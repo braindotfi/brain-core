@@ -86,3 +86,22 @@ export { hashStream, teeSha256 } from "./hashing.js";
 
 // Webhook verification
 export { verifyPlaidWebhook, type PlaidVerifyOptions } from "./webhooks/plaid.js";
+
+// LLM + embeddings (§2 stack: Claude + OpenAI)
+export * from "./llm/types.js";
+export { AnthropicAdapter, type AnthropicAdapterOptions } from "./llm/anthropic.js";
+export {
+  OpenAICompletionAdapter,
+  OpenAIEmbeddingAdapter,
+  type OpenAIAdapterOptions,
+  type OpenAIEmbeddingOptions,
+} from "./llm/openai.js";
+export {
+  RecordedLlmAdapter,
+  RecordedEmbeddingAdapter,
+  DeterministicEmbeddingAdapter,
+  llmKey,
+  embeddingKey,
+  type LlmRecording,
+  type EmbeddingRecording,
+} from "./llm/recorded.js";
