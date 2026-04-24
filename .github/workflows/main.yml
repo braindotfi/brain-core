@@ -1,0 +1,153 @@
+# Brain main-branch pipeline.
+# §10.2: on merge to main → integration tests, build images, push to ACR,
+# deploy to staging, E2E tests, manual promote to production.
+
+name: main
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # OIDC to Azure
+
+concurrency:
+  group: main-${{ github.ref }}
+  cancel-in-progress: false   # never cancel a deploy mid-flight
+
+jobs:
+  unit_and_integration:
+    name: unit + integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: brain
+          POSTGRES_PASSWORD: brain
+          POSTGRES_DB: brain
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://brain:brain@localhost:5432/brain
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm run test:coverage
+      - name: Migrate
+        run: node tools/migrate/dist/cli.js up
+      - name: Integration tests
+        run: pnpm -r --filter='./services/**' --filter='!./services/agents' run test:integration --if-present
+
+  build_and_push_images:
+    name: build + push container images
+    runs-on: ubuntu-latest
+    needs: unit_and_integration
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, raw, wiki, policy, execution, audit, agents]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: ACR login
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/brain-${{ matrix.service }}:${{ github.sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/brain-${{ matrix.service }}:latest
+
+  deploy_staging:
+    name: deploy → staging
+    runs-on: ubuntu-latest
+    needs: build_and_push_images
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy new revision per service
+        run: |
+          for svc in api raw wiki policy execution audit agents; do
+            az containerapp update \
+              --name "brain-staging-$svc" \
+              --resource-group "brain-staging-rg" \
+              --image "${{ secrets.ACR_LOGIN_SERVER }}/brain-$svc:${{ github.sha }}"
+          done
+
+  e2e_staging:
+    name: E2E → staging
+    runs-on: ubuntu-latest
+    needs: deploy_staging
+    env:
+      BRAIN_BASE_URL: https://api.sandbox.brain.fi/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter='./tests/e2e' run test --if-present
+
+  promote_production:
+    name: manual promote → production
+    runs-on: ubuntu-latest
+    needs: e2e_staging
+    environment: production   # GitHub environment gate — manual approval
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Blue/green via revision weights
+        run: |
+          # §10.3: run N and N-1 in parallel. Ship a new revision with
+          # traffic=0, then shift to 10%, then 100%, each step gated by
+          # a separate workflow_dispatch rerun if needed.
+          for svc in api raw wiki policy execution audit agents; do
+            az containerapp update \
+              --name "brain-production-$svc" \
+              --resource-group "brain-production-rg" \
+              --image "${{ secrets.ACR_LOGIN_SERVER_PROD }}/brain-$svc:${{ github.sha }}" \
+              --revision-suffix "sha${{ github.sha }}"
+          done
