@@ -1,0 +1,90 @@
+# Node / pnpm
+node_modules/
+.pnpm-store/
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+.turbo/
+
+# Test / coverage
+coverage/
+.nyc_output/
+*.lcov
+.vitest-cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Foundry / Solidity
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/
+!contracts/broadcast/*/run-latest.json
+contracts/.forge-snapshots/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!terraform.tfvars.example
+
+# IDE / editor
+.vscode/
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+!**/fixtures/**/*.key
+
+# Local state
+.docker-data/
+localstack-data/
+postgres-data/
+redis-data/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+
+# Tool output
+.claude/
