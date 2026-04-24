@@ -1,0 +1,66 @@
+# Brain local development stack.
+# §10.1: Local target = Postgres 16 + pgvector, Redis, LocalStack as Azure Blob equivalent.
+
+name: brain
+
+services:
+  postgres:
+    # pgvector/pgvector:pg16 bundles pgvector 0.7+ with Postgres 16.
+    image: pgvector/pgvector:pg16
+    container_name: brain-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: brain
+      POSTGRES_PASSWORD: brain
+      POSTGRES_DB: brain
+      # Per-tenant schemas use row-level security — see §1 principle 2.
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./tools/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brain -d brain"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: brain-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  localstack:
+    # Azure Blob Storage equivalent for local dev. Uses LocalStack's S3 emulation;
+    # service code abstracts the object store behind a BlobAdapter (lands in stage-2).
+    image: localstack/localstack:3
+    container_name: brain-localstack
+    restart: unless-stopped
+    environment:
+      SERVICES: s3
+      DEBUG: 0
+      PERSISTENCE: 1
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres-data:
+  redis-data:
+  localstack-data:
