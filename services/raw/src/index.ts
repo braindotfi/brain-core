@@ -1,9 +1,17 @@
 /**
  * @brain/raw
  *
- * Ingestion workers. Immutable artifact store, content-addressed, per-source adapters.
- *
- * Scaffolded in stage-0. Real implementation lands in later stages per
- * Brain_Claude_Code_Prompt.docx.
+ * Ingestion workers. Immutable artifact store, content-addressed, per-source
+ * adapters. Implements 5 endpoints from Brain_API_Specification.yaml §Raw.
  */
+
 export const SERVICE_NAME = "brain-raw" as const;
+
+export { buildRawApp, type BuildRawAppOptions } from "./server.js";
+export type { RawDeps } from "./deps.js";
+export { ingestOne, ingestMany, type IngestInput, type IngestResult } from "./services/ingest.js";
+export {
+  adapterForSourceType,
+  adapterForWebhookProvider,
+  listAdapters,
+} from "./adapters/registry.js";
