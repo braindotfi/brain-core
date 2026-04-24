@@ -69,3 +69,20 @@ export {
 export { default as requestIdPlugin, sanitizeRequestId } from "./http/request-id.js";
 export { default as errorHandlerPlugin, mapError } from "./http/error-handler.js";
 export * from "./http/context.js";
+
+// Blob storage (§3 Layer 1)
+export * from "./blob/types.js";
+export { createBlobAdapter, type BlobBackend, type BlobFactoryConfig } from "./blob/factory.js";
+export { S3BlobAdapter, type S3AdapterOptions } from "./blob/s3.js";
+export { AzureBlobAdapter, type AzureAdapterOptions } from "./blob/azure.js";
+export { MemoryBlobAdapter } from "./blob/memory.js";
+
+// Background jobs (BullMQ on Redis — §2)
+export * from "./queue/types.js";
+export { createQueue, createWorker, redisConnectionFromUrl } from "./queue/factory.js";
+
+// Content addressing
+export { hashStream, teeSha256 } from "./hashing.js";
+
+// Webhook verification
+export { verifyPlaidWebhook, type PlaidVerifyOptions } from "./webhooks/plaid.js";

@@ -24,6 +24,10 @@ export const ID_PREFIX = {
   proposal: "prop",
   execution: "exec",
   policy: "pol",
+  rawArtifact: "raw",
+  rawParsed: "prs",
+  wikiEntity: "ent",
+  wikiRelation: "rel",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];
@@ -47,6 +51,10 @@ export const newAuditEventId = (): string => brainId(ID_PREFIX.audit);
 export const newProposalId = (): string => brainId(ID_PREFIX.proposal);
 export const newExecutionId = (): string => brainId(ID_PREFIX.execution);
 export const newPolicyId = (): string => brainId(ID_PREFIX.policy);
+export const newRawArtifactId = (): string => brainId(ID_PREFIX.rawArtifact);
+export const newRawParsedId = (): string => brainId(ID_PREFIX.rawParsed);
+export const newWikiEntityId = (): string => brainId(ID_PREFIX.wikiEntity);
+export const newWikiRelationId = (): string => brainId(ID_PREFIX.wikiRelation);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.
