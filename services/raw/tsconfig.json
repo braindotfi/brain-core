@@ -12,5 +12,10 @@
     "node_modules",
     "dist",
     "src/**/*.test.ts"
+  ],
+  "references": [
+    {
+      "path": "../api"
+    }
   ]
 }
