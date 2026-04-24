@@ -1,0 +1,50 @@
+# Foundry configuration — Brain smart contracts.
+# Four contracts land in stage-5 per Brain_Claude_Code_Prompt.docx:
+#   - BrainAuditAnchor      (per-tenant Merkle root publisher)
+#   - BrainPolicyRegistry   (enterprise policy attestation)
+#   - BrainSmartAccount     (ERC-4337 account with session keys + policy guard)
+#   - BrainMCPAgentRegistry (third-party agent authorization)
+
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+cache_path = "cache"
+broadcast = "broadcast"
+
+# §12.3: Solidity 0.8.24 or later. Immutable after audit — no upgradable contracts in MVP.
+solc = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+
+# Deterministic builds — audit-friendly.
+bytecode_hash = "none"
+cbor_metadata = false
+
+# §7.3: Foundry for everything. Unit + fuzz + invariant tests required.
+verbosity = 3
+fuzz = { runs = 1000, max_test_rejects = 65536 }
+invariant = { runs = 256, depth = 64, fail_on_revert = false }
+
+# Gas snapshots checked on PR — see .github/workflows.
+gas_reports = ["*"]
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+quote_style = "double"
+number_underscore = "thousands"
+single_line_statement_blocks = "preserve"
+
+[rpc_endpoints]
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
+base_mainnet = "${BASE_MAINNET_RPC_URL}"
+
+[etherscan]
+base_sepolia = { key = "${BASESCAN_API_KEY}", chain = 84532 }
+base_mainnet = { key = "${BASESCAN_API_KEY}", chain = 8453 }
