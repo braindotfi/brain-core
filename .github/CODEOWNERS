@@ -1,0 +1,21 @@
+# §12.4: No merge without at least one review from a human engineer.
+# CODEOWNERS enforces the review. Populate with GitHub team handles post-stage-0.
+
+# Default: everything requires review until ownership is assigned.
+*       @brain-finance/engineering
+
+# Per-service ownership (placeholders — fill in once teams exist)
+# services/api/        @brain-finance/platform
+# services/raw/        @brain-finance/data-ingest
+# services/wiki/       @brain-finance/data-ingest
+# services/policy/     @brain-finance/governance
+# services/execution/  @brain-finance/agents
+# services/audit/      @brain-finance/platform
+# services/agents/     @brain-finance/agents
+# contracts/           @brain-finance/contracts
+# infra/               @brain-finance/platform
+
+# Source-of-truth documents: changes require engineering lead review.
+/Brain_API_Specification.yaml    @brain-finance/engineering-lead
+/Brain_Engineering_Standards.md  @brain-finance/engineering-lead
+/Brain_MVP_Architecture.md       @brain-finance/engineering-lead
