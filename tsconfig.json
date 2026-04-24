@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./services/api" },
+    { "path": "./services/raw" },
+    { "path": "./services/wiki" },
+    { "path": "./services/policy" },
+    { "path": "./services/execution" },
+    { "path": "./services/audit" }
+  ]
+}

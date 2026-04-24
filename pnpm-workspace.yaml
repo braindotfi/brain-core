@@ -1,0 +1,9 @@
+packages:
+  - "services/api"
+  - "services/raw"
+  - "services/wiki"
+  - "services/policy"
+  - "services/execution"
+  - "services/audit"
+  - "clients/*"
+  - "tools/*"

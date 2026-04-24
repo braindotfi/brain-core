@@ -1,0 +1,13 @@
+node_modules
+dist
+build
+coverage
+.turbo
+pnpm-lock.yaml
+services/agents/**
+contracts/out
+contracts/cache
+infra/**
+*.tfstate
+*.tfstate.*
+Brain_API_Specification.yaml
