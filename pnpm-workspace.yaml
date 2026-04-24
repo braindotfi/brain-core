@@ -7,3 +7,4 @@ packages:
   - "services/audit"
   - "clients/*"
   - "tools/*"
+  - "tests/e2e"
