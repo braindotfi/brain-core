@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/entity/counterparty/v1",
+  "title": "CounterpartyEntity",
+  "description": "A party the tenant transacts with: vendor, customer, employee, contractor, or a known on-chain address.",
+  "type": "object",
+  "required": ["display_name", "kind"],
+  "additionalProperties": false,
+  "properties": {
+    "display_name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "kind": { "type": "string", "enum": ["vendor", "customer", "employee", "contractor", "onchain", "unknown"] },
+    "tax_id": { "type": "string", "maxLength": 64 },
+    "country": { "type": "string", "pattern": "^[A-Z]{2}$" },
+    "website": { "type": "string", "format": "uri" },
+    "netsuite_internal_id": { "type": "string", "maxLength": 64 },
+    "address": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" }
+  }
+}

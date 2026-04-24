@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/entity/policy/v1",
+  "title": "PolicyEntity",
+  "description": "A Wiki pointer to a Policy artifact in the Policy layer. Carried here so Wiki queries like 'what policy governed X on date Y' work without leaving the Wiki.",
+  "type": "object",
+  "required": ["policy_id", "version"],
+  "additionalProperties": false,
+  "properties": {
+    "policy_id": { "type": "string", "pattern": "^pol_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "version": { "type": "integer", "minimum": 1 },
+    "active": { "type": "boolean" },
+    "content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

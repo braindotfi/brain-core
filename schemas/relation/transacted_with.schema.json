@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/relation/transacted_with/v1",
+  "title": "TransactedWith",
+  "description": "src account transacted with dst counterparty. attributes.transaction_id points at the wiki transaction entity.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "transaction_id": { "type": "string", "pattern": "^ent_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "amount": { "type": "string", "pattern": "^-?\\d+(\\.\\d+)?$" },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "posted_at": { "type": "string", "format": "date-time" }
+  }
+}

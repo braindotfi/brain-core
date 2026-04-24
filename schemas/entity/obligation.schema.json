@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/entity/obligation/v1",
+  "title": "ObligationEntity",
+  "description": "An amount owed to or by a counterparty: invoice, bill, loan payment, subscription.",
+  "type": "object",
+  "required": ["direction", "amount", "currency", "due_at"],
+  "additionalProperties": false,
+  "properties": {
+    "direction": { "type": "string", "enum": ["payable", "receivable"] },
+    "amount": { "type": "string", "pattern": "^\\d+(\\.\\d+)?$" },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "due_at": { "type": "string", "format": "date-time" },
+    "status": { "type": "string", "enum": ["open", "partial", "settled", "overdue", "cancelled"] },
+    "external_id": { "type": "string", "maxLength": 256 },
+    "memo": { "type": "string", "maxLength": 500 }
+  }
+}

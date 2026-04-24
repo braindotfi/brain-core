@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/entity/agent/v1",
+  "title": "AgentEntity",
+  "description": "An internal or external agent. Wiki pointer — the canonical agent record lives in services/execution's Agent table and on-chain in BrainMCPAgentRegistry for external agents.",
+  "type": "object",
+  "required": ["agent_id", "kind"],
+  "additionalProperties": false,
+  "properties": {
+    "agent_id": { "type": "string", "pattern": "^agent_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "display_name": { "type": "string", "maxLength": 200 },
+    "kind": { "type": "string", "enum": ["internal", "external"] },
+    "role": { "type": "string", "enum": ["reconciliation", "payment", "anomaly", "partner"] },
+    "scope_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "onchain_address": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" },
+    "registered_at": { "type": "string", "format": "date-time" }
+  }
+}

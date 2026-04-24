@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/entity/transaction/v1",
+  "title": "TransactionEntity",
+  "description": "A single money-movement event. Inherits direction, amount, currency, and an optional memo. Bitemporal — a transaction that is later re-categorized gets a new version.",
+  "type": "object",
+  "required": ["direction", "amount", "currency", "posted_at"],
+  "additionalProperties": false,
+  "properties": {
+    "direction": { "type": "string", "enum": ["outbound", "inbound"] },
+    "amount": {
+      "type": "string",
+      "pattern": "^-?\\d+(\\.\\d+)?$",
+      "description": "Stringified decimal. Absolute value; sign encoded in direction."
+    },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "posted_at": { "type": "string", "format": "date-time" },
+    "authorized_at": { "type": "string", "format": "date-time" },
+    "memo": { "type": "string", "maxLength": 500 },
+    "category": { "type": "string", "maxLength": 100 },
+    "external_id": { "type": "string", "maxLength": 256 },
+    "rail": { "type": "string", "enum": ["ach", "wire", "card", "check", "onchain", "internal"] },
+    "chain_tx_hash": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" }
+  }
+}

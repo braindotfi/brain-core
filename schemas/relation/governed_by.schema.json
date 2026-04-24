@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/relation/governed_by/v1",
+  "title": "GovernedBy",
+  "description": "src (agent or tenant) is governed by dst (policy). Used by /wiki/question to answer 'what policy was active when action X happened'.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "applies_to": { "type": "string", "enum": ["agent", "tenant", "account"] },
+    "policy_version": { "type": "integer", "minimum": 1 },
+    "activated_at": { "type": "string", "format": "date-time" }
+  }
+}

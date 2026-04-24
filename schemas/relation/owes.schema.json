@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/relation/owes/v1",
+  "title": "Owes",
+  "description": "src (tenant account/counterparty) owes dst (counterparty). Mirrors an obligation with direction=payable.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "obligation_id": { "type": "string", "pattern": "^ent_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "amount": { "type": "string", "pattern": "^\\d+(\\.\\d+)?$" },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "due_at": { "type": "string", "format": "date-time" }
+  }
+}
