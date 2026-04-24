@@ -1,0 +1,1475 @@
+openapi: 3.1.0
+info:
+  title: Brain API
+  version: 0.1.0
+  description: |
+    The Brain API exposes five layers as HTTP endpoints plus one MCP surface.
+    Raw (ingestion), Wiki (structured memory), Policy (governance),
+    Execution (action), Audit (proof).
+
+    All endpoints are tenant-scoped. Tenant identity is derived from the
+    authenticated principal. The principal's tenant is never passed in URLs
+    except where explicitly required for cross-tenant operations by platform
+    administrators.
+
+    Base URL: https://api.brain.fi/v1
+    Protocol: HTTPS only. HTTP requests are rejected at the edge.
+    Content type: application/json unless otherwise specified.
+    Character encoding: UTF-8.
+    Time: all timestamps are RFC 3339 UTC (example: 2026-04-23T11:45:00Z).
+  contact:
+    name: Brain Finance Inc.
+    url: https://brain.fi
+    email: api@brain.fi
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.brain.fi/v1
+    description: Production
+  - url: https://api.sandbox.brain.fi/v1
+    description: Sandbox
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Raw
+    description: Immutable ingestion of financial evidence
+  - name: Wiki
+    description: Structured memory queries and annotations
+  - name: Policy
+    description: Rule composition, signing, evaluation
+  - name: Execution
+    description: Agent proposals, executions, approvals
+  - name: Audit
+    description: Tamper-evident event log and verification
+  - name: MCP
+    description: Model Context Protocol surface for external agents
+  - name: Admin
+    description: Platform administration (tenant-level operations)
+
+paths:
+
+  #############################################################################
+  # LAYER 1: RAW
+  #############################################################################
+
+  /raw/ingest:
+    post:
+      tags: [Raw]
+      summary: Ingest a financial artifact
+      description: |
+        Accepts a financial artifact via direct upload or URL reference.
+        Content is stored immutably with SHA-256 content addressing.
+        Duplicate artifacts (same tenant, same SHA-256) return the existing raw_id.
+      operationId: ingestRaw
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [source_type, file]
+              properties:
+                source_type:
+                  $ref: '#/components/schemas/RawSourceType'
+                source_ref:
+                  type: object
+                  description: Source-specific identifiers (e.g. Plaid transaction ID)
+                  additionalProperties: true
+                file:
+                  type: string
+                  format: binary
+                  description: The artifact content. Max 50 MB.
+                mime_type:
+                  type: string
+                  description: Override auto-detected MIME type
+          application/json:
+            schema:
+              type: object
+              required: [source_type, url]
+              properties:
+                source_type:
+                  $ref: '#/components/schemas/RawSourceType'
+                source_ref:
+                  type: object
+                  additionalProperties: true
+                url:
+                  type: string
+                  format: uri
+                  description: URL to fetch (server-side). Must be HTTPS.
+                auth_header:
+                  type: string
+                  description: Optional Authorization header value for the fetch
+      responses:
+        '201':
+          description: Artifact ingested (new)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RawIngestResponse'
+        '200':
+          description: Artifact already exists (idempotent)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RawIngestResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /raw/webhooks/{provider}:
+    post:
+      tags: [Raw]
+      summary: Webhook ingestion from a known provider
+      description: |
+        HMAC-authenticated webhook endpoint. Each provider has a pre-registered
+        signing secret. Request is rejected if the provider signature header
+        does not verify. Provider-specific.
+      operationId: ingestWebhook
+      security: []  # HMAC signature replaces bearer auth
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [plaid, stripe, alchemy, netsuite, generic_hmac]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Provider-specific payload
+      responses:
+        '202':
+          description: Webhook accepted for async processing
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted: { type: boolean }
+                  trace_id: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Signature verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /raw/{raw_id}:
+    get:
+      tags: [Raw]
+      summary: Retrieve a raw artifact
+      description: |
+        Returns a short-lived signed URL (10 minute expiry) pointing at the
+        artifact in Azure Blob Storage. The artifact itself is served with
+        Content-Disposition: attachment.
+      operationId: getRaw
+      parameters:
+        - $ref: '#/components/parameters/RawId'
+      responses:
+        '200':
+          description: Signed URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  raw_id: { type: string, format: uuid }
+                  sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  signed_url: { type: string, format: uri }
+                  expires_at: { type: string, format: date-time }
+                  mime_type: { type: string }
+                  bytes: { type: integer, minimum: 0 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410':
+          description: Artifact has been tombstoned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [Raw]
+      summary: Tombstone a raw artifact
+      description: |
+        Writes a tombstone record. The underlying artifact is retained in
+        storage per regulatory retention policy but becomes inaccessible
+        via the API and is filtered from all Wiki derivations.
+      operationId: tombstoneRaw
+      parameters:
+        - $ref: '#/components/parameters/RawId'
+      responses:
+        '204':
+          description: Tombstoned
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410':
+          description: Already tombstoned
+
+  /raw/{raw_id}/parsed:
+    get:
+      tags: [Raw]
+      summary: Retrieve parsed output for an artifact
+      description: Returns normalized output from all parser versions.
+      operationId: getRawParsed
+      parameters:
+        - $ref: '#/components/parameters/RawId'
+        - name: parser
+          in: query
+          schema:
+            type: string
+          description: Filter to a specific parser
+        - name: parser_version
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Parsed output
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  raw_id: { type: string, format: uuid }
+                  parsed:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RawParsed'
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  #############################################################################
+  # LAYER 2: WIKI
+  #############################################################################
+
+  /wiki/entity/{entity_id}:
+    get:
+      tags: [Wiki]
+      summary: Fetch an entity with one-hop neighbors
+      operationId: getWikiEntity
+      parameters:
+        - $ref: '#/components/parameters/EntityId'
+        - name: include_neighbors
+          in: query
+          schema: { type: boolean, default: true }
+        - name: as_of
+          in: query
+          schema: { type: string, format: date-time }
+          description: Bitemporal query. If omitted, current state.
+      responses:
+        '200':
+          description: Entity and neighbors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entity:
+                    $ref: '#/components/schemas/WikiEntity'
+                  neighbors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        relation: { $ref: '#/components/schemas/WikiRelation' }
+                        entity: { $ref: '#/components/schemas/WikiEntity' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /wiki/entity/{entity_id}/evidence:
+    get:
+      tags: [Wiki]
+      summary: Retrieve the evidence chain for an entity
+      description: |
+        Returns the full provenance chain: every raw_parsed record and
+        extraction path that produced this entity and its attributes.
+      operationId: getEntityEvidence
+      parameters:
+        - $ref: '#/components/parameters/EntityId'
+      responses:
+        '200':
+          description: Evidence chain
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceChain'
+
+  /wiki/entity/{entity_id}/history:
+    get:
+      tags: [Wiki]
+      summary: All temporal versions of an entity
+      operationId: getEntityHistory
+      parameters:
+        - $ref: '#/components/parameters/EntityId'
+      responses:
+        '200':
+          description: Version history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entity_id: { type: string, format: uuid }
+                  versions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WikiEntity'
+
+  /wiki/search:
+    get:
+      tags: [Wiki]
+      summary: Search the Wiki
+      operationId: searchWiki
+      parameters:
+        - name: kind
+          in: query
+          schema: { $ref: '#/components/schemas/EntityKind' }
+        - name: q
+          in: query
+          schema: { type: string }
+          description: Full-text query over entity attributes
+        - name: semantic
+          in: query
+          schema: { type: string }
+          description: Semantic query using pgvector embeddings
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 500 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: '#/components/schemas/WikiEntity' }
+                  next_cursor: { type: string, nullable: true }
+
+  /wiki/question:
+    post:
+      tags: [Wiki]
+      summary: Natural-language question against the Wiki
+      description: |
+        Translates a natural-language question into a set of SQL queries
+        against the Wiki, executes them, and composes an answer with an
+        evidence path attached. This is the LLM-in-hot-path endpoint.
+        Costs apply per call; see pricing documentation.
+      operationId: askWiki
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                as_of:
+                  type: string
+                  format: date-time
+                  description: Evaluate against the Wiki as of this time
+                max_evidence_depth:
+                  type: integer
+                  default: 3
+                  maximum: 5
+      responses:
+        '200':
+          description: Answer with evidence
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WikiAnswer'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /wiki/annotate:
+    post:
+      tags: [Wiki]
+      summary: Human correction on an entity or relation
+      description: |
+        Submits a structured correction. Corrections are applied as a new
+        temporal version with provenance=human_confirmed. The original
+        version is retained.
+      operationId: annotateWiki
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/EntityAnnotation'
+                - $ref: '#/components/schemas/RelationAnnotation'
+      responses:
+        '201':
+          description: Annotation applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  annotation_id: { type: string, format: uuid }
+                  new_version_id: { type: string, format: uuid }
+
+  /wiki/schema:
+    get:
+      tags: [Wiki]
+      summary: Retrieve current JSON schemas per entity and relation kind
+      operationId: getWikiSchema
+      parameters:
+        - name: kind
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: JSON schemas
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  description: JSON Schema document for the kind
+                  type: object
+
+  #############################################################################
+  # LAYER 3: POLICY
+  #############################################################################
+
+  /policy/{tenant_id}:
+    get:
+      tags: [Policy]
+      summary: Get the active policy for a tenant
+      operationId: getActivePolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Active policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /policy/{tenant_id}/versions:
+    get:
+      tags: [Policy]
+      summary: List policy versions
+      operationId: listPolicyVersions
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Version history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items: { $ref: '#/components/schemas/Policy' }
+
+  /policy/{tenant_id}/compose:
+    post:
+      tags: [Policy]
+      summary: Compose a new policy, returns signing payload
+      description: |
+        Validates the proposed policy against the DSL schema. Returns an
+        EIP-712 typed-data signing payload. Caller then signs with the
+        appropriate keys and submits via /sign.
+      operationId: composePolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyDSL'
+      responses:
+        '200':
+          description: Signing payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content_hash: { type: string, pattern: '^0x[a-f0-9]{64}$' }
+                  typed_data:
+                    description: EIP-712 typed data document to sign
+                    type: object
+                  required_signers:
+                    type: array
+                    items: { type: string }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /policy/{tenant_id}/sign:
+    post:
+      tags: [Policy]
+      summary: Submit signatures for a composed policy
+      operationId: signPolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content_hash, signatures]
+              properties:
+                content_hash: { type: string }
+                signatures:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      signer: { type: string, description: Signer address }
+                      signature: { type: string }
+      responses:
+        '201':
+          description: Policy activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+        '409':
+          description: Insufficient signatures
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /policy/{tenant_id}/evaluate:
+    post:
+      tags: [Policy]
+      summary: Evaluate a proposed action against active policy
+      operationId: evaluatePolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposedAction'
+      responses:
+        '200':
+          description: Decision and trace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyDecision'
+
+  /policy/{tenant_id}/simulate:
+    post:
+      tags: [Policy]
+      summary: Replay an action against a historical policy version
+      operationId: simulatePolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, version]
+              properties:
+                action: { $ref: '#/components/schemas/ProposedAction' }
+                version: { type: integer }
+      responses:
+        '200':
+          description: Decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyDecision'
+
+  #############################################################################
+  # LAYER 4: EXECUTION
+  #############################################################################
+
+  /execution/propose:
+    post:
+      tags: [Execution]
+      summary: Agent proposes an action
+      description: |
+        The agent submits an action. The server evaluates it against the
+        active policy and returns a decision. If decision=allow, the action
+        can be executed immediately via /execute. If decision=confirm, the
+        action requires human approval first. If decision=reject, no
+        further action is possible.
+      operationId: proposeAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, action]
+              properties:
+                agent_id: { type: string }
+                action: { $ref: '#/components/schemas/ProposedAction' }
+                idempotency_key:
+                  type: string
+                  description: Client-supplied key for deduplication
+      responses:
+        '201':
+          description: Proposal created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+
+  /execution/execute:
+    post:
+      tags: [Execution]
+      summary: Execute an approved proposal
+      operationId: executeProposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proposal_id]
+              properties:
+                proposal_id: { type: string, format: uuid }
+                dry_run: { type: boolean, default: false }
+      responses:
+        '202':
+          description: Execution started (async)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  execution_id: { type: string, format: uuid }
+                  status: { type: string, enum: [started] }
+        '409':
+          description: Proposal not in executable state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /execution/{execution_id}:
+    get:
+      tags: [Execution]
+      summary: Execution status and trace
+      operationId: getExecution
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Execution record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Execution'
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /execution/approve:
+    post:
+      tags: [Execution]
+      summary: Human approval for a confirm-gated proposal
+      operationId: approveProposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proposal_id]
+              properties:
+                proposal_id: { type: string, format: uuid }
+                approver_notes: { type: string }
+      responses:
+        '200':
+          description: Approved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proposal' }
+
+  /execution/escalate:
+    post:
+      tags: [Execution]
+      summary: Agent escalates to human
+      operationId: escalateProposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proposal_id, reason]
+              properties:
+                proposal_id: { type: string, format: uuid }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Escalated
+
+  /execution/agents:
+    get:
+      tags: [Execution]
+      summary: List configured agents for the current tenant
+      operationId: listAgents
+      responses:
+        '200':
+          description: Agent list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items: { $ref: '#/components/schemas/Agent' }
+
+  /execution/agents/register:
+    post:
+      tags: [Execution]
+      summary: Register an external agent
+      description: |
+        Registers a third-party agent for this tenant. Returns on-chain
+        attestation transaction hash after BrainMCPAgentRegistry registration
+        completes.
+      operationId: registerExternalAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_address, scope]
+              properties:
+                agent_address:
+                  type: string
+                  description: Ethereum address of the agent
+                scope:
+                  $ref: '#/components/schemas/AgentScope'
+                tenant_signature:
+                  type: string
+                  description: EIP-712 signature authorizing this scope
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent_id: { type: string }
+                  onchain_tx_hash: { type: string }
+                  scope_hash: { type: string }
+
+  /execution/agents/{agent_id}:
+    get:
+      tags: [Execution]
+      summary: Get agent configuration and on-chain registration
+      operationId: getAgent
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Agent record
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agent' }
+
+  #############################################################################
+  # LAYER 5: AUDIT
+  #############################################################################
+
+  /audit/events:
+    get:
+      tags: [Audit]
+      summary: Query audit events
+      operationId: queryAuditEvents
+      parameters:
+        - name: layer
+          in: query
+          schema:
+            type: string
+            enum: [raw, wiki, policy, execution]
+        - name: actor
+          in: query
+          schema: { type: string }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 1000 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Event list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+                  next_cursor: { type: string, nullable: true }
+
+  /audit/event/{event_id}:
+    get:
+      tags: [Audit]
+      summary: Get a single event with inclusion proof
+      operationId: getAuditEvent
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Event and proof
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event: { $ref: '#/components/schemas/AuditEvent' }
+                  inclusion_proof:
+                    type: object
+                    properties:
+                      merkle_root: { type: string }
+                      merkle_proof:
+                        type: array
+                        items: { type: string }
+                      anchor_tx_hash: { type: string }
+                      anchor_block: { type: integer }
+
+  /audit/export:
+    post:
+      tags: [Audit]
+      summary: Request an audit export (async)
+      operationId: exportAudit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format, since, until]
+              properties:
+                format: { type: string, enum: [jsonl, csv] }
+                since: { type: string, format: date-time }
+                until: { type: string, format: date-time }
+                layers:
+                  type: array
+                  items:
+                    type: string
+                    enum: [raw, wiki, policy, execution]
+      responses:
+        '202':
+          description: Export job created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id: { type: string, format: uuid }
+                  status_url: { type: string, format: uri }
+
+  /audit/anchor/latest:
+    get:
+      tags: [Audit]
+      summary: Get the latest on-chain anchor for the current tenant
+      operationId: getLatestAnchor
+      responses:
+        '200':
+          description: Anchor record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  merkle_root: { type: string }
+                  event_count: { type: integer }
+                  period_start: { type: string, format: date-time }
+                  period_end: { type: string, format: date-time }
+                  onchain_tx_hash: { type: string }
+                  onchain_block_number: { type: integer }
+
+  /audit/verify:
+    post:
+      tags: [Audit]
+      summary: Verify an event's inclusion against on-chain root
+      description: |
+        Independent verification. Caller supplies an event hash, a Merkle
+        proof, and a claimed root. Server verifies the proof and the root's
+        on-chain presence. Returns true only if both hold.
+      operationId: verifyInclusion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event_hash, merkle_proof, merkle_root]
+              properties:
+                event_hash: { type: string }
+                merkle_proof:
+                  type: array
+                  items: { type: string }
+                merkle_root: { type: string }
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified: { type: boolean }
+                  onchain_block: { type: integer, nullable: true }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT bearer token issued by Brain's auth service.
+        Contains tenant_id and scopes. See Engineering Standards
+        section 2 for the full auth model.
+
+  parameters:
+    RawId:
+      name: raw_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    EntityId:
+      name: entity_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TenantId:
+      name: tenant_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: Request is malformed or missing required fields
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Authentication failed or missing
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but not authorized for this operation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found or not accessible to this tenant
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PayloadTooLarge:
+      description: Request body exceeds maximum size
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnsupportedMediaType:
+      description: Content-Type not supported for this operation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnprocessableEntity:
+      description: Request is well-formed but semantically invalid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code (see Engineering Standards section 3)
+        message:
+          type: string
+          description: Human-readable error message
+        trace_id:
+          type: string
+          description: Correlation ID for support
+        details:
+          type: object
+          additionalProperties: true
+
+    #
+    # Raw layer
+    #
+
+    RawSourceType:
+      type: string
+      enum:
+        - plaid
+        - erp_netsuite
+        - email
+        - upload
+        - chain_evm
+        - stripe
+        - agent_contributed
+        - other
+
+    RawIngestResponse:
+      type: object
+      properties:
+        raw_id: { type: string, format: uuid }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        source_type: { $ref: '#/components/schemas/RawSourceType' }
+        bytes: { type: integer }
+        ingested_at: { type: string, format: date-time }
+        deduplicated:
+          type: boolean
+          description: True if this artifact was already in storage
+
+    RawParsed:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        raw_artifact_id: { type: string, format: uuid }
+        parser: { type: string }
+        parser_version: { type: string }
+        extracted:
+          type: object
+          additionalProperties: true
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        extracted_at: { type: string, format: date-time }
+
+    #
+    # Wiki layer
+    #
+
+    EntityKind:
+      type: string
+      enum:
+        - account
+        - counterparty
+        - transaction
+        - obligation
+        - policy
+        - agent
+
+    Provenance:
+      type: string
+      enum:
+        - extracted
+        - inferred
+        - ambiguous
+        - human_confirmed
+        - agent_contributed
+
+    WikiEntity:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/EntityKind' }
+        attributes:
+          type: object
+          additionalProperties: true
+        valid_from: { type: string, format: date-time }
+        valid_to: { type: string, format: date-time, nullable: true }
+        provenance: { $ref: '#/components/schemas/Provenance' }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        source_evidence:
+          type: array
+          items: { type: string, format: uuid }
+
+    RelationKind:
+      type: string
+      enum:
+        - transacted_with
+        - owes
+        - owed_by
+        - governed_by
+
+    WikiRelation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        src: { type: string, format: uuid }
+        dst: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/RelationKind' }
+        attributes:
+          type: object
+          additionalProperties: true
+        valid_from: { type: string, format: date-time }
+        valid_to: { type: string, format: date-time, nullable: true }
+        provenance: { $ref: '#/components/schemas/Provenance' }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        source_evidence:
+          type: array
+          items: { type: string, format: uuid }
+
+    EvidenceChain:
+      type: object
+      properties:
+        entity_id: { type: string, format: uuid }
+        chain:
+          type: array
+          items:
+            type: object
+            properties:
+              raw_parsed_id: { type: string, format: uuid }
+              parser: { type: string }
+              confidence: { type: number }
+              extracted_fields:
+                type: array
+                items: { type: string }
+
+    WikiAnswer:
+      type: object
+      properties:
+        question: { type: string }
+        answer: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        evidence_path:
+          type: array
+          items:
+            type: object
+            properties:
+              step: { type: integer }
+              description: { type: string }
+              entity_id: { type: string, format: uuid, nullable: true }
+              sql_query: { type: string, nullable: true }
+              result_summary: { type: string }
+        llm_metadata:
+          type: object
+          properties:
+            model: { type: string }
+            tokens_input: { type: integer }
+            tokens_output: { type: integer }
+            latency_ms: { type: integer }
+
+    EntityAnnotation:
+      type: object
+      required: [entity_id, corrections]
+      properties:
+        entity_id: { type: string, format: uuid }
+        corrections:
+          type: object
+          additionalProperties: true
+        note: { type: string }
+
+    RelationAnnotation:
+      type: object
+      required: [relation_id, corrections]
+      properties:
+        relation_id: { type: string, format: uuid }
+        corrections:
+          type: object
+          additionalProperties: true
+        note: { type: string }
+
+    #
+    # Policy layer
+    #
+
+    Policy:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        version: { type: integer }
+        content:
+          $ref: '#/components/schemas/PolicyDSL'
+        content_hash: { type: string }
+        signers:
+          type: array
+          items:
+            type: object
+            properties:
+              address: { type: string }
+              signature: { type: string }
+        activated_at: { type: string, format: date-time }
+        deactivated_at: { type: string, format: date-time, nullable: true }
+        onchain_tx_hash:
+          type: string
+          nullable: true
+          description: Set for enterprise tier after BrainPolicyRegistry registration
+
+    PolicyDSL:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/PolicyRule' }
+
+    PolicyRule:
+      type: object
+      required: [id, applies_to, execute]
+      properties:
+        id: { type: string }
+        applies_to:
+          type: array
+          items:
+            type: string
+            enum:
+              - outbound_payment
+              - inbound_payment
+              - ledger_write
+              - onchain_tx
+              - any
+        when:
+          type: object
+          description: Condition primitives (see Engineering Standards section 8)
+          properties:
+            counterparty_in: { type: string, description: Reference to a named list }
+            counterparty_not_in: { type: string }
+            amount_lte:
+              type: object
+              properties:
+                currency: { type: string }
+                value: { type: number }
+            amount_gt:
+              type: object
+              properties:
+                currency: { type: string }
+                value: { type: number }
+            agent_role: { type: string }
+            time_window: { type: string, description: Cron expression }
+        require:
+          type: array
+          items:
+            type: string
+            description: Approver roles or compound conditions
+        execute:
+          type: string
+          enum: [auto, confirm, reject]
+
+    ProposedAction:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum:
+            - outbound_payment
+            - inbound_payment
+            - ledger_write
+            - onchain_tx
+        counterparty:
+          type: string
+          description: Entity ID of the counterparty
+        amount:
+          type: object
+          properties:
+            currency: { type: string }
+            value: { type: number }
+        rail:
+          type: string
+          enum: [bank_ach, erp_writeback, onchain_base, notification]
+        metadata:
+          type: object
+          additionalProperties: true
+
+    PolicyDecision:
+      type: object
+      properties:
+        decision:
+          type: string
+          enum: [allow, confirm, reject]
+        trace:
+          type: array
+          items:
+            type: object
+            properties:
+              rule_id: { type: string }
+              matched: { type: boolean }
+              explanation: { type: string }
+        required_approvers:
+          type: array
+          items: { type: string }
+        policy_version: { type: integer }
+
+    #
+    # Execution layer
+    #
+
+    ProposalStatus:
+      type: string
+      enum: [pending, approved, rejected, executed, failed, expired]
+
+    Proposal:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        proposing_agent: { type: string }
+        action: { $ref: '#/components/schemas/ProposedAction' }
+        policy_version: { type: integer }
+        policy_decision: { $ref: '#/components/schemas/PolicyDecision' }
+        required_approvers:
+          type: array
+          items: { type: string }
+        status: { $ref: '#/components/schemas/ProposalStatus' }
+        created_at: { type: string, format: date-time }
+        idempotency_key: { type: string, nullable: true }
+
+    ExecutionStatus:
+      type: string
+      enum: [started, succeeded, failed, timeout]
+
+    Execution:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        proposal_id: { type: string, format: uuid }
+        rail:
+          type: string
+          enum: [bank_ach, erp_writeback, onchain_base, notification]
+        rail_receipt:
+          type: object
+          additionalProperties: true
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time, nullable: true }
+        status: { $ref: '#/components/schemas/ExecutionStatus' }
+        error:
+          type: string
+          nullable: true
+
+    Agent:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type:
+          type: string
+          enum: [internal, external]
+        internal_role:
+          type: string
+          enum: [reconciliation, payment, anomaly]
+          nullable: true
+        external_address:
+          type: string
+          description: Ethereum address (external agents only)
+          nullable: true
+        scope: { $ref: '#/components/schemas/AgentScope' }
+        onchain_registration:
+          type: object
+          nullable: true
+          properties:
+            tx_hash: { type: string }
+            scope_hash: { type: string }
+            registered_at: { type: string, format: date-time }
+
+    AgentScope:
+      type: object
+      description: |
+        Declarative scope document. Hashed and registered on-chain in
+        BrainMCPAgentRegistry for external agents.
+      properties:
+        allowed_actions:
+          type: array
+          items:
+            type: string
+            enum: [read_wiki, propose_action, read_audit]
+        wiki_kinds_readable:
+          type: array
+          items: { $ref: '#/components/schemas/EntityKind' }
+        action_types_proposable:
+          type: array
+          items:
+            type: string
+            enum:
+              - outbound_payment
+              - inbound_payment
+              - ledger_write
+              - onchain_tx
+        max_amount:
+          type: object
+          properties:
+            currency: { type: string }
+            value: { type: number }
+        valid_until:
+          type: string
+          format: date-time
+
+    #
+    # Audit layer
+    #
+
+    AuditEvent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        layer:
+          type: string
+          enum: [raw, wiki, policy, execution]
+        actor: { type: string }
+        action: { type: string }
+        inputs:
+          type: object
+          description: Hashes and evidence refs, not full content
+          additionalProperties: true
+        outputs:
+          type: object
+          additionalProperties: true
+        policy_version:
+          type: integer
+          nullable: true
+        event_hash: { type: string }
+        prev_event_hash: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
