@@ -1,0 +1,31 @@
+{
+  "name": "@brain/migrate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Brain migration runner. Discovers services/*/migrations/*.sql, tracks applied, runs forward-compatible migrations per §10.5.",
+  "type": "module",
+  "bin": {
+    "brain-migrate": "./dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "lint": "eslint src --max-warnings 0",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.2",
+    "@vitest/coverage-v8": "^2.1.2",
+    "eslint": "^9.12.0"
+  }
+}
