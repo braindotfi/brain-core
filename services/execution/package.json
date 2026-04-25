@@ -28,6 +28,7 @@
   "dependencies": {
     "@brain/api": "workspace:*",
     "@brain/policy": "workspace:*",
+    "@brain/ledger": "workspace:*",
     "fastify": "^5.0.0",
     "pg": "^8.13.0"
   }
