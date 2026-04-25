@@ -1,45 +1,66 @@
 # Brain Engineering Standards
 
-Brain Finance Inc. | v0.1.0 MVP
+Brain Finance Inc. | v0.2.0 MVP
 
 This document defines the conventions every engineer, contractor, and AI coding assistant follows when building Brain. It is the decision log that keeps the codebase consistent and the production-posture credible.
 
-Read alongside: Brain_API_Specification.yaml (the OpenAPI contract) and Brain_MVP_Architecture.md (the protocol blueprint).
+Read alongside: Brain_API_Specification.yaml (the OpenAPI contract) and Brain_MVP_Architecture.md (the protocol blueprint, v0.3 = six layers).
+
+### What changed in v0.2.0
+
+v0.2.0 of this document realigns to the v0.3 architecture (six layers). Specifically:
+
+- §1 adds a fifth principle: deterministic pre-execution gate.
+- §2 repo layout adds `services/ledger/` and renames `services/execution/` → `services/agent/`.
+- §3.2 scope list updated: `ledger:*`, `payment_intent:*`, `agent:*`.
+- §4.3 error code registry adds ledger and payment_intent codes; `execution_*` codes alias to `agent_*` for back-compat.
+- §6 Pre-execution gate is a NEW SECTION (renumbers Observability → §7, Testing → §8, etc.).
+- §9.5 PaymentIntent state machine is new.
+- §11 dependencies adds Chainalysis as the deterministic counterparty-verification provider.
+
+The §1 principles, the audit chain, and the v0.1.0 §3.1 auth model are otherwise unchanged.
 
 ## 1. Non-negotiable principles
 
-Four principles override every implementation preference. If a trade-off question comes up and these are on one side, they win.
+Five principles override every implementation preference. If a trade-off question comes up and these are on one side, they win.
 
-Provenance on everything. Every derived fact in the Wiki carries provenance, confidence, and a pointer to source evidence. No exceptions. A Wiki row without those three fields is a bug, regardless of how convenient it would be to skip them.
+**Provenance on everything.** Every derived fact in the Ledger and the Wiki carries provenance, confidence, and a pointer to source evidence. No exceptions. A row without those three fields is a bug, regardless of how convenient it would be to skip them.
 
-Tenant isolation at the storage layer, not the query layer. Row-level security on every Postgres table. Per-tenant path prefixes in Azure Blob. A bug in application code must not be able to leak cross-tenant data. Shared-query-with-filter is not an acceptable pattern for tenant-scoped data.
+**Tenant isolation at the storage layer, not the query layer.** Row-level security on every Postgres table. Per-tenant path prefixes in Azure Blob. A bug in application code must not be able to leak cross-tenant data. Shared-query-with-filter is not an acceptable pattern for tenant-scoped data.
 
-Idempotency by default on writes. Every write endpoint accepts an idempotency key or derives one from content. Retries are safe. Duplicate events are detected. This is required for webhook reliability and for agent retry behavior.
+**Idempotency by default on writes.** Every write endpoint accepts an idempotency key or derives one from content. Retries are safe. Duplicate events are detected. This is required for webhook reliability and for agent retry behavior.
 
-Audit everything that matters. Every API call, policy evaluation, agent action, and state transition produces an audit event. The audit log is append-only and Merkle-chained. If it is not in the log, it did not happen.
+**Audit everything that matters.** Every API call, Ledger write, policy evaluation, agent action, and state transition produces an audit event. The audit log is append-only and Merkle-chained. If it is not in the log, it did not happen.
+
+**Deterministic pre-execution gate.** No financial execution path may bypass the §6 gate. Policy evaluation reads from Ledger state, not Wiki text. LLM judgment never replaces a deterministic precondition check on money movement. (See §6.)
 
 ## 2. Repository layout
 
 One monorepo. Language-specific workspaces inside. Workspaces publish typed clients to each other.
 
+```
 brain/
 ├── services/
-│   ├── api/              # TypeScript. Public HTTP API gateway.
-│   ├── raw/              # TypeScript. Ingestion workers.
-│   ├── wiki/             # TypeScript. Wiki read/write. SQL + pgvector.
-│   ├── policy/           # TypeScript. Rule VM and evaluator.
-│   ├── execution/        # TypeScript. Proposal + execution state machine.
-│   ├── audit/            # TypeScript. Append-only log + Merkle anchor publisher.
+│   ├── api/              # TypeScript. Public HTTP API gateway. Hosts shared primitives.
+│   ├── raw/              # TypeScript. Ingestion workers (Layer 1).
+│   ├── ledger/           # TypeScript. Normalized financial truth (Layer 2). [v0.3]
+│   ├── wiki/             # TypeScript. Memory/Q&A. Pages derived from Ledger (Layer 3).
+│   ├── policy/           # TypeScript. Rule VM and evaluator (Layer 4).
+│   ├── agent/            # TypeScript. Proposal/action orchestration (Layer 5). [renamed from execution]
+│   ├── audit/            # TypeScript. Append-only log + Merkle anchor publisher (Layer 6).
 │   └── agents/           # Python. Extractors, reasoners, the three MVP agents.
 ├── contracts/            # Solidity + Foundry. The four smart contracts.
 ├── infra/                # Terraform. Azure resource definitions.
-├── schemas/              # JSON Schemas per Wiki entity/relation kind.
+├── schemas/              # JSON Schemas per Ledger entity, per Wiki page type.
 ├── clients/              # Generated typed clients for each service.
 ├── tests/
 │   ├── unit/             # Co-located with source in each workspace.
 │   ├── integration/      # Cross-service. Spin up containers, run against real deps.
 │   └── e2e/              # Full-stack against staging environment.
 └── tools/                # Dev scripts, migration runners, backfill utilities.
+```
+
+`services/execution/` is preserved during the v0.3 transition with deprecation headers; it re-exports from `services/agent/`. Migrate your imports during your next normal-cadence PR.
 
 Every service owns its database schema. Cross-service reads go through the owning service's API, never direct database access. This is the rule that preserves the option to extract services later.
 
@@ -47,37 +68,46 @@ Every service owns its database schema. Cross-service reads go through the ownin
 
 ### 3.1 The auth model
 
-Bearer JWT on every endpoint except three: /raw/webhooks/{provider} (HMAC-signed), /audit/verify (public, pure function), and the root health check.
+Bearer JWT on every endpoint except three: `/raw/webhooks/{provider}` (HMAC-signed), `/audit/verify` (public, pure function), and the root health check.
 
 JWT payload:
 
+```json
 {
   "iss": "https://auth.brain.fi",
   "sub": "user_01HQ7K3..." or "agent_01HQ7K3...",
   "tenant_id": "tnt_01HQ7K3...",
   "principal_type": "user" | "agent" | "api_partner",
-  "scopes": ["raw:write", "wiki:read", "policy:sign", ...],
+  "scopes": ["ledger:read", "wiki:read", "policy:sign", "payment_intent:propose", ...],
   "exp": 1745000000,
   "jti": "token_01HQ7K3..."
 }
+```
 
 Tokens are short-lived (15 minutes) and refreshed via a standard refresh-token flow. Refresh tokens rotate on every use. Revoked jti values are cached in Redis for the remainder of their original expiry window.
 
 ### 3.2 Scopes
 
-Scopes are {layer}:{verb} strings. The verb is one of read, write, admin. Admin is only held by the tenant root user and is required for signing policies and registering agents.
+Scopes are `{layer}:{verb}` strings. The verb is one of `read`, `write`, `admin`. Admin is only held by the tenant root user and is required for signing policies and registering agents.
 
-External agents (principal_type=agent, registered in BrainMCPAgentRegistry) are granted scopes explicitly by the tenant at registration time via EIP-712 signature. The three scopes an external agent can hold are wiki:read, raw:write (for agent contributions), and execution:propose. An agent granted raw:write can push artifacts into the Raw layer using source_type=agent_contributed. These artifacts flow through the extraction pipeline, but any derived Wiki entities carry provenance=agent_contributed and start at a confidence ceiling of 0.5 regardless of extractor certainty. Promotion above 0.5 requires independent corroboration or explicit tenant approval via /wiki/annotate. This governance boundary is enforced in the Wiki write path, not just documented here, and is non-negotiable.
+Verb extensions for the Agent layer:
+
+- `agent:propose` — create non-financial proposals
+- `payment_intent:propose` — create PaymentIntent rows
+- `payment_intent:approve` — sign approvals on `confirm`-mode PaymentIntents
+- `payment_intent:execute` — trigger execution of an approved intent
+
+External agents (`principal_type=agent`, registered in BrainMCPAgentRegistry) are granted scopes explicitly by the tenant at registration time via EIP-712 signature. The five scopes an external agent can hold are `ledger:read`, `wiki:read`, `raw:write` (for agent contributions), `payment_intent:propose`, and `agent:propose`. An agent granted `raw:write` can push artifacts into the Raw layer using `source_type=agent_contributed`. These artifacts flow through the extraction pipeline, but any derived **Ledger** rows carry `provenance=agent_contributed` and start at a confidence ceiling of 0.5 regardless of extractor certainty. Promotion above 0.5 requires independent corroboration or explicit tenant approval via `/wiki/annotate` (which writes through to the Ledger via a controlled service method). This governance boundary is enforced in the Ledger write path, not just documented here, and is non-negotiable.
 
 Scope to endpoint mapping is enforced in the API gateway, not in individual services. Services trust the scopes in the JWT but re-verify tenant_id equality on every query.
 
 ### 3.3 Agent identities
 
-Every agent, internal or external, has its own JWT with principal_type=agent. The agent_id in the sub claim must match a row in the Agent table. External agents registered via /execution/agents/register receive their initial JWT immediately after the on-chain registration transaction confirms.
+Every agent, internal or external, has its own JWT with `principal_type=agent`. The agent_id in the sub claim must match a row in the `agents` table. External agents registered via `/agents/register` (legacy: `/execution/agents/register`) receive their initial JWT immediately after the on-chain registration transaction confirms.
 
 ### 3.4 HMAC webhooks
 
-Each provider (Plaid, Stripe, NetSuite, Alchemy) has a provider-specific HMAC signature scheme. The X-Brain-Signature header is verified before the request body is parsed. Failed verification returns 401 and logs a security event. No exceptions.
+Each provider (Plaid, Stripe, NetSuite, Alchemy) has a provider-specific HMAC signature scheme. The `X-Brain-Signature` header is verified before the request body is parsed. Failed verification returns 401 and logs a security event. No exceptions.
 
 ## 4. Error handling
 
@@ -85,6 +115,7 @@ Each provider (Plaid, Stripe, NetSuite, Alchemy) has a provider-specific HMAC si
 
 Every non-2xx response body conforms to this shape:
 
+```json
 {
   "error": {
     "code": "policy_rule_invalid",
@@ -97,8 +128,9 @@ Every non-2xx response body conforms to this shape:
     "docs_url": "https://docs.brain.fi/errors/policy_rule_invalid"
   }
 }
+```
 
-code is a stable machine-readable string. It never changes once shipped. Code strings follow {domain}_{condition} convention. See section 4.3 for the registry.
+`code` is a stable machine-readable string. It never changes once shipped. Code strings follow `{domain}_{condition}` convention. See section 4.3 for the registry.
 
 ### 4.2 Status code mapping
 
@@ -106,8 +138,9 @@ Never return a 200 with an error in the body. HTTP status and error envelope are
 
 ### 4.3 Error code registry
 
-Codes are defined in services/api/src/errors.ts and regenerated into the OpenAPI spec. Adding a new code requires a PR that updates both. The registry:
+Codes are defined in `services/api/src/errors.ts` and regenerated into the OpenAPI spec. Adding a new code requires a PR that updates both. The registry:
 
+```
 // Auth
 auth_token_missing, auth_token_invalid, auth_token_expired,
 auth_scope_insufficient, auth_tenant_mismatch
@@ -119,137 +152,213 @@ request_body_invalid, request_params_invalid, request_too_large
 raw_artifact_not_found, raw_artifact_tombstoned, raw_source_unsupported,
 raw_webhook_signature_invalid
 
+// Ledger (v0.2)
+ledger_row_not_found, ledger_row_invalid, ledger_status_invalid,
+ledger_balance_unavailable, ledger_evidence_required,
+ledger_reconciliation_conflict
+
 // Wiki
-wiki_entity_not_found, wiki_schema_validation_failed,
-wiki_temporal_range_invalid, wiki_question_timeout
+wiki_entity_not_found, wiki_page_not_found,
+wiki_schema_validation_failed, wiki_temporal_range_invalid,
+wiki_question_timeout
 
 // Policy
 policy_not_found, policy_rule_invalid, policy_quorum_not_met,
-policy_signature_invalid, policy_version_mismatch
+policy_signature_invalid, policy_version_mismatch,
+policy_decision_required           // pre-execution gate: no decision was supplied
 
-// Execution
-execution_proposal_not_found, execution_proposal_invalid_state,
-execution_rail_unavailable, execution_idempotency_conflict,
-execution_agent_not_registered
+// Agent / PaymentIntent (v0.2)
+// agent_* aliases supersede execution_* for the v0.3 transition.
+agent_not_registered,                     // alias of legacy execution_agent_not_registered
+agent_proposal_not_found,                 // alias of legacy execution_proposal_not_found
+agent_proposal_invalid_state,             // alias of legacy execution_proposal_invalid_state
+agent_rail_unavailable,                   // alias of legacy execution_rail_unavailable
+agent_idempotency_conflict,               // alias of legacy execution_idempotency_conflict
+
+payment_intent_not_found,
+payment_intent_invalid_state,
+payment_intent_gate_failed,               // pre-execution gate failed; details list the failing checks
+payment_intent_approval_required,
+payment_intent_approval_invalid
 
 // Audit
 audit_event_not_found, audit_proof_invalid, audit_anchor_not_yet_published
 
 // Infrastructure
 dependency_unavailable, internal_server_error, rate_limit_exceeded
+```
+
+The legacy `execution_*` codes remain shipped and equivalent to their `agent_*` aliases for the duration of the v0.3 transition. New code raises the `agent_*` codes.
 
 ## 5. Idempotency
 
 ### 5.1 The two rules
 
-Every write endpoint is either naturally idempotent or accepts an Idempotency-Key header. Naturally idempotent means the same inputs always produce the same result regardless of how many times they are submitted. Examples: /raw/ingest (content-addressed by sha256), /wiki/annotate (derived from target + correction hash).
+Every write endpoint is either naturally idempotent or accepts an `Idempotency-Key` header. Naturally idempotent means the same inputs always produce the same result regardless of how many times they are submitted. Examples: `/raw/ingest` (content-addressed by sha256), `/wiki/annotate` (derived from target + correction hash), `/ledger/normalize` (derived from raw_artifact id + parser version).
 
 Explicit idempotency keys are scoped to the tenant and TTL'd at 24 hours in Redis. A request with a key matching a completed request returns the stored response. A request with a key matching an in-flight request gets a 409.
 
 ### 5.2 Webhooks
 
-Webhook handlers are idempotent by the provider's event_id. Plaid's webhook_id, Stripe's id, Alchemy's id field. The first handler to insert the event_id wins; subsequent retries return 202 with the stored result.
+Webhook handlers are idempotent by the provider's event_id. Plaid's `webhook_id`, Stripe's `id`, Alchemy's `id` field. The first handler to insert the event_id wins; subsequent retries return 202 with the stored result.
 
 ### 5.3 Smart contract transactions
 
 Smart contract writes are idempotent by the nonce of the signing account and the canonical transaction hash. The audit publisher tracks the last published root per tenant and refuses to re-publish the same root.
 
-## 6. Observability
+## 6. Pre-execution gate
 
-### 6.1 Logs
+The pre-execution gate is the deterministic safety mechanism that runs before any action that touches money. No PaymentIntent execution path may bypass it. The gate produces a `PolicyDecision` that downstream layers consume as proof.
 
-Structured JSON. Every log line includes: timestamp, level, service, tenant_id, request_id, trace_id, message. Additional fields per log site. No personally identifiable information in log bodies, ever. Sensitive fields are hashed or redacted at the logging boundary.
+### 6.1 What it covers
+
+Any of the following must pass through the gate:
+
+- Outbound payment (ACH, wire, card, on-chain)
+- Inbound transfer initiation
+- Account opening, closing, or limit change
+- Any write to the tenant's BrainSmartAccount
+- Any agent action with a money-movement side effect
+
+### 6.2 The 13 deterministic checks
+
+The gate runs the following checks in order. Failure short-circuits and produces a `payment_intent_gate_failed` error with the failing check identified.
+
+1. **Agent identity verified.** JWT principal_type=agent, agent_id matches an active row in `agents`.
+2. **Agent authorization.** Scope set includes the verb required for this action (`payment_intent:propose`, etc.).
+3. **Action allowed.** Policy DSL `applies_to` matches the action kind.
+4. **Source account allowed.** `account_id` belongs to the tenant and is in `active` status.
+5. **Counterparty allowed.** `counterparty_id` exists in `ledger_counterparties`, not on a sanctions list.
+6. **Counterparty verified.** `verified_status` ≠ `unverified` for amounts above the policy-defined threshold.
+7. **Amount within policy limit.** `amount.lte` rule from active policy holds.
+8. **Available balance sufficient.** `ledger_accounts.available_balance` ≥ amount + reserved.
+9. **Required evidence exists.** Policy clause `evidence_required` (e.g. invoice attached for B2B AP) holds.
+10. **Approval requirement determined.** Policy decision is one of `allow` (no approval), `confirm` (approval needed), `reject` (refuse).
+11. **Approval granted when required.** If `confirm`, all `required_approvers` have signed.
+12. **PolicyDecision row created.** Inserted with `policy_decision_id` returned to caller.
+13. **Audit event before execution attempt** *and* **audit event after execution result.** Both rows are mandatory; the post-execution audit captures success or failure, with rail receipt where applicable.
+
+Steps 12 and 13 are non-skippable even if every other check passes. The audit-before/audit-after pair is what makes execution forensically reconstructible.
+
+### 6.3 Where the gate lives
+
+The gate is a shared primitive in `services/api/src/shared/gate/`, called by:
+
+- `POST /payment-intents/{id}/execute`
+- `POST /agents/{id}/actions` when the action has a money-movement side effect
+- Internal payment-agent worker dispatch path
+
+Calling sites are enumerated in code; CI grep enforces no execution path bypasses it.
+
+### 6.4 What the gate must not do
+
+- Read from the Wiki. Wiki text is not authoritative.
+- Defer to LLM judgment. Every check is deterministic.
+- Mutate Ledger or execute the action. The gate produces a decision; execution is downstream.
+- Catch and continue. Any failed check is a hard stop.
+
+## 7. Observability
+
+### 7.1 Logs
+
+Structured JSON. Every log line includes: `timestamp`, `level`, `service`, `tenant_id`, `request_id`, `trace_id`, `message`. Additional fields per log site. No personally identifiable information in log bodies, ever. Sensitive fields are hashed or redacted at the logging boundary.
 
 Log levels:
 
-error: something broke, page someone
+- **error**: something broke, page someone
+- **warn**: something unexpected but handled
+- **info**: business-meaningful events (proposal created, payment executed)
+- **debug**: developer detail, off in production
 
-warn: something unexpected but handled
+### 7.2 Metrics
 
-info: business-meaningful events (proposal created, payment executed)
-
-debug: developer detail, off in production
-
-### 6.2 Metrics
-
-Datadog custom metrics. Standard RED metrics (Rate, Errors, Duration) emitted automatically by the API gateway per endpoint. Service-specific metrics per the inventory in services/*/metrics.ts.
+Datadog custom metrics. Standard RED metrics (Rate, Errors, Duration) emitted automatically by the API gateway per endpoint. Service-specific metrics per the inventory in `services/*/metrics.ts`.
 
 Required metrics at MVP:
 
-brain.api.request.count (tagged by endpoint, status_code, tenant_id)
+- `brain.api.request.count` (tagged by endpoint, status_code, tenant_id)
+- `brain.api.request.duration` (same tags)
+- `brain.ledger.write.count` (tagged by entity, source — extracted | annotated | reconciled | agent_contributed)
+- `brain.ledger.reconciliation.match.count` (tagged by match_type, status)
+- `brain.wiki.question.latency` (tagged by model, query_count)
+- `brain.wiki.question.cost` (LLM token cost per question)
+- `brain.policy.evaluation.duration` (tagged by decision)
+- `brain.gate.check.failure.count` (tagged by check_index 1..13, action_kind) — the pre-execution gate
+- `brain.payment_intent.count` (tagged by status, agent_id, rail)
+- `brain.audit.anchor.lag` (time since last anchor publication)
 
-brain.api.request.duration (same tags)
+### 7.3 Traces
 
-brain.wiki.question.latency (tagged by model, query_count)
+OpenTelemetry across all services. Every request gets a trace_id. Cross-service calls propagate the context. Spans named `{service}.{operation}`. LLM calls are their own spans with model and token counts as attributes. Pre-execution gate runs as a single span with one child span per check.
 
-brain.wiki.question.cost (LLM token cost per question)
+### 7.4 Alerts
 
-brain.policy.evaluation.duration (tagged by decision)
-
-brain.execution.proposal.count (tagged by status, agent_type, rail)
-
-brain.audit.anchor.lag (time since last anchor publication)
-
-### 6.3 Traces
-
-OpenTelemetry across all services. Every request gets a trace_id. Cross-service calls propagate the context. Spans named {service}.{operation}. LLM calls are their own spans with model and token counts as attributes.
-
-### 6.4 Alerts
-
-Only two severity levels: page and ticket.
+Only two severity levels: **page** and **ticket**.
 
 Page conditions:
 
-5xx rate above 1% over 5 minutes on any public endpoint
-
-Audit anchor lag exceeds 2 hours
-
-Policy evaluation error rate above 0.1%
-
-Any smart contract transaction reverts
-
-p99 request latency above 5s on any endpoint
+- 5xx rate above 1% over 5 minutes on any public endpoint
+- Audit anchor lag exceeds 2 hours
+- Policy evaluation error rate above 0.1%
+- Pre-execution gate failure rate spikes 10× above 7-day baseline
+- Any smart contract transaction reverts
+- p99 request latency above 5s on any endpoint
 
 Ticket conditions are everything else worth noticing. Ticket thresholds tuned monthly; page thresholds tuned only after post-mortem.
 
-## 7. Testing
+## 8. Testing
 
-### 7.1 The coverage contract
+### 8.1 The coverage contract
 
-Unit tests: 80% line coverage on every service. Enforced in CI.
+- **Unit tests**: 80% line coverage on every service. Enforced in CI.
+- **Integration tests**: Every endpoint in the OpenAPI spec has at least one happy-path integration test and one error-path test.
+- **Property tests**: The policy evaluator, the Merkle anchor builder, the Ledger reconciliation matcher, the pre-execution gate, and the four smart contracts have property-based tests. The TypeScript ones use fast-check; the contracts use Foundry invariants.
+- **E2E tests**: The three Series A proof-points (six-layer end-to-end, Ledger compounding, external agent via MCP) each have a dedicated E2E test suite running against staging.
 
-Integration tests: Every endpoint in the OpenAPI spec has at least one happy-path integration test and one error-path test.
+### 8.2 Deterministic tests for non-deterministic components
 
-Property tests: The policy evaluator, the Merkle anchor builder, and the four smart contracts have property-based tests. The policy evaluator uses fast-check; the contracts use Foundry invariants.
-
-E2E tests: The three Series A proof-points (five-layer end-to-end, Wiki compounding, external agent via MCP) each have a dedicated E2E test suite running against staging.
-
-### 7.2 Deterministic tests for non-deterministic components
-
-/wiki/question is tested via a recorded-prompt harness: canonical question, frozen Wiki state, recorded LLM response, assertion on structured output. New LLM behaviors require updating the frozen response, with a PR review that explicitly approves the change.
+`/wiki/question` is tested via a recorded-prompt harness: canonical question, frozen Ledger + Wiki state, recorded LLM response, assertion on structured output. New LLM behaviors require updating the frozen response, with a PR review that explicitly approves the change.
 
 Agent reasoning is tested similarly. The three MVP agents have 20+ canonical scenarios each, recorded and replayed.
 
-### 7.3 Smart contract testing
+### 8.3 Smart contract testing
 
 Foundry for everything. Every contract has:
 
-Unit tests per function
-
-Fuzz tests on every external function with non-trivial input
-
-Invariant tests for system properties (e.g., "a revoked session key cannot execute", "registered agents have scope_hash matching stored scope")
-
-Gas benchmarks in a fixture file, compared against a baseline on every PR
+- Unit tests per function
+- Fuzz tests on every external function with non-trivial input
+- Invariant tests for system properties (e.g., "a revoked session key cannot execute", "registered agents have scope_hash matching stored scope")
+- Gas benchmarks in a fixture file, compared against a baseline on every PR
 
 External audit required before mainnet deployment. Budget: 80k per audit, probably two rounds (mid-build and pre-deploy).
 
-## 8. State machines
+### 8.4 Invariants
 
-Four critical entities have explicit state machines. Every transition must be enforced in code and emit an audit event.
+Invariants enforced as test suites (lands alongside Phase 6 of the v0.3 refactor):
 
-### 8.1 Proposal
+- Every transaction belongs to an account.
+- Every transaction has at least one source_id or evidence_id.
+- Every transaction has a valid direction.
+- Every obligation has a valid status.
+- Every PaymentIntent has a `policy_decision_id` before execution.
+- Every executed PaymentIntent has an audit trail with both before-execute and after-execute events.
+- Every agent action has an `agent_id`.
+- Every material state transition creates an `audit_event`.
+- Every wiki page is regenerable from Ledger + Raw.
+- No payment can execute from Wiki data alone.
+- Agents can recommend from memory, but execute only from verified Ledger state.
+- Policy evaluation reads from Ledger state, not Wiki text.
+- Raw source payloads are preserved unchanged.
+- Ledger records are derived from Raw evidence or external source ids.
+- Audit events cannot be edited after creation.
 
+## 9. State machines
+
+Five critical entities have explicit state machines. Every transition must be enforced in code and emit an audit event.
+
+### 9.1 Proposal (non-financial agent action)
+
+```
         ┌──────────────────────────────────┐
         v                                  │
     [pending] ──────────────────────> [rejected]
@@ -261,254 +370,228 @@ Four critical entities have explicit state machines. Every transition must be en
         │    [rejected]      [failed] ─────┘
         │
         └──> [rejected]   # policy decision returned reject
+```
 
-pending is only reachable on creation.
+`pending` is only reachable on creation. `approved` is reachable from `pending` when policy decision is `allow` (auto) or all required approvers have signed (`confirm`). `executed` is terminal unless re-processing is triggered by a contract reversion, which creates a new proposal. `rejected` is terminal. `failed` is terminal for this proposal but does not prevent retries via a new proposal.
 
-approved is reachable from pending when policy decision is allow (auto) or all required approvers have signed (confirm).
+For financial actions, use **PaymentIntent** (§9.5) instead of Proposal. The two are kept separate so financial state transitions carry distinct invariants (gate must run, evidence must be linked, policy_decision_id must be present).
 
-executed is terminal unless re-processing is triggered by a contract reversion, which creates a new proposal.
+### 9.2 Execution
 
-rejected is terminal.
+```
+[dispatched] ──> [in_flight] ──> [completed]
+                      │
+                      └──────────> [failed]
+```
 
-failed is terminal for this proposal but does not prevent retries via a new proposal.
+Transitions are driven by rail-specific callbacks (ACH return file, ERP write confirmation, on-chain tx receipt). Timeouts are per-rail and documented in `services/agent/rails/*.ts`.
 
-### 8.2 Execution
+### 9.3 Policy
 
-    [dispatched] ──> [in_flight] ──> [completed]
-                          │
-                          └──────────> [failed]
-
-Transitions are driven by rail-specific callbacks (ACH return file, ERP write confirmation, on-chain tx receipt). Timeouts are per-rail and documented in services/execution/rails/*.ts.
-
-### 8.3 Policy
-
-    [draft] ──> [pending_signatures] ──> [active] ──> [deactivated]
-       │                 │
-       v                 v
-    [cancelled]     [expired]
+```
+[draft] ──> [pending_signatures] ──> [active] ──> [deactivated]
+   │                 │
+   v                 v
+[cancelled]     [expired]
+```
 
 Only one policy per tenant is active at a time. Activating version N+1 deactivates version N atomically.
 
-### 8.4 Agent registration
+### 9.4 Agent registration
 
-    [pending_onchain] ──> [active] ──> [revoked]
-           │
-           v
-       [failed]
+```
+[pending_onchain] ──> [active] ──> [revoked]
+       │
+       v
+   [failed]
+```
 
-An agent is not usable until the on-chain registration transaction confirms. Between submission and confirmation, the agent is in pending_onchain and rejects all proposal attempts.
+An agent is not usable until the on-chain registration transaction confirms. Between submission and confirmation, the agent is in `pending_onchain` and rejects all proposal attempts.
 
-## 9. Dependencies
+### 9.5 PaymentIntent (v0.2)
+
+```
+[proposed] ──> [pending_approval] ──> [approved] ──> [executed]
+    │              │                       │              │
+    │              │                       │              v
+    │              │                       │         [failed]
+    │              │                       v
+    │              │                  [rejected]
+    │              v
+    │         [rejected]
+    v
+[cancelled]
+```
+
+`proposed` is only reachable on creation by an agent with `payment_intent:propose`. Transition to `pending_approval` happens on PolicyDecision = `confirm`; transition to `approved` happens on PolicyDecision = `allow` or after all approvers have signed in `pending_approval`. `executed` is reachable only from `approved` and only via the §6 pre-execution gate. `cancelled` is reachable from `proposed` only (the proposing agent or its tenant root user can cancel an unprocessed intent). `rejected` is terminal. `failed` is terminal but does not bar retries via a new PaymentIntent.
+
+Every transition emits an audit event. The `executed → failed` edge specifically carries the rail receipt (or error trace) in the audit `outputs` field.
+
+## 10. Dependencies
 
 Each external dependency has a one-page contract. Summaries of the six MVP dependencies:
 
-### Plaid
+### 10.1 Plaid
 
-Endpoints used: /accounts/balance/get, /transactions/sync, /transfer/create, /transfer/get
+- Endpoints used: `/accounts/balance/get`, `/transactions/sync`, `/transfer/create`, `/transfer/get`
+- Rate limit: 600 rpm per institution
+- Retry policy: exponential backoff, max 3 retries, then escalate
+- Fallback: none at MVP. Multi-aggregator strategy is Post-Series A.
+- Credentials: rotated quarterly, stored in Azure Key Vault
+- Webhook idempotency: by `webhook_id`
 
-Rate limit: 600 rpm per institution
+### 10.2 NetSuite
 
-Retry policy: exponential backoff, max 3 retries, then escalate
+- Endpoints: SuiteTalk REST for GL, AP, vendors
+- Rate limit: 5 concurrent requests per account
+- Retry policy: 5 retries with jitter, deadline 30s
+- Fallback: queue writes locally and retry for 24h before escalating
+- Credentials: OAuth 2.0, refreshed 7 days before expiry
+- Webhook idempotency: NetSuite does not push; we poll on a 5-minute interval
 
-Fallback: none at MVP. Multi-aggregator strategy is Post-Series A.
+### 10.3 Alchemy (Base L2)
 
-Credentials: rotated quarterly, stored in Azure Key Vault
+- Endpoints used: standard `eth_*` RPC, `getLogs`, `getReceipt`
+- Rate limit: 330 compute units per second on growth tier
+- Retry policy: 3 retries, fall back to public Base RPC
+- Credentials: API key in Key Vault
+- Node reliability target: 99.9% uptime, 100ms p50 response
 
-Webhook idempotency: by webhook_id
+### 10.4 Chainalysis
 
-### NetSuite
+- Endpoints: address screening, sanctions check
+- Rate limit: 100 rpm
+- Retry policy: 2 retries, then fail closed (block the transaction)
+- Fallback: none. Fail-closed is the right posture for sanctions.
+- Used by: §6 pre-execution gate (counterparty verified check), `ledger_counterparties.risk_level` population.
 
-Endpoints: SuiteTalk REST for GL, AP, vendors
+### 10.5 OpenAI + Anthropic
 
-Rate limit: 5 concurrent requests per account
+- Primary: Claude for reasoning and extraction
+- Secondary: OpenAI for embeddings and for fallback when Claude is degraded
+- Retry policy: 2 retries with model swap on the second attempt
+- Budget enforcement: per-tenant daily cap, 429 when exceeded
 
-Retry policy: 5 retries with jitter, deadline 30s
+### 10.6 Base L2 (direct)
 
-Fallback: queue writes locally and retry for 24h before escalating
+- Submitted transactions only, not RPC reads
+- Gas policy: priority fee at 20% above Base median, capped at $0.50/tx equivalent
+- Signing: publisher account is a Safe multi-sig, 2-of-3
 
-Credentials: OAuth 2.0, refreshed 7 days before expiry
+## 11. Deployment
 
-Webhook idempotency: NetSuite does not push; we poll on a 5-minute interval
+### 11.1 Environments
 
-### Alchemy (Base L2)
+- **Local**: Docker Compose, real Postgres + Redis + LocalStack for Azure Blob equivalent
+- **Staging**: Full Azure stack, hits Plaid sandbox, Alchemy sandbox, Base Sepolia
+- **Production**: Azure East US primary, Azure West US 3 backup, Base mainnet
 
-Endpoints used: standard eth_* RPC, getLogs, getReceipt
-
-Rate limit: 330 compute units per second on growth tier
-
-Retry policy: 3 retries, fall back to public Base RPC
-
-Credentials: API key in Key Vault
-
-Node reliability target: 99.9% uptime, 100ms p50 response
-
-### Chainalysis
-
-Endpoints: address screening, sanctions check
-
-Rate limit: 100 rpm
-
-Retry policy: 2 retries, then fail closed (block the transaction)
-
-Fallback: none. Fail-closed is the right posture for sanctions.
-
-### OpenAI + Anthropic
-
-Primary: Claude for reasoning and extraction
-
-Secondary: OpenAI for embeddings and for fallback when Claude is degraded
-
-Retry policy: 2 retries with model swap on the second attempt
-
-Budget enforcement: per-tenant daily cap, 429 when exceeded
-
-### Base L2 (direct)
-
-Submitted transactions only, not RPC reads
-
-Gas policy: priority fee at 20% above Base median, capped at $0.50/tx equivalent
-
-Signing: publisher account is a Safe multi-sig, 2-of-3
-
-## 10. Deployment
-
-### 10.1 Environments
-
-Local: Docker Compose, real Postgres + Redis + LocalStack for Azure Blob equivalent
-
-Staging: Full Azure stack, hits Plaid sandbox, Alchemy sandbox, Base Sepolia
-
-Production: Azure East US primary, Azure West US 3 backup, Base mainnet
-
-### 10.2 Pipeline
+### 11.2 Pipeline
 
 GitHub Actions. On PR: lint, unit, contract compile, property tests. On merge to main: integration tests, build images, push to Azure Container Registry, deploy to staging, E2E tests, manual promote to production.
 
-### 10.3 Rollback
+### 11.3 Rollback
 
-Every service runs N and N-1 in parallel during a rolling deploy. Traffic is shifted via Azure Container Apps revision weights. Rollback is one command: az containerapp revision set-active --revision N-1. Database migrations are always forward-compatible. Never ship a migration that requires a code version to be running.
+Every service runs N and N-1 in parallel during a rolling deploy. Traffic is shifted via Azure Container Apps revision weights. Rollback is one command: `az containerapp revision set-active --revision N-1`. Database migrations are always forward-compatible. Never ship a migration that requires a code version to be running.
 
-### 10.4 Secrets
+### 11.4 Secrets
 
-Azure Key Vault. Managed identities for service-to-vault access. No secrets in environment variables, config files, or application code. CI reads secrets from Key Vault at deploy time. Rotation schedule documented in infra/secrets.md.
+Azure Key Vault. Managed identities for service-to-vault access. No secrets in environment variables, config files, or application code. CI reads secrets from Key Vault at deploy time. Rotation schedule documented in `infra/secrets.md`.
 
-### 10.5 Data migrations
+### 11.5 Data migrations
 
-Three rules:
+Four rules:
 
-Migrations are backward compatible for at least one version.
+- Migrations are backward compatible for at least one version.
+- Migrations that rewrite large tables run async and report progress.
+- Migrations that touch tenant data require a dry-run report reviewed before execution.
+- **Ledger migrations require a pre-cutover diff report.** The runner outputs row counts before and after, plus a sample of changed rows, signed by the engineer applying the migration. Stored in `audit_events` for the duration of the retention period.
 
-Migrations that rewrite large tables run async and report progress.
+Migrations are authored in `services/*/migrations/` and executed by the `tools/migrate` binary.
 
-Migrations that touch tenant data require a dry-run report reviewed before execution.
+## 12. Security
 
-Migrations are authored in services/*/migrations/ and executed by the tools/migrate binary.
-
-## 11. Security
-
-### 11.1 SOC 2 readiness
+### 12.1 SOC 2 readiness
 
 SOC 2 Type 1 is a Month 12 deliverable. Every standard in this document exists partly to make that audit pass. The controls that matter most:
 
-Access control: SSO via Azure AD with hardware MFA required for engineers
+- **Access control**: SSO via Azure AD with hardware MFA required for engineers
+- **Change management**: PR review required, CI gates enforced, deploy approval trail
+- **Incident response**: runbook in `docs/incident-response.md`, quarterly game days
+- **Data protection**: encryption at rest (Azure-managed keys), encryption in transit (TLS 1.3), PII redaction at logging boundary
+- **Vendor management**: each dependency has the one-page contract referenced in section 10
 
-Change management: PR review required, CI gates enforced, deploy approval trail
+### 12.2 Threat model summary
 
-Incident response: runbook in docs/incident-response.md, quarterly game days
+Documented in `docs/threat-model.md`. Primary threats:
 
-Data protection: encryption at rest (Azure-managed keys), encryption in transit (TLS 1.3), PII redaction at logging boundary
+- Cross-tenant data leak via application bug (mitigated by RLS)
+- Agent credential compromise (mitigated by short-lived JWTs and on-chain revocation for external agents)
+- Malicious policy injection (mitigated by EIP-712 signature requirement and content-hash verification)
+- Smart contract exploit (mitigated by external audit and bug bounty pre-mainnet)
+- LLM prompt injection (mitigated by structured input validation, Ledger-grounded retrieval, and never executing unverified LLM output)
+- **Wiki-as-truth attack** (v0.2): a malicious agent or compromised ingestion path attempts to seed Wiki text that influences a downstream decision. Mitigated by §6 (Policy never reads Wiki) and §1 principle 5 (deterministic gate).
 
-Vendor management: each dependency has the one-page contract referenced in section 9
-
-### 11.2 Threat model summary
-
-Documented in docs/threat-model.md. Primary threats:
-
-Cross-tenant data leak via application bug (mitigated by RLS)
-
-Agent credential compromise (mitigated by short-lived JWTs and on-chain revocation for external agents)
-
-Malicious policy injection (mitigated by EIP-712 signature requirement and content-hash verification)
-
-Smart contract exploit (mitigated by external audit and bug bounty pre-mainnet)
-
-LLM prompt injection (mitigated by structured input validation and never executing unverified LLM output)
-
-### 11.3 Secrets in code
+### 12.3 Secrets in code
 
 Prohibited. Pre-commit hook scans for common patterns. CI scans every PR. Any secret accidentally committed triggers immediate rotation and a security incident review.
 
-## 12. Code style
+## 13. Code style
 
-### 12.1 TypeScript
+### 13.1 TypeScript
 
-Strict mode. No any. No @ts-ignore without a comment explaining why.
+- Strict mode. No `any`. No `@ts-ignore` without a comment explaining why.
+- ESLint config in repo root. Enforced in CI.
+- Prettier for formatting. Enforced in CI.
+- Every public function has JSDoc with parameters and return.
+- Naming: camelCase for variables and functions, PascalCase for types and classes, SCREAMING_CASE for constants.
 
-ESLint config in repo root. Enforced in CI.
+### 13.2 Python
 
-Prettier for formatting. Enforced in CI.
+- Black for formatting. Ruff for linting. Both enforced in CI.
+- Type hints on every public function. `mypy --strict` in CI.
+- Python 3.12+. Use new features freely.
 
-Every public function has JSDoc with parameters and return.
+### 13.3 Solidity
 
-Naming: camelCase for variables and functions, PascalCase for types and classes, SCREAMING_CASE for constants.
+- Solidity 0.8.24 or later.
+- OpenZeppelin where a well-tested primitive exists. Write custom only when justified.
+- Every function has a NatSpec comment.
+- Every function emits an event for every state change.
+- No upgradable contracts in MVP. Immutable after audit.
 
-### 12.2 Python
+### 13.4 Commits and PRs
 
-Black for formatting. Ruff for linting. Both enforced in CI.
+- Commit messages: imperative mood, present tense, max 72 chars on the subject line.
+- PR descriptions: what changed, why, and how to test. Link to the tracking issue.
+- No merge without at least one review from a human engineer, regardless of whether an AI assistant wrote the code.
+- AI-generated PRs are labeled `ai-assisted` for tracking.
 
-Type hints on every public function. mypy --strict in CI.
-
-Python 3.12+. Use new features freely.
-
-### 12.3 Solidity
-
-Solidity 0.8.24 or later.
-
-OpenZeppelin where a well-tested primitive exists. Write custom only when justified.
-
-Every function has a NatSpec comment.
-
-Every function emits an event for every state change.
-
-No upgradable contracts in MVP. Immutable after audit.
-
-### 12.4 Commits and PRs
-
-Commit messages: imperative mood, present tense, max 72 chars on the subject line.
-
-PR descriptions: what changed, why, and how to test. Link to the tracking issue.
-
-No merge without at least one review from a human engineer, regardless of whether an AI assistant wrote the code.
-
-AI-generated PRs are labeled ai-assisted for tracking.
-
-## 13. How AI coding assistants should use this document
+## 14. How AI coding assistants should use this document
 
 Two rules.
 
-Rule one: when the spec and this document disagree with what feels natural, follow the spec and this document. They are the source of truth. Your priors about "how APIs usually look" are not.
+**Rule one**: when the spec and this document disagree with what feels natural, follow the spec and this document. They are the source of truth. Your priors about "how APIs usually look" are not.
 
-Rule two: when something is underspecified, stop and ask. Underspecified means: the spec does not constrain the decision, this document does not cover it, and the decision has cross-cutting implications. Do not guess. Leave a clearly marked TODO with a question, and surface it for human review.
+**Rule two**: when something is underspecified, stop and ask. Underspecified means: the spec does not constrain the decision, this document does not cover it, and the decision has cross-cutting implications. Do not guess. Leave a clearly marked TODO with a question, and surface it for human review.
 
-Specifically for Claude Code: reference Brain_API_Specification.yaml for every endpoint implementation. Reference this document for auth, errors, idempotency, observability, testing, and deployment conventions. Reference Brain_MVP_Architecture.md only when you need context on why a decision was made.
+Specifically for Claude Code: reference `Brain_API_Specification.yaml` for every endpoint implementation. Reference this document for auth, errors, idempotency, observability, testing, and deployment conventions. Reference `Brain_MVP_Architecture.md` only when you need context on why a decision was made.
 
-## 14. What this document does not cover
+**v0.2 rule three (new)**: when an existing service or contract appears to violate the six-layer boundary (e.g. an agent reads Wiki text to decide a payment, or a Policy evaluator queries Wiki entities), STOP and surface it. Do not "fix" it by reproducing the violation in new code. The boundaries are non-negotiable.
 
-This is v0.1.0. It will grow. Topics explicitly deferred to later revisions:
+## 15. What this document does not cover
 
-SLA and SLO commitments to external customers (comes with the commercial launch)
+This is v0.2.0. It will grow. Topics explicitly deferred to later revisions:
 
-Multi-region active-active (Post-Series A)
-
-Customer-managed encryption keys (enterprise tier post-MVP)
-
-Bug bounty program details (pre-mainnet, not yet)
-
-On-call rotation and runbooks (Month 4 onward, when there is something to be on-call for)
+- SLA and SLO commitments to external customers (comes with the commercial launch)
+- Multi-region active-active (Post-Series A)
+- Customer-managed encryption keys (enterprise tier post-MVP)
+- Bug bounty program details (pre-mainnet, not yet)
+- On-call rotation and runbooks (Month 4 onward, when there is something to be on-call for)
 
 When those become relevant, this document updates. Every update is a PR with review.
 
-End of v0.1.0. Maintained by the engineering lead. Last material revision logged in git history.
+End of v0.2.0. Maintained by the engineering lead. Last material revision logged in git history.
 
 | Class | HTTP | When |
 | --- | --- | --- |
