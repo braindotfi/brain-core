@@ -3,15 +3,28 @@ import {
   ID_PREFIX,
   brainId,
   isBrainId,
+  newAccountId,
   newAgentId,
   newAuditEventId,
+  newBalanceId,
+  newCategoryId,
+  newCounterpartyId,
+  newDocumentId,
   newExecutionId,
+  newInvoiceId,
+  newObligationId,
+  newPaymentIntentId,
+  newPolicyDecisionId,
   newPolicyId,
   newProposalId,
+  newReconciliationMatchId,
   newRequestId,
   newTenantId,
   newTokenId,
+  newTransactionId,
+  newTransferId,
   newUserId,
+  newWikiPageId,
   parseBrainId,
 } from "./ids.js";
 
@@ -88,5 +101,29 @@ describe("isBrainId", () => {
   });
   it("rejects malformed IDs", () => {
     expect(isBrainId("bogus", "tnt")).toBe(false);
+  });
+});
+
+// v0.3 prefix registry round-trip. Prefixes are wire-visible — protect
+// the registry from accidental rename in CI.
+describe("v0.3 prefix registry round-trip", () => {
+  it.each<[string, () => string, string]>([
+    ["account", newAccountId, "acct"],
+    ["balance", newBalanceId, "bal"],
+    ["transaction", newTransactionId, "tx"],
+    ["counterparty", newCounterpartyId, "cp"],
+    ["obligation", newObligationId, "obl"],
+    ["document", newDocumentId, "doc"],
+    ["category", newCategoryId, "cat"],
+    ["transfer", newTransferId, "xfer"],
+    ["invoice", newInvoiceId, "inv"],
+    ["payment_intent", newPaymentIntentId, "pi"],
+    ["reconciliation_match", newReconciliationMatchId, "rcn"],
+    ["wiki_page", newWikiPageId, "wpg"],
+    ["policy_decision", newPolicyDecisionId, "pd"],
+  ])("%s id has prefix %s", (_label, gen, expected) => {
+    const id = gen();
+    expect(id.startsWith(`${expected}_`)).toBe(true);
+    expect(isBrainId(id, expected as never)).toBe(true);
   });
 });
