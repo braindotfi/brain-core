@@ -105,3 +105,7 @@ export {
   type LlmRecording,
   type EmbeddingRecording,
 } from "./llm/recorded.js";
+
+// Layer-boundary contracts (v0.3 six-layer model).
+// Every cross-service interface lives here as a type-only export.
+export * from "./contracts/index.js";
