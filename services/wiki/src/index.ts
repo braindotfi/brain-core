@@ -1,8 +1,10 @@
 /**
  * @brain/wiki
  *
- * Structured memory. Postgres + pgvector. Bitemporal entity/relation graph.
- * 7 endpoints per Brain_API_Specification.yaml §Wiki.
+ * Layer 3 — human-readable memory. v0.3 narrows the role: financial truth
+ * lives in the Ledger (Layer 2), Wiki holds memory pages and the Q&A
+ * surface. Kind enum is restricted to {policy, agent} pointer types via
+ * migration 0003. Plaid extraction moved to @brain/ledger/extractors.
  */
 
 export const SERVICE_NAME = "brain-wiki" as const;
@@ -15,10 +17,5 @@ export {
   type AskOptions,
   type AskResult,
   type AskDeps,
+  type AskEvidenceItem,
 } from "./question/orchestrator.js";
-export {
-  extractPlaidTransactions,
-  type PlaidExtractInput,
-  type PlaidTransaction,
-  type ExtractResult,
-} from "./extractors/plaid.js";
