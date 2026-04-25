@@ -9,7 +9,13 @@ import {
   searchEntities,
   semanticSearch,
 } from "../repository/entities.js";
-import { ENTITY_KINDS, type EntityKind } from "../../../../schemas/index.js";
+import {
+  LEDGER_KINDS,
+  WIKI_KINDS,
+  type EntityKind,
+  type LedgerKind,
+  type WikiKind,
+} from "../../../../schemas/index.js";
 import { serializeEntity } from "./entity.js";
 import type { WikiDeps } from "../deps.js";
 
@@ -42,10 +48,22 @@ export async function registerSearch(app: FastifyInstance, deps: WikiDeps): Prom
         500,
       );
       const kind = request.query.kind;
-      if (kind !== undefined && !ENTITY_KINDS.includes(kind as EntityKind)) {
-        throw brainError("request_params_invalid", "unknown entity kind", {
-          details: { kind },
-        });
+      if (kind !== undefined) {
+        // v0.3 — Wiki search only returns Wiki-resident kinds (policy, agent).
+        // Financial-truth kinds (account, counterparty, transaction, obligation)
+        // moved to the Ledger; redirect callers explicitly.
+        if (LEDGER_KINDS.includes(kind as LedgerKind)) {
+          throw brainError(
+            "request_params_invalid",
+            `'${kind}' is a Ledger kind in v0.3. Use /ledger/${kind === "account" ? "accounts" : kind === "counterparty" ? "counterparties" : kind === "transaction" ? "transactions" : "obligations"} instead.`,
+            { details: { kind, redirect: `/ledger/${kind}s` } },
+          );
+        }
+        if (!WIKI_KINDS.includes(kind as WikiKind)) {
+          throw brainError("request_params_invalid", "unknown entity kind", {
+            details: { kind, allowed: WIKI_KINDS },
+          });
+        }
       }
       const filters = {
         ...(kind !== undefined ? { kind: kind as EntityKind } : {}),

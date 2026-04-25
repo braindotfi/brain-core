@@ -18,10 +18,10 @@ import {
   type Scope,
 } from "@brain/api/shared";
 import {
-  ENTITY_KINDS,
   RELATION_KINDS,
-  type EntityKind,
+  WIKI_KINDS,
   type RelationKind,
+  type WikiKind,
 } from "../../../../schemas/index.js";
 import {
   findEntityAsOf,
@@ -84,11 +84,25 @@ async function handleEntity(
   if (body.entity_id !== undefined && !isBrainId(body.entity_id, "ent")) {
     throw brainError("request_body_invalid", "entity_id malformed");
   }
-  if (body.kind === undefined || !ENTITY_KINDS.includes(body.kind as EntityKind)) {
-    throw brainError("request_body_invalid", "unknown entity kind");
+  // v0.3 — annotations to financial truth (transaction/account/counterparty/
+  // obligation) write through to the Ledger via the /wiki/annotate
+  // write-through path; that lands in Phase 4. Phase 3 only accepts
+  // annotations to WIKI_KINDS = {policy, agent} which match the narrowed
+  // wiki_entities CHECK constraint introduced by migration 0003.
+  if (body.kind === undefined || !WIKI_KINDS.includes(body.kind as WikiKind)) {
+    throw brainError("request_body_invalid", "unknown entity kind", {
+      details: {
+        kind: body.kind ?? null,
+        allowed: WIKI_KINDS,
+        note: "Ledger annotations (account, counterparty, transaction, obligation) require the /wiki/annotate write-through path which lands in refactor-4.",
+      },
+    });
   }
   const attrs = body.attributes ?? {};
-  deps.schemas.validateEntity(body.kind as EntityKind, attrs);
+  // SchemaRegistry.validateEntity still accepts ENTITY_KINDS (the union of
+  // Ledger + Wiki) because the same JSON Schemas live in schemas/entity/.
+  // We pass the narrower WikiKind cast for type safety.
+  deps.schemas.validateEntity(body.kind as WikiKind, attrs);
 
   const newId = body.entity_id ?? newWikiEntityId();
   const now = new Date();
@@ -103,7 +117,7 @@ async function handleEntity(
     return insertEntity(c, {
       id: newId,
       tenantId: tenant,
-      kind: body.kind as EntityKind,
+      kind: body.kind as WikiKind,
       attributes: attrs,
       embedding: null,
       validFrom: now,
