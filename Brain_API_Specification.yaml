@@ -1,11 +1,17 @@
 openapi: 3.1.0
 info:
   title: Brain API
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    The Brain API exposes five layers as HTTP endpoints plus one MCP surface.
-    Raw (ingestion), Wiki (structured memory), Policy (governance),
-    Execution (action), Audit (proof).
+    The Brain API exposes six layers as HTTP endpoints plus one MCP surface.
+    Raw (evidence), Ledger (normalized financial truth), Wiki (memory),
+    Policy (governance), Agent (action orchestration), Audit (proof).
+
+    v0.2.0 introduces the Normalized Ledger layer. The Wiki API is preserved
+    but its role narrows to memory rendering and Q&A — financial truth lives
+    in the Ledger. The Execution endpoints are renamed to Agent endpoints;
+    legacy /execution/* paths remain shipped with deprecation headers for
+    the duration of the v0.3 transition.
 
     All endpoints are tenant-scoped. Tenant identity is derived from the
     authenticated principal. The principal's tenant is never passed in URLs
@@ -35,15 +41,22 @@ security:
 
 tags:
   - name: Raw
-    description: Immutable ingestion of financial evidence
+    description: Immutable ingestion of financial evidence (Layer 1)
+  - name: Ledger
+    description: Normalized financial truth — accounts, balances, transactions, counterparties, obligations, invoices, documents, transfers, reconciliation matches (Layer 2)
   - name: Wiki
-    description: Structured memory queries and annotations
+    description: Human-readable memory pages, search, Q&A. Pages are derived from Ledger + Raw (Layer 3)
   - name: Policy
-    description: Rule composition, signing, evaluation
+    description: Rule composition, signing, evaluation against Ledger state (Layer 4)
+  - name: Agent
+    description: Agent registration and action orchestration (Layer 5). Replaces the v0.1 Execution group; legacy /execution/* paths still resolve.
+  - name: PaymentIntent
+    description: PaymentIntent lifecycle — propose, approve, execute. Always passes the deterministic pre-execution gate (§6 of Engineering Standards).
   - name: Execution
-    description: Agent proposals, executions, approvals
+    description: DEPRECATED — use Agent and PaymentIntent. Retained for v0.3 transition.
+    x-deprecated-superseded-by: [Agent, PaymentIntent]
   - name: Audit
-    description: Tamper-evident event log and verification
+    description: Tamper-evident event log and verification (Layer 6)
   - name: MCP
     description: Model Context Protocol surface for external agents
   - name: Admin
@@ -246,8 +259,426 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
 
   #############################################################################
-  # LAYER 2: WIKI
+  # LAYER 2: LEDGER
   #############################################################################
+
+  /ledger/accounts:
+    get:
+      tags: [Ledger]
+      summary: List accounts
+      operationId: listAccounts
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, closed, frozen, pending]
+        - name: account_type
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 500 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Account list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items: { $ref: '#/components/schemas/Account' }
+                  next_cursor: { type: string, nullable: true }
+
+  /ledger/accounts/{account_id}:
+    get:
+      tags: [Ledger]
+      summary: Account detail
+      operationId: getAccount
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Account detail with most recent balance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account: { $ref: '#/components/schemas/Account' }
+                  latest_balance: { $ref: '#/components/schemas/Balance' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /ledger/balances:
+    get:
+      tags: [Ledger]
+      summary: Point-in-time balances
+      operationId: listBalances
+      parameters:
+        - name: account_id
+          in: query
+          schema: { type: string }
+        - name: as_of
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Balance list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balances:
+                    type: array
+                    items: { $ref: '#/components/schemas/Balance' }
+
+  /ledger/transactions:
+    get:
+      tags: [Ledger]
+      summary: List transactions
+      operationId: listTransactions
+      parameters:
+        - name: account_id
+          in: query
+          schema: { type: string }
+        - name: counterparty_id
+          in: query
+          schema: { type: string }
+        - name: direction
+          in: query
+          schema: { type: string, enum: [inflow, outflow, transfer, adjustment] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, posted, cleared, failed, reversed, disputed] }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 1000 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Transaction list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transactions:
+                    type: array
+                    items: { $ref: '#/components/schemas/Transaction' }
+                  next_cursor: { type: string, nullable: true }
+
+  /ledger/transactions/{transaction_id}:
+    get:
+      tags: [Ledger]
+      summary: Transaction detail
+      operationId: getTransaction
+      parameters:
+        - name: transaction_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Transaction
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /ledger/counterparties:
+    get:
+      tags: [Ledger]
+      summary: List/search counterparties
+      operationId: listCounterparties
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [merchant, vendor, customer, employer, bank, wallet, exchange, tax_authority, other]
+        - name: verified_status
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Counterparty list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  counterparties:
+                    type: array
+                    items: { $ref: '#/components/schemas/Counterparty' }
+
+  /ledger/obligations:
+    get:
+      tags: [Ledger]
+      summary: List obligations (bills, invoices, subscriptions)
+      operationId: listObligations
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [upcoming, due, paid, overdue, cancelled, disputed] }
+        - name: type
+          in: query
+          schema: { type: string }
+        - name: due_before
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Obligation list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  obligations:
+                    type: array
+                    items: { $ref: '#/components/schemas/Obligation' }
+
+  /ledger/invoices:
+    get:
+      tags: [Ledger]
+      summary: List invoices
+      operationId: listInvoices
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: counterparty_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Invoice list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invoices:
+                    type: array
+                    items: { $ref: '#/components/schemas/Invoice' }
+
+  /ledger/normalize:
+    post:
+      tags: [Ledger]
+      summary: Idempotently normalize a Raw artifact into Ledger rows
+      description: |
+        Normalizes a raw_parsed row (or a raw_artifact_id + parser tuple) into
+        Ledger entities. Idempotent: re-running with the same input returns
+        the same Ledger row ids. Used by the extractor pipeline and by
+        /wiki/annotate's write-through path.
+      operationId: normalizeRaw
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [raw_parsed_id]
+              properties:
+                raw_parsed_id: { type: string }
+                target_entities:
+                  type: array
+                  description: Optional restriction; default is all relevant entities
+                  items:
+                    type: string
+                    enum: [account, balance, transaction, counterparty, obligation, document, category, transfer, invoice]
+      responses:
+        '200':
+          description: Normalization result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ledger_rows_created:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        entity: { type: string }
+                        id: { type: string }
+
+  /ledger/reconcile:
+    post:
+      tags: [Ledger]
+      summary: Run the reconciliation engine over recent ledger rows
+      operationId: runReconciliation
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                since:
+                  type: string
+                  format: date-time
+                match_types:
+                  type: array
+                  items:
+                    type: string
+                    enum: [transaction_receipt, invoice_payment, statement_balance, wallet_transfer, payroll_bank_debit, subscription_charge, card_charge]
+      responses:
+        '202':
+          description: Reconciliation enqueued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id: { type: string }
+
+  /ledger/reconciliation-matches:
+    get:
+      tags: [Ledger]
+      summary: List reconciliation matches
+      operationId: listReconciliationMatches
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: match_type
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Match list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matches:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReconciliationMatch' }
+
+  #############################################################################
+  # LAYER 3: WIKI (memory)
+  #############################################################################
+
+  # Wiki memory pages — derived from Ledger + Raw, regenerable on demand.
+  /memory/pages:
+    get:
+      tags: [Wiki]
+      summary: List/search wiki pages
+      operationId: listMemoryPages
+      parameters:
+        - name: page_type
+          in: query
+          schema:
+            type: string
+            enum: [account, counterparty, obligation, invoice, agent, policy, monthly_summary, cash_flow]
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200':
+          description: Page list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pages:
+                    type: array
+                    items: { $ref: '#/components/schemas/WikiPage' }
+
+  /memory/pages/{slug_or_id}:
+    get:
+      tags: [Wiki]
+      summary: Get a single wiki page
+      operationId: getMemoryPage
+      parameters:
+        - name: slug_or_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WikiPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /memory/regenerate:
+    post:
+      tags: [Wiki]
+      summary: Regenerate a wiki page from current Ledger state
+      operationId: regenerateMemoryPage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug_or_id]
+              properties:
+                slug_or_id: { type: string }
+      responses:
+        '200':
+          description: Regenerated page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WikiPage' }
+
+  /memory/search:
+    get:
+      tags: [Wiki]
+      summary: Semantic + lexical search across wiki pages
+      operationId: searchMemory
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        page: { $ref: '#/components/schemas/WikiPage' }
+                        score: { type: number }
 
   /wiki/entity/{entity_id}:
     get:
@@ -452,7 +883,7 @@ paths:
                   type: object
 
   #############################################################################
-  # LAYER 3: POLICY
+  # LAYER 4: POLICY
   #############################################################################
 
   /policy/{tenant_id}:
@@ -608,7 +1039,289 @@ paths:
                 $ref: '#/components/schemas/PolicyDecision'
 
   #############################################################################
-  # LAYER 4: EXECUTION
+  # LAYER 5: AGENT (action orchestration; legacy /execution/* paths retained)
+  #
+  # New integrations should target /agents/* and /payment-intents/*.
+  # The /execution/* paths below are equivalent (alias routing in the API
+  # gateway) and remain shipped during the v0.3 transition. They carry a
+  # `Deprecation` response header. Tag: Execution (deprecated).
+  #############################################################################
+
+  /agents:
+    get:
+      tags: [Agent]
+      summary: List agents configured for the tenant
+      operationId: listAgents
+      responses:
+        '200':
+          description: Agent list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items: { $ref: '#/components/schemas/Agent' }
+
+  /agents/{agent_id}:
+    get:
+      tags: [Agent]
+      summary: Agent detail
+      operationId: getAgent
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Agent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agent' }
+
+  /agents/{agent_id}/propose:
+    post:
+      tags: [Agent]
+      summary: Agent proposes a non-financial action
+      operationId: proposeAgentAction
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: object }
+      responses:
+        '201':
+          description: Proposal created with policy decision attached
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  proposal_id: { type: string }
+                  policy_decision_id: { type: string }
+                  status: { type: string }
+
+  /agents/{agent_id}/actions:
+    get:
+      tags: [Agent]
+      summary: Recent actions/proposals for an agent
+      operationId: listAgentActions
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 500 }
+      responses:
+        '200':
+          description: Action list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  actions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        proposal_id: { type: string }
+                        payment_intent_id: { type: string, nullable: true }
+                        status: { type: string }
+                        created_at: { type: string, format: date-time }
+
+  /agents/register:
+    post:
+      tags: [Agent]
+      summary: Register an external agent
+      operationId: registerAgent
+      description: |
+        Replaces the legacy POST /execution/agents/register. Persists the
+        agent in `pending_onchain` until the BrainMCPAgentRegistry tx
+        confirms.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, role, display_name]
+              properties:
+                agent_id: { type: string }
+                role: { type: string }
+                display_name: { type: string }
+                scope_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+                onchain_address: { type: string, pattern: '^0x[a-fA-F0-9]{40}$' }
+                registered_tx: { type: string }
+      responses:
+        '201':
+          description: Agent registered (pending_onchain)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agent' }
+
+  /agents/mcp:
+    post:
+      tags: [Agent, MCP]
+      summary: MCP entry for external agents (replaces /execution/mcp)
+      operationId: agentMcpEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method]
+              properties:
+                method: { type: string }
+                params: { type: object }
+      responses:
+        '200':
+          description: MCP method response (varies by method)
+
+  /payment-intents:
+    post:
+      tags: [PaymentIntent]
+      summary: Create a PaymentIntent (proposed)
+      operationId: createPaymentIntent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action_type, source_account_id, destination_counterparty_id, amount, currency]
+              properties:
+                action_type:
+                  type: string
+                  enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment]
+                source_account_id: { type: string }
+                destination_counterparty_id: { type: string }
+                amount: { type: string, pattern: '^\d+(\.\d+)?$' }
+                currency: { type: string, pattern: '^[A-Z]{3}$' }
+                obligation_id: { type: string }
+                invoice_id: { type: string }
+                agent_id: { type: string }
+                evidence_ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        '201':
+          description: PaymentIntent created with PolicyDecision attached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentIntent' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /payment-intents/{id}:
+    get:
+      tags: [PaymentIntent]
+      summary: PaymentIntent detail with PolicyDecision and audit trail
+      operationId: getPaymentIntent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: PaymentIntent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentIntent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /payment-intents/{id}/approve:
+    post:
+      tags: [PaymentIntent]
+      summary: Sign approval on a confirm-mode PaymentIntent
+      operationId: approvePaymentIntent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Updated PaymentIntent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentIntent' }
+
+  /payment-intents/{id}/reject:
+    post:
+      tags: [PaymentIntent]
+      summary: Reject a PaymentIntent
+      operationId: rejectPaymentIntent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Rejected PaymentIntent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentIntent' }
+
+  /payment-intents/{id}/execute:
+    post:
+      tags: [PaymentIntent]
+      summary: Execute an approved PaymentIntent through its rail
+      description: |
+        Runs the deterministic 13-step pre-execution gate (§6 of Engineering
+        Standards) before dispatching. Returns 409 with
+        `payment_intent_gate_failed` if any check fails, with details listing
+        the failing check index.
+      operationId: executePaymentIntent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '202':
+          description: Dispatched to rail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payment_intent_id: { type: string }
+                  execution_id: { type: string }
+                  rail: { type: string }
+                  status: { type: string, enum: [dispatched, in_flight] }
+        '409':
+          description: Gate failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  #############################################################################
+  # LAYER 5 (legacy): EXECUTION — deprecated, retained for v0.3 transition
   #############################################################################
 
   /execution/propose:
@@ -806,8 +1519,49 @@ paths:
               schema: { $ref: '#/components/schemas/Agent' }
 
   #############################################################################
-  # LAYER 5: AUDIT
+  # LAYER 6: AUDIT
   #############################################################################
+
+  /audit/entity/{entityType}/{entityId}:
+    get:
+      tags: [Audit]
+      summary: Every audit event touching a Ledger row
+      operationId: getAuditEntityHistory
+      parameters:
+        - name: entityType
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - account
+              - balance
+              - transaction
+              - counterparty
+              - obligation
+              - document
+              - invoice
+              - payment_intent
+              - reconciliation_match
+              - proposal
+              - execution
+        - name: entityId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Event history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entity_type: { type: string }
+                  entity_id: { type: string }
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
 
   /audit/events:
     get:
@@ -1453,11 +2207,15 @@ components:
     AuditEvent:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        tenant_id: { type: string, format: uuid }
+        id: { type: string }
+        tenant_id: { type: string }
         layer:
           type: string
-          enum: [raw, wiki, policy, execution]
+          enum: [raw, ledger, wiki, policy, agent, execution, audit]
+          description: |
+            v0.2 adds `ledger`, `agent`, and `audit`. Legacy `execution`
+            value is preserved for back-compat with v0.1 clients; new code
+            emits `agent`.
         actor: { type: string }
         action: { type: string }
         inputs:
@@ -1470,6 +2228,345 @@ components:
         policy_version:
           type: integer
           nullable: true
+        policy_decision_id:
+          type: string
+          nullable: true
+        before_state:
+          type: object
+          additionalProperties: true
+          nullable: true
+        after_state:
+          type: object
+          additionalProperties: true
+          nullable: true
         event_hash: { type: string }
         prev_event_hash: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
+
+    #
+    # Ledger layer (v0.2)
+    #
+
+    LedgerProvenance:
+      type: string
+      enum: [extracted, inferred, ambiguous, human_confirmed, agent_contributed]
+
+    LedgerCommonFields:
+      type: object
+      description: Fields common to every Ledger entity. Composed via allOf.
+      properties:
+        id: { type: string }
+        owner_id:
+          type: string
+          description: Tenant id (tnt_<ulid>)
+        source_ids:
+          type: array
+          items: { type: string }
+          description: raw_artifacts ids
+        evidence_ids:
+          type: array
+          items: { type: string }
+          description: raw_parsed ids
+        provenance: { $ref: '#/components/schemas/LedgerProvenance' }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Account:
+      allOf:
+        - $ref: '#/components/schemas/LedgerCommonFields'
+        - type: object
+          required: [id, owner_id, account_type, name, currency, status]
+          properties:
+            institution: { type: string, nullable: true }
+            external_account_id: { type: string, nullable: true }
+            account_type:
+              type: string
+              enum: [bank_checking, bank_savings, card, loan, line_of_credit, onchain]
+            name: { type: string }
+            currency: { type: string, pattern: '^[A-Z]{3}$' }
+            current_balance: { type: string, nullable: true }
+            available_balance: { type: string, nullable: true }
+            status:
+              type: string
+              enum: [active, closed, frozen, pending]
+
+    Balance:
+      allOf:
+        - $ref: '#/components/schemas/LedgerCommonFields'
+        - type: object
+          required: [id, account_id, as_of, currency]
+          properties:
+            account_id: { type: string }
+            as_of: { type: string, format: date-time }
+            current_balance: { type: string }
+            available_balance: { type: string, nullable: true }
+            pending_balance: { type: string, nullable: true }
+            currency: { type: string, pattern: '^[A-Z]{3}$' }
+
+    Transaction:
+      allOf:
+        - $ref: '#/components/schemas/LedgerCommonFields'
+        - type: object
+          required: [id, owner_id, account_id, amount, currency, direction, transaction_date, status]
+          properties:
+            account_id: { type: string }
+            external_transaction_id: { type: string, nullable: true }
+            amount: { type: string, pattern: '^-?\d+(\.\d+)?$' }
+            currency: { type: string, pattern: '^[A-Z]{3}$' }
+            direction:
+              type: string
+              enum: [inflow, outflow, transfer, adjustment]
+            transaction_date: { type: string, format: date-time }
+            posted_date: { type: string, format: date-time, nullable: true }
+            counterparty_id: { type: string, nullable: true }
+            category_id: { type: string, nullable: true }
+            status:
+              type: string
+              enum: [pending, posted, cleared, failed, reversed, disputed]
+            description_raw: { type: string, nullable: true }
+            description_normalized: { type: string, nullable: true }
+            reconciliation_status:
+              type: string
+              enum: [unreconciled, matched, partial, disputed]
+              nullable: true
+
+    Counterparty:
+      allOf:
+        - $ref: '#/components/schemas/LedgerCommonFields'
+        - type: object
+          required: [id, owner_id, name, type]
+          properties:
+            name: { type: string }
+            normalized_name: { type: string, nullable: true }
+            type:
+              type: string
+              enum: [merchant, vendor, customer, employer, bank, wallet, exchange, tax_authority, other]
+            risk_level:
+              type: string
+              enum: [low, medium, high, sanctioned]
+              nullable: true
+            verified_status:
+              type: string
+              enum: [unverified, self_attested, document_verified, sanctions_cleared]
+              nullable: true
+            aliases:
+              type: array
+              items: { type: string }
+            linked_accounts:
+              type: array
+              items: { type: string }
+
+    Obligation:
+      allOf:
+        - $ref: '#/components/schemas/LedgerCommonFields'
+        - type: object
+          required: [id, owner_id, type, counterparty_id, amount_due, currency, due_date, status]
+          properties:
+            type:
+              type: string
+              enum: [bill, invoice, subscription, loan, rent, payroll, tax, card_statement, other]
+            counterparty_id: { type: string }
+            amount_due: { type: string }
+            minimum_due: { type: string, nullable: true }
+            currency: { type: string, pattern: '^[A-Z]{3}$' }
+            due_date: { type: string, format: date-time }
+            recurrence: { type: string, nullable: true }
+            status:
+              type: string
+              enum: [upcoming, due, paid, overdue, cancelled, disputed]
+            linked_transaction_ids:
+              type: array
+              items: { type: string }
+
+    Document:
+      allOf:
+        - $ref: '#/components/schemas/LedgerCommonFields'
+        - type: object
+          required: [id, owner_id, document_type]
+          properties:
+            document_type:
+              type: string
+              enum: [invoice, receipt, bank_statement, card_statement, contract, payroll, tax, other]
+            source_uri: { type: string, nullable: true }
+            extracted_fields:
+              type: object
+              additionalProperties: true
+            linked_account_ids:
+              type: array
+              items: { type: string }
+            linked_transaction_ids:
+              type: array
+              items: { type: string }
+            linked_obligation_ids:
+              type: array
+              items: { type: string }
+            confidence_score: { type: number, minimum: 0, maximum: 1 }
+
+    Category:
+      type: object
+      required: [id, owner_id, name, kind]
+      properties:
+        id: { type: string }
+        owner_id: { type: string }
+        name: { type: string }
+        parent_id: { type: string, nullable: true }
+        kind:
+          type: string
+          enum: [expense, income, transfer, other]
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Transfer:
+      allOf:
+        - $ref: '#/components/schemas/LedgerCommonFields'
+        - type: object
+          required: [id, owner_id, from_account_id, to_account_id, amount, currency, transfer_date, status]
+          properties:
+            from_account_id: { type: string }
+            to_account_id: { type: string }
+            from_transaction_id: { type: string, nullable: true }
+            to_transaction_id: { type: string, nullable: true }
+            amount: { type: string }
+            currency: { type: string, pattern: '^[A-Z]{3}$' }
+            transfer_date: { type: string, format: date-time }
+            status:
+              type: string
+              enum: [proposed, in_flight, completed, failed]
+
+    Invoice:
+      allOf:
+        - $ref: '#/components/schemas/LedgerCommonFields'
+        - type: object
+          required: [id, owner_id, invoice_number, counterparty_id, amount_due, currency, issue_date, status]
+          properties:
+            invoice_number: { type: string }
+            counterparty_id: { type: string }
+            amount_due: { type: string }
+            amount_paid: { type: string, nullable: true }
+            currency: { type: string, pattern: '^[A-Z]{3}$' }
+            issue_date: { type: string, format: date-time }
+            due_date: { type: string, format: date-time, nullable: true }
+            status:
+              type: string
+              enum: [draft, sent, partial, paid, overdue, cancelled, disputed]
+            linked_document_ids:
+              type: array
+              items: { type: string }
+            linked_transaction_ids:
+              type: array
+              items: { type: string }
+
+    PaymentIntent:
+      allOf:
+        - $ref: '#/components/schemas/LedgerCommonFields'
+        - type: object
+          required: [id, owner_id, action_type, source_account_id, destination_counterparty_id, amount, currency, status]
+          properties:
+            created_by_agent_id: { type: string }
+            action_type:
+              type: string
+              enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment, other]
+            source_account_id: { type: string }
+            destination_counterparty_id: { type: string }
+            amount: { type: string }
+            currency: { type: string, pattern: '^[A-Z]{3}$' }
+            obligation_id: { type: string, nullable: true }
+            invoice_id: { type: string, nullable: true }
+            status:
+              type: string
+              enum: [proposed, pending_approval, approved, rejected, executed, failed, cancelled]
+            policy_decision_id: { type: string, nullable: true }
+            approval_ids:
+              type: array
+              items: { type: string }
+            execution_receipt_ids:
+              type: array
+              items: { type: string }
+
+    ReconciliationMatch:
+      type: object
+      required: [id, owner_id, match_type, left_entity_type, left_entity_id, right_entity_type, right_entity_id, status]
+      properties:
+        id: { type: string }
+        owner_id: { type: string }
+        match_type:
+          type: string
+          enum:
+            - transaction_receipt
+            - invoice_payment
+            - statement_balance
+            - wallet_transfer
+            - payroll_bank_debit
+            - subscription_charge
+            - card_charge
+        left_entity_type: { type: string }
+        left_entity_id: { type: string }
+        right_entity_type: { type: string }
+        right_entity_id: { type: string }
+        confidence_score: { type: number, minimum: 0, maximum: 1 }
+        status:
+          type: string
+          enum: [unmatched, matched, partially_matched, duplicate_possible, disputed, cleared, failed, reversed]
+        evidence_ids:
+          type: array
+          items: { type: string }
+        explanation: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    #
+    # Wiki memory pages (v0.2)
+    #
+
+    WikiPage:
+      type: object
+      required: [id, page_type, slug, body_md, rendered_at]
+      properties:
+        id: { type: string }
+        page_type:
+          type: string
+          enum: [account, counterparty, obligation, invoice, agent, policy, monthly_summary, cash_flow]
+        subject_id: { type: string, nullable: true }
+        slug: { type: string }
+        body_md:
+          type: string
+          description: |
+            Markdown with the standard Brain memory page sections:
+            Current Truth, Key Linked Entities, Recent Activity,
+            Open Questions / Missing Evidence, Risk Notes, Timeline,
+            Evidence Links.
+        rendered_at: { type: string, format: date-time }
+        source_revision:
+          type: string
+          description: Ledger checksum at render time
+
+    #
+    # Agent (v0.2 — replaces Execution)
+    #
+
+    Agent:
+      type: object
+      required: [id, kind, role, display_name, state]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [internal, external]
+        role:
+          type: string
+          enum: [reconciliation, payment, anomaly, partner]
+        display_name: { type: string }
+        scope_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          nullable: true
+        onchain_address:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+          nullable: true
+        state:
+          type: string
+          enum: [pending_onchain, active, revoked, failed]
+        registered_tx: { type: string, nullable: true }
+        registered_at: { type: string, format: date-time, nullable: true }
