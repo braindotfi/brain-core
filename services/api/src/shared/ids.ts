@@ -43,6 +43,7 @@ export const ID_PREFIX = {
   ledgerReconciliationMatch: "rcn",
   // Cross-layer
   policyDecision: "pd",
+  approval: "appr",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];
@@ -83,6 +84,7 @@ export const newInvoiceId = (): string => brainId(ID_PREFIX.ledgerInvoice);
 export const newPaymentIntentId = (): string => brainId(ID_PREFIX.ledgerPaymentIntent);
 export const newReconciliationMatchId = (): string => brainId(ID_PREFIX.ledgerReconciliationMatch);
 export const newPolicyDecisionId = (): string => brainId(ID_PREFIX.policyDecision);
+export const newApprovalId = (): string => brainId(ID_PREFIX.approval);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.

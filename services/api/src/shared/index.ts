@@ -109,3 +109,7 @@ export {
 // Layer-boundary contracts (v0.3 six-layer model).
 // Every cross-service interface lives here as a type-only export.
 export * from "./contracts/index.js";
+
+// §6 pre-execution gate (v0.3 / Phase 4). Deterministic 13-step gate
+// every PaymentIntent execution must pass.
+export * from "./gate/index.js";
