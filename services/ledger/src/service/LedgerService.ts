@@ -1,14 +1,12 @@
 /**
- * LedgerService — Phase-2 implementation.
+ * LedgerService — Phase-3 implementation.
  *
- * Implements the read side of `ILedgerService` from
- * `@brain/api/shared/contracts`. Writes (upsertAccount, recordTransaction,
- * upsertCounterparty, normalizeFromRaw) are stubbed for Phase 2 and throw
- * an explicit "not implemented in this phase" error so callers fail
- * loudly rather than silently producing the wrong data path.
+ * Reads + writes for the eleven Layer-2 entities. Implements the
+ * `ILedgerService` contract from `@brain/api/shared/contracts`.
  *
- * Phase 3 implements writes and rewrites the Plaid extractor to call
- * recordTransaction instead of writing wiki entities.
+ * Writes (upsertAccount, recordTransaction, upsertCounterparty,
+ * normalizeFromRaw) live in `./writes.ts` so the class stays focused on
+ * the contract and the repository layer stays SQL-only.
  */
 
 import {
@@ -55,6 +53,12 @@ import {
   type TransactionRow,
 } from "../repository/index.js";
 import type { LedgerDeps } from "../deps.js";
+import {
+  recordTransactionRow,
+  upsertAccountRow,
+  upsertCounterpartyRow,
+} from "./writes.js";
+import { normalizePlaidArtifact } from "../extractors/plaid.js";
 
 export class LedgerService implements ILedgerService {
   public constructor(private readonly deps: LedgerDeps) {}
@@ -187,31 +191,82 @@ export class LedgerService implements ILedgerService {
     return rows.map(serializeBalance);
   }
 
-  // ----- Writes (Phase 3+) -----------------------------------------------
+  // ----- Writes (Phase 3) ------------------------------------------------
 
-  public upsertAccount(_ctx: ServiceCallContext, _input: UpsertAccountInput): Promise<Account> {
-    return notImplemented("upsertAccount");
+  public async upsertAccount(ctx: ServiceCallContext, input: UpsertAccountInput): Promise<Account> {
+    const { row } = await upsertAccountRow(this.deps.pool, this.deps.audit, ctx, input);
+    return serializeAccount(row);
   }
 
-  public recordTransaction(
-    _ctx: ServiceCallContext,
-    _input: RecordTransactionInput,
+  public async recordTransaction(
+    ctx: ServiceCallContext,
+    input: RecordTransactionInput,
   ): Promise<Transaction> {
-    return notImplemented("recordTransaction");
+    const { row } = await recordTransactionRow(this.deps.pool, this.deps.audit, ctx, input);
+    return serializeTransaction(row);
   }
 
-  public upsertCounterparty(
-    _ctx: ServiceCallContext,
-    _input: UpsertCounterpartyInput,
+  public async upsertCounterparty(
+    ctx: ServiceCallContext,
+    input: UpsertCounterpartyInput,
   ): Promise<Counterparty> {
-    return notImplemented("upsertCounterparty");
+    const { row } = await upsertCounterpartyRow(this.deps.pool, this.deps.audit, ctx, input);
+    return serializeCounterparty(row);
   }
 
-  public normalizeFromRaw(
-    _ctx: ServiceCallContext,
-    _rawParsedId: string,
+  /**
+   * Idempotent re-normalization. Reads the raw_parsed row, dispatches by
+   * parser id to a registered extractor, and returns the Ledger rows
+   * created or matched. Phase 3 supports `plaid_tx_v1`; subsequent
+   * extractors land alongside additional source adapters in dedicated PRs.
+   */
+  public async normalizeFromRaw(
+    ctx: ServiceCallContext,
+    rawParsedId: string,
   ): Promise<{ created: Array<{ entity: string; id: string }> }> {
-    return notImplemented("normalizeFromRaw");
+    // Cross-service read: services/ledger needs the raw_parsed row's parser
+    // identifier. We read directly from the raw_parsed table — Raw owns
+    // raw_artifacts, but raw_parsed is a derived index used by every
+    // extractor; sharing read access here is intentional. Writes still
+    // never cross the layer (we only read).
+    const parsed = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      const { rows } = await c.query<{
+        id: string;
+        raw_artifact_id: string;
+        parser: string;
+        parser_version: string;
+        extracted: Record<string, unknown>;
+      }>(
+        `SELECT id, raw_artifact_id, parser, parser_version, extracted
+           FROM raw_parsed
+          WHERE id = $1
+          LIMIT 1`,
+        [rawParsedId],
+      );
+      return rows[0] ?? null;
+    });
+    if (parsed === null) {
+      throw brainError("ledger_row_not_found", "no such raw_parsed row", {
+        details: { raw_parsed_id: rawParsedId },
+      });
+    }
+
+    switch (parsed.parser) {
+      case "plaid_tx_v1": {
+        const result = await normalizePlaidArtifact(this.deps.pool, this.deps.audit, ctx, {
+          rawParsedId: parsed.id,
+          rawArtifactId: parsed.raw_artifact_id,
+          payload: parsed.extracted,
+        });
+        return { created: result };
+      }
+      default:
+        throw brainError(
+          "raw_source_unsupported",
+          `no Ledger extractor registered for parser '${parsed.parser}'`,
+          { details: { parser: parsed.parser } },
+        );
+    }
   }
 
   // Helpers used by external callers that want to verify a row exists
@@ -371,9 +426,3 @@ function clampLimit(requested: number | undefined, fallback: number, max: number
   return Math.min(requested, max);
 }
 
-async function notImplemented(method: string): Promise<never> {
-  throw brainError(
-    "internal_server_error",
-    `LedgerService.${method} is implemented in refactor phase 3+. Phase 2 ships read-only ledger.`,
-  );
-}
