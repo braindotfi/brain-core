@@ -1,6 +1,7 @@
 packages:
   - "services/api"
   - "services/raw"
+  - "services/ledger"
   - "services/wiki"
   - "services/policy"
   - "services/execution"

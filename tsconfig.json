@@ -3,6 +3,7 @@
   "references": [
     { "path": "./services/api" },
     { "path": "./services/raw" },
+    { "path": "./services/ledger" },
     { "path": "./services/wiki" },
     { "path": "./services/policy" },
     { "path": "./services/execution" },
