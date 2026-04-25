@@ -106,8 +106,9 @@ export class PostgresAuditEmitter implements AuditEmitter {
       await client.query(
         `INSERT INTO audit_events (
            id, tenant_id, layer, actor, action, inputs, outputs,
-           policy_version, event_hash, prev_event_hash, created_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+           policy_version, policy_decision_id, before_state, after_state,
+           event_hash, prev_event_hash, created_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [
           id,
           event.tenantId,
@@ -117,6 +118,9 @@ export class PostgresAuditEmitter implements AuditEmitter {
           JSON.stringify(event.inputs),
           JSON.stringify(event.outputs),
           event.policyVersion ?? null,
+          event.policyDecisionId ?? null,
+          event.beforeState === undefined ? null : JSON.stringify(event.beforeState),
+          event.afterState === undefined ? null : JSON.stringify(event.afterState),
           Buffer.from(eventHash, "hex"),
           prevHash === null ? null : Buffer.from(prevHash, "hex"),
           createdAt,

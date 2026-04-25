@@ -30,6 +30,10 @@ export interface HashInput {
 export function canonicalize(input: HashInput): string {
   const e = input.event;
   // `inputs` and `outputs` may be nested objects — stable-serialize them too.
+  // v0.3 fields (policy_decision_id, before_state, after_state) participate in
+  // the canonical hash so the chain breaks when any of them mutate. Prior
+  // events without these fields canonicalize to null for each, which is
+  // backward-compatible with v0.1 hashes.
   const payload = {
     id: input.id,
     tenant_id: e.tenantId,
@@ -39,6 +43,9 @@ export function canonicalize(input: HashInput): string {
     inputs: stableJsonValue(e.inputs),
     outputs: stableJsonValue(e.outputs),
     policy_version: e.policyVersion ?? null,
+    policy_decision_id: e.policyDecisionId ?? null,
+    before_state: e.beforeState === undefined ? null : stableJsonValue(e.beforeState),
+    after_state: e.afterState === undefined ? null : stableJsonValue(e.afterState),
     created_at: input.createdAt,
     prev_event_hash: input.prevEventHash,
   };
