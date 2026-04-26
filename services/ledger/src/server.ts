@@ -14,6 +14,7 @@ import {
   type JwtVerifier,
 } from "@brain/api/shared";
 import { LedgerService } from "./service/LedgerService.js";
+import { ReconciliationService } from "./reconciliation/ReconciliationService.js";
 import { registerLedgerRoutes } from "./routes/index.js";
 import type { LedgerDeps } from "./deps.js";
 
@@ -34,7 +35,11 @@ export async function buildLedgerApp(opts: BuildLedgerAppOptions): Promise<Fasti
 
   app.get("/health", { config: { skipAuth: true } }, async () => ({ ok: true }));
 
-  const service = new LedgerService(opts.deps);
-  await registerLedgerRoutes(app, service);
+  const ledger = new LedgerService(opts.deps);
+  const reconciliation = new ReconciliationService({
+    pool: opts.deps.pool,
+    audit: opts.deps.audit,
+  });
+  await registerLedgerRoutes(app, ledger, reconciliation);
   return app;
 }

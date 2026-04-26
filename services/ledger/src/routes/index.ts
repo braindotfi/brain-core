@@ -16,8 +16,10 @@ import {
   type ServiceCallContext,
 } from "@brain/api/shared";
 import type { LedgerService } from "../service/LedgerService.js";
+import type { ReconciliationService } from "../reconciliation/ReconciliationService.js";
 
 const READ: Scope = "ledger:read";
+const WRITE: Scope = "ledger:write";
 
 function principalCtx(request: FastifyRequest): ServiceCallContext {
   if (request.principal === undefined) {
@@ -33,6 +35,7 @@ function principalCtx(request: FastifyRequest): ServiceCallContext {
 export async function registerLedgerRoutes(
   app: FastifyInstance,
   service: LedgerService,
+  reconciliation?: ReconciliationService,
 ): Promise<void> {
   app.get(
     "/ledger/accounts",
@@ -205,23 +208,86 @@ export async function registerLedgerRoutes(
     },
   );
 
-  // Phase-2 stubs for write-side endpoints. Each returns 501 so callers
-  // see the explicit "lands in phase N" message.
-  app.post("/ledger/normalize", async () => {
-    throw brainError(
-      "raw_source_unsupported",
-      "/ledger/normalize is implemented in refactor-3 (extractor → ledger rewrite)",
-      { statusOverride: 501 },
-    );
-  });
+  // POST /ledger/normalize — refactor-3 implements this via LedgerService.
+  app.post(
+    "/ledger/normalize",
+    async (
+      request: FastifyRequest<{
+        Body: { raw_parsed_id?: string; target_entities?: string[] };
+      }>,
+      reply,
+    ) => {
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, WRITE);
+      const id = request.body?.raw_parsed_id;
+      if (id === undefined) {
+        throw brainError("request_body_invalid", "raw_parsed_id required");
+      }
+      const result = await service.normalizeFromRaw(ctx, id);
+      reply.status(200);
+      return { ledger_rows_created: result.created };
+    },
+  );
 
-  app.post("/ledger/reconcile", async () => {
-    throw brainError(
-      "raw_source_unsupported",
-      "/ledger/reconcile is implemented in refactor-5 (reconciliation engine)",
-      { statusOverride: 501 },
-    );
-  });
+  // POST /ledger/reconcile — refactor-5.
+  app.post(
+    "/ledger/reconcile",
+    async (
+      request: FastifyRequest<{
+        Body: { since?: string; match_types?: string[] };
+      }>,
+      reply,
+    ) => {
+      if (reconciliation === undefined) {
+        throw brainError(
+          "raw_source_unsupported",
+          "ReconciliationService not configured for this app instance",
+          { statusOverride: 501 },
+        );
+      }
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, WRITE);
+      const out = await reconciliation.run(ctx, {
+        ...(request.body?.since !== undefined ? { since: request.body.since } : {}),
+        ...(request.body?.match_types !== undefined
+          ? { match_types: request.body.match_types as never }
+          : {}),
+      });
+      reply.status(202);
+      return out;
+    },
+  );
+
+  app.get(
+    "/ledger/reconciliation-matches",
+    async (
+      request: FastifyRequest<{
+        Querystring: { status?: string; match_type?: string; limit?: string };
+      }>,
+      reply,
+    ) => {
+      if (reconciliation === undefined) {
+        throw brainError(
+          "raw_source_unsupported",
+          "ReconciliationService not configured for this app instance",
+          { statusOverride: 501 },
+        );
+      }
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, READ);
+      const matches = await reconciliation.list(ctx, {
+        ...(request.query.status !== undefined ? { status: request.query.status as never } : {}),
+        ...(request.query.match_type !== undefined
+          ? { match_type: request.query.match_type as never }
+          : {}),
+        ...(request.query.limit !== undefined
+          ? { limit: parseLimit(request.query.limit) }
+          : {}),
+      });
+      reply.status(200);
+      return { matches };
+    },
+  );
 }
 
 function parseLimit(raw: string | undefined): number | undefined {
