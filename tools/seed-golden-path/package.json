@@ -1,0 +1,32 @@
+{
+  "name": "@brain/seed-golden-path",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Golden-path seed dataset for refactor-6 — 2 banks, 1 card, 5 subscriptions, 3 invoices, 2 receipts, 1 rent, 1 dup-charge, 1 low-balance risk, 1 agent proposal, 1 approval-required, 1 policy-rejected.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "brain-seed-golden-path": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "lint": "eslint src --max-warnings 0",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "seed": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@brain/api": "workspace:*",
+    "@brain/ledger": "workspace:*",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.2",
+    "eslint": "^9.12.0"
+  }
+}
