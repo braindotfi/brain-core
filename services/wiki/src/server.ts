@@ -10,6 +10,8 @@ import { registerSearch } from "./routes/search.js";
 import { registerQuestion } from "./routes/question.js";
 import { registerAnnotate } from "./routes/annotate.js";
 import { registerSchema } from "./routes/schema.js";
+import { registerMemoryRoutes } from "./routes/memory.js";
+import { WikiPageService } from "./pages/WikiPageService.js";
 import type { WikiDeps } from "./deps.js";
 
 export interface BuildWikiAppOptions {
@@ -35,6 +37,13 @@ export async function buildWikiApp(opts: BuildWikiAppOptions): Promise<FastifyIn
   await registerQuestion(app, opts.deps);
   await registerAnnotate(app, opts.deps);
   await registerSchema(app, opts.deps);
+
+  // v0.3 Phase 5: /memory/* (page rendering + lexical search).
+  const pageService = new WikiPageService({
+    pool: opts.deps.pool,
+    audit: opts.deps.audit,
+  });
+  await registerMemoryRoutes(app, pageService);
 
   return app;
 }
