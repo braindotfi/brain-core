@@ -1,0 +1,22 @@
+{
+  "name": "@brain/invariants",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The 15 invariants the v0.3 architecture is required to enforce (§8.4).",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.2"
+  },
+  "dependencies": {
+    "@brain/api": "workspace:*",
+    "@brain/ledger": "workspace:*",
+    "@brain/execution": "workspace:*"
+  }
+}

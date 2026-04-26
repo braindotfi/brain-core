@@ -9,3 +9,4 @@ packages:
   - "clients/*"
   - "tools/*"
   - "tests/e2e"
+  - "tests/invariants"
