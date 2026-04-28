@@ -277,6 +277,8 @@ What Ledger must not do. Ledger must not contain freeform Wiki summaries as auth
 
 MVP scope. The eleven entities above. Other ledger entities (positions, securities, FX rates, cost-basis lots) are post-MVP.
 
+Reconciliation coverage at v0.3 ship. The reconciliation engine is wired end-to-end and runs all 7 registered matchers. Two are concrete implementations (`invoice_payment`, `transaction_receipt`); the remaining five (`statement_balance`, `wallet_transfer`, `payroll_bank_debit`, `subscription_charge`, `card_charge`) are typed stubs that document their criteria and return zero matches with a `notes` field set. Stubs land as concrete implementations alongside the source adapters they depend on. Callers can detect a stub matcher via the `notes` field on its `MatcherResult`.
+
 ### Layer 3: Wiki (Memory)
 
 What it does. Maintain human-readable memory over the Ledger and Raw layers: searchable pages, narrative summaries, and a natural-language Q&A endpoint. Wiki pages are derived artifacts — they regenerate from Ledger + Raw on demand and on schedule.
@@ -352,6 +354,8 @@ Every wiki page should include the following sections (rendered as markdown):
 What Wiki must not do. Wiki text is never the source of truth for balances, obligations, transactions, or permissions. Policy never reads from Wiki. Execution never reads from Wiki. Agents may read Wiki for narrative recall, but every machine-checkable precondition comes from the Ledger.
 
 MVP scope. Eight page types: `/accounts/{account_id}`, `/counterparties/{counterparty_id}`, `/obligations/{obligation_id}`, `/invoices/{invoice_id}`, `/agents/{agent_id}`, `/policies/{policy_id}`, `/monthly-summaries/{YYYY-MM}`, `/cash-flow/{period}`. Anything else is post-MVP.
+
+Page-generator coverage at v0.3 ship. Four of eight generators are concrete implementations (`account`, `counterparty`, `obligation`, `monthly_summary`). The other four (`invoice`, `agent`, `policy`, `cash_flow`) ship as typed stubs that emit a placeholder body and set `source_revision = "stub"`. The `WikiPageService.regenerate` path dispatches to the right generator on every call so promoting a stub to a real implementation is a contained change with no caller-visible API impact.
 
 What's NOT in MVP. A graph database. Contradiction detection beyond exact-match. Automatic entity resolution across tenants. A natural-language write path (annotations are structured, not conversational). Cross-tenant agent memory sharing.
 
