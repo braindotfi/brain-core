@@ -7,6 +7,7 @@
     { "path": "./services/wiki" },
     { "path": "./services/policy" },
     { "path": "./services/execution" },
+    { "path": "./services/mcp" },
     { "path": "./services/audit" }
   ]
 }

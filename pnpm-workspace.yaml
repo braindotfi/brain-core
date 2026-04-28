@@ -5,6 +5,7 @@ packages:
   - "services/wiki"
   - "services/policy"
   - "services/execution"
+  - "services/mcp"
   - "services/audit"
   - "clients/*"
   - "tools/*"

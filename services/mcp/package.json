@@ -1,0 +1,33 @@
+{
+  "name": "@brain/mcp",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Brain MCP (Model Context Protocol) server. Exposes ledger reads, wiki Q&A, raw contributions, and proposals through the standard MCP transport so external agents can connect using any MCP-compatible client.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "lint": "eslint src --max-warnings 0",
+    "lint:fix": "eslint src --fix",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.2",
+    "@vitest/coverage-v8": "^2.1.2",
+    "eslint": "^9.12.0"
+  },
+  "dependencies": {
+    "@brain/api": "workspace:*",
+    "@brain/ledger": "workspace:*",
+    "@brain/wiki": "workspace:*",
+    "@brain/execution": "workspace:*",
+    "fastify": "^5.0.0"
+  }
+}
