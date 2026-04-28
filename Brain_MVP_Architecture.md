@@ -491,12 +491,24 @@ POST /v1/payment-intents/{id}/reject             human/agent rejection
 POST /v1/payment-intents/{id}/execute            execute approved intent through rail
 
 # MCP — external agent surface
-POST /v1/agents/mcp                              MCP server entry (renamed from /execution/mcp)
+POST /v1/agents/mcp                              MCP JSON-RPC entry (replaces /execution/mcp)
 ```
 
 Backward-compat note. The v0.2 routes `/execution/propose`, `/execution/execute`, `/execution/{id}`, `/execution/approve`, `/execution/escalate`, `/execution/agents*`, `/execution/mcp` are preserved in MVP with deprecation headers and remain functional for the duration of the v0.3 transition. New integrations should use the `/agents/*` and `/payment-intents/*` routes above.
 
 MCP interface. External agents (tenant-authorized) connect via MCP and get bidirectional access to Brain: they can read Ledger and Wiki, contribute Raw artifacts (transcripts, documents, structured observations) that flow through the extraction pipeline into Ledger rows with `provenance=agent_contributed`, and propose actions that pass through Policy and Audit like any internal agent would. Every authorized third-party agent is registered on-chain in BrainMCPAgentRegistry with its scope attestation. The scope explicitly enumerates which of these three capabilities (read, contribute, propose) the tenant has granted. This is one of Brain's category-defining moves: shipping a bidirectional agent-contribution protocol in MVP, with cryptographic attribution of every contribution, signals that the agent-economy thesis is real and that Brain is positioned as the substrate agents route through.
+
+MCP implementation (v0.3). The `@brain/mcp` workspace ships a JSON-RPC 2.0 dispatcher mounted at `POST /v1/agents/mcp`, single-shot HTTP transport (one request, one response — SSE / streamable transports are post-MVP behind a feature flag). The surface is:
+
+* **10 tools** across four capability groups: Ledger read (`ledger.account.get`, `ledger.accounts.list`, `ledger.transactions.list`, `ledger.obligations.list`, `ledger.counterparties.list`), Wiki read (`wiki.question`, `wiki.page.get`), Raw contribute (`raw.contribute`), Payment-intent propose (`payment_intent.propose` — note: no `.execute`; the §6 13-step gate is the only execution path), and Agent action propose (`agent.action.propose`).
+* **5 resource templates** addressable by `brain://` URIs: ledger accounts, ledger transactions, ledger payment-intents, wiki pages, raw evidence.
+* **5 canned prompts** for the most common agent loops: cash flow summary, bills due, spending change, invoice status, subscriptions.
+
+Auth chain. The Fastify `authPlugin` validates the JWT and resolves the principal (tenant + scopes) upstream. The MCP layer adds three checks before any method dispatch: (a) the agent record in `agents` is `active`; (b) the JWT's `scope_hash` claim matches the on-chain hash registered in `BrainMCPAgentRegistry` (verified once and cached for 60 s per agent); (c) JWT tenant equals agent tenant. Failures map to JSON-RPC error codes -32001..-32005. Tool calls then enforce per-call scopes (`ledger:read`, `wiki:read`, `raw:write`, `payment_intent:propose`, `agent:propose`).
+
+Audit. Every successful `tools/call` and `resources/read` emits an outer `agent.mcp.tool_called` audit event. Tools that mutate state (e.g. `raw.contribute`, `payment_intent.propose`) emit their own inner audit events through the same `LedgerService` / `PaymentIntentService` methods the HTTP API uses, so policy gating + audit emission are identical between the HTTP and MCP paths.
+
+See `docs/mcp-architecture.md` for the full surface map, error-code table, and capability-negotiation details. Source lives under `services/mcp/src/`; the boot site wires it onto the existing Fastify app via the `registerMcp` callback on `buildExecutionApp` (no workspace cycle — `services/execution` stays unaware of `@brain/mcp`).
 
 What Agent must not do. Agents must not mutate Raw, Ledger, Policy, or Audit stores directly. Every Ledger write that originates from agent reasoning (e.g. a `ReconciliationMatch` insert) goes through `LedgerService` methods that emit audit events. Every payment goes through `PaymentIntent` with a `PolicyDecision` and the §6-of-standards pre-execution gate. No financial execution path bypasses Policy.
 

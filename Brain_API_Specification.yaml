@@ -1176,21 +1176,51 @@ paths:
   /agents/mcp:
     post:
       tags: [Agent, MCP]
-      summary: MCP entry for external agents (replaces /execution/mcp)
+      summary: MCP JSON-RPC entry for external agents
+      description: |
+        Single-shot HTTP transport for the Brain MCP (Model Context
+        Protocol) surface. The request body is a JSON-RPC 2.0 envelope;
+        the response is a JSON-RPC 2.0 envelope (always HTTP 200 unless
+        the transport itself fails — application-level errors are
+        carried inside the `error` field).
+
+        Authentication: standard Brain JWT bearer with
+        `principal_type=agent`. The MCP server additionally verifies
+        (a) the agent record is `active`, (b) the JWT's `scope_hash`
+        matches the on-chain hash registered in
+        `BrainMCPAgentRegistry`, and (c) tenant equality. Failures map
+        to JSON-RPC error codes in the -32001..-32005 range — see
+        `McpErrorCode`.
+
+        Supported methods (v0.3):
+          * `initialize`, `ping`
+          * `tools/list`, `tools/call` — 10 tools across ledger, wiki,
+            raw evidence, payment intents, and agent action proposals
+          * `resources/list`, `resources/read` — 5 resource templates
+            (ledger accounts/transactions/payment-intents, wiki pages,
+            raw evidence)
+          * `prompts/list`, `prompts/get` — 5 canned prompts
+
+        Tools enforce per-call scopes (e.g. `ledger:read`,
+        `payment_intent:propose`). `tools/list` returns the full
+        registry regardless of scope; `tools/call` is the gate.
+        See `docs/mcp-architecture.md` for the full surface.
       operationId: agentMcpEntry
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [method]
-              properties:
-                method: { type: string }
-                params: { type: object }
+            schema: { $ref: '#/components/schemas/JsonRpcRequest' }
       responses:
         '200':
-          description: MCP method response (varies by method)
+          description: |
+            JSON-RPC envelope. On success, `result` carries the method
+            result. On failure, `error.code` is one of the standard
+            JSON-RPC codes (-32600..-32603) or a Brain-specific MCP
+            code (-32001..-32005).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JsonRpcResponse' }
 
   /payment-intents:
     post:
@@ -2570,3 +2600,159 @@ components:
           enum: [pending_onchain, active, revoked, failed]
         registered_tx: { type: string, nullable: true }
         registered_at: { type: string, format: date-time, nullable: true }
+
+    #
+    # MCP — JSON-RPC 2.0 envelopes for the /agents/mcp surface
+    #
+
+    JsonRpcRequest:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc:
+          type: string
+          enum: ['2.0']
+        id:
+          oneOf:
+            - { type: string }
+            - { type: integer }
+            - { type: 'null' }
+          description: |
+            Request id echoed in the response. Omit for notifications
+            (Brain's MCP surface treats notifications as no-ops at v0.3).
+        method:
+          type: string
+          enum:
+            - initialize
+            - ping
+            - tools/list
+            - tools/call
+            - resources/list
+            - resources/read
+            - prompts/list
+            - prompts/get
+        params:
+          type: object
+          description: |
+            Method-specific parameters. For `tools/call`, this is
+            `{ name: string, arguments: object }`. For `resources/read`,
+            `{ uri: string }`. For `prompts/get`,
+            `{ name: string, arguments?: object }`.
+          additionalProperties: true
+
+    JsonRpcResponse:
+      type: object
+      required: [jsonrpc, id]
+      properties:
+        jsonrpc:
+          type: string
+          enum: ['2.0']
+        id:
+          oneOf:
+            - { type: string }
+            - { type: integer }
+            - { type: 'null' }
+        result:
+          description: |
+            Present on success. Shape depends on the method —
+            `initialize` returns `InitializeResult`, `tools/list` returns
+            `{ tools: ToolDescriptor[] }`, `tools/call` returns
+            `ToolCallResult`, etc. See `docs/mcp-architecture.md`.
+          type: object
+          additionalProperties: true
+        error:
+          $ref: '#/components/schemas/JsonRpcError'
+
+    JsonRpcError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          $ref: '#/components/schemas/McpErrorCode'
+        message: { type: string }
+        data:
+          type: object
+          additionalProperties: true
+          description: Optional structured error payload (e.g. policy violations)
+
+    McpErrorCode:
+      type: integer
+      description: |
+        JSON-RPC 2.0 error codes plus Brain-specific MCP codes.
+        Standard codes in the -32700..-32603 range follow the spec.
+        Brain codes in the -32001..-32005 range correspond 1:1 with
+        Brain error codes (see Engineering Standards section 3):
+          * -32001 → auth_token_missing
+          * -32002 → auth_scope_insufficient
+          * -32003 → agent_not_registered
+          * -32004 → payment_intent_gate_failed
+          * -32005 → agent_scope_hash_mismatch
+      enum: [-32700, -32600, -32601, -32602, -32603, -32001, -32002, -32003, -32004, -32005]
+
+    InitializeResult:
+      type: object
+      required: [protocolVersion, serverInfo, capabilities]
+      properties:
+        protocolVersion:
+          type: string
+          example: '2024-11-05'
+        serverInfo:
+          type: object
+          required: [name, version]
+          properties:
+            name: { type: string, example: 'brain-mcp' }
+            version: { type: string, example: '0.3.0' }
+        capabilities:
+          type: object
+          properties:
+            tools:
+              type: object
+              properties:
+                listChanged: { type: boolean }
+            resources:
+              type: object
+              properties:
+                listChanged: { type: boolean }
+                subscribe: { type: boolean }
+            prompts:
+              type: object
+              properties:
+                listChanged: { type: boolean }
+
+    ToolDescriptor:
+      type: object
+      required: [name, description, inputSchema]
+      properties:
+        name:
+          type: string
+          description: |
+            Tool name in `<group>.<verb>` form. v0.3 surface:
+            `ledger.account.get`, `ledger.accounts.list`,
+            `ledger.transactions.list`, `ledger.obligations.list`,
+            `ledger.counterparties.list`, `wiki.question`,
+            `wiki.page.get`, `raw.contribute`,
+            `payment_intent.propose`, `agent.action.propose`.
+        description: { type: string }
+        inputSchema:
+          type: object
+          description: JSON Schema for the tool's `arguments` object.
+          additionalProperties: true
+
+    ToolCallResult:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: array
+          items:
+            type: object
+            required: [type, text]
+            properties:
+              type: { type: string, enum: [text] }
+              text: { type: string }
+        structuredContent:
+          type: object
+          additionalProperties: true
+          description: |
+            Machine-readable payload mirroring the human summary in
+            `content[0].text`. Shape is tool-specific.
