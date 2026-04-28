@@ -15,6 +15,25 @@ export interface BuildExecutionAppOptions {
   deps: ExecutionDeps;
   jwtVerifier: JwtVerifier;
   logger?: ReturnType<typeof Fastify>["log"];
+  /**
+   * Optional MCP wiring hook. The boot site constructs a
+   * BrainMcpServer (from `@brain/mcp`) and passes a function that
+   * registers it on the Fastify app. We accept a callback rather than
+   * the BrainMcpServer directly so services/execution stays unaware of
+   * the MCP module — that avoids a workspace cycle (mcp depends on
+   * execution for PaymentIntentService).
+   *
+   * Typical wiring:
+   *
+   *   import { BrainMcpServer, registerMcpRoute } from "@brain/mcp";
+   *   const mcp = new BrainMcpServer({ ... });
+   *   const app = await buildExecutionApp({
+   *     deps,
+   *     jwtVerifier,
+   *     registerMcp: (a) => registerMcpRoute(a, mcp),
+   *   });
+   */
+  registerMcp?: (app: FastifyInstance) => Promise<void>;
 }
 
 export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise<FastifyInstance> {
@@ -28,7 +47,7 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
 
   app.get("/health", { config: { skipAuth: true } }, async () => ({ ok: true }));
 
-  // Stage-6 routes: /execution/* (proposals, executions, agents, MCP).
+  // Stage-6 routes: /execution/* (proposals, executions, agents, legacy /execution/mcp ping stub).
   await registerExecutionRoutes(app, opts.deps);
 
   // Phase-4 routes: /payment-intents/* with the §6 pre-execution gate.
@@ -49,6 +68,15 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     resolvePrincipal: opts.deps.resolvePrincipal,
   });
   await registerPaymentIntentRoutes(app, paymentIntents);
+
+  // Feature/mcp-server: optional MCP route registration. When supplied,
+  // the boot site has constructed a BrainMcpServer (from @brain/mcp) and
+  // is asking us to mount it at /agents/mcp on this same Fastify
+  // instance. When omitted, /agents/mcp returns 404 — the legacy
+  // /execution/mcp ping stub still answers.
+  if (opts.registerMcp !== undefined) {
+    await opts.registerMcp(app);
+  }
 
   return app;
 }
