@@ -12,9 +12,11 @@ import {
 import { buildTree, makeProof, verifyProof } from "./merkle.js";
 import {
   findEvent,
+  findEventsByEntity,
   findLatestAnchor,
   listEventsForAnchor,
   queryEvents,
+  SUPPORTED_AUDIT_ENTITY_TYPES,
   type AuditEventRow,
 } from "./repository.js";
 import type { AuditDeps } from "./deps.js";
@@ -84,6 +86,52 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
         inclusion_proof: result.proof,
         merkle_root: result.root,
         anchor_id: result.anchorId,
+      };
+    },
+  );
+
+  // GET /audit/entity/:entityType/:entityId — every event touching a
+  // Ledger row. Implements the OpenAPI v0.2 contract; the field map in
+  // repository.ts ENTITY_FIELD_MAP determines which JSONB keys count as
+  // "touching" the entity.
+  app.get(
+    "/audit/entity/:entityType/:entityId",
+    async (
+      request: FastifyRequest<{
+        Params: { entityType: string; entityId: string };
+        Querystring: { limit?: string };
+      }>,
+      reply,
+    ) => {
+      const principal = requirePrincipal(request);
+      requireScope(principal.scopes, READ);
+      const { entityType, entityId } = request.params;
+
+      if (!SUPPORTED_AUDIT_ENTITY_TYPES.includes(entityType)) {
+        throw brainError("request_params_invalid", "unsupported entityType", {
+          details: { entityType, supported: SUPPORTED_AUDIT_ENTITY_TYPES },
+        });
+      }
+      // Defensive: an entityId that contains nothing useful won't hit any
+      // index and is almost always a malformed call.
+      if (entityId.length === 0 || entityId.length > 64) {
+        throw brainError("request_params_invalid", "entityId malformed");
+      }
+
+      const limit = Math.min(
+        request.query.limit === undefined ? 200 : Number.parseInt(request.query.limit, 10) || 200,
+        500,
+      );
+
+      const rows = await withTenantScope(deps.pool, principal.tenantId, (c) =>
+        findEventsByEntity(c, entityType, entityId, limit),
+      );
+
+      reply.status(200);
+      return {
+        entity_type: entityType,
+        entity_id: entityId,
+        events: rows.map(serializeEvent),
       };
     },
   );

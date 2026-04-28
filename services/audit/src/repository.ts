@@ -55,6 +55,70 @@ export async function queryEvents(
   return rows;
 }
 
+/**
+ * Map an entity type to the audit event field(s) we expect to carry the
+ * entity's id when an event touches it. The map is conservative — when
+ * a new entity gets first-class audit references, add it here so the
+ * /audit/entity/:type/:id endpoint can find events that reference it.
+ */
+const ENTITY_FIELD_MAP: Readonly<Record<string, ReadonlyArray<string>>> = {
+  account: ["account_id"],
+  balance: ["balance_id"],
+  transaction: ["transaction_id"],
+  counterparty: ["counterparty_id"],
+  obligation: ["obligation_id"],
+  document: ["document_id"],
+  invoice: ["invoice_id"],
+  payment_intent: ["payment_intent_id"],
+  reconciliation_match: ["match_id"],
+  proposal: ["proposal_id"],
+  execution: ["execution_id"],
+};
+
+export const SUPPORTED_AUDIT_ENTITY_TYPES = Object.keys(ENTITY_FIELD_MAP);
+
+/**
+ * Find every audit event whose `inputs` or `outputs` JSONB carries the
+ * given entity id under one of the entity-type-specific field names.
+ *
+ * Implementation note. We use `(inputs->>$field) = $id OR (outputs->>$field) = $id`
+ * for each known field and OR them together. Postgres can index any of
+ * these via expression indexes per-field; for MVP we accept the cost of
+ * a small heap scan. The query is bounded by tenant via RLS + an
+ * explicit LIMIT.
+ */
+export async function findEventsByEntity(
+  client: TenantScopedClient,
+  entityType: string,
+  entityId: string,
+  limit: number,
+): Promise<AuditEventRow[]> {
+  const fields = ENTITY_FIELD_MAP[entityType];
+  if (fields === undefined || fields.length === 0) return [];
+
+  // Build OR'd predicates across {inputs,outputs} × fields. Same value
+  // ($1) reused for every predicate.
+  const predicates: string[] = [];
+  for (const field of fields) {
+    predicates.push(`(inputs->>'${field}') = $1`);
+    predicates.push(`(outputs->>'${field}') = $1`);
+  }
+  // payment_intent events also use `policy_decision_id` as a join key —
+  // not strictly an entity field but useful for reconstruction.
+  if (entityType === "payment_intent") {
+    predicates.push(`policy_decision_id = $1`);
+  }
+
+  const { rows } = await client.query<AuditEventRow>(
+    `SELECT * FROM audit_events
+      WHERE ${predicates.join(" OR ")}
+      ORDER BY created_at ASC, id ASC
+      LIMIT $2`,
+    [entityId, limit],
+  );
+  return rows;
+}
+
 export async function findEvent(client: TenantScopedClient, id: string): Promise<AuditEventRow | null> {
   const { rows } = await client.query<AuditEventRow>(
     `SELECT * FROM audit_events WHERE id = $1 LIMIT 1`,
