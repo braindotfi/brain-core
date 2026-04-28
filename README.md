@@ -8,20 +8,57 @@ intelligence into governed action. It does not hold funds. It does not
 move money directly. It sits between an account holder and their financial
 world as the structured intelligence layer.
 
-| Layer  | Owns                                          |
-| ------ | --------------------------------------------- |
-| Raw    | Source evidence                               |
-| Ledger | Machine-readable financial truth              |
-| Wiki   | Human-readable financial memory               |
-| Policy | Deterministic permission and approval logic   |
-| Agent  | Proposal/action orchestration                 |
-| Audit  | Immutable proof of what happened and why      |
+## The six layers
 
-See `Brain_MVP_Architecture.md` for the v0.3 blueprint,
-`Brain_API_Specification.yaml` for the v0.2 public contract, and
-`Brain_Engineering_Standards.md` v0.2.0 for the conventions this repo
-enforces — including the §6 deterministic pre-execution gate that every
-financial action must pass.
+| # | Layer  | Owns                                          | Workspace             |
+| - | ------ | --------------------------------------------- | --------------------- |
+| 1 | Raw    | Source evidence (immutable)                   | `services/raw`        |
+| 2 | Ledger | Machine-readable financial truth (11 entities)| `services/ledger`     |
+| 3 | Wiki   | Human-readable financial memory + Q&A         | `services/wiki`       |
+| 4 | Policy | Deterministic permission and approval logic   | `services/policy`     |
+| 5 | Agent  | Proposal / PaymentIntent / MCP orchestration  | `services/execution`  |
+| 6 | Audit  | Immutable proof of what happened and why      | `services/audit`      |
+
+The data flow is one-way upward except for two controlled write paths:
+(a) human annotations and agent contributions write into Raw, never
+directly into Ledger; (b) the Agent layer creates PaymentIntent rows
+in the Ledger (the only ledger-write path that doesn't originate from
+a Raw extraction). Every write at every layer emits an Audit event.
+
+### External agents — the MCP surface
+
+External AI agents connect to Brain via the Model Context Protocol
+(MCP) at `POST /v1/agents/mcp`. The surface is JSON-RPC 2.0 over
+single-shot HTTP and exposes 10 tools (5 ledger reads, 2 wiki reads,
+1 raw contribute, 1 payment-intent propose, 1 agent action propose),
+5 resource templates, and 5 canned prompts. Tools enforce per-call
+scopes; the same `LedgerService` / `WikiService` /
+`PaymentIntentService` methods the HTTP API uses are reused so policy
+gating + audit emission are identical between the HTTP and MCP paths.
+
+Authorization is anchored on-chain: every authorized third-party agent
+has a registration entry in `BrainMCPAgentRegistry` with a scope
+attestation. Brain's MCP server verifies that the agent's JWT
+`scope_hash` claim matches the on-chain hash before any tool call.
+
+There is no `payment_intent.execute` on the MCP surface. External
+agents may *propose* but never *execute* — the §6 13-step
+pre-execution gate stays the only execution path, behind human
+approval where the policy demands it.
+
+See `docs/mcp-architecture.md` for the design and `services/mcp/` for
+the implementation.
+
+## Companion docs
+
+- `Brain_MVP_Architecture.md` — v0.3 blueprint (six-layer + MCP)
+- `Brain_API_Specification.yaml` — v0.3 public HTTP + MCP contract
+- `Brain_Engineering_Standards.md` v0.2.0 — conventions enforced in
+  CI, including the §6 deterministic pre-execution gate that every
+  financial action must pass
+- `docs/mcp-architecture.md` — MCP surface design (Layer 5)
+- `docs/v0.3-deliverables.md` — post-implementation report for the
+  v0.3 refactor + hotfix + MCP feature
 
 ## Repository layout
 
@@ -33,7 +70,8 @@ brain/
 │   ├── ledger/           # TypeScript. Normalized financial truth (Layer 2).
 │   ├── wiki/             # TypeScript. Memory pages, search, Q&A (Layer 3).
 │   ├── policy/           # TypeScript. Rule VM and evaluator (Layer 4).
-│   ├── agent/            # TypeScript. Proposals, PaymentIntents, MCP (Layer 5). [renamed from execution]
+│   ├── execution/        # TypeScript. Agent layer — Proposals, PaymentIntents, §6 gate (Layer 5).
+│   ├── mcp/              # TypeScript. MCP server — JSON-RPC, 10 tools, 5 resources, 5 prompts (Layer 5).
 │   ├── audit/            # TypeScript. Append-only log + Merkle anchor publisher (Layer 6).
 │   └── agents/           # Python. Extractors, reasoners, the three MVP agents.
 ├── contracts/            # Solidity + Foundry. The four smart contracts.
@@ -43,12 +81,23 @@ brain/
 ├── tests/
 │   ├── unit/             # Co-located with source in each workspace.
 │   ├── integration/      # Cross-service. Run against real deps in containers.
+│   ├── invariants/       # Static cross-layer invariant suite (15 invariants).
 │   └── e2e/              # Full-stack against staging environment.
 └── tools/                # Dev scripts, migration runners, backfill utilities.
 ```
 
-`services/execution/` remains in-tree during the v0.3 transition and
-re-exports from `services/agent/`. Migrate imports during normal-cadence PRs.
+`services/execution/` is the Agent-layer (Layer 5) workspace. The
+directory name is retained from v0.2 for back-compat with the
+`/execution/*` legacy routes; the package re-exports the v0.3
+PaymentIntentService + ApprovalService alongside the legacy
+ProposalService. New v0.3 routes live under `/agents/*`,
+`/payment-intents/*`, and `/agents/mcp`.
+
+`services/mcp/` is a sibling workspace (`@brain/mcp`) that hosts the
+MCP server. It depends on `@brain/execution` for
+`PaymentIntentService` but is wired onto the Fastify app via an
+optional `registerMcp` callback so that `services/execution` doesn't
+need to know about `@brain/mcp` (no workspace cycle).
 
 ## Prerequisites
 
@@ -138,33 +187,42 @@ exception. Highlights enforced in CI:
 
 The MVP ships in 10 build stages (0–9) plus a v0.3 architecture-refactor
 phase set (`refactor-1` through `refactor-6`) that introduces the
-Normalized Ledger layer and the §6 pre-execution gate. Each stage and each
-refactor phase is plan-first, human-approved, then a series of small
+Normalized Ledger layer and the §6 pre-execution gate, followed by
+focused feature branches for documentation reconciliation
+(`hotfix-1`) and the MCP server (`feature/mcp-server`). Each stage
+and each phase is plan-first, human-approved, then a series of small
 reviewed commits.
 
-| Stage      | Deliverable                                                          |
-| ---------- | -------------------------------------------------------------------- |
-| 0          | Repository scaffolding                                               |
-| 1          | Shared primitives (errors, auth, idempotency, observability)         |
-| 2          | Raw layer — 5 endpoints + 5 source adapters                          |
-| 3          | Wiki layer (v0.1 shape)                                              |
-| 4          | Policy layer — 6 endpoints, rule VM, EIP-712 signing                 |
-| 5          | 4 smart contracts on Base                                            |
-| 6          | Execution layer (v0.1 shape)                                         |
-| 7          | Audit layer — 5 endpoints, Merkle anchor publisher                   |
-| 8          | Terraform infrastructure + CI/CD pipelines                           |
-| 9          | End-to-end proof test suites                                         |
-| refactor-1 | Six-layer doc realignment (this PR)                                  |
-| refactor-2 | Ledger scaffolding (workspace + 11 migrations + read-only API)       |
-| refactor-3 | Migrate financial truth from Wiki → Ledger; rewrite Plaid extractor  |
-| refactor-4 | PaymentIntent + §6 pre-execution gate                                |
-| refactor-5 | Reconciliation engine + Wiki page generation from Ledger             |
-| refactor-6 | Invariant tests + golden-path dataset                                |
+| Stage / branch          | Deliverable                                                          |
+| ----------------------- | -------------------------------------------------------------------- |
+| 0                       | Repository scaffolding                                               |
+| 1                       | Shared primitives (errors, auth, idempotency, observability)         |
+| 2                       | Raw layer — 5 endpoints + 5 source adapters                          |
+| 3                       | Wiki layer (v0.1 shape)                                              |
+| 4                       | Policy layer — 6 endpoints, rule VM, EIP-712 signing                 |
+| 5                       | 4 smart contracts on Base                                            |
+| 6                       | Execution layer (v0.1 shape)                                         |
+| 7                       | Audit layer — 5 endpoints, Merkle anchor publisher                   |
+| 8                       | Terraform infrastructure + CI/CD pipelines                           |
+| 9                       | End-to-end proof test suites                                         |
+| refactor-1              | Six-layer doc realignment                                            |
+| refactor-2              | Ledger scaffolding (workspace + 11 migrations + read-only API)       |
+| refactor-3              | Migrate financial truth from Wiki → Ledger; rewrite Plaid extractor  |
+| refactor-4              | PaymentIntent + §6 13-step pre-execution gate                        |
+| refactor-5              | Reconciliation engine + Wiki page generation from Ledger             |
+| refactor-6              | Invariant tests + golden-path dataset                                |
+| hotfix-1                | `/audit/entity/:type/:id` route + doc-claim reconciliation           |
+| feature/mcp-server      | `@brain/mcp` workspace — MCP server, 10 tools, 5 resources, 5 prompts|
 
-Progress is tracked via PRs labeled `stage-N` or `refactor-N`.
+Progress is tracked via PRs labeled `stage-N`, `refactor-N`, or the
+feature/hotfix branch name.
 
 ## Support
 
-- API docs: `Brain_API_Specification.yaml` (browsable via Swagger UI or Redoc)
-- Error code registry: `services/api/src/errors.ts` (lands in stage-1)
+- API docs: `Brain_API_Specification.yaml` (browsable via Swagger UI
+  or Redoc) — includes the `/agents/mcp` JSON-RPC surface and the
+  `McpErrorCode` schema
+- MCP architecture: `docs/mcp-architecture.md`
+- Error code registry: `services/api/src/shared/errors.ts`
+- v0.3 deliverables report: `docs/v0.3-deliverables.md`
 - Runbooks: `docs/` (populated from stage-8 onward)
