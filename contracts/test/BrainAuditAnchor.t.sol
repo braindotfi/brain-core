@@ -84,30 +84,47 @@ contract BrainAuditAnchorTest is Test {
     }
 
     // --- Merkle verify ---
+    // Domain separation scheme: leaf = keccak256(0x00 ++ data),
+    // internal node = keccak256(0x01 ++ sort(left, right)).
+    // proof[] elements are pre-computed node hashes at each level.
+
+    function _leafHash(bytes32 data) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(bytes1(0x00), data));
+    }
+
+    function _nodeHash(bytes32 left, bytes32 right) internal pure returns (bytes32) {
+        if (left < right) return keccak256(abi.encodePacked(bytes1(0x01), left, right));
+        return keccak256(abi.encodePacked(bytes1(0x01), right, left));
+    }
 
     function test_verifyInclusion_singleLeaf() public view {
         bytes32 leaf = keccak256("only");
+        bytes32 root = _leafHash(leaf);
         bytes32[] memory proof = new bytes32[](0);
-        assertTrue(anchor.verifyInclusion(leaf, leaf, proof));
+        assertTrue(anchor.verifyInclusion(root, leaf, proof));
     }
 
     function test_verifyInclusion_pair() public view {
         bytes32 a = keccak256("a");
         bytes32 b = keccak256("b");
-        bytes32 root = a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
+        bytes32 ha = _leafHash(a);
+        bytes32 hb = _leafHash(b);
+        bytes32 root = _nodeHash(ha, hb);
         bytes32[] memory proof = new bytes32[](1);
-        proof[0] = b;
+        proof[0] = hb; // sibling of a (already leaf-hashed)
         assertTrue(anchor.verifyInclusion(root, a, proof));
-        proof[0] = a;
+        proof[0] = ha; // sibling of b
         assertTrue(anchor.verifyInclusion(root, b, proof));
     }
 
     function test_verifyInclusion_wrongProofFails() public view {
         bytes32 a = keccak256("a");
         bytes32 b = keccak256("b");
-        bytes32 root = keccak256(abi.encodePacked(a, b));
+        bytes32 ha = _leafHash(a);
+        bytes32 hb = _leafHash(b);
+        bytes32 root = _nodeHash(ha, hb);
         bytes32[] memory proof = new bytes32[](1);
-        proof[0] = keccak256("wrong");
+        proof[0] = keccak256("wrong"); // not hb
         assertFalse(anchor.verifyInclusion(root, a, proof));
     }
 
@@ -124,11 +141,11 @@ contract BrainAuditAnchorTest is Test {
     }
 
     function testFuzz_verify_roundTrip(bytes32 leaf, bytes32 sibling) public view {
-        bytes32 root = leaf < sibling
-            ? keccak256(abi.encodePacked(leaf, sibling))
-            : keccak256(abi.encodePacked(sibling, leaf));
+        bytes32 hl = _leafHash(leaf);
+        bytes32 hs = _leafHash(sibling);
+        bytes32 root = _nodeHash(hl, hs);
         bytes32[] memory proof = new bytes32[](1);
-        proof[0] = sibling;
+        proof[0] = hs; // sibling leaf hash
         assertTrue(anchor.verifyInclusion(root, leaf, proof));
     }
 }

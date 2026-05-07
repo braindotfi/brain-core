@@ -91,18 +91,22 @@ contract BrainAuditAnchor {
     }
 
     /// @notice Verify that a leaf is included in a root by a Merkle proof.
-    /// @dev    Hashing: pair-sort and keccak256. The audit publisher MUST
-    ///         use the same order-independent pair hash when it builds
-    ///         the tree off-chain.
+    /// @dev    Domain separation prevents second pre-image attacks:
+    ///         leaf nodes   → keccak256(0x00 ++ leaf_data)
+    ///         internal nodes → keccak256(0x01 ++ sort(left, right))
+    ///         The audit publisher MUST use the same scheme off-chain.
+    ///         `leaf` is raw leaf data; `proof` elements are already-computed
+    ///         node hashes at each level (leaf hashes for bottom-level siblings,
+    ///         internal node hashes for higher levels).
     function verifyInclusion(bytes32 root, bytes32 leaf, bytes32[] calldata proof) external pure returns (bool) {
-        bytes32 computed = leaf;
+        bytes32 computed = keccak256(abi.encodePacked(bytes1(0x00), leaf));
         uint256 len = proof.length;
         for (uint256 i = 0; i < len; ++i) {
             bytes32 sibling = proof[i];
             if (computed < sibling) {
-                computed = keccak256(abi.encodePacked(computed, sibling));
+                computed = keccak256(abi.encodePacked(bytes1(0x01), computed, sibling));
             } else {
-                computed = keccak256(abi.encodePacked(sibling, computed));
+                computed = keccak256(abi.encodePacked(bytes1(0x01), sibling, computed));
             }
         }
         return computed == root;

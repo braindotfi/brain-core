@@ -49,6 +49,8 @@ contract BrainSmartAccount {
     error NotOwner();
     error NotHolder();
     error KeyNotActive();
+    error KeyExpired();
+    error ZeroAddress();
     error TargetNotAllowed(address target);
     error SelectorNotAllowed(bytes4 selector);
     error ExceedsPerTxCap();
@@ -69,13 +71,14 @@ contract BrainSmartAccount {
 
     /// @notice Rotate the owner. Use this on hardware-wallet swap.
     function transferOwnership(address next) external onlyOwner {
+        if (next == address(0)) revert ZeroAddress();
         owner = next;
     }
 
     /// @notice Grant a session key. Overwrites any existing key for the holder.
     function grantSessionKey(SessionKey calldata key) external onlyOwner {
-        require(key.holder != address(0), "holder required");
-        require(key.validUntil > block.timestamp, "already expired");
+        if (key.holder == address(0)) revert ZeroAddress();
+        if (key.validUntil <= block.timestamp) revert KeyExpired();
         _keys[key.holder] = key;
         emit SessionKeyGranted(key.holder, key.policyVersion, key.validUntil);
     }
