@@ -1,0 +1,82 @@
+Brain Protocol — Base Sepolia Deployment Summary
+Date: 2026-05-11
+Branch: feat/poc-readiness
+Chain: Base Sepolia (chain ID 84532)
+Deployer: 0x41D4ce9D9Fe968Ca1230bDc296B28fdc9AA6FF6E
+
+=== Deployed Contracts ===
+
+BrainAuditAnchor
+  Address : 0xb900add824064098342c869ff83efdeb05eb95ce
+  Status  : previously deployed (2026-05-02)
+  Script  : contracts/script/Deploy.s.sol
+  Broadcast: contracts/broadcast/Deploy.s.sol/84532/run-latest.json
+
+BrainPolicyRegistry
+  Address : 0x683893ccd84d9a3487095d09fed324b6b8ea2501
+  Status  : previously deployed (2026-05-02)
+  Script  : contracts/script/Deploy.s.sol
+
+BrainMCPAgentRegistry
+  Address : 0xd1558828ef31630164aa8942dd41bc63a4d8bed7
+  Status  : previously deployed (2026-05-02)
+  Script  : contracts/script/Deploy.s.sol
+
+BrainSmartAccount (golden-path tenant)
+  Address   : 0x857C6dcb8D68CD8f002ebabe0644D53640bFEcb0
+  Status    : NEW — deployed 2026-05-11
+  Tx hash   : 0x83a1b2d9a458fa128b6414424bdc9b00d0bbdc0898618a48f1b6895263ebdbf1
+  Block     : 41357721
+  Gas used  : 1,068,657
+  Script    : contracts/script/DeployTenantAccount.s.sol
+  Broadcast : contracts/broadcast/DeployTenantAccount.s.sol/84532/run-latest.json
+  Tenant ID : tnt_01GOLDEN00000000000000000
+  Owner     : 0x41D4ce9D9Fe968Ca1230bDc296B28fdc9AA6FF6E
+  Policy reg: 0x683893ccd84d9a3487095d09fed324b6b8ea2501
+
+=== Session Key ===
+
+Script  : contracts/script/GrantSessionKey.s.sol
+Broadcast: contracts/broadcast/GrantSessionKey.s.sol/84532/run-latest.json
+Holder       : 0x41D4ce9D9Fe968Ca1230bDc296B28fdc9AA6FF6E
+validAfter   : 0 (active immediately)
+validUntil   : 9999999999 (2286 — rotate before mainnet)
+allowedTargets : [] (any)
+allowedSelectors: [] (any)
+maxPerTx     : type(uint256).max (no per-tx cap, PoC only)
+maxPerPeriod : type(uint256).max (no cumulative cap)
+periodSeconds: 0 (period accounting disabled)
+policyVersion: 0x0000000000000000000000000000000000000000000000000000000000000001
+
+=== Database State ===
+
+Migration applied : execution/0004_tenant_configs.sql
+Table             : public.tenant_configs
+Row               : tenant_id='tnt_01GOLDEN00000000000000000',
+                    smart_account_address='0x857C6dcb8D68CD8f002ebabe0644D53640bFEcb0'
+
+=== Service Config (.env) ===
+
+BRAIN_SESSION_KEY      set — execution service activates OnchainBaseRail on next start
+GOLDEN_TENANT_SMART_ACCOUNT=0x857C6dcb8D68CD8f002ebabe0644D53640bFEcb0
+BRAIN_AUDIT_ANCHOR     =0xb900add824064098342c869ff83efdeb05eb95ce
+BRAIN_POLICY_REGISTRY  =0x683893ccd84d9a3487095d09fed324b6b8ea2501
+BRAIN_MCP_AGENT_REGISTRY=0xd1558828ef31630164aa8942dd41bc63a4d8bed7
+
+=== Test Results (pre-deploy) ===
+
+forge test: 50 passed, 0 failed
+  - testFuzz_erc20CapBypass (1000 runs) PASS
+  - test_erc20_transfer_respectsPerTxCap PASS
+  - test_erc20_approve_respectsPerTxCap PASS
+  - test_erc20_transferFrom_respectsPerTxCap PASS
+  All 16 BrainSmartAccount tests pass including ERC20 cap fix (commit 7e93920)
+
+=== Pre-Mainnet Checklist ===
+
+[ ] Rotate session key: use a dedicated Brain agent wallet, not the deployer key
+[ ] Set realistic maxPerTx / maxPerPeriod caps on the session key
+[ ] Replace PUBLISHER_MULTISIG / admin addresses with a proper 2-of-3 multi-sig
+[ ] External audit of BrainSmartAccount before mainnet deploy
+[ ] Set policyVersion to the real active policy content hash (not bytes32(1))
+[ ] Register the Brain agent in BrainMCPAgentRegistry with tenant signer signature
