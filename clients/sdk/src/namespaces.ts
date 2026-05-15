@@ -5,6 +5,8 @@
  * @internal
  */
 
+export * from "./actions/index.js";
+export * from "./agents/index.js";
 export * from "./audit/index.js";
 export * from "./ledger/index.js";
 export * from "./policy/index.js";

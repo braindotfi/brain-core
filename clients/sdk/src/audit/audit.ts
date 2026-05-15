@@ -104,6 +104,34 @@ export class AuditModule {
   }
 
   /**
+   * Every audit event touching a single entity (Ledger row, Action,
+   * etc.), ordered ascending by `created_at`.
+   *
+   * Implements `GET /audit/entity/{entityType}/{entityId}` (operationId
+   * `getAuditEntityHistory`). Backs the top-level `brain.trace(actionId)`
+   * convenience.
+   */
+  public async byEntity(
+    entityType:
+      | "account"
+      | "balance"
+      | "transaction"
+      | "counterparty"
+      | "obligation"
+      | "document"
+      | "invoice"
+      | "payment_intent"
+      | "reconciliation_match"
+      | "proposal"
+      | "execution",
+    entityId: string,
+  ): Promise<{ entity_type: string; entity_id: string; events: AuditEvent[] }> {
+    return this.http.get(
+      `/audit/entity/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+    );
+  }
+
+  /**
    * Get the Merkle proof for an event. Returns the full proof bundle
    * suitable for off-line verification with `auditVerify`.
    *

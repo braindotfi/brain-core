@@ -9,8 +9,10 @@
  */
 
 import {
-  AuditModule,
   AccountsModule,
+  ActionsModule,
+  AgentsModule,
+  AuditModule,
   BalancesModule,
   CounterpartiesModule,
   InvoicesModule,
@@ -19,7 +21,11 @@ import {
   TransactionsModule,
   WikiModule,
 } from "./namespaces.js";
+import { ConvenienceSurface, type PayInput, type ActionTrace } from "./convenience.js";
 import { BrainHttp } from "./http/index.js";
+import type { Action } from "./actions/index.js";
+import type { AuditProof } from "./audit/index.js";
+import type { WikiAnswer } from "./wiki/index.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -163,6 +169,11 @@ export class Brain {
   public readonly wiki: WikiModule;
   public readonly policy: PolicyModule;
   public readonly audit: AuditModule;
+  public readonly actions: ActionsModule;
+  public readonly agents: AgentsModule;
+
+  /** @internal Holds the implementation of the top-level convenience methods. */
+  readonly #convenience: ConvenienceSurface;
 
   /** The api key. Kept readonly + non-public for safety. */
   readonly #apiKey: string;
@@ -210,6 +221,56 @@ export class Brain {
     this.wiki = new WikiModule(this.http);
     this.policy = new PolicyModule(this.http);
     this.audit = new AuditModule(this.http);
+    this.actions = new ActionsModule(this.http);
+    this.agents = new AgentsModule(this.http);
+
+    this.#convenience = new ConvenienceSurface({
+      actions: this.actions,
+      audit: this.audit,
+      wiki: this.wiki,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Top-level convenience surface — see src/convenience.ts and
+  // https://docs.brain.fi/build/*. Positional `tenantId` first arg for
+  // ergonomic compat with the docs Build samples.
+  // ---------------------------------------------------------------------------
+
+  /** @see ConvenienceSurface.ask */
+  public ask(tenantId: string, question: string): Promise<WikiAnswer> {
+    return this.#convenience.ask(tenantId, question);
+  }
+
+  /** @see ConvenienceSurface.pay */
+  public pay(tenantId: string, opts: PayInput): Promise<Action> {
+    return this.#convenience.pay(tenantId, opts);
+  }
+
+  /** @see ConvenienceSurface.approve */
+  public approve(
+    actionId: string,
+    opts: { as?: string; idempotencyKey?: string } = {},
+  ): Promise<Action> {
+    return this.#convenience.approve(actionId, opts);
+  }
+
+  /** @see ConvenienceSurface.reject */
+  public reject(
+    actionId: string,
+    opts: { as?: string; reason?: string; idempotencyKey?: string } = {},
+  ): Promise<Action> {
+    return this.#convenience.reject(actionId, opts);
+  }
+
+  /** @see ConvenienceSurface.proof */
+  public proof(actionId: string): Promise<AuditProof> {
+    return this.#convenience.proof(actionId);
+  }
+
+  /** @see ConvenienceSurface.trace */
+  public trace(actionId: string): Promise<ActionTrace> {
+    return this.#convenience.trace(actionId);
   }
 
   /**
@@ -320,8 +381,9 @@ export type {
   paths as Paths,
 } from "./generated/index.js";
 
-// Namespace modules + their option/return types (commit #9 read-side set).
-// `actions` and `agents` modules land in commit #11.
+// Namespace modules + their option/return types.
 export * from "./namespaces.js";
 
-// (convenience surface lands in commit #11)
+// Convenience surface types (positional `tenantId`-first methods that
+// live directly on the Brain class as `brain.ask`, `brain.pay`, etc.).
+export type { PayInput, ActionTrace, ConvenienceDeps } from "./convenience.js";
