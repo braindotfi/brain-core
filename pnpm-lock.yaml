@@ -36,6 +36,12 @@ importers:
         specifier: ^2.1.2
         version: 2.1.9(@types/node@22.19.19)
 
+  schemas:
+    devDependencies:
+      typescript:
+        specifier: ^5.6.2
+        version: 5.9.3
+
   services/api:
     dependencies:
       '@anthropic-ai/sdk':
@@ -462,6 +468,19 @@ importers:
         specifier: ^2.1.2
         version: 2.1.9(@types/node@22.19.19)
 
+  tools/dev-token:
+    dependencies:
+      jose:
+        specifier: ^5.9.3
+        version: 5.10.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.7.0
+        version: 22.19.19
+      typescript:
+        specifier: ^5.6.2
+        version: 5.9.3
+
   tools/migrate:
     dependencies:
       pg:
@@ -486,6 +505,19 @@ importers:
       vitest:
         specifier: ^2.1.2
         version: 2.1.9(@types/node@22.19.19)
+
+  tools/plaid-sandbox:
+    dependencies:
+      plaid:
+        specifier: ^18.0.0
+        version: 18.3.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.7.0
+        version: 22.19.19
+      typescript:
+        specifier: ^5.6.2
+        version: 5.9.3
 
   tools/seed-golden-path:
     dependencies:
@@ -3147,6 +3179,10 @@ packages:
   pino@9.14.0:
     resolution: {integrity: sha512-8OEwKp5juEvb/MjpIc4hjqfgCNysrS94RIOMXYvpYCdm/jglrKEiAYmiumbmGhCvs+IcInsphYDFwqrjr7398w==}
     hasBin: true
+
+  plaid@18.3.0:
+    resolution: {integrity: sha512-uk9xHS/Gs/wNRmcAM+La1QHqUCIYU/CdPQZ6Cbm+DQ05cIiJmk+ttjKCfKRLHFazUPuPd8Yszf5lFy17MnXGgA==}
+    engines: {node: '>=10.0.0'}
 
   plaid@27.0.0:
     resolution: {integrity: sha512-aEwXrKT5DSlJFj0IITaKFGCdaAf8xcvdwqZzIjTqyR//xsCtscC5P9lAExnllaAts7ELqQBJn8JzYnLO5TUMTg==}
@@ -6749,6 +6785,13 @@ snapshots:
       safe-stable-stringify: 2.5.0
       sonic-boom: 4.2.1
       thread-stream: 3.1.0
+
+  plaid@18.3.0:
+    dependencies:
+      axios: 1.16.1
+    transitivePeerDependencies:
+      - debug
+      - supports-color
 
   plaid@27.0.0:
     dependencies:
