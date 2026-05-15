@@ -4,6 +4,70 @@
  */
 
 export interface paths {
+    "/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List sources */
+        get: operations["listSources"];
+        put?: never;
+        /** Connect a new source */
+        post: operations["connectSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sources/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a single source */
+        get: operations["getSource"];
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect a source
+         * @description Marks the source `disconnected`. Ingestion stops immediately;
+         *     historical Raw artifacts are retained per the tenant's
+         *     retention policy and remain queryable via /raw/*.
+         */
+        delete: operations["disconnectSource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sources/{source_id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger an immediate sync
+         * @description Queues a manual sync. Returns the sync job descriptor; the job
+         *     runs asynchronously and emits new `/raw/ingest` rows as data
+         *     arrives. Stub-mode source types accept the call but return
+         *     `{notes: "stub"}` instead of running real adapter logic.
+         */
+        post: operations["syncSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/raw/ingest": {
         parameters: {
             query?: never;
@@ -281,6 +345,30 @@ export interface paths {
         };
         /** List reconciliation matches */
         get: operations["listReconciliationMatches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/cash_flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cash-flow aggregation over a recent window
+         * @description Aggregates `ledger_transactions` over the requested window and
+         *     returns inflow/outflow totals plus a per-day breakdown. Used by
+         *     the SDK's `brain.cashFlow.summarize` and the
+         *     `brain.snapshot(tenantId)` convenience composition. Source:
+         *     https://docs.brain.fi/api-reference/ledger-api ("cash flows").
+         */
+        get: operations["summarizeCashFlow"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1364,6 +1452,78 @@ export interface components {
                 docs_url: string;
             };
         };
+        /**
+         * @description Source connector identifier. v0.3 MVP set (8 values).
+         *     Stub-mode connectors: csv_upload, pdf_upload, email_inbound,
+         *     netsuite, alchemy_wallet, eth_address. Concrete connectors:
+         *     plaid, stripe.
+         * @enum {string}
+         */
+        SourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address";
+        /** @enum {string} */
+        SourceStatus: "active" | "paused" | "error" | "disconnected";
+        Source: {
+            /** @description Source id (src_<ulid>). */
+            id: string;
+            tenantId: string;
+            type: components["schemas"]["SourceType"];
+            status: components["schemas"]["SourceStatus"];
+            /** Format: date-time */
+            last_synced_at?: string | null;
+            /**
+             * @description Caller-supplied labels (`label`, `description`, etc.).
+             *     Stored verbatim and returned unchanged.
+             */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description Most recent provider-level error. Populated when status =
+             *     `"error"` (typically after `source_credential_invalid` or
+             *     `upstream_timeout`).
+             */
+            error_message?: string | null;
+            /**
+             * @description True when the underlying adapter is not yet implemented and
+             *     sync/ingest return a `{notes: "stub"}` shape. Useful for
+             *     UIs that want to grey out "Sync now" for stub sources.
+             */
+            is_stub?: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        /**
+         * @description Per-currency cash-flow aggregation over a window. When the
+         *     caller filters by `currency`, the array contains exactly one
+         *     entry; otherwise one entry per currency present in the window.
+         */
+        CashFlowSummary: {
+            tenantId: string;
+            /** Format: date-time */
+            since: string;
+            /** Format: date-time */
+            until: string;
+            currencies: {
+                currency: string;
+                /** @description Decimal string. Sum of `inflow` direction in window. */
+                inflow: string;
+                /** @description Decimal string. Sum of `outflow` direction in window. */
+                outflow: string;
+                /** @description Decimal string. inflow minus outflow. */
+                net: string;
+                transaction_count?: number;
+                /** @description Daily breakdown, in ascending date order. */
+                by_day: {
+                    /** Format: date */
+                    date: string;
+                    inflow: string;
+                    outflow: string;
+                    net: string;
+                }[];
+            }[];
+        };
         /** @enum {string} */
         RawSourceType: "plaid" | "erp_netsuite" | "email" | "upload" | "chain_evm" | "stripe" | "agent_contributed" | "other";
         RawIngestResponse: {
@@ -2153,6 +2313,168 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listSources: {
+        parameters: {
+            query?: {
+                tenantId?: string;
+                type?: components["schemas"]["SourceType"];
+                status?: components["schemas"]["SourceStatus"];
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Source"][];
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+        };
+    };
+    connectSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    tenantId: string;
+                    type: components["schemas"]["SourceType"];
+                    /**
+                     * @description Provider-specific credentials. Schema depends on
+                     *     `type` — e.g. Plaid expects `{access_token}`,
+                     *     Stripe `{api_key}`. Server validates per adapter.
+                     */
+                    credentials: {
+                        [key: string]: unknown;
+                    };
+                    /**
+                     * @description Optional caller labels (e.g. `{label: "operating
+                     *     account"}`). Stored verbatim and returned with the
+                     *     Source record.
+                     */
+                    metadata?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Source connected */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Source"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Provider rejected credentials (`source_credential_invalid`) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Source"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    disconnectSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Source"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    syncSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sync enqueued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        job_id: string;
+                        source_id?: string;
+                        /** @enum {string} */
+                        status: "enqueued" | "running";
+                        /**
+                         * @description Present and set to `"stub"` when the underlying
+                         *     adapter is not yet implemented (csv_upload,
+                         *     pdf_upload, email_inbound, netsuite,
+                         *     alchemy_wallet, eth_address in v0.3 ship).
+                         */
+                        notes?: string;
+                    };
+                };
+            };
+        };
+    };
     ingestRaw: {
         parameters: {
             query?: never;
@@ -2653,6 +2975,36 @@ export interface operations {
                     "application/json": {
                         matches?: components["schemas"]["ReconciliationMatch"][];
                     };
+                };
+            };
+        };
+    };
+    summarizeCashFlow: {
+        parameters: {
+            query?: {
+                tenantId?: string;
+                /** @description Window size, ending now. Default 30, max 365. */
+                days?: number;
+                /**
+                 * @description When set, restrict aggregation to transactions in this
+                 *     currency. When omitted, the response groups by currency
+                 *     (each currency is its own series).
+                 */
+                currency?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cash flow summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashFlowSummary"];
                 };
             };
         };

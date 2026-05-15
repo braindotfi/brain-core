@@ -20,6 +20,12 @@ import { registerArtifact } from "./routes/artifact.js";
 import { registerIngest } from "./routes/ingest.js";
 import { registerParsed } from "./routes/parsed.js";
 import { registerWebhook, type WebhookTenantResolver } from "./routes/webhook.js";
+import {
+  InMemorySourceRepository,
+  SourceService,
+  type SourceRepository,
+} from "./sources/SourceService.js";
+import { registerSourceRoutes } from "./sources/routes.js";
 import type { RawDeps } from "./deps.js";
 
 export interface BuildRawAppOptions {
@@ -30,6 +36,12 @@ export interface BuildRawAppOptions {
   plaidVerify: PlaidVerifyOptions;
   resolveWebhookTenant: WebhookTenantResolver;
   logger?: ReturnType<typeof Fastify>["log"];
+  /**
+   * Backing store for the v0.3 /v1/sources/* surface. Defaults to a
+   * process-local in-memory repository — production wiring overrides
+   * with a Postgres-backed implementation (follow-up commit).
+   */
+  sourceRepository?: SourceRepository;
 }
 
 export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInstance> {
@@ -96,6 +108,12 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
   });
   await registerArtifact(app, opts.deps);
   await registerParsed(app, opts.deps);
+
+  // PLAN-FIRST #12: /v1/sources/* — source-connector lifecycle.
+  const sourceService = new SourceService(
+    opts.sourceRepository ?? new InMemorySourceRepository(),
+  );
+  await registerSourceRoutes(app, sourceService);
 
   return app;
 }

@@ -47,6 +47,11 @@ security:
   - bearerAuth: []
 
 tags:
+  - name: Sources
+    description: |
+      Source-connection lifecycle — connect/list/get/disconnect/sync.
+      Adapter-facing surface that feeds the Raw ingestion layer.
+      Source: https://docs.brain.fi/api-reference/sources-api.
   - name: Raw
     description: Immutable ingestion of financial evidence (Layer 1)
   - name: Ledger
@@ -80,6 +85,172 @@ tags:
     description: Platform administration (tenant-level operations)
 
 paths:
+
+  #############################################################################
+  # SOURCES — source-connection lifecycle (PLAN-FIRST #12)
+  #
+  # Adapter-facing routes that the Brain Console and SDK call to manage
+  # ingestion connections. Each row in `raw_sources` represents one
+  # active connection to a provider (Plaid bank, Stripe processor, etc.).
+  # Sources feed `/raw/ingest` behind the scenes — webhooks land in
+  # `/raw/webhooks/{provider}`, polled adapters call `/raw/ingest`
+  # internally.
+  #
+  # Source: https://docs.brain.fi/api-reference/sources-api.
+  #############################################################################
+
+  /sources:
+    post:
+      tags: [Sources]
+      summary: Connect a new source
+      operationId: connectSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, type, credentials]
+              properties:
+                tenantId: { type: string }
+                type: { $ref: '#/components/schemas/SourceType' }
+                credentials:
+                  type: object
+                  additionalProperties: true
+                  description: |
+                    Provider-specific credentials. Schema depends on
+                    `type` — e.g. Plaid expects `{access_token}`,
+                    Stripe `{api_key}`. Server validates per adapter.
+                metadata:
+                  type: object
+                  additionalProperties: true
+                  description: |
+                    Optional caller labels (e.g. `{label: "operating
+                    account"}`). Stored verbatim and returned with the
+                    Source record.
+      responses:
+        '201':
+          description: Source connected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Source' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Provider rejected credentials (`source_credential_invalid`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    get:
+      tags: [Sources]
+      summary: List sources
+      operationId: listSources
+      parameters:
+        - name: tenantId
+          in: query
+          schema: { type: string }
+        - name: type
+          in: query
+          schema: { $ref: '#/components/schemas/SourceType' }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/SourceStatus' }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 500 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Source list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Source' }
+                  next_cursor:
+                    type: string
+                    nullable: true
+
+  /sources/{source_id}:
+    get:
+      tags: [Sources]
+      summary: Get a single source
+      operationId: getSource
+      parameters:
+        - name: source_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Source
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Source' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      tags: [Sources]
+      summary: Disconnect a source
+      description: |
+        Marks the source `disconnected`. Ingestion stops immediately;
+        historical Raw artifacts are retained per the tenant's
+        retention policy and remain queryable via /raw/*.
+      operationId: disconnectSource
+      parameters:
+        - name: source_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Disconnected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Source' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /sources/{source_id}/sync:
+    post:
+      tags: [Sources]
+      summary: Trigger an immediate sync
+      description: |
+        Queues a manual sync. Returns the sync job descriptor; the job
+        runs asynchronously and emits new `/raw/ingest` rows as data
+        arrives. Stub-mode source types accept the call but return
+        `{notes: "stub"}` instead of running real adapter logic.
+      operationId: syncSource
+      parameters:
+        - name: source_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '202':
+          description: Sync enqueued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, status]
+                properties:
+                  job_id: { type: string }
+                  source_id: { type: string }
+                  status:
+                    type: string
+                    enum: [enqueued, running]
+                  notes:
+                    type: string
+                    description: |
+                      Present and set to `"stub"` when the underlying
+                      adapter is not yet implemented (csv_upload,
+                      pdf_upload, email_inbound, netsuite,
+                      alchemy_wallet, eth_address in v0.3 ship).
 
   #############################################################################
   # LAYER 1: RAW
@@ -594,6 +765,45 @@ paths:
                   matches:
                     type: array
                     items: { $ref: '#/components/schemas/ReconciliationMatch' }
+
+  /ledger/cash_flows:
+    get:
+      tags: [Ledger]
+      summary: Cash-flow aggregation over a recent window
+      description: |
+        Aggregates `ledger_transactions` over the requested window and
+        returns inflow/outflow totals plus a per-day breakdown. Used by
+        the SDK's `brain.cashFlow.summarize` and the
+        `brain.snapshot(tenantId)` convenience composition. Source:
+        https://docs.brain.fi/api-reference/ledger-api ("cash flows").
+      operationId: summarizeCashFlow
+      parameters:
+        - name: tenantId
+          in: query
+          schema: { type: string }
+        - name: days
+          in: query
+          description: Window size, ending now. Default 30, max 365.
+          schema:
+            type: integer
+            default: 30
+            minimum: 1
+            maximum: 365
+        - name: currency
+          in: query
+          description: |
+            When set, restrict aggregation to transactions in this
+            currency. When omitted, the response groups by currency
+            (each currency is its own series).
+          schema:
+            type: string
+            pattern: '^[A-Z]{3}$'
+      responses:
+        '200':
+          description: Cash flow summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CashFlowSummary' }
 
   #############################################################################
   # LAYER 3: WIKI (memory)
@@ -2311,6 +2521,124 @@ components:
             policy_version: 3
           trace_id: trc_8f3a92abc
           docs_url: https://docs.brain.fi/errors/policy_denied
+
+    #
+    # Sources (PLAN-FIRST #12) — adapter connections that feed the Raw
+    # layer. The 8-value MVP set per docs/sdk-audit.md decision K2.
+    # Adding a new value to `SourceType` is a non-breaking enum widening
+    # — extends as adapters ship (Architecture §3.1, "Other
+    # source-specific adapters … are post-MVP").
+    #
+
+    SourceType:
+      type: string
+      description: |
+        Source connector identifier. v0.3 MVP set (8 values).
+        Stub-mode connectors: csv_upload, pdf_upload, email_inbound,
+        netsuite, alchemy_wallet, eth_address. Concrete connectors:
+        plaid, stripe.
+      enum:
+        - plaid
+        - stripe
+        - netsuite
+        - email_inbound
+        - csv_upload
+        - pdf_upload
+        - alchemy_wallet
+        - eth_address
+
+    SourceStatus:
+      type: string
+      enum:
+        - active
+        - paused
+        - error
+        - disconnected
+
+    Source:
+      type: object
+      required: [id, tenantId, type, status, created_at]
+      properties:
+        id:
+          type: string
+          description: Source id (src_<ulid>).
+        tenantId:
+          type: string
+        type:
+          $ref: '#/components/schemas/SourceType'
+        status:
+          $ref: '#/components/schemas/SourceStatus'
+        last_synced_at:
+          type: string
+          format: date-time
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+          description: |
+            Caller-supplied labels (`label`, `description`, etc.).
+            Stored verbatim and returned unchanged.
+        error_message:
+          type: string
+          nullable: true
+          description: |
+            Most recent provider-level error. Populated when status =
+            `"error"` (typically after `source_credential_invalid` or
+            `upstream_timeout`).
+        is_stub:
+          type: boolean
+          description: |
+            True when the underlying adapter is not yet implemented and
+            sync/ingest return a `{notes: "stub"}` shape. Useful for
+            UIs that want to grey out "Sync now" for stub sources.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CashFlowSummary:
+      type: object
+      required: [tenantId, since, until, currencies]
+      description: |
+        Per-currency cash-flow aggregation over a window. When the
+        caller filters by `currency`, the array contains exactly one
+        entry; otherwise one entry per currency present in the window.
+      properties:
+        tenantId: { type: string }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        currencies:
+          type: array
+          items:
+            type: object
+            required: [currency, inflow, outflow, net, by_day]
+            properties:
+              currency: { type: string, pattern: '^[A-Z]{3}$' }
+              inflow:
+                type: string
+                description: Decimal string. Sum of `inflow` direction in window.
+              outflow:
+                type: string
+                description: Decimal string. Sum of `outflow` direction in window.
+              net:
+                type: string
+                description: Decimal string. inflow minus outflow.
+              transaction_count: { type: integer, minimum: 0 }
+              by_day:
+                type: array
+                description: Daily breakdown, in ascending date order.
+                items:
+                  type: object
+                  required: [date, inflow, outflow, net]
+                  properties:
+                    date:
+                      type: string
+                      format: date
+                    inflow: { type: string }
+                    outflow: { type: string }
+                    net: { type: string }
 
     #
     # Raw layer
