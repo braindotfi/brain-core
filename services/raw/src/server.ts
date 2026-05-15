@@ -10,7 +10,9 @@ import multipart from "@fastify/multipart";
 import {
   authPlugin,
   errorHandlerPlugin,
+  idempotencyPlugin,
   requestIdPlugin,
+  type IdempotencyStore,
   type JwtVerifier,
   type PlaidVerifyOptions,
 } from "@brain/api/shared";
@@ -23,6 +25,8 @@ import type { RawDeps } from "./deps.js";
 export interface BuildRawAppOptions {
   deps: RawDeps;
   jwtVerifier: JwtVerifier;
+  idempotencyStore: IdempotencyStore;
+  idempotencyTtlSeconds?: number;
   plaidVerify: PlaidVerifyOptions;
   resolveWebhookTenant: WebhookTenantResolver;
   logger?: ReturnType<typeof Fastify>["log"];
@@ -77,6 +81,10 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
     },
   });
   await app.register(authPlugin, { verifier: opts.jwtVerifier });
+  await app.register(idempotencyPlugin, {
+    store: opts.idempotencyStore,
+    ttlSeconds: opts.idempotencyTtlSeconds ?? 86400,
+  });
 
   // Health check — no auth, no DB.
   app.get("/health", { config: { skipAuth: true } }, async () => ({ ok: true }));

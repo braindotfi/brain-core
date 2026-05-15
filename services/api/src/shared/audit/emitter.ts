@@ -81,6 +81,8 @@ export class PostgresAuditEmitter implements AuditEmitter {
     const client: PoolClient = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Set tenant scope for RLS — audit_events has per-tenant isolation policies.
+      await client.query("SELECT set_config('app.tenant_id', $1, true)", [event.tenantId]);
 
       // Lock the most recent event for this tenant (if any) to serialize.
       const prev = await client.query<{ event_hash: string }>(

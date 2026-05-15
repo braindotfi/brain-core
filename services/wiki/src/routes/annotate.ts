@@ -22,7 +22,7 @@ import {
   WIKI_KINDS,
   type RelationKind,
   type WikiKind,
-} from "../../../../schemas/index.js";
+} from "@brain/schemas";
 import {
   findEntityAsOf,
   insertEntity,

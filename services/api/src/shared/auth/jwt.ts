@@ -28,6 +28,11 @@ import { VALID_SCOPES, type Scope } from "./scopes.js";
 export interface VerifyOptions {
   /** JWKS endpoint URL (§3.1 auth service). */
   jwksUrl: string;
+  /**
+   * Raw HS256 secret. When set, tokens are verified with this secret instead of
+   * fetching from jwksUrl. Use only in dev/test — production must use asymmetric JWKS.
+   */
+  secret?: string;
   issuer: string;
   audience: string;
   /** Seconds of clock skew tolerance when checking exp/iat. */
@@ -40,7 +45,12 @@ export class JwtVerifier {
   private readonly jwks: JWTVerifyGetKey;
 
   public constructor(private readonly opts: VerifyOptions) {
-    this.jwks = createRemoteJWKSet(new URL(opts.jwksUrl));
+    if (opts.secret !== undefined && opts.secret !== "") {
+      const keyBytes = new TextEncoder().encode(opts.secret);
+      this.jwks = async () => keyBytes;
+    } else {
+      this.jwks = createRemoteJWKSet(new URL(opts.jwksUrl));
+    }
   }
 
   public async verify(token: string): Promise<Principal> {

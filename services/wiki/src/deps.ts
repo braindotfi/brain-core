@@ -5,7 +5,7 @@ import type {
   MetricsEmitter,
 } from "@brain/api/shared";
 import type { Pool } from "pg";
-import type Redis from "ioredis";
+import type { Redis } from "ioredis";
 import type { SchemaRegistry } from "./schemas.js";
 
 export interface WikiDeps {

@@ -84,9 +84,10 @@ describe("PostgresAuditEmitter", () => {
 
     const ev = await emitter.emit(baseEvent());
     expect(log[0]).toBe("BEGIN");
-    expect(log[1]).toContain("SELECT event_hash");
-    expect(log[2]).toContain("INSERT INTO audit_events");
-    expect(log[3]).toBe("COMMIT");
+    expect(log[1]).toContain("set_config");
+    expect(log[2]).toContain("SELECT event_hash");
+    expect(log[3]).toContain("INSERT INTO audit_events");
+    expect(log[4]).toBe("COMMIT");
     expect(client.released).toBe(true);
     expect(ev.prevEventHash).toBeNull();
     expect(ev.eventHash).toMatch(/^[0-9a-f]{64}$/);
