@@ -34,3 +34,4 @@ export type {
   PolicyDocument,
 } from "./dsl.js";
 export { isValidTransition, type PolicyState, type PolicyRow } from "./repository.js";
+export { registerPolicyRoutes } from "./routes.js";

@@ -36,6 +36,7 @@ export {
   verifyWithKey,
   type VerifyOptions,
 } from "./auth/jwt.js";
+export { JwtSigner, type SignOptions } from "./auth/signer.js";
 export {
   RedisRevocationStore,
   InMemoryRevocationStore,

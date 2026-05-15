@@ -102,7 +102,6 @@ export class AzureBlobAdapter implements BlobAdapter {
         blobName: path,
         permissions: BlobSASPermissions.parse("r"),
         expiresOn,
-        protocol: undefined,
       },
       this.credential,
     );

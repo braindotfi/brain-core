@@ -17,7 +17,11 @@ export * from "./ILedgerService.js";
 export * from "./IWikiMemoryService.js";
 export * from "./IPolicyService.js";
 export * from "./IAgentService.js";
-export * from "./IAuditService.js";
+export {
+  type AuditEventRecord,
+  type AuditAnchorRecord,
+  type IAuditService,
+} from "./IAuditService.js";
 export * from "./IReconciliationService.js";
 export * from "./IPaymentIntentService.js";
 export * from "./IApprovalService.js";
