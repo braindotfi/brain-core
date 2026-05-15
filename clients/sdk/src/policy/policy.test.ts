@@ -72,9 +72,11 @@ describe("brain.policy.sign", () => {
 });
 
 describe("brain.policy.evaluate", () => {
-  it("POSTs the proposed action to /policy/{tenant_id}/evaluate", async () => {
+  it("POSTs the proposed action to /policy/{tenant_id}/evaluate and forwards the docs decision vocabulary", async () => {
+    // Wire decision is ALLOW | ESCALATE | DENY per
+    // docs/sdk-audit.md decision overrride (see audit & PLAN-FIRST #10).
     const { brain, calls } = makeBrain({
-      decision: "allow",
+      decision: "ALLOW",
       trace: [],
       required_approvers: [],
       policy_version: 1,
@@ -84,21 +86,22 @@ describe("brain.policy.evaluate", () => {
       action: { type: "outbound_payment", amount: { currency: "USD", value: 100 } },
     });
     expect(calls[0]?.url).toContain("/policy/acme/evaluate");
-    expect(decision.decision).toBe("allow");
+    expect(decision.decision).toBe("ALLOW");
     const body = JSON.parse(calls[0]?.body ?? "{}");
     expect(body.type).toBe("outbound_payment");
   });
 });
 
 describe("brain.policy.simulate", () => {
-  it("POSTs to /policy/{tenant_id}/simulate with version", async () => {
-    const { brain, calls } = makeBrain({ decision: "confirm" });
-    await brain.policy.simulate({
+  it("POSTs to /policy/{tenant_id}/simulate with version and surfaces the ESCALATE decision", async () => {
+    const { brain, calls } = makeBrain({ decision: "ESCALATE" });
+    const result = await brain.policy.simulate({
       tenantId: "acme",
       action: { type: "outbound_payment" },
       version: 2,
     });
     expect(calls[0]?.url).toContain("/policy/acme/simulate");
+    expect(result.decision).toBe("ESCALATE");
     const body = JSON.parse(calls[0]?.body ?? "{}");
     expect(body.version).toBe(2);
     expect(body.action.type).toBe("outbound_payment");

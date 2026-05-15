@@ -57,11 +57,21 @@ tags:
     description: Rule composition, signing, evaluation against Ledger state (Layer 4)
   - name: Agent
     description: Agent registration and action orchestration (Layer 5). Replaces the v0.1 Execution group; legacy /execution/* paths still resolve.
+  - name: Action
+    description: |
+      v0.3 unified write-path for financial actions — propose, list,
+      approve, reject, execute, cancel. Replaces the v0.2 PaymentIntent
+      surface. Always passes the deterministic §6 13-step pre-execution
+      gate. Source: https://docs.brain.fi/api-reference/actions-api.
   - name: PaymentIntent
-    description: PaymentIntent lifecycle — propose, approve, execute. Always passes the deterministic pre-execution gate (§6 of Engineering Standards).
+    description: |
+      DEPRECATED in v0.3 — use Action. The /payment-intents/* operations
+      remain shipped behind a deprecation header for the duration of the
+      v0.3 transition; new integrations target /actions/*.
+    x-deprecated-superseded-by: [Action]
   - name: Execution
-    description: DEPRECATED — use Agent and PaymentIntent. Retained for v0.3 transition.
-    x-deprecated-superseded-by: [Agent, PaymentIntent]
+    description: DEPRECATED — use Agent and Action. Retained for v0.3 transition.
+    x-deprecated-superseded-by: [Agent, Action]
   - name: Audit
     description: Tamper-evident event log and verification (Layer 6)
   - name: MCP
@@ -1328,10 +1338,275 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/JsonRpcResponse' }
 
+  #############################################################################
+  # v0.3 CANONICAL ACTION SURFACE (/v1/actions/*)
+  #
+  # User-facing write-path for financial actions. Source:
+  # https://docs.brain.fi/api-reference/actions-api. Internally backed
+  # by PaymentIntentService; the route layer translates storage
+  # vocabularies to the docs vocabulary on every response.
+  #############################################################################
+
+  /actions:
+    post:
+      tags: [Action]
+      summary: Propose an action
+      description: |
+        Creates an Action (internally a PaymentIntent row) and attaches
+        the PolicyDecision. On `decision === "ALLOW"` the action is
+        auto-approved and ready for `/execute`; on `"ESCALATE"` it
+        waits in `status === "needs_approval"`; on `"DENY"` it is
+        terminal in `status === "rejected"`.
+      operationId: createAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, type]
+              properties:
+                tenantId: { type: string }
+                agent_id:
+                  type: string
+                  description: |
+                    Proposing agent. Required when the caller is an
+                    agent principal; the server falls back to the
+                    auth context if omitted.
+                type:
+                  type: string
+                  description: |
+                    Free-form action type (e.g. `pay_invoice`,
+                    `outbound_payment`, `onchain_transfer`,
+                    `erp_writeback`, `card_payment`). The policy DSL
+                    `applies_to` clause gates each value.
+                # Convenience shorthand: caller passes either `invoiceId`
+                # OR an explicit destination + amount.
+                invoiceId:
+                  type: string
+                  description: |
+                    When set, the server populates source account /
+                    destination / amount / currency from the linked
+                    ledger_invoices row.
+                to:
+                  type: object
+                  properties:
+                    counterparty_id: { type: string }
+                amount:
+                  type: string
+                  pattern: '^\d+(\.\d+)?$'
+                currency:
+                  type: string
+                  pattern: '^[A-Z]{3}$'
+                source_account_id: { type: string }
+                memo:
+                  type: string
+                  maxLength: 500
+                evidence_ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        '201':
+          description: Action created with policy decision attached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+    get:
+      tags: [Action]
+      summary: List actions
+      operationId: listActions
+      parameters:
+        - name: tenantId
+          in: query
+          schema: { type: string }
+        - name: agent_id
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/ActionStatus' }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 500 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Action list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Action' }
+                  next_cursor:
+                    type: string
+                    nullable: true
+
+  /actions/{action_id}:
+    get:
+      tags: [Action]
+      summary: Get a single action with its PolicyDecision + audit trail
+      operationId: getAction
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Action
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      tags: [Action]
+      summary: Cancel a proposed action
+      description: |
+        Only Actions in `status === "needs_approval"` (or pre-approval
+        `auto`) can be cancelled. Cancellation is a terminal state.
+      operationId: cancelAction
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cancelled action
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+        '409':
+          description: Action not in a cancellable state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /actions/{action_id}/approve:
+    post:
+      tags: [Action]
+      summary: Sign approval on an ESCALATE action
+      operationId: approveAction
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                as:
+                  type: string
+                  description: |
+                    Approver identity reference (e.g. `user_cfo`,
+                    `role:treasurer`). Default: the caller's principal id.
+                approver_role:
+                  type: string
+                  description: Role context for the approval.
+                signature:
+                  type: string
+                  description: |
+                    Hex-encoded EIP-712 signature when the policy is
+                    on-chain-registered. Optional for off-chain policies.
+      responses:
+        '200':
+          description: Updated action (approval recorded; status may transition to `approved`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+
+  /actions/{action_id}/reject:
+    post:
+      tags: [Action]
+      summary: Reject an action
+      operationId: rejectAction
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                as: { type: string }
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Rejected action
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+
+  /actions/{action_id}/execute:
+    post:
+      tags: [Action]
+      summary: Execute an approved action through its rail
+      description: |
+        Runs the deterministic 13-step pre-execution gate (§6 of
+        Engineering Standards) before dispatching to the rail. On any
+        gate failure returns 422 with one of the `gate_*` error codes
+        (see https://docs.brain.fi/resources/errors).
+      operationId: executeAction
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '202':
+          description: Dispatched to rail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action_id: { type: string }
+                  execution_id: { type: string }
+                  rail: { $ref: '#/components/schemas/ActionRail' }
+                  status:
+                    type: string
+                    enum: [dispatched, in_flight]
+        '422':
+          description: Pre-execution gate failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  #############################################################################
+  # v0.2 PAYMENT INTENTS (deprecated — use /actions/* above)
+  #############################################################################
+
   /payment-intents:
     post:
       tags: [PaymentIntent]
-      summary: Create a PaymentIntent (proposed)
+      deprecated: true
+      summary: '[Deprecated] Create a PaymentIntent — use POST /actions'
+      description: |
+        Deprecated in v0.3. Successor: `POST /v1/actions`. Equivalent
+        behavior; the new route uses the docs Action body shape.
       operationId: createPaymentIntent
       requestBody:
         required: true
@@ -1366,7 +1641,10 @@ paths:
   /payment-intents/{id}:
     get:
       tags: [PaymentIntent]
-      summary: PaymentIntent detail with PolicyDecision and audit trail
+      deprecated: true
+      summary: '[Deprecated] PaymentIntent detail — use GET /actions/{action_id}'
+      description: |
+        Deprecated in v0.3. Successor: `GET /v1/actions/{action_id}`.
       operationId: getPaymentIntent
       parameters:
         - name: id
@@ -1384,7 +1662,11 @@ paths:
   /payment-intents/{id}/approve:
     post:
       tags: [PaymentIntent]
-      summary: Sign approval on a confirm-mode PaymentIntent
+      deprecated: true
+      summary: '[Deprecated] Approve — use POST /actions/{action_id}/approve'
+      description: |
+        Deprecated in v0.3. Successor:
+        `POST /v1/actions/{action_id}/approve`.
       operationId: approvePaymentIntent
       parameters:
         - name: id
@@ -1401,7 +1683,11 @@ paths:
   /payment-intents/{id}/reject:
     post:
       tags: [PaymentIntent]
-      summary: Reject a PaymentIntent
+      deprecated: true
+      summary: '[Deprecated] Reject — use POST /actions/{action_id}/reject'
+      description: |
+        Deprecated in v0.3. Successor:
+        `POST /v1/actions/{action_id}/reject`.
       operationId: rejectPaymentIntent
       parameters:
         - name: id
@@ -1426,12 +1712,15 @@ paths:
   /payment-intents/{id}/execute:
     post:
       tags: [PaymentIntent]
-      summary: Execute an approved PaymentIntent through its rail
+      deprecated: true
+      summary: '[Deprecated] Execute — use POST /actions/{action_id}/execute'
       description: |
-        Runs the deterministic 13-step pre-execution gate (§6 of Engineering
-        Standards) before dispatching. Returns 409 with
-        `payment_intent_gate_failed` if any check fails, with details listing
-        the failing check index.
+        Deprecated in v0.3. Successor:
+        `POST /v1/actions/{action_id}/execute`. Runs the deterministic
+        13-step pre-execution gate (§6 of Engineering Standards) before
+        dispatching. Returns 422 with one of the `gate_*` error codes if
+        any check fails (previously the legacy code was the umbrella
+        `payment_intent_gate_failed`).
       operationId: executePaymentIntent
       parameters:
         - name: id
@@ -2297,7 +2586,17 @@ components:
       properties:
         decision:
           type: string
-          enum: [allow, confirm, reject]
+          enum: [ALLOW, ESCALATE, DENY]
+          description: |
+            Policy verdict for the evaluated action. Source:
+            https://docs.brain.fi/api-reference/policy-api ("Evaluate
+            Action"). Semantics:
+              * ALLOW    — action may proceed without approval
+              * ESCALATE — action requires the human signers listed in
+                           `required_approvers` before it can execute
+              * DENY     — action is blocked
+            Internally services emit `allow|confirm|reject`; the HTTP
+            layer maps these to the wire vocabulary on every response.
         trace:
           type: array
           items:
@@ -2310,6 +2609,14 @@ components:
           type: array
           items: { type: string }
         policy_version: { type: integer }
+        matched_rule:
+          type: string
+          nullable: true
+          description: |
+            Convenience: the id of the single rule that produced the
+            decision. Equivalent to `trace[i].rule_id` where
+            `trace[i].matched` is true. Surfaced on Action responses
+            and used by the SDK convenience methods.
 
     #
     # Execution layer
@@ -2679,6 +2986,146 @@ components:
             execution_receipt_ids:
               type: array
               items: { type: string }
+
+    ActionStatus:
+      type: string
+      description: |
+        Caller-facing lifecycle state, per
+        https://docs.brain.fi/api-reference/actions-api. Maps onto the
+        internal PaymentIntent status one-to-one but uses the
+        docs-publishing vocabulary instead of the storage one.
+      enum:
+        - auto
+        - needs_approval
+        - approved
+        - rejected
+        - executed
+        - failed
+        - cancelled
+
+    ActionRail:
+      type: string
+      description: |
+        Execution rail. Source:
+        https://docs.brain.fi/api-reference/actions-api.
+      enum:
+        - bank_api
+        - smart_account
+        - x402
+
+    Action:
+      description: |
+        v0.3 user-facing Action object — the resource served by
+        `/v1/actions/*`. Internally backed by a PaymentIntent row in
+        the Ledger; the route layer translates the storage enum
+        vocabularies to the docs vocabulary on every response.
+
+        Source: https://docs.brain.fi/api-reference/actions-api.
+      type: object
+      required: [id, tenantId, type, status, decision, expires_at]
+      properties:
+        id:
+          type: string
+          description: Action id (action_<ulid>).
+        tenantId:
+          type: string
+          description: Owning tenant.
+        agent_id:
+          type: string
+          nullable: true
+          description: Proposing agent (null when proposed by a human).
+        type:
+          type: string
+          description: |
+            Action type. Examples: `pay_invoice`, `outbound_payment`,
+            `onchain_transfer`, `erp_writeback`. Free-form string —
+            the policy DSL `applies_to` clause is what gates each value.
+        decision:
+          type: string
+          enum: [ALLOW, ESCALATE, DENY]
+          description: |
+            Latest policy verdict on this action. ALLOW = no approval
+            needed; ESCALATE = waiting on signers in `approvers`;
+            DENY = blocked. Matches `PolicyDecision.decision`.
+        approvers:
+          type: array
+          description: |
+            Approver references (e.g. `["role:cfo"]`). Populated when
+            `decision === "ESCALATE"`.
+          items: { type: string }
+        approvals:
+          type: array
+          description: Approvals submitted so far.
+          items:
+            type: object
+            properties:
+              signer: { type: string }
+              signed_at: { type: string, format: date-time }
+              signature: { type: string }
+        status:
+          $ref: '#/components/schemas/ActionStatus'
+        rail:
+          $ref: '#/components/schemas/ActionRail'
+        tx_hash:
+          type: string
+          nullable: true
+          description: On-chain tx hash if `rail === "smart_account"`; else null.
+        rail_receipt:
+          type: object
+          nullable: true
+          description: |
+            Rail-specific receipt body (ACH return file row, on-chain
+            tx receipt, etc.). Schema is rail-dependent.
+          additionalProperties: true
+        executed_at:
+          type: string
+          format: date-time
+          nullable: true
+        settled_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          description: |
+            When the policy decision expires and the Action must be
+            re-evaluated (e.g. balance staleness window).
+        policy_version:
+          type: integer
+          description: Policy version the decision was evaluated against.
+        matched_rule:
+          type: string
+          nullable: true
+          description: Rule id that produced the decision.
+        reason:
+          type: object
+          nullable: true
+          description: |
+            Structured "why" payload when `decision !== "ALLOW"`. Schema
+            is decision-dependent — e.g. for DENY:
+            `{ code: "counterparty_unverified", counterparty_id: "..." }`.
+          additionalProperties: true
+        signed_verdict:
+          type: string
+          nullable: true
+          description: |
+            EIP-712 signed PolicyDecision attestation. Present when the
+            policy was registered on-chain. Opaque to the SDK in v0.3;
+            schema formalizes in a later release.
+        audit_events:
+          type: array
+          description: |
+            Audit event ids touching this action, ordered by
+            `created_at` ascending. Use `brain.audit.get(eventId)` or
+            `brain.audit.proof(eventId)` to dereference.
+          items: { type: string }
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     ReconciliationMatch:
       type: object

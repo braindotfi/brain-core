@@ -8,6 +8,7 @@ import {
   type JwtVerifier,
 } from "@brain/api/shared";
 import { registerExecutionRoutes } from "./routes.js";
+import { registerActionRoutes } from "./actions/routes.js";
 import { ApprovalService } from "./approvals/ApprovalService.js";
 import { PaymentIntentService } from "./payment-intents/PaymentIntentService.js";
 import { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
@@ -75,7 +76,27 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     evaluatePolicy: opts.deps.evaluatePaymentIntent,
     resolvePrincipal: opts.deps.resolvePrincipal,
   });
+  // Legacy /payment-intents/* routes (deprecated in v0.3) — every reply
+  // gets the RFC 8594 `Deprecation: true` header and a `Link` header
+  // pointing at the successor /actions/* route. Spec marks each
+  // operation with `deprecated: true`.
+  app.addHook("onSend", async (request, reply) => {
+    if (request.routeOptions?.url?.startsWith("/payment-intents")) {
+      reply.header("Deprecation", "true");
+      const successor = request.routeOptions.url.replace(
+        "/payment-intents",
+        "/actions",
+      );
+      reply.header(
+        "Link",
+        `<${successor}>; rel="successor-version"`,
+      );
+    }
+  });
   await registerPaymentIntentRoutes(app, paymentIntents);
+
+  // v0.3 canonical /actions/* routes — share the same PaymentIntentService.
+  await registerActionRoutes(app, paymentIntents);
 
   // Feature/mcp-server: optional MCP route registration. When supplied,
   // the boot site has constructed a BrainMcpServer (from @brain/mcp) and
