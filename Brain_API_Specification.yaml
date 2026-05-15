@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Brain API
-  version: 0.2.0
+  version: 0.3.0
   description: |
     The Brain API exposes six layers as HTTP endpoints plus one MCP surface.
     Raw (evidence), Ledger (normalized financial truth), Wiki (memory),
@@ -13,12 +13,19 @@ info:
     legacy /execution/* paths remain shipped with deprecation headers for
     the duration of the v0.3 transition.
 
+    v0.3.0 aligns the spec to the canonical public docs at
+    https://docs.brain.fi. Material changes land in small commits — see
+    docs/sdk-audit.md for the reconciliation queue. This release aligns
+    the error envelope to the docs shape (`{ error: { code, message,
+    details, trace_id, docs_url } }`); the v0.2 flat shape is replaced.
+
     All endpoints are tenant-scoped. Tenant identity is derived from the
     authenticated principal. The principal's tenant is never passed in URLs
     except where explicitly required for cross-tenant operations by platform
     administrators.
 
-    Base URL: https://api.brain.fi/v1
+    Base URL (production): https://api.brain.fi/v1
+    Base URL (sandbox):    https://api.brain.dev/v1
     Protocol: HTTPS only. HTTP requests are rejected at the edge.
     Content type: application/json unless otherwise specified.
     Character encoding: UTF-8.
@@ -33,8 +40,8 @@ info:
 servers:
   - url: https://api.brain.fi/v1
     description: Production
-  - url: https://api.sandbox.brain.fi/v1
-    description: Sandbox
+  - url: https://api.brain.dev/v1
+    description: Sandbox (Base Sepolia behind the audit anchor)
 
 security:
   - bearerAuth: []
@@ -1824,20 +1831,60 @@ components:
 
     Error:
       type: object
-      required: [code, message]
+      required: [error]
+      description: |
+        Canonical Brain error envelope. Every non-2xx response wraps its
+        body in this shape. Source of truth:
+        https://docs.brain.fi/resources/errors (canonical wire codes) and
+        https://docs.brain.fi/api-reference/overview (envelope shape).
+
+        Engineering Standards §4.1 previously specified the same nested
+        shape under the field name `request_id`; the docs publish it as
+        `trace_id` and the docs win — see docs/sdk-audit.md conflict E.
       properties:
-        code:
-          type: string
-          description: Machine-readable error code (see Engineering Standards section 3)
-        message:
-          type: string
-          description: Human-readable error message
-        trace_id:
-          type: string
-          description: Correlation ID for support
-        details:
+        error:
           type: object
-          additionalProperties: true
+          required: [code, message, trace_id, docs_url]
+          properties:
+            code:
+              type: string
+              description: |
+                Machine-readable error code. Stable: once shipped a code
+                is never renamed (Standards §4.3 "additions only"). See
+                services/api/src/shared/errors.ts for the registry.
+            message:
+              type: string
+              description: Human-readable error message (English, untranslated).
+            details:
+              type: object
+              additionalProperties: true
+              description: |
+                Optional structured payload. Schema is code-specific —
+                e.g. `policy_denied` carries `{rule_id, …}`, `gate_*`
+                carries `{check, …}`.
+            trace_id:
+              type: string
+              description: |
+                Correlation id for support. Per-request, surfaced in
+                logs, metrics, and traces. Pass to support to retrieve
+                the full request timeline.
+              example: trc_8f3a92...
+            docs_url:
+              type: string
+              format: uri
+              description: |
+                Direct link to the docs page for this error code, of the
+                form https://docs.brain.fi/errors/{code}.
+              example: https://docs.brain.fi/errors/policy_denied
+      example:
+        error:
+          code: policy_denied
+          message: Counterparty not approved
+          details:
+            counterparty_id: cp_x
+            policy_version: 3
+          trace_id: trc_8f3a92abc
+          docs_url: https://docs.brain.fi/errors/policy_denied
 
     #
     # Raw layer
