@@ -8,6 +8,8 @@
  * @packageDocumentation
  */
 
+import { BrainHttp } from "./http/index.js";
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -127,6 +129,12 @@ export class Brain {
   /** Default tenant for calls that omit `tenantId`. */
   public readonly defaultTenantId: string | undefined;
 
+  /**
+   * The HTTP transport. Public for advanced/escape-hatch use cases —
+   * most callers use the namespace methods.
+   */
+  public readonly http: BrainHttp;
+
   /** The api key. Kept readonly + non-public for safety. */
   readonly #apiKey: string;
 
@@ -157,6 +165,12 @@ export class Brain {
       );
     }
     this.#fetch = fetchImpl;
+
+    this.http = new BrainHttp({
+      baseUrl: this.baseUrl,
+      apiKey: this.#apiKey,
+      fetch: this.#fetch,
+    });
   }
 
   /**
@@ -244,7 +258,15 @@ export {
   MaintenanceModeError,
 } from "./errors/index.js";
 
-// (http transport lands in commit #7)
+export {
+  BrainHttp,
+  generateIdempotencyKey,
+  looksLikeIdempotencyKey,
+  type BrainHttpOptions,
+  type HttpMethod,
+  type RequestOptions,
+} from "./http/index.js";
+
 // (generated types land in commit #8)
 // (namespace modules land in commits #9 and #11)
 // (convenience surface lands in commit #11)
