@@ -8,6 +8,17 @@
  * @packageDocumentation
  */
 
+import {
+  AuditModule,
+  AccountsModule,
+  BalancesModule,
+  CounterpartiesModule,
+  InvoicesModule,
+  ObligationsModule,
+  PolicyModule,
+  TransactionsModule,
+  WikiModule,
+} from "./namespaces.js";
 import { BrainHttp } from "./http/index.js";
 
 // ---------------------------------------------------------------------------
@@ -135,6 +146,24 @@ export class Brain {
    */
   public readonly http: BrainHttp;
 
+  // -------------------------------------------------------------------------
+  // Ledger sub-namespaces (top-level for ergonomic compat with
+  // docs.brain.fi/build/* examples)
+  // -------------------------------------------------------------------------
+  public readonly accounts: AccountsModule;
+  public readonly transactions: TransactionsModule;
+  public readonly balances: BalancesModule;
+  public readonly counterparties: CounterpartiesModule;
+  public readonly obligations: ObligationsModule;
+  public readonly invoices: InvoicesModule;
+
+  // -------------------------------------------------------------------------
+  // Higher-layer namespaces
+  // -------------------------------------------------------------------------
+  public readonly wiki: WikiModule;
+  public readonly policy: PolicyModule;
+  public readonly audit: AuditModule;
+
   /** The api key. Kept readonly + non-public for safety. */
   readonly #apiKey: string;
 
@@ -171,6 +200,16 @@ export class Brain {
       apiKey: this.#apiKey,
       fetch: this.#fetch,
     });
+
+    this.accounts = new AccountsModule(this.http);
+    this.transactions = new TransactionsModule(this.http);
+    this.balances = new BalancesModule(this.http);
+    this.counterparties = new CounterpartiesModule(this.http);
+    this.obligations = new ObligationsModule(this.http);
+    this.invoices = new InvoicesModule(this.http);
+    this.wiki = new WikiModule(this.http);
+    this.policy = new PolicyModule(this.http);
+    this.audit = new AuditModule(this.http);
   }
 
   /**
@@ -281,5 +320,8 @@ export type {
   paths as Paths,
 } from "./generated/index.js";
 
-// (namespace modules land in commits #9 and #11)
+// Namespace modules + their option/return types (commit #9 read-side set).
+// `actions` and `agents` modules land in commit #11.
+export * from "./namespaces.js";
+
 // (convenience surface lands in commit #11)

@@ -1,0 +1,15 @@
+export {
+  WikiModule,
+  type AskOptions,
+  type Citation,
+  type GetEntityOptions,
+  type GetPageOptions,
+  type GetRelatedOptions,
+  type RegeneratePageOptions,
+  type SearchOptions,
+  type SemanticSearchOptions,
+  type WikiAnswer,
+  type WikiEntity,
+  type WikiPage,
+  type WikiRelation,
+} from "./wiki.js";
