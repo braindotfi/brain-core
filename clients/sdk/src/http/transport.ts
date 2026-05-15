@@ -69,17 +69,33 @@ const SDK_USER_AGENT = "brain-sdk-ts/0.1.0";
  */
 export class BrainHttp {
   readonly #baseUrl: string;
-  readonly #apiKey: string;
+  /** Mutable so auth flows (SIWX) can swap the bearer mid-session. */
+  #bearerToken: string;
   readonly #fetch: FetchLike;
   readonly #userAgent: string;
 
   public constructor(opts: BrainHttpOptions) {
     this.#baseUrl = opts.baseUrl.replace(/\/+$/, "");
-    this.#apiKey = opts.apiKey;
+    this.#bearerToken = opts.apiKey;
     this.#fetch = opts.fetch;
     this.#userAgent = opts.userAgent
       ? `${SDK_USER_AGENT} ${opts.userAgent}`
       : SDK_USER_AGENT;
+  }
+
+  /**
+   * Rotate the bearer token on this transport. After
+   * `brain.auth.signInWithSIWX(...)` succeeds, subsequent requests
+   * authenticate as the agent rather than with the initial api key.
+   * Pass `null` to clear (sign-out).
+   */
+  public setBearerToken(token: string | null): void {
+    this.#bearerToken = token ?? "";
+  }
+
+  /** Returns true when there is a non-empty bearer to send. */
+  public hasBearerToken(): boolean {
+    return this.#bearerToken.length > 0;
   }
 
   /** Generic request. Most callers use `get` / `post` / etc. instead. */
@@ -175,7 +191,7 @@ export class BrainHttp {
   ): Record<string, string> {
     const headers: Record<string, string> = {
       Accept: "application/json",
-      Authorization: `Bearer ${this.#apiKey}`,
+      Authorization: `Bearer ${this.#bearerToken}`,
       "User-Agent": this.#userAgent,
     };
     if (opts.body !== undefined) {

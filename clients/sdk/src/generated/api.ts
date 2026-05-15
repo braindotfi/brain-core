@@ -4,6 +4,57 @@
  */
 
 export interface paths {
+    "/auth/siwx/challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request a SIWX challenge nonce
+         * @description Issues a fresh nonce and `session_id` the agent should echo back
+         *     on `POST /auth/siwx`. The nonce is bound to a 5-minute TTL and
+         *     is single-use. Optional path; clients may also provide their own
+         *     nonce inside the SIWX message.
+         */
+        post: operations["siwxChallenge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/siwx": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in as an external agent via SIWX
+         * @description Verifies an EIP-4361-formatted message signed with the agent's
+         *     registered key, checks the agent is `active` in the local
+         *     `agents` table and that its `scope_hash` matches the on-chain
+         *     `BrainMCPAgentRegistry` record, then issues an `agent_token`
+         *     JWT (1-hour TTL, refreshable by re-signing).
+         *
+         *     v0.3 ship verifies the signature and shape; the on-chain
+         *     scope-hash check is stubbed until the registry contract
+         *     integration lands (see PLAN-FIRST #14b).
+         */
+        post: operations["siwxVerify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sources": {
         parameters: {
             query?: never;
@@ -2313,6 +2364,116 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    siwxChallenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description Optional hint — the server may use it to pre-fetch
+                     *     the agent's registration record so the verify call
+                     *     is faster.
+                     */
+                    agent_address?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Challenge issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        nonce: string;
+                        session_id: string;
+                        /**
+                         * @description The EIP-4361 `domain` claim the agent must include
+                         *     in its signed message. Defaults to `api.brain.fi`.
+                         */
+                        domain: string;
+                    };
+                };
+            };
+        };
+    };
+    siwxVerify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description EIP-4361 SIWX message in plain text. */
+                    message: string;
+                    signature: string;
+                    /**
+                     * @description The session id returned by /auth/siwx/challenge.
+                     *     Required when the message's nonce was not pre-shared
+                     *     out-of-band.
+                     */
+                    session_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Verified — agent_token issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /**
+                         * @description Brain agent JWT. Use as
+                         *     `Authorization: Bearer <access_token>` on
+                         *     subsequent calls.
+                         */
+                        access_token: string;
+                        /** @enum {string} */
+                        token_type: "Bearer";
+                        /** @description Seconds until token expiry. */
+                        expires_in: number;
+                        principal: {
+                            id?: string;
+                            /** @enum {string} */
+                            type?: "agent";
+                            tenantId?: string;
+                            scopes?: string[];
+                        };
+                    };
+                };
+            };
+            /**
+             * @description Signature verification or agent registration check failed.
+             *     Maps to one of:
+             *       * `auth_siwx_invalid` — signature did not recover to the
+             *         expected address, or the nonce was expired/already used.
+             *       * `agent_not_found` — recovered address is not registered.
+             *       * `agent_inactive` — agent is registered but not in
+             *         `active` state.
+             *       * `scope_hash_mismatch` — JWT scope_hash would not match
+             *         the on-chain registry value.
+             */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listSources: {
         parameters: {
             query?: {

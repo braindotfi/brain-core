@@ -13,6 +13,7 @@ import {
   ActionsModule,
   AgentsModule,
   AuditModule,
+  AuthModule,
   BalancesModule,
   CashFlowModule,
   CounterpartiesModule,
@@ -172,8 +173,9 @@ export class Brain {
   public readonly cashFlow: CashFlowModule;
 
   // -------------------------------------------------------------------------
-  // Ingestion / lifecycle namespaces
+  // Auth / ingestion / lifecycle namespaces
   // -------------------------------------------------------------------------
+  public readonly auth: AuthModule;
   public readonly sources: SourcesModule;
 
   // -------------------------------------------------------------------------
@@ -232,6 +234,7 @@ export class Brain {
     this.obligations = new ObligationsModule(this.http);
     this.invoices = new InvoicesModule(this.http);
     this.cashFlow = new CashFlowModule(this.http);
+    this.auth = new AuthModule(this.http);
     this.sources = new SourcesModule(this.http);
     this.wiki = new WikiModule(this.http);
     this.policy = new PolicyModule(this.http);

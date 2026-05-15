@@ -87,6 +87,144 @@ tags:
 paths:
 
   #############################################################################
+  # AUTH — external-agent sign-in via SIWX (PLAN-FIRST #15)
+  #
+  # Source: https://docs.brain.fi/api-reference/authentication and
+  # https://docs.brain.fi/products/brain-api ("For SIWX flow,
+  # authentication occurs via POST /v1/auth/siwx").
+  #
+  # Internal services and human users continue to authenticate via the
+  # existing /auth/nonce + /auth/verify SIWE flow at services/api/src/
+  # auth/siwe.ts. SIWX is the *agent-specific* path: the signing address
+  # must match a registered agent in BrainMCPAgentRegistry, scopes are
+  # drawn from the agent's on-chain attestation, and the issued token
+  # carries principal_type=agent.
+  #############################################################################
+
+  /auth/siwx/challenge:
+    post:
+      tags: [Admin]
+      security: []  # public — no bearer token required
+      summary: Request a SIWX challenge nonce
+      description: |
+        Issues a fresh nonce and `session_id` the agent should echo back
+        on `POST /auth/siwx`. The nonce is bound to a 5-minute TTL and
+        is single-use. Optional path; clients may also provide their own
+        nonce inside the SIWX message.
+      operationId: siwxChallenge
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agent_address:
+                  type: string
+                  pattern: '^0x[a-fA-F0-9]{40}$'
+                  description: |
+                    Optional hint — the server may use it to pre-fetch
+                    the agent's registration record so the verify call
+                    is faster.
+      responses:
+        '200':
+          description: Challenge issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nonce, session_id, domain]
+                properties:
+                  nonce: { type: string, minLength: 8 }
+                  session_id: { type: string }
+                  domain:
+                    type: string
+                    description: |
+                      The EIP-4361 `domain` claim the agent must include
+                      in its signed message. Defaults to `api.brain.fi`.
+
+  /auth/siwx:
+    post:
+      tags: [Admin]
+      security: []  # public — caller is unauthenticated until verify succeeds
+      summary: Sign in as an external agent via SIWX
+      description: |
+        Verifies an EIP-4361-formatted message signed with the agent's
+        registered key, checks the agent is `active` in the local
+        `agents` table and that its `scope_hash` matches the on-chain
+        `BrainMCPAgentRegistry` record, then issues an `agent_token`
+        JWT (1-hour TTL, refreshable by re-signing).
+
+        v0.3 ship verifies the signature and shape; the on-chain
+        scope-hash check is stubbed until the registry contract
+        integration lands (see PLAN-FIRST #14b).
+      operationId: siwxVerify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message, signature]
+              properties:
+                message:
+                  type: string
+                  description: EIP-4361 SIWX message in plain text.
+                signature:
+                  type: string
+                  pattern: '^0x[a-fA-F0-9]+$'
+                session_id:
+                  type: string
+                  description: |
+                    The session id returned by /auth/siwx/challenge.
+                    Required when the message's nonce was not pre-shared
+                    out-of-band.
+      responses:
+        '200':
+          description: Verified — agent_token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, token_type, expires_in, principal]
+                properties:
+                  access_token:
+                    type: string
+                    description: |
+                      Brain agent JWT. Use as
+                      `Authorization: Bearer <access_token>` on
+                      subsequent calls.
+                  token_type:
+                    type: string
+                    enum: [Bearer]
+                  expires_in:
+                    type: integer
+                    description: Seconds until token expiry.
+                  principal:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      type: { type: string, enum: [agent] }
+                      tenantId: { type: string }
+                      scopes:
+                        type: array
+                        items: { type: string }
+        '401':
+          description: |
+            Signature verification or agent registration check failed.
+            Maps to one of:
+              * `auth_siwx_invalid` — signature did not recover to the
+                expected address, or the nonce was expired/already used.
+              * `agent_not_found` — recovered address is not registered.
+              * `agent_inactive` — agent is registered but not in
+                `active` state.
+              * `scope_hash_mismatch` — JWT scope_hash would not match
+                the on-chain registry value.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  #############################################################################
   # SOURCES — source-connection lifecycle (PLAN-FIRST #12)
   #
   # Adapter-facing routes that the Brain Console and SDK call to manage
