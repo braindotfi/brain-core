@@ -1,0 +1,60 @@
+{
+  "name": "@brain/sdk",
+  "version": "0.1.0",
+  "private": false,
+  "description": "The official TypeScript SDK for the Brain Finance API. Source of truth: https://docs.brain.fi.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "lint": "eslint src --max-warnings 0",
+    "lint:fix": "eslint src --fix",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@vitest/coverage-v8": "^2.1.2",
+    "eslint": "^9.12.0",
+    "typescript": "^5.6.2",
+    "undici": "^6.20.0",
+    "vitest": "^2.1.2"
+  },
+  "keywords": [
+    "brain",
+    "brain-finance",
+    "financial-intelligence",
+    "ledger",
+    "wiki",
+    "policy",
+    "audit",
+    "mcp"
+  ],
+  "homepage": "https://docs.brain.fi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brain-finance/brain.git",
+    "directory": "clients/sdk"
+  }
+}
