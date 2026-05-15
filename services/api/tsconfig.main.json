@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo.main"
+  },
+  "include": [
+    "src/main.ts",
+    "src/auth/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ],
+  "references": [
+    { "path": "../raw" },
+    { "path": "../ledger" },
+    { "path": "../wiki" },
+    { "path": "../policy" },
+    { "path": "../execution" },
+    { "path": "../audit" },
+    { "path": "../mcp" }
+  ]
+}

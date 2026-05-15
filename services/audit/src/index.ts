@@ -17,3 +17,4 @@ export {
   type BroadcastResult,
   type PublishOptions,
 } from "./publisher.js";
+export { registerAuditRoutes } from "./routes.js";

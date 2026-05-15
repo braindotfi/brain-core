@@ -7,7 +7,12 @@
 
 export const SERVICE_NAME = "brain-raw" as const;
 
-export { buildRawApp, type BuildRawAppOptions } from "./server.js";
+export {
+  buildRawApp,
+  registerRawPlugin,
+  type BuildRawAppOptions,
+  type RegisterRawPluginOptions,
+} from "./server.js";
 export type { RawDeps } from "./deps.js";
 export { ingestOne, ingestMany, type IngestInput, type IngestResult } from "./services/ingest.js";
 export {

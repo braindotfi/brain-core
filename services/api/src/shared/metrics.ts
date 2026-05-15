@@ -52,6 +52,7 @@ export function createMetrics(opts: CreateMetricsOptions): MetricsEmitter {
   if (opts.mock === true) {
     return new MockMetrics();
   }
+  const globalTags = tagObjectToArray(opts.globalTags);
   const statsd = new StatsD({
     host: opts.host,
     port: opts.port,
@@ -62,7 +63,7 @@ export function createMetrics(opts: CreateMetricsOptions): MetricsEmitter {
       // eslint-disable-next-line no-console
       console.warn(`[metrics] emission error: ${err.message}`);
     },
-    globalTags: tagObjectToArray(opts.globalTags),
+    ...(globalTags !== undefined ? { globalTags } : {}),
   });
   return new StatsdMetrics(statsd);
 }

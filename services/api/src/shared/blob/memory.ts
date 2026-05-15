@@ -21,12 +21,15 @@ export class MemoryBlobAdapter implements BlobAdapter {
     opts: PutOptions,
   ): Promise<BlobObject> {
     const buf = await toBuffer(body);
-    this.objects.set(path, {
+    const entry: { body: Buffer; contentType?: string; metadata: Record<string, string>; tombstoned: false } = {
       body: buf,
-      contentType: opts.contentType,
       metadata: { ...(opts.metadata ?? {}) },
       tombstoned: false,
-    });
+    };
+    if (opts.contentType !== undefined) {
+      entry.contentType = opts.contentType;
+    }
+    this.objects.set(path, entry);
     return { uri: path, sha256: sha256Hex(buf), bytes: buf.length, mimeType: opts.contentType };
   }
 

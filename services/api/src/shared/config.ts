@@ -17,6 +17,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "staging", "production"]).default("development"),
   SERVICE_NAME: z.string().min(1).default("brain-unknown"),
   SERVICE_VERSION: z.string().default("0.0.0-dev"),
+  PORT: z.coerce.number().int().positive().default(3000),
 
   // ---- Postgres ----
   DATABASE_URL: z.string().url(),
@@ -51,6 +52,31 @@ const envSchema = z.object({
 
   // ---- Limits ----
   REQUEST_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(52_428_800), // 50 MiB cap
+
+  // ---- LLM (OpenAI) ----
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  WIKI_LLM_MODEL: z.string().default("gpt-4o-mini"),
+  WIKI_EMBED_MODEL: z.string().default("text-embedding-3-small"),
+
+  // ---- MCP / on-chain ----
+  RPC_URL: z.string().url().default("https://sepolia.base.org"),
+  MCP_AGENT_REGISTRY_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .default("0xd1558828ef31630164aa8942dd41bc63a4d8bed7"),
+  BRAIN_MCP_DEV_AUTH_BYPASS: z.coerce.boolean().default(false),
+
+  // ---- On-chain rails (Base Sepolia) ----
+  BRAIN_SESSION_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
+  BASE_RPC_URL: z.string().url().optional(),
+
+  // ---- Audit anchor (Base Sepolia) ----
+  AUDIT_PUBLISHER_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
+  AUDIT_ANCHOR_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .default("0xb900add824064098342c869ff83efdeb05eb95ce"),
+  AUDIT_ANCHOR_INTERVAL_MS: z.coerce.number().int().positive().default(60 * 60 * 1000),
 });
 
 export type BrainConfig = z.infer<typeof envSchema>;

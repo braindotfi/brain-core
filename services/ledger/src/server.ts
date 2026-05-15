@@ -43,3 +43,15 @@ export async function buildLedgerApp(opts: BuildLedgerAppOptions): Promise<Fasti
   await registerLedgerRoutes(app, ledger, reconciliation);
   return app;
 }
+
+/**
+ * Plugin-style registration for the composed single-process boot.
+ *
+ * Registers all Ledger routes on an already-configured Fastify app (shared
+ * plugins registered once by main.ts). No standalone server setup.
+ */
+export async function registerLedgerPlugin(app: FastifyInstance, deps: LedgerDeps): Promise<void> {
+  const service = new LedgerService(deps);
+  const reconciliation = new ReconciliationService({ pool: deps.pool, audit: deps.audit });
+  await registerLedgerRoutes(app, service, reconciliation);
+}

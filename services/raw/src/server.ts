@@ -91,3 +91,50 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
 
   return app;
 }
+
+export interface RegisterRawPluginOptions {
+  plaidVerify: PlaidVerifyOptions;
+  resolveWebhookTenant: WebhookTenantResolver;
+}
+
+/**
+ * Plugin-style registration for the composed single-process boot.
+ *
+ * Registers all Raw routes and content-type parsers on an already-configured
+ * Fastify app. Shared plugins (auth, error handler, request-id) are NOT
+ * registered here — they are registered once by main.ts.
+ */
+export async function registerRawPlugin(
+  app: FastifyInstance,
+  deps: RawDeps,
+  opts: RegisterRawPluginOptions,
+): Promise<void> {
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "buffer" },
+    (_req: unknown, body: Buffer, done: (err: Error | null, body?: unknown) => void) => {
+      try {
+        const parsed =
+          body.length > 0 ? (JSON.parse(body.toString("utf8")) as Record<string, unknown>) : {};
+        parsed["__rawBody"] = body;
+        done(null, parsed);
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
+  );
+  app.addContentTypeParser(
+    "application/octet-stream",
+    { parseAs: "buffer" },
+    (_req: unknown, body: Buffer, done: (err: Error | null, body?: unknown) => void) =>
+      done(null, body),
+  );
+  await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024, files: 1, fields: 16 } });
+  await registerIngest(app, deps);
+  await registerWebhook(app, deps, {
+    plaidVerify: opts.plaidVerify,
+    resolveTenant: opts.resolveWebhookTenant,
+  });
+  await registerArtifact(app, deps);
+  await registerParsed(app, deps);
+}

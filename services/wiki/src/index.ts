@@ -13,7 +13,7 @@
 
 export const SERVICE_NAME = "brain-wiki" as const;
 
-export { buildWikiApp, type BuildWikiAppOptions } from "./server.js";
+export { buildWikiApp, registerWikiPlugin, type BuildWikiAppOptions } from "./server.js";
 export { loadRegistry, type SchemaRegistry } from "./schemas.js";
 export type { WikiDeps } from "./deps.js";
 export {

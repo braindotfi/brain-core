@@ -43,3 +43,7 @@ export type {
   RailDispatchResult,
   RailKind,
 } from "./rails/types.js";
+
+// Boot-binary route registration hooks.
+export { registerExecutionRoutes } from "./routes.js";
+export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";

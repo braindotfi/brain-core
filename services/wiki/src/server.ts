@@ -47,3 +47,19 @@ export async function buildWikiApp(opts: BuildWikiAppOptions): Promise<FastifyIn
 
   return app;
 }
+
+/**
+ * Plugin-style registration for the composed single-process boot.
+ *
+ * Registers all Wiki routes on an already-configured Fastify app (shared
+ * plugins registered once by main.ts). No standalone server setup.
+ */
+export async function registerWikiPlugin(app: FastifyInstance, deps: WikiDeps): Promise<void> {
+  await registerEntity(app, deps);
+  await registerSearch(app, deps);
+  await registerQuestion(app, deps);
+  await registerAnnotate(app, deps);
+  await registerSchema(app, deps);
+  const pageService = new WikiPageService({ pool: deps.pool, audit: deps.audit });
+  await registerMemoryRoutes(app, pageService);
+}
