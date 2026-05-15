@@ -267,6 +267,19 @@ export {
   type RequestOptions,
 } from "./http/index.js";
 
-// (generated types land in commit #8)
+/**
+ * OpenAPI-derived types. Regenerate via `pnpm --filter @brain/sdk run
+ * generate-types` after every change to Brain_API_Specification.yaml.
+ *
+ * Re-exported under the `Schemas` namespace so callers can write
+ * `Schemas.components["schemas"]["Account"]` without importing the
+ * generated file directly.
+ */
+export type {
+  components as Components,
+  operations as Operations,
+  paths as Paths,
+} from "./generated/index.js";
+
 // (namespace modules land in commits #9 and #11)
 // (convenience surface lands in commit #11)

@@ -2357,30 +2357,12 @@ components:
           type: string
           nullable: true
 
-    Agent:
-      type: object
-      properties:
-        id: { type: string }
-        name: { type: string }
-        type:
-          type: string
-          enum: [internal, external]
-        internal_role:
-          type: string
-          enum: [reconciliation, payment, anomaly]
-          nullable: true
-        external_address:
-          type: string
-          description: Ethereum address (external agents only)
-          nullable: true
-        scope: { $ref: '#/components/schemas/AgentScope' }
-        onchain_registration:
-          type: object
-          nullable: true
-          properties:
-            tx_hash: { type: string }
-            scope_hash: { type: string }
-            registered_at: { type: string, format: date-time }
+    # v0.2 `Agent` block was deleted in v0.3 — the canonical Agent schema
+    # is defined further down (search for `Agent:` under the v0.2 Agent
+    # section). The two blocks had different shapes and YAML duplicate-key
+    # rules made the spec unparseable. The kept v0.3 shape matches the
+    # `agents` table in Architecture §3.5 and the response of
+    # POST /agents/register.
 
     AgentScope:
       type: object

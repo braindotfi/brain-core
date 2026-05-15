@@ -31,12 +31,14 @@
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "generate-types": "openapi-typescript ../../Brain_API_Specification.yaml -o src/generated/api.ts"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
     "@vitest/coverage-v8": "^2.1.2",
     "eslint": "^9.12.0",
+    "openapi-typescript": "^7.4.0",
     "typescript": "^5.6.2",
     "undici": "^6.20.0",
     "vitest": "^2.1.2"
