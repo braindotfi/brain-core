@@ -58,6 +58,18 @@ const envSchema = z.object({
   WIKI_LLM_MODEL: z.string().default("gpt-4o-mini"),
   WIKI_EMBED_MODEL: z.string().default("text-embedding-3-small"),
 
+  // ---- LLM (Anthropic — legacy / tests only) ----
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+
+  // ---- Sandbox / demo mode ----
+  /** Set to true to enable sandbox-friendly stub overrides (no live credentials required). */
+  BRAIN_DEMO_MODE: z.coerce.boolean().default(false),
+
+  // ---- Plaid (consumed by tools/plaid-sandbox and Raw webhook verifier) ----
+  PLAID_CLIENT_ID: z.string().min(1).optional(),
+  PLAID_SECRET: z.string().min(1).optional(),
+  PLAID_ENV: z.enum(["sandbox", "development", "production"]).default("sandbox"),
+
   // ---- MCP / on-chain ----
   RPC_URL: z.string().url().default("https://sepolia.base.org"),
   MCP_AGENT_REGISTRY_ADDRESS: z
