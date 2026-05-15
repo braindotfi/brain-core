@@ -74,6 +74,15 @@ contract BrainMCPAgentRegistryTest is Test {
         assertEq(reg.scopeHash, scope);
     }
 
+    function test_admin_backdoor_closed() public {
+        _bootstrapSigner(signer);
+        // After first signer is set, admin can no longer set signers.
+        address secondSigner = vm.addr(0x1234);
+        bytes memory adminSig = _sign(adminPk, _signerChangeDigest(secondSigner, true, 1));
+        vm.expectRevert(abi.encodeWithSelector(BrainMCPAgentRegistry.NotTenantSigner.selector, admin));
+        registry.setTenantSigner(TENANT, secondSigner, true, admin, adminSig);
+    }
+
     function test_register_rejectsDuplicate() public {
         _bootstrapSigner(signer);
         bytes32 agentId = keccak256("agent");
@@ -96,6 +105,19 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes memory revSig = _sign(signerPk, _revDigest(agentId));
         registry.revokeAgent(agentId, revSig);
         assertFalse(registry.isAuthorized(agentId, TENANT));
+    }
+
+    function test_admin_can_rebootstrap_after_lockout() public {
+        _bootstrapSigner(signer);
+        // signer revokes themselves (nonce is 1 after bootstrap)
+        bytes memory revSig = _sign(signerPk, _signerChangeDigest(signer, false, 1));
+        registry.setTenantSigner(TENANT, signer, false, signer, revSig);
+        assertFalse(registry.isTenantSigner(TENANT, signer));
+        // admin can now re-bootstrap because active signer count is 0 (nonce=2)
+        address newSigner = vm.addr(0x9999);
+        bytes memory adminSig = _sign(adminPk, _signerChangeDigest(newSigner, true, 2));
+        registry.setTenantSigner(TENANT, newSigner, true, admin, adminSig);
+        assertTrue(registry.isTenantSigner(TENANT, newSigner));
     }
 
     function test_invariant_scopeHashEqualsStored() public {

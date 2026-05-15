@@ -36,6 +36,11 @@ contract BrainMCPAgentRegistry {
     ///      registered for them.
     mapping(bytes32 => mapping(address => bool)) private _tenantSigners;
 
+    /// @dev Count of active signers per tenant; zero means initialAdmin may
+    ///      bootstrap. Using a counter (not a bool) allows re-bootstrap after
+    ///      all signers are revoked, preventing permanent tenant lockout.
+    mapping(bytes32 => uint256) private _tenantSignerCount;
+
     // EIP-712
     bytes32 private constant _REGISTER_TYPEHASH = keccak256(
         "AgentRegistration(bytes32 agentId,address agentAddress,bytes32 tenantId,bytes32 scopeHash)"
@@ -45,7 +50,12 @@ contract BrainMCPAgentRegistry {
     bytes32 private constant _DOMAIN_TYPEHASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
-    bytes32 private immutable _domainSeparator;
+
+    bytes32 private immutable _hashedName;
+    bytes32 private immutable _hashedVersion;
+    bytes32 private immutable _cachedDomainSeparator;
+    uint256 private immutable _cachedChainId;
+
     address public immutable initialAdmin;
     mapping(bytes32 => uint256) public signerNonce;
 
@@ -60,15 +70,11 @@ contract BrainMCPAgentRegistry {
     constructor(address admin) {
         if (admin == address(0)) revert ZeroAddress();
         initialAdmin = admin;
-        _domainSeparator = keccak256(
-            abi.encode(
-                _DOMAIN_TYPEHASH,
-                keccak256(bytes("Brain MCP Agent")),
-                keccak256(bytes("1")),
-                block.chainid,
-                address(this)
-            )
-        );
+
+        _hashedName = keccak256(bytes("Brain MCP Agent"));
+        _hashedVersion = keccak256(bytes("1"));
+        _cachedChainId = block.chainid;
+        _cachedDomainSeparator = _buildDomainSeparator();
     }
 
     // --- Tenant signer management (EIP-712 signed by an existing signer, or
@@ -92,8 +98,14 @@ contract BrainMCPAgentRegistry {
             revert NotTenantSigner(authSigner);
         }
 
+        if (allowed && !_tenantSigners[tenantId][signer]) {
+            _tenantSignerCount[tenantId] += 1;
+        } else if (!allowed && _tenantSigners[tenantId][signer]) {
+            _tenantSignerCount[tenantId] -= 1;
+        }
         _tenantSigners[tenantId][signer] = allowed;
         signerNonce[tenantId] += 1;
+
         emit TenantSignerSet(tenantId, signer, allowed);
     }
 
@@ -157,22 +169,30 @@ contract BrainMCPAgentRegistry {
         return _agents[agentId];
     }
 
-    function domainSeparator() external view returns (bytes32) {
-        return _domainSeparator;
+    function domainSeparator() public view returns (bytes32) {
+        if (block.chainid == _cachedChainId) {
+            return _cachedDomainSeparator;
+        } else {
+            return _buildDomainSeparator();
+        }
     }
 
     // --- Internals -------------------------------------------------------
 
-    function _hasAnySigner(bytes32) private pure returns (bool) {
-        // Solidity doesn't give us a cheap way to introspect nested mapping
-        // existence, so we treat the first call from the initialAdmin as
-        // the bootstrap. We rely on nonce monotonicity to prevent replay
-        // of the bootstrap signature. Operational note: the initialAdmin
-        // should revoke its own bootstrap authority by setting a signer
-        // and then immediately calling setTenantSigner(...admin, false)
-        // signed by the new signer. Multi-tenant deployments do this per
-        // tenant onboarding.
-        return false;
+    function _hasAnySigner(bytes32 tenantId) private view returns (bool) {
+        return _tenantSignerCount[tenantId] > 0;
+    }
+
+    function _buildDomainSeparator() private view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                _DOMAIN_TYPEHASH,
+                _hashedName,
+                _hashedVersion,
+                block.chainid,
+                address(this)
+            )
+        );
     }
 
     function _hashRegistration(
@@ -182,12 +202,12 @@ contract BrainMCPAgentRegistry {
         bytes32 scopeHash
     ) private view returns (bytes32) {
         bytes32 structHash = keccak256(abi.encode(_REGISTER_TYPEHASH, agentId, agentAddress, tenantId, scopeHash));
-        return keccak256(abi.encodePacked(hex"19_01", _domainSeparator, structHash));
+        return keccak256(abi.encodePacked(hex"19_01", domainSeparator(), structHash));
     }
 
     function _hashRevocation(bytes32 agentId, bytes32 tenantId) private view returns (bytes32) {
         bytes32 structHash = keccak256(abi.encode(_REVOKE_TYPEHASH, agentId, tenantId));
-        return keccak256(abi.encodePacked(hex"19_01", _domainSeparator, structHash));
+        return keccak256(abi.encodePacked(hex"19_01", domainSeparator(), structHash));
     }
 
     function _hashSignerChange(
@@ -197,7 +217,7 @@ contract BrainMCPAgentRegistry {
         uint256 nonce
     ) private view returns (bytes32) {
         bytes32 structHash = keccak256(abi.encode(_SIGNER_TYPEHASH, tenantId, signer, allowed, nonce));
-        return keccak256(abi.encodePacked(hex"19_01", _domainSeparator, structHash));
+        return keccak256(abi.encodePacked(hex"19_01", domainSeparator(), structHash));
     }
 
     function _recover(bytes32 digest, bytes calldata sig) private pure returns (address) {

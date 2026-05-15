@@ -49,6 +49,8 @@ contract BrainSmartAccount {
     error NotOwner();
     error NotHolder();
     error KeyNotActive();
+    error KeyExpired();
+    error ZeroAddress();
     error TargetNotAllowed(address target);
     error SelectorNotAllowed(bytes4 selector);
     error ExceedsPerTxCap();
@@ -69,13 +71,14 @@ contract BrainSmartAccount {
 
     /// @notice Rotate the owner. Use this on hardware-wallet swap.
     function transferOwnership(address next) external onlyOwner {
+        if (next == address(0)) revert ZeroAddress();
         owner = next;
     }
 
     /// @notice Grant a session key. Overwrites any existing key for the holder.
     function grantSessionKey(SessionKey calldata key) external onlyOwner {
-        require(key.holder != address(0), "holder required");
-        require(key.validUntil > block.timestamp, "already expired");
+        if (key.holder == address(0)) revert ZeroAddress();
+        if (key.validUntil <= block.timestamp) revert KeyExpired();
         _keys[key.holder] = key;
         emit SessionKeyGranted(key.holder, key.policyVersion, key.validUntil);
     }
@@ -116,13 +119,29 @@ contract BrainSmartAccount {
             if (!ok) revert SelectorNotAllowed(selector);
         }
 
-        // Per-tx value cap.
-        if (value > key.maxPerTx) revert ExceedsPerTxCap();
+        // Determine the effective amount subject to caps.
+        // When value == 0 and the call targets a standard ERC20 method,
+        // decode the token quantity from calldata. Without this, an agent
+        // can bypass maxPerTx/maxPerPeriod by routing large token transfers
+        // through calls with value=0.
+        uint256 capAmount = value;
+        if (value == 0 && data.length >= 4) {
+            if ((selector == 0xa9059cbb || selector == 0x095ea7b3) && data.length >= 68) {
+                // transfer(address,uint256) / approve(address,uint256): amount at [36,68)
+                capAmount = uint256(bytes32(data[36:68]));
+            } else if (selector == 0x23b872dd && data.length >= 100) {
+                // transferFrom(address,address,uint256): amount at [68,100)
+                capAmount = uint256(bytes32(data[68:100]));
+            }
+        }
+
+        // Per-tx cap.
+        if (capAmount > key.maxPerTx) revert ExceedsPerTxCap();
 
         // Per-period cumulative cap.
         if (key.periodSeconds > 0) {
             uint256 window = (block.timestamp / key.periodSeconds) * key.periodSeconds;
-            uint256 spent = _windowSpent[msg.sender][window] + value;
+            uint256 spent = _windowSpent[msg.sender][window] + capAmount;
             if (spent > key.maxPerPeriod) revert ExceedsPerPeriodCap();
             _windowSpent[msg.sender][window] = spent;
         }
@@ -146,7 +165,7 @@ contract BrainSmartAccount {
             key.policyVersion,
             target,
             selector,
-            value,
+            capAmount,
             keccak256(data)
         );
         return ret;
