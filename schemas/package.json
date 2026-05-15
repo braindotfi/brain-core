@@ -1,0 +1,17 @@
+{
+  "name": "@brain/schemas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Entity and relation kind constants shared across Brain services.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.2"
+  }
+}
