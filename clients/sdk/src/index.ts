@@ -182,10 +182,68 @@ export class Brain {
 }
 
 // ---------------------------------------------------------------------------
-// Re-exports — each subsequent commit adds to this list.
+// Re-exports
 // ---------------------------------------------------------------------------
 
-// (errors module lands in commit #6)
+export {
+  BRAIN_ERROR_CODES,
+  BRAIN_ERROR_CLASS_BY_CODE,
+  BrainError,
+  brainErrorFromEnvelope,
+  isBrainError,
+  isBrainErrorCode,
+  isBrainErrorEnvelope,
+  type BrainErrorCode,
+  type BrainErrorEnvelope,
+  type BrainErrorOptions,
+  // Auth
+  AuthInvalidKeyError,
+  AuthExpiredError,
+  AuthSiwxInvalidError,
+  ScopeInsufficientError,
+  // Tenant
+  TenantNotFoundError,
+  TenantSuspendedError,
+  TenantAccessDeniedError,
+  // Source
+  SourceNotFoundError,
+  SourceRateLimitError,
+  SourceCredentialInvalidError,
+  // Policy
+  PolicyNotActiveError,
+  PolicyDeniedError,
+  PolicyEscalateError,
+  // Agent
+  AgentNotFoundError,
+  AgentInactiveError,
+  ScopeHashMismatchError,
+  ScopeExpiredError,
+  // Action
+  ActionNotFoundError,
+  ActionAlreadyExecutedError,
+  InsufficientBalanceError,
+  LimitsExceededError,
+  IdempotencyKeyReusedError,
+  // Gate
+  GateNoPolicyDecisionError,
+  GatePolicyVersionStaleError,
+  GateCounterpartyUnverifiedError,
+  GateCounterpartySanctionedError,
+  GateBalanceInsufficientError,
+  GateApprovalIncompleteError,
+  GateSessionKeyInvalidError,
+  GateAuditChainStaleError,
+  // Validation
+  ValidationFailedError,
+  MissingRequiredFieldError,
+  InvalidCursorError,
+  // Infrastructure
+  RateLimitedError,
+  InternalError,
+  UpstreamTimeoutError,
+  MaintenanceModeError,
+} from "./errors/index.js";
+
 // (http transport lands in commit #7)
 // (generated types land in commit #8)
 // (namespace modules land in commits #9 and #11)
