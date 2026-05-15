@@ -25,6 +25,10 @@
  * Codes follow `{domain}_{condition}` snake_case. Never rename. Additions only.
  */
 export const BRAIN_ERROR_CODES = [
+  // ---------------------------------------------------------------------------
+  // v0.1 / v0.2 codes — kept per §4.3 "additions only, never rename".
+  // ---------------------------------------------------------------------------
+
   // Auth
   "auth_token_missing",
   "auth_token_invalid",
@@ -73,6 +77,72 @@ export const BRAIN_ERROR_CODES = [
   "dependency_unavailable",
   "internal_server_error",
   "rate_limit_exceeded",
+
+  // ---------------------------------------------------------------------------
+  // v0.3 codes — lowercase snake_case forms of the canonical docs codes at
+  // https://docs.brain.fi/resources/errors. Convention: the docs SCREAMING_CASE
+  // identifier `AUTH_INVALID_KEY` maps to the snake_case wire code
+  // `auth_invalid_key`. New code paths emit these; v0.1/v0.2 codes above stay
+  // shipped per §4.3 and are gradually deprecated.
+  // ---------------------------------------------------------------------------
+
+  // Auth (docs)
+  "auth_invalid_key",
+  "auth_expired",
+  "auth_siwx_invalid",
+  "scope_insufficient",
+
+  // Tenant
+  "tenant_not_found",
+  "tenant_suspended",
+  "tenant_access_denied",
+
+  // Source
+  "source_not_found",
+  "source_rate_limit",
+  "source_credential_invalid",
+
+  // Policy (docs)
+  "policy_not_active",
+  "policy_denied",
+  "policy_escalate",
+
+  // Agent (docs)
+  "agent_not_found",
+  "agent_inactive",
+  "scope_hash_mismatch",
+  "scope_expired",
+
+  // Action (the v0.3 user-facing name for Proposal + PaymentIntent — see
+  // docs/sdk-audit.md conflict A; routes land at /v1/actions/* with
+  // /v1/payment-intents/* kept as deprecated aliases).
+  "action_not_found",
+  "action_already_executed",
+  "insufficient_balance",
+  "limits_exceeded",
+  "idempotency_key_reused",
+
+  // Pre-execution gate — one code per failing check. Replaces the single
+  // legacy `payment_intent_gate_failed` umbrella so callers can branch.
+  "gate_no_policy_decision",
+  "gate_policy_version_stale",
+  "gate_counterparty_unverified",
+  "gate_counterparty_sanctioned",
+  "gate_balance_insufficient",
+  "gate_approval_incomplete",
+  "gate_session_key_invalid",
+  "gate_audit_chain_stale",
+
+  // Validation (docs)
+  "validation_failed",
+  "missing_required_field",
+  "invalid_cursor",
+
+  // Infrastructure (docs)
+  "rate_limited",
+  "internal_error",
+  "upstream_timeout",
+  "maintenance_mode",
 ] as const;
 
 export type BrainErrorCode = (typeof BRAIN_ERROR_CODES)[number];
@@ -150,6 +220,73 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
 
   // 500 — last resort
   internal_server_error: 500,
+
+  // -------------------------------------------------------------------------
+  // v0.3 docs codes
+  // -------------------------------------------------------------------------
+
+  // 401 — bad key / expired / SIWX signature
+  auth_invalid_key: 401,
+  auth_expired: 401,
+  auth_siwx_invalid: 401,
+
+  // 403 — authenticated but not authorized
+  scope_insufficient: 403,
+  tenant_suspended: 403,
+  tenant_access_denied: 403,
+  scope_hash_mismatch: 403,
+  scope_expired: 403,
+
+  // 404 — not found
+  tenant_not_found: 404,
+  source_not_found: 404,
+  agent_not_found: 404,
+  action_not_found: 404,
+
+  // 401 — upstream credential rejected by source provider
+  source_credential_invalid: 401,
+
+  // 429 — upstream provider returned 429 (e.g. Plaid). Distinct from per-tenant
+  // brain rate limit so callers can tell apart "I am being throttled by Brain"
+  // from "the bank is being throttled". docs: SOURCE_RATE_LIMIT.
+  source_rate_limit: 429,
+  rate_limited: 429,
+
+  // 409 — state conflict
+  policy_not_active: 409,
+  agent_inactive: 409,
+  action_already_executed: 409,
+  idempotency_key_reused: 409,
+  gate_policy_version_stale: 409,
+  gate_session_key_invalid: 409,
+
+  // 422 — policy denied / escalation / pre-execution gate (docs explicitly
+  // map 422 to "Policy denied or escalation required").
+  policy_denied: 422,
+  policy_escalate: 422,
+  insufficient_balance: 422,
+  limits_exceeded: 422,
+  gate_no_policy_decision: 422,
+  gate_counterparty_unverified: 422,
+  gate_counterparty_sanctioned: 422,
+  gate_balance_insufficient: 422,
+  gate_approval_incomplete: 422,
+
+  // 400 — validation
+  validation_failed: 400,
+  missing_required_field: 400,
+  invalid_cursor: 400,
+
+  // 503 — degraded / scheduled maintenance / stale audit chain
+  gate_audit_chain_stale: 503,
+  maintenance_mode: 503,
+
+  // 504 — upstream timeout (distinct from 503 dependency_unavailable; the
+  // dependency was reachable but did not respond in time)
+  upstream_timeout: 504,
+
+  // 500 — last resort (docs name: INTERNAL_ERROR)
+  internal_error: 500,
 };
 
 export function httpStatusForCode(code: BrainErrorCode): number {

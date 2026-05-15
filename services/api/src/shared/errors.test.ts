@@ -29,6 +29,41 @@ describe("BRAIN_ERROR_CODES registry", () => {
     }
   });
 
+  it("contains the v0.3 docs codes from https://docs.brain.fi/resources/errors", () => {
+    const docsCodes: BrainErrorCode[] = [
+      // one representative per docs category
+      "auth_invalid_key",
+      "tenant_not_found",
+      "source_rate_limit",
+      "policy_denied",
+      "agent_inactive",
+      "action_not_found",
+      "insufficient_balance",
+      "gate_counterparty_sanctioned",
+      "validation_failed",
+      "upstream_timeout",
+    ];
+    for (const code of docsCodes) {
+      expect(BRAIN_ERROR_CODES).toContain(code);
+    }
+  });
+
+  it("splits the legacy payment_intent_gate_failed umbrella into 8 specific gate codes", () => {
+    const gateCodes: BrainErrorCode[] = [
+      "gate_no_policy_decision",
+      "gate_policy_version_stale",
+      "gate_counterparty_unverified",
+      "gate_counterparty_sanctioned",
+      "gate_balance_insufficient",
+      "gate_approval_incomplete",
+      "gate_session_key_invalid",
+      "gate_audit_chain_stale",
+    ];
+    for (const code of gateCodes) {
+      expect(BRAIN_ERROR_CODES).toContain(code);
+    }
+  });
+
   it("has no duplicates", () => {
     expect(new Set(BRAIN_ERROR_CODES).size).toBe(BRAIN_ERROR_CODES.length);
   });
@@ -84,6 +119,52 @@ describe("httpStatusForCode", () => {
 
   it("maps internal_server_error to 500", () => {
     expect(httpStatusForCode("internal_server_error")).toBe(500);
+  });
+
+  it("maps v0.3 auth/scope codes to 401/403 per docs table", () => {
+    expect(httpStatusForCode("auth_invalid_key")).toBe(401);
+    expect(httpStatusForCode("auth_expired")).toBe(401);
+    expect(httpStatusForCode("auth_siwx_invalid")).toBe(401);
+    expect(httpStatusForCode("source_credential_invalid")).toBe(401);
+    expect(httpStatusForCode("scope_insufficient")).toBe(403);
+    expect(httpStatusForCode("scope_hash_mismatch")).toBe(403);
+    expect(httpStatusForCode("scope_expired")).toBe(403);
+    expect(httpStatusForCode("tenant_access_denied")).toBe(403);
+    expect(httpStatusForCode("tenant_suspended")).toBe(403);
+  });
+
+  it("maps policy denial and pre-execution gate failures to 422", () => {
+    // Docs §api-reference/overview status table: 422 = Policy denied or
+    // escalation required. All gate_* checks except version/session/audit-chain
+    // are policy preconditions, so they map to 422 too.
+    const policyAnd422Gate: BrainErrorCode[] = [
+      "policy_denied",
+      "policy_escalate",
+      "insufficient_balance",
+      "limits_exceeded",
+      "gate_no_policy_decision",
+      "gate_counterparty_unverified",
+      "gate_counterparty_sanctioned",
+      "gate_balance_insufficient",
+      "gate_approval_incomplete",
+    ];
+    for (const code of policyAnd422Gate) {
+      expect(httpStatusForCode(code)).toBe(422);
+    }
+  });
+
+  it("maps stale-state gate codes to 409 and degraded codes to 503", () => {
+    expect(httpStatusForCode("gate_policy_version_stale")).toBe(409);
+    expect(httpStatusForCode("gate_session_key_invalid")).toBe(409);
+    expect(httpStatusForCode("gate_audit_chain_stale")).toBe(503);
+    expect(httpStatusForCode("maintenance_mode")).toBe(503);
+  });
+
+  it("maps upstream_timeout to 504 (not 503)", () => {
+    // 503 vs 504 distinction: 503 = dependency known down / circuit open;
+    // 504 = dependency reachable, didn't answer in time.
+    expect(httpStatusForCode("upstream_timeout")).toBe(504);
+    expect(httpStatusForCode("dependency_unavailable")).toBe(503);
   });
 
   it("defines a status for every code in the registry", () => {
