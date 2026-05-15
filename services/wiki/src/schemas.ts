@@ -9,6 +9,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import Ajv, { type ValidateFunction } from "ajv";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { brainError } from "@brain/api/shared";
 import {
@@ -16,7 +17,7 @@ import {
   RELATION_KINDS,
   type EntityKind,
   type RelationKind,
-} from "../../../schemas/index.js";
+} from "@brain/schemas";
 
 export interface SchemaRegistry {
   entity: Record<EntityKind, Record<string, unknown>>;
@@ -58,8 +59,8 @@ export function loadRegistry(repoRoot?: string): SchemaRegistry {
     relation[k] = s;
   }
 
-  const ajv = new Ajv({ strict: false, allErrors: true });
-  addFormats(ajv);
+  const ajv = new Ajv2020({ strict: false, allErrors: true });
+  (addFormats as unknown as (a: InstanceType<typeof Ajv2020>) => void)(ajv);
   const entityValidators: Record<EntityKind, ValidateFunction> = {} as Record<EntityKind, ValidateFunction>;
   const relationValidators: Record<RelationKind, ValidateFunction> = {} as Record<RelationKind, ValidateFunction>;
   for (const k of ENTITY_KINDS) entityValidators[k] = ajv.compile(entity[k]);

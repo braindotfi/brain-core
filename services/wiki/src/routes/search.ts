@@ -15,7 +15,7 @@ import {
   type EntityKind,
   type LedgerKind,
   type WikiKind,
-} from "../../../../schemas/index.js";
+} from "@brain/schemas";
 import { serializeEntity } from "./entity.js";
 import type { WikiDeps } from "../deps.js";
 

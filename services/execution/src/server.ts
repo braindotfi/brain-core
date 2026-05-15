@@ -2,7 +2,9 @@ import Fastify, { type FastifyInstance } from "fastify";
 import {
   authPlugin,
   errorHandlerPlugin,
+  idempotencyPlugin,
   requestIdPlugin,
+  type IdempotencyStore,
   type JwtVerifier,
 } from "@brain/api/shared";
 import { registerExecutionRoutes } from "./routes.js";
@@ -14,6 +16,8 @@ import type { ExecutionDeps } from "./deps.js";
 export interface BuildExecutionAppOptions {
   deps: ExecutionDeps;
   jwtVerifier: JwtVerifier;
+  idempotencyStore: IdempotencyStore;
+  idempotencyTtlSeconds?: number;
   logger?: ReturnType<typeof Fastify>["log"];
   /**
    * Optional MCP wiring hook. The boot site constructs a
@@ -44,6 +48,10 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
   await app.register(authPlugin, { verifier: opts.jwtVerifier });
+  await app.register(idempotencyPlugin, {
+    store: opts.idempotencyStore,
+    ttlSeconds: opts.idempotencyTtlSeconds ?? 86400,
+  });
 
   app.get("/health", { config: { skipAuth: true } }, async () => ({ ok: true }));
 

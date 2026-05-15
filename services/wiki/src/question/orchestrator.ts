@@ -33,7 +33,7 @@ import {
   type MetricsEmitter,
   type TenantScopedClient,
 } from "@brain/api/shared";
-import type Redis from "ioredis";
+import type { Redis } from "ioredis";
 
 export interface AskOptions {
   question: string;

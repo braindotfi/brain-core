@@ -7,7 +7,7 @@
  */
 
 import type { TenantScopedClient } from "@brain/api/shared";
-import type { Provenance, RelationKind } from "../../../../schemas/index.js";
+import type { Provenance, RelationKind } from "@brain/schemas";
 
 export interface WikiRelationRow {
   id: string;

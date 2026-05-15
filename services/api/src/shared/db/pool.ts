@@ -65,7 +65,7 @@ export function isLocalHost(connectionString: string): boolean {
   try {
     const url = new URL(connectionString);
     const host = url.hostname.toLowerCase();
-    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
   } catch {
     return false;
   }

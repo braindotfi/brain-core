@@ -45,6 +45,7 @@ export const BRAIN_ERROR_CODES = [
 
   // Wiki
   "wiki_entity_not_found",
+  "wiki_page_not_found",
   "wiki_schema_validation_failed",
   "wiki_temporal_range_invalid",
   "wiki_question_timeout",
@@ -113,6 +114,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   raw_artifact_not_found: 404,
   raw_artifact_tombstoned: 404,
   wiki_entity_not_found: 404,
+  wiki_page_not_found: 404,
   policy_not_found: 404,
   execution_proposal_not_found: 404,
   audit_event_not_found: 404,
@@ -238,5 +240,14 @@ export function brainError(
 }
 
 export function isBrainError(err: unknown): err is BrainError {
-  return err instanceof BrainError;
+  // Duck-type check: robust against instanceof failing across ESM module instances
+  // (e.g. tsx-compiled source vs pre-compiled dist in single-process multi-service boot).
+  if (err instanceof BrainError) return true;
+  return (
+    err !== null &&
+    typeof err === "object" &&
+    (err as Record<string, unknown>)["name"] === "BrainError" &&
+    typeof (err as Record<string, unknown>)["code"] === "string" &&
+    typeof (err as Record<string, unknown>)["statusCode"] === "number"
+  );
 }
