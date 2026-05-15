@@ -687,10 +687,14 @@ paths:
                         page: { $ref: '#/components/schemas/WikiPage' }
                         score: { type: number }
 
-  /wiki/entity/{entity_id}:
+  /wiki/entities/{entity_id}:
     get:
       tags: [Wiki]
       summary: Fetch an entity with one-hop neighbors
+      description: |
+        Source: https://docs.brain.fi/api-reference/wiki-api ("Get Entity").
+        Path renamed from /wiki/entity/{entity_id} (singular) in v0.3 to
+        match the docs.
       operationId: getWikiEntity
       parameters:
         - $ref: '#/components/parameters/EntityId'
@@ -720,7 +724,45 @@ paths:
                         entity: { $ref: '#/components/schemas/WikiEntity' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /wiki/entity/{entity_id}/evidence:
+  /wiki/entities/{entity_id}/relationships:
+    get:
+      tags: [Wiki]
+      summary: Walk one-hop relationships from an entity
+      description: |
+        Source: https://docs.brain.fi/api-reference/wiki-api ("Walk
+        Relationships"). Traverses connected entities. Equivalent to
+        calling GET /wiki/entities/{id}?include_neighbors=true, but
+        returns the relations[] array directly without wrapping the
+        subject entity. New in v0.3.
+      operationId: getEntityRelationships
+      parameters:
+        - $ref: '#/components/parameters/EntityId'
+        - name: relationship
+          in: query
+          schema: { $ref: '#/components/schemas/RelationKind' }
+          description: Filter to a single relationship kind.
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 500 }
+      responses:
+        '200':
+          description: Relationships
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entity_id: { type: string, format: uuid }
+                  relationships:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        relation: { $ref: '#/components/schemas/WikiRelation' }
+                        entity: { $ref: '#/components/schemas/WikiEntity' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /wiki/entities/{entity_id}/evidence:
     get:
       tags: [Wiki]
       summary: Retrieve the evidence chain for an entity
@@ -738,7 +780,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/EvidenceChain'
 
-  /wiki/entity/{entity_id}/history:
+  /wiki/entities/{entity_id}/history:
     get:
       tags: [Wiki]
       summary: All temporal versions of an entity
@@ -760,34 +802,40 @@ paths:
                       $ref: '#/components/schemas/WikiEntity'
 
   /wiki/search:
-    get:
+    post:
       tags: [Wiki]
       summary: Search the Wiki
+      description: |
+        Source: https://docs.brain.fi/api-reference/wiki-api ("Search
+        Entities"). Method changed from GET to POST in v0.3 — the
+        request body carries a structured query payload that exceeds
+        what's ergonomic in query-string form.
       operationId: searchWiki
-      parameters:
-        - name: kind
-          in: query
-          schema: { $ref: '#/components/schemas/EntityKind' }
-        - name: q
-          in: query
-          schema: { type: string }
-          description: Full-text query over entity attributes
-        - name: semantic
-          in: query
-          schema: { type: string }
-          description: Semantic query using pgvector embeddings
-        - name: since
-          in: query
-          schema: { type: string, format: date-time }
-        - name: until
-          in: query
-          schema: { type: string, format: date-time }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 50, maximum: 500 }
-        - name: cursor
-          in: query
-          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: Full-text query over entity attributes.
+                kind:
+                  $ref: '#/components/schemas/EntityKind'
+                since:
+                  type: string
+                  format: date-time
+                until:
+                  type: string
+                  format: date-time
+                limit:
+                  type: integer
+                  default: 50
+                  maximum: 500
+                cursor:
+                  type: string
       responses:
         '200':
           description: Search results
@@ -800,6 +848,57 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/WikiEntity' }
                   next_cursor: { type: string, nullable: true }
+
+  /wiki/semantic_search:
+    post:
+      tags: [Wiki]
+      summary: Free-text semantic search over Wiki pages and entities
+      description: |
+        Source: https://docs.brain.fi/api-reference/wiki-api ("Semantic
+        Search"). New in v0.3 — split from /wiki/search to make the
+        retrieval mode explicit in the URL rather than via a `semantic`
+        query parameter. Returns entities ranked by pgvector cosine
+        similarity. Use /wiki/search for lexical match.
+      operationId: semanticSearchWiki
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: Natural-language phrase or sentence to embed.
+                kind:
+                  $ref: '#/components/schemas/EntityKind'
+                limit:
+                  type: integer
+                  default: 20
+                  maximum: 100
+                min_score:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  description: |
+                    Drop results below this cosine similarity score.
+                    Default is implementation-defined.
+      responses:
+        '200':
+          description: Ranked results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        entity: { $ref: '#/components/schemas/WikiEntity' }
+                        score: { type: number, minimum: 0, maximum: 1 }
 
   /wiki/question:
     post:
