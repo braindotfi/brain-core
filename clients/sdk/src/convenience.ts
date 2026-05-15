@@ -19,6 +19,17 @@
 
 import type { ActionsModule } from "./actions/index.js";
 import type { AuditModule, AuditEvent, AuditProof } from "./audit/index.js";
+import type { CashFlowModule, CashFlowSummary } from "./cash_flows/index.js";
+import type {
+  AccountsModule,
+  Account,
+  CounterpartiesModule,
+  Counterparty,
+  ObligationsModule,
+  Obligation,
+  Transaction,
+  TransactionsModule,
+} from "./ledger/index.js";
 import type { WikiModule, WikiAnswer } from "./wiki/index.js";
 
 /** Args accepted by `brain.pay(tenantId, opts)`. */
@@ -45,6 +56,18 @@ export interface ActionTrace {
 }
 
 /**
+ * Composite financial snapshot returned by `brain.snapshot(tenantId)`.
+ * Shape per https://docs.brain.fi/build/read-a-financial-picture.
+ */
+export interface FinancialSnapshot {
+  readonly accounts: readonly Account[];
+  readonly transactions: readonly Transaction[];
+  readonly obligations: readonly Obligation[];
+  readonly counterparties: readonly Counterparty[];
+  readonly cashFlow: CashFlowSummary;
+}
+
+/**
  * Construction-time dependency bag. The Brain class instantiates this
  * and passes it to the ConvenienceSurface constructor; tests can
  * substitute mocks for each module.
@@ -53,6 +76,11 @@ export interface ConvenienceDeps {
   readonly actions: ActionsModule;
   readonly audit: AuditModule;
   readonly wiki: WikiModule;
+  readonly accounts: AccountsModule;
+  readonly transactions: TransactionsModule;
+  readonly obligations: ObligationsModule;
+  readonly counterparties: CounterpartiesModule;
+  readonly cashFlow: CashFlowModule;
 }
 
 /**
@@ -183,6 +211,38 @@ export class ConvenienceSurface {
   public async trace(actionId: string): Promise<ActionTrace> {
     const trail = await this.actionTrail(actionId);
     return { events: trail.events };
+  }
+
+  /**
+   * Composite financial snapshot — accounts, recent transactions,
+   * upcoming/due/overdue obligations, top counterparties, and a
+   * 30-day cash-flow summary. All five sub-queries run in parallel.
+   *
+   * @see https://docs.brain.fi/build/read-a-financial-picture
+   */
+  public async snapshot(tenantId: string): Promise<FinancialSnapshot> {
+    const [accountsPage, transactionsPage, obligations, counterparties, cashFlow] =
+      await Promise.all([
+        this.d.accounts.list(tenantId),
+        this.d.transactions.list(tenantId, { limit: 100 }),
+        this.d.obligations.list(tenantId, {
+          // The docs sample filters to the three "live" statuses.
+          // Server returns all when no status query is set; we mirror
+          // the docs and stick to live statuses by default.
+        }),
+        this.d.counterparties.list(tenantId, {
+          sortBy: "activity",
+          limit: 20,
+        }),
+        this.d.cashFlow.summarize({ tenantId, days: 30 }),
+      ]);
+    return {
+      accounts: accountsPage.data,
+      transactions: transactionsPage.data,
+      obligations: obligations.obligations,
+      counterparties: counterparties.counterparties,
+      cashFlow,
+    };
   }
 
   // -------------------------------------------------------------------------

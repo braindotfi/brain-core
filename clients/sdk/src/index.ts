@@ -14,14 +14,21 @@ import {
   AgentsModule,
   AuditModule,
   BalancesModule,
+  CashFlowModule,
   CounterpartiesModule,
   InvoicesModule,
   ObligationsModule,
   PolicyModule,
+  SourcesModule,
   TransactionsModule,
   WikiModule,
 } from "./namespaces.js";
-import { ConvenienceSurface, type PayInput, type ActionTrace } from "./convenience.js";
+import {
+  ConvenienceSurface,
+  type ActionTrace,
+  type FinancialSnapshot,
+  type PayInput,
+} from "./convenience.js";
 import { BrainHttp } from "./http/index.js";
 import type { Action } from "./actions/index.js";
 import type { AuditProof } from "./audit/index.js";
@@ -162,6 +169,12 @@ export class Brain {
   public readonly counterparties: CounterpartiesModule;
   public readonly obligations: ObligationsModule;
   public readonly invoices: InvoicesModule;
+  public readonly cashFlow: CashFlowModule;
+
+  // -------------------------------------------------------------------------
+  // Ingestion / lifecycle namespaces
+  // -------------------------------------------------------------------------
+  public readonly sources: SourcesModule;
 
   // -------------------------------------------------------------------------
   // Higher-layer namespaces
@@ -218,6 +231,8 @@ export class Brain {
     this.counterparties = new CounterpartiesModule(this.http);
     this.obligations = new ObligationsModule(this.http);
     this.invoices = new InvoicesModule(this.http);
+    this.cashFlow = new CashFlowModule(this.http);
+    this.sources = new SourcesModule(this.http);
     this.wiki = new WikiModule(this.http);
     this.policy = new PolicyModule(this.http);
     this.audit = new AuditModule(this.http);
@@ -228,6 +243,11 @@ export class Brain {
       actions: this.actions,
       audit: this.audit,
       wiki: this.wiki,
+      accounts: this.accounts,
+      transactions: this.transactions,
+      obligations: this.obligations,
+      counterparties: this.counterparties,
+      cashFlow: this.cashFlow,
     });
   }
 
@@ -271,6 +291,11 @@ export class Brain {
   /** @see ConvenienceSurface.trace */
   public trace(actionId: string): Promise<ActionTrace> {
     return this.#convenience.trace(actionId);
+  }
+
+  /** @see ConvenienceSurface.snapshot */
+  public snapshot(tenantId: string): Promise<FinancialSnapshot> {
+    return this.#convenience.snapshot(tenantId);
   }
 
   /**
@@ -386,4 +411,9 @@ export * from "./namespaces.js";
 
 // Convenience surface types (positional `tenantId`-first methods that
 // live directly on the Brain class as `brain.ask`, `brain.pay`, etc.).
-export type { PayInput, ActionTrace, ConvenienceDeps } from "./convenience.js";
+export type {
+  ActionTrace,
+  ConvenienceDeps,
+  FinancialSnapshot,
+  PayInput,
+} from "./convenience.js";

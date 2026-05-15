@@ -219,3 +219,39 @@ describe("brain.trace / brain.proof", () => {
     await expect(brain.proof("pi_Y")).rejects.toThrow(/no audit events/);
   });
 });
+
+describe("brain.snapshot", () => {
+  it("fans out 5 reads in parallel and composes the result", async () => {
+    // Five concurrent calls. The makeBrain stub returns responses in
+    // array order regardless of issue order, but every fetch increments
+    // the same counter so any ordering returns a valid response.
+    const { brain, calls } = makeBrain([
+      { body: { accounts: [{ id: "acc_1" }], next_cursor: null } },
+      { body: { transactions: [{ id: "tx_1" }], next_cursor: null } },
+      { body: { obligations: [{ id: "obl_1" }] } },
+      { body: { counterparties: [{ id: "cp_1" }] } },
+      {
+        body: {
+          tenantId: "acme",
+          since: "x",
+          until: "y",
+          currencies: [],
+        },
+      },
+    ]);
+    const snap = await brain.snapshot("acme");
+    expect(calls).toHaveLength(5);
+    // Verify each of the 5 endpoint paths is among the URLs called
+    const paths = calls.map((c) => c.url);
+    expect(paths.some((u) => u.includes("/ledger/accounts"))).toBe(true);
+    expect(paths.some((u) => u.includes("/ledger/transactions"))).toBe(true);
+    expect(paths.some((u) => u.includes("/ledger/obligations"))).toBe(true);
+    expect(paths.some((u) => u.includes("/ledger/counterparties"))).toBe(true);
+    expect(paths.some((u) => u.includes("/ledger/cash_flows"))).toBe(true);
+    expect(snap.accounts).toHaveLength(1);
+    expect(snap.transactions).toHaveLength(1);
+    expect(snap.obligations).toHaveLength(1);
+    expect(snap.counterparties).toHaveLength(1);
+    expect(snap.cashFlow.tenantId).toBe("acme");
+  });
+});
