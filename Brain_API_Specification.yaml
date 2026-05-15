@@ -1359,19 +1359,27 @@ paths:
 
   #############################################################################
   # LAYER 5 (legacy): EXECUTION — deprecated, retained for v0.3 transition
+  #
+  # Every operation in this group carries `deprecated: true`. Runtime
+  # responses include the `Deprecation: true` HTTP header (per RFC 8594)
+  # alongside a `Link: <v0.3-path>; rel="successor-version"` header. New
+  # integrations must target the /agents/* and /actions/* routes.
   #############################################################################
 
   /execution/propose:
     post:
       tags: [Execution]
-      summary: Agent proposes an action
+      deprecated: true
+      summary: '[Deprecated] Agent proposes an action — use POST /agents/{agent_id}/propose'
       description: |
+        Deprecated in v0.3. Successor: `POST /v1/agents/{agent_id}/propose`.
+
         The agent submits an action. The server evaluates it against the
         active policy and returns a decision. If decision=allow, the action
         can be executed immediately via /execute. If decision=confirm, the
         action requires human approval first. If decision=reject, no
         further action is possible.
-      operationId: proposeAction
+      operationId: proposeActionLegacy
       requestBody:
         required: true
         content:
@@ -1396,8 +1404,14 @@ paths:
   /execution/execute:
     post:
       tags: [Execution]
-      summary: Execute an approved proposal
-      operationId: executeProposal
+      deprecated: true
+      summary: '[Deprecated] Execute an approved proposal — use POST /actions/{action_id}/execute'
+      description: |
+        Deprecated in v0.3. Successor: `POST /v1/actions/{action_id}/execute`.
+        The successor route runs the deterministic §6 13-step pre-execution
+        gate; this legacy route still runs the gate but lacks the action-id
+        addressability the v0.3 surface requires.
+      operationId: executeProposalLegacy
       requestBody:
         required: true
         content:
@@ -1427,7 +1441,12 @@ paths:
   /execution/{execution_id}:
     get:
       tags: [Execution]
-      summary: Execution status and trace
+      deprecated: true
+      summary: '[Deprecated] Execution status — use GET /actions/{action_id}'
+      description: |
+        Deprecated in v0.3. Successor: `GET /v1/actions/{action_id}`. The
+        v0.3 surface unifies Proposal and PaymentIntent under a single
+        Action resource.
       operationId: getExecution
       parameters:
         - name: execution_id
@@ -1446,7 +1465,10 @@ paths:
   /execution/approve:
     post:
       tags: [Execution]
-      summary: Human approval for a confirm-gated proposal
+      deprecated: true
+      summary: '[Deprecated] Human approval — use POST /actions/{action_id}/approve'
+      description: |
+        Deprecated in v0.3. Successor: `POST /v1/actions/{action_id}/approve`.
       operationId: approveProposal
       requestBody:
         required: true
@@ -1468,7 +1490,14 @@ paths:
   /execution/escalate:
     post:
       tags: [Execution]
-      summary: Agent escalates to human
+      deprecated: true
+      summary: '[Deprecated] Agent escalates to human — no direct v0.3 successor'
+      description: |
+        Deprecated in v0.3. Escalation is now subsumed by the
+        PolicyDecision/Action lifecycle: when policy outcome is `confirm`,
+        the Action transitions to `pending_approval` and surfaces in
+        `GET /v1/actions` filtered by `status=pending_approval`. Agents do
+        not request escalation; the policy evaluator decides.
       operationId: escalateProposal
       requestBody:
         required: true
@@ -1487,8 +1516,11 @@ paths:
   /execution/agents:
     get:
       tags: [Execution]
-      summary: List configured agents for the current tenant
-      operationId: listAgents
+      deprecated: true
+      summary: '[Deprecated] List configured agents — use GET /agents'
+      description: |
+        Deprecated in v0.3. Successor: `GET /v1/agents`.
+      operationId: listAgentsLegacy
       responses:
         '200':
           description: Agent list
@@ -1504,12 +1536,15 @@ paths:
   /execution/agents/register:
     post:
       tags: [Execution]
-      summary: Register an external agent
+      deprecated: true
+      summary: '[Deprecated] Register external agent — use POST /agents/register'
       description: |
+        Deprecated in v0.3. Successor: `POST /v1/agents/register`.
+
         Registers a third-party agent for this tenant. Returns on-chain
         attestation transaction hash after BrainMCPAgentRegistry registration
         completes.
-      operationId: registerExternalAgent
+      operationId: registerExternalAgentLegacy
       requestBody:
         required: true
         content:
@@ -1541,8 +1576,11 @@ paths:
   /execution/agents/{agent_id}:
     get:
       tags: [Execution]
-      summary: Get agent configuration and on-chain registration
-      operationId: getAgent
+      deprecated: true
+      summary: '[Deprecated] Get agent — use GET /agents/{agent_id}'
+      description: |
+        Deprecated in v0.3. Successor: `GET /v1/agents/{agent_id}`.
+      operationId: getAgentLegacy
       parameters:
         - name: agent_id
           in: path
