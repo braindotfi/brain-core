@@ -35,3 +35,4 @@ export type {
 } from "./dsl.js";
 export { isValidTransition, type PolicyState, type PolicyRow } from "./repository.js";
 export { registerPolicyRoutes } from "./routes.js";
+export { PolicyService, type PolicyServiceDeps } from "./service.js";

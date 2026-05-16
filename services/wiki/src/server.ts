@@ -46,10 +46,11 @@ export async function buildWikiApp(opts: BuildWikiAppOptions): Promise<FastifyIn
   await registerAnnotate(app, opts.deps);
   await registerSchema(app, opts.deps);
 
-  // v0.3 Phase 5: /memory/* (page rendering + lexical search).
+  // v0.3 Phase 5: /memory/* (page rendering + semantic search via pgvector).
   const pageService = new WikiPageService({
     pool: opts.deps.pool,
     audit: opts.deps.audit,
+    embed: opts.deps.embed,
   });
   await registerMemoryRoutes(app, pageService);
 
@@ -68,6 +69,6 @@ export async function registerWikiPlugin(app: FastifyInstance, deps: WikiDeps): 
   await registerQuestion(app, deps);
   await registerAnnotate(app, deps);
   await registerSchema(app, deps);
-  const pageService = new WikiPageService({ pool: deps.pool, audit: deps.audit });
+  const pageService = new WikiPageService({ pool: deps.pool, audit: deps.audit, embed: deps.embed });
   await registerMemoryRoutes(app, pageService);
 }

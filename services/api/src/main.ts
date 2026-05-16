@@ -50,7 +50,7 @@ import { LedgerService, registerLedgerPlugin, startNormalizeWorker } from "@brai
 
 import { WikiPageService, registerWikiPlugin, loadRegistry, askWiki } from "@brain/wiki";
 
-import { registerPolicyRoutes } from "@brain/policy";
+import { registerPolicyRoutes, PolicyService } from "@brain/policy";
 import type { PolicyDeps } from "@brain/policy";
 
 import {
@@ -257,15 +257,7 @@ function stubResolveRole(_ctx: ServiceCallContext, _principalId: string): Promis
   return Promise.resolve(null);
 }
 
-function stubEvaluatePaymentIntent(
-  _ctx: ServiceCallContext,
-  _intent: GatePaymentIntent,
-): Promise<GatePolicyDecision> {
-  // TODO: wire to Policy service evaluate() function.
-  return Promise.reject(
-    brainError("internal_server_error", "evaluatePaymentIntent hook not yet wired in boot binary"),
-  );
-}
+
 
 // ---------------------------------------------------------------------------
 // main
@@ -344,7 +336,7 @@ async function main(): Promise<void> {
     questionModel: cfg.WIKI_LLM_MODEL,
   };
 
-  const wikiPageService = new WikiPageService({ pool, audit });
+  const wikiPageService = new WikiPageService({ pool, audit, embed });
   const wikiService = buildWikiMemoryService(wikiPageService, wikiDeps);
 
   const policyDeps: PolicyDeps = {
@@ -354,6 +346,8 @@ async function main(): Promise<void> {
     chainId: 84532,
     policyRegistryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
   };
+
+  const policyService = new PolicyService({ pool, audit });
 
   const rawEvidenceService = buildRawEvidenceService(rawDeps);
 
@@ -367,7 +361,8 @@ async function main(): Promise<void> {
   const resolvePrincipal = cfg.BRAIN_DEMO_MODE ? sandboxResolvePrincipal : stubResolvePrincipal;
   const evaluatePaymentIntent = cfg.BRAIN_DEMO_MODE
     ? sandboxEvaluatePaymentIntent
-    : stubEvaluatePaymentIntent;
+    : (ctx: ServiceCallContext, intent: GatePaymentIntent) =>
+        policyService.evaluateForGate(ctx, intent);
   const evaluateLegacyPolicy = cfg.BRAIN_DEMO_MODE
     ? sandboxEvaluateLegacyPolicy
     : async (

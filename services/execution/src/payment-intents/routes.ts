@@ -154,4 +154,36 @@ export async function registerPaymentIntentRoutes(
       return result;
     },
   );
+
+  // GET /agents/:agent_id/actions — spec §Agent listAgentActions
+  app.get(
+    "/agents/:agent_id/actions",
+    async (
+      request: FastifyRequest<{
+        Params: { agent_id: string };
+        Querystring: { limit?: string };
+      }>,
+      reply,
+    ) => {
+      const ctx = assertCtx(request);
+      requireScope(request.principal!.scopes, SCOPE_READ);
+      const limit = parseIntParam(request.query.limit, 50, 500);
+      const intents = await service.list(ctx, { agent_id: request.params.agent_id, limit });
+      reply.status(200);
+      return {
+        actions: intents.map((i) => ({
+          proposal_id: null,
+          payment_intent_id: i.id,
+          status: i.status,
+          created_at: i.created_at,
+        })),
+      };
+    },
+  );
+}
+
+function parseIntParam(raw: string | undefined, defaultVal: number, max: number): number {
+  if (raw === undefined) return defaultVal;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, max) : defaultVal;
 }
