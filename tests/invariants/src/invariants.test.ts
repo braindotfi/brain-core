@@ -26,7 +26,12 @@ import {
   LEDGER_KINDS,
   WIKI_KINDS,
 } from "../../../schemas/index.js";
-import { InMemoryAuditEmitter, recordTransactionRow, upsertCounterpartyRow } from "@brain/ledger";
+import { InMemoryAuditEmitter, newTenantId, newUserId } from "@brain/api/shared";
+import { recordTransactionRow, upsertCounterpartyRow } from "@brain/ledger";
+
+// Generated once per test run so every ID is a valid Brain ULID.
+const TEST_TENANT = newTenantId();
+const TEST_ACTOR = newUserId();
 
 // =============================================================================
 // 1. Every transaction belongs to an account.
@@ -82,7 +87,7 @@ describe("invariant: every transaction has a valid direction", () => {
       recordTransactionRow(
         fakePool,
         audit,
-        { tenantId: "tnt_x", actor: "user_x" },
+        { tenantId: TEST_TENANT, actor: TEST_ACTOR },
         {
           account_id: "acct_x",
           external_transaction_id: "x",
@@ -182,7 +187,7 @@ describe("invariant: every material state transition creates an AuditEvent", () 
       "INSERT INTO ledger_counterparties": [
         {
           id: "cp_X",
-          owner_id: "tnt_x",
+          owner_id: TEST_TENANT,
           name: "X",
           normalized_name: "x",
           type: "vendor",
@@ -200,7 +205,7 @@ describe("invariant: every material state transition creates an AuditEvent", () 
     await upsertCounterpartyRow(
       fakePool,
       audit,
-      { tenantId: "tnt_x", actor: "user_x" },
+      { tenantId: TEST_TENANT, actor: TEST_ACTOR },
       {
         name: "X",
         type: "vendor",

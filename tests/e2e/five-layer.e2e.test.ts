@@ -8,6 +8,8 @@
  *
  * This suite runs against staging. Requires BRAIN_BASE_URL + BRAIN_TOKEN
  * plus a seeded test tenant with Plaid sandbox + NetSuite sandbox wired.
+ * Optional: BRAIN_TEST_TENANT_ID, BRAIN_TEST_VENDOR_ID,
+ *           BRAIN_TEST_SOURCE_ACCT_ID.
  */
 
 import { describe, expect, it } from "vitest";
@@ -16,44 +18,47 @@ import { envClient } from "./lib/client.js";
 const DESCRIBE = process.env.BRAIN_BASE_URL !== undefined ? describe : describe.skip;
 
 DESCRIBE("five-layer end-to-end (Series A proof 1)", () => {
-  it("connects Plaid, compiles wiki, signs policy, executes payment, exports audit", async () => {
+  it("connects Plaid, compiles ledger, signs policy, creates payment intent, exports audit", async () => {
     const client = envClient();
 
-    // Step 1 — ingest a Plaid sandbox webhook (pre-signed by the seed).
-    // In staging, the seed script has already exercised this path; the
-    // test just asserts artifact count is non-zero.
-    const artifacts = await client.get<{ events: unknown[] }>("/audit/events?layer=raw&limit=10");
+    // Step 1 — verify Raw ingestion produced audit events (Plaid seed has run).
+    const artifacts = await client.get<{ events: unknown[] }>(
+      "/v1/audit/events?layer=raw&limit=10",
+    );
     expect(artifacts.events.length).toBeGreaterThan(0);
 
-    // Step 2 — wiki has entities.
-    const search = await client.get<{ results: unknown[] }>(
-      "/wiki/search?kind=transaction&limit=10",
-    );
-    expect(search.results.length).toBeGreaterThan(0);
+    // Step 2 — Ledger has accounts compiled from Plaid data.
+    const ledger = await client.get<{ accounts: unknown[] }>("/v1/ledger/accounts?limit=10");
+    expect(ledger.accounts.length).toBeGreaterThan(0);
 
     // Step 3 — policy is active.
     const tenantId = process.env.BRAIN_TEST_TENANT_ID ?? "";
-    const policy = await client.get<{ state: string; version: number }>(`/policy/${tenantId}`);
+    const policy = await client.get<{ state: string; version: number }>(
+      `/v1/policy/${tenantId}`,
+    );
     expect(policy.state).toBe("active");
 
-    // Step 4 — propose a payment; it should evaluate against the policy.
-    const proposal = await client.post<{ id: string; status: string; policy_decision: string }>(
-      "/execution/propose",
-      {
-        action: {
-          kind: "outbound_payment",
-          counterparty_id: process.env.BRAIN_TEST_VENDOR_ID ?? "cp_aws",
-          amount: { currency: "USD", value: "50.00" },
-          agent_role: "reconciliation",
-          timestamp: new Date().toISOString(),
-        },
-      },
-    );
-    expect(["allow", "confirm", "reject"]).toContain(proposal.policy_decision);
+    // Step 4 — create a PaymentIntent; it evaluates against the policy during
+    // creation and records a policy_decision_id. The resulting status reflects
+    // the policy outcome: approved (allow), pending_approval (confirm), or
+    // rejected (reject).
+    const intent = await client.post<{
+      id: string;
+      status: string;
+      policy_decision_id: string | null;
+    }>("/v1/payment-intents", {
+      action_type: "ach_outbound",
+      source_account_id: process.env.BRAIN_TEST_SOURCE_ACCT_ID ?? "",
+      destination_counterparty_id: process.env.BRAIN_TEST_VENDOR_ID ?? "",
+      amount: "50.00",
+      currency: "USD",
+    });
+    expect(intent.id.startsWith("pi_")).toBe(true);
+    expect(["proposed", "pending_approval", "approved", "rejected"]).toContain(intent.status);
 
-    // Step 5 — audit verify endpoint is reachable even without auth.
+    // Step 5 — audit verify endpoint is reachable even without auth (skipAuth).
     const verify = await fetch(
-      `${process.env.BRAIN_BASE_URL}/audit/verify?root=${"a".repeat(64)}&leaf=${"a".repeat(64)}&proof=`,
+      `${process.env.BRAIN_BASE_URL}/v1/audit/verify?root=${"a".repeat(64)}&leaf=${"a".repeat(64)}&proof=`,
     );
     expect([200]).toContain(verify.status);
   });

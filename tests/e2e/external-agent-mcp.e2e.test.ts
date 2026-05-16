@@ -7,6 +7,7 @@
  *
  * Runs against staging with a pre-registered external agent whose JWT is
  * supplied via BRAIN_EXTERNAL_AGENT_TOKEN.
+ * Optional: BRAIN_TEST_VENDOR_ID, BRAIN_TEST_SOURCE_ACCT_ID.
  */
 
 import { describe, expect, it } from "vitest";
@@ -24,41 +25,43 @@ DESCRIBE("external agent via MCP (Series A proof 3)", () => {
   });
 
   it("agent ping via MCP succeeds with principal_type=agent JWT", async () => {
-    const res = await agent.post<{ ok: boolean }>("/execution/mcp", { method: "ping" });
+    const res = await agent.post<{ ok: boolean }>("/v1/agents/mcp", { method: "ping" });
     expect(res.ok).toBe(true);
   });
 
   it("agent reads wiki with wiki:read scope", async () => {
-    const search = await agent.get<{ results: unknown[] }>(
-      "/wiki/search?kind=counterparty&limit=5",
+    // v0.3: wiki-resident kinds are 'policy' and 'agent'; Ledger kinds
+    // (counterparty, transaction, account, obligation) were removed from
+    // /wiki/search. Query without a kind filter to get all wiki entities.
+    const search = await agent.get<{ results: unknown[]; next_cursor: null }>(
+      "/v1/wiki/search?limit=5",
     );
     expect(Array.isArray(search.results)).toBe(true);
   });
 
   it("agent proposes an action which is gated by policy and audited", async () => {
-    const proposal = await agent.post<{ id: string; policy_decision: string }>(
-      "/execution/propose",
-      {
-        action: {
-          kind: "outbound_payment",
-          counterparty_id: process.env.BRAIN_TEST_VENDOR_ID ?? "cp_aws",
-          amount: { currency: "USD", value: "10.00" },
-          agent_role: "partner",
-          timestamp: new Date().toISOString(),
-        },
-      },
-    );
-    expect(proposal.id.startsWith("prop_")).toBe(true);
-    // Decision can be any of allow/confirm/reject — the test's point is
-    // that the agent got through the same policy gate an internal agent
-    // would.
-    expect(["allow", "confirm", "reject"]).toContain(proposal.policy_decision);
+    // v0.3: proposal == PaymentIntent. POST /v1/payment-intents evaluates the
+    // policy DSL during creation and records a policy_decision_id.
+    const intent = await agent.post<{
+      id: string;
+      status: string;
+      policy_decision_id: string | null;
+    }>("/v1/payment-intents", {
+      action_type: "ach_outbound",
+      source_account_id: process.env.BRAIN_TEST_SOURCE_ACCT_ID ?? "",
+      destination_counterparty_id: process.env.BRAIN_TEST_VENDOR_ID ?? "",
+      amount: "10.00",
+      currency: "USD",
+    });
+    expect(intent.id.startsWith("pi_")).toBe(true);
+    // status reflects policy outcome: approved (allow) | pending_approval (confirm) | rejected (reject)
+    expect(["proposed", "pending_approval", "approved", "rejected"]).toContain(intent.status);
 
-    // Audit emitted — the proposal id appears in recent audit events.
-    const events = await agent.get<{ events: Array<{ outputs: { proposal_id?: string } }> }>(
-      "/audit/events?layer=execution&limit=20",
-    );
-    const match = events.events.find((e) => e.outputs?.proposal_id === proposal.id);
+    // Audit emitted on layer="agent" — the payment_intent id appears in recent events.
+    const events = await agent.get<{
+      events: Array<{ outputs: { payment_intent_id?: string } }>;
+    }>("/v1/audit/events?layer=agent&limit=20");
+    const match = events.events.find((e) => e.outputs?.payment_intent_id === intent.id);
     expect(match).toBeDefined();
   });
 });
