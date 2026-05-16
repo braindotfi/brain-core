@@ -25,12 +25,10 @@ import { AccountPageGenerator } from "./account.js";
 import { CounterpartyPageGenerator } from "./counterparty.js";
 import { ObligationPageGenerator } from "./obligation.js";
 import { MonthlySummaryPageGenerator } from "./monthly-summary.js";
-import {
-  AgentPageGenerator,
-  CashFlowPageGenerator,
-  InvoicePageGenerator,
-  PolicyPageGenerator,
-} from "./stubs.js";
+import { InvoicePageGenerator } from "./invoice.js";
+import { AgentPageGenerator } from "./agent.js";
+import { PolicyPageGenerator } from "./policy.js";
+import { CashFlowPageGenerator } from "./cash-flow.js";
 import type { PageGenerator } from "./types.js";
 
 export interface WikiPageServiceDeps {

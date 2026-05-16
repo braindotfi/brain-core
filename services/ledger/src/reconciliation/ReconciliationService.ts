@@ -26,13 +26,11 @@ import type { Pool } from "pg";
 import { listReconciliationMatches } from "../repository/reconciliation_matches.js";
 import { InvoicePaymentMatcher } from "./invoice-payment.js";
 import { TransactionReceiptMatcher } from "./transaction-receipt.js";
-import {
-  CardChargeMatcher,
-  PayrollBankDebitMatcher,
-  StatementBalanceMatcher,
-  SubscriptionChargeMatcher,
-  WalletTransferMatcher,
-} from "./stubs.js";
+import { StatementBalanceMatcher } from "./statement-balance.js";
+import { WalletTransferMatcher } from "./wallet-transfer.js";
+import { PayrollBankDebitMatcher } from "./payroll-bank-debit.js";
+import { SubscriptionChargeMatcher } from "./subscription-charge.js";
+import { CardChargeMatcher } from "./card-charge.js";
 import type { Matcher, MatcherResult } from "./types.js";
 
 export interface ReconciliationServiceDeps {

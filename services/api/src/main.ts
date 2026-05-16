@@ -46,7 +46,7 @@ import {
 
 import { registerRawPlugin, ingestOne, type RegisterRawPluginOptions } from "@brain/raw";
 
-import { LedgerService, registerLedgerPlugin } from "@brain/ledger";
+import { LedgerService, registerLedgerPlugin, startNormalizeWorker } from "@brain/ledger";
 
 import { WikiPageService, registerWikiPlugin, loadRegistry, askWiki } from "@brain/wiki";
 
@@ -531,6 +531,9 @@ async function main(): Promise<void> {
     { prefix: "/v1" },
   );
 
+  // -- background workers ---------------------------------------------
+  const normalizeWorker = startNormalizeWorker({ pool, audit });
+
   // -- listen ---------------------------------------------------------
   await app.listen({ host: "0.0.0.0", port: cfg.PORT });
   log.info({ port: cfg.PORT, version: cfg.SERVICE_VERSION }, "brain-server up");
@@ -538,6 +541,7 @@ async function main(): Promise<void> {
   // -- graceful shutdown ----------------------------------------------
   const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, "shutting down");
+    normalizeWorker.stop();
     try {
       await app.close();
     } catch (err) {

@@ -28,3 +28,8 @@ export {
   type PlaidExtractInput,
   type ExtractedLedgerRow,
 } from "./extractors/plaid.js";
+export {
+  startNormalizeWorker,
+  type NormalizeWorker,
+  type NormalizeWorkerOptions,
+} from "./workers/normalizeWorker.js";
