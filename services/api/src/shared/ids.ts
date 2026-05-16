@@ -44,6 +44,7 @@ export const ID_PREFIX = {
   // Cross-layer
   policyDecision: "pd",
   approval: "appr",
+  webhookEndpoint: "whe",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];
@@ -85,6 +86,7 @@ export const newPaymentIntentId = (): string => brainId(ID_PREFIX.ledgerPaymentI
 export const newReconciliationMatchId = (): string => brainId(ID_PREFIX.ledgerReconciliationMatch);
 export const newPolicyDecisionId = (): string => brainId(ID_PREFIX.policyDecision);
 export const newApprovalId = (): string => brainId(ID_PREFIX.approval);
+export const newWebhookEndpointId = (): string => brainId(ID_PREFIX.webhookEndpoint);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.

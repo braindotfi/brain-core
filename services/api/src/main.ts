@@ -19,6 +19,8 @@ import {
   idempotencyPlugin,
   JwtVerifier,
   PostgresAuditEmitter,
+  WebhookDispatcher,
+  WebhookAuditEmitter,
   RedisIdempotencyStore,
   InMemoryRevocationStore,
   createLogger,
@@ -284,7 +286,10 @@ async function main(): Promise<void> {
   const redis = new Redis(cfg.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
   await redis.connect();
 
-  const audit = new PostgresAuditEmitter(pool);
+  const audit = new WebhookAuditEmitter(
+    new PostgresAuditEmitter(pool),
+    new WebhookDispatcher(pool),
+  );
 
   const jwtVerifier = new JwtVerifier({
     jwksUrl: cfg.AUTH_JWKS_URL,

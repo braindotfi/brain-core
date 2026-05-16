@@ -76,8 +76,14 @@ export { createQueue, createWorker, redisConnectionFromUrl } from "./queue/facto
 // Content addressing
 export { hashStream, teeSha256 } from "./hashing.js";
 
-// Webhook verification
+// Webhook verification (inbound Plaid) + outbound dispatcher
 export { verifyPlaidWebhook, type PlaidVerifyOptions } from "./webhooks/plaid.js";
+export {
+  WebhookDispatcher,
+  WebhookAuditEmitter,
+  generateWebhookSecret,
+  FORWARDED_EVENTS,
+} from "./webhooks/outbound.js";
 
 // LLM + embeddings (§2 stack: Claude + OpenAI)
 export * from "./llm/types.js";
