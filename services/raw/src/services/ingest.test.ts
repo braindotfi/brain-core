@@ -1,10 +1,6 @@
+import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import {
-  InMemoryAuditEmitter,
-  MemoryBlobAdapter,
-  newTenantId,
-  newUserId,
-} from "@brain/api/shared";
+import { InMemoryAuditEmitter, MemoryBlobAdapter, newTenantId, newUserId } from "@brain/api/shared";
 import { ingestOne } from "./ingest.js";
 
 function makeFakePool(options: { existing?: boolean } = {}): {
@@ -63,7 +59,7 @@ describe("ingestOne", () => {
     const body = Buffer.from("hello world");
 
     const result = await ingestOne(
-      { pool: pool as unknown as import("pg").Pool, blob, audit },
+      { pool: pool as unknown as Pool, blob, audit },
       {
         tenantId,
         actor,
@@ -97,7 +93,7 @@ describe("ingestOne", () => {
     const audit = new InMemoryAuditEmitter();
 
     const result = await ingestOne(
-      { pool: pool as unknown as import("pg").Pool, blob, audit },
+      { pool: pool as unknown as Pool, blob, audit },
       {
         tenantId: newTenantId(),
         actor: newUserId(),
@@ -120,7 +116,7 @@ describe("ingestOne", () => {
     const tenantId = newTenantId();
 
     await ingestOne(
-      { pool: pool as unknown as import("pg").Pool, blob, audit },
+      { pool: pool as unknown as Pool, blob, audit },
       {
         tenantId,
         actor: newUserId(),

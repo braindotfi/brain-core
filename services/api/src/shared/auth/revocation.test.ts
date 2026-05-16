@@ -1,9 +1,6 @@
+import type { Redis } from "ioredis";
 import { describe, expect, it, vi } from "vitest";
-import {
-  InMemoryRevocationStore,
-  RedisRevocationStore,
-  redisRevocationKey,
-} from "./revocation.js";
+import { InMemoryRevocationStore, RedisRevocationStore, redisRevocationKey } from "./revocation.js";
 
 describe("redisRevocationKey", () => {
   it("namespaces by jti", () => {
@@ -34,7 +31,7 @@ describe("RedisRevocationStore", () => {
       get: vi.fn(async (_k: string) => "1"),
       set: vi.fn(),
     };
-    const store = new RedisRevocationStore(redis as unknown as import("ioredis").Redis);
+    const store = new RedisRevocationStore(redis as unknown as Redis);
     expect(await store.isRevoked("jti1")).toBe(true);
     expect(redis.get).toHaveBeenCalledWith("auth:revoked:jti1");
   });
@@ -44,7 +41,7 @@ describe("RedisRevocationStore", () => {
       get: vi.fn(async () => null),
       set: vi.fn(),
     };
-    const store = new RedisRevocationStore(redis as unknown as import("ioredis").Redis);
+    const store = new RedisRevocationStore(redis as unknown as Redis);
     expect(await store.isRevoked("missing")).toBe(false);
   });
 
@@ -55,7 +52,7 @@ describe("RedisRevocationStore", () => {
       get: vi.fn(),
       set: vi.fn(async () => "OK"),
     };
-    const store = new RedisRevocationStore(redis as unknown as import("ioredis").Redis);
+    const store = new RedisRevocationStore(redis as unknown as Redis);
 
     await store.revoke("jtiA", now + 100);
     expect(redis.set).toHaveBeenLastCalledWith("auth:revoked:jtiA", "1", "EX", 100);

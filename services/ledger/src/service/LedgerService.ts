@@ -53,11 +53,7 @@ import {
   type TransactionRow,
 } from "../repository/index.js";
 import type { LedgerDeps } from "../deps.js";
-import {
-  recordTransactionRow,
-  upsertAccountRow,
-  upsertCounterpartyRow,
-} from "./writes.js";
+import { recordTransactionRow, upsertAccountRow, upsertCounterpartyRow } from "./writes.js";
 import { normalizePlaidArtifact } from "../extractors/plaid.js";
 
 export class LedgerService implements ILedgerService {
@@ -65,7 +61,10 @@ export class LedgerService implements ILedgerService {
 
   // ----- Reads -----------------------------------------------------------
 
-  public async listAccounts(ctx: ServiceCallContext, f: AccountListFilters): Promise<ListResult<Account>> {
+  public async listAccounts(
+    ctx: ServiceCallContext,
+    f: AccountListFilters,
+  ): Promise<ListResult<Account>> {
     const limit = clampLimit(f.limit, 50, 500);
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       listAccountsRepo(c, {
@@ -114,7 +113,9 @@ export class LedgerService implements ILedgerService {
   }
 
   public async getTransaction(ctx: ServiceCallContext, id: string): Promise<Transaction | null> {
-    const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) => findTransactionById(c, id));
+    const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+      findTransactionById(c, id),
+    );
     return row === null ? null : serializeTransaction(row);
   }
 
@@ -210,7 +211,12 @@ export class LedgerService implements ILedgerService {
     ctx: ServiceCallContext,
     input: UpsertCounterpartyInput,
   ): Promise<Counterparty> {
-    const { row } = await upsertCounterpartyRow(this.deps.pool, this.deps.audit, ctx, input);
+    const { risk_level, verified_status, ...cpRest } = input;
+    const { row } = await upsertCounterpartyRow(this.deps.pool, this.deps.audit, ctx, {
+      ...cpRest,
+      ...(risk_level !== undefined ? { risk_level } : {}),
+      ...(verified_status !== undefined ? { verified_status } : {}),
+    });
     return serializeCounterparty(row);
   }
 
@@ -271,13 +277,20 @@ export class LedgerService implements ILedgerService {
 
   // Helpers used by external callers that want to verify a row exists
   // (e.g. the §6 gate in Phase 4 will call these).
-  public async findCounterpartyById(ctx: ServiceCallContext, id: string): Promise<Counterparty | null> {
-    const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) => findCounterpartyById(c, id));
+  public async findCounterpartyById(
+    ctx: ServiceCallContext,
+    id: string,
+  ): Promise<Counterparty | null> {
+    const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+      findCounterpartyById(c, id),
+    );
     return row === null ? null : serializeCounterparty(row);
   }
 
   public async findObligationById(ctx: ServiceCallContext, id: string): Promise<Obligation | null> {
-    const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) => findObligationById(c, id));
+    const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+      findObligationById(c, id),
+    );
     return row === null ? null : serializeObligation(row);
   }
 
@@ -425,4 +438,3 @@ function clampLimit(requested: number | undefined, fallback: number, max: number
   if (requested < 1) return fallback;
   return Math.min(requested, max);
 }
-

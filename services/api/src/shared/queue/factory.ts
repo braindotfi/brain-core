@@ -6,7 +6,7 @@
  * the service's boot code.
  */
 
-import { Queue, Worker, type ConnectionOptions, type WorkerOptions } from "bullmq";
+import { Queue, Worker, type ConnectionOptions, type Job, type WorkerOptions } from "bullmq";
 import { DEFAULT_JOB_OPTS, type BrainJobEnvelope, type QueueName } from "./types.js";
 
 export interface QueueFactoryOptions {
@@ -26,7 +26,10 @@ export function redisConnectionFromUrl(url: string): ConnectionOptions {
   };
 }
 
-export function createQueue<T>(name: QueueName, opts: QueueFactoryOptions): Queue<BrainJobEnvelope<T>> {
+export function createQueue<T>(
+  name: QueueName,
+  opts: QueueFactoryOptions,
+): Queue<BrainJobEnvelope<T>> {
   return new Queue<BrainJobEnvelope<T>>(name, {
     connection: redisConnectionFromUrl(opts.redisUrl),
     defaultJobOptions: DEFAULT_JOB_OPTS,
@@ -35,7 +38,7 @@ export function createQueue<T>(name: QueueName, opts: QueueFactoryOptions): Queu
 
 export function createWorker<T, R = unknown>(
   name: QueueName,
-  processor: (job: import("bullmq").Job<BrainJobEnvelope<T>>) => Promise<R>,
+  processor: (job: Job<BrainJobEnvelope<T>>) => Promise<R>,
   opts: QueueFactoryOptions & { concurrency?: number },
 ): Worker<BrainJobEnvelope<T>, R> {
   const workerOpts: WorkerOptions = {

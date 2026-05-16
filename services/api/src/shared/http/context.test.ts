@@ -1,8 +1,9 @@
+import type { FastifyRequest } from "fastify";
 import { describe, expect, it } from "vitest";
 import { contextFromRequest } from "./context.js";
 
-function fakeRequest(partial: Record<string, unknown>): import("fastify").FastifyRequest {
-  return partial as unknown as import("fastify").FastifyRequest;
+function fakeRequest(partial: Record<string, unknown>): FastifyRequest {
+  return partial as unknown as FastifyRequest;
 }
 
 describe("contextFromRequest", () => {

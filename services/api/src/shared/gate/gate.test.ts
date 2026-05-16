@@ -73,9 +73,10 @@ function makeDecision(overrides: Partial<GatePolicyDecision> = {}): GatePolicyDe
   };
 }
 
-function makeDeps(
-  overrides: Partial<GateDependencies> = {},
-): { deps: GateDependencies; audit: InMemoryAuditEmitter } {
+function makeDeps(overrides: Partial<GateDependencies> = {}): {
+  deps: GateDependencies;
+  audit: InMemoryAuditEmitter;
+} {
   const audit = new InMemoryAuditEmitter();
   const deps: GateDependencies = {
     audit,
@@ -104,7 +105,9 @@ describe("§6 pre-execution gate — happy path", () => {
       expect(result.policyDecisionId).toBe("pd_TEST");
       expect(result.checks).toHaveLength(13);
       expect(result.checks.every((c) => c.passed)).toBe(true);
-      expect(result.checks.map((c) => c.index)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+      expect(result.checks.map((c) => c.index)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+      ]);
     }
     expect(audit.events).toHaveLength(1);
     expect(audit.events[0]!.action).toBe("payment_intent.execute.before");
@@ -150,8 +153,10 @@ describe("§6 — check 1: agent identity", () => {
 });
 
 describe("§6 — check 2: agent authorized", () => {
-  it("fails when scope is missing", async () => {
-    const { deps } = makeDeps();
+  it("fails when scope is missing on both principal and agent", async () => {
+    const { deps } = makeDeps({
+      resolveAgent: async () => ({ ...ACTIVE_AGENT, scope: { canExecutePayments: false } }),
+    });
     const result = await runPreExecutionGate(deps, {
       ctx,
       principal: defaultPrincipal({ scopes: ["wiki:read"] }),
@@ -178,8 +183,7 @@ describe("§6 — check 3: action allowed", () => {
 
   it("fails when no rule matched", async () => {
     const { deps } = makeDeps({
-      evaluatePolicy: async () =>
-        makeDecision({ outcome: "allow", matched_rule_id: null }),
+      evaluatePolicy: async () => makeDecision({ outcome: "allow", matched_rule_id: null }),
     });
     const result = await runPreExecutionGate(deps, {
       ctx,
@@ -324,8 +328,7 @@ describe("§6 — check 8: available balance sufficient", () => {
 describe("§6 — check 9: required evidence present", () => {
   it("fails when policy requires evidence and intent has none", async () => {
     const { deps } = makeDeps({
-      evaluatePolicy: async () =>
-        makeDecision({ required_evidence_kinds: ["invoice"] }),
+      evaluatePolicy: async () => makeDecision({ required_evidence_kinds: ["invoice"] }),
     });
     const result = await runPreExecutionGate(deps, {
       ctx,
@@ -337,8 +340,7 @@ describe("§6 — check 9: required evidence present", () => {
   });
   it("passes when intent supplies evidence", async () => {
     const { deps } = makeDeps({
-      evaluatePolicy: async () =>
-        makeDecision({ required_evidence_kinds: ["invoice"] }),
+      evaluatePolicy: async () => makeDecision({ required_evidence_kinds: ["invoice"] }),
     });
     const result = await runPreExecutionGate(deps, {
       ctx,

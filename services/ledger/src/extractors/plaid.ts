@@ -17,10 +17,7 @@
  * Re-running the extractor against the same payload is a no-op.
  */
 
-import type {
-  AuditEmitter,
-  ServiceCallContext,
-} from "@brain/api/shared";
+import type { AuditEmitter, ServiceCallContext } from "@brain/api/shared";
 import type { Pool } from "pg";
 import {
   recordTransactionRow,
@@ -32,12 +29,7 @@ export interface PlaidAccountPayload {
   account_id: string;
   name: string;
   official_name?: string;
-  type:
-    | "depository"
-    | "credit"
-    | "loan"
-    | "investment"
-    | "other";
+  type: "depository" | "credit" | "loan" | "investment" | "other";
   subtype?: string;
   iso_currency_code?: string | null;
   balances?: {
@@ -102,7 +94,7 @@ export async function normalizePlaidArtifact(
   for (const acct of accounts) {
     const { row } = await upsertAccountRow(pool, audit, ctx, {
       external_account_id: acct.account_id,
-      institution: acct.official_name,
+      ...(acct.official_name !== undefined ? { institution: acct.official_name } : {}),
       account_type: mapPlaidAccountType(acct.type, acct.subtype),
       name: acct.name,
       currency: (acct.iso_currency_code ?? "USD").toUpperCase(),
@@ -151,7 +143,7 @@ export async function normalizePlaidArtifact(
       currency: (tx.iso_currency_code ?? "USD").toUpperCase(),
       direction,
       transaction_date: new Date(tx.date).toISOString(),
-      ...(tx.authorized_date != null
+      ...(tx.authorized_date !== null && tx.authorized_date !== undefined
         ? { posted_date: new Date(tx.authorized_date).toISOString() }
         : {}),
       ...(counterpartyId !== undefined ? { counterparty_id: counterpartyId } : {}),
@@ -176,13 +168,7 @@ export async function normalizePlaidArtifact(
 function mapPlaidAccountType(
   type: PlaidAccountPayload["type"],
   subtype?: string,
-):
-  | "bank_checking"
-  | "bank_savings"
-  | "card"
-  | "loan"
-  | "line_of_credit"
-  | "onchain" {
+): "bank_checking" | "bank_savings" | "card" | "loan" | "line_of_credit" | "onchain" {
   if (type === "depository" && subtype === "savings") return "bank_savings";
   if (type === "depository") return "bank_checking";
   if (type === "credit" && subtype === "line of credit") return "line_of_credit";
