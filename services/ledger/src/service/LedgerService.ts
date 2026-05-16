@@ -214,8 +214,8 @@ export class LedgerService implements ILedgerService {
     const { risk_level, verified_status, ...cpRest } = input;
     const { row } = await upsertCounterpartyRow(this.deps.pool, this.deps.audit, ctx, {
       ...cpRest,
-      ...(risk_level !== undefined ? { risk_level } : {}),
-      ...(verified_status !== undefined ? { verified_status } : {}),
+      ...(risk_level !== undefined && risk_level !== null ? { risk_level } : {}),
+      ...(verified_status !== undefined && verified_status !== null ? { verified_status } : {}),
     });
     return serializeCounterparty(row);
   }

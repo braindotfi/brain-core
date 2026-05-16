@@ -6,7 +6,14 @@ describe("schema registry", () => {
   const reg = loadRegistry();
 
   it("loads schemas for every MVP entity kind", () => {
-    for (const k of ["account", "counterparty", "transaction", "obligation", "policy", "agent"] as const) {
+    for (const k of [
+      "account",
+      "counterparty",
+      "transaction",
+      "obligation",
+      "policy",
+      "agent",
+    ] as const) {
       expect(reg.entity[k]).toBeDefined();
     }
   });
@@ -67,7 +74,7 @@ describe("schema registry", () => {
   it("validates transacted_with relation", () => {
     expect(() =>
       reg.validateRelation("transacted_with", {
-        transaction_id: "ent_01HQ7K3AAAAAAAAAAAAAAAAAAAA",
+        transaction_id: "ent_01HQ7K3AAAAAAAAAAAAAAAAAAA",
         amount: "12.50",
         currency: "USD",
         posted_at: "2026-04-01T00:00:00Z",

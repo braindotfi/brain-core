@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, isBrainError } from "@brain/api/shared";
+import { InMemoryAuditEmitter, isBrainError, newTenantId, newUserId } from "@brain/api/shared";
 import { LedgerService } from "./LedgerService.js";
 
 /**
@@ -35,7 +35,7 @@ function fakePool(routes: Record<SqlPattern, Array<Record<string, unknown>>> = {
   return { pool, log };
 }
 
-const ctx = { tenantId: "tnt_test", actor: "user_test" };
+const ctx = { tenantId: newTenantId(), actor: newUserId() };
 
 // =============================================================================
 // READS
