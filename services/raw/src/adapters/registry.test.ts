@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isBrainError } from "@brain/api/shared";
-import {
-  adapterForSourceType,
-  adapterForWebhookProvider,
-  listAdapters,
-} from "./registry.js";
+import { adapterForSourceType, adapterForWebhookProvider, listAdapters } from "./registry.js";
 
 describe("adapterForSourceType", () => {
   it("returns an adapter for every OpenAPI source_type enum value", () => {

@@ -60,7 +60,7 @@ export function createMetrics(opts: CreateMetricsOptions): MetricsEmitter {
     errorHandler: (err) => {
       // §6.1: emit a stderr line rather than throwing — metrics emission must
       // never fail a request path.
-      // eslint-disable-next-line no-console
+
       console.warn(`[metrics] emission error: ${err.message}`);
     },
     ...(globalTags !== undefined ? { globalTags } : {}),

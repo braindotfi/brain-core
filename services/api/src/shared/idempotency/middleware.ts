@@ -42,10 +42,7 @@ export interface IdempotencyPluginOptions {
 const HEADER_NAME = "idempotency-key";
 const MAX_KEY_LEN = 256;
 
-const plugin: FastifyPluginAsync<IdempotencyPluginOptions> = async (
-  fastify,
-  opts,
-) => {
+const plugin: FastifyPluginAsync<IdempotencyPluginOptions> = async (fastify, opts) => {
   const { store, ttlSeconds } = opts;
 
   fastify.addHook("preHandler", async (request, reply) => {

@@ -18,6 +18,7 @@ import { Client, Pool } from "pg";
 import Fastify from "fastify";
 import {
   InMemoryAuditEmitter,
+  InMemoryIdempotencyStore,
   MemoryBlobAdapter,
   JwtVerifier,
   newTenantId,
@@ -54,7 +55,10 @@ export async function buildHarness(): Promise<Harness | null> {
   const dbUrl = process.env.DATABASE_URL;
   if (dbUrl === undefined || dbUrl === "") return null;
 
-  const schema = `brain_test_${createHash("sha1").update(String(process.pid) + String(Date.now())).digest("hex").slice(0, 12)}`;
+  const schema = `brain_test_${createHash("sha1")
+    .update(String(process.pid) + String(Date.now()))
+    .digest("hex")
+    .slice(0, 12)}`;
 
   // Create + enter schema on a throwaway client.
   const bootstrap = new Client({ connectionString: dbUrl });
@@ -77,7 +81,9 @@ export async function buildHarness(): Promise<Harness | null> {
   try {
     await migClient.query(`SET search_path TO ${schema}, public`);
     const discovered = await discoverMigrations(findRepoRoot());
-    await applyAll(migClient, discovered, { appliedBy: "integration-test" });
+    await applyAll(migClient as unknown as Parameters<typeof applyAll>[0], discovered, {
+      appliedBy: "integration-test",
+    });
   } finally {
     migClient.release();
   }
@@ -106,6 +112,7 @@ export async function buildHarness(): Promise<Harness | null> {
   const app = await buildRawApp({
     deps: { pool, blob, audit },
     jwtVerifier: verifier,
+    idempotencyStore: new InMemoryIdempotencyStore(),
     plaidVerify: { keyResolver: async () => ({}) as never },
     resolveWebhookTenant: async () => "tnt_NOT_USED",
     logger,
@@ -118,7 +125,12 @@ export async function buildHarness(): Promise<Harness | null> {
     expiresInSeconds?: number;
   }): Promise<{ token: string; principal: Principal }> {
     const type = claims.principalType ?? "user";
-    const sub = type === "user" ? newUserId() : type === "agent" ? `agent_${newTokenId().slice(6)}` : `partner_${newTokenId().slice(6)}`;
+    const sub =
+      type === "user"
+        ? newUserId()
+        : type === "agent"
+          ? `agent_${newTokenId().slice(6)}`
+          : `partner_${newTokenId().slice(6)}`;
     const jti = newTokenId();
     const exp = Math.floor(Date.now() / 1000) + (claims.expiresInSeconds ?? 300);
 

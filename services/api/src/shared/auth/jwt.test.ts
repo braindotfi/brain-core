@@ -38,9 +38,7 @@ const BASE_OPTS = {
 };
 
 describe("projectPrincipal", () => {
-  function baseClaims(
-    overrides: Partial<Record<string, unknown>> = {},
-  ): Record<string, unknown> {
+  function baseClaims(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
     return {
       sub: newUserId(),
       jti: newTokenId(),
@@ -164,10 +162,7 @@ describe("verifyWithKey", () => {
     });
 
     // Revoke the jti baked into makeKeyed()'s signer.
-    await revocation.revoke(
-      "token_01HQ7K3TESTTESTTESTTESTTST",
-      Math.floor(Date.now() / 1000) + 60,
-    );
+    await revocation.revoke("token_01HQ7K3TESTTESTTESTTESTTST", Math.floor(Date.now() / 1000) + 60);
 
     try {
       await verifyWithKey(token, async () => getKey(), {

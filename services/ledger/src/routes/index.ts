@@ -116,7 +116,9 @@ export async function registerLedgerRoutes(
         ...(request.query.counterparty_id !== undefined
           ? { counterparty_id: request.query.counterparty_id }
           : {}),
-        ...(request.query.direction !== undefined ? { direction: request.query.direction as never } : {}),
+        ...(request.query.direction !== undefined
+          ? { direction: request.query.direction as never }
+          : {}),
         ...(request.query.status !== undefined ? { status: request.query.status as never } : {}),
         ...(request.query.since !== undefined ? { since: request.query.since } : {}),
         ...(request.query.until !== undefined ? { until: request.query.until } : {}),
@@ -275,15 +277,13 @@ export async function registerLedgerRoutes(
       }
       const ctx = principalCtx(request);
       requireScope(request.principal!.scopes, READ);
-      const matches = await reconciliation.list(ctx, {
-        ...(request.query.status !== undefined ? { status: request.query.status as never } : {}),
-        ...(request.query.match_type !== undefined
-          ? { match_type: request.query.match_type as never }
-          : {}),
-        ...(request.query.limit !== undefined
-          ? { limit: parseLimit(request.query.limit) }
-          : {}),
-      });
+      type ListF = Parameters<typeof reconciliation.list>[1];
+      const listF = {
+        ...(request.query.status !== undefined ? { status: request.query.status } : {}),
+        ...(request.query.match_type !== undefined ? { match_type: request.query.match_type } : {}),
+        ...(request.query.limit !== undefined ? { limit: parseLimit(request.query.limit) } : {}),
+      } as unknown as ListF;
+      const matches = await reconciliation.list(ctx, listF);
       reply.status(200);
       return { matches };
     },

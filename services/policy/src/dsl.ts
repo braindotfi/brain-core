@@ -19,21 +19,26 @@
 
 import { createHash } from "node:crypto";
 
-export type ApplyTo = "outbound_payment" | "inbound_payment" | "ledger_write" | "onchain_tx" | "any";
+export type ApplyTo =
+  | "outbound_payment"
+  | "inbound_payment"
+  | "ledger_write"
+  | "onchain_tx"
+  | "any";
 export type ExecuteMode = "auto" | "confirm" | "reject";
 
 export interface AmountLiteral {
   currency: string; // ISO 4217 or chain symbol
-  value: string;    // stringified decimal
+  value: string; // stringified decimal
 }
 
 export interface RuleWhen {
-  "counterparty.in"?: string;     // list reference: vendors.trusted
+  "counterparty.in"?: string; // list reference: vendors.trusted
   "counterparty.not_in"?: string; // list reference: vendors.blocked
   "amount.lte"?: AmountLiteral;
   "amount.gt"?: AmountLiteral;
   "agent.role"?: string;
-  "time_window"?: string; // cron expression
+  time_window?: string; // cron expression
 }
 
 export interface PolicyRule {
@@ -74,7 +79,8 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]:
 
 function stableStringify(v: JsonValue): string {
   if (v === null) return "null";
-  if (typeof v === "number" || typeof v === "boolean" || typeof v === "string") return JSON.stringify(v);
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "string")
+    return JSON.stringify(v);
   if (Array.isArray(v)) return `[${v.map(stableStringify).join(",")}]`;
   const keys = Object.keys(v).sort();
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(v[k]!)}`).join(",")}}`;

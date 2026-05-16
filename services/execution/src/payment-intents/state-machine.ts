@@ -30,7 +30,9 @@ export function isValidPaymentIntentTransition(
 ): boolean {
   switch (from) {
     case "proposed":
-      return to === "pending_approval" || to === "approved" || to === "rejected" || to === "cancelled";
+      return (
+        to === "pending_approval" || to === "approved" || to === "rejected" || to === "cancelled"
+      );
     case "pending_approval":
       return to === "approved" || to === "rejected";
     case "approved":

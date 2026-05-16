@@ -25,7 +25,12 @@ interface FixtureSeed {
   amex_balance: { account_id: string; balance: string };
   spending_change_this_month: { current: string; prior: string };
   invoice_1042: { id: string; amount_due: string; amount_paid: string; status: string };
-  active_subscriptions: Array<{ id: string; counterparty_name: string; amount_due: string; recurrence: string }>;
+  active_subscriptions: Array<{
+    id: string;
+    counterparty_name: string;
+    amount_due: string;
+    recurrence: string;
+  }>;
   payments_agent_actions: Array<{ payment_intent_id: string; status: string; created_at: Date }>;
   approvals_required: Array<{ payment_intent_id: string; required_approvers: string[] }>;
   evidence_for_invoice_1042: Array<{ source_id: string; evidence_id: string }>;
@@ -52,23 +57,44 @@ function fixture(): FixtureSeed {
       status: "partial",
     },
     active_subscriptions: [
-      { id: "obl_netflix", counterparty_name: "Netflix", amount_due: "15.49", recurrence: "RRULE:FREQ=MONTHLY" },
-      { id: "obl_spotify", counterparty_name: "Spotify", amount_due: "10.99", recurrence: "RRULE:FREQ=MONTHLY" },
-      { id: "obl_nytimes", counterparty_name: "New York Times", amount_due: "17.00", recurrence: "RRULE:FREQ=MONTHLY" },
-      { id: "obl_figma", counterparty_name: "Figma", amount_due: "12.00", recurrence: "RRULE:FREQ=MONTHLY" },
-      { id: "obl_notion", counterparty_name: "Notion Labs", amount_due: "8.00", recurrence: "RRULE:FREQ=MONTHLY" },
+      {
+        id: "obl_netflix",
+        counterparty_name: "Netflix",
+        amount_due: "15.49",
+        recurrence: "RRULE:FREQ=MONTHLY",
+      },
+      {
+        id: "obl_spotify",
+        counterparty_name: "Spotify",
+        amount_due: "10.99",
+        recurrence: "RRULE:FREQ=MONTHLY",
+      },
+      {
+        id: "obl_nytimes",
+        counterparty_name: "New York Times",
+        amount_due: "17.00",
+        recurrence: "RRULE:FREQ=MONTHLY",
+      },
+      {
+        id: "obl_figma",
+        counterparty_name: "Figma",
+        amount_due: "12.00",
+        recurrence: "RRULE:FREQ=MONTHLY",
+      },
+      {
+        id: "obl_notion",
+        counterparty_name: "Notion Labs",
+        amount_due: "8.00",
+        recurrence: "RRULE:FREQ=MONTHLY",
+      },
     ],
     payments_agent_actions: [
       { payment_intent_id: "pi_proposed_rent", status: "proposed", created_at: now },
       { payment_intent_id: "pi_pending_aws", status: "pending_approval", created_at: now },
       { payment_intent_id: "pi_rejected_high_risk", status: "rejected", created_at: now },
     ],
-    approvals_required: [
-      { payment_intent_id: "pi_pending_aws", required_approvers: ["cfo"] },
-    ],
-    evidence_for_invoice_1042: [
-      { source_id: "raw_inv_1042", evidence_id: "prs_inv_1042_v1" },
-    ],
+    approvals_required: [{ payment_intent_id: "pi_pending_aws", required_approvers: ["cfo"] }],
+    evidence_for_invoice_1042: [{ source_id: "raw_inv_1042", evidence_id: "prs_inv_1042_v1" }],
   };
 }
 

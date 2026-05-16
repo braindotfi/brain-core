@@ -61,40 +61,37 @@ export async function registerPaymentIntentRoutes(
   app: FastifyInstance,
   service: PaymentIntentService,
 ): Promise<void> {
-  app.post(
-    "/payment-intents",
-    async (request: FastifyRequest<{ Body: CreateBody }>, reply) => {
-      const ctx = assertCtx(request);
-      requireScope(request.principal!.scopes, SCOPE_PROPOSE);
-      const b = request.body ?? {};
-      if (
-        b.action_type === undefined ||
-        !ACTION_TYPES.has(b.action_type) ||
-        b.source_account_id === undefined ||
-        !isBrainId(b.source_account_id, "acct") ||
-        b.destination_counterparty_id === undefined ||
-        !isBrainId(b.destination_counterparty_id, "cp") ||
-        b.amount === undefined ||
-        b.currency === undefined ||
-        !/^[A-Z]{3}$/.test(b.currency)
-      ) {
-        throw brainError("request_body_invalid", "missing or malformed PaymentIntent fields");
-      }
-      const intent = await service.create(ctx, {
-        action_type: b.action_type as never,
-        source_account_id: b.source_account_id,
-        destination_counterparty_id: b.destination_counterparty_id,
-        amount: b.amount,
-        currency: b.currency,
-        ...(b.obligation_id !== undefined ? { obligation_id: b.obligation_id } : {}),
-        ...(b.invoice_id !== undefined ? { invoice_id: b.invoice_id } : {}),
-        ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
-        ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
-      });
-      reply.status(201);
-      return intent;
-    },
-  );
+  app.post("/payment-intents", async (request: FastifyRequest<{ Body: CreateBody }>, reply) => {
+    const ctx = assertCtx(request);
+    requireScope(request.principal!.scopes, SCOPE_PROPOSE);
+    const b = request.body ?? {};
+    if (
+      b.action_type === undefined ||
+      !ACTION_TYPES.has(b.action_type) ||
+      b.source_account_id === undefined ||
+      !isBrainId(b.source_account_id, "acct") ||
+      b.destination_counterparty_id === undefined ||
+      !isBrainId(b.destination_counterparty_id, "cp") ||
+      b.amount === undefined ||
+      b.currency === undefined ||
+      !/^[A-Z]{3}$/.test(b.currency)
+    ) {
+      throw brainError("request_body_invalid", "missing or malformed PaymentIntent fields");
+    }
+    const intent = await service.create(ctx, {
+      action_type: b.action_type as never,
+      source_account_id: b.source_account_id,
+      destination_counterparty_id: b.destination_counterparty_id,
+      amount: b.amount,
+      currency: b.currency,
+      ...(b.obligation_id !== undefined ? { obligation_id: b.obligation_id } : {}),
+      ...(b.invoice_id !== undefined ? { invoice_id: b.invoice_id } : {}),
+      ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
+      ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
+    });
+    reply.status(201);
+    return intent;
+  });
 
   app.get(
     "/payment-intents/:id",

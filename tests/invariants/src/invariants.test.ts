@@ -14,10 +14,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import {
-  isValidPaymentIntentTransition,
-  type PaymentIntentState,
-} from "@brain/execution";
+import { isValidPaymentIntentTransition, type PaymentIntentState } from "@brain/execution";
 import {
   isValidExecutionTransition,
   isValidProposalTransition,
@@ -29,11 +26,7 @@ import {
   LEDGER_KINDS,
   WIKI_KINDS,
 } from "../../../schemas/index.js";
-import {
-  InMemoryAuditEmitter,
-  recordTransactionRow,
-  upsertCounterpartyRow,
-} from "@brain/ledger";
+import { InMemoryAuditEmitter, recordTransactionRow, upsertCounterpartyRow } from "@brain/ledger";
 
 // =============================================================================
 // 1. Every transaction belongs to an account.
@@ -86,19 +79,24 @@ describe("invariant: every transaction has a valid direction", () => {
       }),
     } as unknown as import("pg").Pool;
     await expect(
-      recordTransactionRow(fakePool, audit, { tenantId: "tnt_x", actor: "user_x" }, {
-        account_id: "acct_x",
-        external_transaction_id: "x",
-        amount: "-1.00",
-        currency: "USD",
-        direction: "outflow",
-        transaction_date: new Date().toISOString(),
-        status: "posted",
-        source_ids: ["raw_x"],
-        evidence_ids: [],
-        provenance: "extracted",
-        confidence: 0.9,
-      }),
+      recordTransactionRow(
+        fakePool,
+        audit,
+        { tenantId: "tnt_x", actor: "user_x" },
+        {
+          account_id: "acct_x",
+          external_transaction_id: "x",
+          amount: "-1.00",
+          currency: "USD",
+          direction: "outflow",
+          transaction_date: new Date().toISOString(),
+          status: "posted",
+          source_ids: ["raw_x"],
+          evidence_ids: [],
+          provenance: "extracted",
+          confidence: 0.9,
+        },
+      ),
     ).rejects.toThrow();
   });
 });
@@ -182,20 +180,36 @@ describe("invariant: every material state transition creates an AuditEvent", () 
     const audit = new InMemoryAuditEmitter();
     const fakePool = mkFakePoolReturning({
       "INSERT INTO ledger_counterparties": [
-        { id: "cp_X", owner_id: "tnt_x", name: "X", normalized_name: "x", type: "vendor",
-          aliases: [], linked_accounts: [], source_ids: ["raw_x"], evidence_ids: [],
-          provenance: "extracted", confidence: 0.9, created_at: new Date(),
-          updated_at: new Date() },
+        {
+          id: "cp_X",
+          owner_id: "tnt_x",
+          name: "X",
+          normalized_name: "x",
+          type: "vendor",
+          aliases: [],
+          linked_accounts: [],
+          source_ids: ["raw_x"],
+          evidence_ids: [],
+          provenance: "extracted",
+          confidence: 0.9,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
       ],
     });
-    await upsertCounterpartyRow(fakePool, audit, { tenantId: "tnt_x", actor: "user_x" }, {
-      name: "X",
-      type: "vendor",
-      source_ids: ["raw_x"],
-      evidence_ids: [],
-      provenance: "extracted",
-      confidence: 0.9,
-    });
+    await upsertCounterpartyRow(
+      fakePool,
+      audit,
+      { tenantId: "tnt_x", actor: "user_x" },
+      {
+        name: "X",
+        type: "vendor",
+        source_ids: ["raw_x"],
+        evidence_ids: [],
+        provenance: "extracted",
+        confidence: 0.9,
+      },
+    );
     expect(audit.events.some((e) => e.action === "ledger.counterparty.created")).toBe(true);
   });
 });

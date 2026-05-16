@@ -131,9 +131,12 @@ export async function applyAll(
       } catch {
         /* swallow */
       }
-      throw new Error(`migration ${m.key} failed: ${err instanceof Error ? err.message : String(err)}`, {
-        cause: err instanceof Error ? err : undefined,
-      });
+      throw new Error(
+        `migration ${m.key} failed: ${err instanceof Error ? err.message : String(err)}`,
+        {
+          cause: err instanceof Error ? err : undefined,
+        },
+      );
     }
     result.applied.push(m);
   }
@@ -162,5 +165,7 @@ function bufferEquals(a: Buffer | ReadonlyArray<number> | Uint8Array, b: Buffer)
 }
 
 function toHex(buf: Buffer | ReadonlyArray<number> | Uint8Array): string {
-  return Buffer.isBuffer(buf) ? buf.toString("hex") : Buffer.from(buf as Uint8Array).toString("hex");
+  return Buffer.isBuffer(buf)
+    ? buf.toString("hex")
+    : Buffer.from(buf as Uint8Array).toString("hex");
 }

@@ -51,7 +51,12 @@ export interface QuestionAnswer {
 }
 
 export interface AnnotationInput {
-  target_type: "ledger_account" | "ledger_transaction" | "ledger_counterparty" | "ledger_obligation" | "ledger_invoice";
+  target_type:
+    | "ledger_account"
+    | "ledger_transaction"
+    | "ledger_counterparty"
+    | "ledger_obligation"
+    | "ledger_invoice";
   target_id: string;
   body?: string;
   /** Optional structured override of attributes; written through to Ledger via a Raw artifact. */
@@ -59,10 +64,20 @@ export interface AnnotationInput {
 }
 
 export interface IWikiMemoryService {
-  listPages(ctx: ServiceCallContext, f: { page_type?: WikiPage["page_type"]; q?: string; limit?: number }): Promise<{ pages: WikiPage[] }>;
+  listPages(
+    ctx: ServiceCallContext,
+    f: { page_type?: WikiPage["page_type"]; q?: string; limit?: number },
+  ): Promise<{ pages: WikiPage[] }>;
   getPage(ctx: ServiceCallContext, slugOrId: string): Promise<WikiPage | null>;
   regenerate(ctx: ServiceCallContext, slugOrId: string): Promise<WikiPage>;
-  search(ctx: ServiceCallContext, q: string, limit: number): Promise<Array<{ page: WikiPage; score: number }>>;
+  search(
+    ctx: ServiceCallContext,
+    q: string,
+    limit: number,
+  ): Promise<Array<{ page: WikiPage; score: number }>>;
   question(ctx: ServiceCallContext, req: QuestionRequest): Promise<QuestionAnswer>;
-  annotate(ctx: ServiceCallContext, input: AnnotationInput): Promise<{ annotation_id: string; raw_artifact_id: string }>;
+  annotate(
+    ctx: ServiceCallContext,
+    input: AnnotationInput,
+  ): Promise<{ annotation_id: string; raw_artifact_id: string }>;
 }

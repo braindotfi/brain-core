@@ -7,7 +7,11 @@
  */
 
 import type { TenantScopedClient } from "@brain/api/shared";
-import { AGENT_CONTRIBUTED_CONFIDENCE_CEILING, type EntityKind, type Provenance } from "@brain/schemas";
+import {
+  AGENT_CONTRIBUTED_CONFIDENCE_CEILING,
+  type EntityKind,
+  type Provenance,
+} from "@brain/schemas";
 
 export interface WikiEntityRow {
   id: string;

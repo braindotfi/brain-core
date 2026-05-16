@@ -22,9 +22,7 @@ DESCRIBE("five-layer end-to-end (Series A proof 1)", () => {
     // Step 1 — ingest a Plaid sandbox webhook (pre-signed by the seed).
     // In staging, the seed script has already exercised this path; the
     // test just asserts artifact count is non-zero.
-    const artifacts = await client.get<{ events: unknown[] }>(
-      "/audit/events?layer=raw&limit=10",
-    );
+    const artifacts = await client.get<{ events: unknown[] }>("/audit/events?layer=raw&limit=10");
     expect(artifacts.events.length).toBeGreaterThan(0);
 
     // Step 2 — wiki has entities.
@@ -35,9 +33,7 @@ DESCRIBE("five-layer end-to-end (Series A proof 1)", () => {
 
     // Step 3 — policy is active.
     const tenantId = process.env.BRAIN_TEST_TENANT_ID ?? "";
-    const policy = await client.get<{ state: string; version: number }>(
-      `/policy/${tenantId}`,
-    );
+    const policy = await client.get<{ state: string; version: number }>(`/policy/${tenantId}`);
     expect(policy.state).toBe("active");
 
     // Step 4 — propose a payment; it should evaluate against the policy.

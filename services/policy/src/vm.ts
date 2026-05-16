@@ -148,7 +148,7 @@ export function compareDecimal(a: string, b: string): number {
 
 interface NormalizedDecimal {
   negative: boolean;
-  int: string;  // digits only, no leading zeros
+  int: string; // digits only, no leading zeros
   frac: string; // digits only, right-padded to length 18
 }
 

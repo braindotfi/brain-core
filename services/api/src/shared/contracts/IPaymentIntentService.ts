@@ -15,12 +15,7 @@
  *  - Rejection is terminal. Cancellation is reachable from `proposed` only.
  */
 
-import type {
-  Currency,
-  DecimalString,
-  LedgerCommonFields,
-  ServiceCallContext,
-} from "./types.js";
+import type { Currency, DecimalString, LedgerCommonFields, ServiceCallContext } from "./types.js";
 
 export type PaymentIntentActionType =
   | "ach_outbound"
@@ -77,7 +72,10 @@ export interface ExecuteResult {
 export interface IPaymentIntentService {
   create(ctx: ServiceCallContext, input: CreatePaymentIntentInput): Promise<PaymentIntent>;
   get(ctx: ServiceCallContext, id: string): Promise<PaymentIntent | null>;
-  list(ctx: ServiceCallContext, f: { status?: PaymentIntentStatus; agent_id?: string; limit?: number }): Promise<PaymentIntent[]>;
+  list(
+    ctx: ServiceCallContext,
+    f: { status?: PaymentIntentStatus; agent_id?: string; limit?: number },
+  ): Promise<PaymentIntent[]>;
   approve(ctx: ServiceCallContext, id: string): Promise<PaymentIntent>;
   reject(ctx: ServiceCallContext, id: string, reason?: string): Promise<PaymentIntent>;
   cancel(ctx: ServiceCallContext, id: string): Promise<PaymentIntent>;

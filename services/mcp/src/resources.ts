@@ -8,11 +8,7 @@
  */
 
 import { brainError } from "@brain/api/shared";
-import type {
-  ResourceDescriptor,
-  ResourceListResult,
-  ResourceReadResult,
-} from "./types.js";
+import type { ResourceDescriptor, ResourceListResult, ResourceReadResult } from "./types.js";
 import type { ToolContext } from "./tools/types.js";
 
 export const RESOURCE_DESCRIPTORS: ReadonlyArray<ResourceDescriptor> = [
@@ -132,7 +128,12 @@ export async function readResource(
 }
 
 interface ParsedBrainUri {
-  kind: "ledger.account" | "ledger.transaction" | "ledger.obligation" | "ledger.payment_intent" | "wiki.page";
+  kind:
+    | "ledger.account"
+    | "ledger.transaction"
+    | "ledger.obligation"
+    | "ledger.payment_intent"
+    | "wiki.page";
   id: string;
 }
 
@@ -149,9 +150,12 @@ export function parseBrainUri(uri: string): ParsedBrainUri | null {
   if (segments.length < 3) return null;
   const [layer, collection, id] = segments;
   if (layer === "ledger" && collection === "accounts" && id) return { kind: "ledger.account", id };
-  if (layer === "ledger" && collection === "transactions" && id) return { kind: "ledger.transaction", id };
-  if (layer === "ledger" && collection === "obligations" && id) return { kind: "ledger.obligation", id };
-  if (layer === "ledger" && collection === "payment-intents" && id) return { kind: "ledger.payment_intent", id };
+  if (layer === "ledger" && collection === "transactions" && id)
+    return { kind: "ledger.transaction", id };
+  if (layer === "ledger" && collection === "obligations" && id)
+    return { kind: "ledger.obligation", id };
+  if (layer === "ledger" && collection === "payment-intents" && id)
+    return { kind: "ledger.payment_intent", id };
   if (layer === "wiki" && collection === "pages" && id) return { kind: "wiki.page", id };
   return null;
 }

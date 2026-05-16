@@ -73,9 +73,7 @@ export async function insertPolicy(
   return row;
 }
 
-export async function getActive(
-  client: TenantScopedClient,
-): Promise<PolicyRow | null> {
+export async function getActive(client: TenantScopedClient): Promise<PolicyRow | null> {
   const { rows } = await client.query<PolicyRow>(
     `SELECT * FROM policies WHERE state = 'active' LIMIT 1`,
   );
@@ -94,9 +92,7 @@ export async function getByVersion(
 }
 
 export async function listVersions(client: TenantScopedClient): Promise<PolicyRow[]> {
-  const { rows } = await client.query<PolicyRow>(
-    `SELECT * FROM policies ORDER BY version DESC`,
-  );
+  const { rows } = await client.query<PolicyRow>(`SELECT * FROM policies ORDER BY version DESC`);
   return rows;
 }
 
@@ -140,10 +136,7 @@ export async function transition(
   );
   const row = rows[0];
   if (row === undefined) {
-    throw brainError(
-      "execution_proposal_invalid_state",
-      `policy ${id} is not in state ${from}`,
-    );
+    throw brainError("execution_proposal_invalid_state", `policy ${id} is not in state ${from}`);
   }
   return row;
 }

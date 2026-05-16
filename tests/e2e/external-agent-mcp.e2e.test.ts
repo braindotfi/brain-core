@@ -29,7 +29,9 @@ DESCRIBE("external agent via MCP (Series A proof 3)", () => {
   });
 
   it("agent reads wiki with wiki:read scope", async () => {
-    const search = await agent.get<{ results: unknown[] }>("/wiki/search?kind=counterparty&limit=5");
+    const search = await agent.get<{ results: unknown[] }>(
+      "/wiki/search?kind=counterparty&limit=5",
+    );
     expect(Array.isArray(search.results)).toBe(true);
   });
 

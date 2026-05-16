@@ -44,20 +44,11 @@ import {
   type AnnotationInput,
 } from "@brain/api/shared";
 
-import {
-  registerRawPlugin,
-  ingestOne,
-  type RegisterRawPluginOptions,
-} from "@brain/raw";
+import { registerRawPlugin, ingestOne, type RegisterRawPluginOptions } from "@brain/raw";
 
 import { LedgerService, registerLedgerPlugin } from "@brain/ledger";
 
-import {
-  WikiPageService,
-  registerWikiPlugin,
-  loadRegistry,
-  askWiki,
-} from "@brain/wiki";
+import { WikiPageService, registerWikiPlugin, loadRegistry, askWiki } from "@brain/wiki";
 
 import { registerPolicyRoutes } from "@brain/policy";
 import type { PolicyDeps } from "@brain/policy";
@@ -84,11 +75,7 @@ import {
   makeSandboxResolveCounterparty,
 } from "./sandbox/resolvers.js";
 
-import {
-  BrainMcpServer,
-  FakeAuthVerifier,
-  registerMcpRoute,
-} from "@brain/mcp";
+import { BrainMcpServer, FakeAuthVerifier, registerMcpRoute } from "@brain/mcp";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps } from "@brain/wiki";
@@ -108,7 +95,7 @@ import type {
 
 try {
   // Node 20.12+ built-in. Silently skip if file not found or function absent.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const loadEnv = (process as unknown as Record<string, unknown>)["loadEnvFile"] as
     | ((path: string) => void)
     | undefined;
@@ -157,10 +144,7 @@ function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
       // TODO: implement via blob.signedUrl + artifact repository lookup.
       throw brainError("internal_server_error", "signedUrl not yet wired in boot binary");
     },
-    async listParsed(
-      _ctx: ServiceCallContext,
-      _rawId: string,
-    ): Promise<ParsedOutput[]> {
+    async listParsed(_ctx: ServiceCallContext, _rawId: string): Promise<ParsedOutput[]> {
       // TODO: implement via listParsedByArtifact from @brain/raw repository.
       throw brainError("internal_server_error", "listParsed not yet wired in boot binary");
     },
@@ -200,30 +184,24 @@ function buildWikiMemoryService(
     async search(ctx: ServiceCallContext, q: string, limit: number) {
       return pageService.search(ctx, q, limit);
     },
-    async question(
-      ctx: ServiceCallContext,
-      req: QuestionRequest,
-    ): Promise<QuestionAnswer> {
-      const result = await withTenantScope(
-        wikiDeps.pool,
-        ctx.tenantId,
-        (client) =>
-          askWiki(
-            {
-              client,
-              llm: wikiDeps.llm,
-              embed: wikiDeps.embed,
-              redis: wikiDeps.redis,
-              metrics: wikiDeps.metrics,
-            },
-            {
-              question: req.question,
-              asOf: req.asOf !== null ? new Date(req.asOf) : null,
-              maxEvidenceDepth: req.maxEvidenceDepth,
-              tenantId: ctx.tenantId,
-              model: wikiDeps.questionModel,
-            },
-          ),
+    async question(ctx: ServiceCallContext, req: QuestionRequest): Promise<QuestionAnswer> {
+      const result = await withTenantScope(wikiDeps.pool, ctx.tenantId, (client) =>
+        askWiki(
+          {
+            client,
+            llm: wikiDeps.llm,
+            embed: wikiDeps.embed,
+            redis: wikiDeps.redis,
+            metrics: wikiDeps.metrics,
+          },
+          {
+            question: req.question,
+            asOf: req.asOf !== null ? new Date(req.asOf) : null,
+            maxEvidenceDepth: req.maxEvidenceDepth,
+            tenantId: ctx.tenantId,
+            model: wikiDeps.questionModel,
+          },
+        ),
       );
       return {
         question: req.question,
@@ -239,10 +217,7 @@ function buildWikiMemoryService(
       _ctx: ServiceCallContext,
       _input: AnnotationInput,
     ): Promise<{ annotation_id: string; raw_artifact_id: string }> {
-      throw brainError(
-        "internal_server_error",
-        "wiki.annotate not yet wired in boot binary",
-      );
+      throw brainError("internal_server_error", "wiki.annotate not yet wired in boot binary");
     },
   };
 }
@@ -251,10 +226,7 @@ function buildWikiMemoryService(
 // Stub hook factories — reduce repetition in ExecutionDeps / PaymentIntentDeps
 // ---------------------------------------------------------------------------
 
-function stubResolveAgent(
-  _ctx: ServiceCallContext,
-  _agentId: string,
-): Promise<GateAgent | null> {
+function stubResolveAgent(_ctx: ServiceCallContext, _agentId: string): Promise<GateAgent | null> {
   // TODO: wire to the execution agents table.
   return Promise.resolve(null);
 }
@@ -280,10 +252,7 @@ function stubResolvePrincipal(ctx: ServiceCallContext): Promise<GatePrincipal> {
   return Promise.resolve({ id: ctx.actor, type: "user" as const, scopes: [] });
 }
 
-function stubResolveRole(
-  _ctx: ServiceCallContext,
-  _principalId: string,
-): Promise<string | null> {
+function stubResolveRole(_ctx: ServiceCallContext, _principalId: string): Promise<string | null> {
   // TODO: wire to the agents / users role table.
   return Promise.resolve(null);
 }
@@ -348,22 +317,21 @@ async function main(): Promise<void> {
 
   // Wiki LLM + embed adapters.
   // Priority: OPENAI_API_KEY (real) > BRAIN_DEMO_MODE (recorded fixture) > throw-stub.
-  const llm = cfg.OPENAI_API_KEY !== undefined
-    ? new OpenAICompletionAdapter({ apiKey: cfg.OPENAI_API_KEY })
-    : cfg.BRAIN_DEMO_MODE
-      ? new RecordedLlmAdapter([])
-      : {
-          complete: async (): Promise<never> => {
-            throw brainError(
-              "internal_server_error",
-              "LLM not configured — set OPENAI_API_KEY",
-            );
-          },
-        };
+  const llm =
+    cfg.OPENAI_API_KEY !== undefined
+      ? new OpenAICompletionAdapter({ apiKey: cfg.OPENAI_API_KEY })
+      : cfg.BRAIN_DEMO_MODE
+        ? new RecordedLlmAdapter([])
+        : {
+            complete: async (): Promise<never> => {
+              throw brainError("internal_server_error", "LLM not configured — set OPENAI_API_KEY");
+            },
+          };
 
-  const embed = cfg.OPENAI_API_KEY !== undefined
-    ? new OpenAIEmbeddingAdapter({ apiKey: cfg.OPENAI_API_KEY })
-    : new DeterministicEmbeddingAdapter();
+  const embed =
+    cfg.OPENAI_API_KEY !== undefined
+      ? new OpenAIEmbeddingAdapter({ apiKey: cfg.OPENAI_API_KEY })
+      : new DeterministicEmbeddingAdapter();
 
   const wikiDeps: WikiDeps = {
     pool,
@@ -392,9 +360,7 @@ async function main(): Promise<void> {
   // Resolver hooks — sandbox replacements when BRAIN_DEMO_MODE is on.
   const resolveRole = cfg.BRAIN_DEMO_MODE ? sandboxResolveRole : stubResolveRole;
   const resolveAgent = cfg.BRAIN_DEMO_MODE ? sandboxResolveAgent : stubResolveAgent;
-  const resolveAccount = cfg.BRAIN_DEMO_MODE
-    ? makeSandboxResolveAccount(pool)
-    : stubResolveAccount;
+  const resolveAccount = cfg.BRAIN_DEMO_MODE ? makeSandboxResolveAccount(pool) : stubResolveAccount;
   const resolveCounterparty = cfg.BRAIN_DEMO_MODE
     ? makeSandboxResolveCounterparty(pool)
     : stubResolveCounterparty;
@@ -526,10 +492,7 @@ async function main(): Promise<void> {
       if (typeof devTenantHeader === "string" && devTenantHeader.length > 0) {
         return devTenantHeader;
       }
-      throw brainError(
-        "auth_tenant_mismatch",
-        "cannot resolve webhook tenant — not configured",
-      );
+      throw brainError("auth_tenant_mismatch", "cannot resolve webhook tenant — not configured");
     },
   };
 

@@ -34,8 +34,7 @@ abstract class StubPageGenerator implements PageGenerator {
       subject_id: subject.subjectId,
       slug: subject.slug,
       body_md: renderPage(this.title, {
-        currentTruth:
-          `_${this.title} pages ship in a follow-up PR after refactor-5. Subject: \`${subject.subjectId ?? subject.slug}\`._`,
+        currentTruth: `_${this.title} pages ship in a follow-up PR after refactor-5. Subject: \`${subject.subjectId ?? subject.slug}\`._`,
       }),
       source_revision: "stub",
     };
@@ -85,8 +84,7 @@ export class CashFlowPageGenerator implements PageGenerator {
       subject_id: subject.subjectId,
       slug: subject.slug,
       body_md: renderPage("Cash flow", {
-        currentTruth:
-          `_Cash-flow pages ship in a follow-up PR. Period: \`${subject.subjectId ?? "?"}\`._`,
+        currentTruth: `_Cash-flow pages ship in a follow-up PR. Period: \`${subject.subjectId ?? "?"}\`._`,
       }),
       source_revision: "stub",
     };

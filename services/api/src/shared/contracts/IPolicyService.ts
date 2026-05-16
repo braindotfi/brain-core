@@ -39,9 +39,16 @@ export interface EvaluateRequest {
 }
 
 export interface IPolicyService {
-  getActive(ctx: ServiceCallContext): Promise<{ id: string; version: number; content: Record<string, unknown> } | null>;
-  listVersions(ctx: ServiceCallContext): Promise<Array<{ id: string; version: number; state: string; activated_at: string | null }>>;
+  getActive(
+    ctx: ServiceCallContext,
+  ): Promise<{ id: string; version: number; content: Record<string, unknown> } | null>;
+  listVersions(
+    ctx: ServiceCallContext,
+  ): Promise<Array<{ id: string; version: number; state: string; activated_at: string | null }>>;
   evaluate(ctx: ServiceCallContext, req: EvaluateRequest): Promise<PolicyDecision>;
   getDecision(ctx: ServiceCallContext, decisionId: string): Promise<PolicyDecision | null>;
-  simulate(ctx: ServiceCallContext, req: EvaluateRequest & { policy_version: number }): Promise<PolicyDecision>;
+  simulate(
+    ctx: ServiceCallContext,
+    req: EvaluateRequest & { policy_version: number },
+  ): Promise<PolicyDecision>;
 }

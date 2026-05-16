@@ -48,7 +48,11 @@ const envSchema = z.object({
 
   // ---- Idempotency ----
   /** TTL for stored idempotency responses, §5.1. */
-  IDEMPOTENCY_TTL_SECONDS: z.coerce.number().int().positive().default(24 * 60 * 60),
+  IDEMPOTENCY_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(24 * 60 * 60),
 
   // ---- Limits ----
   REQUEST_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(52_428_800), // 50 MiB cap
@@ -79,16 +83,26 @@ const envSchema = z.object({
   BRAIN_MCP_DEV_AUTH_BYPASS: z.coerce.boolean().default(false),
 
   // ---- On-chain rails (Base Sepolia) ----
-  BRAIN_SESSION_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
+  BRAIN_SESSION_KEY: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/)
+    .optional(),
   BASE_RPC_URL: z.string().url().optional(),
 
   // ---- Audit anchor (Base Sepolia) ----
-  AUDIT_PUBLISHER_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
+  AUDIT_PUBLISHER_KEY: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/)
+    .optional(),
   AUDIT_ANCHOR_ADDRESS: z
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
     .default("0xb900add824064098342c869ff83efdeb05eb95ce"),
-  AUDIT_ANCHOR_INTERVAL_MS: z.coerce.number().int().positive().default(60 * 60 * 1000),
+  AUDIT_ANCHOR_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60 * 60 * 1000),
 });
 
 export type BrainConfig = z.infer<typeof envSchema>;
@@ -102,9 +116,7 @@ export function parseConfig(
 ): BrainConfig {
   const result = envSchema.safeParse(env);
   if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
+    const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid Brain configuration:\n${issues}`);
   }
   return result.data;

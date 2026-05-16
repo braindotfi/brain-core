@@ -18,11 +18,7 @@ import {
   type ServiceCallContext,
 } from "@brain/api/shared";
 import type { Pool } from "pg";
-import {
-  insertApproval,
-  listApprovals,
-  type ApprovalSubjectType,
-} from "./repository.js";
+import { insertApproval, listApprovals, type ApprovalSubjectType } from "./repository.js";
 
 export interface ApprovalServiceDeps {
   pool: Pool;

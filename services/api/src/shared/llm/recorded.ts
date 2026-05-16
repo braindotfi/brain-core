@@ -64,9 +64,13 @@ export class RecordedEmbeddingAdapter implements EmbeddingAdapter {
     const key = embeddingKey(input, model);
     const hit = this.byKey.get(key);
     if (hit === undefined) {
-      throw brainError("dependency_unavailable", `no recorded embedding for key ${key.slice(0, 12)}…`, {
-        details: { key },
-      });
+      throw brainError(
+        "dependency_unavailable",
+        `no recorded embedding for key ${key.slice(0, 12)}…`,
+        {
+          details: { key },
+        },
+      );
     }
     return hit;
   }
@@ -107,5 +111,7 @@ export function llmKey(opts: LlmCompletionOptions): string {
 }
 
 export function embeddingKey(input: string, model?: string): string {
-  return createHash("sha256").update(JSON.stringify({ input, model: model ?? null })).digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify({ input, model: model ?? null }))
+    .digest("hex");
 }

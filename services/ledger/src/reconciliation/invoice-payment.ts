@@ -12,10 +12,7 @@
  * remain candidates after a partial match.
  */
 
-import {
-  withTenantScope,
-  type ServiceCallContext,
-} from "@brain/api/shared";
+import { withTenantScope, type ServiceCallContext } from "@brain/api/shared";
 import type { Pool } from "pg";
 import { combine, amountScore, dateScore } from "./scoring.js";
 import { persistMatch } from "./persist.js";
@@ -69,7 +66,14 @@ export class InvoicePaymentMatcher implements Matcher {
         if (tx.currency !== inv.currency) continue;
         const score = combine([
           { score: amountScore(inv.amount_due, tx.amount), weight: 0.55 },
-          { score: dateScore(inv.due_date ?? inv.issue_date, tx.posted_date ?? tx.transaction_date, 14), weight: 0.30 },
+          {
+            score: dateScore(
+              inv.due_date ?? inv.issue_date,
+              tx.posted_date ?? tx.transaction_date,
+              14,
+            ),
+            weight: 0.3,
+          },
           { score: tx.counterparty_id === inv.counterparty_id ? 1 : 0, weight: 0.15 },
         ]);
         if (score >= MATCH_THRESHOLD && (bestPair === null || score > bestPair.score)) {

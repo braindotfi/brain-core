@@ -9,9 +9,9 @@ describe("isLocalHost", () => {
   });
 
   it("treats hosted databases as remote", () => {
-    expect(
-      isLocalHost("postgres://u:p@brain-postgres.postgres.database.azure.com:5432/db"),
-    ).toBe(false);
+    expect(isLocalHost("postgres://u:p@brain-postgres.postgres.database.azure.com:5432/db")).toBe(
+      false,
+    );
     expect(isLocalHost("postgres://u:p@10.0.0.5:5432/db")).toBe(false);
   });
 

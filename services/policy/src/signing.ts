@@ -48,9 +48,9 @@ export interface PolicyTypedData {
 }
 
 export interface BuildPayloadInput {
-  tenantId: string;          // tnt_ULID — hashed to bytes32
+  tenantId: string; // tnt_ULID — hashed to bytes32
   version: number;
-  policyHashHex: string;     // 32-byte hex (no 0x prefix OK either)
+  policyHashHex: string; // 32-byte hex (no 0x prefix OK either)
   chainId: number;
   verifyingContract: `0x${string}`;
 }
@@ -90,8 +90,16 @@ export function buildTypedData(input: BuildPayloadInput): PolicyTypedData {
  * `ecrecover(...)` would validate against a produced signature.
  */
 export function computeDigest(typed: PolicyTypedData): Uint8Array {
-  const domainSeparator = hashStruct(typed.types, "EIP712Domain", typed.domain as unknown as Record<string, unknown>);
-  const messageHash = hashStruct(typed.types, typed.primaryType, typed.message as unknown as Record<string, unknown>);
+  const domainSeparator = hashStruct(
+    typed.types,
+    "EIP712Domain",
+    typed.domain as unknown as Record<string, unknown>,
+  );
+  const messageHash = hashStruct(
+    typed.types,
+    typed.primaryType,
+    typed.message as unknown as Record<string, unknown>,
+  );
   return keccak_256(concatBytes(new Uint8Array([0x19, 0x01]), domainSeparator, messageHash));
 }
 
@@ -126,7 +134,9 @@ function hashType(types: PolicyTypedData["types"], primaryType: string): Uint8Ar
   const deps = sortDependencies(types, primaryType);
   const full = [primaryType, ...deps]
     .map((name) => {
-      const fields = (types as unknown as Record<string, Array<{ name: string; type: string }>>)[name];
+      const fields = (types as unknown as Record<string, Array<{ name: string; type: string }>>)[
+        name
+      ];
       if (fields === undefined) return "";
       return `${name}(${fields.map((f) => `${f.type} ${f.name}`).join(",")})`;
     })
@@ -156,7 +166,9 @@ function encodeData(
   primaryType: string,
   data: Record<string, unknown>,
 ): Uint8Array {
-  const fields = (types as unknown as Record<string, Array<{ name: string; type: string }>>)[primaryType];
+  const fields = (types as unknown as Record<string, Array<{ name: string; type: string }>>)[
+    primaryType
+  ];
   if (fields === undefined) throw new Error(`unknown type: ${primaryType}`);
   const parts: Uint8Array[] = [];
   for (const f of fields) {
@@ -169,7 +181,8 @@ function encodeField(types: PolicyTypedData["types"], type: string, value: unkno
   if (type === "bytes32") return hexToBytes(value as string);
   if (type === "address") return padLeft(hexToBytes((value as string).toLowerCase()), 32);
   if (type === "string") return keccak_256(value as string);
-  if (type.startsWith("uint")) return padLeft(bigIntToBytes(BigInt(value as bigint | number | string)), 32);
+  if (type.startsWith("uint"))
+    return padLeft(bigIntToBytes(BigInt(value as bigint | number | string)), 32);
   // Nested struct
   return hashStruct(types, type, value as Record<string, unknown>);
 }

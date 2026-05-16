@@ -43,6 +43,10 @@ export const BRAIN_ERROR_CODES = [
   "raw_source_unsupported",
   "raw_webhook_signature_invalid",
 
+  // Ledger
+  "ledger_row_not_found",
+  "ledger_row_invalid",
+
   // Wiki
   "wiki_entity_not_found",
   "wiki_page_not_found",
@@ -57,12 +61,20 @@ export const BRAIN_ERROR_CODES = [
   "policy_signature_invalid",
   "policy_version_mismatch",
 
+  // MCP / Agent registry
+  "agent_not_registered",
+  "agent_scope_hash_mismatch",
+
   // Execution
   "execution_proposal_not_found",
   "execution_proposal_invalid_state",
   "execution_rail_unavailable",
   "execution_idempotency_conflict",
   "execution_agent_not_registered",
+  "payment_intent_not_found",
+  "payment_intent_invalid_state",
+  "payment_intent_gate_failed",
+  "agent_rail_unavailable",
 
   // Audit
   "audit_event_not_found",
@@ -110,17 +122,24 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   // 413 — too large
   request_too_large: 413,
 
+  // 401 — MCP / on-chain agent
+  agent_not_registered: 401,
+  agent_scope_hash_mismatch: 401,
+
   // 404 — not found / tombstoned
   raw_artifact_not_found: 404,
   raw_artifact_tombstoned: 404,
+  ledger_row_not_found: 404,
   wiki_entity_not_found: 404,
   wiki_page_not_found: 404,
   policy_not_found: 404,
   execution_proposal_not_found: 404,
+  payment_intent_not_found: 404,
   audit_event_not_found: 404,
 
   // 400 — domain validation
   raw_source_unsupported: 400,
+  ledger_row_invalid: 400,
   wiki_schema_validation_failed: 400,
   wiki_temporal_range_invalid: 400,
   policy_rule_invalid: 400,
@@ -139,10 +158,13 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   execution_proposal_invalid_state: 409,
   execution_idempotency_conflict: 409,
   execution_agent_not_registered: 409,
+  payment_intent_invalid_state: 409,
+  payment_intent_gate_failed: 409,
   audit_anchor_not_yet_published: 409,
 
   // 503 — dependency / rail outage
   execution_rail_unavailable: 503,
+  agent_rail_unavailable: 503,
   dependency_unavailable: 503,
 
   // 429 — rate limit
@@ -174,10 +196,7 @@ export interface ErrorEnvelope {
  * Compose the §4.1 envelope body. `request_id` is required — the HTTP layer
  * injects it at serialization time; callers of `BrainError` do not set it.
  */
-export function toErrorEnvelope(
-  err: BrainError,
-  requestId: string,
-): ErrorEnvelope {
+export function toErrorEnvelope(err: BrainError, requestId: string): ErrorEnvelope {
   const envelope: ErrorEnvelope["error"] = {
     code: err.code,
     message: err.message,
@@ -211,11 +230,7 @@ export class BrainError extends Error {
   public readonly statusCode: number;
   public readonly details: Readonly<Record<string, unknown>> | undefined;
 
-  public constructor(
-    code: BrainErrorCode,
-    message: string,
-    opts: BrainErrorOptions = {},
-  ) {
+  public constructor(code: BrainErrorCode, message: string, opts: BrainErrorOptions = {}) {
     super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
     this.name = "BrainError";
     this.code = code;

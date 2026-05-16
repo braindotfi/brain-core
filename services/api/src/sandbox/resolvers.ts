@@ -49,9 +49,7 @@ export async function sandboxEvaluatePaymentIntent(
 // resolvePrincipal — returns an agent principal so §6 check 1 passes
 // ---------------------------------------------------------------------------
 
-export async function sandboxResolvePrincipal(
-  ctx: ServiceCallContext,
-): Promise<GatePrincipal> {
+export async function sandboxResolvePrincipal(ctx: ServiceCallContext): Promise<GatePrincipal> {
   return {
     id: ctx.actor,
     // Must be "agent" — gate check 1 rejects non-agent principals.

@@ -31,11 +31,7 @@ import {
 /** §3.2 of Brain_MVP_Architecture.md — agent-contributed rows are capped. */
 const AGENT_CONTRIBUTED_CONFIDENCE_CEILING = 0.5;
 import type { Pool } from "pg";
-import type {
-  AccountRow,
-  CounterpartyRow,
-  TransactionRow,
-} from "../repository/index.js";
+import type { AccountRow, CounterpartyRow, TransactionRow } from "../repository/index.js";
 
 const PROVENANCE_VALUES = new Set([
   "extracted",
@@ -182,13 +178,7 @@ export async function upsertCounterpartyRow(
 export interface UpsertAccountArgs {
   external_account_id: string | null;
   institution?: string;
-  account_type:
-    | "bank_checking"
-    | "bank_savings"
-    | "card"
-    | "loan"
-    | "line_of_credit"
-    | "onchain";
+  account_type: "bank_checking" | "bank_savings" | "card" | "loan" | "line_of_credit" | "onchain";
   name: string;
   currency: string;
   current_balance?: string | null;

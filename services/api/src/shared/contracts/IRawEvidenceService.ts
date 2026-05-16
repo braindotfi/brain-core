@@ -16,7 +16,7 @@
 import type { ServiceCallContext } from "./types.js";
 
 export interface RawIngestRequest {
-  sourceType: string;          // raw_artifacts.source_type CHECK enum
+  sourceType: string; // raw_artifacts.source_type CHECK enum
   sourceRef: Record<string, unknown>;
   body: Buffer;
   mimeType?: string;

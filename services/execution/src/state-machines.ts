@@ -82,9 +82,6 @@ export function isValidAgentTransition(from: AgentState, to: AgentState): boolea
 
 export function assertAgentTransition(from: AgentState, to: AgentState): void {
   if (!isValidAgentTransition(from, to)) {
-    throw brainError(
-      "execution_agent_not_registered",
-      `invalid agent transition ${from} → ${to}`,
-    );
+    throw brainError("execution_agent_not_registered", `invalid agent transition ${from} → ${to}`);
   }
 }

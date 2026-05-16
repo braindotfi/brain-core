@@ -29,14 +29,10 @@ describe("dateScore", () => {
     expect(dateScore(d, new Date("2026-04-12T16:00:00Z"))).toBe(1);
   });
   it("returns 0.7 within 3 days", () => {
-    expect(
-      dateScore(new Date("2026-04-12T00:00:00Z"), new Date("2026-04-14T00:00:00Z")),
-    ).toBe(0.7);
+    expect(dateScore(new Date("2026-04-12T00:00:00Z"), new Date("2026-04-14T00:00:00Z"))).toBe(0.7);
   });
   it("returns 0 outside the window", () => {
-    expect(
-      dateScore(new Date("2026-04-12T00:00:00Z"), new Date("2026-05-01T00:00:00Z")),
-    ).toBe(0);
+    expect(dateScore(new Date("2026-04-12T00:00:00Z"), new Date("2026-05-01T00:00:00Z"))).toBe(0);
   });
 });
 

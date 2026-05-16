@@ -48,7 +48,9 @@ export function renderPage(title: string, sections: Partial<PageSections>): stri
 }
 
 /** Build a stable revision key from a flat list of (id, updated_at) pairs. */
-export function revisionFromTouches(touches: ReadonlyArray<{ id: string; updated_at: Date }>): string {
+export function revisionFromTouches(
+  touches: ReadonlyArray<{ id: string; updated_at: Date }>,
+): string {
   const ordered = [...touches].sort((a, b) => a.id.localeCompare(b.id));
   const payload = ordered.map((t) => `${t.id}|${t.updated_at.toISOString()}`).join("\n");
   return createHash("sha256").update(payload, "utf8").digest("hex").slice(0, 16);

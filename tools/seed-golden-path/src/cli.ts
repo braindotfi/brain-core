@@ -24,9 +24,7 @@ async function main(): Promise<number> {
   const actor = process.env.BRAIN_ACTOR;
 
   if (dbUrl === undefined || tenantId === undefined || actor === undefined) {
-    process.stderr.write(
-      "error: DATABASE_URL, BRAIN_TENANT_ID, and BRAIN_ACTOR are required\n",
-    );
+    process.stderr.write("error: DATABASE_URL, BRAIN_TENANT_ID, and BRAIN_ACTOR are required\n");
     return 1;
   }
   if (!tenantId.startsWith("tnt_")) {
@@ -75,8 +73,6 @@ async function main(): Promise<number> {
 main()
   .then((code) => process.exit(code))
   .catch((err: unknown) => {
-    process.stderr.write(
-      `error: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
+    process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(2);
   });

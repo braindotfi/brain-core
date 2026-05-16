@@ -31,12 +31,16 @@ const plugin: FastifyPluginAsync = async (fastify) => {
     const envelope = toErrorEnvelope(mapped, request.id ?? "req_unknown");
 
     const logFn = mapped.statusCode >= 500 ? request.log.error : request.log.warn;
-    logFn.call(request.log, {
-      err,
-      code: mapped.code,
-      status: mapped.statusCode,
-      message: mapped.message,
-    }, "request failed");
+    logFn.call(
+      request.log,
+      {
+        err,
+        code: mapped.code,
+        status: mapped.statusCode,
+        message: mapped.message,
+      },
+      "request failed",
+    );
 
     reply.status(mapped.statusCode);
     reply.header("content-type", "application/json; charset=utf-8");
@@ -79,10 +83,7 @@ export function mapError(err: unknown): BrainError {
       return new BrainError("request_too_large", maybeFastify.message ?? "request too large");
     }
     if (maybeFastify.statusCode === 429) {
-      return new BrainError(
-        "rate_limit_exceeded",
-        maybeFastify.message ?? "rate limit exceeded",
-      );
+      return new BrainError("rate_limit_exceeded", maybeFastify.message ?? "rate limit exceeded");
     }
   }
 

@@ -6,11 +6,7 @@
  */
 
 import { brainError } from "@brain/api/shared";
-import type {
-  PromptDescriptor,
-  PromptGetResult,
-  PromptListResult,
-} from "./types.js";
+import type { PromptDescriptor, PromptGetResult, PromptListResult } from "./types.js";
 
 interface PromptDef {
   name: string;
@@ -84,11 +80,13 @@ const PROMPTS: ReadonlyArray<PromptDef> = [
 
 export function listPrompts(): PromptListResult {
   return {
-    prompts: PROMPTS.map((p): PromptDescriptor => ({
-      name: p.name,
-      description: p.description,
-      arguments: p.arguments,
-    })),
+    prompts: PROMPTS.map(
+      (p): PromptDescriptor => ({
+        name: p.name,
+        description: p.description,
+        arguments: p.arguments,
+      }),
+    ),
   };
 }
 

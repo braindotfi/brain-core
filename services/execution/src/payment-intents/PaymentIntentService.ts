@@ -45,11 +45,8 @@ import {
   type PaymentIntentRow,
 } from "@brain/ledger";
 import type { Pool } from "pg";
-import {
-  assertPaymentIntentTransition,
-  type PaymentIntentState,
-} from "./state-machine.js";
-import { ApprovalService } from "../approvals/ApprovalService.js";
+import { assertPaymentIntentTransition, type PaymentIntentState } from "./state-machine.js";
+import type { ApprovalService } from "../approvals/ApprovalService.js";
 import { insertExecution, transitionExecution } from "../repository.js";
 import type { RailRegistry } from "../rails/stubs.js";
 
@@ -198,7 +195,9 @@ export class PaymentIntentService implements IPaymentIntentService {
 
     // Record the approval.
     const approval = await this.deps.approvals.sign(ctx, { type: "payment_intent", id });
-    await withTenantScope(this.deps.pool, ctx.tenantId, (c) => appendApprovalId(c, id, approval.id));
+    await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+      appendApprovalId(c, id, approval.id),
+    );
 
     // Check whether quorum is met. Required approvers came from the
     // PolicyDecision — re-evaluate so we always check against the current
@@ -217,7 +216,10 @@ export class PaymentIntentService implements IPaymentIntentService {
         return transitionPaymentIntent(c, id, "pending_approval", "approved");
       });
       if (updated === null) {
-        throw brainError("payment_intent_invalid_state", "PaymentIntent moved between approve and quorum check");
+        throw brainError(
+          "payment_intent_invalid_state",
+          "PaymentIntent moved between approve and quorum check",
+        );
       }
       await this.deps.audit.emit({
         tenantId: ctx.tenantId,
@@ -245,7 +247,11 @@ export class PaymentIntentService implements IPaymentIntentService {
     reason?: string,
   ): Promise<PaymentIntent> {
     const intent = await this.requireIntent(ctx, id);
-    if (intent.status !== "pending_approval" && intent.status !== "proposed" && intent.status !== "approved") {
+    if (
+      intent.status !== "pending_approval" &&
+      intent.status !== "proposed" &&
+      intent.status !== "approved"
+    ) {
       throw brainError(
         "payment_intent_invalid_state",
         `cannot reject PaymentIntent in status ${intent.status}`,

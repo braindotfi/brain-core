@@ -38,10 +38,7 @@ export class BrainClient {
     return (await res.json()) as T;
   }
 
-  public async postMultipart<T>(
-    path: string,
-    form: FormData,
-  ): Promise<T> {
+  public async postMultipart<T>(path: string, form: FormData): Promise<T> {
     const res = await fetch(`${this.opts.baseUrl}${path}`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.opts.token}` },

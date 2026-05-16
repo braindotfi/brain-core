@@ -1,14 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import {
-  brainError,
-  requireScope,
-  withTenantScope,
-  type Scope,
-} from "@brain/api/shared";
-import {
-  searchEntities,
-  semanticSearch,
-} from "../repository/entities.js";
+import { brainError, requireScope, withTenantScope, type Scope } from "@brain/api/shared";
+import { searchEntities, semanticSearch } from "../repository/entities.js";
 import {
   LEDGER_KINDS,
   WIKI_KINDS,

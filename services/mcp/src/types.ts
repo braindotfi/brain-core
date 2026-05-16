@@ -74,7 +74,7 @@ export interface ToolCallResult {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
   /** Brain-specific result payload echoed alongside the textual content. */
-  structuredContent?: Record<string, unknown>;
+  structuredContent?: unknown;
 }
 
 export interface ResourceDescriptor {

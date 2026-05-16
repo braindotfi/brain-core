@@ -119,7 +119,10 @@ export async function findEventsByEntity(
   return rows;
 }
 
-export async function findEvent(client: TenantScopedClient, id: string): Promise<AuditEventRow | null> {
+export async function findEvent(
+  client: TenantScopedClient,
+  id: string,
+): Promise<AuditEventRow | null> {
   const { rows } = await client.query<AuditEventRow>(
     `SELECT * FROM audit_events WHERE id = $1 LIMIT 1`,
     [id],

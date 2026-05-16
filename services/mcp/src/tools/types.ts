@@ -37,8 +37,8 @@ export interface ToolContext {
 
 export interface ToolResult {
   /** Brain's structured payload — echoed in the MCP response and used
-   *  for structured-content extraction. */
-  payload: Record<string, unknown>;
+   *  for structured-content extraction. Serialized as JSON. */
+  payload: unknown;
   /** Human-readable summary (markdown). MCP clients show this. */
   summary: string;
 }
@@ -57,10 +57,7 @@ export interface Tool<TInput = unknown> {
 }
 
 /** Helper used by every tool's parseInput when a string field is required. */
-export function requireString(
-  params: Record<string, unknown>,
-  name: string,
-): string {
+export function requireString(params: Record<string, unknown>, name: string): string {
   const v = params[name];
   if (typeof v !== "string" || v.length === 0) {
     throw {
@@ -72,18 +69,12 @@ export function requireString(
   return v;
 }
 
-export function optionalString(
-  params: Record<string, unknown>,
-  name: string,
-): string | undefined {
+export function optionalString(params: Record<string, unknown>, name: string): string | undefined {
   const v = params[name];
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
-export function optionalNumber(
-  params: Record<string, unknown>,
-  name: string,
-): number | undefined {
+export function optionalNumber(params: Record<string, unknown>, name: string): number | undefined {
   const v = params[name];
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string") {

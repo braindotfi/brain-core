@@ -26,16 +26,17 @@ export class AnthropicAdapter implements LlmAdapter {
   }
 
   public async complete(opts: LlmCompletionOptions): Promise<LlmCompletion> {
-    const system = opts.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");
+    const system = opts.messages
+      .filter((m) => m.role === "system")
+      .map((m) => m.content)
+      .join("\n");
     const nonSystem = opts.messages
       .filter((m) => m.role !== "system")
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
     const abort = new AbortController();
     const timeoutHandle =
-      opts.timeoutMs !== undefined
-        ? setTimeout(() => abort.abort(), opts.timeoutMs)
-        : null;
+      opts.timeoutMs !== undefined ? setTimeout(() => abort.abort(), opts.timeoutMs) : null;
 
     try {
       const res = await this.client.messages.create(

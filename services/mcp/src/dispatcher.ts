@@ -51,9 +51,10 @@ export function parseRequest(payload: unknown): JsonRpcRequest | null {
     jsonrpc: "2.0",
     id: id ?? null,
     method: obj.method,
-    params: typeof obj.params === "object" && obj.params !== null && !Array.isArray(obj.params)
-      ? (obj.params as Record<string, unknown>)
-      : {},
+    params:
+      typeof obj.params === "object" && obj.params !== null && !Array.isArray(obj.params)
+        ? (obj.params as Record<string, unknown>)
+        : {},
   };
 }
 

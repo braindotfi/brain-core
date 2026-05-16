@@ -20,23 +20,13 @@
  *                  queries.
  */
 
-export const LEDGER_KINDS = [
-  "account",
-  "counterparty",
-  "transaction",
-  "obligation",
-] as const;
+export const LEDGER_KINDS = ["account", "counterparty", "transaction", "obligation"] as const;
 
 export const WIKI_KINDS = ["policy", "agent"] as const;
 
 export const ENTITY_KINDS = [...LEDGER_KINDS, ...WIKI_KINDS] as const;
 
-export const RELATION_KINDS = [
-  "transacted_with",
-  "owes",
-  "owed_by",
-  "governed_by",
-] as const;
+export const RELATION_KINDS = ["transacted_with", "owes", "owed_by", "governed_by"] as const;
 
 export const PROVENANCE_VALUES = [
   "extracted",

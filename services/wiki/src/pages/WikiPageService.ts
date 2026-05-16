@@ -21,9 +21,7 @@ import {
   type WikiPage,
 } from "@brain/api/shared";
 import type { Pool } from "pg";
-import {
-  AccountPageGenerator,
-} from "./account.js";
+import { AccountPageGenerator } from "./account.js";
 import { CounterpartyPageGenerator } from "./counterparty.js";
 import { ObligationPageGenerator } from "./obligation.js";
 import { MonthlySummaryPageGenerator } from "./monthly-summary.js";
@@ -147,7 +145,13 @@ export class WikiPageService {
                   rendered_at = now(), source_revision = $4
             WHERE id = $5
             RETURNING id, page_type, subject_id, slug, body_md, rendered_at, source_revision`,
-          [output.page_type, output.subject_id, output.body_md, output.source_revision, existing[0].id],
+          [
+            output.page_type,
+            output.subject_id,
+            output.body_md,
+            output.source_revision,
+            existing[0].id,
+          ],
         );
         return rows[0]!;
       }

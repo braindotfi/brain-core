@@ -14,7 +14,8 @@ export class MonthlySummaryPageGenerator implements PageGenerator {
   public readonly pageType = "monthly_summary" as const;
 
   public resolveSlug(slugOrId: string): { subjectId: string | null; slug: string } | null {
-    if (MONTH_RE.test(slugOrId)) return { subjectId: slugOrId, slug: `/monthly-summaries/${slugOrId}` };
+    if (MONTH_RE.test(slugOrId))
+      return { subjectId: slugOrId, slug: `/monthly-summaries/${slugOrId}` };
     if (slugOrId.startsWith("/monthly-summaries/")) {
       const id = slugOrId.slice("/monthly-summaries/".length);
       if (!MONTH_RE.test(id)) return null;
@@ -52,8 +53,12 @@ export class MonthlySummaryPageGenerator implements PageGenerator {
 
     const linkedEntities = bullet(
       [
-        ...topInflow.slice(0, 5).map((c) => `Top inflow: ${c.name} \`${c.id}\` — ${c.total} ${c.currency}`),
-        ...topOutflow.slice(0, 5).map((c) => `Top outflow: ${c.name} \`${c.id}\` — ${c.total} ${c.currency}`),
+        ...topInflow
+          .slice(0, 5)
+          .map((c) => `Top inflow: ${c.name} \`${c.id}\` — ${c.total} ${c.currency}`),
+        ...topOutflow
+          .slice(0, 5)
+          .map((c) => `Top outflow: ${c.name} \`${c.id}\` — ${c.total} ${c.currency}`),
       ],
       "_No counterparties active this month._",
     );
@@ -70,7 +75,10 @@ export class MonthlySummaryPageGenerator implements PageGenerator {
     const openQuestions = bullet(
       dueSoon
         .filter((o) => o.status === "overdue")
-        .map((o) => `Overdue: ${o.type} ${o.amount_due} ${o.currency} due ${o.due_date.toISOString().slice(0, 10)} — \`${o.id}\``),
+        .map(
+          (o) =>
+            `Overdue: ${o.type} ${o.amount_due} ${o.currency} due ${o.due_date.toISOString().slice(0, 10)} — \`${o.id}\``,
+        ),
       "_No overdue obligations in window._",
     );
 

@@ -97,9 +97,7 @@ export async function withTenantScope<T>(
  * the helper itself, but occasionally useful for assertion inside a function
  * that wants to defensively confirm it is inside a `withTenantScope` block.
  */
-export async function currentTenantScope(
-  client: TenantScopedClient,
-): Promise<string | null> {
+export async function currentTenantScope(client: TenantScopedClient): Promise<string | null> {
   const { rows } = await client.query<{ tid: string | null }>(
     "SELECT current_setting('app.tenant_id', true) AS tid",
   );

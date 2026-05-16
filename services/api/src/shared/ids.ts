@@ -91,9 +91,7 @@ export const newApprovalId = (): string => brainId(ID_PREFIX.approval);
  * Use when you need to assert an ID is of a given kind at a trust boundary
  * (e.g., path-param that must be a tenant id).
  */
-export function parseBrainId(
-  id: string,
-): { prefix: string; ulid: string } | null {
+export function parseBrainId(id: string): { prefix: string; ulid: string } | null {
   const idx = id.indexOf("_");
   if (idx <= 0 || idx === id.length - 1) return null;
   const prefix = id.slice(0, idx);

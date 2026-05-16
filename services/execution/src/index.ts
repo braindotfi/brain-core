@@ -37,12 +37,7 @@ export {
   OnchainBaseRail,
   defaultRails,
 } from "./rails/stubs.js";
-export type {
-  Rail,
-  RailDispatchInput,
-  RailDispatchResult,
-  RailKind,
-} from "./rails/types.js";
+export type { Rail, RailDispatchInput, RailDispatchResult, RailKind } from "./rails/types.js";
 
 // Boot-binary route registration hooks.
 export { registerExecutionRoutes } from "./routes.js";

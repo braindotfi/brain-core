@@ -31,13 +31,7 @@ import type {
 export interface Account extends LedgerCommonFields {
   institution: string | null;
   external_account_id: string | null;
-  account_type:
-    | "bank_checking"
-    | "bank_savings"
-    | "card"
-    | "loan"
-    | "line_of_credit"
-    | "onchain";
+  account_type: "bank_checking" | "bank_savings" | "card" | "loan" | "line_of_credit" | "onchain";
   name: string;
   currency: Currency;
   current_balance: DecimalString | null;
@@ -249,22 +243,49 @@ export interface UpsertCounterpartyInput {
 export interface ILedgerService {
   // Reads
   listAccounts(ctx: ServiceCallContext, f: AccountListFilters): Promise<ListResult<Account>>;
-  getAccount(ctx: ServiceCallContext, id: string): Promise<{ account: Account; latest_balance: Balance | null } | null>;
-  listTransactions(ctx: ServiceCallContext, f: TransactionListFilters): Promise<ListResult<Transaction>>;
+  getAccount(
+    ctx: ServiceCallContext,
+    id: string,
+  ): Promise<{ account: Account; latest_balance: Balance | null } | null>;
+  listTransactions(
+    ctx: ServiceCallContext,
+    f: TransactionListFilters,
+  ): Promise<ListResult<Transaction>>;
   getTransaction(ctx: ServiceCallContext, id: string): Promise<Transaction | null>;
-  listCounterparties(ctx: ServiceCallContext, f: { q?: string; type?: Counterparty["type"]; limit?: number }): Promise<ListResult<Counterparty>>;
-  listObligations(ctx: ServiceCallContext, f: ObligationListFilters): Promise<ListResult<Obligation>>;
-  listInvoices(ctx: ServiceCallContext, f: { status?: Invoice["status"]; counterparty_id?: string; limit?: number }): Promise<ListResult<Invoice>>;
-  listDocuments(ctx: ServiceCallContext, f: { document_type?: Document["document_type"]; limit?: number }): Promise<ListResult<Document>>;
-  listBalances(ctx: ServiceCallContext, f: { account_id?: string; as_of?: string }): Promise<Balance[]>;
+  listCounterparties(
+    ctx: ServiceCallContext,
+    f: { q?: string; type?: Counterparty["type"]; limit?: number },
+  ): Promise<ListResult<Counterparty>>;
+  listObligations(
+    ctx: ServiceCallContext,
+    f: ObligationListFilters,
+  ): Promise<ListResult<Obligation>>;
+  listInvoices(
+    ctx: ServiceCallContext,
+    f: { status?: Invoice["status"]; counterparty_id?: string; limit?: number },
+  ): Promise<ListResult<Invoice>>;
+  listDocuments(
+    ctx: ServiceCallContext,
+    f: { document_type?: Document["document_type"]; limit?: number },
+  ): Promise<ListResult<Document>>;
+  listBalances(
+    ctx: ServiceCallContext,
+    f: { account_id?: string; as_of?: string },
+  ): Promise<Balance[]>;
 
   // Writes — invoked by the extractor pipeline (Phase 3+) and annotation
   // path. Each method is idempotent per (tenant, source-driven dedup key)
   // and emits an audit event of the form `ledger.<entity>.<verb>`.
   upsertAccount(ctx: ServiceCallContext, input: UpsertAccountInput): Promise<Account>;
   recordTransaction(ctx: ServiceCallContext, input: RecordTransactionInput): Promise<Transaction>;
-  upsertCounterparty(ctx: ServiceCallContext, input: UpsertCounterpartyInput): Promise<Counterparty>;
+  upsertCounterparty(
+    ctx: ServiceCallContext,
+    input: UpsertCounterpartyInput,
+  ): Promise<Counterparty>;
 
   /** Idempotent re-normalization. Used by the extractor pipeline retry path. */
-  normalizeFromRaw(ctx: ServiceCallContext, rawParsedId: string): Promise<{ created: Array<{ entity: string; id: string }> }>;
+  normalizeFromRaw(
+    ctx: ServiceCallContext,
+    rawParsedId: string,
+  ): Promise<{ created: Array<{ entity: string; id: string }> }>;
 }

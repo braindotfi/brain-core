@@ -35,7 +35,10 @@ const WRITE: Scope = "execution:write";
 const READ: Scope = "execution:read";
 const ADMIN: Scope = "execution:admin";
 
-export async function registerExecutionRoutes(app: FastifyInstance, deps: ExecutionDeps): Promise<void> {
+export async function registerExecutionRoutes(
+  app: FastifyInstance,
+  deps: ExecutionDeps,
+): Promise<void> {
   // POST /execution/propose
   app.post(
     "/execution/propose",
@@ -63,7 +66,12 @@ export async function registerExecutionRoutes(app: FastifyInstance, deps: Execut
           policyDecision: decision.outcome,
           policyTrace: decision.trace as ProposalRow["policy_trace"],
           requiredApprovers: decision.required_approvers,
-          status: decision.outcome === "reject" ? "rejected" : decision.outcome === "allow" ? "approved" : "pending",
+          status:
+            decision.outcome === "reject"
+              ? "rejected"
+              : decision.outcome === "allow"
+                ? "approved"
+                : "pending",
         }),
       );
 
@@ -172,7 +180,8 @@ export async function registerExecutionRoutes(app: FastifyInstance, deps: Execut
       const principal = requirePrincipal(request);
       requireScope(principal.scopes, WRITE);
       const proposalId = request.body?.proposal_id;
-      if (proposalId === undefined) throw brainError("request_body_invalid", "proposal_id required");
+      if (proposalId === undefined)
+        throw brainError("request_body_invalid", "proposal_id required");
 
       const row = await withTenantScope(deps.pool, principal.tenantId, async (c) => {
         const proposal = await findProposal(c, proposalId);
@@ -211,14 +220,12 @@ export async function registerExecutionRoutes(app: FastifyInstance, deps: Execut
   // POST /execution/escalate
   app.post(
     "/execution/escalate",
-    async (
-      request: FastifyRequest<{ Body: { proposal_id?: string; note?: string } }>,
-      reply,
-    ) => {
+    async (request: FastifyRequest<{ Body: { proposal_id?: string; note?: string } }>, reply) => {
       const principal = requirePrincipal(request);
       requireScope(principal.scopes, PROPOSE);
       const proposalId = request.body?.proposal_id;
-      if (proposalId === undefined) throw brainError("request_body_invalid", "proposal_id required");
+      if (proposalId === undefined)
+        throw brainError("request_body_invalid", "proposal_id required");
       await deps.audit.emit({
         tenantId: principal.tenantId,
         layer: "execution",
@@ -317,7 +324,10 @@ export async function registerExecutionRoutes(app: FastifyInstance, deps: Execut
     ) => {
       const principal = requirePrincipal(request);
       if (principal.type !== "agent") {
-        throw brainError("auth_scope_insufficient", "MCP surface accepts principal_type=agent only");
+        throw brainError(
+          "auth_scope_insufficient",
+          "MCP surface accepts principal_type=agent only",
+        );
       }
       const method = request.body?.method;
       if (method === undefined) {
@@ -327,9 +337,13 @@ export async function registerExecutionRoutes(app: FastifyInstance, deps: Execut
         case "ping":
           return reply.status(200).send({ ok: true });
         default:
-          throw brainError("execution_agent_not_registered", `MCP method not implemented: ${method}`, {
-            statusOverride: 501,
-          });
+          throw brainError(
+            "execution_agent_not_registered",
+            `MCP method not implemented: ${method}`,
+            {
+              statusOverride: 501,
+            },
+          );
       }
     },
   );

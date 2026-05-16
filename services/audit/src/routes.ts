@@ -3,12 +3,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import {
-  brainError,
-  requireScope,
-  withTenantScope,
-  type Scope,
-} from "@brain/api/shared";
+import { brainError, requireScope, withTenantScope, type Scope } from "@brain/api/shared";
 import { buildTree, makeProof, verifyProof } from "./merkle.js";
 import {
   findEvent,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { childFromContext, createLogger } from "./logger.js";
+import { childFromContext, createLogger, type BrainLogContext } from "./logger.js";
 
 /**
  * Capture pino output by writing into a stream the test owns. The default
@@ -65,7 +65,7 @@ describe("childFromContext", () => {
     const child = childFromContext(logger, {
       tenant_id: "tnt_01HQ7K3",
       request_id: undefined,
-    });
+    } as unknown as BrainLogContext);
     child.info("hello");
     const parsed = JSON.parse(lines[0]!);
     expect(parsed.tenant_id).toBe("tnt_01HQ7K3");
