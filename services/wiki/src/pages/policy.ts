@@ -87,7 +87,9 @@ export class PolicyPageGenerator implements PageGenerator {
           : "_No risk flags._";
 
     const timeline = [
-      policy.activated_at !== null ? `Activated: ${policy.activated_at.toISOString().slice(0, 10)}` : null,
+      policy.activated_at !== null
+        ? `Activated: ${policy.activated_at.toISOString().slice(0, 10)}`
+        : null,
       policy.deactivated_at !== null
         ? `Deactivated: ${policy.deactivated_at.toISOString().slice(0, 10)}`
         : null,

@@ -18,6 +18,7 @@ import {
   requestIdPlugin,
   idempotencyPlugin,
   JwtVerifier,
+  JwtSigner,
   PostgresAuditEmitter,
   WebhookDispatcher,
   WebhookAuditEmitter,
@@ -45,6 +46,8 @@ import {
   type QuestionAnswer,
   type AnnotationInput,
 } from "@brain/api/shared";
+
+import { registerSiwxRoutes, StubAgentRegistry } from "./auth/siwx.js";
 
 import { registerRawPlugin, ingestOne, type RegisterRawPluginOptions } from "@brain/raw";
 
@@ -87,7 +90,6 @@ import type {
   GateAgent,
   GateCounterparty,
   GatePaymentIntent,
-  GatePolicyDecision,
   GatePrincipal,
 } from "@brain/api/shared";
 
@@ -259,8 +261,6 @@ function stubResolveRole(_ctx: ServiceCallContext, _principalId: string): Promis
   return Promise.resolve(null);
 }
 
-
-
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -291,8 +291,13 @@ async function main(): Promise<void> {
     new WebhookDispatcher(pool),
   );
 
+  // In demo mode use a local HS256 secret so tokens issued by registerSiwxRoutes
+  // (and any future local issuer) are verifiable without a live JWKS endpoint.
+  // Never set secret in production — keep AUTH_JWKS_URL for asymmetric verification.
+  const DEMO_SIGN_SECRET = "brain-demo-mode-insecure-dev-only";
   const jwtVerifier = new JwtVerifier({
     jwksUrl: cfg.AUTH_JWKS_URL,
+    ...(cfg.BRAIN_DEMO_MODE ? { secret: DEMO_SIGN_SECRET } : {}),
     issuer: cfg.AUTH_ISSUER,
     audience: cfg.AUTH_AUDIENCE,
     clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
@@ -527,6 +532,23 @@ async function main(): Promise<void> {
       });
       await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
       await v1.register(async (child) => registerMcpRoute(child, mcpServer));
+      // SIWX (agent auth) — wired in demo mode only. Production wiring requires
+      // an AUTH_SIGN_KEY config variable backed by Azure Key Vault (follow-up).
+      if (cfg.BRAIN_DEMO_MODE) {
+        const demoSigner = new JwtSigner({
+          issuer: cfg.AUTH_ISSUER,
+          audience: cfg.AUTH_AUDIENCE,
+          key: { kty: "oct", k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"), alg: "HS256" },
+          algorithm: "HS256",
+        });
+        await v1.register(async (child) =>
+          registerSiwxRoutes(child, {
+            signer: demoSigner,
+            registry: new StubAgentRegistry(),
+            demoMode: true,
+          }),
+        );
+      }
     },
     { prefix: "/v1" },
   );

@@ -60,7 +60,7 @@ change, not a re-architecture.
 ## Required refactor: `register*Routes` exports per service
 
 Today each service's `server.ts` exports only `buildXApp(opts)`,
-which constructs *its own* Fastify instance with shared plugins.
+which constructs _its own_ Fastify instance with shared plugins.
 Composing multiple FastifyInstances is awkward; composing **plugins
 that register routes onto a parent app** is the standard Fastify
 pattern.
@@ -124,37 +124,20 @@ import {
   redisConnectionFromUrl,
 } from "@brain/api/shared";
 
-import { registerRawRoutes }       from "@brain/raw";
-import {
-  registerLedgerRoutes,
-  LedgerService,
-} from "@brain/ledger";
-import {
-  registerWikiRoutes,
-  WikiPageService,
-  askWiki,
-} from "@brain/wiki";
-import {
-  registerPolicyRoutes,
-  PolicyService,
-} from "@brain/policy";
+import { registerRawRoutes } from "@brain/raw";
+import { registerLedgerRoutes, LedgerService } from "@brain/ledger";
+import { registerWikiRoutes, WikiPageService, askWiki } from "@brain/wiki";
+import { registerPolicyRoutes, PolicyService } from "@brain/policy";
 import {
   registerExecutionRoutes,
   PaymentIntentService,
   ApprovalService,
   defaultRails,
 } from "@brain/execution";
-import {
-  registerAuditRoutes,
-  AuditService,
-} from "@brain/audit";
-import {
-  BrainMcpServer,
-  McpAuthVerifier,
-  registerMcpRoute,
-} from "@brain/mcp";
+import { registerAuditRoutes, AuditService } from "@brain/audit";
+import { BrainMcpServer, McpAuthVerifier, registerMcpRoute } from "@brain/mcp";
 
-import { loadConfig }              from "./config.js";
+import { loadConfig } from "./config.js";
 import { buildRawEvidenceService } from "./adapters/raw-evidence.js";
 import { buildOnchainScopeChecker } from "./adapters/onchain-scope.js";
 
@@ -169,17 +152,17 @@ async function main(): Promise<void> {
   });
   const redis = redisConnectionFromUrl(cfg.REDIS_URL);
   const audit = new PostgresAuditEmitter({ pool });
-  const jwt   = new JwtVerifier({
-    issuer:   cfg.JWT_ISSUER,
+  const jwt = new JwtVerifier({
+    issuer: cfg.JWT_ISSUER,
     audience: cfg.JWT_AUDIENCE,
-    jwksUri:  cfg.JWKS_URI,
+    jwksUri: cfg.JWKS_URI,
     revocationStore: new RedisRevocationStore({ redis }),
   });
 
   // -- layer services ------------------------------------------------
   const ledger = new LedgerService({ pool, audit });
-  const wiki   = new WikiPageService({ pool, ledger /*, llm/embeddings deps */ });
-  const raw    = buildRawEvidenceService({ pool, audit /*, blob, queue */ });
+  const wiki = new WikiPageService({ pool, ledger /*, llm/embeddings deps */ });
+  const raw = buildRawEvidenceService({ pool, audit /*, blob, queue */ });
   const policy = new PolicyService({ pool, audit });
   const auditService = new AuditService({ pool });
 
@@ -196,18 +179,26 @@ async function main(): Promise<void> {
     audit,
     rails: defaultRails(cfg),
     approvals,
-    resolveAgent:        async (id) => { /* ... */ },
-    resolveAccount:      async (id) => { /* ... */ },
-    resolveCounterparty: async (id) => { /* ... */ },
-    evaluatePolicy:      policy.evaluatePaymentIntent.bind(policy),
-    resolvePrincipal:    async (jwtPayload) => { /* ... */ },
+    resolveAgent: async (id) => {
+      /* ... */
+    },
+    resolveAccount: async (id) => {
+      /* ... */
+    },
+    resolveCounterparty: async (id) => {
+      /* ... */
+    },
+    evaluatePolicy: policy.evaluatePaymentIntent.bind(policy),
+    resolvePrincipal: async (jwtPayload) => {
+      /* ... */
+    },
   });
 
   // -- MCP -----------------------------------------------------------
   const mcpAuth = new McpAuthVerifier({
     pool,
     onchain: buildOnchainScopeChecker({
-      rpcUrl:   cfg.BASE_RPC_URL,
+      rpcUrl: cfg.BASE_RPC_URL,
       registry: cfg.BRAIN_MCP_AGENT_REGISTRY_ADDR,
       cacheTtlSec: 60,
     }),
@@ -235,15 +226,20 @@ async function main(): Promise<void> {
     version: cfg.VERSION,
   }));
 
-  await app.register(async (a) => registerRawRoutes(a,       { pool, raw, audit }));
-  await app.register(async (a) => registerLedgerRoutes(a,    { pool, ledger, audit }));
-  await app.register(async (a) => registerWikiRoutes(a,      { pool, wiki, ask: askWiki, audit }));
-  await app.register(async (a) => registerPolicyRoutes(a,    { pool, policy, audit }));
-  await app.register(async (a) => registerExecutionRoutes(a, {
-    pool, audit, paymentIntents, approvals,
-    /* legacy proposal/execution deps */
-  }));
-  await app.register(async (a) => registerAuditRoutes(a,     { pool, auditService }));
+  await app.register(async (a) => registerRawRoutes(a, { pool, raw, audit }));
+  await app.register(async (a) => registerLedgerRoutes(a, { pool, ledger, audit }));
+  await app.register(async (a) => registerWikiRoutes(a, { pool, wiki, ask: askWiki, audit }));
+  await app.register(async (a) => registerPolicyRoutes(a, { pool, policy, audit }));
+  await app.register(async (a) =>
+    registerExecutionRoutes(a, {
+      pool,
+      audit,
+      paymentIntents,
+      approvals,
+      /* legacy proposal/execution deps */
+    }),
+  );
+  await app.register(async (a) => registerAuditRoutes(a, { pool, auditService }));
   await app.register(async (a) => registerMcpRoute(a, mcp));
 
   // -- listen + graceful shutdown ------------------------------------
@@ -252,12 +248,24 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, "shutting down");
-    try { await app.close(); } catch (err) { log.error({ err }, "app.close failed"); }
-    try { await pool.end(); }   catch (err) { log.error({ err }, "pool.end failed"); }
-    try { redis.disconnect(); } catch (err) { log.error({ err }, "redis.disconnect failed"); }
+    try {
+      await app.close();
+    } catch (err) {
+      log.error({ err }, "app.close failed");
+    }
+    try {
+      await pool.end();
+    } catch (err) {
+      log.error({ err }, "pool.end failed");
+    }
+    try {
+      redis.disconnect();
+    } catch (err) {
+      log.error({ err }, "redis.disconnect failed");
+    }
     process.exit(0);
   };
-  process.on("SIGINT",  () => shutdown("SIGINT"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
@@ -274,33 +282,33 @@ main().catch((err) => {
 import { z } from "zod";
 
 const Schema = z.object({
-  PORT:         z.coerce.number().default(3000),
-  LOG_LEVEL:    z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
-  VERSION:      z.string().default("0.3.0"),
+  PORT: z.coerce.number().default(3000),
+  LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
+  VERSION: z.string().default("0.3.0"),
 
   DATABASE_URL: z.string().url(),
-  PG_POOL_MAX:  z.coerce.number().default(10),
+  PG_POOL_MAX: z.coerce.number().default(10),
 
-  REDIS_URL:    z.string().url(),
+  REDIS_URL: z.string().url(),
 
-  JWT_ISSUER:   z.string(),
+  JWT_ISSUER: z.string(),
   JWT_AUDIENCE: z.string(),
-  JWKS_URI:     z.string().url(),
+  JWKS_URI: z.string().url(),
 
-  BASE_RPC_URL:                    z.string().url(),
-  BRAIN_MCP_AGENT_REGISTRY_ADDR:   z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  BRAIN_AUDIT_ANCHOR_ADDR:         z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  BRAIN_POLICY_REGISTRY_ADDR:      z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+  BASE_RPC_URL: z.string().url(),
+  BRAIN_MCP_AGENT_REGISTRY_ADDR: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+  BRAIN_AUDIT_ANCHOR_ADDR: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+  BRAIN_POLICY_REGISTRY_ADDR: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
 
   // Optional rails creds (allow missing in dev)
-  PLAID_CLIENT_ID:    z.string().optional(),
-  PLAID_SECRET:       z.string().optional(),
+  PLAID_CLIENT_ID: z.string().optional(),
+  PLAID_SECRET: z.string().optional(),
   NETSUITE_OAUTH_KEY: z.string().optional(),
-  ALCHEMY_API_KEY:    z.string().optional(),
+  ALCHEMY_API_KEY: z.string().optional(),
 
   // Anthropic / OpenAI for the LLM stack
-  ANTHROPIC_API_KEY:  z.string().optional(),
-  OPENAI_API_KEY:     z.string().optional(),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
 });
 
 export type AppConfig = z.infer<typeof Schema>;
@@ -323,7 +331,7 @@ These don't exist yet and are part of the boot binary work.
 not a service-shaped object. Wrap them:
 
 ```ts
-import { ingestOne, /* ... */ } from "@brain/raw";
+import { ingestOne /* ... */ } from "@brain/raw";
 import type { IRawEvidenceService, AuditEmitter } from "@brain/api/shared";
 import type { Pool } from "pg";
 
@@ -350,9 +358,7 @@ Implement using ethers:
 import { ethers } from "ethers";
 import type { OnchainScopeChecker } from "@brain/mcp";
 
-const ABI = [
-  "function getAgent(bytes32 agentId) view returns (bytes32 scopeHash, bool active)",
-];
+const ABI = ["function getAgent(bytes32 agentId) view returns (bytes32 scopeHash, bool active)"];
 
 export function buildOnchainScopeChecker(opts: {
   rpcUrl: string;
@@ -385,23 +391,23 @@ export function buildOnchainScopeChecker(opts: {
   "main": "./dist/index.js",
   "bin": { "brain-server": "./dist/main.js" },
   "scripts": {
-    "build":     "tsc -b",
-    "start":     "node dist/main.js",
-    "dev":       "tsx watch src/main.ts",
+    "build": "tsc -b",
+    "start": "node dist/main.js",
+    "dev": "tsx watch src/main.ts",
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
-    "fastify":  "^5.0.0",
-    "pg":       "^8.13.0",
-    "ethers":   "^6.13.0",
-    "zod":      "^3.23.0",
-    "@brain/raw":       "workspace:*",
-    "@brain/ledger":    "workspace:*",
-    "@brain/wiki":      "workspace:*",
-    "@brain/policy":    "workspace:*",
+    "fastify": "^5.0.0",
+    "pg": "^8.13.0",
+    "ethers": "^6.13.0",
+    "zod": "^3.23.0",
+    "@brain/raw": "workspace:*",
+    "@brain/ledger": "workspace:*",
+    "@brain/wiki": "workspace:*",
+    "@brain/policy": "workspace:*",
     "@brain/execution": "workspace:*",
-    "@brain/audit":     "workspace:*",
-    "@brain/mcp":       "workspace:*"
+    "@brain/audit": "workspace:*",
+    "@brain/mcp": "workspace:*"
   }
 }
 ```
@@ -496,18 +502,18 @@ Out of scope; tracked separately:
 
 ## Effort estimate
 
-| Step                                                                | LOC      | Time      |
-| ------------------------------------------------------------------- | -------- | --------- |
-| Add `register*Routes` exports across 6 services                     | 6 × ~30  | ~½ day    |
-| Write `services/api/src/main.ts`                                    | ~200     | ~½ day    |
-| Write `services/api/src/config.ts`                                  | ~50      | ~1 hr     |
-| Write `services/api/src/adapters/raw-evidence.ts`                   | ~80      | ~½ day    |
-| Write `services/api/src/adapters/onchain-scope.ts`                  | ~50      | ~2 hr     |
-| Update `services/api/package.json` (bin, deps, scripts)             | ~20      | trivial   |
-| Write `Dockerfile`                                                  | ~20      | trivial   |
-| Smoke-test `/health` + one MCP `initialize` + one `tools/call`      | n/a      | ~½ day    |
-| Surface and fix typecheck errors that show up                       | n/a      | **0–2 days unknown** |
-| **Total**                                                           | **~600** | **~3 days** plus typecheck-fix tail |
+| Step                                                           | LOC      | Time                                |
+| -------------------------------------------------------------- | -------- | ----------------------------------- |
+| Add `register*Routes` exports across 6 services                | 6 × ~30  | ~½ day                              |
+| Write `services/api/src/main.ts`                               | ~200     | ~½ day                              |
+| Write `services/api/src/config.ts`                             | ~50      | ~1 hr                               |
+| Write `services/api/src/adapters/raw-evidence.ts`              | ~80      | ~½ day                              |
+| Write `services/api/src/adapters/onchain-scope.ts`             | ~50      | ~2 hr                               |
+| Update `services/api/package.json` (bin, deps, scripts)        | ~20      | trivial                             |
+| Write `Dockerfile`                                             | ~20      | trivial                             |
+| Smoke-test `/health` + one MCP `initialize` + one `tools/call` | n/a      | ~½ day                              |
+| Surface and fix typecheck errors that show up                  | n/a      | **0–2 days unknown**                |
+| **Total**                                                      | **~600** | **~3 days** plus typecheck-fix tail |
 
 The "fix typecheck errors that show up" line is honest — the v0.3
 work has never been compiled. There may be import path issues,

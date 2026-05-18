@@ -92,9 +92,7 @@ export class PolicyService {
     });
 
     const matchedRule =
-      decision.matched_rule_id !== null
-        ? findRule(active.content, decision.matched_rule_id)
-        : null;
+      decision.matched_rule_id !== null ? findRule(active.content, decision.matched_rule_id) : null;
 
     return {
       id,

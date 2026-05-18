@@ -5,7 +5,7 @@
 ## Prerequisites
 
 - Azure CLI authenticated with an identity that has `Container Apps
-  Contributor` on the resource group.
+Contributor` on the resource group.
 - Resource group: `brain-production-rg` (or `brain-staging-rg`).
 - Know the service that needs rollback (usually `api`, but any of the
   seven services).

@@ -88,10 +88,7 @@ export class WebhookDispatcher {
 
     await Promise.allSettled(
       endpoints
-        .filter(
-          (ep) =>
-            ep.enabled_events === null || ep.enabled_events.includes(event.action),
-        )
+        .filter((ep) => ep.enabled_events === null || ep.enabled_events.includes(event.action))
         .map(async (ep) => {
           const sig = sign(ep.secret, payload);
           try {
@@ -105,9 +102,7 @@ export class WebhookDispatcher {
               signal: AbortSignal.timeout(10_000),
             });
             if (!res.ok) {
-              console.warn(
-                `[webhooks] endpoint ${ep.id} returned HTTP ${res.status}`,
-              );
+              console.warn(`[webhooks] endpoint ${ep.id} returned HTTP ${res.status}`);
             }
           } catch {
             console.warn(`[webhooks] delivery failed to endpoint ${ep.id}`);

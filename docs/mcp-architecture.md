@@ -26,7 +26,7 @@ MCP is the standard those external agents reach for. By implementing the
 spec rather than a Brain-specific RPC, we let any MCP-aware client
 (Claude Desktop, custom-built agents, third-party integrations) connect
 without bespoke wiring. The protocol does not change the layer model —
-it is a *transport* over the same six-layer policy/audit boundary.
+it is a _transport_ over the same six-layer policy/audit boundary.
 
 ## What MCP gives an agent (and what it does not)
 
@@ -40,7 +40,7 @@ An MCP client connected to Brain can:
 - **List and get prompts** — canonical question templates the client
   composes against (e.g. `wiki.question.cash_flow`).
 
-An MCP client *cannot*:
+An MCP client _cannot_:
 
 - Bypass the §6 deterministic pre-execution gate. `payment_intent.execute`
   is **not** exposed as an MCP tool; agents may only `propose`. Execution
@@ -141,33 +141,33 @@ Ten tools across four capability groups. Each tool name is an
 
 ### `ledger:read` capability
 
-| Tool | Maps to | Notes |
-| --- | --- | --- |
-| `ledger.account.get` | `LedgerService.getAccount` | Returns account + latest balance. |
-| `ledger.accounts.list` | `LedgerService.listAccounts` | Filter by status/type. |
-| `ledger.transactions.list` | `LedgerService.listTransactions` | Rich filter set. |
-| `ledger.obligations.list` | `LedgerService.listObligations` | Open obligations. |
-| `ledger.counterparties.list` | `LedgerService.listCounterparties` | Search by `q`. |
+| Tool                         | Maps to                            | Notes                             |
+| ---------------------------- | ---------------------------------- | --------------------------------- |
+| `ledger.account.get`         | `LedgerService.getAccount`         | Returns account + latest balance. |
+| `ledger.accounts.list`       | `LedgerService.listAccounts`       | Filter by status/type.            |
+| `ledger.transactions.list`   | `LedgerService.listTransactions`   | Rich filter set.                  |
+| `ledger.obligations.list`    | `LedgerService.listObligations`    | Open obligations.                 |
+| `ledger.counterparties.list` | `LedgerService.listCounterparties` | Search by `q`.                    |
 
 ### `wiki:read` capability
 
-| Tool | Maps to | Notes |
-| --- | --- | --- |
-| `wiki.question` | `askWiki` orchestrator | Returns answer + cited evidence ids. |
-| `wiki.page.get` | `WikiPageService.getPage` | Markdown body of a page. |
+| Tool            | Maps to                   | Notes                                |
+| --------------- | ------------------------- | ------------------------------------ |
+| `wiki.question` | `askWiki` orchestrator    | Returns answer + cited evidence ids. |
+| `wiki.page.get` | `WikiPageService.getPage` | Markdown body of a page.             |
 
 ### `raw:write` capability
 
-| Tool | Maps to | Notes |
-| --- | --- | --- |
+| Tool             | Maps to                                                           | Notes                            |
+| ---------------- | ----------------------------------------------------------------- | -------------------------------- |
 | `raw.contribute` | `IRawEvidenceService.ingest` with `source_type=agent_contributed` | Caps confidence at 0.5 per §3.2. |
 
 ### `payment_intent:propose` and `agent:propose` capabilities
 
-| Tool | Maps to | Notes |
-| --- | --- | --- |
+| Tool                     | Maps to                       | Notes                                                  |
+| ------------------------ | ----------------------------- | ------------------------------------------------------ |
 | `payment_intent.propose` | `PaymentIntentService.create` | Returns intent + PolicyDecision. **Never `.execute`.** |
-| `agent.action.propose` | `IAgentService.propose` | Non-financial proposal. |
+| `agent.action.propose`   | `IAgentService.propose`       | Non-financial proposal.                                |
 
 A tool that the agent isn't scoped for is still **listed** (`tools/list`
 returns the full registry); attempting to **call** it returns
@@ -179,14 +179,14 @@ generic MCP client present a discoverable tool catalog.
 
 Resources are read-only typed identifiers. Brain exposes:
 
-| URI scheme | Resolves to |
-| --- | --- |
-| `brain://ledger/accounts/{account_id}` | Account row + latest balance |
-| `brain://ledger/transactions/{transaction_id}` | Transaction row |
-| `brain://ledger/obligations/{obligation_id}` | Obligation row |
-| `brain://ledger/payment-intents/{id}` | PaymentIntent row + PolicyDecision |
-| `brain://wiki/pages/{slug}` | Wiki page (markdown body) |
-| `brain://audit/events/{id}` | Audit event with inclusion proof |
+| URI scheme                                     | Resolves to                        |
+| ---------------------------------------------- | ---------------------------------- |
+| `brain://ledger/accounts/{account_id}`         | Account row + latest balance       |
+| `brain://ledger/transactions/{transaction_id}` | Transaction row                    |
+| `brain://ledger/obligations/{obligation_id}`   | Obligation row                     |
+| `brain://ledger/payment-intents/{id}`          | PaymentIntent row + PolicyDecision |
+| `brain://wiki/pages/{slug}`                    | Wiki page (markdown body)          |
+| `brain://audit/events/{id}`                    | Audit event with inclusion proof   |
 
 Resources are syntactic sugar over the equivalent tools — useful for
 clients that want stable URIs they can pin in their reasoning context.
@@ -273,14 +273,14 @@ graceful empty response.
 
 Mapped onto the JSON-RPC error code space + Brain's error registry:
 
-| Brain code | JSON-RPC code | When |
-| --- | --- | --- |
-| `auth_token_missing` | -32001 | No JWT or invalid bearer |
-| `auth_scope_insufficient` | -32002 | Tool requires a scope the agent doesn't hold |
-| `agent_not_registered` | -32003 | JWT valid but agent row missing/revoked |
-| `request_body_invalid` | -32602 | JSON-RPC `params` failed schema validation |
-| `payment_intent_gate_failed` | -32004 | Only relevant when proposing a payment that fails policy on creation |
-| internal | -32603 | Anything else |
+| Brain code                   | JSON-RPC code | When                                                                 |
+| ---------------------------- | ------------- | -------------------------------------------------------------------- |
+| `auth_token_missing`         | -32001        | No JWT or invalid bearer                                             |
+| `auth_scope_insufficient`    | -32002        | Tool requires a scope the agent doesn't hold                         |
+| `agent_not_registered`       | -32003        | JWT valid but agent row missing/revoked                              |
+| `request_body_invalid`       | -32602        | JSON-RPC `params` failed schema validation                           |
+| `payment_intent_gate_failed` | -32004        | Only relevant when proposing a payment that fails policy on creation |
+| internal                     | -32603        | Anything else                                                        |
 
 Standard JSON-RPC -32700 (parse error) and -32601 (method not found) are
 also surfaced for malformed transport / unknown method names.
@@ -299,12 +299,14 @@ same standard as `/execution/*` legacy routes (Engineering Standards
 ## Testing strategy
 
 Unit tests at `services/mcp/src/**/*.test.ts`:
+
 - Dispatcher: every JSON-RPC method routes correctly.
 - Auth: scope mismatch, expired JWT, agent non-active.
 - Each tool: happy path + scope-failed path + service-error path.
 - Audit: every tool call emits exactly one outer event.
 
 Integration tests (skipped without `DATABASE_URL`):
+
 - A mock MCP client connects, calls `initialize`, `tools/list`, and
   exercises every tool against a live Postgres + the golden-path seed.
 

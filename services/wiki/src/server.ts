@@ -69,6 +69,10 @@ export async function registerWikiPlugin(app: FastifyInstance, deps: WikiDeps): 
   await registerQuestion(app, deps);
   await registerAnnotate(app, deps);
   await registerSchema(app, deps);
-  const pageService = new WikiPageService({ pool: deps.pool, audit: deps.audit, embed: deps.embed });
+  const pageService = new WikiPageService({
+    pool: deps.pool,
+    audit: deps.audit,
+    embed: deps.embed,
+  });
   await registerMemoryRoutes(app, pageService);
 }

@@ -8,7 +8,10 @@
   "additionalProperties": false,
   "properties": {
     "display_name": { "type": "string", "minLength": 1, "maxLength": 200 },
-    "kind": { "type": "string", "enum": ["vendor", "customer", "employee", "contractor", "onchain", "unknown"] },
+    "kind": {
+      "type": "string",
+      "enum": ["vendor", "customer", "employee", "contractor", "onchain", "unknown"]
+    },
     "tax_id": { "type": "string", "maxLength": 64 },
     "country": { "type": "string", "pattern": "^[A-Z]{2}$" },
     "website": { "type": "string", "format": "uri" },

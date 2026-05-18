@@ -146,10 +146,7 @@ const POLICY_DECISION: GatePolicyDecision = {
 // Service factory
 // ---------------------------------------------------------------------------
 
-function makeService(
-  pool: Pool,
-  audit: InMemoryAuditEmitter,
-): PaymentIntentService {
+function makeService(pool: Pool, audit: InMemoryAuditEmitter): PaymentIntentService {
   const approvals = new ApprovalService({
     pool,
     audit,

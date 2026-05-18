@@ -29,6 +29,9 @@ export const ID_PREFIX = {
   wikiEntity: "ent",
   wikiRelation: "rel",
   wikiPage: "wpg",
+  // Sources (v0.3 / PLAN-FIRST #12). One row per adapter connection.
+  source: "src",
+  sourceSyncJob: "sjob",
   // Ledger entities (v0.3 / Layer 2). Prefixes are wire-visible — never rename.
   ledgerAccount: "acct",
   ledgerBalance: "bal",
@@ -73,6 +76,8 @@ export const newRawParsedId = (): string => brainId(ID_PREFIX.rawParsed);
 export const newWikiEntityId = (): string => brainId(ID_PREFIX.wikiEntity);
 export const newWikiRelationId = (): string => brainId(ID_PREFIX.wikiRelation);
 export const newWikiPageId = (): string => brainId(ID_PREFIX.wikiPage);
+export const newSourceId = (): string => brainId(ID_PREFIX.source);
+export const newSourceSyncJobId = (): string => brainId(ID_PREFIX.sourceSyncJob);
 export const newAccountId = (): string => brainId(ID_PREFIX.ledgerAccount);
 export const newBalanceId = (): string => brainId(ID_PREFIX.ledgerBalance);
 export const newTransactionId = (): string => brainId(ID_PREFIX.ledgerTransaction);

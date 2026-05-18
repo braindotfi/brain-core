@@ -21,11 +21,7 @@ import {
   SUPPORTED_AUDIT_ENTITY_TYPES,
   type AuditEventRow,
 } from "./repository.js";
-import {
-  deleteWebhookEndpoint,
-  insertWebhookEndpoint,
-  listWebhookEndpoints,
-} from "./webhooks.js";
+import { deleteWebhookEndpoint, insertWebhookEndpoint, listWebhookEndpoints } from "./webhooks.js";
 import type { AuditDeps } from "./deps.js";
 
 const READ: Scope = "audit:read";
@@ -253,12 +249,15 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
       }
       if (
         enabled_events !== undefined &&
-        (!Array.isArray(enabled_events) ||
-          enabled_events.some((e) => !FORWARDED_EVENTS.has(e)))
+        (!Array.isArray(enabled_events) || enabled_events.some((e) => !FORWARDED_EVENTS.has(e)))
       ) {
-        throw brainError("request_body_invalid", "enabled_events must be a subset of forwarded event types", {
-          details: { allowed: [...FORWARDED_EVENTS] },
-        });
+        throw brainError(
+          "request_body_invalid",
+          "enabled_events must be a subset of forwarded event types",
+          {
+            details: { allowed: [...FORWARDED_EVENTS] },
+          },
+        );
       }
       const secret = generateWebhookSecret();
       const id = newWebhookEndpointId();
@@ -284,27 +283,24 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
     },
   );
 
-  app.get(
-    "/audit/webhooks/endpoints",
-    async (request: FastifyRequest, reply) => {
-      const principal = requirePrincipal(request);
-      requireScope(principal.scopes, READ);
-      const rows = await withTenantScope(deps.pool, principal.tenantId, (c) =>
-        listWebhookEndpoints(c),
-      );
-      reply.status(200);
-      return {
-        endpoints: rows.map((r) => ({
-          id: r.id,
-          url: r.url,
-          enabled_events: r.enabled_events,
-          enabled: r.enabled,
-          secret_preview: `${r.secret.slice(0, 8)}...`,
-          created_at: r.created_at.toISOString(),
-        })),
-      };
-    },
-  );
+  app.get("/audit/webhooks/endpoints", async (request: FastifyRequest, reply) => {
+    const principal = requirePrincipal(request);
+    requireScope(principal.scopes, READ);
+    const rows = await withTenantScope(deps.pool, principal.tenantId, (c) =>
+      listWebhookEndpoints(c),
+    );
+    reply.status(200);
+    return {
+      endpoints: rows.map((r) => ({
+        id: r.id,
+        url: r.url,
+        enabled_events: r.enabled_events,
+        enabled: r.enabled,
+        secret_preview: `${r.secret.slice(0, 8)}...`,
+        created_at: r.created_at.toISOString(),
+      })),
+    };
+  });
 
   app.delete(
     "/audit/webhooks/endpoints/:id",

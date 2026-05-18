@@ -37,9 +37,6 @@ export async function listWebhookEndpoints(c: TenantScopedClient): Promise<Webho
 }
 
 export async function deleteWebhookEndpoint(c: TenantScopedClient, id: string): Promise<boolean> {
-  const result = await c.query(
-    `DELETE FROM webhook_endpoints WHERE id = $1`,
-    [id],
-  );
+  const result = await c.query(`DELETE FROM webhook_endpoints WHERE id = $1`, [id]);
   return (result.rowCount ?? 0) > 0;
 }

@@ -13,7 +13,7 @@ v0.2.0 of this document realigns to the v0.3 architecture (six layers). Specific
 - §1 adds a fifth principle: deterministic pre-execution gate.
 - §2 repo layout adds `services/ledger/` and renames `services/execution/` → `services/agent/`.
 - §3.2 scope list updated: `ledger:*`, `payment_intent:*`, `agent:*`.
-- §4.3 error code registry adds ledger and payment_intent codes; `execution_*` codes alias to `agent_*` for back-compat.
+- §4.3 error code registry adds ledger and payment*intent codes; `execution*\_`codes alias to`agent\_\_` for back-compat.
 - §6 Pre-execution gate is a NEW SECTION (renumbers Observability → §7, Testing → §8, etc.).
 - §9.5 PaymentIntent state machine is new.
 - §11 dependencies adds Chainalysis as the deterministic counterparty-verification provider.
@@ -236,7 +236,7 @@ The gate runs the following checks in order. Failure short-circuits and produces
 10. **Approval requirement determined.** Policy decision is one of `allow` (no approval), `confirm` (approval needed), `reject` (refuse).
 11. **Approval granted when required.** If `confirm`, all `required_approvers` have signed.
 12. **PolicyDecision row created.** Inserted with `policy_decision_id` returned to caller.
-13. **Audit event before execution attempt** *and* **audit event after execution result.** Both rows are mandatory; the post-execution audit captures success or failure, with rail receipt where applicable.
+13. **Audit event before execution attempt** _and_ **audit event after execution result.** Both rows are mandatory; the post-execution audit captures success or failure, with rail receipt where applicable.
 
 Steps 12 and 13 are non-skippable even if every other check passes. The audit-before/audit-after pair is what makes execution forensically reconstructible.
 
@@ -593,14 +593,14 @@ When those become relevant, this document updates. Every update is a PR with rev
 
 End of v0.2.0. Maintained by the engineering lead. Last material revision logged in git history.
 
-| Class | HTTP | When |
-| --- | --- | --- |
-| Input validation | 400 | Request body or params fail schema validation |
-| Missing auth | 401 | No bearer token or token invalid |
-| Forbidden | 403 | Authenticated but scope or tenant mismatch |
-| Not found | 404 | Resource does not exist or is tombstoned |
-| Conflict | 409 | Illegal state transition, duplicate idempotency key with different body |
-| Too large | 413 | Request body exceeds the 50MB ingestion cap or similar |
-| Rate limited | 429 | Exceeded per-tenant rate budget |
-| Server error | 500 | Unexpected exception. Always accompanied by pager alert |
-| Unavailable | 503 | Dependency down, circuit breaker open, graceful degradation |
+| Class            | HTTP | When                                                                    |
+| ---------------- | ---- | ----------------------------------------------------------------------- |
+| Input validation | 400  | Request body or params fail schema validation                           |
+| Missing auth     | 401  | No bearer token or token invalid                                        |
+| Forbidden        | 403  | Authenticated but scope or tenant mismatch                              |
+| Not found        | 404  | Resource does not exist or is tombstoned                                |
+| Conflict         | 409  | Illegal state transition, duplicate idempotency key with different body |
+| Too large        | 413  | Request body exceeds the 50MB ingestion cap or similar                  |
+| Rate limited     | 429  | Exceeded per-tenant rate budget                                         |
+| Server error     | 500  | Unexpected exception. Always accompanied by pager alert                 |
+| Unavailable      | 503  | Dependency down, circuit breaker open, graceful degradation             |

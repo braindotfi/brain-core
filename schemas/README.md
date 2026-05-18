@@ -15,19 +15,19 @@ The `relation/` directory will be deprecated after refactor-3 lands.
 
 ## Ledger entity kinds (Layer 2)
 
-| Kind                  | Schema                          |
-| --------------------- | ------------------------------- |
-| account               | `entity/account.schema.json`    |
-| balance               | (added in refactor-2)           |
-| transaction           | `entity/transaction.schema.json`|
-| counterparty          | `entity/counterparty.schema.json` |
-| obligation            | `entity/obligation.schema.json` |
-| document              | (added in refactor-2)           |
-| category              | (added in refactor-2)           |
-| transfer              | (added in refactor-2)           |
-| invoice               | (added in refactor-2)           |
-| payment_intent        | (added in refactor-4)           |
-| reconciliation_match  | (added in refactor-5)           |
+| Kind                 | Schema                            |
+| -------------------- | --------------------------------- |
+| account              | `entity/account.schema.json`      |
+| balance              | (added in refactor-2)             |
+| transaction          | `entity/transaction.schema.json`  |
+| counterparty         | `entity/counterparty.schema.json` |
+| obligation           | `entity/obligation.schema.json`   |
+| document             | (added in refactor-2)             |
+| category             | (added in refactor-2)             |
+| transfer             | (added in refactor-2)             |
+| invoice              | (added in refactor-2)             |
+| payment_intent       | (added in refactor-4)             |
+| reconciliation_match | (added in refactor-5)             |
 
 The `policy` and `agent` schemas in `entity/` are pointer types — they
 reference the canonical records in `services/policy/` and
@@ -36,16 +36,16 @@ compatibility and are queryable as Ledger entities post-refactor.
 
 ## Wiki page types (Layer 3)
 
-| Slug pattern                  | Page type           |
-| ----------------------------- | ------------------- |
-| `/accounts/{account_id}`      | account             |
-| `/counterparties/{cp_id}`     | counterparty        |
-| `/obligations/{obl_id}`       | obligation          |
-| `/invoices/{inv_id}`          | invoice             |
-| `/agents/{agent_id}`          | agent               |
-| `/policies/{policy_id}`       | policy              |
-| `/monthly-summaries/{YYYY-MM}`| monthly_summary     |
-| `/cash-flow/{period}`         | cash_flow           |
+| Slug pattern                   | Page type       |
+| ------------------------------ | --------------- |
+| `/accounts/{account_id}`       | account         |
+| `/counterparties/{cp_id}`      | counterparty    |
+| `/obligations/{obl_id}`        | obligation      |
+| `/invoices/{inv_id}`           | invoice         |
+| `/agents/{agent_id}`           | agent           |
+| `/policies/{policy_id}`        | policy          |
+| `/monthly-summaries/{YYYY-MM}` | monthly_summary |
+| `/cash-flow/{period}`          | cash_flow       |
 
 Every page body should include the standard Brain memory page sections:
 Current Truth, Key Linked Entities, Recent Activity, Open Questions /
@@ -69,9 +69,9 @@ The four legacy relation kinds — `transacted_with`, `owes`, `owed_by`,
 `governed_by` — remain queryable in `services/wiki/` until refactor-3
 removes them. New code should query Ledger directly:
 
-| Legacy relation     | v0.3 Ledger query                                                 |
-| ------------------- | ----------------------------------------------------------------- |
-| `transacted_with`   | `ledger_transactions WHERE account_id = X AND counterparty_id = Y`|
-| `owes`              | `ledger_obligations WHERE direction = 'payable'`                  |
-| `owed_by`           | `ledger_obligations WHERE direction = 'receivable'`               |
-| `governed_by`       | `ledger_payment_intents.policy_decision_id` join                  |
+| Legacy relation   | v0.3 Ledger query                                                  |
+| ----------------- | ------------------------------------------------------------------ |
+| `transacted_with` | `ledger_transactions WHERE account_id = X AND counterparty_id = Y` |
+| `owes`            | `ledger_obligations WHERE direction = 'payable'`                   |
+| `owed_by`         | `ledger_obligations WHERE direction = 'receivable'`                |
+| `governed_by`     | `ledger_payment_intents.policy_decision_id` join                   |

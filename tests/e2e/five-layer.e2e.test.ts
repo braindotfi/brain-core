@@ -33,9 +33,7 @@ DESCRIBE("five-layer end-to-end (Series A proof 1)", () => {
 
     // Step 3 — policy is active.
     const tenantId = process.env.BRAIN_TEST_TENANT_ID ?? "";
-    const policy = await client.get<{ state: string; version: number }>(
-      `/v1/policy/${tenantId}`,
-    );
+    const policy = await client.get<{ state: string; version: number }>(`/v1/policy/${tenantId}`);
     expect(policy.state).toBe("active");
 
     // Step 4 — create a PaymentIntent; it evaluates against the policy during

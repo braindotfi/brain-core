@@ -55,12 +55,18 @@ export class CashFlowPageGenerator implements PageGenerator {
 
     const linkedEntities = bullet(
       [
-        ...topCounterparties.inflow.slice(0, 3).map(
-          (cp) => `Top inflow: **${cp.name}** \`${cp.id}\` — ${cp.total.toFixed(2)} ${summary.currency ?? "USD"}`,
-        ),
-        ...topCounterparties.outflow.slice(0, 3).map(
-          (cp) => `Top outflow: **${cp.name}** \`${cp.id}\` — ${cp.total.toFixed(2)} ${summary.currency ?? "USD"}`,
-        ),
+        ...topCounterparties.inflow
+          .slice(0, 3)
+          .map(
+            (cp) =>
+              `Top inflow: **${cp.name}** \`${cp.id}\` — ${cp.total.toFixed(2)} ${summary.currency ?? "USD"}`,
+          ),
+        ...topCounterparties.outflow
+          .slice(0, 3)
+          .map(
+            (cp) =>
+              `Top outflow: **${cp.name}** \`${cp.id}\` — ${cp.total.toFixed(2)} ${summary.currency ?? "USD"}`,
+          ),
       ],
       "_No counterparty data._",
     );

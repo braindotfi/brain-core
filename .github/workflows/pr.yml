@@ -101,14 +101,14 @@ jobs:
 
       - name: forge fmt check
         run: forge fmt --check
-        continue-on-error: true  # no contracts yet — placeholder until stage-5
+        continue-on-error: true # no contracts yet — placeholder until stage-5
 
       - name: forge build
         run: forge build --sizes
 
       - name: forge test
         run: forge test -vvv
-        continue-on-error: true  # no tests yet — placeholder until stage-5
+        continue-on-error: true # no tests yet — placeholder until stage-5
 
   # --------- Secret scanning ---------
   secrets:

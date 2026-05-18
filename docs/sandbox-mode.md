@@ -4,19 +4,19 @@ Run the full PaymentIntent PoC flow — Raw ingest → Ledger derive → §6 gat
 
 ## What BRAIN_DEMO_MODE changes
 
-| Area | Production | `BRAIN_DEMO_MODE=true` |
-|---|---|---|
-| LLM adapter | `OpenAICompletionAdapter` (requires `OPENAI_API_KEY`) | `RecordedLlmAdapter` (fixture responses, no network) |
-| Embed adapter | `OpenAIEmbeddingAdapter` | `DeterministicEmbeddingAdapter` |
-| `evaluatePaymentIntent` | Calls Policy service (not yet wired) | Returns `{outcome: "allow"}` for any intent |
-| `evaluatePolicy` (legacy) | Calls Policy service (not yet wired) | Returns `{outcome: "allow"}` |
-| `resolvePrincipal` | Maps JWT claims → `GatePrincipal` | Returns synthetic agent principal |
-| `resolveAgent` | Queries agents table | Returns synthetic active agent |
-| `resolveAccount` | Queries `ledger_accounts` by id | Queries `ledger_accounts` by id (same) |
-| `resolveCounterparty` | Queries `ledger_counterparties` by id | Queries `ledger_counterparties` by id (same) |
-| `resolveRole` | Queries role table | Always returns `"owner"` |
-| Plaid webhook | Rejects — key resolver not configured | Rejects with clear "use /raw/ingest" message |
-| MCP auth | `FakeAuthVerifier` (same in both modes for now) | `FakeAuthVerifier` |
+| Area                      | Production                                            | `BRAIN_DEMO_MODE=true`                               |
+| ------------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
+| LLM adapter               | `OpenAICompletionAdapter` (requires `OPENAI_API_KEY`) | `RecordedLlmAdapter` (fixture responses, no network) |
+| Embed adapter             | `OpenAIEmbeddingAdapter`                              | `DeterministicEmbeddingAdapter`                      |
+| `evaluatePaymentIntent`   | Calls Policy service (not yet wired)                  | Returns `{outcome: "allow"}` for any intent          |
+| `evaluatePolicy` (legacy) | Calls Policy service (not yet wired)                  | Returns `{outcome: "allow"}`                         |
+| `resolvePrincipal`        | Maps JWT claims → `GatePrincipal`                     | Returns synthetic agent principal                    |
+| `resolveAgent`            | Queries agents table                                  | Returns synthetic active agent                       |
+| `resolveAccount`          | Queries `ledger_accounts` by id                       | Queries `ledger_accounts` by id (same)               |
+| `resolveCounterparty`     | Queries `ledger_counterparties` by id                 | Queries `ledger_counterparties` by id (same)         |
+| `resolveRole`             | Queries role table                                    | Always returns `"owner"`                             |
+| Plaid webhook             | Rejects — key resolver not configured                 | Rejects with clear "use /raw/ingest" message         |
+| MCP auth                  | `FakeAuthVerifier` (same in both modes for now)       | `FakeAuthVerifier`                                   |
 
 Setting `OPENAI_API_KEY` overrides the demo LLM fallback regardless of `BRAIN_DEMO_MODE`.
 

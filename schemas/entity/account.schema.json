@@ -12,7 +12,11 @@
       "type": "string",
       "enum": ["bank_checking", "bank_savings", "card", "loan", "line_of_credit", "onchain"]
     },
-    "currency": { "type": "string", "pattern": "^[A-Z]{3}$", "description": "ISO 4217 code; crypto uses the chain's native symbol." },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$",
+      "description": "ISO 4217 code; crypto uses the chain's native symbol."
+    },
     "institution": { "type": "string", "maxLength": 200 },
     "mask": { "type": "string", "pattern": "^[\\dxX*]{3,6}$" },
     "external_id": { "type": "string", "maxLength": 256 },

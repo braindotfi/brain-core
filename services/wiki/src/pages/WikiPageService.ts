@@ -230,4 +230,3 @@ function toPage(row: PageRow): WikiPage {
     source_revision: row.source_revision,
   };
 }
-

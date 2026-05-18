@@ -10,14 +10,14 @@ world as the structured intelligence layer.
 
 ## The six layers
 
-| # | Layer  | Owns                                          | Workspace             |
-| - | ------ | --------------------------------------------- | --------------------- |
-| 1 | Raw    | Source evidence (immutable)                   | `services/raw`        |
-| 2 | Ledger | Machine-readable financial truth (11 entities)| `services/ledger`     |
-| 3 | Wiki   | Human-readable financial memory + Q&A         | `services/wiki`       |
-| 4 | Policy | Deterministic permission and approval logic   | `services/policy`     |
-| 5 | Agent  | Proposal / PaymentIntent / MCP orchestration  | `services/execution`  |
-| 6 | Audit  | Immutable proof of what happened and why      | `services/audit`      |
+| #   | Layer  | Owns                                           | Workspace            |
+| --- | ------ | ---------------------------------------------- | -------------------- |
+| 1   | Raw    | Source evidence (immutable)                    | `services/raw`       |
+| 2   | Ledger | Machine-readable financial truth (11 entities) | `services/ledger`    |
+| 3   | Wiki   | Human-readable financial memory + Q&A          | `services/wiki`      |
+| 4   | Policy | Deterministic permission and approval logic    | `services/policy`    |
+| 5   | Agent  | Proposal / PaymentIntent / MCP orchestration   | `services/execution` |
+| 6   | Audit  | Immutable proof of what happened and why       | `services/audit`     |
 
 The data flow is one-way upward except for two controlled write paths:
 (a) human annotations and agent contributions write into Raw, never
@@ -42,7 +42,7 @@ attestation. Brain's MCP server verifies that the agent's JWT
 `scope_hash` claim matches the on-chain hash before any tool call.
 
 There is no `payment_intent.execute` on the MCP surface. External
-agents may *propose* but never *execute* — the §6 13-step
+agents may _propose_ but never _execute_ — the §6 13-step
 pre-execution gate stays the only execution path, behind human
 approval where the policy demands it.
 
@@ -163,11 +163,11 @@ pnpm run dev:down      # docker compose down
 
 Service URLs once the stack is healthy:
 
-| Service    | URL                                                 |
-| ---------- | --------------------------------------------------- |
-| Postgres   | `postgres://brain:brain@localhost:5432/brain`       |
-| Redis      | `redis://localhost:6379`                            |
-| LocalStack | `http://localhost:4566` (Azure Blob-equivalent S3)  |
+| Service    | URL                                                |
+| ---------- | -------------------------------------------------- |
+| Postgres   | `postgres://brain:brain@localhost:5432/brain`      |
+| Redis      | `redis://localhost:6379`                           |
+| LocalStack | `http://localhost:4566` (Azure Blob-equivalent S3) |
 
 ## Engineering standards
 
@@ -193,26 +193,26 @@ focused feature branches for documentation reconciliation
 and each phase is plan-first, human-approved, then a series of small
 reviewed commits.
 
-| Stage / branch          | Deliverable                                                          |
-| ----------------------- | -------------------------------------------------------------------- |
-| 0                       | Repository scaffolding                                               |
-| 1                       | Shared primitives (errors, auth, idempotency, observability)         |
-| 2                       | Raw layer — 5 endpoints + 5 source adapters                          |
-| 3                       | Wiki layer (v0.1 shape)                                              |
-| 4                       | Policy layer — 6 endpoints, rule VM, EIP-712 signing                 |
-| 5                       | 4 smart contracts on Base                                            |
-| 6                       | Execution layer (v0.1 shape)                                         |
-| 7                       | Audit layer — 5 endpoints, Merkle anchor publisher                   |
-| 8                       | Terraform infrastructure + CI/CD pipelines                           |
-| 9                       | End-to-end proof test suites                                         |
-| refactor-1              | Six-layer doc realignment                                            |
-| refactor-2              | Ledger scaffolding (workspace + 11 migrations + read-only API)       |
-| refactor-3              | Migrate financial truth from Wiki → Ledger; rewrite Plaid extractor  |
-| refactor-4              | PaymentIntent + §6 13-step pre-execution gate                        |
-| refactor-5              | Reconciliation engine + Wiki page generation from Ledger             |
-| refactor-6              | Invariant tests + golden-path dataset                                |
-| hotfix-1                | `/audit/entity/:type/:id` route + doc-claim reconciliation           |
-| feature/mcp-server      | `@brain/mcp` workspace — MCP server, 10 tools, 5 resources, 5 prompts|
+| Stage / branch     | Deliverable                                                           |
+| ------------------ | --------------------------------------------------------------------- |
+| 0                  | Repository scaffolding                                                |
+| 1                  | Shared primitives (errors, auth, idempotency, observability)          |
+| 2                  | Raw layer — 5 endpoints + 5 source adapters                           |
+| 3                  | Wiki layer (v0.1 shape)                                               |
+| 4                  | Policy layer — 6 endpoints, rule VM, EIP-712 signing                  |
+| 5                  | 4 smart contracts on Base                                             |
+| 6                  | Execution layer (v0.1 shape)                                          |
+| 7                  | Audit layer — 5 endpoints, Merkle anchor publisher                    |
+| 8                  | Terraform infrastructure + CI/CD pipelines                            |
+| 9                  | End-to-end proof test suites                                          |
+| refactor-1         | Six-layer doc realignment                                             |
+| refactor-2         | Ledger scaffolding (workspace + 11 migrations + read-only API)        |
+| refactor-3         | Migrate financial truth from Wiki → Ledger; rewrite Plaid extractor   |
+| refactor-4         | PaymentIntent + §6 13-step pre-execution gate                         |
+| refactor-5         | Reconciliation engine + Wiki page generation from Ledger              |
+| refactor-6         | Invariant tests + golden-path dataset                                 |
+| hotfix-1           | `/audit/entity/:type/:id` route + doc-claim reconciliation            |
+| feature/mcp-server | `@brain/mcp` workspace — MCP server, 10 tools, 5 resources, 5 prompts |
 
 Progress is tracked via PRs labeled `stage-N`, `refactor-N`, or the
 feature/hotfix branch name.

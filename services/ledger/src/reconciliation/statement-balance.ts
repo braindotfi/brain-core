@@ -68,7 +68,9 @@ export class StatementBalanceMatcher implements Matcher {
       if (Number.isNaN(docDate.getTime())) continue;
       if (doc.linked_account_ids.length === 0) continue;
 
-      const docCurrency = (typeof fields.currency === "string" ? fields.currency : "USD").toUpperCase();
+      const docCurrency = (
+        typeof fields.currency === "string" ? fields.currency : "USD"
+      ).toUpperCase();
       const balances = await loadNearbyBalances(
         deps.pool,
         input.ctx,
