@@ -154,7 +154,12 @@ export class FakeAuthVerifier implements AuthVerifier {
     }
     return {
       agent: this.agent,
-      ctx: { tenantId: principal.tenantId, actor: principal.id },
+      ctx: {
+        tenantId: principal.tenantId,
+        actor: principal.id,
+        principalType: principal.type,
+        scopes: principal.scopes,
+      },
     };
   }
 }

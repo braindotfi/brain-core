@@ -33,6 +33,8 @@ function assertCtx(request: FastifyRequest): ServiceCallContext {
     tenantId: request.principal.tenantId,
     actor: request.principal.id,
     requestId: request.id,
+    principalType: request.principal.type,
+    scopes: request.principal.scopes,
   };
 }
 

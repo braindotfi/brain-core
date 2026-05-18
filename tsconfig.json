@@ -8,6 +8,7 @@
     { "path": "./services/policy" },
     { "path": "./services/execution" },
     { "path": "./services/mcp" },
-    { "path": "./services/audit" }
+    { "path": "./services/audit" },
+    { "path": "./services/api/tsconfig.main.json" }
   ]
 }

@@ -64,6 +64,7 @@ import {
   ApprovalService,
   PaymentIntentService,
   defaultRails,
+  findAgent,
 } from "@brain/execution";
 import type { ExecutionDeps } from "@brain/execution";
 
@@ -230,35 +231,70 @@ function buildWikiMemoryService(
 // Stub hook factories — reduce repetition in ExecutionDeps / PaymentIntentDeps
 // ---------------------------------------------------------------------------
 
-function stubResolveAgent(_ctx: ServiceCallContext, _agentId: string): Promise<GateAgent | null> {
-  // TODO: wire to the execution agents table.
-  return Promise.resolve(null);
+function makeResolveAgent(
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext, agentId: string) => Promise<GateAgent | null> {
+  return async (ctx, agentId) => {
+    const row = await withTenantScope(pool, ctx.tenantId, (c) => findAgent(c, agentId));
+    if (row === null) return null;
+    return {
+      id: row.id,
+      state: row.state,
+      scope: { canExecutePayments: row.state === "active" && row.role === "payment" },
+    };
+  };
 }
 
-function stubResolveAccount(
-  _ctx: ServiceCallContext,
-  _accountId: string,
-): Promise<GateAccount | null> {
-  // TODO: wire to LedgerService.getAccount.
-  return Promise.resolve(null);
+function makeResolveAccount(
+  ledger: LedgerService,
+): (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null> {
+  return async (ctx, accountId) => {
+    const result = await ledger.getAccount(ctx, accountId);
+    if (result === null) return null;
+    return {
+      id: result.account.id,
+      status: result.account.status,
+      currency: result.account.currency,
+      available_balance:
+        result.latest_balance !== null
+          ? result.latest_balance.available_balance
+          : result.account.available_balance,
+    };
+  };
 }
 
-function stubResolveCounterparty(
-  _ctx: ServiceCallContext,
-  _counterpartyId: string,
-): Promise<GateCounterparty | null> {
-  // TODO: wire to LedgerService listCounterparties.
-  return Promise.resolve(null);
+function makeResolveCounterparty(
+  ledger: LedgerService,
+): (ctx: ServiceCallContext, counterpartyId: string) => Promise<GateCounterparty | null> {
+  return async (ctx, counterpartyId) => {
+    const cp = await ledger.findCounterpartyById(ctx, counterpartyId);
+    if (cp === null) return null;
+    return {
+      id: cp.id,
+      type: cp.type,
+      risk_level: cp.risk_level ?? null,
+      verified_status: cp.verified_status ?? null,
+    };
+  };
 }
 
-function stubResolvePrincipal(ctx: ServiceCallContext): Promise<GatePrincipal> {
-  // TODO: wire to JWT claims on the request principal.
-  return Promise.resolve({ id: ctx.actor, type: "user" as const, scopes: [] });
+function resolvePrincipalFromCtx(ctx: ServiceCallContext): Promise<GatePrincipal> {
+  return Promise.resolve({
+    id: ctx.actor,
+    type: ctx.principalType ?? "user",
+    scopes: ctx.scopes !== undefined ? [...ctx.scopes] : [],
+  });
 }
 
-function stubResolveRole(_ctx: ServiceCallContext, _principalId: string): Promise<string | null> {
-  // TODO: wire to the agents / users role table.
-  return Promise.resolve(null);
+function makeResolveRole(
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext, principalId: string) => Promise<string | null> {
+  return async (ctx, principalId) => {
+    const row = await withTenantScope(pool, ctx.tenantId, (c) => findAgent(c, principalId));
+    if (row !== null) return row.role;
+    // TODO: users-role table not yet modeled — see audit §6 cross-cutting.
+    return null;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -362,34 +398,23 @@ async function main(): Promise<void> {
   const rawEvidenceService = buildRawEvidenceService(rawDeps);
 
   // Resolver hooks — sandbox replacements when BRAIN_DEMO_MODE is on.
-  const resolveRole = cfg.BRAIN_DEMO_MODE ? sandboxResolveRole : stubResolveRole;
-  const resolveAgent = cfg.BRAIN_DEMO_MODE ? sandboxResolveAgent : stubResolveAgent;
-  const resolveAccount = cfg.BRAIN_DEMO_MODE ? makeSandboxResolveAccount(pool) : stubResolveAccount;
+  const resolveRole = cfg.BRAIN_DEMO_MODE ? sandboxResolveRole : makeResolveRole(pool);
+  const resolveAgent = cfg.BRAIN_DEMO_MODE ? sandboxResolveAgent : makeResolveAgent(pool);
+  const resolveAccount = cfg.BRAIN_DEMO_MODE
+    ? makeSandboxResolveAccount(pool)
+    : makeResolveAccount(ledgerService);
   const resolveCounterparty = cfg.BRAIN_DEMO_MODE
     ? makeSandboxResolveCounterparty(pool)
-    : stubResolveCounterparty;
-  const resolvePrincipal = cfg.BRAIN_DEMO_MODE ? sandboxResolvePrincipal : stubResolvePrincipal;
+    : makeResolveCounterparty(ledgerService);
+  const resolvePrincipal = cfg.BRAIN_DEMO_MODE ? sandboxResolvePrincipal : resolvePrincipalFromCtx;
   const evaluatePaymentIntent = cfg.BRAIN_DEMO_MODE
     ? sandboxEvaluatePaymentIntent
     : (ctx: ServiceCallContext, intent: GatePaymentIntent) =>
         policyService.evaluateForGate(ctx, intent);
   const evaluateLegacyPolicy = cfg.BRAIN_DEMO_MODE
     ? sandboxEvaluateLegacyPolicy
-    : async (
-        _tenantId: string,
-        _action: Record<string, unknown>,
-      ): Promise<{
-        outcome: "allow" | "confirm" | "reject";
-        matched_rule_id: string | null;
-        required_approvers: string[];
-        trace: unknown[];
-        policy_version: number;
-      }> => {
-        throw brainError(
-          "internal_server_error",
-          "evaluatePolicy (legacy) not yet wired in boot binary",
-        );
-      };
+    : async (tenantId: string, action: Record<string, unknown>) =>
+        policyService.evaluateLegacy({ tenantId, actor: "system" }, action);
 
   const approvalService = new ApprovalService({
     pool,

@@ -14,7 +14,8 @@
  * call site per execution path.
  */
 
-import type { AuditEmitter, ServiceCallContext } from "../index.js";
+import type { AuditEmitter } from "../audit/emitter.js";
+import type { ServiceCallContext } from "../contracts/types.js";
 import type { GateCheck, GateResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
