@@ -1,4 +1,4 @@
-export { Brain, type BrainOptions } from "./brain.js";
+export { Brain, type BrainOptions, type PayResult } from "./brain.js";
 
 export {
   createBrainHttpClient,
@@ -6,7 +6,14 @@ export {
   type BrainHttpClientOptions,
 } from "./client.js";
 
-export { BrainAPIError, type BrainErrorBody } from "./errors.js";
+export {
+  BrainAPIError,
+  PolicyApprovalRequiredError,
+  PolicyRejectedError,
+  type BrainErrorBody,
+  type PaymentIntent,
+  type Proposal,
+} from "./errors.js";
 
 export {
   AccountsResource,
@@ -41,5 +48,21 @@ export {
   type VerifyAuditRequest,
   type VerifyAuditResult,
 } from "./resources/audit.js";
+
+export {
+  PaymentsResource,
+  type CreatePaymentIntentParams,
+  type ExecutionReceipt,
+  type RejectPaymentIntentParams,
+} from "./resources/payments.js";
+
+export {
+  ActionsResource,
+  type ApproveProposalParams,
+  type EscalateProposalParams,
+  type ExecuteProposalParams,
+  type ProposeActionParams,
+  type StartedExecution,
+} from "./resources/actions.js";
 
 export type { paths, components, operations } from "./generated/openapi.js";
