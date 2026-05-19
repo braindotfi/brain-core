@@ -81,4 +81,16 @@ export {
   type RawArtifact,
 } from "./resources/raw.js";
 
+export {
+  WikiResource,
+  type AnnotationResult,
+  type AskParams,
+  type EntityVersionHistory,
+  type GetWikiEntityParams,
+  type SchemaQuery,
+  type SearchWikiParams,
+  type WikiEntityWithNeighbors,
+  type WikiSearchResult,
+} from "./resources/wiki.js";
+
 export type { paths, components, operations } from "./generated/openapi.js";
