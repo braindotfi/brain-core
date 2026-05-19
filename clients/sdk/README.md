@@ -20,9 +20,9 @@ This package is the source-of-truth client that backs every code example on
 | 1B.1  | `Brain` class + ledger reads (accounts, transactions, counterparties, obligations, invoices, balances)                              | shipped                 |
 | 1B.2  | Audit surface: `brain.audit.list/get/history/export/verify`, `brain.audit.anchor.latest`, `brain.proof`                             | shipped                 |
 | 1B.3  | Payment intents + actions: `brain.payments.*`, `brain.actions.*`, `brain.pay` / `brain.approve` / `brain.reject` (with idempotency) | shipped                 |
-| 1B.4  | Agents (`brain.agents.list/get/register/listActions/propose`) + raw ingestion (`brain.raw.ingest/get/getParsed`)                    | **shipping in this PR** |
-| 1B.5  | Wiki: `brain.ask` (compound over `/wiki/question`), `brain.wiki.*`                                                                  | not yet implemented     |
-| 1B.6  | Policy: `brain.policy.*`                                                                                                            | not yet implemented     |
+| 1B.4  | Agents (`brain.agents.list/get/register/listActions/propose`) + raw ingestion (`brain.raw.ingest/get/getParsed`)                    | shipped                 |
+| 1B.5  | Wiki: `brain.wiki.question/search/getEntity/getEvidence/getHistory/annotate/schema`, `brain.ask` compound                           | shipped                 |
+| 1B.6  | Policy: `brain.policy.get/listVersions/compose/sign/activate/evaluate/simulate`                                                     | **shipping in this PR** |
 | 1B.7  | Compounds without REST endpoints today: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`                                 | deferred (need product) |
 | 1C    | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package)                        | not yet implemented     |
 
