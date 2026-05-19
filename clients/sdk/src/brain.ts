@@ -21,6 +21,13 @@ import {
   type ExecutionReceipt,
   type RejectPaymentIntentParams,
 } from "./resources/payments.js";
+import {
+  CashFlowResource,
+  CompoundsResource,
+  type ActionTrace,
+  type FinancialSnapshot,
+  type SnapshotOptions,
+} from "./resources/compounds.js";
 import { PolicyResource } from "./resources/policy.js";
 import { RawResource } from "./resources/raw.js";
 import { WikiResource, type AskParams } from "./resources/wiki.js";
@@ -57,6 +64,8 @@ export class Brain {
   readonly raw: RawResource;
   readonly wiki: WikiResource;
   readonly policy: PolicyResource;
+  readonly cashFlow: CashFlowResource;
+  private readonly compounds: CompoundsResource;
 
   constructor(options: BrainOptions) {
     this.http = createBrainHttpClient(options);
@@ -73,6 +82,31 @@ export class Brain {
     this.raw = new RawResource(this.http);
     this.wiki = new WikiResource(this.http);
     this.policy = new PolicyResource(this.http);
+    this.compounds = new CompoundsResource(this);
+    this.cashFlow = new CashFlowResource(this);
+  }
+
+  /**
+   * Documented as `brain.snapshot(tenantId)` on the homepage. Returns a
+   * tenant's current financial picture: balances + recent transactions
+   * + open obligations, fetched in parallel. Client-side aggregation;
+   * no server endpoint backs it directly.
+   */
+  snapshot(tenantId: string, options?: SnapshotOptions): Promise<FinancialSnapshot> {
+    return this.compounds.snapshot(tenantId, options);
+  }
+
+  /**
+   * Documented as `brain.trace(actionId)` on the homepage. Walks the
+   * audit history for a PaymentIntent (default) and returns each event
+   * with its inclusion proof attached. Override `entityType` for other
+   * Ledger entities. Client-side aggregation.
+   */
+  trace(
+    entityId: string,
+    options?: Parameters<CompoundsResource["trace"]>[1],
+  ): Promise<ActionTrace> {
+    return this.compounds.trace(entityId, options);
   }
 
   /**
