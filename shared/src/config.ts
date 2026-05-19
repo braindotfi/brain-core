@@ -83,6 +83,10 @@ const envSchema = z.object({
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
     .default("0xd1558828ef31630164aa8942dd41bc63a4d8bed7"),
+  POLICY_REGISTRY_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .default("0x683893ccd84d9a3487095d09fed324b6b8ea2501"),
   BRAIN_MCP_DEV_AUTH_BYPASS: z.coerce.boolean().default(false),
 
   // ---- On-chain rails (Base Sepolia) ----

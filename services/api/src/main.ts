@@ -395,7 +395,7 @@ async function main(): Promise<void> {
     audit,
     // Base Sepolia chain id.
     chainId: 84532,
-    policyRegistryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
+    policyRegistryAddress: cfg.POLICY_REGISTRY_ADDRESS as `0x${string}`,
   };
 
   const policyService = new PolicyService({ pool, audit });
