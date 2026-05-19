@@ -120,7 +120,13 @@ async function findExistingMatch(
         AND left_entity_type = $2 AND left_entity_id = $3
         AND right_entity_type = $4 AND right_entity_id = $5
       LIMIT 1`,
-    [input.matchType, input.leftEntityType, input.leftEntityId, input.rightEntityType, input.rightEntityId],
+    [
+      input.matchType,
+      input.leftEntityType,
+      input.leftEntityId,
+      input.rightEntityType,
+      input.rightEntityId,
+    ],
   );
   return rows[0] ?? null;
 }

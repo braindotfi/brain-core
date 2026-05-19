@@ -13,7 +13,7 @@
 import { brainError } from "@brain/api/shared";
 import type { SourceAdapter } from "./types.js";
 
-function unsupportedWebhook(provider: string): SourceAdapter["handleWebhook"] {
+function unsupportedWebhook(provider: string): NonNullable<SourceAdapter["handleWebhook"]> {
   return async () => {
     throw brainError(
       "raw_source_unsupported",

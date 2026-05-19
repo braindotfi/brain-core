@@ -34,13 +34,14 @@ export class AccountPageGenerator implements PageGenerator {
       throw new Error(`account ${accountId} not found`);
     }
 
-    const [latestBalance, recentTx, openObligations, recentCps, unreconciledCount] = await Promise.all([
-      fetchLatestBalance(deps, accountId),
-      fetchRecentTransactions(deps, accountId, 10),
-      fetchOpenObligations(deps, accountId),
-      fetchRecentCounterparties(deps, accountId),
-      countUnreconciled(deps, accountId),
-    ]);
+    const [latestBalance, recentTx, openObligations, recentCps, unreconciledCount] =
+      await Promise.all([
+        fetchLatestBalance(deps, accountId),
+        fetchRecentTransactions(deps, accountId, 10),
+        fetchOpenObligations(deps, accountId),
+        fetchRecentCounterparties(deps, accountId),
+        countUnreconciled(deps, accountId),
+      ]);
 
     const currentTruth =
       `**${acct.name}** (${acct.account_type}) — ${acct.institution ?? "no institution"}\n` +
@@ -62,7 +63,7 @@ export class AccountPageGenerator implements PageGenerator {
         (t) =>
           `${t.transaction_date.toISOString().slice(0, 10)} — ${t.direction} ` +
           `${t.amount} ${t.currency}` +
-          (t.description_normalized ?? t.description_raw
+          ((t.description_normalized ?? t.description_raw)
             ? ` (${t.description_normalized ?? t.description_raw})`
             : ""),
       ),
@@ -84,7 +85,8 @@ export class AccountPageGenerator implements PageGenerator {
         `- ${o.due_date.toISOString().slice(0, 10)} — ${o.type} (${o.status}) ` +
         `— ${o.amount_due} ${o.currency} → \`${o.id}\``,
     );
-    const timeline = obligationLines.length === 0 ? "_No upcoming obligations._" : obligationLines.join("\n");
+    const timeline =
+      obligationLines.length === 0 ? "_No upcoming obligations._" : obligationLines.join("\n");
 
     const evidenceLinks = bullet(
       acct.source_ids.slice(0, 10).map((id: string) => `\`${id}\` (raw artifact)`),
@@ -227,10 +229,7 @@ async function fetchRecentCounterparties(
   return rows;
 }
 
-async function countUnreconciled(
-  deps: PageGenerationContext,
-  accountId: string,
-): Promise<number> {
+async function countUnreconciled(deps: PageGenerationContext, accountId: string): Promise<number> {
   const { rows } = await deps.client.query<{ count: string }>(
     `SELECT count(*)::text AS count
        FROM ledger_transactions

@@ -48,7 +48,13 @@ export const paymentIntentProposeTool: Tool<PaymentIntentProposeInput> = {
   requiredScopes: ["payment_intent:propose"],
   inputSchema: {
     type: "object",
-    required: ["action_type", "source_account_id", "destination_counterparty_id", "amount", "currency"],
+    required: [
+      "action_type",
+      "source_account_id",
+      "destination_counterparty_id",
+      "amount",
+      "currency",
+    ],
     properties: {
       action_type: { type: "string", enum: Array.from(ACTION_TYPES) },
       source_account_id: { type: "string" },

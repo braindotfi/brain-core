@@ -25,7 +25,9 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
     if (h !== null) await h.cleanup();
   });
 
-  async function writeToken(scopes: string[] = ["raw:write", "raw:read", "raw:admin"]): Promise<string> {
+  async function writeToken(
+    scopes: string[] = ["raw:write", "raw:read", "raw:admin"],
+  ): Promise<string> {
     if (h === null) throw new Error("harness not built");
     const { token } = await h.signToken({ tenantId: tenant, scopes });
     return token;

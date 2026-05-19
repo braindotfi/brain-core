@@ -29,7 +29,10 @@ export const rawContributeTool: Tool<RawContributeInput> = {
     type: "object",
     required: ["payload"],
     properties: {
-      payload: { type: "string", description: "Artifact bytes as a string. JSON, text, or base64-encoded binary." },
+      payload: {
+        type: "string",
+        description: "Artifact bytes as a string. JSON, text, or base64-encoded binary.",
+      },
       mime_type: { type: "string", default: "application/json" },
       source_ref: { type: "object", additionalProperties: true },
     },
@@ -38,7 +41,11 @@ export const rawContributeTool: Tool<RawContributeInput> = {
     const payload = requireString(params, "payload");
     const out: RawContributeInput = { payload };
     if (typeof params.mime_type === "string") out.mime_type = params.mime_type;
-    if (typeof params.source_ref === "object" && params.source_ref !== null && !Array.isArray(params.source_ref)) {
+    if (
+      typeof params.source_ref === "object" &&
+      params.source_ref !== null &&
+      !Array.isArray(params.source_ref)
+    ) {
       out.source_ref = params.source_ref as Record<string, unknown>;
     }
     return out;

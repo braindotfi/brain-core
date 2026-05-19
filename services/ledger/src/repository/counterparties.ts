@@ -45,7 +45,9 @@ export async function listCounterparties(
   }
   if (filters.q !== undefined && filters.q !== "") {
     values.push(`%${filters.q.toLowerCase()}%`);
-    where.push(`(LOWER(name) LIKE $${values.length} OR LOWER(COALESCE(normalized_name, '')) LIKE $${values.length})`);
+    where.push(
+      `(LOWER(name) LIKE $${values.length} OR LOWER(COALESCE(normalized_name, '')) LIKE $${values.length})`,
+    );
   }
   values.push(filters.limit);
   const limitIdx = values.length;

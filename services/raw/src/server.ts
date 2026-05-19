@@ -20,6 +20,12 @@ import { registerArtifact } from "./routes/artifact.js";
 import { registerIngest } from "./routes/ingest.js";
 import { registerParsed } from "./routes/parsed.js";
 import { registerWebhook, type WebhookTenantResolver } from "./routes/webhook.js";
+import {
+  InMemorySourceRepository,
+  SourceService,
+  type SourceRepository,
+} from "./sources/SourceService.js";
+import { registerSourceRoutes } from "./sources/routes.js";
 import type { RawDeps } from "./deps.js";
 
 export interface BuildRawAppOptions {
@@ -30,6 +36,12 @@ export interface BuildRawAppOptions {
   plaidVerify: PlaidVerifyOptions;
   resolveWebhookTenant: WebhookTenantResolver;
   logger?: ReturnType<typeof Fastify>["log"];
+  /**
+   * Backing store for the v0.3 /v1/sources/* surface. Defaults to a
+   * process-local in-memory repository — production wiring overrides
+   * with a Postgres-backed implementation (follow-up commit).
+   */
+  sourceRepository?: SourceRepository;
 }
 
 export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInstance> {
@@ -41,34 +53,28 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
 
   // §3.4: webhook bodies MUST be verifiable byte-for-byte. Register a raw
   // content-type parser for the webhooks path that preserves the buffer.
-  app.addContentTypeParser(
-    "application/json",
-    { parseAs: "buffer" },
-    (_req, body, done) => {
-      // For non-webhook routes, parse JSON normally; for webhook routes we
-      // leave it as a Buffer and route handlers JSON-parse inside adapter
-      // logic. The simplest approach: attach the Buffer, but also try to
-      // parse JSON for non-webhook callers. Since we can't easily know the
-      // route here, we parse and stash the buffer.
-      try {
-        const parsed = body.length > 0 ? JSON.parse(body.toString("utf8")) : {};
-        // Expose raw bytes for downstream sig verify via req.rawBody hack.
-        // Typed as unknown because Fastify's types are strict on parser return.
-        (parsed as Record<string, unknown>)["__rawBody"] = body;
-        done(null, parsed);
-      } catch (err) {
-        done(err as Error, undefined);
-      }
-    },
-  );
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (_req, body, done) => {
+    // For non-webhook routes, parse JSON normally; for webhook routes we
+    // leave it as a Buffer and route handlers JSON-parse inside adapter
+    // logic. The simplest approach: attach the Buffer, but also try to
+    // parse JSON for non-webhook callers. Since we can't easily know the
+    // route here, we parse and stash the buffer.
+    try {
+      const parsed = body.length > 0 ? JSON.parse(body.toString("utf8")) : {};
+      // Expose raw bytes for downstream sig verify via req.rawBody hack.
+      // Typed as unknown because Fastify's types are strict on parser return.
+      (parsed as Record<string, unknown>)["__rawBody"] = body;
+      done(null, parsed);
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
 
   // Webhook route needs raw bytes; register a second parser just for the
   // webhook routes' content-type marker. We use application/octet-stream +
   // direct Buffer capture when operators configure webhooks to send bytes.
-  app.addContentTypeParser(
-    "application/octet-stream",
-    { parseAs: "buffer" },
-    (_req, body, done) => done(null, body),
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_req, body, done) =>
+    done(null, body),
   );
 
   await app.register(requestIdPlugin);
@@ -96,6 +102,10 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
   });
   await registerArtifact(app, opts.deps);
   await registerParsed(app, opts.deps);
+
+  // PLAN-FIRST #12: /v1/sources/* — source-connector lifecycle.
+  const sourceService = new SourceService(opts.sourceRepository ?? new InMemorySourceRepository());
+  await registerSourceRoutes(app, sourceService);
 
   return app;
 }

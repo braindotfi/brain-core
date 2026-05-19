@@ -98,10 +98,7 @@ export async function llmSpan<T>(
       if (out.tokens !== undefined) {
         span.setAttribute("llm.usage.prompt_tokens", out.tokens.input);
         span.setAttribute("llm.usage.completion_tokens", out.tokens.output);
-        span.setAttribute(
-          "llm.usage.total_tokens",
-          out.tokens.input + out.tokens.output,
-        );
+        span.setAttribute("llm.usage.total_tokens", out.tokens.input + out.tokens.output);
       }
       return out.result;
     },

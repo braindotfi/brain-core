@@ -8,16 +8,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import Ajv, { type ValidateFunction } from "ajv";
+import { type ValidateFunction } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { brainError } from "@brain/api/shared";
-import {
-  ENTITY_KINDS,
-  RELATION_KINDS,
-  type EntityKind,
-  type RelationKind,
-} from "@brain/schemas";
+import { ENTITY_KINDS, RELATION_KINDS, type EntityKind, type RelationKind } from "@brain/schemas";
 
 export interface SchemaRegistry {
   entity: Record<EntityKind, Record<string, unknown>>;
@@ -46,13 +41,19 @@ export function loadRegistry(repoRoot?: string): SchemaRegistry {
   const entityRaw = loadSchemaDir(entityDir);
   const relationRaw = loadSchemaDir(relationDir);
 
-  const entity: Record<EntityKind, Record<string, unknown>> = {} as Record<EntityKind, Record<string, unknown>>;
+  const entity: Record<EntityKind, Record<string, unknown>> = {} as Record<
+    EntityKind,
+    Record<string, unknown>
+  >;
   for (const k of ENTITY_KINDS) {
     const s = entityRaw[k];
     if (s === undefined) throw new Error(`missing JSON schema for entity kind '${k}'`);
     entity[k] = s;
   }
-  const relation: Record<RelationKind, Record<string, unknown>> = {} as Record<RelationKind, Record<string, unknown>>;
+  const relation: Record<RelationKind, Record<string, unknown>> = {} as Record<
+    RelationKind,
+    Record<string, unknown>
+  >;
   for (const k of RELATION_KINDS) {
     const s = relationRaw[k];
     if (s === undefined) throw new Error(`missing JSON schema for relation kind '${k}'`);
@@ -61,8 +62,14 @@ export function loadRegistry(repoRoot?: string): SchemaRegistry {
 
   const ajv = new Ajv2020({ strict: false, allErrors: true });
   (addFormats as unknown as (a: InstanceType<typeof Ajv2020>) => void)(ajv);
-  const entityValidators: Record<EntityKind, ValidateFunction> = {} as Record<EntityKind, ValidateFunction>;
-  const relationValidators: Record<RelationKind, ValidateFunction> = {} as Record<RelationKind, ValidateFunction>;
+  const entityValidators: Record<EntityKind, ValidateFunction> = {} as Record<
+    EntityKind,
+    ValidateFunction
+  >;
+  const relationValidators: Record<RelationKind, ValidateFunction> = {} as Record<
+    RelationKind,
+    ValidateFunction
+  >;
   for (const k of ENTITY_KINDS) entityValidators[k] = ajv.compile(entity[k]);
   for (const k of RELATION_KINDS) relationValidators[k] = ajv.compile(relation[k]);
 

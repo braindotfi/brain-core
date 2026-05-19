@@ -13,7 +13,7 @@
  * header needed (§5.1 "naturally idempotent").
  */
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { brainError, isBrainId, requireScope, type Scope } from "@brain/api/shared";
 import { adapterForSourceType } from "../adapters/registry.js";
 import { ingestOne } from "../services/ingest.js";
@@ -56,11 +56,7 @@ function assertPrincipal(request: FastifyRequest): void {
   }
 }
 
-async function handleMultipart(
-  request: FastifyRequest,
-  reply: import("fastify").FastifyReply,
-  deps: RawDeps,
-) {
+async function handleMultipart(request: FastifyRequest, reply: FastifyReply, deps: RawDeps) {
   // @fastify/multipart registered on the server; request.parts() yields parts.
   // Collect into a {fieldname → value|file}. A single file field named "file"
   // is required; form fields are captured as strings.
@@ -131,11 +127,7 @@ async function handleMultipart(
   };
 }
 
-async function handleJson(
-  request: FastifyRequest,
-  reply: import("fastify").FastifyReply,
-  deps: RawDeps,
-) {
+async function handleJson(request: FastifyRequest, reply: FastifyReply, deps: RawDeps) {
   const body = (request.body ?? {}) as JsonBody;
   if (body.source_type === undefined || body.url === undefined) {
     throw brainError("request_body_invalid", "source_type and url are required");

@@ -11,7 +11,7 @@
     "clean": "rm -rf dist *.tsbuildinfo",
     "lint": "eslint src --max-warnings 0",
     "lint:fix": "eslint src --fix",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

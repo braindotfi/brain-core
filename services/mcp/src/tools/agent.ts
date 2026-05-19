@@ -7,7 +7,7 @@
  * `payment_intent.propose` instead, which carries its own §6 gate.
  */
 
-import { requireString, type Tool, type ToolContext, type ToolResult } from "./types.js";
+import { type Tool, type ToolContext, type ToolResult } from "./types.js";
 
 interface AgentProposeInput {
   /** Action shape — Brain accepts arbitrary JSON; the policy DSL

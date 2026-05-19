@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  SUPPORTED_AUDIT_ENTITY_TYPES,
-  findEventsByEntity,
-} from "./repository.js";
+import { SUPPORTED_AUDIT_ENTITY_TYPES, findEventsByEntity } from "./repository.js";
 
 /**
  * Repository unit tests for the v0.3 entity-history endpoint helper.

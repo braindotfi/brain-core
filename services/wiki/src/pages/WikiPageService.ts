@@ -17,27 +17,26 @@ import {
   newWikiPageId,
   withTenantScope,
   type AuditEmitter,
+  type EmbeddingAdapter,
   type ServiceCallContext,
   type WikiPage,
 } from "@brain/api/shared";
 import type { Pool } from "pg";
-import {
-  AccountPageGenerator,
-} from "./account.js";
+import { vectorLiteral } from "../repository/entities.js";
+import { AccountPageGenerator } from "./account.js";
 import { CounterpartyPageGenerator } from "./counterparty.js";
 import { ObligationPageGenerator } from "./obligation.js";
 import { MonthlySummaryPageGenerator } from "./monthly-summary.js";
-import {
-  AgentPageGenerator,
-  CashFlowPageGenerator,
-  InvoicePageGenerator,
-  PolicyPageGenerator,
-} from "./stubs.js";
+import { InvoicePageGenerator } from "./invoice.js";
+import { AgentPageGenerator } from "./agent.js";
+import { PolicyPageGenerator } from "./policy.js";
+import { CashFlowPageGenerator } from "./cash-flow.js";
 import type { PageGenerator } from "./types.js";
 
 export interface WikiPageServiceDeps {
   pool: Pool;
   audit: AuditEmitter;
+  embed: EmbeddingAdapter;
 }
 
 interface PageRow {
@@ -116,10 +115,24 @@ export class WikiPageService {
     q: string,
     limit: number,
   ): Promise<Array<{ page: WikiPage; score: number }>> {
-    // Phase 5 lexical search. Embedding-based scoring lands when the
-    // generator pipeline starts populating body_embedding.
-    const result = await this.listPages(ctx, { q, limit: Math.min(limit, 100) });
-    return result.pages.map((page) => ({ page, score: scoreLexical(page.body_md, q) }));
+    const qe = await this.deps.embed.embed(q);
+    const vec = vectorLiteral(qe.vector);
+    const rows = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      const result = await c.query<PageRow & { similarity: string }>(
+        `SELECT id, page_type, subject_id, slug, body_md, rendered_at, source_revision,
+                (1 - (body_embedding <=> $1::vector)) AS similarity
+           FROM wiki_pages
+          WHERE body_embedding IS NOT NULL
+          ORDER BY body_embedding <=> $1::vector
+          LIMIT $2`,
+        [vec, Math.min(limit, 100)],
+      );
+      return result.rows;
+    });
+    return rows.map((row) => ({
+      page: toPage(row),
+      score: Math.max(0, Math.min(1, parseFloat(row.similarity))),
+    }));
   }
 
   public async regenerate(ctx: ServiceCallContext, slugOrId: string): Promise<WikiPage> {
@@ -135,6 +148,9 @@ export class WikiPageService {
       generator.render({ ctx, client: c }, resolved),
     );
 
+    const embResult = await this.deps.embed.embed(output.body_md);
+    const vec = vectorLiteral(embResult.vector);
+
     const stored = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
       const { rows: existing } = await c.query<{ id: string }>(
         `SELECT id FROM wiki_pages WHERE slug = $1 LIMIT 1`,
@@ -144,16 +160,23 @@ export class WikiPageService {
         const { rows } = await c.query<PageRow>(
           `UPDATE wiki_pages
               SET page_type = $1, subject_id = $2, body_md = $3,
-                  rendered_at = now(), source_revision = $4
-            WHERE id = $5
+                  rendered_at = now(), source_revision = $4, body_embedding = $5
+            WHERE id = $6
             RETURNING id, page_type, subject_id, slug, body_md, rendered_at, source_revision`,
-          [output.page_type, output.subject_id, output.body_md, output.source_revision, existing[0].id],
+          [
+            output.page_type,
+            output.subject_id,
+            output.body_md,
+            output.source_revision,
+            vec,
+            existing[0].id,
+          ],
         );
         return rows[0]!;
       }
       const { rows } = await c.query<PageRow>(
-        `INSERT INTO wiki_pages (id, tenant_id, page_type, subject_id, slug, body_md, source_revision)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO wiki_pages (id, tenant_id, page_type, subject_id, slug, body_md, source_revision, body_embedding)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id, page_type, subject_id, slug, body_md, rendered_at, source_revision`,
         [
           newWikiPageId(),
@@ -163,6 +186,7 @@ export class WikiPageService {
           output.slug,
           output.body_md,
           output.source_revision,
+          vec,
         ],
       );
       return rows[0]!;
@@ -205,19 +229,4 @@ function toPage(row: PageRow): WikiPage {
     rendered_at: row.rendered_at.toISOString(),
     source_revision: row.source_revision,
   };
-}
-
-function scoreLexical(body: string, q: string): number {
-  if (q.length === 0) return 0;
-  const lower = body.toLowerCase();
-  const needle = q.toLowerCase();
-  let score = 0;
-  let from = 0;
-  while (true) {
-    const idx = lower.indexOf(needle, from);
-    if (idx === -1) break;
-    score += 1;
-    from = idx + needle.length;
-  }
-  return Math.min(score / 5, 1);
 }

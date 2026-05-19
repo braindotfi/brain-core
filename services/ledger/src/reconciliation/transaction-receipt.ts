@@ -11,10 +11,7 @@
  * amount/date the matcher skips the candidate rather than guessing.
  */
 
-import {
-  withTenantScope,
-  type ServiceCallContext,
-} from "@brain/api/shared";
+import { withTenantScope, type ServiceCallContext } from "@brain/api/shared";
 import type { Pool } from "pg";
 import { combine, amountScore, dateScore, nameScore } from "./scoring.js";
 import { persistMatch } from "./persist.js";
@@ -80,7 +77,7 @@ export class TransactionReceiptMatcher implements Matcher {
         const txMemo = tx.description_normalized ?? tx.description_raw ?? null;
         const score = combine([
           { score: amountScore(docAmount, tx.amount), weight: 0.55 },
-          { score: dateScore(docDate, tx.posted_date ?? tx.transaction_date, 7), weight: 0.30 },
+          { score: dateScore(docDate, tx.posted_date ?? tx.transaction_date, 7), weight: 0.3 },
           { score: nameScore(merchant, txMemo), weight: 0.15 },
         ]);
         if (score >= MATCH_THRESHOLD && (bestPair === null || score > bestPair.score)) {
@@ -157,10 +154,7 @@ async function loadCandidateTransactions(
   linkedAccountIds: ReadonlyArray<string>,
 ): Promise<TxCandidate[]> {
   return withTenantScope(pool, ctx.tenantId, async (c) => {
-    const accountFilter =
-      linkedAccountIds.length === 0
-        ? ""
-        : `AND account_id = ANY($3::TEXT[])`;
+    const accountFilter = linkedAccountIds.length === 0 ? "" : `AND account_id = ANY($3::TEXT[])`;
     const values: unknown[] = [near, MAX_TX_CANDIDATES_PER_DOC];
     if (linkedAccountIds.length > 0) values.push(Array.from(linkedAccountIds));
     const { rows } = await c.query<TxCandidate>(

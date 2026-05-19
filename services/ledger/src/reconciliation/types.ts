@@ -27,11 +27,7 @@
  * with the corresponding source-adapter work.
  */
 
-import type {
-  AuditEmitter,
-  MatchType,
-  ServiceCallContext,
-} from "@brain/api/shared";
+import type { AuditEmitter, MatchType, ServiceCallContext } from "@brain/api/shared";
 import type { Pool } from "pg";
 
 export interface MatcherContext {

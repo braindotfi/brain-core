@@ -31,15 +31,13 @@ describe("parseConfig", () => {
   });
 
   it("rejects malformed URL values", () => {
-    expect(() =>
-      parseConfig({ ...MIN_ENV, DATABASE_URL: "not a url" }),
-    ).toThrowError(/DATABASE_URL/);
-    expect(() =>
-      parseConfig({ ...MIN_ENV, REDIS_URL: "not a url" }),
-    ).toThrowError(/REDIS_URL/);
-    expect(() =>
-      parseConfig({ ...MIN_ENV, AUTH_JWKS_URL: "not a url" }),
-    ).toThrowError(/AUTH_JWKS_URL/);
+    expect(() => parseConfig({ ...MIN_ENV, DATABASE_URL: "not a url" })).toThrowError(
+      /DATABASE_URL/,
+    );
+    expect(() => parseConfig({ ...MIN_ENV, REDIS_URL: "not a url" })).toThrowError(/REDIS_URL/);
+    expect(() => parseConfig({ ...MIN_ENV, AUTH_JWKS_URL: "not a url" })).toThrowError(
+      /AUTH_JWKS_URL/,
+    );
   });
 
   it("coerces numeric env vars", () => {
@@ -53,18 +51,16 @@ describe("parseConfig", () => {
   });
 
   it("rejects non-positive numerics", () => {
-    expect(() =>
-      parseConfig({ ...MIN_ENV, DATABASE_POOL_MAX: "0" }),
-    ).toThrowError(/DATABASE_POOL_MAX/);
-    expect(() =>
-      parseConfig({ ...MIN_ENV, DATABASE_POOL_MAX: "-1" }),
-    ).toThrowError(/DATABASE_POOL_MAX/);
+    expect(() => parseConfig({ ...MIN_ENV, DATABASE_POOL_MAX: "0" })).toThrowError(
+      /DATABASE_POOL_MAX/,
+    );
+    expect(() => parseConfig({ ...MIN_ENV, DATABASE_POOL_MAX: "-1" })).toThrowError(
+      /DATABASE_POOL_MAX/,
+    );
   });
 
   it("rejects unknown NODE_ENV values", () => {
-    expect(() =>
-      parseConfig({ ...MIN_ENV, NODE_ENV: "staging-v2" }),
-    ).toThrowError(/NODE_ENV/);
+    expect(() => parseConfig({ ...MIN_ENV, NODE_ENV: "staging-v2" })).toThrowError(/NODE_ENV/);
   });
 
   it("accepts optional OTLP endpoint and omits when absent", () => {
@@ -72,9 +68,7 @@ describe("parseConfig", () => {
       ...MIN_ENV,
       OTEL_EXPORTER_OTLP_ENDPOINT: "https://otlp.example.com/v1/traces",
     });
-    expect(with_otlp.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(
-      "https://otlp.example.com/v1/traces",
-    );
+    expect(with_otlp.OTEL_EXPORTER_OTLP_ENDPOINT).toBe("https://otlp.example.com/v1/traces");
 
     const without = parseConfig(MIN_ENV);
     expect(without.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();

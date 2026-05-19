@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 import { isBrainError } from "../errors.js";
 import { verifyPlaidWebhook } from "./plaid.js";
 
-async function makeSignedWebhook(rawBody: Buffer, overrides: { iat?: number } = {}): Promise<{
+async function makeSignedWebhook(
+  rawBody: Buffer,
+  overrides: { iat?: number } = {},
+): Promise<{
   header: string;
   jwk: JWK;
   kid: string;
@@ -75,7 +78,9 @@ describe("verifyPlaidWebhook", () => {
   it("rejects when request_body_sha256 claim is missing", async () => {
     const { publicKey, privateKey } = await generateKeyPair("ES256");
     const jwk = { ...(await exportJWK(publicKey)), kid: "k" } as JWK;
-    const header = await new SignJWT({}).setProtectedHeader({ alg: "ES256", kid: "k" }).sign(privateKey);
+    const header = await new SignJWT({})
+      .setProtectedHeader({ alg: "ES256", kid: "k" })
+      .sign(privateKey);
     try {
       await verifyPlaidWebhook(Buffer.alloc(0), header, { keyResolver: async () => jwk });
       expect.fail();

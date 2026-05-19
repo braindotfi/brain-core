@@ -7,7 +7,7 @@
  * to rise above 0.5.
  */
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   brainError,
   isBrainId,
@@ -17,16 +17,8 @@ import {
   withTenantScope,
   type Scope,
 } from "@brain/api/shared";
-import {
-  RELATION_KINDS,
-  WIKI_KINDS,
-  type RelationKind,
-  type WikiKind,
-} from "@brain/schemas";
-import {
-  findEntityAsOf,
-  insertEntity,
-} from "../repository/entities.js";
+import { RELATION_KINDS, WIKI_KINDS, type RelationKind, type WikiKind } from "@brain/schemas";
+import { findEntityAsOf, insertEntity } from "../repository/entities.js";
 import { insertRelation } from "../repository/relations.js";
 import type { WikiDeps } from "../deps.js";
 
@@ -52,31 +44,28 @@ interface RelationAnnotation {
 type Annotation = EntityAnnotation | RelationAnnotation;
 
 export async function registerAnnotate(app: FastifyInstance, deps: WikiDeps): Promise<void> {
-  app.post(
-    "/wiki/annotate",
-    async (request: FastifyRequest, reply) => {
-      if (request.principal === undefined) {
-        throw brainError("auth_token_missing", "principal required");
-      }
-      requireScope(request.principal.scopes, WRITE_SCOPE);
-      const body = (request.body ?? {}) as Annotation;
-      const actor = request.principal.id;
-      const tenant = request.principal.tenantId;
+  app.post("/wiki/annotate", async (request: FastifyRequest, reply) => {
+    if (request.principal === undefined) {
+      throw brainError("auth_token_missing", "principal required");
+    }
+    requireScope(request.principal.scopes, WRITE_SCOPE);
+    const body = (request.body ?? {}) as Annotation;
+    const actor = request.principal.id;
+    const tenant = request.principal.tenantId;
 
-      if (body.target === "entity") {
-        return handleEntity(body, reply, deps, tenant, actor);
-      }
-      if (body.target === "relation") {
-        return handleRelation(body, reply, deps, tenant, actor);
-      }
-      throw brainError("request_body_invalid", "target must be 'entity' or 'relation'");
-    },
-  );
+    if (body.target === "entity") {
+      return handleEntity(body, reply, deps, tenant, actor);
+    }
+    if (body.target === "relation") {
+      return handleRelation(body, reply, deps, tenant, actor);
+    }
+    throw brainError("request_body_invalid", "target must be 'entity' or 'relation'");
+  });
 }
 
 async function handleEntity(
   body: EntityAnnotation,
-  reply: import("fastify").FastifyReply,
+  reply: FastifyReply,
   deps: WikiDeps,
   tenant: string,
   actor: string,
@@ -144,7 +133,7 @@ async function handleEntity(
 
 async function handleRelation(
   body: RelationAnnotation,
-  reply: import("fastify").FastifyReply,
+  reply: FastifyReply,
   deps: WikiDeps,
   tenant: string,
   actor: string,

@@ -18,7 +18,10 @@ import {
   requestIdPlugin,
   idempotencyPlugin,
   JwtVerifier,
+  JwtSigner,
   PostgresAuditEmitter,
+  WebhookDispatcher,
+  WebhookAuditEmitter,
   RedisIdempotencyStore,
   InMemoryRevocationStore,
   createLogger,
@@ -26,8 +29,12 @@ import {
   MemoryBlobAdapter,
   MockMetrics,
   DeterministicEmbeddingAdapter,
+  OpenAICompletionAdapter,
+  OpenAIEmbeddingAdapter,
+  RecordedLlmAdapter,
   loadConfig,
   brainError,
+  withTenantScope,
   type IRawEvidenceService,
   type IWikiMemoryService,
   type ServiceCallContext,
@@ -40,21 +47,15 @@ import {
   type AnnotationInput,
 } from "@brain/api/shared";
 
-import {
-  registerRawPlugin,
-  ingestOne,
-  type RegisterRawPluginOptions,
-} from "@brain/raw";
+import { registerSiwxRoutes, StubAgentRegistry } from "./auth/siwx.js";
 
-import { LedgerService, registerLedgerPlugin } from "@brain/ledger";
+import { registerRawPlugin, ingestOne, type RegisterRawPluginOptions } from "@brain/raw";
 
-import {
-  WikiPageService,
-  registerWikiPlugin,
-  loadRegistry,
-} from "@brain/wiki";
+import { LedgerService, registerLedgerPlugin, startNormalizeWorker } from "@brain/ledger";
 
-import { registerPolicyRoutes } from "@brain/policy";
+import { WikiPageService, registerWikiPlugin, loadRegistry, askWiki } from "@brain/wiki";
+
+import { registerPolicyRoutes, PolicyService } from "@brain/policy";
 import type { PolicyDeps } from "@brain/policy";
 
 import {
@@ -63,6 +64,7 @@ import {
   ApprovalService,
   PaymentIntentService,
   defaultRails,
+  findAgent,
 } from "@brain/execution";
 import type { ExecutionDeps } from "@brain/execution";
 
@@ -70,10 +72,16 @@ import { registerAuditRoutes } from "@brain/audit";
 import type { AuditDeps } from "@brain/audit";
 
 import {
-  BrainMcpServer,
-  FakeAuthVerifier,
-  registerMcpRoute,
-} from "@brain/mcp";
+  sandboxEvaluatePaymentIntent,
+  sandboxEvaluateLegacyPolicy,
+  sandboxResolveAgent,
+  sandboxResolvePrincipal,
+  sandboxResolveRole,
+  makeSandboxResolveAccount,
+  makeSandboxResolveCounterparty,
+} from "./sandbox/resolvers.js";
+
+import { BrainMcpServer, FakeAuthVerifier, registerMcpRoute } from "@brain/mcp";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps } from "@brain/wiki";
@@ -83,7 +91,6 @@ import type {
   GateAgent,
   GateCounterparty,
   GatePaymentIntent,
-  GatePolicyDecision,
   GatePrincipal,
 } from "@brain/api/shared";
 
@@ -93,7 +100,7 @@ import type {
 
 try {
   // Node 20.12+ built-in. Silently skip if file not found or function absent.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const loadEnv = (process as unknown as Record<string, unknown>)["loadEnvFile"] as
     | ((path: string) => void)
     | undefined;
@@ -142,10 +149,7 @@ function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
       // TODO: implement via blob.signedUrl + artifact repository lookup.
       throw brainError("internal_server_error", "signedUrl not yet wired in boot binary");
     },
-    async listParsed(
-      _ctx: ServiceCallContext,
-      _rawId: string,
-    ): Promise<ParsedOutput[]> {
+    async listParsed(_ctx: ServiceCallContext, _rawId: string): Promise<ParsedOutput[]> {
       // TODO: implement via listParsedByArtifact from @brain/raw repository.
       throw brainError("internal_server_error", "listParsed not yet wired in boot binary");
     },
@@ -165,7 +169,10 @@ function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
 // TODO: wire question to askWiki, wire annotate to the write-through path.
 // ---------------------------------------------------------------------------
 
-function buildWikiMemoryService(pageService: WikiPageService): IWikiMemoryService {
+function buildWikiMemoryService(
+  pageService: WikiPageService,
+  wikiDeps: WikiDeps,
+): IWikiMemoryService {
   return {
     async listPages(
       ctx: ServiceCallContext,
@@ -182,25 +189,40 @@ function buildWikiMemoryService(pageService: WikiPageService): IWikiMemoryServic
     async search(ctx: ServiceCallContext, q: string, limit: number) {
       return pageService.search(ctx, q, limit);
     },
-    // TODO: wire to askWiki orchestrator with real LLM deps.
-    async question(
-      _ctx: ServiceCallContext,
-      _req: QuestionRequest,
-    ): Promise<QuestionAnswer> {
-      throw brainError(
-        "internal_server_error",
-        "wiki.question not yet wired in boot binary — supply OPENAI_API_KEY and wire askWiki",
+    async question(ctx: ServiceCallContext, req: QuestionRequest): Promise<QuestionAnswer> {
+      const result = await withTenantScope(wikiDeps.pool, ctx.tenantId, (client) =>
+        askWiki(
+          {
+            client,
+            llm: wikiDeps.llm,
+            embed: wikiDeps.embed,
+            redis: wikiDeps.redis,
+            metrics: wikiDeps.metrics,
+          },
+          {
+            question: req.question,
+            asOf: req.asOf !== null ? new Date(req.asOf) : null,
+            maxEvidenceDepth: req.maxEvidenceDepth,
+            tenantId: ctx.tenantId,
+            model: wikiDeps.questionModel,
+          },
+        ),
       );
+      return {
+        question: req.question,
+        answer: result.answer,
+        evidence: result.evidence,
+        model: result.model,
+        usage: result.usage,
+        ...(result.cachedAt !== undefined ? { cachedAt: result.cachedAt } : {}),
+      };
     },
     // TODO: wire to the annotate write-through path.
     async annotate(
       _ctx: ServiceCallContext,
       _input: AnnotationInput,
     ): Promise<{ annotation_id: string; raw_artifact_id: string }> {
-      throw brainError(
-        "internal_server_error",
-        "wiki.annotate not yet wired in boot binary",
-      );
+      throw brainError("internal_server_error", "wiki.annotate not yet wired in boot binary");
     },
   };
 }
@@ -209,51 +231,70 @@ function buildWikiMemoryService(pageService: WikiPageService): IWikiMemoryServic
 // Stub hook factories — reduce repetition in ExecutionDeps / PaymentIntentDeps
 // ---------------------------------------------------------------------------
 
-function stubResolveAgent(
-  _ctx: ServiceCallContext,
-  _agentId: string,
-): Promise<GateAgent | null> {
-  // TODO: wire to the execution agents table.
-  return Promise.resolve(null);
+function makeResolveAgent(
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext, agentId: string) => Promise<GateAgent | null> {
+  return async (ctx, agentId) => {
+    const row = await withTenantScope(pool, ctx.tenantId, (c) => findAgent(c, agentId));
+    if (row === null) return null;
+    return {
+      id: row.id,
+      state: row.state,
+      scope: { canExecutePayments: row.state === "active" && row.role === "payment" },
+    };
+  };
 }
 
-function stubResolveAccount(
-  _ctx: ServiceCallContext,
-  _accountId: string,
-): Promise<GateAccount | null> {
-  // TODO: wire to LedgerService.getAccount.
-  return Promise.resolve(null);
+function makeResolveAccount(
+  ledger: LedgerService,
+): (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null> {
+  return async (ctx, accountId) => {
+    const result = await ledger.getAccount(ctx, accountId);
+    if (result === null) return null;
+    return {
+      id: result.account.id,
+      status: result.account.status,
+      currency: result.account.currency,
+      available_balance:
+        result.latest_balance !== null
+          ? result.latest_balance.available_balance
+          : result.account.available_balance,
+    };
+  };
 }
 
-function stubResolveCounterparty(
-  _ctx: ServiceCallContext,
-  _counterpartyId: string,
-): Promise<GateCounterparty | null> {
-  // TODO: wire to LedgerService listCounterparties.
-  return Promise.resolve(null);
+function makeResolveCounterparty(
+  ledger: LedgerService,
+): (ctx: ServiceCallContext, counterpartyId: string) => Promise<GateCounterparty | null> {
+  return async (ctx, counterpartyId) => {
+    const cp = await ledger.findCounterpartyById(ctx, counterpartyId);
+    if (cp === null) return null;
+    return {
+      id: cp.id,
+      type: cp.type,
+      risk_level: cp.risk_level ?? null,
+      verified_status: cp.verified_status ?? null,
+    };
+  };
 }
 
-function stubResolvePrincipal(ctx: ServiceCallContext): Promise<GatePrincipal> {
-  // TODO: wire to JWT claims on the request principal.
-  return Promise.resolve({ id: ctx.actor, type: "user" as const, scopes: [] });
+function resolvePrincipalFromCtx(ctx: ServiceCallContext): Promise<GatePrincipal> {
+  return Promise.resolve({
+    id: ctx.actor,
+    type: ctx.principalType ?? "user",
+    scopes: ctx.scopes !== undefined ? [...ctx.scopes] : [],
+  });
 }
 
-function stubResolveRole(
-  _ctx: ServiceCallContext,
-  _principalId: string,
-): Promise<string | null> {
-  // TODO: wire to the agents / users role table.
-  return Promise.resolve(null);
-}
-
-function stubEvaluatePaymentIntent(
-  _ctx: ServiceCallContext,
-  _intent: GatePaymentIntent,
-): Promise<GatePolicyDecision> {
-  // TODO: wire to Policy service evaluate() function.
-  return Promise.reject(
-    brainError("internal_server_error", "evaluatePaymentIntent hook not yet wired in boot binary"),
-  );
+function makeResolveRole(
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext, principalId: string) => Promise<string | null> {
+  return async (ctx, principalId) => {
+    const row = await withTenantScope(pool, ctx.tenantId, (c) => findAgent(c, principalId));
+    if (row !== null) return row.role;
+    // TODO: users-role table not yet modeled — see audit §6 cross-cutting.
+    return null;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -281,10 +322,18 @@ async function main(): Promise<void> {
   const redis = new Redis(cfg.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
   await redis.connect();
 
-  const audit = new PostgresAuditEmitter(pool);
+  const audit = new WebhookAuditEmitter(
+    new PostgresAuditEmitter(pool),
+    new WebhookDispatcher(pool),
+  );
 
+  // In demo mode use a local HS256 secret so tokens issued by registerSiwxRoutes
+  // (and any future local issuer) are verifiable without a live JWKS endpoint.
+  // Never set secret in production — keep AUTH_JWKS_URL for asymmetric verification.
+  const DEMO_SIGN_SECRET = "brain-demo-mode-insecure-dev-only";
   const jwtVerifier = new JwtVerifier({
     jwksUrl: cfg.AUTH_JWKS_URL,
+    ...(cfg.BRAIN_DEMO_MODE ? { secret: DEMO_SIGN_SECRET } : {}),
     issuer: cfg.AUTH_ISSUER,
     audience: cfg.AUTH_AUDIENCE,
     clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
@@ -304,33 +353,37 @@ async function main(): Promise<void> {
   const schemaRegistry = await loadRegistry();
   const metrics = new MockMetrics();
 
-  // Wiki LLM + embed adapters. Use DeterministicEmbeddingAdapter as stub
-  // until OPENAI_API_KEY is supplied.
-  // TODO: replace with real OpenAICompletionAdapter + OpenAIEmbeddingAdapter
-  //       when OPENAI_API_KEY is set.
-  const deterministicEmbed = new DeterministicEmbeddingAdapter();
+  // Wiki LLM + embed adapters.
+  // Priority: OPENAI_API_KEY (real) > BRAIN_DEMO_MODE (recorded fixture) > throw-stub.
+  const llm =
+    cfg.OPENAI_API_KEY !== undefined
+      ? new OpenAICompletionAdapter({ apiKey: cfg.OPENAI_API_KEY })
+      : cfg.BRAIN_DEMO_MODE
+        ? new RecordedLlmAdapter([])
+        : {
+            complete: async (): Promise<never> => {
+              throw brainError("internal_server_error", "LLM not configured — set OPENAI_API_KEY");
+            },
+          };
+
+  const embed =
+    cfg.OPENAI_API_KEY !== undefined
+      ? new OpenAIEmbeddingAdapter({ apiKey: cfg.OPENAI_API_KEY })
+      : new DeterministicEmbeddingAdapter();
 
   const wikiDeps: WikiDeps = {
     pool,
     redis,
     audit,
-    // TODO: wire AnthropicAdapter when ANTHROPIC_API_KEY is set.
-    llm: {
-      complete: async () => {
-        throw brainError(
-          "internal_server_error",
-          "LLM not configured — supply ANTHROPIC_API_KEY",
-        );
-      },
-    },
-    embed: deterministicEmbed,
+    llm,
+    embed,
     schemas: schemaRegistry,
     metrics,
     questionModel: cfg.WIKI_LLM_MODEL,
   };
 
-  const wikiPageService = new WikiPageService({ pool, audit });
-  const wikiService = buildWikiMemoryService(wikiPageService);
+  const wikiPageService = new WikiPageService({ pool, audit, embed });
+  const wikiService = buildWikiMemoryService(wikiPageService, wikiDeps);
 
   const policyDeps: PolicyDeps = {
     pool,
@@ -340,12 +393,33 @@ async function main(): Promise<void> {
     policyRegistryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
   };
 
+  const policyService = new PolicyService({ pool, audit });
+
   const rawEvidenceService = buildRawEvidenceService(rawDeps);
+
+  // Resolver hooks — sandbox replacements when BRAIN_DEMO_MODE is on.
+  const resolveRole = cfg.BRAIN_DEMO_MODE ? sandboxResolveRole : makeResolveRole(pool);
+  const resolveAgent = cfg.BRAIN_DEMO_MODE ? sandboxResolveAgent : makeResolveAgent(pool);
+  const resolveAccount = cfg.BRAIN_DEMO_MODE
+    ? makeSandboxResolveAccount(pool)
+    : makeResolveAccount(ledgerService);
+  const resolveCounterparty = cfg.BRAIN_DEMO_MODE
+    ? makeSandboxResolveCounterparty(pool)
+    : makeResolveCounterparty(ledgerService);
+  const resolvePrincipal = cfg.BRAIN_DEMO_MODE ? sandboxResolvePrincipal : resolvePrincipalFromCtx;
+  const evaluatePaymentIntent = cfg.BRAIN_DEMO_MODE
+    ? sandboxEvaluatePaymentIntent
+    : (ctx: ServiceCallContext, intent: GatePaymentIntent) =>
+        policyService.evaluateForGate(ctx, intent);
+  const evaluateLegacyPolicy = cfg.BRAIN_DEMO_MODE
+    ? sandboxEvaluateLegacyPolicy
+    : async (tenantId: string, action: Record<string, unknown>) =>
+        policyService.evaluateLegacy({ tenantId, actor: "system" }, action);
 
   const approvalService = new ApprovalService({
     pool,
     audit,
-    resolveRole: stubResolveRole,
+    resolveRole,
   });
 
   const paymentIntentService = new PaymentIntentService({
@@ -353,39 +427,24 @@ async function main(): Promise<void> {
     audit,
     rails: defaultRails(),
     approvals: approvalService,
-    resolveAgent: stubResolveAgent,
-    resolveAccount: stubResolveAccount,
-    resolveCounterparty: stubResolveCounterparty,
-    evaluatePolicy: stubEvaluatePaymentIntent,
-    resolvePrincipal: stubResolvePrincipal,
+    resolveAgent,
+    resolveAccount,
+    resolveCounterparty,
+    evaluatePolicy: evaluatePaymentIntent,
+    resolvePrincipal,
   });
 
   const executionDeps: ExecutionDeps = {
     pool,
     audit,
     rails: defaultRails(),
-    // TODO: wire evaluatePolicy (legacy) to the Policy service.
-    evaluatePolicy: async (
-      _tenantId: string,
-      _action: Record<string, unknown>,
-    ): Promise<{
-      outcome: "allow" | "confirm" | "reject";
-      matched_rule_id: string | null;
-      required_approvers: string[];
-      trace: unknown[];
-      policy_version: number;
-    }> => {
-      throw brainError(
-        "internal_server_error",
-        "evaluatePolicy (legacy) not yet wired in boot binary",
-      );
-    },
-    evaluatePaymentIntent: stubEvaluatePaymentIntent,
-    resolveAgent: stubResolveAgent,
-    resolveAccount: stubResolveAccount,
-    resolveCounterparty: stubResolveCounterparty,
-    resolvePrincipal: stubResolvePrincipal,
-    resolveRole: stubResolveRole,
+    evaluatePolicy: evaluateLegacyPolicy,
+    evaluatePaymentIntent,
+    resolveAgent,
+    resolveAccount,
+    resolveCounterparty,
+    resolvePrincipal,
+    resolveRole,
   };
 
   const auditDeps: AuditDeps = { pool, audit };
@@ -413,7 +472,7 @@ async function main(): Promise<void> {
 
   // -- Fastify root app -----------------------------------------------
   const app = Fastify({
-    logger: log as Parameters<typeof Fastify>[0]["logger"],
+    logger: true,
     bodyLimit: cfg.REQUEST_BODY_LIMIT_BYTES,
     disableRequestLogging: false,
   });
@@ -433,16 +492,24 @@ async function main(): Promise<void> {
     service: cfg.SERVICE_NAME,
   }));
 
-  // Service layer route registrations.
+  // Service layer route registrations — all under /v1 to match OpenAPI spec.
   // Raw: also registers content-type parsers + multipart inside registerRawPlugin.
   const rawOpts: RegisterRawPluginOptions = {
     plaidVerify: {
-      // TODO: populate from config when Plaid credentials are set.
-      // The verifier requires a keyResolver — stubbed to always reject
-      // until PLAID_CLIENT_ID / PLAID_SECRET are wired.
-      keyResolver: async (): Promise<never> => {
-        throw brainError("raw_webhook_signature_invalid", "Plaid key resolver not configured");
-      },
+      // In production supply a real key resolver backed by Plaid JWKS.
+      // In demo mode the sandbox CLI uses /raw/ingest (not the webhook route),
+      // so this resolver is only reached if someone explicitly POSTs to
+      // /raw/webhooks/plaid — it rejects with a clear error either way.
+      keyResolver: cfg.BRAIN_DEMO_MODE
+        ? async (_kid: string): Promise<never> => {
+            throw brainError(
+              "raw_webhook_signature_invalid",
+              "Plaid webhook signing not configured — use /raw/ingest in demo mode",
+            );
+          }
+        : async (): Promise<never> => {
+            throw brainError("raw_webhook_signature_invalid", "Plaid key resolver not configured");
+          },
       clockToleranceSeconds: 300,
     },
     resolveWebhookTenant: async (
@@ -455,41 +522,64 @@ async function main(): Promise<void> {
       if (typeof devTenantHeader === "string" && devTenantHeader.length > 0) {
         return devTenantHeader;
       }
-      throw brainError(
-        "auth_tenant_mismatch",
-        "cannot resolve webhook tenant — not configured",
-      );
+      throw brainError("auth_tenant_mismatch", "cannot resolve webhook tenant — not configured");
     },
   };
 
-  await app.register(async (child) => registerRawPlugin(child, rawDeps, rawOpts));
-  await app.register(async (child) => registerLedgerPlugin(child, ledgerDeps));
-  await app.register(async (child) => registerWikiPlugin(child, wikiDeps));
-  await app.register(async (child) => registerPolicyRoutes(child, policyDeps));
-  await app.register(async (child) => registerExecutionRoutes(child, executionDeps));
-  await app.register(async (child) => {
-    // PaymentIntentService has its own approval sub-service; create a fresh
-    // instance scoped to this plugin so it doesn't share mutable state.
-    const piApprovals = new ApprovalService({
-      pool,
-      audit,
-      resolveRole: stubResolveRole,
-    });
-    const piService = new PaymentIntentService({
-      pool,
-      audit,
-      rails: defaultRails(),
-      approvals: piApprovals,
-      resolveAgent: stubResolveAgent,
-      resolveAccount: stubResolveAccount,
-      resolveCounterparty: stubResolveCounterparty,
-      evaluatePolicy: stubEvaluatePaymentIntent,
-      resolvePrincipal: stubResolvePrincipal,
-    });
-    await registerPaymentIntentRoutes(child, piService);
-  });
-  await app.register(async (child) => registerAuditRoutes(child, auditDeps));
-  await app.register(async (child) => registerMcpRoute(child, mcpServer));
+  // Mount all service routes under /v1 to match Brain_API_Specification.yaml.
+  await app.register(
+    async (v1) => {
+      await v1.register(async (child) => registerRawPlugin(child, rawDeps, rawOpts));
+      await v1.register(async (child) => registerLedgerPlugin(child, ledgerDeps));
+      await v1.register(async (child) => registerWikiPlugin(child, wikiDeps));
+      await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
+      await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
+      await v1.register(async (child) => {
+        // PaymentIntentService has its own approval sub-service; create a fresh
+        // instance scoped to this plugin so it doesn't share mutable state.
+        const piApprovals = new ApprovalService({
+          pool,
+          audit,
+          resolveRole,
+        });
+        const piService = new PaymentIntentService({
+          pool,
+          audit,
+          rails: defaultRails(),
+          approvals: piApprovals,
+          resolveAgent,
+          resolveAccount,
+          resolveCounterparty,
+          evaluatePolicy: evaluatePaymentIntent,
+          resolvePrincipal,
+        });
+        await registerPaymentIntentRoutes(child, piService);
+      });
+      await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
+      await v1.register(async (child) => registerMcpRoute(child, mcpServer));
+      // SIWX (agent auth) — wired in demo mode only. Production wiring requires
+      // an AUTH_SIGN_KEY config variable backed by Azure Key Vault (follow-up).
+      if (cfg.BRAIN_DEMO_MODE) {
+        const demoSigner = new JwtSigner({
+          issuer: cfg.AUTH_ISSUER,
+          audience: cfg.AUTH_AUDIENCE,
+          key: { kty: "oct", k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"), alg: "HS256" },
+          algorithm: "HS256",
+        });
+        await v1.register(async (child) =>
+          registerSiwxRoutes(child, {
+            signer: demoSigner,
+            registry: new StubAgentRegistry(),
+            demoMode: true,
+          }),
+        );
+      }
+    },
+    { prefix: "/v1" },
+  );
+
+  // -- background workers ---------------------------------------------
+  const normalizeWorker = startNormalizeWorker({ pool, audit });
 
   // -- listen ---------------------------------------------------------
   await app.listen({ host: "0.0.0.0", port: cfg.PORT });
@@ -498,6 +588,7 @@ async function main(): Promise<void> {
   // -- graceful shutdown ----------------------------------------------
   const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, "shutting down");
+    normalizeWorker.stop();
     try {
       await app.close();
     } catch (err) {

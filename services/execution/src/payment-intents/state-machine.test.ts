@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
-import {
-  isValidPaymentIntentTransition,
-  type PaymentIntentState,
-} from "./state-machine.js";
+import { isValidPaymentIntentTransition, type PaymentIntentState } from "./state-machine.js";
 
 const ALL: PaymentIntentState[] = [
   "proposed",
@@ -64,7 +61,7 @@ describe("§9.5 PaymentIntent state machine", () => {
   it("property: every reachable terminal cannot leave", () => {
     fc.assert(
       fc.property(
-        fc.constantFrom("rejected", "cancelled", "failed" as const),
+        fc.constantFrom("rejected" as const, "cancelled" as const, "failed" as const),
         fc.constantFrom(...ALL),
         (from, to) => {
           expect(isValidPaymentIntentTransition(from, to)).toBe(false);

@@ -78,7 +78,7 @@ export function verifyProof(
   proof: ReadonlyArray<Buffer>,
   hashFn: HashFn = keccakLike,
 ): boolean {
-  let computed = Buffer.from(leaf);
+  let computed: Buffer = Buffer.from(leaf);
   for (const sibling of proof) {
     computed = hashPair(hashFn, computed, sibling);
   }

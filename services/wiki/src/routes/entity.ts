@@ -12,11 +12,7 @@ import {
   withTenantScope,
   type Scope,
 } from "@brain/api/shared";
-import {
-  findEntityAsOf,
-  listEntityVersions,
-  type WikiEntityRow,
-} from "../repository/entities.js";
+import { findEntityAsOf, listEntityVersions, type WikiEntityRow } from "../repository/entities.js";
 import { findOneHopNeighbors } from "../repository/relations.js";
 import type { WikiDeps } from "../deps.js";
 
@@ -148,7 +144,17 @@ export function serializeEntity(e: WikiEntityRow): Record<string, unknown> {
   };
 }
 
-export function serializeRelation(r: { id: string; src: string; dst: string; kind: string; attributes: Record<string, unknown>; valid_from: Date; valid_to: Date | null; provenance: string; confidence: number }): Record<string, unknown> {
+export function serializeRelation(r: {
+  id: string;
+  src: string;
+  dst: string;
+  kind: string;
+  attributes: Record<string, unknown>;
+  valid_from: Date;
+  valid_to: Date | null;
+  provenance: string;
+  confidence: number;
+}): Record<string, unknown> {
   return {
     id: r.id,
     src: r.src,

@@ -1,3 +1,4 @@
+import type { Redis } from "ioredis";
 import { describe, expect, it } from "vitest";
 import {
   DeterministicEmbeddingAdapter,
@@ -161,7 +162,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
         client: fakeClient(rows),
         llm,
         embed: new DeterministicEmbeddingAdapter(16),
-        redis: fakeRedis() as unknown as import("ioredis").Redis,
+        redis: fakeRedis() as unknown as Redis,
         metrics: new MockMetrics(),
       },
       {
@@ -225,7 +226,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       client: fakeClient(rows),
       llm,
       embed: new DeterministicEmbeddingAdapter(16),
-      redis: fakeRedis() as unknown as import("ioredis").Redis,
+      redis: fakeRedis() as unknown as Redis,
       metrics,
     };
     const opts = {

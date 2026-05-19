@@ -33,6 +33,8 @@ function assertCtx(request: FastifyRequest): ServiceCallContext {
     tenantId: request.principal.tenantId,
     actor: request.principal.id,
     requestId: request.id,
+    principalType: request.principal.type,
+    scopes: request.principal.scopes,
   };
 }
 
@@ -61,40 +63,37 @@ export async function registerPaymentIntentRoutes(
   app: FastifyInstance,
   service: PaymentIntentService,
 ): Promise<void> {
-  app.post(
-    "/payment-intents",
-    async (request: FastifyRequest<{ Body: CreateBody }>, reply) => {
-      const ctx = assertCtx(request);
-      requireScope(request.principal!.scopes, SCOPE_PROPOSE);
-      const b = request.body ?? {};
-      if (
-        b.action_type === undefined ||
-        !ACTION_TYPES.has(b.action_type) ||
-        b.source_account_id === undefined ||
-        !isBrainId(b.source_account_id, "acct") ||
-        b.destination_counterparty_id === undefined ||
-        !isBrainId(b.destination_counterparty_id, "cp") ||
-        b.amount === undefined ||
-        b.currency === undefined ||
-        !/^[A-Z]{3}$/.test(b.currency)
-      ) {
-        throw brainError("request_body_invalid", "missing or malformed PaymentIntent fields");
-      }
-      const intent = await service.create(ctx, {
-        action_type: b.action_type as never,
-        source_account_id: b.source_account_id,
-        destination_counterparty_id: b.destination_counterparty_id,
-        amount: b.amount,
-        currency: b.currency,
-        ...(b.obligation_id !== undefined ? { obligation_id: b.obligation_id } : {}),
-        ...(b.invoice_id !== undefined ? { invoice_id: b.invoice_id } : {}),
-        ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
-        ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
-      });
-      reply.status(201);
-      return intent;
-    },
-  );
+  app.post("/payment-intents", async (request: FastifyRequest<{ Body: CreateBody }>, reply) => {
+    const ctx = assertCtx(request);
+    requireScope(request.principal!.scopes, SCOPE_PROPOSE);
+    const b = request.body ?? {};
+    if (
+      b.action_type === undefined ||
+      !ACTION_TYPES.has(b.action_type) ||
+      b.source_account_id === undefined ||
+      !isBrainId(b.source_account_id, "acct") ||
+      b.destination_counterparty_id === undefined ||
+      !isBrainId(b.destination_counterparty_id, "cp") ||
+      b.amount === undefined ||
+      b.currency === undefined ||
+      !/^[A-Z]{3}$/.test(b.currency)
+    ) {
+      throw brainError("request_body_invalid", "missing or malformed PaymentIntent fields");
+    }
+    const intent = await service.create(ctx, {
+      action_type: b.action_type as never,
+      source_account_id: b.source_account_id,
+      destination_counterparty_id: b.destination_counterparty_id,
+      amount: b.amount,
+      currency: b.currency,
+      ...(b.obligation_id !== undefined ? { obligation_id: b.obligation_id } : {}),
+      ...(b.invoice_id !== undefined ? { invoice_id: b.invoice_id } : {}),
+      ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
+      ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
+    });
+    reply.status(201);
+    return intent;
+  });
 
   app.get(
     "/payment-intents/:id",
@@ -157,4 +156,36 @@ export async function registerPaymentIntentRoutes(
       return result;
     },
   );
+
+  // GET /agents/:agent_id/actions — spec §Agent listAgentActions
+  app.get(
+    "/agents/:agent_id/actions",
+    async (
+      request: FastifyRequest<{
+        Params: { agent_id: string };
+        Querystring: { limit?: string };
+      }>,
+      reply,
+    ) => {
+      const ctx = assertCtx(request);
+      requireScope(request.principal!.scopes, SCOPE_READ);
+      const limit = parseIntParam(request.query.limit, 50, 500);
+      const intents = await service.list(ctx, { agent_id: request.params.agent_id, limit });
+      reply.status(200);
+      return {
+        actions: intents.map((i) => ({
+          proposal_id: null,
+          payment_intent_id: i.id,
+          status: i.status,
+          created_at: i.created_at,
+        })),
+      };
+    },
+  );
+}
+
+function parseIntParam(raw: string | undefined, defaultVal: number, max: number): number {
+  if (raw === undefined) return defaultVal;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, max) : defaultVal;
 }

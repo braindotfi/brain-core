@@ -14,11 +14,7 @@
  * (orchestrator.ts) and reads pages + Ledger.
  */
 
-import type {
-  TenantScopedClient,
-  WikiPage,
-  ServiceCallContext,
-} from "@brain/api/shared";
+import type { TenantScopedClient, WikiPage, ServiceCallContext } from "@brain/api/shared";
 
 export interface PageGenerationContext {
   ctx: ServiceCallContext;
@@ -41,5 +37,8 @@ export interface PageGenerator {
    */
   resolveSlug(slugOrId: string): { subjectId: string | null; slug: string } | null;
   /** Render the page from current Ledger state. */
-  render(deps: PageGenerationContext, subject: { subjectId: string | null; slug: string }): Promise<PageGenerationOutput>;
+  render(
+    deps: PageGenerationContext,
+    subject: { subjectId: string | null; slug: string },
+  ): Promise<PageGenerationOutput>;
 }

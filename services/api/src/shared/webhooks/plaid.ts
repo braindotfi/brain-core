@@ -21,13 +21,7 @@
  */
 
 import { createHash } from "node:crypto";
-import {
-  importJWK,
-  jwtVerify,
-  type JWK,
-  type JWTVerifyGetKey,
-  type KeyLike,
-} from "jose";
+import { importJWK, jwtVerify, type JWK, type JWTVerifyGetKey, type KeyLike } from "jose";
 import { brainError } from "../errors.js";
 
 export interface PlaidVerifyOptions {

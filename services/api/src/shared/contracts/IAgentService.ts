@@ -47,7 +47,10 @@ export interface ProposalRecord {
 export interface IAgentService {
   list(ctx: ServiceCallContext): Promise<AgentRecord[]>;
   get(ctx: ServiceCallContext, agentId: string): Promise<AgentRecord | null>;
-  register(ctx: ServiceCallContext, input: Omit<AgentRecord, "state" | "registered_at">): Promise<AgentRecord>;
+  register(
+    ctx: ServiceCallContext,
+    input: Omit<AgentRecord, "state" | "registered_at">,
+  ): Promise<AgentRecord>;
 
   /** Non-financial proposal. Financial actions use IPaymentIntentService. */
   propose(ctx: ServiceCallContext, agentId: string, input: ProposalInput): Promise<ProposalRecord>;

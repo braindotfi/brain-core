@@ -15,17 +15,13 @@
  *   3. POST each transaction to /v1/raw/ingest as base64-encoded JSON blob
  */
 
-import {
-  Configuration,
-  PlaidApi,
-  PlaidEnvironments,
-  Products,
-  CountryCode,
-} from "plaid";
+import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 
 const PLAID_CLIENT_ID = process.env["PLAID_CLIENT_ID"];
 const PLAID_SECRET = process.env["PLAID_SECRET"];
-const PLAID_BASE_PATH: string = PlaidEnvironments[process.env["PLAID_ENV"] as keyof typeof PlaidEnvironments] as string ?? PlaidEnvironments.sandbox;
+const PLAID_BASE_PATH: string =
+  (PlaidEnvironments[process.env["PLAID_ENV"] as keyof typeof PlaidEnvironments] as string) ??
+  PlaidEnvironments.sandbox;
 const BRAIN_API_URL = process.env["BRAIN_API_URL"] ?? "http://localhost:3000";
 const BRAIN_TOKEN = process.env["BRAIN_TOKEN"];
 const INSTITUTION_ID = process.env["PLAID_INSTITUTION_ID"] ?? "ins_109508";
@@ -51,21 +47,23 @@ const plaidConfig = new Configuration({
 const plaid = new PlaidApi(plaidConfig);
 
 async function ingestTransaction(tx: Record<string, unknown>): Promise<string> {
-  const encoded = Buffer.from(JSON.stringify(tx)).toString("base64");
-  const body = {
-    source_type: "plaid",
-    source_ref: tx["transaction_id"] as string,
-    url: `data:application/json;base64,${encoded}`,
-    mime_type: "application/json",
-  };
+  const txId = tx["transaction_id"] as string;
+  const jsonBytes = Buffer.from(JSON.stringify(tx));
+
+  // Use multipart/form-data so the ingest route accepts the raw bytes
+  // without requiring an https:// URL (the JSON body path requires one).
+  const form = new FormData();
+  form.append("source_type", "plaid");
+  form.append("source_ref", txId);
+  form.append("file", new Blob([jsonBytes], { type: "application/json" }), `plaid-tx-${txId}.json`);
+
   const res = await fetch(`${BRAIN_API_URL}/v1/raw/ingest`, {
     method: "POST",
     headers: {
-      "content-type": "application/json",
       authorization: `Bearer ${BRAIN_TOKEN}`,
-      "idempotency-key": `plaid-sandbox-${tx["transaction_id"] as string}`,
+      "idempotency-key": `plaid-sandbox-${txId}`,
     },
-    body: JSON.stringify(body),
+    body: form,
   });
   if (!res.ok) {
     const text = await res.text();
@@ -114,7 +112,9 @@ async function run(): Promise<void> {
   } while (cursor !== undefined);
 
   console.log(`\nDone. Ingested ${totalIngested} Plaid Sandbox transactions into Brain raw layer.`);
-  console.log("Note: transactions land in raw_artifacts only — wiki promotion requires the extractor pipeline (not yet built).");
+  console.log(
+    "Note: transactions land in raw_artifacts only — wiki promotion requires the extractor pipeline (not yet built).",
+  );
 }
 
 run().catch((err: unknown) => {

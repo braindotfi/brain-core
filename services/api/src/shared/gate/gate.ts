@@ -14,10 +14,8 @@
  * call site per execution path.
  */
 
-import type {
-  AuditEmitter,
-  ServiceCallContext,
-} from "../index.js";
+import type { AuditEmitter } from "../audit/emitter.js";
+import type { ServiceCallContext } from "../contracts/types.js";
 import type { GateCheck, GateResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -119,7 +117,10 @@ export async function runPreExecutionGate(
   if (input.principal.type !== "agent") {
     return fail(checks, 1, "agent_identity_verified", { type: input.principal.type });
   }
-  if (input.intent.created_by_agent_id !== null && input.intent.created_by_agent_id !== input.principal.id) {
+  if (
+    input.intent.created_by_agent_id !== null &&
+    input.intent.created_by_agent_id !== input.principal.id
+  ) {
     return fail(checks, 1, "agent_identity_verified", {
       reason: "principal does not own this PaymentIntent",
     });
@@ -135,7 +136,10 @@ export async function runPreExecutionGate(
   pass(checks, 1, "agent_identity_verified");
 
   // 2 — agent authorized: scopes include payment_intent:execute.
-  if (!input.principal.scopes.includes("payment_intent:execute") && !agent.scope.canExecutePayments) {
+  if (
+    !input.principal.scopes.includes("payment_intent:execute") &&
+    !agent.scope.canExecutePayments
+  ) {
     return fail(checks, 2, "agent_authorized", {
       missing_scope: "payment_intent:execute",
     });
@@ -184,7 +188,10 @@ export async function runPreExecutionGate(
   // 6 — counterparty verified (when required by policy threshold).
   const threshold = decision.counterparty_verification_threshold ?? null;
   if (threshold !== null) {
-    if (cmpDecimal(input.intent.amount, threshold.value) > 0 && input.intent.currency === threshold.currency) {
+    if (
+      cmpDecimal(input.intent.amount, threshold.value) > 0 &&
+      input.intent.currency === threshold.currency
+    ) {
       const ok =
         counterparty.verified_status === "document_verified" ||
         counterparty.verified_status === "sanctions_cleared";
@@ -298,7 +305,12 @@ export async function runPreExecutionGate(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function pass(checks: GateCheck[], index: number, name: GateCheck["name"], detail?: Record<string, unknown>): void {
+function pass(
+  checks: GateCheck[],
+  index: number,
+  name: GateCheck["name"],
+  detail?: Record<string, unknown>,
+): void {
   checks.push({ index, name, passed: true, ...(detail !== undefined ? { detail } : {}) });
 }
 

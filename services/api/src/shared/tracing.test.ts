@@ -10,15 +10,9 @@ function makeFakeTracer(): { tracer: Tracer; spans: FakeSpan[] } {
   const spans: FakeSpan[] = [];
   const tracer: Tracer = {
     startSpan: (name) => new FakeSpan(name, spans) as unknown as Span,
-    startActiveSpan: ((
-      name: string,
-      _optsOrFn: unknown,
-      maybeFn?: (span: Span) => unknown,
-    ) => {
+    startActiveSpan: ((name: string, _optsOrFn: unknown, maybeFn?: (span: Span) => unknown) => {
       const span = new FakeSpan(name, spans);
-      const fn = (typeof _optsOrFn === "function"
-        ? _optsOrFn
-        : maybeFn) as (s: Span) => unknown;
+      const fn = (typeof _optsOrFn === "function" ? _optsOrFn : maybeFn) as (s: Span) => unknown;
       return fn(span as unknown as Span);
     }) as Tracer["startActiveSpan"],
   };
@@ -134,21 +128,17 @@ describe("llmSpan", () => {
 
   it("recognizes openai models", async () => {
     const { tracer, spans } = makeFakeTracer();
-    await llmSpan(
-      tracer,
-      { model: "gpt-4o-mini", operation: "wiki.embedding" },
-      async () => ({ result: null }),
-    );
+    await llmSpan(tracer, { model: "gpt-4o-mini", operation: "wiki.embedding" }, async () => ({
+      result: null,
+    }));
     expect(spans[0]!.attributes["llm.vendor"]).toBe("openai");
   });
 
   it("labels unknown models as 'unknown'", async () => {
     const { tracer, spans } = makeFakeTracer();
-    await llmSpan(
-      tracer,
-      { model: "mystery-xyz", operation: "op" },
-      async () => ({ result: null }),
-    );
+    await llmSpan(tracer, { model: "mystery-xyz", operation: "op" }, async () => ({
+      result: null,
+    }));
     expect(spans[0]!.attributes["llm.vendor"]).toBe("unknown");
   });
 

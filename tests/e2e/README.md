@@ -8,13 +8,13 @@ merge, gated before the production promotion step in
 
 ## Environment
 
-| Variable                         | Required by                 | Notes                                        |
-| -------------------------------- | --------------------------- | -------------------------------------------- |
-| `BRAIN_BASE_URL`                 | all 3 suites                | Staging endpoint.                            |
-| `BRAIN_TOKEN`                    | suites 1 + 2                | Tenant-admin JWT minted by seed script.      |
-| `BRAIN_TEST_TENANT_ID`           | suites 1 + 2                | `tnt_...` for the seeded test tenant.        |
-| `BRAIN_TEST_VENDOR_ID`           | suites 1 + 3                | `cp_...` or ULID of a seeded vendor entity.  |
-| `BRAIN_EXTERNAL_AGENT_TOKEN`     | suite 3                     | JWT for an external agent (`principal_type=agent`) pre-registered in `BrainMCPAgentRegistry`. |
+| Variable                     | Required by  | Notes                                                                                         |
+| ---------------------------- | ------------ | --------------------------------------------------------------------------------------------- |
+| `BRAIN_BASE_URL`             | all 3 suites | Staging endpoint.                                                                             |
+| `BRAIN_TOKEN`                | suites 1 + 2 | Tenant-admin JWT minted by seed script.                                                       |
+| `BRAIN_TEST_TENANT_ID`       | suites 1 + 2 | `tnt_...` for the seeded test tenant.                                                         |
+| `BRAIN_TEST_VENDOR_ID`       | suites 1 + 3 | `cp_...` or ULID of a seeded vendor entity.                                                   |
+| `BRAIN_EXTERNAL_AGENT_TOKEN` | suite 3      | JWT for an external agent (`principal_type=agent`) pre-registered in `BrainMCPAgentRegistry`. |
 
 When a variable is absent, the affected suite skips — local runs don't
 fail CI, but staging runs that are missing any variable should.

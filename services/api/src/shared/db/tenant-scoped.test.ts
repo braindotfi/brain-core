@@ -1,3 +1,4 @@
+import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { isBrainError } from "../errors.js";
 import { newTenantId } from "../ids.js";
@@ -36,14 +37,10 @@ describe("withTenantScope", () => {
     const { pool, log, client } = makeFakePool();
     const tenantId = newTenantId();
 
-    const result = await withTenantScope(
-      pool as unknown as import("pg").Pool,
-      tenantId,
-      async (c) => {
-        await c.query("SELECT 1");
-        return "ok";
-      },
-    );
+    const result = await withTenantScope(pool as unknown as Pool, tenantId, async (c) => {
+      await c.query("SELECT 1");
+      return "ok";
+    });
 
     expect(result).toBe("ok");
     expect(log[0]).toBe("BEGIN");
@@ -59,7 +56,7 @@ describe("withTenantScope", () => {
     const boom = new Error("boom");
 
     await expect(
-      withTenantScope(pool as unknown as import("pg").Pool, tenantId, async () => {
+      withTenantScope(pool as unknown as Pool, tenantId, async () => {
         throw boom;
       }),
     ).rejects.toBe(boom);
@@ -72,11 +69,7 @@ describe("withTenantScope", () => {
   it("rejects malformed tenant ids with auth_tenant_mismatch", async () => {
     const { pool } = makeFakePool();
     try {
-      await withTenantScope(
-        pool as unknown as import("pg").Pool,
-        "not-a-tenant",
-        async () => "x",
-      );
+      await withTenantScope(pool as unknown as Pool, "not-a-tenant", async () => "x");
       expect.fail("expected throw");
     } catch (err) {
       expect(isBrainError(err)).toBe(true);
@@ -88,11 +81,7 @@ describe("withTenantScope", () => {
 
   it("does not call connect when the tenant id is invalid", async () => {
     const pool = { connect: vi.fn() };
-    await withTenantScope(
-      pool as unknown as import("pg").Pool,
-      "bogus",
-      async () => "x",
-    ).catch(() => undefined);
+    await withTenantScope(pool as unknown as Pool, "bogus", async () => "x").catch(() => undefined);
     expect(pool.connect).not.toHaveBeenCalled();
   });
 
@@ -115,7 +104,7 @@ describe("withTenantScope", () => {
     const boom = new Error("user code failure");
 
     await expect(
-      withTenantScope(pool as unknown as import("pg").Pool, tenantId, async () => {
+      withTenantScope(pool as unknown as Pool, tenantId, async () => {
         throw boom;
       }),
     ).rejects.toBe(boom);

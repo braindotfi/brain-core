@@ -8,12 +8,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import {
-  brainError,
-  requireScope,
-  type Scope,
-  type ServiceCallContext,
-} from "@brain/api/shared";
+import { brainError, requireScope, type Scope, type ServiceCallContext } from "@brain/api/shared";
 import type { WikiPageService } from "../pages/WikiPageService.js";
 
 const READ: Scope = "wiki:read";
@@ -64,7 +59,9 @@ export async function registerMemoryRoutes(
       const decoded = decodeURIComponent(request.params.slug_or_id);
       const page = await service.getPage(c, decoded);
       if (page === null) {
-        throw brainError("wiki_page_not_found", "no such page", { details: { slug_or_id: decoded } });
+        throw brainError("wiki_page_not_found", "no such page", {
+          details: { slug_or_id: decoded },
+        });
       }
       reply.status(200);
       return page;
@@ -88,10 +85,7 @@ export async function registerMemoryRoutes(
 
   app.get(
     "/memory/search",
-    async (
-      request: FastifyRequest<{ Querystring: { q?: string; limit?: string } }>,
-      reply,
-    ) => {
+    async (request: FastifyRequest<{ Querystring: { q?: string; limit?: string } }>, reply) => {
       const c = ctx(request);
       requireScope(request.principal!.scopes, READ);
       const q = request.query.q;

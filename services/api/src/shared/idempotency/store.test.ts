@@ -1,17 +1,11 @@
 import { describe, expect, it } from "vitest";
-import {
-  InMemoryIdempotencyStore,
-  hashBody,
-  idempotencyRedisKey,
-} from "./store.js";
+import { InMemoryIdempotencyStore, hashBody, idempotencyRedisKey } from "./store.js";
 
 const TENANT = "tnt_01HQ7K3ABCDEFGHJKMNPQRSTV";
 
 describe("idempotencyRedisKey", () => {
   it("namespaces by tenant and key", () => {
-    expect(idempotencyRedisKey(TENANT, "order-123")).toBe(
-      `idemp:${TENANT}:order-123`,
-    );
+    expect(idempotencyRedisKey(TENANT, "order-123")).toBe(`idemp:${TENANT}:order-123`);
   });
 });
 

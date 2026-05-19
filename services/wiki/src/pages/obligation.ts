@@ -9,7 +9,8 @@ export class ObligationPageGenerator implements PageGenerator {
   public readonly pageType = "obligation" as const;
 
   public resolveSlug(slugOrId: string): { subjectId: string | null; slug: string } | null {
-    if (slugOrId.startsWith("obl_")) return { subjectId: slugOrId, slug: `/obligations/${slugOrId}` };
+    if (slugOrId.startsWith("obl_"))
+      return { subjectId: slugOrId, slug: `/obligations/${slugOrId}` };
     if (slugOrId.startsWith("/obligations/")) {
       const id = slugOrId.slice("/obligations/".length);
       return { subjectId: id, slug: slugOrId };
@@ -40,8 +41,12 @@ export class ObligationPageGenerator implements PageGenerator {
 
     const linkedEntities = bullet(
       [
-        ...(counterparty !== null ? [`Counterparty: \`${counterparty.id}\` — ${counterparty.name}`] : []),
-        ...openIntents.map((pi) => `Open PaymentIntent: \`${pi.id}\` (${pi.status}, ${pi.amount} ${pi.currency})`),
+        ...(counterparty !== null
+          ? [`Counterparty: \`${counterparty.id}\` — ${counterparty.name}`]
+          : []),
+        ...openIntents.map(
+          (pi) => `Open PaymentIntent: \`${pi.id}\` (${pi.status}, ${pi.amount} ${pi.currency})`,
+        ),
       ],
       "_No linked entities._",
     );

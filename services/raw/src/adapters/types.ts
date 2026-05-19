@@ -25,6 +25,9 @@ export interface SourceAdapter {
   /** Machine id — matches raw_artifacts.source_type. */
   readonly sourceType: string;
   /** For webhook-capable providers only. Others throw 501. */
-  handleWebhook?(tenantId: string, rawBody: Buffer, headers: Record<string, unknown>):
-    Promise<FetchedArtifact[]>;
+  handleWebhook?(
+    tenantId: string,
+    rawBody: Buffer,
+    headers: Record<string, unknown>,
+  ): Promise<FetchedArtifact[]>;
 }

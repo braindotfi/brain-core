@@ -213,7 +213,8 @@ async function retrieveLedgerCandidates(
     out.push({
       type: "transaction",
       id: r.id,
-      excerpt: `${r.direction} ${r.amount} ${r.currency} on ${r.transaction_date.toISOString().slice(0, 10)}${cp} ${memo}`.trim(),
+      excerpt:
+        `${r.direction} ${r.amount} ${r.currency} on ${r.transaction_date.toISOString().slice(0, 10)}${cp} ${memo}`.trim(),
     });
   }
   for (const r of oblRes.rows) {

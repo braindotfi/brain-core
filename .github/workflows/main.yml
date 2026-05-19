@@ -11,11 +11,11 @@ on:
 
 permissions:
   contents: read
-  id-token: write   # OIDC to Azure
+  id-token: write # OIDC to Azure
 
 concurrency:
   group: main-${{ github.ref }}
-  cancel-in-progress: false   # never cancel a deploy mid-flight
+  cancel-in-progress: false # never cancel a deploy mid-flight
 
 jobs:
   unit_and_integration:
@@ -48,7 +48,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -120,7 +119,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -132,7 +130,7 @@ jobs:
     name: manual promote → production
     runs-on: ubuntu-latest
     needs: e2e_staging
-    environment: production   # GitHub environment gate — manual approval
+    environment: production # GitHub environment gate — manual approval
     steps:
       - uses: azure/login@v2
         with:

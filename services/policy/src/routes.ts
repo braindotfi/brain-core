@@ -70,7 +70,11 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
     ) => {
       const tenant = assertTenantAccess(request, request.params.tenant_id, WRITE);
       const content = request.body?.content;
-      if (content === undefined || !Array.isArray(content.rules) || typeof content.version !== "number") {
+      if (
+        content === undefined ||
+        !Array.isArray(content.rules) ||
+        typeof content.version !== "number"
+      ) {
         throw brainError("policy_rule_invalid", "content must be { version, rules[] }");
       }
       const quorum = request.body?.quorum_required ?? 1;
@@ -134,10 +138,9 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
       }
 
       const { row, activated } = await withTenantScope(deps.pool, tenant, async (c) => {
-        const existing = await c.query<PolicyRow>(
-          `SELECT * FROM policies WHERE id = $1 LIMIT 1`,
-          [body.policy_id],
-        );
+        const existing = await c.query<PolicyRow>(`SELECT * FROM policies WHERE id = $1 LIMIT 1`, [
+          body.policy_id,
+        ]);
         const r = existing.rows[0];
         if (r === undefined) throw brainError("policy_not_found", "policy not found");
         if (r.state !== "pending_signatures") {
@@ -153,12 +156,15 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
         });
 
         for (const sig of body.signatures!) {
+          // PolicyTypedData["types"] uses Array<{name;type}> which satisfies the
+          // runtime contract but doesn't match viem's strict generic inference.
+          type VerifyArgs = Parameters<typeof verifyTypedData>[0];
           const ok = await verifyTypedData({
             address: sig.address,
-            domain: typed.domain,
-            types: typed.types,
+            domain: typed.domain as VerifyArgs["domain"],
+            types: typed.types as unknown as VerifyArgs["types"],
             primaryType: typed.primaryType,
-            message: typed.message,
+            message: typed.message as VerifyArgs["message"],
             signature: sig.signature,
           });
           if (!ok) {

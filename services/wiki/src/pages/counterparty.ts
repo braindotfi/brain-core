@@ -9,7 +9,8 @@ export class CounterpartyPageGenerator implements PageGenerator {
   public readonly pageType = "counterparty" as const;
 
   public resolveSlug(slugOrId: string): { subjectId: string | null; slug: string } | null {
-    if (slugOrId.startsWith("cp_")) return { subjectId: slugOrId, slug: `/counterparties/${slugOrId}` };
+    if (slugOrId.startsWith("cp_"))
+      return { subjectId: slugOrId, slug: `/counterparties/${slugOrId}` };
     if (slugOrId.startsWith("/counterparties/")) {
       const id = slugOrId.slice("/counterparties/".length);
       return { subjectId: id, slug: slugOrId };
@@ -39,7 +40,10 @@ export class CounterpartyPageGenerator implements PageGenerator {
 
     const linkedEntities = bullet(
       [
-        ...openObligations.map((o) => `\`${o.id}\` — ${o.type} due ${o.due_date.toISOString().slice(0, 10)} (${o.amount_due} ${o.currency})`),
+        ...openObligations.map(
+          (o) =>
+            `\`${o.id}\` — ${o.type} due ${o.due_date.toISOString().slice(0, 10)} (${o.amount_due} ${o.currency})`,
+        ),
       ],
       "_No open obligations._",
     );
@@ -122,10 +126,7 @@ interface OblRow {
   currency: string;
   due_date: Date;
 }
-async function fetchOpenObligations(
-  deps: PageGenerationContext,
-  id: string,
-): Promise<OblRow[]> {
+async function fetchOpenObligations(deps: PageGenerationContext, id: string): Promise<OblRow[]> {
   const { rows } = await deps.client.query<OblRow>(
     `SELECT id, type, status, amount_due, currency, due_date
        FROM ledger_obligations
@@ -145,10 +146,7 @@ interface TxRow {
   direction: string;
   transaction_date: Date;
 }
-async function fetchRecentTransactions(
-  deps: PageGenerationContext,
-  id: string,
-): Promise<TxRow[]> {
+async function fetchRecentTransactions(deps: PageGenerationContext, id: string): Promise<TxRow[]> {
   const { rows } = await deps.client.query<TxRow>(
     `SELECT id, account_id, amount, currency, direction, transaction_date
        FROM ledger_transactions

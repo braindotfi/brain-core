@@ -154,7 +154,11 @@ function interpretExisting(raw: string, suppliedBodyHash: string): IdempotencyLo
     return { state: "miss" };
   }
   const storedHash = parsed.body_hash ?? "";
-  if (parsed.state === "done" && typeof parsed.status === "number" && typeof parsed.body === "string") {
+  if (
+    parsed.state === "done" &&
+    typeof parsed.status === "number" &&
+    typeof parsed.body === "string"
+  ) {
     if (storedHash !== suppliedBodyHash) {
       return { state: "conflict", storedBodyHash: storedHash, suppliedBodyHash };
     }

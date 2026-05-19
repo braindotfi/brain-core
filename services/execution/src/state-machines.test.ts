@@ -30,9 +30,11 @@ describe("§8.1 proposal", () => {
     for (const to of PROP) expect(isValidProposalTransition("failed", to)).toBe(false);
   });
   it("property: no self-transitions", () => {
-    fc.assert(fc.property(fc.constantFrom(...PROP), (s) => {
-      expect(isValidProposalTransition(s, s)).toBe(false);
-    }));
+    fc.assert(
+      fc.property(fc.constantFrom(...PROP), (s) => {
+        expect(isValidProposalTransition(s, s)).toBe(false);
+      }),
+    );
   });
 });
 
@@ -48,9 +50,13 @@ describe("§8.2 execution", () => {
   });
   it("property: terminal states never transition", () => {
     fc.assert(
-      fc.property(fc.constantFrom("completed", "failed" as const), fc.constantFrom(...EXEC), (from, to) => {
-        expect(isValidExecutionTransition(from, to)).toBe(false);
-      }),
+      fc.property(
+        fc.constantFrom("completed" as const, "failed" as const),
+        fc.constantFrom(...EXEC),
+        (from, to) => {
+          expect(isValidExecutionTransition(from, to)).toBe(false);
+        },
+      ),
     );
   });
 });
@@ -66,9 +72,13 @@ describe("§8.4 agent registration", () => {
   });
   it("property: terminal states are sinks", () => {
     fc.assert(
-      fc.property(fc.constantFrom("revoked", "failed" as const), fc.constantFrom(...AGENT), (from, to) => {
-        expect(isValidAgentTransition(from, to)).toBe(false);
-      }),
+      fc.property(
+        fc.constantFrom("revoked" as const, "failed" as const),
+        fc.constantFrom(...AGENT),
+        (from, to) => {
+          expect(isValidAgentTransition(from, to)).toBe(false);
+        },
+      ),
     );
   });
 });

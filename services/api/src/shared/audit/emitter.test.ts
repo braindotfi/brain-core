@@ -1,3 +1,4 @@
+import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { newTenantId, newUserId } from "../ids.js";
 import { InMemoryAuditEmitter, PostgresAuditEmitter } from "./emitter.js";
@@ -71,7 +72,7 @@ function makeFakePgPool(rows: Array<{ event_hash: string }> = []) {
     }),
   };
   return {
-    pool: { connect: async () => client } as unknown as import("pg").Pool,
+    pool: { connect: async () => client } as unknown as Pool,
     client,
     log,
   };
@@ -118,7 +119,7 @@ describe("PostgresAuditEmitter", () => {
     };
     const pool = {
       connect: async () => failingClient,
-    } as unknown as import("pg").Pool;
+    } as unknown as Pool;
     const emitter = new PostgresAuditEmitter(pool);
 
     await expect(emitter.emit(baseEvent())).rejects.toThrow(/boom/);

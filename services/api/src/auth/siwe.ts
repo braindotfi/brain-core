@@ -13,7 +13,7 @@
 import { type FastifyInstance, type FastifyRequest, type FastifyReply } from "fastify";
 import { SiweMessage, generateNonce } from "siwe";
 import { brainId, newTokenId } from "../shared/ids.js";
-import { JwtSigner } from "../shared/auth/signer.js";
+import type { JwtSigner } from "../shared/auth/signer.js";
 import { brainError } from "../shared/errors.js";
 import type { Scope } from "../shared/auth/scopes.js";
 
@@ -30,10 +30,7 @@ interface NonceEntry {
   expires: number;
 }
 
-export async function registerSiweRoutes(
-  app: FastifyInstance,
-  opts: SiweOptions,
-): Promise<void> {
+export async function registerSiweRoutes(app: FastifyInstance, opts: SiweOptions): Promise<void> {
   // In-process nonce map keyed by session_id.
   // TODO: replace with Redis-backed store for production multi-instance deployments.
   const nonces = new Map<string, NonceEntry>();

@@ -58,10 +58,19 @@ export interface IAuditService {
   getEvent(
     ctx: ServiceCallContext,
     id: string,
-  ): Promise<{ event: AuditEventRecord; inclusion_proof: string[]; merkle_root: string | null; anchor_id: string | null } | null>;
+  ): Promise<{
+    event: AuditEventRecord;
+    inclusion_proof: string[];
+    merkle_root: string | null;
+    anchor_id: string | null;
+  } | null>;
 
   /** Every event touching a Ledger row, by entity type. */
-  entityHistory(ctx: ServiceCallContext, entityType: string, entityId: string): Promise<AuditEventRecord[]>;
+  entityHistory(
+    ctx: ServiceCallContext,
+    entityType: string,
+    entityId: string,
+  ): Promise<AuditEventRecord[]>;
 
   latestAnchor(ctx: ServiceCallContext): Promise<AuditAnchorRecord | null>;
 

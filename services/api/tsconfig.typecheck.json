@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "incremental": false,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@brain/api": ["src/index.ts"],
+      "@brain/api/shared": ["src/shared/index.ts"],
+      "@brain/api/shared/*": ["src/shared/*.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

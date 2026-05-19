@@ -4,6 +4,7 @@ import js from "@eslint/js";
 import tseslint from "@typescript-eslint/eslint-plugin";
 import tsparser from "@typescript-eslint/parser";
 import prettier from "eslint-config-prettier";
+import globals from "globals";
 
 export default [
   {
@@ -27,8 +28,18 @@ export default [
       parserOptions: {
         ecmaVersion: 2023,
         sourceType: "module",
-        project: ["./services/*/tsconfig.json"],
+        project: [
+          "./services/*/tsconfig.json",
+          "./services/*/tsconfig.typecheck.json",
+          "./clients/*/tsconfig.json",
+          "./clients/*/tsconfig.typecheck.json",
+        ],
         tsconfigRootDir: import.meta.dirname,
+      },
+      globals: {
+        ...globals.node,
+        ...globals.es2021,
+        NodeJS: "readonly",
       },
     },
     plugins: {

@@ -14,10 +14,18 @@
 import type { BrainErrorCode } from "../errors.js";
 import { brainError } from "../errors.js";
 
-export const LAYERS = ["raw", "wiki", "policy", "execution", "audit"] as const;
+export const LAYERS = [
+  "raw",
+  "ledger",
+  "wiki",
+  "policy",
+  "execution",
+  "payment_intent",
+  "audit",
+] as const;
 export type Layer = (typeof LAYERS)[number];
 
-export const VERBS = ["read", "write", "admin", "propose", "sign"] as const;
+export const VERBS = ["read", "write", "admin", "propose", "approve", "execute", "sign"] as const;
 export type Verb = (typeof VERBS)[number];
 
 /** `{layer}:{verb}` tuple. Narrower types could enumerate valid pairs,
@@ -29,6 +37,9 @@ export const VALID_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "raw:read",
   "raw:write",
   "raw:admin",
+  "ledger:read",
+  "ledger:write",
+  "ledger:admin",
   "wiki:read",
   "wiki:write",
   "wiki:admin",
@@ -40,6 +51,9 @@ export const VALID_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "execution:write",
   "execution:admin",
   "execution:propose",
+  "payment_intent:propose",
+  "payment_intent:approve",
+  "payment_intent:execute",
   "audit:read",
   "audit:admin",
 ]);
@@ -68,10 +82,7 @@ function impliedAdmin(scope: Scope): Scope {
   return `${layer}:admin` as Scope;
 }
 
-export function requireScope(
-  held: ReadonlyArray<string>,
-  required: Scope,
-): void {
+export function requireScope(held: ReadonlyArray<string>, required: Scope): void {
   if (!hasScope(held, required)) {
     const code: BrainErrorCode = "auth_scope_insufficient";
     throw brainError(code, `missing required scope: ${required}`, {

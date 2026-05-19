@@ -30,12 +30,7 @@ export * from "./db/tenant-scoped.js";
 // Auth (§3)
 export * from "./auth/principal.js";
 export * from "./auth/scopes.js";
-export {
-  JwtVerifier,
-  projectPrincipal,
-  verifyWithKey,
-  type VerifyOptions,
-} from "./auth/jwt.js";
+export { JwtVerifier, projectPrincipal, verifyWithKey, type VerifyOptions } from "./auth/jwt.js";
 export { JwtSigner, type SignOptions } from "./auth/signer.js";
 export {
   RedisRevocationStore,
@@ -60,11 +55,7 @@ export { default as idempotencyPlugin } from "./idempotency/middleware.js";
 // Audit (§1 principle 4)
 export * from "./audit/types.js";
 export * from "./audit/hash.js";
-export {
-  InMemoryAuditEmitter,
-  PostgresAuditEmitter,
-  type AuditEmitter,
-} from "./audit/emitter.js";
+export { InMemoryAuditEmitter, PostgresAuditEmitter, type AuditEmitter } from "./audit/emitter.js";
 
 // HTTP plumbing
 export { default as requestIdPlugin, sanitizeRequestId } from "./http/request-id.js";
@@ -85,8 +76,14 @@ export { createQueue, createWorker, redisConnectionFromUrl } from "./queue/facto
 // Content addressing
 export { hashStream, teeSha256 } from "./hashing.js";
 
-// Webhook verification
+// Webhook verification (inbound Plaid) + outbound dispatcher
 export { verifyPlaidWebhook, type PlaidVerifyOptions } from "./webhooks/plaid.js";
+export {
+  WebhookDispatcher,
+  WebhookAuditEmitter,
+  generateWebhookSecret,
+  FORWARDED_EVENTS,
+} from "./webhooks/outbound.js";
 
 // LLM + embeddings (§2 stack: Claude + OpenAI)
 export * from "./llm/types.js";

@@ -16,6 +16,7 @@ import {
 import { LedgerService } from "./service/LedgerService.js";
 import { ReconciliationService } from "./reconciliation/ReconciliationService.js";
 import { registerLedgerRoutes } from "./routes/index.js";
+import { registerCashFlowRoutes } from "./cash_flows/routes.js";
 import type { LedgerDeps } from "./deps.js";
 
 export interface BuildLedgerAppOptions {
@@ -41,6 +42,7 @@ export async function buildLedgerApp(opts: BuildLedgerAppOptions): Promise<Fasti
     audit: opts.deps.audit,
   });
   await registerLedgerRoutes(app, ledger, reconciliation);
+  await registerCashFlowRoutes(app, ledger);
   return app;
 }
 
@@ -54,4 +56,5 @@ export async function registerLedgerPlugin(app: FastifyInstance, deps: LedgerDep
   const service = new LedgerService(deps);
   const reconciliation = new ReconciliationService({ pool: deps.pool, audit: deps.audit });
   await registerLedgerRoutes(app, service, reconciliation);
+  await registerCashFlowRoutes(app, service);
 }

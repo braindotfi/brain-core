@@ -44,4 +44,8 @@ export interface ServiceCallContext {
   actor: string;
   /** Request id for tracing through audit events. */
   requestId?: string;
+  /** Principal type from the JWT. Present on authenticated HTTP routes; absent on background workers. */
+  principalType?: "user" | "agent" | "api_partner";
+  /** Scopes granted by the JWT. Present on authenticated HTTP routes; absent on background workers. */
+  scopes?: ReadonlyArray<string>;
 }

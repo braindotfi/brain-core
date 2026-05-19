@@ -31,7 +31,11 @@ export interface SignedUrlOptions {
 }
 
 export interface BlobAdapter {
-  put(path: string, body: Uint8Array | NodeJS.ReadableStream, opts: PutOptions): Promise<BlobObject>;
+  put(
+    path: string,
+    body: Uint8Array | NodeJS.ReadableStream,
+    opts: PutOptions,
+  ): Promise<BlobObject>;
   get(path: string): Promise<NodeJS.ReadableStream>;
   signedUrl(path: string, opts: SignedUrlOptions): Promise<string>;
   /** Tombstone — never deletes bytes (§3 Layer 1 immutability). Attaches metadata flag. */

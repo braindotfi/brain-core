@@ -60,14 +60,14 @@ The Wiki is a compiled, continuously-updated memory artifact derived from Ledger
 
 ### Core principle
 
-| Layer  | Owns                                          |
-| ------ | --------------------------------------------- |
-| Raw    | Source evidence                               |
-| Ledger | Machine-readable financial truth              |
-| Wiki   | Human-readable financial memory               |
-| Policy | Deterministic permission and approval logic   |
-| Agent  | Proposal/action orchestration                 |
-| Audit  | Immutable proof of what happened and why      |
+| Layer  | Owns                                        |
+| ------ | ------------------------------------------- |
+| Raw    | Source evidence                             |
+| Ledger | Machine-readable financial truth            |
+| Wiki   | Human-readable financial memory             |
+| Policy | Deterministic permission and approval logic |
+| Agent  | Proposal/action orchestration               |
+| Audit  | Immutable proof of what happened and why    |
 
 ## 2. Tech stack
 
@@ -394,12 +394,12 @@ rules:
   - id: <string>
     applies_to: [outbound_payment | inbound_payment | ledger_write | onchain_tx | any]
     when:
-      counterparty.in: <list_ref>          # vendors.trusted, etc.
+      counterparty.in: <list_ref> # vendors.trusted, etc.
       counterparty.not_in: <list_ref>
       counterparty.verified: true|false
-      amount.lte: {currency, value}
-      amount.gt:  {currency, value}
-      account.balance.gte: {currency, value}
+      amount.lte: { currency, value }
+      amount.gt: { currency, value }
+      account.balance.gte: { currency, value }
       agent.role: <role>
       time_window: <cron_expr>
     require: [single_signer | <role>_approval | <role>_and_<role>]
@@ -500,9 +500,9 @@ MCP interface. External agents (tenant-authorized) connect via MCP and get bidir
 
 MCP implementation (v0.3). The `@brain/mcp` workspace ships a JSON-RPC 2.0 dispatcher mounted at `POST /v1/agents/mcp`, single-shot HTTP transport (one request, one response — SSE / streamable transports are post-MVP behind a feature flag). The surface is:
 
-* **10 tools** across four capability groups: Ledger read (`ledger.account.get`, `ledger.accounts.list`, `ledger.transactions.list`, `ledger.obligations.list`, `ledger.counterparties.list`), Wiki read (`wiki.question`, `wiki.page.get`), Raw contribute (`raw.contribute`), Payment-intent propose (`payment_intent.propose` — note: no `.execute`; the §6 13-step gate is the only execution path), and Agent action propose (`agent.action.propose`).
-* **5 resource templates** addressable by `brain://` URIs: ledger accounts, ledger transactions, ledger payment-intents, wiki pages, raw evidence.
-* **5 canned prompts** for the most common agent loops: cash flow summary, bills due, spending change, invoice status, subscriptions.
+- **10 tools** across four capability groups: Ledger read (`ledger.account.get`, `ledger.accounts.list`, `ledger.transactions.list`, `ledger.obligations.list`, `ledger.counterparties.list`), Wiki read (`wiki.question`, `wiki.page.get`), Raw contribute (`raw.contribute`), Payment-intent propose (`payment_intent.propose` — note: no `.execute`; the §6 13-step gate is the only execution path), and Agent action propose (`agent.action.propose`).
+- **5 resource templates** addressable by `brain://` URIs: ledger accounts, ledger transactions, ledger payment-intents, wiki pages, raw evidence.
+- **5 canned prompts** for the most common agent loops: cash flow summary, bills due, spending change, invoice status, subscriptions.
 
 Auth chain. The Fastify `authPlugin` validates the JWT and resolves the principal (tenant + scopes) upstream. The MCP layer adds three checks before any method dispatch: (a) the agent record in `agents` is `active`; (b) the JWT's `scope_hash` claim matches the on-chain hash registered in `BrainMCPAgentRegistry` (verified once and cached for 60 s per agent); (c) JWT tenant equals agent tenant. Failures map to JSON-RPC error codes -32001..-32005. Tool calls then enforce per-call scopes (`ledger:read`, `wiki:read`, `raw:write`, `payment_intent:propose`, `agent:propose`).
 

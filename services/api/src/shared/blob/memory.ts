@@ -21,7 +21,12 @@ export class MemoryBlobAdapter implements BlobAdapter {
     opts: PutOptions,
   ): Promise<BlobObject> {
     const buf = await toBuffer(body);
-    const entry: { body: Buffer; contentType?: string; metadata: Record<string, string>; tombstoned: false } = {
+    const entry: {
+      body: Buffer;
+      contentType?: string;
+      metadata: Record<string, string>;
+      tombstoned: false;
+    } = {
       body: buf,
       metadata: { ...(opts.metadata ?? {}) },
       tombstoned: false,

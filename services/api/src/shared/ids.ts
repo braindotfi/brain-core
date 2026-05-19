@@ -29,6 +29,9 @@ export const ID_PREFIX = {
   wikiEntity: "ent",
   wikiRelation: "rel",
   wikiPage: "wpg",
+  // Sources (v0.3 / PLAN-FIRST #12). One row per adapter connection.
+  source: "src",
+  sourceSyncJob: "sjob",
   // Ledger entities (v0.3 / Layer 2). Prefixes are wire-visible — never rename.
   ledgerAccount: "acct",
   ledgerBalance: "bal",
@@ -44,6 +47,7 @@ export const ID_PREFIX = {
   // Cross-layer
   policyDecision: "pd",
   approval: "appr",
+  webhookEndpoint: "whe",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];
@@ -72,6 +76,8 @@ export const newRawParsedId = (): string => brainId(ID_PREFIX.rawParsed);
 export const newWikiEntityId = (): string => brainId(ID_PREFIX.wikiEntity);
 export const newWikiRelationId = (): string => brainId(ID_PREFIX.wikiRelation);
 export const newWikiPageId = (): string => brainId(ID_PREFIX.wikiPage);
+export const newSourceId = (): string => brainId(ID_PREFIX.source);
+export const newSourceSyncJobId = (): string => brainId(ID_PREFIX.sourceSyncJob);
 export const newAccountId = (): string => brainId(ID_PREFIX.ledgerAccount);
 export const newBalanceId = (): string => brainId(ID_PREFIX.ledgerBalance);
 export const newTransactionId = (): string => brainId(ID_PREFIX.ledgerTransaction);
@@ -85,15 +91,14 @@ export const newPaymentIntentId = (): string => brainId(ID_PREFIX.ledgerPaymentI
 export const newReconciliationMatchId = (): string => brainId(ID_PREFIX.ledgerReconciliationMatch);
 export const newPolicyDecisionId = (): string => brainId(ID_PREFIX.policyDecision);
 export const newApprovalId = (): string => brainId(ID_PREFIX.approval);
+export const newWebhookEndpointId = (): string => brainId(ID_PREFIX.webhookEndpoint);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.
  * Use when you need to assert an ID is of a given kind at a trust boundary
  * (e.g., path-param that must be a tenant id).
  */
-export function parseBrainId(
-  id: string,
-): { prefix: string; ulid: string } | null {
+export function parseBrainId(id: string): { prefix: string; ulid: string } | null {
   const idx = id.indexOf("_");
   if (idx <= 0 || idx === id.length - 1) return null;
   const prefix = id.slice(0, idx);

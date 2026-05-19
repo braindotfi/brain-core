@@ -5,15 +5,10 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo.main"
   },
-  "include": [
-    "src/main.ts",
-    "src/auth/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist"
-  ],
+  "include": ["src/main.ts", "src/auth/**/*.ts", "src/sandbox/**/*.ts"],
+  "exclude": ["node_modules", "dist"],
   "references": [
+    { "path": "." },
     { "path": "../raw" },
     { "path": "../ledger" },
     { "path": "../wiki" },

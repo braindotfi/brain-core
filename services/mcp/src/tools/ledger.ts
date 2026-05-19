@@ -25,8 +25,7 @@ interface AccountGetInput {
 
 export const accountGetTool: Tool<AccountGetInput> = {
   name: "ledger.account.get",
-  description:
-    "Fetch one account by id, including the most recent balance snapshot.",
+  description: "Fetch one account by id, including the most recent balance snapshot.",
   requiredScopes: ["ledger:read"],
   inputSchema: {
     type: "object",
@@ -99,7 +98,8 @@ export const accountsListTool: Tool<AccountsListInput> = {
       ...(input.limit !== undefined ? { limit: input.limit } : {}),
     });
     const lines = list.items.map(
-      (a) => `- ${a.name} (\`${a.id}\`, ${a.account_type}) — ${a.current_balance ?? "?"} ${a.currency} · ${a.status}`,
+      (a) =>
+        `- ${a.name} (\`${a.id}\`, ${a.account_type}) — ${a.current_balance ?? "?"} ${a.currency} · ${a.status}`,
     );
     return {
       payload: list,
@@ -136,7 +136,10 @@ export const transactionsListTool: Tool<TransactionsListInput> = {
       account_id: { type: "string" },
       counterparty_id: { type: "string" },
       direction: { type: "string", enum: ["inflow", "outflow", "transfer", "adjustment"] },
-      status: { type: "string", enum: ["pending", "posted", "cleared", "failed", "reversed", "disputed"] },
+      status: {
+        type: "string",
+        enum: ["pending", "posted", "cleared", "failed", "reversed", "disputed"],
+      },
       since: { type: "string", format: "date-time" },
       until: { type: "string", format: "date-time" },
       limit: { type: "integer", minimum: 1, maximum: 1000 },
@@ -144,7 +147,14 @@ export const transactionsListTool: Tool<TransactionsListInput> = {
   },
   parseInput(params): TransactionsListInput {
     const out: TransactionsListInput = {};
-    for (const k of ["account_id", "counterparty_id", "direction", "status", "since", "until"] as const) {
+    for (const k of [
+      "account_id",
+      "counterparty_id",
+      "direction",
+      "status",
+      "since",
+      "until",
+    ] as const) {
       const v = optionalString(params, k);
       if (v !== undefined) (out as Record<string, unknown>)[k] = v;
     }
@@ -199,7 +209,10 @@ export const obligationsListTool: Tool<ObligationsListInput> = {
   inputSchema: {
     type: "object",
     properties: {
-      status: { type: "string", enum: ["upcoming", "due", "paid", "overdue", "cancelled", "disputed"] },
+      status: {
+        type: "string",
+        enum: ["upcoming", "due", "paid", "overdue", "cancelled", "disputed"],
+      },
       type: { type: "string" },
       due_before: { type: "string", format: "date-time" },
       limit: { type: "integer", minimum: 1, maximum: 500 },
@@ -248,7 +261,8 @@ interface CounterpartiesListInput {
 
 export const counterpartiesListTool: Tool<CounterpartiesListInput> = {
   name: "ledger.counterparties.list",
-  description: "Search counterparties by name (q) or type. Returns id + name + risk + verified status.",
+  description:
+    "Search counterparties by name (q) or type. Returns id + name + risk + verified status.",
   requiredScopes: ["ledger:read"],
   inputSchema: {
     type: "object",

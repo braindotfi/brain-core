@@ -47,12 +47,8 @@ describe("revisionFromTouches", () => {
     expect(a).toMatch(/^[0-9a-f]{16}$/);
   });
   it("changes when an updated_at moves", () => {
-    const a = revisionFromTouches([
-      { id: "tx_1", updated_at: new Date("2026-04-01T00:00:00Z") },
-    ]);
-    const b = revisionFromTouches([
-      { id: "tx_1", updated_at: new Date("2026-04-02T00:00:00Z") },
-    ]);
+    const a = revisionFromTouches([{ id: "tx_1", updated_at: new Date("2026-04-01T00:00:00Z") }]);
+    const b = revisionFromTouches([{ id: "tx_1", updated_at: new Date("2026-04-02T00:00:00Z") }]);
     expect(a).not.toBe(b);
   });
 });

@@ -132,10 +132,7 @@ function makeServer(scopes: string[] = ["ledger:read", "wiki:read"]) {
 describe("BrainMcpServer.handle — protocol surface", () => {
   it("initialize returns protocolVersion + capabilities", async () => {
     const { server, p } = makeServer();
-    const res = await server.handle(
-      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
-      p,
-    );
+    const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, p);
     expect("result" in res).toBe(true);
     if ("result" in res) {
       const r = res.result as { protocolVersion: string; capabilities: unknown };

@@ -1,14 +1,16 @@
 /**
- * Audit routes: 5 endpoints per Brain_API_Specification.yaml §Audit.
+ * Audit routes: 5 core endpoints + 3 webhook endpoint management routes.
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   brainError,
+  newWebhookEndpointId,
   requireScope,
   withTenantScope,
   type Scope,
 } from "@brain/api/shared";
+import { FORWARDED_EVENTS, generateWebhookSecret } from "@brain/api/shared";
 import { buildTree, makeProof, verifyProof } from "./merkle.js";
 import {
   findEvent,
@@ -19,9 +21,11 @@ import {
   SUPPORTED_AUDIT_ENTITY_TYPES,
   type AuditEventRow,
 } from "./repository.js";
+import { deleteWebhookEndpoint, insertWebhookEndpoint, listWebhookEndpoints } from "./webhooks.js";
 import type { AuditDeps } from "./deps.js";
 
 const READ: Scope = "audit:read";
+const WRITE: Scope = "audit:write";
 
 export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps): Promise<void> {
   // GET /audit/events — filter by layer/since/until
@@ -219,6 +223,97 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
       const ok = verifyProof(root, leaf, proof);
       reply.status(200);
       return { ok };
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Outbound webhook endpoint management
+  // POST /audit/webhooks/endpoints    — register a new endpoint (returns secret once)
+  // GET  /audit/webhooks/endpoints    — list endpoints (secret masked)
+  // DELETE /audit/webhooks/endpoints/:id — remove an endpoint
+  // -------------------------------------------------------------------------
+
+  app.post(
+    "/audit/webhooks/endpoints",
+    async (
+      request: FastifyRequest<{
+        Body: { url?: string; enabled_events?: string[] };
+      }>,
+      reply,
+    ) => {
+      const principal = requirePrincipal(request);
+      requireScope(principal.scopes, WRITE);
+      const { url, enabled_events } = request.body ?? {};
+      if (typeof url !== "string" || !url.startsWith("https://")) {
+        throw brainError("request_body_invalid", "url must be an https:// string");
+      }
+      if (
+        enabled_events !== undefined &&
+        (!Array.isArray(enabled_events) || enabled_events.some((e) => !FORWARDED_EVENTS.has(e)))
+      ) {
+        throw brainError(
+          "request_body_invalid",
+          "enabled_events must be a subset of forwarded event types",
+          {
+            details: { allowed: [...FORWARDED_EVENTS] },
+          },
+        );
+      }
+      const secret = generateWebhookSecret();
+      const id = newWebhookEndpointId();
+      const row = await withTenantScope(deps.pool, principal.tenantId, (c) =>
+        insertWebhookEndpoint(c, {
+          id,
+          tenant_id: principal.tenantId,
+          url,
+          secret,
+          enabled_events: enabled_events ?? null,
+        }),
+      );
+      reply.status(201);
+      // Secret returned only on creation.
+      return {
+        id: row.id,
+        url: row.url,
+        enabled_events: row.enabled_events,
+        enabled: row.enabled,
+        secret,
+        created_at: row.created_at.toISOString(),
+      };
+    },
+  );
+
+  app.get("/audit/webhooks/endpoints", async (request: FastifyRequest, reply) => {
+    const principal = requirePrincipal(request);
+    requireScope(principal.scopes, READ);
+    const rows = await withTenantScope(deps.pool, principal.tenantId, (c) =>
+      listWebhookEndpoints(c),
+    );
+    reply.status(200);
+    return {
+      endpoints: rows.map((r) => ({
+        id: r.id,
+        url: r.url,
+        enabled_events: r.enabled_events,
+        enabled: r.enabled,
+        secret_preview: `${r.secret.slice(0, 8)}...`,
+        created_at: r.created_at.toISOString(),
+      })),
+    };
+  });
+
+  app.delete(
+    "/audit/webhooks/endpoints/:id",
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+      const principal = requirePrincipal(request);
+      requireScope(principal.scopes, WRITE);
+      const deleted = await withTenantScope(deps.pool, principal.tenantId, (c) =>
+        deleteWebhookEndpoint(c, request.params.id),
+      );
+      if (!deleted) {
+        throw brainError("audit_event_not_found", "webhook endpoint not found");
+      }
+      reply.status(204);
     },
   );
 }

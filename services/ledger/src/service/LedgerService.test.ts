@@ -1,5 +1,6 @@
+import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, isBrainError } from "@brain/api/shared";
+import { InMemoryAuditEmitter, isBrainError, newTenantId, newUserId } from "@brain/api/shared";
 import { LedgerService } from "./LedgerService.js";
 
 /**
@@ -9,7 +10,7 @@ import { LedgerService } from "./LedgerService.js";
  */
 type SqlPattern = string;
 function fakePool(routes: Record<SqlPattern, Array<Record<string, unknown>>> = {}): {
-  pool: import("pg").Pool;
+  pool: Pool;
   log: string[];
 } {
   const log: string[] = [];
@@ -30,11 +31,11 @@ function fakePool(routes: Record<SqlPattern, Array<Record<string, unknown>>> = {
     }),
     release: vi.fn(),
   };
-  const pool = { connect: async () => client } as unknown as import("pg").Pool;
+  const pool = { connect: async () => client } as unknown as Pool;
   return { pool, log };
 }
 
-const ctx = { tenantId: "tnt_test", actor: "user_test" };
+const ctx = { tenantId: newTenantId(), actor: newUserId() };
 
 // =============================================================================
 // READS
@@ -468,11 +469,7 @@ describe("LedgerService.normalizeFromRaw", () => {
     });
     const service = new LedgerService({ pool, audit });
     const result = await service.normalizeFromRaw(ctx, "prs_def");
-    expect(result.created.map((r) => r.entity)).toEqual([
-      "account",
-      "counterparty",
-      "transaction",
-    ]);
+    expect(result.created.map((r) => r.entity)).toEqual(["account", "counterparty", "transaction"]);
     expect(audit.events.some((e) => e.action === "ledger.account.created")).toBe(true);
     expect(audit.events.some((e) => e.action === "ledger.transaction.posted")).toBe(true);
   });

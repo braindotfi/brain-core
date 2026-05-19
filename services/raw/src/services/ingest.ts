@@ -41,10 +41,7 @@ export interface IngestDeps {
   audit: AuditEmitter;
 }
 
-export async function ingestOne(
-  deps: IngestDeps,
-  input: IngestInput,
-): Promise<IngestResult> {
+export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<IngestResult> {
   const sha = sha256Hex(input.body);
   const id = newRawArtifactId();
   const path = blobPath(input.tenantId, sha);
@@ -61,21 +58,18 @@ export async function ingestOne(
   });
 
   // Insert-or-reuse inside a tenant-scoped TX.
-  const { row, deduplicated } = await withTenantScope(
-    deps.pool,
-    input.tenantId,
-    async (client) =>
-      insertOrReuseArtifact(client, {
-        id,
-        tenantId: input.tenantId,
-        sha256Hex: sha,
-        sourceType: input.sourceType,
-        sourceRef: input.sourceRef,
-        blobUri: path,
-        mimeType: input.mimeType,
-        bytes: input.body.length,
-        ingestedBy: input.actor,
-      }),
+  const { row, deduplicated } = await withTenantScope(deps.pool, input.tenantId, async (client) =>
+    insertOrReuseArtifact(client, {
+      id,
+      tenantId: input.tenantId,
+      sha256Hex: sha,
+      sourceType: input.sourceType,
+      sourceRef: input.sourceRef,
+      blobUri: path,
+      mimeType: input.mimeType,
+      bytes: input.body.length,
+      ingestedBy: input.actor,
+    }),
   );
 
   // Audit emit — §1 principle 4. Inputs/outputs are hashes and identifiers

@@ -4,7 +4,13 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError, isBrainId, requireScope, withTenantScope, type Scope } from "@brain/api/shared";
+import {
+  brainError,
+  isBrainId,
+  requireScope,
+  withTenantScope,
+  type Scope,
+} from "@brain/api/shared";
 import { findArtifactById, tombstoneArtifact } from "../repository/artifacts.js";
 import type { RawDeps } from "../deps.js";
 
@@ -82,10 +88,8 @@ export async function registerArtifact(app: FastifyInstance, deps: RawDeps): Pro
 
       // Tombstone flag in blob metadata too; does not delete bytes.
       try {
-        const existing = await withTenantScope(
-          deps.pool,
-          request.principal!.tenantId,
-          (c) => findArtifactById(c, id),
+        const existing = await withTenantScope(deps.pool, request.principal!.tenantId, (c) =>
+          findArtifactById(c, id),
         );
         if (existing !== null) {
           await deps.blob.tombstone(existing.blob_uri, request.principal!.id);

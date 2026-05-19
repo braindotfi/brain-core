@@ -128,7 +128,9 @@ export class BrainMcpServer {
     enforceScopes(tool, scopes);
 
     const argsRaw =
-      typeof params.arguments === "object" && params.arguments !== null && !Array.isArray(params.arguments)
+      typeof params.arguments === "object" &&
+      params.arguments !== null &&
+      !Array.isArray(params.arguments)
         ? (params.arguments as Record<string, unknown>)
         : {};
     const input = tool.parseInput(argsRaw);
@@ -155,7 +157,9 @@ export class BrainMcpServer {
     const name = params.name;
     if (typeof name !== "string") invalidParams("'name' is required");
     const argsRaw =
-      typeof params.arguments === "object" && params.arguments !== null && !Array.isArray(params.arguments)
+      typeof params.arguments === "object" &&
+      params.arguments !== null &&
+      !Array.isArray(params.arguments)
         ? (params.arguments as Record<string, unknown>)
         : {};
     // Coerce values to strings; prompts only support string args at v0.3.

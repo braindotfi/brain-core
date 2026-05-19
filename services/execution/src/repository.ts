@@ -66,8 +66,14 @@ export async function insertProposal(
   return row;
 }
 
-export async function findProposal(client: TenantScopedClient, id: string): Promise<ProposalRow | null> {
-  const { rows } = await client.query<ProposalRow>(`SELECT * FROM proposals WHERE id = $1 LIMIT 1`, [id]);
+export async function findProposal(
+  client: TenantScopedClient,
+  id: string,
+): Promise<ProposalRow | null> {
+  const { rows } = await client.query<ProposalRow>(
+    `SELECT * FROM proposals WHERE id = $1 LIMIT 1`,
+    [id],
+  );
   return rows[0] ?? null;
 }
 
@@ -146,8 +152,14 @@ export async function insertExecution(
   return row;
 }
 
-export async function findExecution(client: TenantScopedClient, id: string): Promise<ExecutionRow | null> {
-  const { rows } = await client.query<ExecutionRow>(`SELECT * FROM executions WHERE id = $1 LIMIT 1`, [id]);
+export async function findExecution(
+  client: TenantScopedClient,
+  id: string,
+): Promise<ExecutionRow | null> {
+  const { rows } = await client.query<ExecutionRow>(
+    `SELECT * FROM executions WHERE id = $1 LIMIT 1`,
+    [id],
+  );
   return rows[0] ?? null;
 }
 

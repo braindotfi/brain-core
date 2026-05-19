@@ -6,12 +6,22 @@ describe("canonicalize", () => {
     const a = canonicalize({
       version: 1,
       rules: [
-        { id: "r", applies_to: ["any"], when: { "amount.lte": { currency: "USD", value: "10" } }, execute: "auto" },
+        {
+          id: "r",
+          applies_to: ["any"],
+          when: { "amount.lte": { currency: "USD", value: "10" } },
+          execute: "auto",
+        },
       ],
     });
     const b = canonicalize({
       rules: [
-        { execute: "auto", applies_to: ["any"], id: "r", when: { "amount.lte": { value: "10", currency: "USD" } } },
+        {
+          execute: "auto",
+          applies_to: ["any"],
+          id: "r",
+          when: { "amount.lte": { value: "10", currency: "USD" } },
+        },
       ],
       version: 1,
     });

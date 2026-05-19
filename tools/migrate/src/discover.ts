@@ -66,7 +66,10 @@ export async function discoverMigrations(repoRoot: string): Promise<DiscoveredMi
 async function safeListDirs(root: string): Promise<string[]> {
   try {
     const entries = await readdir(root, { withFileTypes: true });
-    return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return entries
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
   } catch {
     return [];
   }

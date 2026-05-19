@@ -24,17 +24,19 @@
     "contracts:build": "cd contracts && forge build",
     "contracts:test": "cd contracts && forge test",
     "dev:up": "./scripts/dev-up.sh",
-    "dev:down": "docker compose down"
+    "dev:down": "docker compose down",
+    "plaid:sandbox": "pnpm -C tools/plaid-sandbox run start"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
     "@typescript-eslint/eslint-plugin": "^8.8.0",
     "@typescript-eslint/parser": "^8.8.0",
+    "@vitest/coverage-v8": "^2.1.2",
     "eslint": "^9.12.0",
     "eslint-config-prettier": "^9.1.0",
+    "globals": "^17.6.0",
     "prettier": "^3.3.3",
     "typescript": "^5.6.2",
-    "vitest": "^2.1.2",
-    "@vitest/coverage-v8": "^2.1.2"
+    "vitest": "^2.1.2"
   }
 }

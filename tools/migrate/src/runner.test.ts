@@ -33,7 +33,14 @@ function makeFakeClient(selectRows: Array<Record<string, unknown>> = []): {
 }
 
 function m(service: string, name: string, sql: string): DiscoveredMigration {
-  return { service, name, sequence: name.slice(0, 4), path: `${service}/${name}`, sql, key: `${service}/${name}` };
+  return {
+    service,
+    name,
+    sequence: name.slice(0, 4),
+    path: `${service}/${name}`,
+    sql,
+    key: `${service}/${name}`,
+  };
 }
 
 describe("ensureBookkeeping", () => {
@@ -47,7 +54,10 @@ describe("ensureBookkeeping", () => {
 describe("applyAll", () => {
   it("applies pending migrations in order inside BEGIN/COMMIT", async () => {
     const { client, log } = makeFakeClient();
-    const ms = [m("audit", "0001_audit_events.sql", "-- audit sql"), m("raw", "0001_raw_artifacts.sql", "-- raw sql")];
+    const ms = [
+      m("audit", "0001_audit_events.sql", "-- audit sql"),
+      m("raw", "0001_raw_artifacts.sql", "-- raw sql"),
+    ];
 
     const result = await applyAll(client, ms, { appliedBy: "test-user" });
     expect(result.applied.map((x) => x.key)).toEqual(ms.map((x) => x.key));
@@ -55,7 +65,9 @@ describe("applyAll", () => {
 
     // First statement is the bookkeeping CREATE, then SELECT for applied list,
     // then (BEGIN, migration SQL, INSERT brain_migrations, COMMIT) per entry.
-    const meaningful = log.filter((l) => !l.startsWith("SELECT") && !l.includes("CREATE TABLE IF NOT EXISTS brain_migrations"));
+    const meaningful = log.filter(
+      (l) => !l.startsWith("SELECT") && !l.includes("CREATE TABLE IF NOT EXISTS brain_migrations"),
+    );
     expect(meaningful[0]).toBe("BEGIN");
     expect(meaningful[1]).toBe("-- audit sql");
     expect(meaningful[2]).toContain("INSERT INTO brain_migrations");
@@ -112,9 +124,9 @@ describe("applyAll", () => {
         return { rows: [], rowCount: 0 };
       }),
     };
-    await expect(
-      applyAll(client, [m("raw", "0001_broken.sql", "DROP BAD;")]),
-    ).rejects.toThrow(/migration raw\/0001_broken\.sql failed: syntax error/);
+    await expect(applyAll(client, [m("raw", "0001_broken.sql", "DROP BAD;")])).rejects.toThrow(
+      /migration raw\/0001_broken\.sql failed: syntax error/,
+    );
     expect(log).toContain("ROLLBACK");
   });
 });

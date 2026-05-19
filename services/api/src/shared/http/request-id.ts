@@ -18,7 +18,7 @@ import { newRequestId } from "../ids.js";
 
 const HEADER = "x-request-id";
 const MAX_LEN = 128;
-const ALLOWED = /^[A-Za-z0-9._:\-]+$/;
+const ALLOWED = /^[A-Za-z0-9._:-]+$/;
 
 export function sanitizeRequestId(raw: unknown): string | null {
   if (typeof raw !== "string") return null;

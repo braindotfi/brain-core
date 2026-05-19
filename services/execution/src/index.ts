@@ -37,13 +37,12 @@ export {
   OnchainBaseRail,
   defaultRails,
 } from "./rails/stubs.js";
-export type {
-  Rail,
-  RailDispatchInput,
-  RailDispatchResult,
-  RailKind,
-} from "./rails/types.js";
+export type { Rail, RailDispatchInput, RailDispatchResult, RailKind } from "./rails/types.js";
 
 // Boot-binary route registration hooks.
 export { registerExecutionRoutes } from "./routes.js";
 export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
+
+// Repository primitives exposed for boot-binary dependency wiring.
+export { findAgent } from "./repository.js";
+export type { AgentRow } from "./repository.js";
