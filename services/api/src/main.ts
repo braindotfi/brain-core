@@ -38,6 +38,7 @@ import {
   loadConfig,
   brainError,
   withTenantScope,
+  newTokenId,
   type IRawEvidenceService,
   type IWikiMemoryService,
   type ServiceCallContext,
@@ -601,6 +602,39 @@ async function main(): Promise<void> {
             demoMode: true,
           }),
         );
+
+      // GET /v1/demo/token — mints a long-lived demo JWT for the golden-path tenant.
+      // Investors paste the returned token into the SDK quickstart or curl commands.
+      v1.get("/demo/token", { config: { skipAuth: true } }, async (_req, reply) => {
+        const DEMO_TTL_S = 24 * 60 * 60; // 24 hours
+        const token = await demoSigner.sign({
+          id: "usr_01GOLDEN00000000000000000",
+          type: "user",
+          tenantId: "tnt_01GOLDEN00000000000000000",
+          tokenId: newTokenId(),
+          expiresAt: Math.floor(Date.now() / 1000) + DEMO_TTL_S,
+          scopes: [
+            "ledger:read",
+            "wiki:read",
+            "raw:read",
+            "raw:write",
+            "policy:read",
+            "execution:read",
+            "execution:write",
+            "execution:propose",
+            "payment_intent:propose",
+            "payment_intent:approve",
+            "payment_intent:execute",
+            "audit:read",
+            "audit:admin",
+          ],
+        });
+        return reply.send({
+          token,
+          tenant_id: "tnt_01GOLDEN00000000000000000",
+          expires_in: DEMO_TTL_S,
+        });
+      });
       }
     },
     { prefix: "/v1" },
