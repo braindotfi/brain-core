@@ -26,4 +26,20 @@ export {
   type TransactionListPage,
 } from "./resources/ledger.js";
 
+export {
+  AnchorResource,
+  AuditResource,
+  type AnchorRecord,
+  type AuditEventListPage,
+  type AuditEventWithProof,
+  type EntityAuditHistory,
+  type EntityType,
+  type ExportAuditJob,
+  type ExportAuditRequest,
+  type InclusionProof,
+  type ListAuditEventsParams,
+  type VerifyAuditRequest,
+  type VerifyAuditResult,
+} from "./resources/audit.js";
+
 export type { paths, components, operations } from "./generated/openapi.js";

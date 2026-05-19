@@ -17,8 +17,8 @@ This package is the source-of-truth client that backs every code example on
 | Slice | Surface                                                                                                      | Status                  |
 | ----- | ------------------------------------------------------------------------------------------------------------ | ----------------------- |
 | 1A    | `createBrainHttpClient` over the full OpenAPI surface                                                        | **shipped**             |
-| 1B.1  | `Brain` class + ledger reads (accounts, transactions, counterparties, obligations, invoices, balances)       | **shipping in this PR** |
-| 1B.2  | Audit surface: `brain.audit.*`, `brain.proof`                                                                | not yet implemented     |
+| 1B.1  | `Brain` class + ledger reads (accounts, transactions, counterparties, obligations, invoices, balances)       | shipped                 |
+| 1B.2  | Audit surface: `brain.audit.list/get/history/export/verify`, `brain.audit.anchor.latest`, `brain.proof`      | **shipping in this PR** |
 | 1B.3  | Payment intents: `brain.pay`, `brain.approve`, `brain.reject`, `brain.actions.*`                             | not yet implemented     |
 | 1B.4  | Agents, raw/sources                                                                                          | not yet implemented     |
 | 1B.5  | Wiki: `brain.ask` (compound over `/wiki/question`), `brain.wiki.*`                                           | not yet implemented     |
@@ -43,6 +43,18 @@ const counterparties = await brain.counterparties.list({ q: "stripe" });
 const obligations = await brain.obligations.list({ status: "due" });
 const invoices = await brain.invoices.list();
 const balances = await brain.balances.list();
+
+// Audit and proof
+const { events } = await brain.audit.list({ layer: "execution" });
+const { event, inclusionProof } = await brain.audit.get("evt_8231");
+const history = await brain.audit.history("payment_intent", "pi_8231");
+const anchor = await brain.audit.anchor.latest();
+const verification = await brain.audit.verify({
+  eventHash: "0x...",
+  merkleProof: ["0x...", "0x..."],
+  merkleRoot: "0x...",
+});
+const proof = await brain.proof("evt_8231"); // shorthand for audit.get(id).inclusionProof
 ```
 
 On a non-2xx response, methods throw `BrainAPIError` carrying `status`,
