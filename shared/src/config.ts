@@ -66,8 +66,11 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
 
   // ---- Sandbox / demo mode ----
-  /** Set to true to enable sandbox-friendly stub overrides (no live credentials required). */
-  BRAIN_DEMO_MODE: z.coerce.boolean().default(false),
+  /** Set to "true" to enable sandbox-friendly stub overrides (no live credentials required). */
+  BRAIN_DEMO_MODE: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
 
   // ---- Plaid (consumed by tools/plaid-sandbox and Raw webhook verifier) ----
   PLAID_CLIENT_ID: z.string().min(1).optional(),

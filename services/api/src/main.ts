@@ -327,13 +327,18 @@ async function main(): Promise<void> {
     new WebhookDispatcher(pool),
   );
 
+  if (cfg.BRAIN_DEMO_MODE && cfg.NODE_ENV === "production") {
+    throw new Error("BRAIN_DEMO_MODE=true is not allowed in NODE_ENV=production");
+  }
+
   // In demo mode use a local HS256 secret so tokens issued by registerSiwxRoutes
-  // (and any future local issuer) are verifiable without a live JWKS endpoint.
-  // Never set secret in production — keep AUTH_JWKS_URL for asymmetric verification.
-  const DEMO_SIGN_SECRET = "brain-demo-mode-insecure-dev-only";
+  // are verifiable without a live JWKS endpoint.
+  // DEMO_SIGN_SECRET is intentionally scoped here — never accessible in production paths.
   const jwtVerifier = new JwtVerifier({
     jwksUrl: cfg.AUTH_JWKS_URL,
-    ...(cfg.BRAIN_DEMO_MODE ? { secret: DEMO_SIGN_SECRET } : {}),
+    ...(cfg.BRAIN_DEMO_MODE
+      ? { secret: "brain-demo-mode-insecure-dev-only" }
+      : {}),
     issuer: cfg.AUTH_ISSUER,
     audience: cfg.AUTH_AUDIENCE,
     clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
@@ -563,7 +568,7 @@ async function main(): Promise<void> {
         const demoSigner = new JwtSigner({
           issuer: cfg.AUTH_ISSUER,
           audience: cfg.AUTH_AUDIENCE,
-          key: { kty: "oct", k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"), alg: "HS256" },
+          key: { kty: "oct", k: Buffer.from("brain-demo-mode-insecure-dev-only").toString("base64url"), alg: "HS256" },
           algorithm: "HS256",
         });
         await v1.register(async (child) =>
