@@ -26,6 +26,40 @@ This package is the source-of-truth client that backs every code example on
 | 1B.7  | Client-side compounds: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`                                                  | **shipping in this PR** |
 | 1C    | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package)                        | not yet implemented     |
 
+## Quickstart against the hosted sandbox
+
+The Brain sandbox is hosted at `https://api.brain.dev/v1` and runs in demo
+mode with a pre-seeded golden-path dataset (Brain Inc. accounts, Stripe
+counterparty, invoices).
+
+**Step 1 — get a demo token:**
+
+```bash
+export BRAIN_TOKEN=$(curl -s https://api.brain.dev/v1/demo/token | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).token))")
+```
+
+**Step 2 — run the quickstart:**
+
+```bash
+BRAIN_BASE_URL=https://api.brain.dev/v1 \
+  npx tsx clients/sdk/examples/quickstart.ts
+```
+
+Or from within the workspace after `pnpm install`:
+
+```bash
+BRAIN_TOKEN=$(curl -s https://api.brain.dev/v1/demo/token | jq -r .token) \
+BRAIN_BASE_URL=https://api.brain.dev/v1 \
+  pnpm -C clients/sdk exec tsx examples/quickstart.ts
+```
+
+The token is valid for 24 hours. To reset the dataset between demo sessions:
+
+```bash
+# (on the server, or via API — see docs/demo-script.md for the pre-flight checklist)
+pnpm run demo:reset
+```
+
 ## Usage
 
 ### High-Level (`Brain` Class)
