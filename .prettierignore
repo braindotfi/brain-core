@@ -11,3 +11,15 @@ infra/**
 *.tfstate
 *.tfstate.*
 Brain_API_Specification.yaml
+# GitBook-managed docs — formatting owned by GitBook, not prettier
+api-reference/**
+architecture/**
+build/**
+concepts/**
+introduction/**
+legal/**
+mcp-server/**
+protocol/**
+resources/**
+smart-contracts/**
+docs/audits/**

@@ -22,7 +22,7 @@ const TEST_DOMAIN = "api.brain.fi.test";
 // claims, not on the signature.
 const HS256_KEY = {
   kty: "oct",
-  k: "Y3JlYXRlZF9pbl90ZXN0X2Vudmlyb25tZW50X29ubHlf",
+  k: "Y3JlYXRlZF9pbl90ZXN0X2Vudmlyb25tZW50X29ubHlf", // gitleaks:allow
   alg: "HS256",
 };
 

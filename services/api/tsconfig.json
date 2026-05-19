@@ -6,5 +6,12 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/main.ts", "src/auth/**/*.ts", "src/sandbox/**/*.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.test.ts",
+    "src/main.ts",
+    "src/auth/**/*.ts",
+    "src/sandbox/**/*.ts"
+  ]
 }

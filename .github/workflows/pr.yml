@@ -98,7 +98,7 @@ jobs:
           version: stable
 
       - name: Install forge dependencies
-        run: forge install
+        run: forge install foundry-rs/forge-std --no-commit
 
       - name: forge fmt check
         run: forge fmt --check
