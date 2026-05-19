@@ -14,17 +14,17 @@ This package is the source-of-truth client that backs every code example on
 
 ## Status
 
-| Slice | Surface                                                                                                      | Status                  |
-| ----- | ------------------------------------------------------------------------------------------------------------ | ----------------------- |
-| 1A    | `createBrainHttpClient` over the full OpenAPI surface                                                        | **shipped**             |
-| 1B.1  | `Brain` class + ledger reads (accounts, transactions, counterparties, obligations, invoices, balances)       | shipped                 |
-| 1B.2  | Audit surface: `brain.audit.list/get/history/export/verify`, `brain.audit.anchor.latest`, `brain.proof`      | **shipping in this PR** |
-| 1B.3  | Payment intents: `brain.pay`, `brain.approve`, `brain.reject`, `brain.actions.*`                             | not yet implemented     |
-| 1B.4  | Agents, raw/sources                                                                                          | not yet implemented     |
-| 1B.5  | Wiki: `brain.ask` (compound over `/wiki/question`), `brain.wiki.*`                                           | not yet implemented     |
-| 1B.6  | Policy: `brain.policy.*`                                                                                     | not yet implemented     |
-| 1B.7  | Compounds without REST endpoints today: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`          | deferred (need product) |
-| 1C    | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package) | not yet implemented     |
+| Slice | Surface                                                                                                                             | Status                  |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| 1A    | `createBrainHttpClient` over the full OpenAPI surface                                                                               | **shipped**             |
+| 1B.1  | `Brain` class + ledger reads (accounts, transactions, counterparties, obligations, invoices, balances)                              | shipped                 |
+| 1B.2  | Audit surface: `brain.audit.list/get/history/export/verify`, `brain.audit.anchor.latest`, `brain.proof`                             | shipped                 |
+| 1B.3  | Payment intents + actions: `brain.payments.*`, `brain.actions.*`, `brain.pay` / `brain.approve` / `brain.reject` (with idempotency) | **shipping in this PR** |
+| 1B.4  | Agents, raw/sources                                                                                                                 | not yet implemented     |
+| 1B.5  | Wiki: `brain.ask` (compound over `/wiki/question`), `brain.wiki.*`                                                                  | not yet implemented     |
+| 1B.6  | Policy: `brain.policy.*`                                                                                                            | not yet implemented     |
+| 1B.7  | Compounds without REST endpoints today: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`                                 | deferred (need product) |
+| 1C    | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package)                        | not yet implemented     |
 
 ## Usage
 
@@ -55,6 +55,30 @@ const verification = await brain.audit.verify({
   merkleRoot: "0x...",
 });
 const proof = await brain.proof("evt_8231"); // shorthand for audit.get(id).inclusionProof
+
+// Payments — propose + execute compound
+const result = await brain.pay("acme", {
+  action_type: "ach_outbound",
+  source_account_id: "acct_8231",
+  destination_counterparty_id: "cp_555",
+  amount: "1234.00",
+  currency: "USD",
+  invoice_id: "inv_8231",
+  idempotencyKey: crypto.randomUUID(),
+});
+// result.intent (always), result.execution (only if policy auto-approved)
+// Throws PolicyApprovalRequiredError if pending_approval; PolicyRejectedError if rejected.
+
+// Approve / reject flow when policy required confirmation
+await brain.approve("pi_8231");
+await brain.payments.execute("pi_8231");
+
+// Or non-financial agent actions
+const proposal = await brain.actions.propose({
+  agentId: "agent_1",
+  action: { type: "reconciliation_match" /* ... */ },
+  idempotencyKey: crypto.randomUUID(),
+});
 ```
 
 On a non-2xx response, methods throw `BrainAPIError` carrying `status`,
