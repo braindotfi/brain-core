@@ -9,6 +9,7 @@
     { "path": "./services/execution" },
     { "path": "./services/mcp" },
     { "path": "./services/audit" },
-    { "path": "./services/api/tsconfig.main.json" }
+    { "path": "./services/api/tsconfig.main.json" },
+    { "path": "./clients/sdk" }
   ]
 }

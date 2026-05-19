@@ -3,10 +3,8 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
-    "tsBuildInfoFile": "dist/.tsbuildinfo",
-    "lib": ["ES2023", "DOM"],
-    "types": []
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/generated/**/*.d.ts"],
   "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
 }

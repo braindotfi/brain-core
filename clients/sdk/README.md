@@ -1,88 +1,92 @@
-# `@brain/sdk`
+# @brain/sdk
 
-The official TypeScript SDK for the Brain Finance API.
+The typed HTTP client for the Brain API.
 
-Source of truth: <https://docs.brain.fi>. This SDK is the runtime
-implementation of the public contract published on the docs site. Where
-the docs and this SDK disagree, the docs win and the SDK is patched.
+This package is the source-of-truth client that backs every code example on
+[docs.brain.fi](https://docs.brain.fi). It exposes:
 
-## Install
+- A high-level `Brain` class with namespaced helpers (`brain.accounts.list`,
+  `brain.transactions.get`, `brain.obligations.list`, …) as documented on
+  the homepage. The surface lands in slices — see Status below.
+- A low-level typed client (`createBrainHttpClient`) generated from
+  [`Brain_API_Specification.yaml`](../../Brain_API_Specification.yaml) for
+  power users who want raw HTTP access.
 
-```bash
-npm install @brain/sdk
-# or
-pnpm add @brain/sdk
-# or
-yarn add @brain/sdk
-```
+## Status
 
-## Quickstart
+| Slice | Surface                                                                                                      | Status                  |
+| ----- | ------------------------------------------------------------------------------------------------------------ | ----------------------- |
+| 1A    | `createBrainHttpClient` over the full OpenAPI surface                                                        | **shipped**             |
+| 1B.1  | `Brain` class + ledger reads (accounts, transactions, counterparties, obligations, invoices, balances)       | **shipping in this PR** |
+| 1B.2  | Audit surface: `brain.audit.*`, `brain.proof`                                                                | not yet implemented     |
+| 1B.3  | Payment intents: `brain.pay`, `brain.approve`, `brain.reject`, `brain.actions.*`                             | not yet implemented     |
+| 1B.4  | Agents, raw/sources                                                                                          | not yet implemented     |
+| 1B.5  | Wiki: `brain.ask` (compound over `/wiki/question`), `brain.wiki.*`                                           | not yet implemented     |
+| 1B.6  | Policy: `brain.policy.*`                                                                                     | not yet implemented     |
+| 1B.7  | Compounds without REST endpoints today: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`          | deferred (need product) |
+| 1C    | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package) | not yet implemented     |
 
-```ts
+## Usage
+
+### High-level (`Brain` class)
+
+```typescript
 import { Brain } from "@brain/sdk";
 
 const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY! });
 
-// Natural-language query against the tenant's financial brain.
-const answer = await brain.ask("acme", "What did we spend on AWS last month?");
-console.log(answer.text);
-
-// Propose a payment. Policy gates execution.
-const action = await brain.pay("acme", { invoiceId: "inv_8231" });
-
-// Get a verifiable receipt with an on-chain Merkle anchor.
-const proof = await brain.proof(action.id);
+// Ledger reads
+const { accounts, nextCursor } = await brain.accounts.list({ status: "active" });
+const { account, latestBalance } = await brain.accounts.get("acct_8231");
+const { transactions } = await brain.transactions.list({ direction: "inflow", limit: 50 });
+const counterparties = await brain.counterparties.list({ q: "stripe" });
+const obligations = await brain.obligations.list({ status: "due" });
+const invoices = await brain.invoices.list();
+const balances = await brain.balances.list();
 ```
 
-## Configuration
+On a non-2xx response, methods throw `BrainAPIError` carrying `status`,
+`code`, `traceId`, and structured `details` from the standard Brain error
+envelope.
 
-| Option            | Type                        | Default                     | Notes                                                                                                               |
-| ----------------- | --------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `apiKey`          | `string` (required)         | —                           | Server key issued by the Brain Console. Sandbox keys start with `brain_sk_test_`, production with `brain_sk_live_`. |
-| `environment`     | `"sandbox" \| "production"` | `"production"`              | Selects the default base URL. Override with `baseUrl` if needed.                                                    |
-| `baseUrl`         | `string`                    | resolved from `environment` | Production: `https://api.brain.fi/v1`. Sandbox: `https://api.brain.dev/v1`.                                         |
-| `fetch`           | `typeof globalThis.fetch`   | `globalThis.fetch`          | Provide your own `fetch` implementation for runtimes that don't have a global one (older Node, etc.).               |
-| `agentSigner`     | `AgentSigner` (TBD)         | `undefined`                 | Optional SIWX signer for external-agent flows (`brain.auth.signInWithSIWX()`).                                      |
-| `defaultTenantId` | `string`                    | `undefined`                 | If set, methods that take `tenantId` will fall back to this value when called without one.                          |
+### Low-level (`createBrainHttpClient`)
 
-## Runtime support
+For endpoints not yet wrapped by the `Brain` class, or for callers who
+want direct typed-fetch access:
 
-The SDK is runtime-agnostic. It works in:
+```typescript
+import { createBrainHttpClient } from "@brain/sdk";
 
-- Node 18+ (uses the built-in `fetch`)
-- Bun
-- Deno
-- Edge runtimes (Cloudflare Workers, Vercel Edge)
-- Modern browsers (do **not** ship server keys to the browser; this is for read-only use cases like dashboards backed by a JIT-issued public token)
+const http = createBrainHttpClient({
+  apiKey: process.env.BRAIN_API_KEY!,
+});
 
-Pass a custom `fetch` if your runtime needs one.
-
-## Idempotency
-
-Every mutating call (`brain.pay`, `brain.actions.execute`, etc.) sends
-an `Idempotency-Key` header. The SDK generates a ULID per request
-unless you supply your own via `idempotencyKey` on the call options.
-Retries with the same key are guaranteed not to double-execute.
-
-## Errors
-
-The SDK throws typed `BrainError` subclasses. Every code maps 1:1 to
-the canonical registry at <https://docs.brain.fi/resources/errors>.
-
-```ts
-import { Brain, PolicyDeniedError } from "@brain/sdk";
-
-try {
-  await brain.pay("acme", { invoiceId: "inv_8231" });
-} catch (err) {
-  if (err instanceof PolicyDeniedError) {
-    console.log("policy said no:", err.details);
-  }
-  throw err;
-}
+const { data, error } = await http.GET("/audit/anchor/latest");
 ```
 
-## Status
+The client is fully typed against the OpenAPI spec. Path, query, body, and
+response shapes are inferred — there is no hand-written type surface to drift.
 
-`0.1.0` — scaffold. Method surface is published; implementations land
-incrementally. Track progress in `docs/sdk-audit.md` and the PR queue.
+## Codegen
+
+```bash
+pnpm --filter @brain/sdk run codegen
+```
+
+Regenerates `src/generated/openapi.d.ts` from
+[`Brain_API_Specification.yaml`](../../Brain_API_Specification.yaml). The
+generated file is committed so downstream consumers don't need to run codegen
+on `pnpm install`. CI runs `codegen:check` to catch drift.
+
+## Publish target
+
+`private: true` for now. Future intent: publish to GitHub Packages with
+private access (organisation members and authorised consumers only). The
+docs commit to `npm install @brain/sdk`; until a publish workflow lands, that
+command does not yet resolve — see Step 1A in the SDK plan thread for
+sequencing.
+
+## Conventions
+
+Follows the standard Brain TypeScript package layout: strict mode, ESM,
+`tsc -b` build, `dist/` output, Vitest with 80% line / 75% branch coverage.
