@@ -22,6 +22,8 @@ import {
   type RejectPaymentIntentParams,
 } from "./resources/payments.js";
 import { RawResource } from "./resources/raw.js";
+import { WikiResource, type AskParams } from "./resources/wiki.js";
+import type { components } from "./generated/openapi.js";
 
 export type BrainOptions = BrainHttpClientOptions;
 
@@ -52,6 +54,7 @@ export class Brain {
   readonly actions: ActionsResource;
   readonly agents: AgentsResource;
   readonly raw: RawResource;
+  readonly wiki: WikiResource;
 
   constructor(options: BrainOptions) {
     this.http = createBrainHttpClient(options);
@@ -66,6 +69,23 @@ export class Brain {
     this.actions = new ActionsResource(this.http);
     this.agents = new AgentsResource(this.http);
     this.raw = new RawResource(this.http);
+    this.wiki = new WikiResource(this.http);
+  }
+
+  /**
+   * Compound helper documented as `brain.ask(tenantId, question)` on the
+   * homepage. Thin wrapper over `brain.wiki.question`.
+   *
+   * Like `brain.pay`, the `tenantId` argument is reserved for future
+   * cross-tenant API keys; today the tenant is derived from the
+   * authenticated principal and the argument is not sent on the wire.
+   */
+  ask(
+    _tenantId: string,
+    question: string,
+    options: Omit<AskParams, "question"> = {},
+  ): Promise<components["schemas"]["WikiAnswer"]> {
+    return this.wiki.question({ question, ...options });
   }
 
   /**
