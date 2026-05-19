@@ -93,4 +93,11 @@ export {
   type WikiSearchResult,
 } from "./resources/wiki.js";
 
+export {
+  PolicyResource,
+  type PolicySignatureSubmission,
+  type PolicySigningPayload,
+  type SimulatePolicyParams,
+} from "./resources/policy.js";
+
 export type { paths, components, operations } from "./generated/openapi.js";

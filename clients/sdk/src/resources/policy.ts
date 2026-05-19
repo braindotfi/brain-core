@@ -1,0 +1,111 @@
+import type { BrainHttpClient } from "../client.js";
+import { BrainAPIError, type BrainErrorBody } from "../errors.js";
+import type { components } from "../generated/openapi.js";
+
+type Policy = components["schemas"]["Policy"];
+type PolicyDSL = components["schemas"]["PolicyDSL"];
+type PolicyDecision = components["schemas"]["PolicyDecision"];
+type ProposedAction = components["schemas"]["ProposedAction"];
+
+export interface PolicySigningPayload {
+  contentHash: string | undefined;
+  typedData: Record<string, unknown> | undefined;
+  requiredSigners: string[];
+}
+
+export interface PolicySignatureSubmission {
+  contentHash: string;
+  signatures: Array<{ signer: string; signature: string }>;
+}
+
+export interface SimulatePolicyParams {
+  action: ProposedAction;
+  version: number;
+}
+
+function unwrap<T>(data: T | undefined, error: BrainErrorBody | undefined, status: number): T {
+  if (error !== undefined || data === undefined) {
+    throw new BrainAPIError(status, error);
+  }
+  return data;
+}
+
+export class PolicyResource {
+  constructor(private readonly http: BrainHttpClient) {}
+
+  async get(tenantId: string): Promise<Policy> {
+    const { data, error, response } = await this.http.GET("/policy/{tenant_id}", {
+      params: { path: { tenant_id: tenantId } },
+    });
+    return unwrap(data, error, response.status);
+  }
+
+  async listVersions(tenantId: string): Promise<Policy[]> {
+    const { data, error, response } = await this.http.GET("/policy/{tenant_id}/versions", {
+      params: { path: { tenant_id: tenantId } },
+    });
+    const body = unwrap(data, error, response.status);
+    return body.versions ?? [];
+  }
+
+  /**
+   * Documented as `brain.policy.create(...)` on docs.brain.fi. Validates
+   * the DSL and returns the EIP-712 signing payload. Caller signs with
+   * authorised keys, then submits via `sign()` to activate.
+   */
+  async compose(tenantId: string, dsl: PolicyDSL): Promise<PolicySigningPayload> {
+    const { data, error, response } = await this.http.POST("/policy/{tenant_id}/compose", {
+      params: { path: { tenant_id: tenantId } },
+      body: dsl,
+    });
+    const body = unwrap(data, error, response.status);
+    return {
+      contentHash: body.content_hash,
+      typedData: body.typed_data,
+      requiredSigners: body.required_signers ?? [],
+    };
+  }
+
+  /**
+   * Submits signatures gathered against the compose() payload. When the
+   * server has sufficient signatures, the policy is activated and the
+   * new active Policy is returned. 409 indicates insufficient signatures
+   * (more required).
+   */
+  async sign(tenantId: string, submission: PolicySignatureSubmission): Promise<Policy> {
+    const { data, error, response } = await this.http.POST("/policy/{tenant_id}/sign", {
+      params: { path: { tenant_id: tenantId } },
+      body: {
+        content_hash: submission.contentHash,
+        signatures: submission.signatures,
+      },
+    });
+    return unwrap(data, error, response.status);
+  }
+
+  /**
+   * Alias for `sign`. Documented as `brain.policy.activate(...)` on
+   * docs.brain.fi — the spec has no separate /activate endpoint; the
+   * policy activates as a side effect of submitting sufficient signatures
+   * via /sign.
+   */
+  activate(tenantId: string, submission: PolicySignatureSubmission): Promise<Policy> {
+    return this.sign(tenantId, submission);
+  }
+
+  async evaluate(tenantId: string, action: ProposedAction): Promise<PolicyDecision> {
+    const { data, error, response } = await this.http.POST("/policy/{tenant_id}/evaluate", {
+      params: { path: { tenant_id: tenantId } },
+      body: action,
+    });
+    return unwrap(data, error, response.status);
+  }
+
+  async simulate(tenantId: string, params: SimulatePolicyParams): Promise<PolicyDecision> {
+    const { data, error, response } = await this.http.POST("/policy/{tenant_id}/simulate", {
+      params: { path: { tenant_id: tenantId } },
+      body: { action: params.action, version: params.version },
+    });
+    return unwrap(data, error, response.status);
+  }
+}
