@@ -11,6 +11,9 @@
  */
 
 import Fastify from "fastify";
+import fastifyCors from "@fastify/cors";
+import fastifyHelmet from "@fastify/helmet";
+import fastifyRateLimit from "@fastify/rate-limit";
 import { Redis } from "ioredis";
 import {
   authPlugin,
@@ -23,7 +26,7 @@ import {
   WebhookDispatcher,
   WebhookAuditEmitter,
   RedisIdempotencyStore,
-  InMemoryRevocationStore,
+  RedisRevocationStore,
   createLogger,
   createPool,
   MemoryBlobAdapter,
@@ -343,8 +346,7 @@ async function main(): Promise<void> {
     issuer: cfg.AUTH_ISSUER,
     audience: cfg.AUTH_AUDIENCE,
     clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
-    // TODO: swap to RedisRevocationStore in production.
-    revocation: new InMemoryRevocationStore(),
+    revocation: new RedisRevocationStore(redis),
   });
 
   // -- blob adapter (MemoryBlobAdapter until Azure/S3 creds are set) ---
@@ -494,7 +496,13 @@ async function main(): Promise<void> {
     logger: true,
     bodyLimit: cfg.REQUEST_BODY_LIMIT_BYTES,
     disableRequestLogging: false,
+    trustProxy: true,
   });
+
+  // Security plugins registered before routes.
+  await app.register(fastifyCors, { origin: true, credentials: true });
+  await app.register(fastifyHelmet, { contentSecurityPolicy: false });
+  await app.register(fastifyRateLimit, { max: 300, timeWindow: "1 minute" });
 
   // Shared plugins registered ONCE.
   await app.register(requestIdPlugin);
@@ -589,6 +597,7 @@ async function main(): Promise<void> {
           registerSiwxRoutes(child, {
             signer: demoSigner,
             registry: new StubAgentRegistry(),
+            redis,
             demoMode: true,
           }),
         );

@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import type { Redis } from "ioredis";
 import { SiweMessage } from "siwe";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +10,21 @@ import {
   type AgentRegistryLookup,
   type AgentResolution,
 } from "./siwx.js";
+
+function makeRedisStub(): Redis {
+  const store = new Map<string, string>();
+  return {
+    setex: async (_k: string, _ttl: number, v: string) => {
+      store.set(_k, v);
+      return "OK";
+    },
+    getdel: async (k: string) => {
+      const v = store.get(k) ?? null;
+      store.delete(k);
+      return v;
+    },
+  } as unknown as Redis;
+}
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -42,6 +58,7 @@ async function buildApp(
     signer,
     domain: TEST_DOMAIN,
     registry,
+    redis: makeRedisStub(),
     tokenTtlSeconds: 60,
     ...opts,
   });
@@ -163,7 +180,7 @@ describe("POST /auth/siwx — happy path", () => {
       "wiki:read",
       "raw:write",
       "payment_intent:propose",
-      "agent:propose",
+      "execution:propose",
     ]);
   });
 
@@ -308,8 +325,8 @@ describe("POST /auth/siwx — demo mode", () => {
     expect(body.token_type).toBe("Bearer");
     expect(typeof body.access_token).toBe("string");
     expect(body.principal.type).toBe("agent");
-    expect(body.principal.id).toBe("agent_01DEMO000000000000000000");
-    expect(body.principal.tenantId).toBe("tnt_01DEMO00000000000000000");
+    expect(body.principal.id).toBe("agent_01DEMX00000000000000000000");
+    expect(body.principal.tenantId).toBe("tnt_01DEMX00000000000000000000");
     expect(body.principal.scopes).toContain("ledger:read");
   });
 
