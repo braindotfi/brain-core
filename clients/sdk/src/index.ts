@@ -100,4 +100,15 @@ export {
   type SimulatePolicyParams,
 } from "./resources/policy.js";
 
+export {
+  CashFlowResource,
+  CompoundsResource,
+  type ActionTrace,
+  type CashFlowSummarizeParams,
+  type CashFlowSummary,
+  type FinancialSnapshot,
+  type SnapshotOptions,
+  type TraceEntry,
+} from "./resources/compounds.js";
+
 export type { paths, components, operations } from "./generated/openapi.js";

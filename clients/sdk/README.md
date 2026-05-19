@@ -22,8 +22,8 @@ This package is the source-of-truth client that backs every code example on
 | 1B.3  | Payment intents + actions: `brain.payments.*`, `brain.actions.*`, `brain.pay` / `brain.approve` / `brain.reject` (with idempotency) | shipped                 |
 | 1B.4  | Agents (`brain.agents.list/get/register/listActions/propose`) + raw ingestion (`brain.raw.ingest/get/getParsed`)                    | shipped                 |
 | 1B.5  | Wiki: `brain.wiki.question/search/getEntity/getEvidence/getHistory/annotate/schema`, `brain.ask` compound                           | shipped                 |
-| 1B.6  | Policy: `brain.policy.get/listVersions/compose/sign/activate/evaluate/simulate`                                                     | **shipping in this PR** |
-| 1B.7  | Compounds without REST endpoints today: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`                                 | deferred (need product) |
+| 1B.6  | Policy: `brain.policy.get/listVersions/compose/sign/activate/evaluate/simulate`                                                     | shipped                 |
+| 1B.7  | Client-side compounds: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`                                                  | **shipping in this PR** |
 | 1C    | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package)                        | not yet implemented     |
 
 ## Usage
@@ -79,6 +79,41 @@ const proposal = await brain.actions.propose({
   action: { type: "reconciliation_match" /* ... */ },
   idempotencyKey: crypto.randomUUID(),
 });
+
+// Wiki — natural language Q&A grounded in the tenant ledger
+const answer = await brain.ask("acme", "did cloud spend grow faster than revenue this quarter?");
+const search = await brain.wiki.search({ q: "stripe", limit: 10 });
+const entity = await brain.wiki.getEntity("ent_8231", { includeNeighbors: true });
+
+// Policy — compose, sign, activate (EIP-712), evaluate, simulate
+const signingPayload = await brain.policy.compose("acme", dslDocument);
+// (sign signingPayload.typedData with authorised keys, then submit)
+await brain.policy.sign("acme", { contentHash: signingPayload.contentHash!, signatures });
+const decision = await brain.policy.evaluate("acme", action);
+
+// Agents — register, list, propose
+const agents = await brain.agents.list();
+await brain.agents.register({
+  agent_id: "ext_1",
+  role: "reconciliation",
+  display_name: "Recon Bot",
+});
+
+// Raw ingestion — pull from a URL
+await brain.raw.ingest({
+  sourceType: "document",
+  url: "https://example.com/invoice.pdf",
+});
+
+// Client-side compounds — multiple calls under the hood, no server endpoint
+const snapshot = await brain.snapshot("acme"); // balances + tx + obligations
+const trace = await brain.trace("pi_8231"); // full audit chain for an action
+const summary = await brain.cashFlow.summarize({
+  tenantId: "acme",
+  since: "2026-04-01",
+  until: "2026-04-30",
+  currency: "USD",
+});
 ```
 
 On a non-2xx response, methods throw `BrainAPIError` carrying `status`,
@@ -126,3 +161,31 @@ sequencing.
 
 Follows the standard Brain TypeScript package layout: strict mode, ESM,
 `tsc -b` build, `dist/` output, Vitest with 80% line / 75% branch coverage.
+
+## Architecture notes
+
+- **Resource-per-namespace**: each `brain.<namespace>` is an instance of a
+  `*Resource` class that wraps the typed HTTP client. Resources are
+  exported individually for tree-shaking and stand-alone use.
+- **camelCase at the SDK boundary**: arguments and return types are
+  camelCase. Snake_case lives on the wire only; the SDK translates in
+  both directions.
+- **Errors are typed**: `BrainAPIError` carries `status`, `code`,
+  `traceId`, `details` from the standard error envelope. Compound
+  helpers may additionally throw `PolicyApprovalRequiredError` or
+  `PolicyRejectedError` carrying the proposed intent.
+- **Idempotency keys**: every mutating method on `payments` and
+  `actions` accepts `idempotencyKey` and sends it as the
+  `Idempotency-Key` HTTP header. Critical infrastructure for financial
+  APIs — set this on every retry-safe write from production callers.
+- **Compounds are client-side**: `brain.snapshot`, `brain.trace`, and
+  `brain.cashFlow.summarize` issue multiple HTTP calls under the hood,
+  no server endpoint backs them directly. If a server-side equivalent
+  lands later, these can be retargeted without changing the public
+  method signature.
+- **Tenant scoping**: most endpoints derive the tenant from the
+  authenticated principal. The `policy.*` methods are an exception —
+  they take `tenant_id` explicitly. Compound helpers that accept a
+  `tenantId` argument (`pay`, `ask`, `snapshot`) match the documented
+  signature but currently don't forward the value on the wire. Reserved
+  for future cross-tenant API key support.
