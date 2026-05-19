@@ -36,15 +36,15 @@ Brain is a layered protocol where information flows up and control flows down. E
 
 | Component                     | Location                                 | Notes                                            |
 | ----------------------------- | ---------------------------------------- | ------------------------------------------------ |
-| **Raw artifacts**             | Azure Blob                               | Content-addressed, encrypted, tenant-scoped DEKs |
-| **Ledger records**            | Postgres                                 | Immutable, append-only with supersedence         |
-| **Wiki graph and embeddings** | Postgres + pgvector                      | Updated incrementally                            |
-| **Policy compiled form**      | Postgres                                 | Hash-anchored on-chain                           |
-| **Audit hash chain**          | Postgres                                 | Merkle roots batched on-chain                    |
-| **Agent identity**            | `BrainMCPAgentRegistry` (Base L2)        | ERC-8004 compatible                              |
-| **Smart account state**       | `BrainSmartAccount` per tenant (Base L2) | ERC-4337                                         |
-| **Policy hashes**             | `BrainPolicyRegistry` (Base L2)          | EIP-712 signed by tenant                         |
-| **Audit anchors**             | `BrainAuditAnchor` (Base L2)             | EIP-712 signed by Brain anchorer                 |
+| **Raw Artifacts**             | Azure Blob                               | Content-addressed, encrypted, tenant-scoped DEKs |
+| **Ledger Records**            | Postgres                                 | Immutable, append-only with supersedence         |
+| **Wiki Graph and Embeddings** | Postgres + pgvector                      | Updated incrementally                            |
+| **Policy Compiled Form**      | Postgres                                 | Hash-anchored on-chain                           |
+| **Audit Hash Chain**          | Postgres                                 | Merkle roots batched on-chain                    |
+| **Agent Identity**            | `BrainMCPAgentRegistry` (Base L2)        | ERC-8004 compatible                              |
+| **Smart Account State**       | `BrainSmartAccount` per tenant (Base L2) | ERC-4337                                         |
+| **Policy Hashes**             | `BrainPolicyRegistry` (Base L2)          | EIP-712 signed by tenant                         |
+| **Audit Anchors**             | `BrainAuditAnchor` (Base L2)             | EIP-712 signed by Brain anchorer                 |
 
 ### On-Chain Surface Is Intentionally Small
 
@@ -52,10 +52,10 @@ Brain's on-chain surface is intentionally minimal. **Most logic lives off-chain.
 
 | On-Chain Purpose                                    | Contract                |
 | --------------------------------------------------- | ----------------------- |
-| **Anchor state**                                    | `BrainAuditAnchor`      |
-| **Register policy hashes**                          | `BrainPolicyRegistry`   |
-| **Register agent identity**                         | `BrainMCPAgentRegistry` |
-| **Enforce ERC-4337 validation and route execution** | `BrainSmartAccount`     |
+| **Anchor State**                                    | `BrainAuditAnchor`      |
+| **Register Policy Hashes**                          | `BrainPolicyRegistry`   |
+| **Register Agent Identity**                         | `BrainMCPAgentRegistry` |
+| **Enforce ERC-4337 Validation and Route Execution** | `BrainSmartAccount`     |
 
 All contracts are deployed on Base L2 and written in Solidity 0.8.x, built and tested with Foundry. Upgrades use a transparent proxy pattern with a 48-hour timelock.
 
@@ -80,10 +80,10 @@ The same API surface serves humans, internal agents, and external agents. Auth d
 
 | Network            | Role                                                 |
 | ------------------ | ---------------------------------------------------- |
-| **Base mainnet**   | Primary execution environment for production tenants |
+| **Base Mainnet**   | Primary execution environment for production tenants |
 | **Base Sepolia**   | Sandbox for development                              |
-| **External rails** | Bank APIs, processors, custodians (off-chain)        |
+| **External Rails** | Bank APIs, processors, custodians (off-chain)        |
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📥 Data flow</strong></td><td>End-to-end walkthrough of an action.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🔒 Tenant isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>🛡️ Security and compliance</strong></td><td>Non-negotiable principles.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📥 Data Flow</strong></td><td>End-to-end walkthrough of an action.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🔒 Tenant Isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>🛡️ Security and Compliance</strong></td><td>Non-negotiable principles.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr></tbody></table>

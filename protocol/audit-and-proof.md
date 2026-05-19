@@ -4,7 +4,7 @@ Every event in Brain (ingestion, extraction, query, proposal, policy decision, a
 
 ### Three Properties This Gives You
 
-<table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>📜 Tenant-verifiable history</strong></td><td>A tenant can prove a specific decision occurred at a specific time, based on specific evidence, under a specific policy version.</td></tr><tr><td><strong>🤝 Counterparty-verifiable proofs</strong></td><td>A counterparty can verify a payment was authorized without seeing the underlying data, by checking a Merkle proof against an anchored root.</td></tr><tr><td><strong>🔒 No silent rewrites</strong></td><td>Brain itself cannot silently rewrite history. Anchors commit the past state to a public chain.</td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>📜 Tenant-verifiable History</strong></td><td>A tenant can prove a specific decision occurred at a specific time, based on specific evidence, under a specific policy version.</td></tr><tr><td><strong>🤝 Counterparty-verifiable Proofs</strong></td><td>A counterparty can verify a payment was authorized without seeing the underlying data, by checking a Merkle proof against an anchored root.</td></tr><tr><td><strong>🔒 No Silent Rewrites</strong></td><td>Brain itself cannot silently rewrite history. Anchors commit the past state to a public chain.</td></tr></tbody></table>
 
 ### What Every Audit Event Commits To
 

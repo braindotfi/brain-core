@@ -59,7 +59,7 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 | **Writes to**       | Ledger (`ledger_payment_intents`)                        |
 | **Required scope**  | `payment_intent:propose` (for external agents)           |
 | **Service method**  | `PaymentIntentService.create()` (shared by HTTP and MCP) |
-| **Lifecycle gates** | Policy → Approval → 13-step pre-execution gate        |
+| **Lifecycle gates** | Policy → Approval → 13-step pre-execution gate           |
 
 [**→ Payment Intents**](../protocol/payment-intents.md)
 
@@ -112,7 +112,7 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 | Writer           | Path                                      | Notes                       |
 | ---------------- | ----------------------------------------- | --------------------------- |
 | Every layer      | `audit_events` append-only writes         | Every material state change |
-| Anchor publisher | `audit_anchors` per published Merkle root | Hourly cadence       |
+| Anchor publisher | `audit_anchors` per published Merkle root | Hourly cadence              |
 
 ### What Is Not Allowed
 
@@ -135,4 +135,4 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🏗️ System overview</strong></td><td>The full architecture top-down.</td><td><a href="system-overview.md">system-overview.md</a></td><td></td></tr><tr><td><strong>🌊 Data flow</strong></td><td>How a single source-of-truth event ripples up.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🛡️ Tenant isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🏗️ System Overview</strong></td><td>The full architecture top-down.</td><td><a href="system-overview.md">system-overview.md</a></td><td></td></tr><tr><td><strong>🌊 Data Flow</strong></td><td>How a single source-of-truth event ripples up.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🛡️ Tenant Isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr></tbody></table>

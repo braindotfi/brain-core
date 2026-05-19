@@ -7,7 +7,7 @@ description: The mental model in five minutes.
 Brain is one API for autonomous financial operations. Underneath, it does four things, in this order, every time:
 
 ```
-remember   →   decide   →   execute   →   prove
+Remember   →   Decide   →   Execute   →   Prove
 ```
 
 | Word         | What Brain does                                                                                             | What you call it                       |

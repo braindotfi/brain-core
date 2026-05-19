@@ -4,7 +4,7 @@ description: The rules a tenant signed. How decisions are made.
 
 # Policy
 
-,Every action that touches a tenant's money runs through Policy. Policy is the rules a tenant has signed, expressed in plain English, compiled to deterministic checks, and evaluated on every proposed action.
+Every action that touches a tenant's money runs through Policy. Policy is the rules a tenant has signed, expressed in plain English, compiled to deterministic checks, and evaluated on every proposed action.
 
 ### Three Possible Outcomes
 

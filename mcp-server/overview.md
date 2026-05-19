@@ -4,11 +4,11 @@ Brain exposes a **Model Context Protocol (MCP) server** so agents can read finan
 
 Agents propose actions. Policies decide what runs. Humans stay in control where the policy says they should.
 
-| Property              | Value                                            |
-| --------------------- | ------------------------------------------------ |
-| **Endpoint**          | `POST /v1/agents/mcp`                            |
-| **Transport**         | JSON-RPC 2.0 over single-shot HTTP               |
-| **Backed by**         | The same Ledger, Wiki, and PaymentIntent surface as the HTTP API |
+| Property      | Value                                                            |
+| ------------- | ---------------------------------------------------------------- |
+| **Endpoint**  | `POST /v1/agents/mcp`                                            |
+| **Transport** | JSON-RPC 2.0 over single-shot HTTP                               |
+| **Backed by** | The same Ledger, Wiki, and PaymentIntent surface as the HTTP API |
 
 {% hint style="info" %}
 The MCP surface uses single-shot HTTP. One request, one response, one audit event. Streaming transports may follow once we see a use case that needs them.
@@ -18,7 +18,7 @@ The MCP surface uses single-shot HTTP. One request, one response, one audit even
 
 The MCP surface is intentionally small. **10 tools, 5 resource templates, 5 canned prompts.**
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ 10 Tools</strong></td><td>Five Ledger reads, two Wiki reads, one Raw contribute, one PaymentIntent propose, one agent action propose.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>📦 5 resources</strong></td><td>Resource templates addressable by <code>brain://</code> URIs: accounts, transactions, payment-intents, wiki pages, raw evidence.</td><td><a href="resources.md">resources.md</a></td><td></td></tr><tr><td><strong>💬 5 Prompts</strong></td><td>Canned prompts for the most common agent loops: cash flow, bills, spending, invoices, subscriptions.</td><td><a href="prompts.md">prompts.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT plus on-chain scope hash verification against <code>BrainMCPAgentRegistry</code>.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ 10 Tools</strong></td><td>Five Ledger reads, two Wiki reads, one Raw contribute, one PaymentIntent propose, one agent action propose.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>📦 5 Resources</strong></td><td>Resource templates addressable by <code>brain://</code> URIs: accounts, transactions, payment-intents, wiki pages, raw evidence.</td><td><a href="resources.md">resources.md</a></td><td></td></tr><tr><td><strong>💬 5 Prompts</strong></td><td>Canned prompts for the most common agent loops: cash flow, bills, spending, invoices, subscriptions.</td><td><a href="prompts.md">prompts.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT plus on-chain scope hash verification against <code>BrainMCPAgentRegistry</code>.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
 
 ### What an External Agent Can Do
 

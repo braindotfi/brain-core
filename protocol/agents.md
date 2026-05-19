@@ -43,7 +43,7 @@ Selection itself is an audited event
 
 Approved actions execute through one of three paths.
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🏦 Off-chain rail</strong></td><td>A bank API or processor SDK called server-side by Brain on behalf of the tenant.</td><td></td></tr><tr><td><strong>⛓️ On-chain via smart account</strong></td><td><code>BrainSmartAccount</code> (ERC-4337) signs and submits a UserOperation. For tenants who own an EOA, EIP-7702 enables that EOA to act with smart-account semantics for the duration of a single delegation.</td><td></td></tr><tr><td><strong>🤝 Agent-to-agent</strong></td><td>An agent invokes another agent's capability through Brain. Both calls are policy-checked. Both are audited.</td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🏦 Off-chain Rail</strong></td><td>A bank API or processor SDK called server-side by Brain on behalf of the tenant.</td><td></td></tr><tr><td><strong>⛓️ On-chain Via Smart Account</strong></td><td><code>BrainSmartAccount</code> (ERC-4337) signs and submits a UserOperation. For tenants who own an EOA, EIP-7702 enables that EOA to act with smart-account semantics for the duration of a single delegation.</td><td></td></tr><tr><td><strong>🤝 Agent-to-Agent</strong></td><td>An agent invokes another agent's capability through Brain. Both calls are policy-checked. Both are audited.</td><td></td></tr></tbody></table>
 
 ### Settlement: When Agents Are Paid
 
