@@ -1,4 +1,4 @@
-# Terms of Service
+# Terms of service
 
 ## Terms of Service
 
@@ -18,27 +18,27 @@ You must be at least 18 years old and legally capable of entering into binding c
 
 You agree not to use our Services in any of the following ways:
 
-* **Unlawful use** — violate any applicable laws or regulations
-* **Fraud or abuse** — use our Services for fraudulent, deceptive, or illegal purposes
-* **Infrastructure interference** — disrupt, degrade, or interfere with our network, systems, or infrastructure
-* **Reverse engineering** — attempt to reverse-engineer, decompile, or replicate our proprietary technology
+* **Unlawful use**: violate any applicable laws or regulations
+* **Fraud or abuse**: use our Services for fraudulent, deceptive, or illegal purposes
+* **Infrastructure interference**: disrupt, degrade, or interfere with our network, systems, or infrastructure
+* **Reverse engineering**: attempt to reverse-engineer, decompile, or replicate our proprietary technology
 
-### Intellectual Property
+### Intellectual property
 
 All content, trademarks, and technology on our platform are owned by Brain Finance Inc. or its licensors. You may not copy, modify, or distribute any part of our Services without our prior written permission.
 
-### User Content
+### User content
 
 If you submit content to us including feedback, ideas, or suggestions, you grant Brain Finance Inc. a non-exclusive, royalty-free, perpetual license to use that content for any purpose.
 
-### Third-Party Services
+### Third-party services
 
 Our Services may link to or integrate with third-party services, protocols, or platforms. Brain Finance Inc. is not responsible for the practices, availability, or content of those third-party services.
 
-### No Financial Advice
+### No financial advice
 
 {% hint style="warning" %}
-Our Services, including any AI-generated insights or agent outputs, are for informational purposes only. Nothing on the Brain platform constitutes financial, legal, or investment advice. Always consult a qualified professional before making financial decisions.
+Our Services, including any automated insights or agent outputs, are for informational purposes only. Nothing on the Brain platform constitutes financial, legal, or investment advice. Always consult a qualified professional before making financial decisions.
 {% endhint %}
 
 ### Disclaimers
@@ -57,7 +57,7 @@ To the fullest extent permitted by applicable law, Brain Finance Inc. shall not 
 
 You agree to indemnify, defend, and hold harmless Brain Finance Inc. and its officers, directors, employees, and agents from any claims, damages, losses, or expenses, including reasonable legal fees arising out of your use of the Services or your violation of these Terms.
 
-### Governing Law
+### Governing law
 
 These Terms are governed by the laws of the United States. Any disputes arising under or in connection with these Terms shall be resolved in the courts of the United States, unless otherwise agreed in writing by both parties.
 

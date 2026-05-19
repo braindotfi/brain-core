@@ -1,4 +1,4 @@
-# Write Paths
+# Write paths
 
 Brain's six layers form a one-way upward data flow. Information flows up; control flows down. Within that flow, only **two write paths are allowed to write upward into the authoritative state** without coming from below: agent contributions to Raw, and agent-proposed PaymentIntents into Ledger.
 
@@ -135,4 +135,4 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 
 ### What's next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🏗️ System Overview</strong></td><td>The full architecture top-down.</td><td><a href="system-overview.md">system-overview.md</a></td><td></td></tr><tr><td><strong>🌊 Data Flow</strong></td><td>How a single source-of-truth event ripples up.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🛡️ Tenant Isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🏗️ System overview</strong></td><td>The full architecture top-down.</td><td><a href="system-overview.md">system-overview.md</a></td><td></td></tr><tr><td><strong>🌊 Data flow</strong></td><td>How a single source-of-truth event ripples up.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🛡️ Tenant isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr></tbody></table>

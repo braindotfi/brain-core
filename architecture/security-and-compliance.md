@@ -1,4 +1,4 @@
-# Security and Compliance
+# Security and compliance
 
 Brain's security posture rests on a small set of non-negotiable principles. Each one shapes the architecture.
 
@@ -103,4 +103,4 @@ These are configurable per tenant. The defaults err on the side of human review.
 
 ### What's next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔒 Tenant Isolation</strong></td><td>How separation is enforced at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>⚠️ Risks and Mitigations</strong></td><td>Known risks and how Brain handles them.</td><td><a href="risks-and-mitigations.md">risks-and-mitigations.md</a></td><td></td></tr><tr><td><strong>📜 Smart Contracts</strong></td><td>The on-chain enforcement layer.</td><td><a href="/broken/pages/ia2C5LyWlDxEqxJuu710">Broken link</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔒 Tenant isolation</strong></td><td>How separation is enforced at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>⚠️ Risks and mitigations</strong></td><td>Known risks and how Brain handles them.</td><td><a href="risks-and-mitigations.md">risks-and-mitigations.md</a></td><td></td></tr><tr><td><strong>📜 Smart contracts</strong></td><td>The on-chain enforcement layer.</td><td><a href="../smart-contracts/overview.md">overview.md</a></td><td></td></tr></tbody></table>

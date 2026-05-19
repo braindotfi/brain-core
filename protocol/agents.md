@@ -37,7 +37,7 @@ Brain selects based on:
 Selection itself is an audited event
 ```
 
-[**→ Smart contract reference**](/broken/pages/ia2C5LyWlDxEqxJuu710)
+[**→ Smart contract reference**](../smart-contracts/overview.md)
 
 ### Three execution paths
 

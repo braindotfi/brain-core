@@ -1,4 +1,4 @@
-# The Six-Layer Stack
+# The six-layer stack
 
 Brain is a layered protocol. Information flows up; control flows down.
 
@@ -71,8 +71,8 @@ Most logic is off-chain by design. On-chain contracts exist to anchor state, reg
 | **Off-chain**          | Raw artifacts (Azure Blob), Ledger records (Postgres), Wiki graph (Postgres + pgvector), Policy compiler, Agent runtime |
 | **On-chain (Base L2)** | `BrainAuditAnchor`, `BrainPolicyRegistry`, `BrainSmartAccount`, `BrainMCPAgentRegistry`                                 |
 
-[**→ Smart contract reference**](/broken/pages/ia2C5LyWlDxEqxJuu710)
+[**→ Smart contract reference**](../smart-contracts/overview.md)
 
 ### What's next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📥 Raw and Ledger</strong></td><td>How evidence becomes deterministic structure.</td><td><a href="raw-and-ledger.md">raw-and-ledger.md</a></td><td></td></tr><tr><td><strong>🧠 The Wiki</strong></td><td>The memory graph per tenant.</td><td><a href="the-wiki.md">the-wiki.md</a></td><td></td></tr><tr><td><strong>📋 Policy and Permissioning</strong></td><td>Plain-English rules to deterministic guards.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📥 Raw and Ledger</strong></td><td>How evidence becomes deterministic structure.</td><td><a href="raw-and-ledger.md">raw-and-ledger.md</a></td><td></td></tr><tr><td><strong>🧠 The Wiki</strong></td><td>The memory graph per tenant.</td><td><a href="the-wiki.md">the-wiki.md</a></td><td></td></tr><tr><td><strong>📋 Policy and permissioning</strong></td><td>Plain-English rules to deterministic guards.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr></tbody></table>

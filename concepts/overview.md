@@ -4,7 +4,7 @@ description: The mental model in five minutes.
 
 # Overview
 
-Brain is one API for agentic finance. Underneath, it does four things, in this order, every time:
+Brain is one API for autonomous financial operations. Underneath, it does four things, in this order, every time:
 
 ```
 remember   →   decide   →   execute   →   prove
@@ -17,11 +17,11 @@ remember   →   decide   →   execute   →   prove
 | **Execute**  | Dispatches the action through the right rail (ACH, ERP write, on-chain)                                     | `brain.pay`, `brain.approve`           |
 | **Prove**    | Records every step in a tamper-evident log anchored on Base L2                                              | `brain.proof`, `brain.audit.list`      |
 
-That's the whole product. Everything else is depth.
+Everything else in this documentation is depth on those four steps.
 
 ### Why this matters
 
-Most fintech infrastructure stops at "execute." You move money, they confirm. They don't remember context, don't enforce your rules, don't give you a verifiable trail. Brain is built around the fact that **AI agents need all four**, in order, on every action.
+Most fintech infrastructure stops at execution. The provider moves the money and confirms it landed. That leaves the integrating application to handle context, rules, and audit on its own. Brain is built around the fact that agents need all four steps, in order, on every action.
 
 | Without remember           | Without decide            | Without execute        | Without prove                     |
 | -------------------------- | ------------------------- | ---------------------- | --------------------------------- |
@@ -67,7 +67,7 @@ await brain.pay("acme", {
 });
 ```
 
-Retries with the same key return the existing action. No duplicate payments, ever.
+Retries with the same key return the existing action, so a network blip never produces a duplicate payment.
 
 ### Where the depth lives
 
@@ -80,4 +80,4 @@ When you're ready, the protocol underneath has more to offer. Each of those conc
 | Agents  | The Agent layer                   |
 | Proof   | Audit and on-chain anchoring      |
 
-You don't need any of that to build with Brain. It's there when you want it.
+You can build with Brain without reading any of those sections. They are there when you want the deeper view.

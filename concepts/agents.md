@@ -10,9 +10,9 @@ In Brain, an **agent** is any non-human caller that proposes or executes actions
 | ------------------------------------- | ----------------------------------------- |
 | **Human**                             | OAuth/SSO via the Console                 |
 | **Internal agent** (your backend)     | Server API key                            |
-| **External agent** (a third-party AI) | JWT, anchored to an on-chain registration |
+| **External agent** (third-party software) | JWT, anchored to an on-chain registration |
 
-All three call the same endpoints. All three are subject to Policy. All three land in Audit.
+All three hit the same endpoints, run through Policy, and land in the Audit log.
 
 ### Internal vs external
 
@@ -27,7 +27,7 @@ Most apps start with internal agents. External agents become useful when:
 
 * Your tenant wants to use a specialist agent (a vendor-management bot, a treasury agent) you didn't build
 * You're building a marketplace where tenants pick agents
-* You're integrating a third-party AI assistant that should see a tenant's financial state
+* You're integrating a third-party assistant that should see a tenant's financial state
 
 ### How agents act
 
@@ -41,7 +41,7 @@ Whether internal or external, the lifecycle is the same:
 5. Audit anchors what happened
 ```
 
-Agents propose. Brain decides. **Agents never bypass Policy.**
+An agent proposes; Brain decides. Agents do not bypass Policy.
 
 ### What external agents can do
 
@@ -79,11 +79,11 @@ Same audit log, same Policy gating. Your server keys are scoped (you can issue n
 
 ### What "MCP-compatible" means
 
-[MCP](https://modelcontextprotocol.io) is the open standard for connecting AI agents to tools and data sources. Brain runs an MCP server at `mcp.brain.fi`. Any agent built on an MCP-compatible runtime (Anthropic's, OpenAI's via adapters, or open-source ones) can connect.
+[MCP](https://modelcontextprotocol.io) is the open standard for connecting agents to tools and data sources. Brain runs an MCP server at `mcp.brain.fi`. Any agent built on an MCP-compatible runtime can connect.
 
 You don't have to know any of this if you're only building internal agents. The MCP server matters when you want to **be a destination** for third-party agents.
 
-[**→ MCP Server**](/broken/pages/TQ2qB7I3AZOpEbqR4fZT)
+[**→ MCP server**](../mcp-server/overview.md)
 
 ### Related
 

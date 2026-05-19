@@ -1,4 +1,4 @@
-# Audit and Proof
+# Audit and proof
 
 Every event in Brain (ingestion, extraction, query, proposal, policy decision, approval, execution, settlement) emits an audit record into an append-only log. Records form a per-tenant **Merkle tree**. Tree roots are batched and anchored on-chain through `BrainAuditAnchor`.
 

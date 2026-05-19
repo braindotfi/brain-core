@@ -92,7 +92,7 @@ The proof story is the Audit layer (Layer 6) plus three smart contracts:
 | `BrainPolicyRegistry` | Anchors policy version hashes per tenant              |
 | `BrainSmartAccount`   | Validates UserOps against the active policy and scope |
 
-[**→ Smart contracts overview**](/broken/pages/ia2C5LyWlDxEqxJuu710)
+[**→ Smart contracts overview**](../smart-contracts/overview.md)
 
 ### Related
 

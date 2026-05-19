@@ -4,7 +4,7 @@ description: Define a policy in plain English. Brain enforces it on every propos
 
 # Give an agent a spending limit
 
-Goal: write a sentence in English describing what an AI agent (or human user) can do with a tenant's money. Brain compiles it to a deterministic rule, signs it with the tenant's key, and enforces it on every proposed action.
+Goal: write a sentence in English describing what an agent (or human user) can do with a tenant's money. Brain compiles it to a deterministic rule, signs it with the tenant's key, and enforces it on every proposed action.
 
 ### The simplest policy
 

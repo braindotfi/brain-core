@@ -1,4 +1,4 @@
-# MCP Authentication
+# MCP authentication
 
 External agents authenticate to Brain's MCP server with a **JWT** that anchors back to an on-chain registration in `BrainMCPAgentRegistry`. There are two layers of verification: the JWT itself, and the cryptographic match between the JWT's `scope_hash` claim and the on-chain hash.
 
@@ -6,7 +6,7 @@ External agents authenticate to Brain's MCP server with a **JWT** that anchors b
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  External AI Agent                              │
+│  External agent                              │
 │  signs JWT with agent's signing key             │
 └────────────────┬────────────────────────────────┘
                  │  Authorization: Bearer <jwt>

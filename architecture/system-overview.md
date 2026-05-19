@@ -1,4 +1,4 @@
-# System Overview
+# System overview
 
 Brain is a layered protocol where information flows up and control flows down. Each tenant has its own logical instance of every layer, with hard isolation at the database, KMS, and policy boundaries.
 
@@ -86,4 +86,4 @@ The same API surface serves humans, internal agents, and external agents. Auth d
 
 ### What's next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📥 Data Flow</strong></td><td>End-to-end walkthrough of an action.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🔒 Tenant Isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>🛡️ Security and Compliance</strong></td><td>Non-negotiable principles.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📥 Data flow</strong></td><td>End-to-end walkthrough of an action.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🔒 Tenant isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>🛡️ Security and compliance</strong></td><td>Non-negotiable principles.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr></tbody></table>

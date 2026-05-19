@@ -4,7 +4,7 @@ description: Authorize an MCP-compatible agent to read and propose on a tenant's
 
 # Let an external agent in
 
-Goal: authorize an external AI agent (one you didn't write) to read a tenant's financial state and propose actions on the tenant's behalf, with the same policy and audit guarantees as anything you'd build yourself.
+Goal: authorize an external agent (one you didn't write) to read a tenant's financial state and propose actions on the tenant's behalf, with the same policy and audit guarantees as anything you'd build yourself.
 
 External agents speak [MCP](https://modelcontextprotocol.io). Brain ships an MCP server. The integration is mostly authorization, not code.
 
@@ -151,4 +151,4 @@ Within at most 60 seconds (the on-chain scope cache window), the agent's calls f
 
 ### What's next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔌 MCP Server</strong></td><td>The full reference for the MCP surface.</td><td><a href="/broken/pages/TQ2qB7I3AZOpEbqR4fZT">Broken link</a></td><td></td></tr><tr><td><strong>📜 Audit trail</strong></td><td>Watch what external agents do.</td><td><a href="audit-every-action.md">audit-every-action.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔌 MCP server</strong></td><td>The full reference for the MCP surface.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>📜 Audit trail</strong></td><td>Watch what external agents do.</td><td><a href="audit-every-action.md">audit-every-action.md</a></td><td></td></tr></tbody></table>

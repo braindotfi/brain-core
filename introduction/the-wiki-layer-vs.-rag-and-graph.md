@@ -1,4 +1,4 @@
-# The Wiki Layer vs. RAG and Graph
+# The Wiki layer vs. RAG and graph
 
 ### What it is
 
@@ -18,7 +18,7 @@ Every fact in Wiki points back to verifiable evidence in Raw or Ledger. If the s
 
 ### Comparison with RAG and Graph
 
-Most AI memory systems use one of two tools.
+Most memory systems use one of two tools.
 
 **RAG** (Retrieval Augmented Generation) stores text chunks as vector embeddings and retrieves what looks similar at query time. It is fast, easy to set up, and useful for unstructured Q\&A. It has no entity identity, no relationships, and no notion of truth. Two strings that mean the same thing are unrelated to it. RAG tells you what it has read, not what it is.
 
@@ -30,7 +30,7 @@ Most AI memory systems use one of two tools.
 
 ### Why this matters
 
-When an AI agent is reasoning about money, "probably true" is not enough. A treasury agent that thinks the company has $4.2M in operating cash needs to be right, not approximately right. A lending agent applying a credit policy needs to know exactly which counterparty it is dealing with, not a fuzzy match.
+When an agent is reasoning about money, "probably true" is not enough. A treasury agent that thinks the company has $4.2M in operating cash needs to be right, not approximately right. A lending agent applying a credit policy needs to know exactly which counterparty it is dealing with, not a fuzzy match.
 
 RAG and graphs are useful tools, but they are retrieval systems, not systems of record. They tell agents what was said. Wiki tells agents what is.
 

@@ -1,9 +1,8 @@
 # Overview
 
-Brain is a financial intelligence **Model Context Protocol (MCP) server** for the autonomous economy. It gives AI agents a secure, permissioned interface for understanding financial activity, retrieving structured financial memory, enforcing user-defined policies, and supporting autonomous execution with verifiable audit trails. A financial brain for AI agents. \
-\
-Connect once to Plaid, Alchemy, Chainalysis, and your existing rails. Brain handles the rest. \
-Agents propose actions. Policies decide what runs. Humans stay in control.
+Brain exposes a **Model Context Protocol (MCP) server** so agents can read financial state, retrieve memory, and propose actions within tenant-signed policy. Brain runs the underlying ingest, normalization, policy, and execution; the agent works against a single scoped surface.
+
+Agents propose actions. Policies decide what runs. Humans stay in control where the policy says they should.
 
 | Property              | Value                                            |
 | --------------------- | ------------------------------------------------ |
@@ -19,7 +18,7 @@ The MCP surface uses single-shot HTTP. One request, one response, one audit even
 
 The MCP surface is intentionally small. **10 tools, 5 resource templates, 5 canned prompts.**
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ 10 Tools</strong></td><td>Five Ledger reads, two Wiki reads, one Raw contribute, one PaymentIntent propose, one agent action propose.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>📦 5 Resources</strong></td><td>Resource templates addressable by <code>brain://</code> URIs: accounts, transactions, payment-intents, wiki pages, raw evidence.</td><td><a href="resources.md">resources.md</a></td><td></td></tr><tr><td><strong>💬 5 Prompts</strong></td><td>Canned prompts for the most common agent loops: cash flow, bills, spending, invoices, subscriptions.</td><td><a href="prompts.md">prompts.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT plus on-chain scope hash verification against <code>BrainMCPAgentRegistry</code>.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ 10 Tools</strong></td><td>Five Ledger reads, two Wiki reads, one Raw contribute, one PaymentIntent propose, one agent action propose.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>📦 5 resources</strong></td><td>Resource templates addressable by <code>brain://</code> URIs: accounts, transactions, payment-intents, wiki pages, raw evidence.</td><td><a href="resources.md">resources.md</a></td><td></td></tr><tr><td><strong>💬 5 Prompts</strong></td><td>Canned prompts for the most common agent loops: cash flow, bills, spending, invoices, subscriptions.</td><td><a href="prompts.md">prompts.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT plus on-chain scope hash verification against <code>BrainMCPAgentRegistry</code>.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
 
 ### What an external agent can do
 
@@ -35,7 +34,7 @@ The MCP surface is intentionally small. **10 tools, 5 resource templates, 5 cann
 There is no `payment_intent.execute` on the MCP surface. External agents may **propose** but never **execute**. Execution always goes through Brain's deterministic 13-step pre-execution gate, behind human approval where policy demands it.
 {% endhint %}
 
-[**→ The Pre-Execution Gate**](../protocol/the-pre-execution-gate.md)
+[**→ The pre-execution gate**](../protocol/the-pre-execution-gate.md)
 
 ### What makes the MCP surface different
 
@@ -51,7 +50,7 @@ The MCP tools call the same Ledger, Wiki, and PaymentIntent code paths that back
 
 ```
         ┌─────────────────────────────────┐
-        │  External AI Agent              │
+        │  External agent              │
         └────────────┬────────────────────┘
                      │  JSON-RPC 2.0 over HTTPS
                      │  Authorization: Bearer <jwt>

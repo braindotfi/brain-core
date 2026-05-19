@@ -1,4 +1,4 @@
-# Policy and Permissioning
+# Policy and permissioning
 
 Tenants describe policy in **plain English**. The Policy compiler converts each policy into a deterministic guard expression that is evaluated for every proposed action. Policies are versioned and signed by the tenant via EIP-712, with hashes anchored on-chain through `BrainPolicyRegistry`.
 
@@ -101,7 +101,7 @@ PolicyRegistration(
 )
 ```
 
-[**→ Smart contract reference**](/broken/pages/ia2C5LyWlDxEqxJuu710)
+[**→ Smart contract reference**](../smart-contracts/overview.md)
 
 ### How policy enforcement is layered
 

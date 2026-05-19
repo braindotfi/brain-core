@@ -30,7 +30,7 @@ Brain ingests from any source the tenant authorizes:
 | **Accounting**           | QuickBooks, Xero                                                    |
 | **Payroll**              | Gusto, Rippling, ADP                                                |
 | **Documents**            | Email-attached invoices, CSV/PDF uploads                            |
-| **Agent contributions**  | Transcripts, signed contracts, observations from external AI agents |
+| **Agent contributions**  | Transcripts, signed contracts, observations from external agents |
 
 You connect a source once. Brain handles the rest: pulling, parsing, normalizing, indexing, keeping it current.
 

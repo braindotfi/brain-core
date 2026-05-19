@@ -1,6 +1,6 @@
-# Agent Contributions
+# Agent contributions
 
-External AI agents do not just **read** Brain. With the right scope, they can **contribute** to Brain by pushing artifacts (transcripts, documents, structured observations) into the Raw layer, with cryptographic attribution.
+External agents do not just **read** Brain. With the right scope, they can **contribute** to Brain by pushing artifacts (transcripts, documents, structured observations) into the Raw layer, with cryptographic attribution.
 
 | Property                              | Value                                                      |
 | ------------------------------------- | ---------------------------------------------------------- |
@@ -16,7 +16,7 @@ This is one of Brain's category-defining moves. Most "agent platforms" let agent
 
 ### Why agents contribute
 
-Most useful financial signals don't come from banks or ERPs. They come from conversations, emails, contracts, internal observations. An AI agent that sits in a customer's workflow accumulates context that Brain otherwise has no way to see.
+Most useful financial signals don't come from banks or ERPs. They come from conversations, emails, contracts, internal observations. An agent that sits in a customer's workflow accumulates context that Brain otherwise has no way to see.
 
 Examples of what agents typically contribute:
 
