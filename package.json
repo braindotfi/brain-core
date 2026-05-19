@@ -25,7 +25,8 @@
     "contracts:test": "cd contracts && forge test",
     "dev:up": "./scripts/dev-up.sh",
     "dev:down": "docker compose down",
-    "plaid:sandbox": "pnpm -C tools/plaid-sandbox run start"
+    "plaid:sandbox": "pnpm -C tools/plaid-sandbox run start",
+    "demo:reset": "pnpm -C tools/demo-reset run reset"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",

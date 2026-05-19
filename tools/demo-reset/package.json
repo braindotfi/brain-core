@@ -1,0 +1,30 @@
+{
+  "name": "@brain/demo-reset",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Truncate demo tenant data and re-seed for a fresh investor demo session.",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "brain-demo-reset": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "lint": "eslint src --max-warnings 0",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "reset": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@brain/shared": "workspace:*",
+    "@brain/ledger": "workspace:*",
+    "@brain/seed-golden-path": "workspace:*",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.6.2",
+    "eslint": "^9.12.0"
+  }
+}

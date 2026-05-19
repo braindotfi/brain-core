@@ -588,6 +588,34 @@ importers:
         specifier: ^3.2.0
         version: 3.2.4(@types/node@22.19.19)(tsx@4.22.0)
 
+  tools/demo-reset:
+    dependencies:
+      '@brain/ledger':
+        specifier: workspace:*
+        version: link:../../services/ledger
+      '@brain/seed-golden-path':
+        specifier: workspace:*
+        version: link:../seed-golden-path
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      pg:
+        specifier: ^8.13.0
+        version: 8.20.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.7.0
+        version: 22.19.19
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
+      eslint:
+        specifier: ^9.12.0
+        version: 9.39.4
+      typescript:
+        specifier: ^5.6.2
+        version: 5.9.3
+
   tools/dev-token:
     dependencies:
       jose:
