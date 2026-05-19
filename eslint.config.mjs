@@ -28,6 +28,7 @@ export default [
       parserOptions: {
         ecmaVersion: 2023,
         sourceType: "module",
+
         project: [
           "./services/*/tsconfig.json",
           "./services/*/tsconfig.typecheck.json",

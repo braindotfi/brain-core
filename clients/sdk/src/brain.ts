@@ -5,6 +5,7 @@ import {
 } from "./client.js";
 import { PolicyApprovalRequiredError, PolicyRejectedError, type PaymentIntent } from "./errors.js";
 import { ActionsResource } from "./resources/actions.js";
+import { AgentsResource } from "./resources/agents.js";
 import { AuditResource, type InclusionProof } from "./resources/audit.js";
 import {
   AccountsResource,
@@ -20,6 +21,7 @@ import {
   type ExecutionReceipt,
   type RejectPaymentIntentParams,
 } from "./resources/payments.js";
+import { RawResource } from "./resources/raw.js";
 
 export type BrainOptions = BrainHttpClientOptions;
 
@@ -48,6 +50,8 @@ export class Brain {
   readonly audit: AuditResource;
   readonly payments: PaymentsResource;
   readonly actions: ActionsResource;
+  readonly agents: AgentsResource;
+  readonly raw: RawResource;
 
   constructor(options: BrainOptions) {
     this.http = createBrainHttpClient(options);
@@ -60,6 +64,8 @@ export class Brain {
     this.audit = new AuditResource(this.http);
     this.payments = new PaymentsResource(this.http);
     this.actions = new ActionsResource(this.http);
+    this.agents = new AgentsResource(this.http);
+    this.raw = new RawResource(this.http);
   }
 
   /**

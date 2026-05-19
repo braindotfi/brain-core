@@ -19,8 +19,8 @@ This package is the source-of-truth client that backs every code example on
 | 1A    | `createBrainHttpClient` over the full OpenAPI surface                                                                               | **shipped**             |
 | 1B.1  | `Brain` class + ledger reads (accounts, transactions, counterparties, obligations, invoices, balances)                              | shipped                 |
 | 1B.2  | Audit surface: `brain.audit.list/get/history/export/verify`, `brain.audit.anchor.latest`, `brain.proof`                             | shipped                 |
-| 1B.3  | Payment intents + actions: `brain.payments.*`, `brain.actions.*`, `brain.pay` / `brain.approve` / `brain.reject` (with idempotency) | **shipping in this PR** |
-| 1B.4  | Agents, raw/sources                                                                                                                 | not yet implemented     |
+| 1B.3  | Payment intents + actions: `brain.payments.*`, `brain.actions.*`, `brain.pay` / `brain.approve` / `brain.reject` (with idempotency) | shipped                 |
+| 1B.4  | Agents (`brain.agents.list/get/register/listActions/propose`) + raw ingestion (`brain.raw.ingest/get/getParsed`)                    | **shipping in this PR** |
 | 1B.5  | Wiki: `brain.ask` (compound over `/wiki/question`), `brain.wiki.*`                                                                  | not yet implemented     |
 | 1B.6  | Policy: `brain.policy.*`                                                                                                            | not yet implemented     |
 | 1B.7  | Compounds without REST endpoints today: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`                                 | deferred (need product) |

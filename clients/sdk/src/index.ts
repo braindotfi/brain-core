@@ -65,4 +65,20 @@ export {
   type StartedExecution,
 } from "./resources/actions.js";
 
+export {
+  AgentsResource,
+  type AgentActionsList,
+  type ListAgentActionsParams,
+  type ProposeFromAgentResult,
+  type RegisterAgentBody,
+} from "./resources/agents.js";
+
+export {
+  RawResource,
+  type GetParsedParams,
+  type IngestFromUrlParams,
+  type ParsedRaw,
+  type RawArtifact,
+} from "./resources/raw.js";
+
 export type { paths, components, operations } from "./generated/openapi.js";
