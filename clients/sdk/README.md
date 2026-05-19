@@ -5,33 +5,63 @@ The typed HTTP client for the Brain API.
 This package is the source-of-truth client that backs every code example on
 [docs.brain.fi](https://docs.brain.fi). It exposes:
 
+- A high-level `Brain` class with namespaced helpers (`brain.accounts.list`,
+  `brain.transactions.get`, `brain.obligations.list`, …) as documented on
+  the homepage. The surface lands in slices — see Status below.
 - A low-level typed client (`createBrainHttpClient`) generated from
-  [`Brain_API_Specification.yaml`](../../Brain_API_Specification.yaml).
-- (Future, Step 1B) A high-level `Brain` class with convenience methods
-  (`brain.ask`, `brain.pay`, `brain.proof`, namespaced helpers) as documented
-  on the homepage.
+  [`Brain_API_Specification.yaml`](../../Brain_API_Specification.yaml) for
+  power users who want raw HTTP access.
 
 ## Status
 
-| Step | Surface                                                                                                      | Status                  |
-| ---- | ------------------------------------------------------------------------------------------------------------ | ----------------------- |
-| 1A   | `createBrainHttpClient` over the full 57-endpoint OpenAPI surface                                            | **shipping in this PR** |
-| 1B   | `Brain` class with the flat + namespaced surface from docs.brain.fi                                          | not yet implemented     |
-| 1C   | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package) | not yet implemented     |
+| Slice | Surface                                                                                                      | Status                  |
+| ----- | ------------------------------------------------------------------------------------------------------------ | ----------------------- |
+| 1A    | `createBrainHttpClient` over the full OpenAPI surface                                                        | **shipped**             |
+| 1B.1  | `Brain` class + ledger reads (accounts, transactions, counterparties, obligations, invoices, balances)       | **shipping in this PR** |
+| 1B.2  | Audit surface: `brain.audit.*`, `brain.proof`                                                                | not yet implemented     |
+| 1B.3  | Payment intents: `brain.pay`, `brain.approve`, `brain.reject`, `brain.actions.*`                             | not yet implemented     |
+| 1B.4  | Agents, raw/sources                                                                                          | not yet implemented     |
+| 1B.5  | Wiki: `brain.ask` (compound over `/wiki/question`), `brain.wiki.*`                                           | not yet implemented     |
+| 1B.6  | Policy: `brain.policy.*`                                                                                     | not yet implemented     |
+| 1B.7  | Compounds without REST endpoints today: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`          | deferred (need product) |
+| 1C    | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package) | not yet implemented     |
 
-## Usage (1A surface)
+## Usage
+
+### High-level (`Brain` class)
+
+```typescript
+import { Brain } from "@brain/sdk";
+
+const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY! });
+
+// Ledger reads
+const { accounts, nextCursor } = await brain.accounts.list({ status: "active" });
+const { account, latestBalance } = await brain.accounts.get("acct_8231");
+const { transactions } = await brain.transactions.list({ direction: "inflow", limit: 50 });
+const counterparties = await brain.counterparties.list({ q: "stripe" });
+const obligations = await brain.obligations.list({ status: "due" });
+const invoices = await brain.invoices.list();
+const balances = await brain.balances.list();
+```
+
+On a non-2xx response, methods throw `BrainAPIError` carrying `status`,
+`code`, `traceId`, and structured `details` from the standard Brain error
+envelope.
+
+### Low-level (`createBrainHttpClient`)
+
+For endpoints not yet wrapped by the `Brain` class, or for callers who
+want direct typed-fetch access:
 
 ```typescript
 import { createBrainHttpClient } from "@brain/sdk";
 
 const http = createBrainHttpClient({
   apiKey: process.env.BRAIN_API_KEY!,
-  baseUrl: "https://api.brain.fi/v1",
 });
 
-const { data, error } = await http.GET("/ledger/accounts", {
-  params: { query: { status: "active" } },
-});
+const { data, error } = await http.GET("/audit/anchor/latest");
 ```
 
 The client is fully typed against the OpenAPI spec. Path, query, body, and
