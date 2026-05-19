@@ -5,15 +5,14 @@ Brain is a financial intelligence **Model Context Protocol (MCP) server** for th
 Connect once to Plaid, Alchemy, Chainalysis, and your existing rails. Brain handles the rest. \
 Agents propose actions. Policies decide what runs. Humans stay in control.
 
-| Property                         | Value                                                  |
-| -------------------------------- | ------------------------------------------------------ |
-| **Endpoint**                     | `POST /v1/agents/mcp`                                  |
-| **Transport**                    | JSON-RPC 2.0 over single-shot HTTP                     |
-| **Workspace**                    | `@brain/mcp` (`services/mcp/`)                         |
-| **Service shared with HTTP API** | `LedgerService`, `WikiService`, `PaymentIntentService` |
+| Property              | Value                                            |
+| --------------------- | ------------------------------------------------ |
+| **Endpoint**          | `POST /v1/agents/mcp`                            |
+| **Transport**         | JSON-RPC 2.0 over single-shot HTTP               |
+| **Backed by**         | The same Ledger, Wiki, and PaymentIntent surface as the HTTP API |
 
 {% hint style="info" %}
-SSE and streamable transports are post-MVP behind a feature flag. Single-shot HTTP keeps the surface small and the audit story clean: one request, one response, one audit event.
+The MCP surface uses single-shot HTTP. One request, one response, one audit event. Streaming transports may follow once we see a use case that needs them.
 {% endhint %}
 
 ### Surface map
@@ -33,14 +32,14 @@ The MCP surface is intentionally small. **10 tools, 5 resource templates, 5 cann
 | **Propose agent action** | `agent.action.propose`                                                                                                            | `agent:propose`          |
 
 {% hint style="warning" %}
-There is no `payment_intent.execute` on the MCP surface. External agents may **propose** but never **execute**. Execution always goes through Brain's deterministic §6 13-step pre-execution gate, behind human approval where policy demands it.
+There is no `payment_intent.execute` on the MCP surface. External agents may **propose** but never **execute**. Execution always goes through Brain's deterministic 13-step pre-execution gate, behind human approval where policy demands it.
 {% endhint %}
 
 [**→ The Pre-Execution Gate**](../protocol/the-pre-execution-gate.md)
 
 ### What makes the MCP surface different
 
-The same `LedgerService`, `WikiService`, and `PaymentIntentService` methods that back the HTTP API back the MCP tools. That has three concrete consequences:
+The MCP tools call the same Ledger, Wiki, and PaymentIntent code paths that back the HTTP API. That has three concrete consequences:
 
 | Property                     | Effect                                                                                                                   |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -58,15 +57,15 @@ The same `LedgerService`, `WikiService`, and `PaymentIntentService` methods that
                      │  Authorization: Bearer <jwt>
                      ▼
         ┌─────────────────────────────────┐
-        │  Fastify authPlugin             │
+        │  Brain edge                     │
         │  Validates JWT, resolves        │
         │  principal (tenant + scopes)    │
         └────────────┬────────────────────┘
                      │
                      ▼
         ┌─────────────────────────────────┐
-        │  @brain/mcp  (services/mcp/)    │
-        │  - Method dispatcher            │
+        │  MCP dispatcher                 │
+        │  - Method routing               │
         │  - 3 pre-call checks:           │
         │    a) agent active              │
         │    b) JWT scope_hash matches    │
@@ -78,28 +77,14 @@ The same `LedgerService`, `WikiService`, and `PaymentIntentService` methods that
                      │
                      ▼
         ┌─────────────────────────────────┐
-        │  Shared service methods:        │
-        │  LedgerService                  │
-        │  WikiService                    │
-        │  PaymentIntentService           │
+        │  Shared Brain services:         │
+        │  Ledger reads & writes          │
+        │  Wiki Q&A and pages             │
+        │  PaymentIntent proposal flow    │
         └─────────────────────────────────┘
                      │
                      ▼
             Audit events emitted at every step
-```
-
-### Boot wiring
-
-The MCP server is mounted onto the existing Fastify app via the `registerMcp` callback on `buildExecutionApp`. This keeps `services/execution` unaware of `@brain/mcp` so there is no workspace cycle.
-
-```typescript
-// services/api boot
-import { buildExecutionApp } from "@brain/execution";
-import { registerMcp } from "@brain/mcp";
-
-const app = await buildExecutionApp({
-  registerMcp,  // optional, pass to enable the MCP surface
-});
 ```
 
 ### A first call

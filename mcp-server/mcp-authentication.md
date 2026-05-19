@@ -12,14 +12,14 @@ External agents authenticate to Brain's MCP server with a **JWT** that anchors b
                  │  Authorization: Bearer <jwt>
                  ▼
 ┌─────────────────────────────────────────────────┐
-│  Fastify authPlugin                             │
+│  Brain edge                                     │
 │  - Validates JWT signature                      │
 │  - Resolves principal (tenant + scopes)         │
 └────────────────┬────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────┐
-│  @brain/mcp                                     │
+│  MCP dispatcher                                 │
 │  Three pre-call checks:                         │
 │  1. Agent record in `agents` is `active`        │
 │  2. JWT `scope_hash` claim matches on-chain     │

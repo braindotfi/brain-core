@@ -59,7 +59,7 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 | **Writes to**       | Ledger (`ledger_payment_intents`)                        |
 | **Required scope**  | `payment_intent:propose` (for external agents)           |
 | **Service method**  | `PaymentIntentService.create()` (shared by HTTP and MCP) |
-| **Lifecycle gates** | Policy → Approval → §6 13-step pre-execution gate        |
+| **Lifecycle gates** | Policy → Approval → 13-step pre-execution gate        |
 
 [**→ Payment Intents**](../protocol/payment-intents.md)
 
@@ -112,7 +112,7 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 | Writer           | Path                                      | Notes                       |
 | ---------------- | ----------------------------------------- | --------------------------- |
 | Every layer      | `audit_events` append-only writes         | Every material state change |
-| Anchor publisher | `audit_anchors` per published Merkle root | Hourly cadence in MVP       |
+| Anchor publisher | `audit_anchors` per published Merkle root | Hourly cadence       |
 
 ### What is not allowed
 

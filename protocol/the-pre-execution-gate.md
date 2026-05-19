@@ -1,10 +1,9 @@
 # The Pre-Execution Gate
 
-Before any PaymentIntent can execute, it must pass a **deterministic 13-step pre-execution gate** defined in §6 of Brain's Engineering Standards. The gate is the only path to financial execution. There is no shortcut, no override, no bypass.
+Before any PaymentIntent can execute, it must pass a **deterministic 13-step pre-execution gate**. The gate is the only path to financial execution. There is no shortcut, no override, no bypass.
 
 | Property       | Value                                                        |
 | -------------- | ------------------------------------------------------------ |
-| **Defined in** | `Brain_Engineering_Standards.md` §6                          |
 | **Runs at**    | The boundary between `approved` and `executed`               |
 | **Reads from** | The live Ledger (current balance, counterparty status, etc.) |
 | **Emits**      | An audit event before each step and after each pass/fail     |
@@ -21,7 +20,7 @@ Think of Policy as the **standing rule** and the gate as the **flight check**. B
 
 ### The 13 steps
 
-The exact ordering and content are versioned in `Brain_Engineering_Standards.md` §6. The MVP gate runs the following classes of check, every payment, every time.
+The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol.
 
 | #  | Step                                                                                           | Reads From                              |
 | -- | ---------------------------------------------------------------------------------------------- | --------------------------------------- |

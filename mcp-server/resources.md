@@ -120,7 +120,7 @@ Lists the URI patterns Brain advertises:
 | ------------------------------ | ---------------------------------------------------------------------------- |
 | Lists, queries, search results | Tools handle those (`*.list`)                                                |
 | Newly proposed entities        | The propose tool is the canonical entry point; resources are for fetch-by-id |
-| Streaming feeds                | Single-shot HTTP only in MVP                                                 |
+| Streaming feeds                | Single-shot HTTP today; streaming may follow when there is a clear use case  |
 
 ### Audit
 

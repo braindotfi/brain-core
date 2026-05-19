@@ -18,7 +18,7 @@ Brain's MCP surface exposes **10 tools** across four capability groups. Each too
 | `agent.action.propose`       | Agent action   | `agent:propose`          | Yes (writes Proposal)                |
 
 {% hint style="warning" %}
-**There is no `payment_intent.execute` tool.** External agents propose; humans (or internal Brain workers under policy `auto`) execute. The §6 13-step pre-execution gate is the only path to settlement.
+**There is no `payment_intent.execute` tool.** External agents propose; humans (or internal Brain workers under an `auto` policy decision) execute. The 13-step pre-execution gate is the only path to settlement.
 {% endhint %}
 
 ### Ledger reads
@@ -124,7 +124,7 @@ Returns:
 
 #### `wiki.page.get`
 
-Fetch a Wiki page by slug or id. Eight page types ship in MVP: `/accounts/{id}`, `/counterparties/{id}`, `/obligations/{id}`, `/invoices/{id}`, `/agents/{id}`, `/policies/{id}`, `/monthly-summaries/{YYYY-MM}`, `/cash-flow/{period}`.
+Fetch a Wiki page by slug or id. Eight page types are available: `/accounts/{id}`, `/counterparties/{id}`, `/obligations/{id}`, `/invoices/{id}`, `/agents/{id}`, `/policies/{id}`, `/monthly-summaries/{YYYY-MM}`, `/cash-flow/{period}`.
 
 | Argument     | Type   | Description |
 | ------------ | ------ | ----------- |
