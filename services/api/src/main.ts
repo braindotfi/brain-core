@@ -48,6 +48,7 @@ import {
 } from "@brain/shared";
 
 import { registerSiwxRoutes, StubAgentRegistry } from "./auth/siwx.js";
+import { createViemAnchorBroadcaster } from "./anchorBroadcaster.js";
 
 import { registerRawPlugin, ingestOne, type RegisterRawPluginOptions } from "@brain/raw";
 
@@ -68,7 +69,7 @@ import {
 } from "@brain/execution";
 import type { ExecutionDeps } from "@brain/execution";
 
-import { registerAuditRoutes } from "@brain/audit";
+import { registerAuditRoutes, publishAnchor } from "@brain/audit";
 import type { AuditDeps } from "@brain/audit";
 
 import {
@@ -452,7 +453,20 @@ async function main(): Promise<void> {
     resolveRole,
   };
 
-  const auditDeps: AuditDeps = { pool, audit };
+  const anchorBroadcaster =
+    cfg.AUDIT_PUBLISHER_KEY !== undefined
+      ? createViemAnchorBroadcaster({
+          privateKey: cfg.AUDIT_PUBLISHER_KEY as `0x${string}`,
+          contractAddress: cfg.AUDIT_ANCHOR_ADDRESS as `0x${string}`,
+          rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+        })
+      : undefined;
+
+  const auditDeps: AuditDeps = {
+    pool,
+    audit,
+    ...(anchorBroadcaster !== undefined ? { broadcaster: anchorBroadcaster } : {}),
+  };
 
   // -- MCP server -----------------------------------------------------
   // TODO: swap FakeAuthVerifier for McpAuthVerifier with a real onchain
@@ -586,6 +600,39 @@ async function main(): Promise<void> {
   // -- background workers ---------------------------------------------
   const normalizeWorker = startNormalizeWorker({ pool, audit });
 
+  let anchorTimer: NodeJS.Timeout | undefined;
+  if (anchorBroadcaster !== undefined) {
+    const intervalMs = cfg.AUDIT_ANCHOR_INTERVAL_MS;
+    const runAnchor = (): void => {
+      const now = new Date();
+      const periodStart = new Date(now.getTime() - intervalMs);
+      // Query all tenants that have unanchored events and publish for each.
+      void pool
+        .query<{ tenant_id: string }>(
+          "SELECT DISTINCT tenant_id FROM audit_events WHERE created_at >= $1",
+          [periodStart],
+        )
+        .then(async (res) => {
+          for (const row of res.rows) {
+            try {
+              await publishAnchor(pool, anchorBroadcaster, {
+                tenantId: row.tenant_id,
+                periodStart,
+                periodEnd: now,
+              });
+            } catch (err) {
+              log.error({ err, tenantId: row.tenant_id }, "anchor publish failed");
+            }
+          }
+        })
+        .catch((err: unknown) => {
+          log.error({ err }, "anchor tenant query failed");
+        });
+    };
+    anchorTimer = setInterval(runAnchor, intervalMs);
+    log.info({ intervalMs }, "anchor publisher started");
+  }
+
   // -- listen ---------------------------------------------------------
   await app.listen({ host: "0.0.0.0", port: cfg.PORT });
   log.info({ port: cfg.PORT, version: cfg.SERVICE_VERSION }, "brain-server up");
@@ -593,6 +640,7 @@ async function main(): Promise<void> {
   // -- graceful shutdown ----------------------------------------------
   const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, "shutting down");
+    if (anchorTimer !== undefined) clearInterval(anchorTimer);
     normalizeWorker.stop();
     try {
       await app.close();

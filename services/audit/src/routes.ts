@@ -12,6 +12,7 @@ import {
 } from "@brain/shared";
 import { FORWARDED_EVENTS, generateWebhookSecret } from "@brain/shared";
 import { buildTree, makeProof, verifyProof } from "./merkle.js";
+import { publishAnchor } from "./publisher.js";
 import {
   findEvent,
   findEventsByEntity,
@@ -190,6 +191,35 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
       onchain_block_number: anchor.onchain_block_number,
     };
   });
+
+  // POST /audit/anchor/publish — on-demand anchor (demo presenter trigger).
+  // Only registered when a broadcaster is wired in.
+  if (deps.broadcaster !== undefined) {
+    const broadcaster = deps.broadcaster;
+    app.post("/audit/anchor/publish", async (request, reply) => {
+      const principal = requirePrincipal(request);
+      requireScope(principal.scopes, "audit:admin" as Scope);
+      const now = new Date();
+      const periodStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const anchor = await publishAnchor(deps.pool, broadcaster, {
+        tenantId: principal.tenantId,
+        periodStart,
+        periodEnd: now,
+      });
+      if (anchor === null) {
+        throw brainError("audit_no_events", "no audit events in the last 24 hours");
+      }
+      reply.status(200);
+      const txHashHex = anchor.onchain_tx_hash?.toString("hex") ?? null;
+      return {
+        id: anchor.id,
+        merkle_root: anchor.merkle_root.toString("hex"),
+        event_count: anchor.event_count,
+        tx_hash: txHashHex,
+        basescan_url: txHashHex !== null ? `https://sepolia.basescan.org/tx/0x${txHashHex}` : null,
+      };
+    });
+  }
 
   // GET /audit/verify — PUBLIC (skipAuth) — pure inclusion verifier.
   // Clients supply root + leaf + proof; we return ok:true if it verifies.
