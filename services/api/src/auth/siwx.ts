@@ -104,15 +104,15 @@ export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions
       if (opts.demoMode === true) {
         const expiresAt = Math.floor(Date.now() / 1000) + tokenTtl;
         const access_token = await opts.signer.sign({
-          id: "agent_01DEMO000000000000000000",
+          id: "agent_01DEMX00000000000000000000",
           type: "agent",
-          tenantId: "tnt_01DEMO00000000000000000",
+          tenantId: "tnt_01DEMX00000000000000000000",
           scopes: [
             "ledger:read",
             "wiki:read",
             "raw:write",
             "payment_intent:propose",
-            "agent:propose",
+            "execution:propose",
           ] as Scope[],
           tokenId: newTokenId(),
           expiresAt,
@@ -123,15 +123,15 @@ export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions
           token_type: "Bearer",
           expires_in: tokenTtl,
           principal: {
-            id: "agent_01DEMO000000000000000000",
+            id: "agent_01DEMX00000000000000000000",
             type: "agent",
-            tenantId: "tnt_01DEMO00000000000000000",
+            tenantId: "tnt_01DEMX00000000000000000000",
             scopes: [
               "ledger:read",
               "wiki:read",
               "raw:write",
               "payment_intent:propose",
-              "agent:propose",
+              "execution:propose",
             ],
           },
         };
@@ -251,7 +251,7 @@ export class StubAgentRegistry implements AgentRegistryLookup {
         "wiki:read",
         "raw:write",
         "payment_intent:propose",
-        "agent:propose",
+        "execution:propose",
       ] as Scope[],
       scopeHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
     };

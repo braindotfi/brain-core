@@ -472,7 +472,7 @@ async function main(): Promise<void> {
 
   // -- Fastify root app -----------------------------------------------
   const app = Fastify({
-    logger: log as Parameters<typeof Fastify>[0]["logger"],
+    logger: true,
     bodyLimit: cfg.REQUEST_BODY_LIMIT_BYTES,
     disableRequestLogging: false,
   });
