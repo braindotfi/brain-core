@@ -202,8 +202,9 @@ resource "azurerm_container_app_environment" "main" {
 }
 
 # One Container App per service. Revision-based blue/green per §10.3.
+# Override var.services in a tfvars file to deploy a subset (e.g. poc.tfvars).
 locals {
-  services = toset(["api", "raw", "wiki", "policy", "execution", "audit", "agents"])
+  services = toset(var.services)
 }
 
 resource "azurerm_container_app" "service" {

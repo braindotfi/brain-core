@@ -54,6 +54,7 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 !terraform.tfvars.example
+!infra/poc.tfvars
 
 # IDE / editor
 .vscode/

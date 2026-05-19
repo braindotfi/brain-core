@@ -19,3 +19,9 @@ variable "backup_location" {
   type        = string
   default     = "westus3"
 }
+
+variable "services" {
+  description = "Set of service names to deploy as Container Apps. Override in tfvars to deploy a subset (e.g. POC = [\"api\"])."
+  type        = set(string)
+  default     = ["api", "raw", "wiki", "policy", "execution", "audit", "agents"]
+}
