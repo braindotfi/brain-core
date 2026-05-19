@@ -27,7 +27,7 @@ describe("Brain.snapshot", () => {
       { status: 200, body: { transactions: [{ id: "tx_1" }], next_cursor: null } },
       { status: 200, body: { obligations: [{ id: "obl_1" }] } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const snap = await brain.snapshot("acme");
 
@@ -47,7 +47,7 @@ describe("Brain.snapshot", () => {
       { status: 200, body: { transactions: [], next_cursor: null } },
       { status: 200, body: { obligations: [] } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.snapshot("acme", { recentTransactionLimit: 5 });
 
@@ -82,7 +82,7 @@ describe("Brain.trace", () => {
         },
       },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const trace = await brain.trace("pi_1");
 
@@ -102,7 +102,7 @@ describe("Brain.trace", () => {
         body: { events: [] },
       },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.trace("tx_1", { entityType: "transaction" });
 
@@ -125,7 +125,7 @@ describe("Brain.trace", () => {
         },
       },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const trace = await brain.trace("pi_1");
 
@@ -159,7 +159,7 @@ describe("Brain.cashFlow.summarize", () => {
         },
       },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const summary = await brain.cashFlow.summarize({
       tenantId: "acme",
@@ -191,7 +191,7 @@ describe("Brain.cashFlow.summarize", () => {
         },
       },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const summary = await brain.cashFlow.summarize({
       tenantId: "acme",
@@ -208,7 +208,7 @@ describe("Brain.cashFlow.summarize", () => {
     const { fetch, calls } = mockSequence([
       { status: 200, body: { transactions: [], next_cursor: null } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.cashFlow.summarize({
       tenantId: "acme",

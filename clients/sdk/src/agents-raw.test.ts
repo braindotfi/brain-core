@@ -22,7 +22,7 @@ describe("Brain.agents", () => {
     const { fetch, calls } = mockFetch(200, {
       agents: [{ id: "agent_1" }, { id: "agent_2" }],
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const agents = await brain.agents.list();
 
@@ -32,14 +32,14 @@ describe("Brain.agents", () => {
 
   it("list returns empty array when body has none", async () => {
     const { fetch } = mockFetch(200, {});
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     expect(await brain.agents.list()).toEqual([]);
   });
 
   it("get returns one agent", async () => {
     const { fetch, calls } = mockFetch(200, { id: "agent_1", kind: "internal" });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const agent = await brain.agents.get("agent_1");
 
@@ -52,7 +52,7 @@ describe("Brain.agents", () => {
       id: "agent_new",
       state: "pending_onchain",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const agent = await brain.agents.register({
       agent_id: "agent_new",
@@ -77,7 +77,7 @@ describe("Brain.agents", () => {
         },
       ],
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.agents.listActions("agent_1", { limit: 25 });
 
@@ -98,7 +98,7 @@ describe("Brain.agents", () => {
       policy_decision_id: "pd_1",
       status: "pending",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.agents.propose("agent_1", {
       type: "categorize_transaction",
@@ -122,7 +122,7 @@ describe("Brain.raw", () => {
       raw_id: "raw_1",
       sha256: "abc",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.raw.ingest({
       sourceType: "document" as never,
@@ -141,7 +141,7 @@ describe("Brain.raw", () => {
 
   it("ingest omits optional fields when not provided", async () => {
     const { fetch, calls } = mockFetch(201, { raw_id: "raw_1" });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.raw.ingest({
       sourceType: "document" as never,
@@ -162,7 +162,7 @@ describe("Brain.raw", () => {
       mime_type: "application/pdf",
       bytes: 1024,
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.raw.get("raw_1");
 
@@ -182,7 +182,7 @@ describe("Brain.raw", () => {
       raw_id: "raw_1",
       parsed: [{ parser: "pdf", parser_version: "1.0" }],
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.raw.getParsed("raw_1", { parser: "pdf" });
 
@@ -193,7 +193,7 @@ describe("Brain.raw", () => {
 
   it("getParsed returns empty array when body has none", async () => {
     const { fetch } = mockFetch(200, { raw_id: "raw_1" });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.raw.getParsed("raw_1");
 

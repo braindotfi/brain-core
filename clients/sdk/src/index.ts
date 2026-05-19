@@ -1,4 +1,4 @@
-export { Brain, type BrainOptions, type PayResult } from "./brain.js";
+export { Brain, BRAIN_BASE_URLS, resolveBaseUrl, type BrainOptions, type PayResult } from "./brain.js";
 
 export {
   createBrainHttpClient,

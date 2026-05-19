@@ -33,7 +33,7 @@ This package is the source-of-truth client that backs every code example on
 ```typescript
 import { Brain } from "@brain/sdk";
 
-const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY! });
+const brain = new Brain({ token: process.env.BRAIN_TOKEN! });
 
 // Ledger reads
 const { accounts, nextCursor } = await brain.accounts.list({ status: "active" });
@@ -129,7 +129,7 @@ want direct typed-fetch access:
 import { createBrainHttpClient } from "@brain/sdk";
 
 const http = createBrainHttpClient({
-  apiKey: process.env.BRAIN_API_KEY!,
+  token: process.env.BRAIN_TOKEN!,
 });
 
 const { data, error } = await http.GET("/audit/anchor/latest");

@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createBrainHttpClient } from "./client.js";
 
 describe("createBrainHttpClient", () => {
-  it("throws when apiKey is empty", () => {
-    expect(() => createBrainHttpClient({ apiKey: "" })).toThrow(/apiKey is required/);
+  it("throws when token is empty", () => {
+    expect(() => createBrainHttpClient({ token: "" })).toThrow(/token is required/);
   });
 
   it("sends Authorization header and uses the default base URL", async () => {
@@ -17,7 +17,7 @@ describe("createBrainHttpClient", () => {
     );
 
     const http = createBrainHttpClient({
-      apiKey: "test-key",
+      token: "test-key",
       fetch: fetchMock as unknown as typeof fetch,
     });
 
@@ -36,7 +36,7 @@ describe("createBrainHttpClient", () => {
     );
 
     const http = createBrainHttpClient({
-      apiKey: "k",
+      token: "k",
       baseUrl: "https://api.sandbox.brain.fi/v1",
       fetch: fetchMock as unknown as typeof fetch,
     });
@@ -54,7 +54,7 @@ describe("createBrainHttpClient", () => {
     );
 
     const http = createBrainHttpClient({
-      apiKey: "k",
+      token: "k",
       headers: { "X-Trace-Id": "trace-123" },
       fetch: fetchMock as unknown as typeof fetch,
     });

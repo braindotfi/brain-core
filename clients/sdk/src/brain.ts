@@ -33,11 +33,28 @@ import { RawResource } from "./resources/raw.js";
 import { WikiResource, type AskParams } from "./resources/wiki.js";
 import type { components } from "./generated/openapi.js";
 
-export type BrainOptions = BrainHttpClientOptions;
+export interface BrainOptions extends Omit<BrainHttpClientOptions, "baseUrl"> {
+  /** Named environment shorthand. Ignored when `baseUrl` is set explicitly. */
+  environment?: "production" | "sandbox";
+  /** Explicit base URL override. Takes precedence over `environment`. */
+  baseUrl?: string;
+  /** Tenant ID attached to compound helpers (`brain.pay`, `brain.ask`). */
+  defaultTenantId?: string;
+}
 
 export interface PayResult {
   intent: PaymentIntent;
   execution: ExecutionReceipt | undefined;
+}
+
+export const BRAIN_BASE_URLS: Record<"production" | "sandbox", string> = {
+  production: "https://api.brain.fi/v1",
+  sandbox: "https://api.brain.dev/v1",
+};
+
+export function resolveBaseUrl(options: Pick<BrainOptions, "environment" | "baseUrl">): string {
+  const url = options.baseUrl ?? BRAIN_BASE_URLS[options.environment ?? "production"];
+  return url.replace(/\/$/, "");
 }
 
 /**
@@ -51,6 +68,8 @@ export interface PayResult {
  */
 export class Brain {
   readonly http: BrainHttpClient;
+  readonly baseUrl: string;
+  readonly defaultTenantId: string | undefined;
   readonly accounts: AccountsResource;
   readonly transactions: TransactionsResource;
   readonly counterparties: CounterpartiesResource;
@@ -65,10 +84,23 @@ export class Brain {
   readonly wiki: WikiResource;
   readonly policy: PolicyResource;
   readonly cashFlow: CashFlowResource;
+  private readonly _token: string;
+  private readonly _fetch: typeof globalThis.fetch;
   private readonly compounds: CompoundsResource;
 
   constructor(options: BrainOptions) {
-    this.http = createBrainHttpClient(options);
+    if (!options.token || typeof options.token !== "string") {
+      throw new Error("Brain: token is required (pass a JWT string)");
+    }
+    const fetch = options.fetch ?? globalThis.fetch;
+    if (typeof fetch !== "function") {
+      throw new Error("Brain: no fetch implementation available — pass options.fetch");
+    }
+    this.baseUrl = resolveBaseUrl(options);
+    this.defaultTenantId = options.defaultTenantId;
+    this._token = options.token;
+    this._fetch = fetch;
+    this.http = createBrainHttpClient({ ...options, baseUrl: this.baseUrl, fetch });
     this.accounts = new AccountsResource(this.http);
     this.transactions = new TransactionsResource(this.http);
     this.counterparties = new CounterpartiesResource(this.http);
@@ -84,6 +116,14 @@ export class Brain {
     this.policy = new PolicyResource(this.http);
     this.compounds = new CompoundsResource(this);
     this.cashFlow = new CashFlowResource(this);
+  }
+
+  getMaskedApiKey(): string {
+    return this._token.length > 11 ? `${this._token.slice(0, 11)}***` : "***";
+  }
+
+  getFetch(): typeof globalThis.fetch {
+    return this._fetch;
   }
 
   /**

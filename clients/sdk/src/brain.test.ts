@@ -19,8 +19,8 @@ function mockFetch(
 }
 
 describe("Brain", () => {
-  it("constructs sub-resources from a single apiKey", () => {
-    const brain = new Brain({ apiKey: "k" });
+  it("constructs sub-resources from a single token", () => {
+    const brain = new Brain({ token: "k" });
     expect(brain.accounts).toBeDefined();
     expect(brain.transactions).toBeDefined();
     expect(brain.counterparties).toBeDefined();
@@ -36,7 +36,7 @@ describe("Brain", () => {
         accounts: [{ id: "acct_1" }, { id: "acct_2" }],
         next_cursor: "abc",
       });
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       const page = await brain.accounts.list({ status: "active" });
 
@@ -47,7 +47,7 @@ describe("Brain", () => {
 
     it("list defaults nextCursor to null when missing", async () => {
       const { fetch } = mockFetch(200, { accounts: [] });
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       const page = await brain.accounts.list();
 
@@ -60,7 +60,7 @@ describe("Brain", () => {
         account: { id: "acct_1", display_name: "Checking" },
         latest_balance: { current: "100.00" },
       });
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       const detail = await brain.accounts.get("acct_1");
 
@@ -75,7 +75,7 @@ describe("Brain", () => {
         message: "Account not found",
         trace_id: "trace-1",
       });
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       await expect(brain.accounts.get("missing")).rejects.toMatchObject({
         name: "BrainAPIError",
@@ -87,7 +87,7 @@ describe("Brain", () => {
 
     it("throws when 200 body is missing the account field", async () => {
       const { fetch } = mockFetch(200, {});
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       await expect(brain.accounts.get("acct_1")).rejects.toBeInstanceOf(BrainAPIError);
     });
@@ -99,7 +99,7 @@ describe("Brain", () => {
         transactions: [{ id: "tx_1" }],
         next_cursor: null,
       });
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       const page = await brain.transactions.list({
         direction: "inflow",
@@ -115,7 +115,7 @@ describe("Brain", () => {
     it("get returns the raw Transaction body", async () => {
       const tx = { id: "tx_1", amount: "50.00" };
       const { fetch, calls } = mockFetch(200, tx);
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       const result = await brain.transactions.get("tx_1");
 
@@ -129,7 +129,7 @@ describe("Brain", () => {
       const { fetch } = mockFetch(200, {
         counterparties: [{ id: "cp_1" }, { id: "cp_2" }, { id: "cp_3" }],
       });
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       const list = await brain.counterparties.list({ q: "stripe" });
 
@@ -138,7 +138,7 @@ describe("Brain", () => {
 
     it("list returns empty array when body has no counterparties", async () => {
       const { fetch } = mockFetch(200, {});
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       const list = await brain.counterparties.list();
 
@@ -151,7 +151,7 @@ describe("Brain", () => {
       const { fetch } = mockFetch(200, {
         obligations: [{ id: "obl_1" }],
       });
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       const list = await brain.obligations.list({ status: "due" });
 
@@ -164,7 +164,7 @@ describe("Brain", () => {
       const { fetch } = mockFetch(200, {
         invoices: [{ id: "inv_1" }],
       });
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       const list = await brain.invoices.list();
 
@@ -177,7 +177,7 @@ describe("Brain", () => {
       const { fetch } = mockFetch(200, {
         balances: [{ account_id: "acct_1", current: "100.00" }],
       });
-      const brain = new Brain({ apiKey: "k", fetch });
+      const brain = new Brain({ token: "k", fetch });
 
       const list = await brain.balances.list({ account_id: "acct_1" });
 
