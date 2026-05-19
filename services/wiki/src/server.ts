@@ -6,7 +6,7 @@ import {
   requestIdPlugin,
   type IdempotencyStore,
   type JwtVerifier,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { registerEntity } from "./routes/entity.js";
 import { registerSearch } from "./routes/search.js";
 import { registerQuestion } from "./routes/question.js";

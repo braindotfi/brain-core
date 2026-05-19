@@ -26,10 +26,8 @@
 
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { SiweMessage, generateNonce } from "siwe";
-import { brainError } from "../shared/errors.js";
-import { brainId, newAgentId, newTokenId } from "../shared/ids.js";
-import type { JwtSigner } from "../shared/auth/signer.js";
-import type { Scope } from "../shared/auth/scopes.js";
+import { brainError, brainId, newAgentId, newTokenId } from "@brain/shared";
+import type { JwtSigner, Scope } from "@brain/shared";
 
 const NONCE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_AGENT_TTL_SECONDS = 60 * 60; // 1 hour per docs

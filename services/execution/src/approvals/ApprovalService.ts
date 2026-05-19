@@ -16,7 +16,7 @@ import {
   type AuditEmitter,
   type IApprovalService,
   type ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Pool } from "pg";
 import { insertApproval, listApprovals, type ApprovalSubjectType } from "./repository.js";
 

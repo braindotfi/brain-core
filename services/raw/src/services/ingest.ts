@@ -13,7 +13,7 @@ import {
   withTenantScope,
   type AuditEmitter,
   type BlobAdapter,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Pool } from "pg";
 import { insertOrReuseArtifact } from "../repository/artifacts.js";
 

@@ -20,7 +20,7 @@ import {
   type IRawEvidenceService,
   type IWikiMemoryService,
   type Principal,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { dispatch, invalidParams, type JsonRpcHandler } from "./dispatcher.js";
 import {
   PROTOCOL_VERSION,

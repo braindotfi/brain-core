@@ -1,0 +1,56 @@
+{
+  "name": "@brain/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Brain shared primitives — auth, errors, ids, db, blob, queue, audit, gate, contracts. Consumed by every Brain service.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "lint": "eslint src --max-warnings 0",
+    "lint:fix": "eslint src --fix",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@aws-sdk/client-s3": "^3.670.0",
+    "@aws-sdk/s3-request-presigner": "^3.670.0",
+    "@azure/storage-blob": "^12.25.0",
+    "@opentelemetry/api": "^1.9.0",
+    "bullmq": "^5.21.0",
+    "fastify": "^5.0.0",
+    "fastify-plugin": "^5.0.1",
+    "hot-shots": "^10.2.1",
+    "ioredis": "^5.4.1",
+    "jose": "^5.9.3",
+    "openai": "^4.68.0",
+    "pg": "^8.13.0",
+    "pino": "^9.4.0",
+    "ulid": "^2.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/pg": "^8.11.10",
+    "eslint": "^9.12.0",
+    "fast-check": "^3.23.1",
+    "typescript": "^5.6.2",
+    "vitest": "^3.2.0",
+    "@vitest/coverage-v8": "^3.2.0"
+  }
+}

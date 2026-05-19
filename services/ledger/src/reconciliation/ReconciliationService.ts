@@ -21,7 +21,7 @@ import {
   type ReconciliationMatch,
   type RunReconciliationRequest,
   type ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Pool } from "pg";
 import { listReconciliationMatches } from "../repository/reconciliation_matches.js";
 import { InvoicePaymentMatcher } from "./invoice-payment.js";

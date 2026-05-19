@@ -15,7 +15,7 @@ import {
   type MatchType,
   type ServiceCallContext,
   type TenantScopedClient,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Pool } from "pg";
 import type { ReconciliationMatchRow } from "../repository/reconciliation_matches.js";
 

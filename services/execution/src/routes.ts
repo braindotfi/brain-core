@@ -13,7 +13,7 @@ import {
   requireScope,
   withTenantScope,
   type Scope,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import {
   appendApproverSigned,
   findAgent,

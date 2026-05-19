@@ -1,4 +1,4 @@
-import type { AuditEmitter, EmbeddingAdapter, LlmAdapter, MetricsEmitter } from "@brain/api/shared";
+import type { AuditEmitter, EmbeddingAdapter, LlmAdapter, MetricsEmitter } from "@brain/shared";
 import type { Pool } from "pg";
 import type { Redis } from "ioredis";
 import type { SchemaRegistry } from "./schemas.js";

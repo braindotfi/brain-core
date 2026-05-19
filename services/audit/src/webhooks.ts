@@ -3,7 +3,7 @@
  * Callers must be inside a withTenantScope transaction.
  */
 
-import type { TenantScopedClient } from "@brain/api/shared";
+import type { TenantScopedClient } from "@brain/shared";
 
 export interface WebhookEndpointRow {
   id: string;

@@ -5,7 +5,7 @@
  * rather than silently accepting unstructured data.
  */
 
-import { brainError } from "@brain/api/shared";
+import { brainError } from "@brain/shared";
 import { PlaidAdapter } from "./plaid.js";
 import {
   AgentContributedAdapter,

@@ -10,7 +10,7 @@ import {
   requireScope,
   withTenantScope,
   type Scope,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { findArtifactById, tombstoneArtifact } from "../repository/artifacts.js";
 import type { RawDeps } from "../deps.js";
 

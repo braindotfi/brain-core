@@ -6,7 +6,7 @@ import {
   requestIdPlugin,
   type IdempotencyStore,
   type JwtVerifier,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { registerAuditRoutes } from "./routes.js";
 import type { AuditDeps } from "./deps.js";
 

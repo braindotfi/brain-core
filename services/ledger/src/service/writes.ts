@@ -26,7 +26,7 @@ import {
   type AuditEmitter,
   type ServiceCallContext,
   type TenantScopedClient,
-} from "@brain/api/shared";
+} from "@brain/shared";
 
 /** §3.2 of Brain_MVP_Architecture.md — agent-contributed rows are capped. */
 const AGENT_CONTRIBUTED_CONFIDENCE_CEILING = 0.5;

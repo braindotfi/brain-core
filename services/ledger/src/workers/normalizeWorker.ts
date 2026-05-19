@@ -14,7 +14,7 @@
  */
 
 import type { Pool } from "pg";
-import type { AuditEmitter } from "@brain/api/shared";
+import type { AuditEmitter } from "@brain/shared";
 import { LedgerService } from "../service/LedgerService.js";
 import type { LedgerDeps } from "../deps.js";
 

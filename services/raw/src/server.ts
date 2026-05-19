@@ -15,7 +15,7 @@ import {
   type IdempotencyStore,
   type JwtVerifier,
   type PlaidVerifyOptions,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { registerArtifact } from "./routes/artifact.js";
 import { registerIngest } from "./routes/ingest.js";
 import { registerParsed } from "./routes/parsed.js";

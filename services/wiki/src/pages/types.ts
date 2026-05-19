@@ -14,7 +14,7 @@
  * (orchestrator.ts) and reads pages + Ledger.
  */
 
-import type { TenantScopedClient, WikiPage, ServiceCallContext } from "@brain/api/shared";
+import type { TenantScopedClient, WikiPage, ServiceCallContext } from "@brain/shared";
 
 export interface PageGenerationContext {
   ctx: ServiceCallContext;

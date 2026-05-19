@@ -15,7 +15,7 @@ import {
   type GatePaymentIntent,
   type GatePolicyDecision,
   type ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Pool } from "pg";
 import { getActive } from "./repository.js";
 import { evaluate, type Action } from "./vm.js";

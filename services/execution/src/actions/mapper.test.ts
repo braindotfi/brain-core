@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PaymentIntent, PaymentIntentStatus } from "@brain/api/shared";
+import type { PaymentIntent, PaymentIntentStatus } from "@brain/shared";
 import { paymentIntentToAction, piStatusToActionStatus, piStatusToDecision } from "./mapper.js";
 
 function fakeIntent(status: PaymentIntentStatus): PaymentIntent {

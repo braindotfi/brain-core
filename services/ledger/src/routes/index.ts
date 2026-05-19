@@ -14,7 +14,7 @@ import {
   requireScope,
   type Scope,
   type ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { LedgerService } from "../service/LedgerService.js";
 import type { ReconciliationService } from "../reconciliation/ReconciliationService.js";
 

@@ -9,8 +9,8 @@ import {
   requireScope,
   withTenantScope,
   type Scope,
-} from "@brain/api/shared";
-import { FORWARDED_EVENTS, generateWebhookSecret } from "@brain/api/shared";
+} from "@brain/shared";
+import { FORWARDED_EVENTS, generateWebhookSecret } from "@brain/shared";
 import { buildTree, makeProof, verifyProof } from "./merkle.js";
 import {
   findEvent,

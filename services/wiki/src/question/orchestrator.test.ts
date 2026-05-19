@@ -6,7 +6,7 @@ import {
   RecordedLlmAdapter,
   llmKey,
   type TenantScopedClient,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { askWiki } from "./orchestrator.js";
 
 /**

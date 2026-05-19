@@ -22,7 +22,7 @@ import {
   type GatePolicyDecision,
   type GatePrincipal,
   type ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 
 // ---------------------------------------------------------------------------
 // evaluatePaymentIntent — always allows; no policy rule evaluation

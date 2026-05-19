@@ -1,4 +1,4 @@
-import type { AuditEmitter } from "@brain/api/shared";
+import type { AuditEmitter } from "@brain/shared";
 import type { Pool } from "pg";
 
 export interface PolicyDeps {

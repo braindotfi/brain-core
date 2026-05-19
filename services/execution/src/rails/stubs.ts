@@ -10,7 +10,7 @@
  * focused PR post-stage-6.
  */
 
-import { brainError } from "@brain/api/shared";
+import { brainError } from "@brain/shared";
 import type { Rail, RailDispatchInput, RailDispatchResult } from "./types.js";
 
 export class BankAchRail implements Rail {

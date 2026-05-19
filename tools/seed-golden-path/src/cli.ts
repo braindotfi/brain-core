@@ -15,7 +15,7 @@
  */
 
 import { Pool } from "pg";
-import { InMemoryAuditEmitter } from "@brain/api/shared";
+import { InMemoryAuditEmitter } from "@brain/shared";
 import { seedGoldenPath } from "./index.js";
 
 async function main(): Promise<number> {

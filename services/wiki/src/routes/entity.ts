@@ -11,7 +11,7 @@ import {
   requireScope,
   withTenantScope,
   type Scope,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { findEntityAsOf, listEntityVersions, type WikiEntityRow } from "../repository/entities.js";
 import { findOneHopNeighbors } from "../repository/relations.js";
 import type { WikiDeps } from "../deps.js";

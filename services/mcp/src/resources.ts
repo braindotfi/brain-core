@@ -7,7 +7,7 @@
  * `brain://ledger/...` requires `ledger:read`, etc.
  */
 
-import { brainError } from "@brain/api/shared";
+import { brainError } from "@brain/shared";
 import type { ResourceDescriptor, ResourceListResult, ResourceReadResult } from "./types.js";
 import type { ToolContext } from "./tools/types.js";
 

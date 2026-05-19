@@ -23,7 +23,7 @@ import {
   newAuditEventId,
   withTenantScope,
   type TenantScopedClient,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Pool } from "pg";
 import { buildTree } from "./merkle.js";
 import {

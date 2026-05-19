@@ -12,7 +12,7 @@ import {
   errorHandlerPlugin,
   requestIdPlugin,
   type JwtVerifier,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { LedgerService } from "./service/LedgerService.js";
 import { ReconciliationService } from "./reconciliation/ReconciliationService.js";
 import { registerLedgerRoutes } from "./routes/index.js";

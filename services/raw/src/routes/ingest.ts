@@ -14,7 +14,7 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { brainError, isBrainId, requireScope, type Scope } from "@brain/api/shared";
+import { brainError, isBrainId, requireScope, type Scope } from "@brain/shared";
 import { adapterForSourceType } from "../adapters/registry.js";
 import { ingestOne } from "../services/ingest.js";
 import type { RawDeps } from "../deps.js";

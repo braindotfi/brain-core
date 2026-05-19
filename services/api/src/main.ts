@@ -45,7 +45,7 @@ import {
   type QuestionRequest,
   type QuestionAnswer,
   type AnnotationInput,
-} from "@brain/api/shared";
+} from "@brain/shared";
 
 import { registerSiwxRoutes, StubAgentRegistry } from "./auth/siwx.js";
 
@@ -92,7 +92,7 @@ import type {
   GateCounterparty,
   GatePaymentIntent,
   GatePrincipal,
-} from "@brain/api/shared";
+} from "@brain/shared";
 
 // ---------------------------------------------------------------------------
 // .env loader (optional — repo-root .env only)

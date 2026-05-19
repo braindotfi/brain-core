@@ -26,7 +26,7 @@ import {
   newUserId,
   verifyWithKey,
   type Principal,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { SignJWT, exportJWK, generateKeyPair, type KeyLike } from "jose";
 import { buildRawApp } from "../server.js";
 import { applyAll, discoverMigrations } from "../../../../tools/migrate/src/index.js";

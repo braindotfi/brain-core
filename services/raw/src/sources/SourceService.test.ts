@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { isBrainError, type ServiceCallContext } from "@brain/api/shared";
+import { isBrainError, type ServiceCallContext } from "@brain/shared";
 import { InMemorySourceRepository, SourceService } from "./SourceService.js";
 import { SOURCE_TYPES, STUB_SOURCE_TYPES } from "./types.js";
 

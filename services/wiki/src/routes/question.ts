@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError, requireScope, withTenantScope, type Scope } from "@brain/api/shared";
+import { brainError, requireScope, withTenantScope, type Scope } from "@brain/shared";
 import { askWiki } from "../question/orchestrator.js";
 import type { WikiDeps } from "../deps.js";
 

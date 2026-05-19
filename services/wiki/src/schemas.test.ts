@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isBrainError } from "@brain/api/shared";
+import { isBrainError } from "@brain/shared";
 import { loadRegistry } from "./schemas.js";
 
 describe("schema registry", () => {

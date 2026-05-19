@@ -11,7 +11,7 @@ import {
   requireScope,
   withTenantScope,
   type Scope,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { contentHash, type PolicyDocument } from "./dsl.js";
 import { buildTypedData } from "./signing.js";
 import {

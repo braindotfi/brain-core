@@ -10,7 +10,7 @@
  * @packageDocumentation
  */
 
-import { brainError, newSourceId, type ServiceCallContext } from "@brain/api/shared";
+import { brainError, newSourceId, type ServiceCallContext } from "@brain/shared";
 import { getConnector, isStub } from "./connectors.js";
 import {
   SOURCE_TYPES,

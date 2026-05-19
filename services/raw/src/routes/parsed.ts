@@ -12,7 +12,7 @@ import {
   requireScope,
   withTenantScope,
   type Scope,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { findArtifactById } from "../repository/artifacts.js";
 import { listParsedByArtifact } from "../repository/parsed.js";
 import type { RawDeps } from "../deps.js";

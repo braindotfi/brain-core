@@ -1,4 +1,4 @@
-import type { TenantScopedClient } from "@brain/api/shared";
+import type { TenantScopedClient } from "@brain/shared";
 
 export interface CategoryRow {
   id: string;

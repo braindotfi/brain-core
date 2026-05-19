@@ -5,7 +5,7 @@
  * The server.ts boot code constructs the bundle once and passes it down.
  */
 
-import type { AuditEmitter, BlobAdapter } from "@brain/api/shared";
+import type { AuditEmitter, BlobAdapter } from "@brain/shared";
 import type { Pool } from "pg";
 
 export interface RawDeps {

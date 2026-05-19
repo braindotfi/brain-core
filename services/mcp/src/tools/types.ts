@@ -18,7 +18,7 @@ import type {
   IRawEvidenceService,
   IWikiMemoryService,
   ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { AgentRecord } from "../auth.js";
 
 export interface ToolContext {

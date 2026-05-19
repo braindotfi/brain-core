@@ -10,7 +10,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError, verifyPlaidWebhook, type PlaidVerifyOptions } from "@brain/api/shared";
+import { brainError, verifyPlaidWebhook, type PlaidVerifyOptions } from "@brain/shared";
 import { adapterForWebhookProvider } from "../adapters/registry.js";
 import { ingestMany } from "../services/ingest.js";
 import type { RawDeps } from "../deps.js";

@@ -19,7 +19,7 @@
  *     "ready to run"). `executed` stays distinct (it has run).
  */
 
-import type { PaymentIntent, PaymentIntentStatus } from "@brain/api/shared";
+import type { PaymentIntent, PaymentIntentStatus } from "@brain/shared";
 
 export type ActionStatus =
   | "auto"

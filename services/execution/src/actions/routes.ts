@@ -26,7 +26,7 @@ import {
   requireScope,
   type Scope,
   type ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { PaymentIntentService } from "../payment-intents/PaymentIntentService.js";
 import { paymentIntentToAction, type ActionStatus } from "./mapper.js";
 

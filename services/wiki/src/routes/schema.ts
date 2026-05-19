@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError, requireScope, type Scope } from "@brain/api/shared";
+import { brainError, requireScope, type Scope } from "@brain/shared";
 import type { WikiDeps } from "../deps.js";
 
 const READ_SCOPE: Scope = "wiki:read";

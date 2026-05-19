@@ -16,7 +16,7 @@ import {
   requireScope,
   withTenantScope,
   type Scope,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { RELATION_KINDS, WIKI_KINDS, type RelationKind, type WikiKind } from "@brain/schemas";
 import { findEntityAsOf, insertEntity } from "../repository/entities.js";
 import { insertRelation } from "../repository/relations.js";

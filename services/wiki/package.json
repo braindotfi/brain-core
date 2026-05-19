@@ -27,7 +27,7 @@
     "ioredis": "^5.4.1"
   },
   "dependencies": {
-    "@brain/api": "workspace:*",
+    "@brain/shared": "workspace:*",
     "@brain/schemas": "workspace:*",
     "fastify": "^5.0.0",
     "pg": "^8.13.0",

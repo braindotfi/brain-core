@@ -10,7 +10,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError, requireScope, type Scope, type ServiceCallContext } from "@brain/api/shared";
+import { brainError, requireScope, type Scope, type ServiceCallContext } from "@brain/shared";
 import type { SourceService } from "./SourceService.js";
 import { recordToWire, type SourceStatus, type SourceType } from "./types.js";
 

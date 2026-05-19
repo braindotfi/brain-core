@@ -20,7 +20,7 @@ import {
   type EmbeddingAdapter,
   type ServiceCallContext,
   type WikiPage,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Pool } from "pg";
 import { vectorLiteral } from "../repository/entities.js";
 import { AccountPageGenerator } from "./account.js";

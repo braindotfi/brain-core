@@ -10,8 +10,8 @@
  * error code rather than invent a new one; the semantics match).
  */
 
-import type { TenantScopedClient } from "@brain/api/shared";
-import { brainError } from "@brain/api/shared";
+import type { TenantScopedClient } from "@brain/shared";
+import { brainError } from "@brain/shared";
 import type { PolicyDocument } from "./dsl.js";
 
 export type PolicyState =

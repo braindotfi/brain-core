@@ -8,7 +8,7 @@
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "src/**/*.test.ts"],
   "references": [
-    { "path": "../api" },
+    { "path": "../../shared" },
     { "path": "../ledger" },
     { "path": "../wiki" },
     { "path": "../execution" }

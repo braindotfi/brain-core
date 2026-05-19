@@ -5,7 +5,7 @@
  * Approvals are tenant-scoped and unique per (subject, principal).
  */
 
-import type { TenantScopedClient } from "@brain/api/shared";
+import type { TenantScopedClient } from "@brain/shared";
 
 export type ApprovalSubjectType = "payment_intent" | "proposal";
 

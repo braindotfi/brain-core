@@ -17,7 +17,7 @@ import {
   requireScope,
   type Scope,
   type ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { PaymentIntentService } from "./PaymentIntentService.js";
 
 const SCOPE_PROPOSE: Scope = "payment_intent:propose";

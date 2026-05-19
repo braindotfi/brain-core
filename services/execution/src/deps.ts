@@ -7,7 +7,7 @@ import type {
   GatePolicyDecision,
   GatePrincipal,
   ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Pool } from "pg";
 import type { RailRegistry } from "./rails/stubs.js";
 

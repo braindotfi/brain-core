@@ -2,8 +2,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { SiweMessage } from "siwe";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { beforeEach, describe, expect, it } from "vitest";
-import { errorHandlerPlugin, requestIdPlugin } from "../shared/index.js";
-import { JwtSigner } from "../shared/auth/signer.js";
+import { errorHandlerPlugin, requestIdPlugin, JwtSigner } from "@brain/shared";
 import {
   StubAgentRegistry,
   registerSiwxRoutes,

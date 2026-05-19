@@ -5,7 +5,7 @@
  * generic MCP clients.
  */
 
-import { brainError } from "@brain/api/shared";
+import { brainError } from "@brain/shared";
 import type { PromptDescriptor, PromptGetResult, PromptListResult } from "./types.js";
 
 interface PromptDef {

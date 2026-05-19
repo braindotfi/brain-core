@@ -22,7 +22,7 @@ import {
   withTenantScope,
   type Principal,
   type ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Pool } from "pg";
 
 export interface AgentRecord {

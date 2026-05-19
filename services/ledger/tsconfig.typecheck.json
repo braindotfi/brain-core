@@ -3,7 +3,11 @@
   "compilerOptions": {
     "composite": false,
     "incremental": false,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@brain/shared": ["../../shared/src/index.ts"],
+      "@brain/shared/*": ["../../shared/src/*.ts"]
+    }
   },
   "include": ["src/**/*.ts"]
 }

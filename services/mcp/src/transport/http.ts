@@ -7,7 +7,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError } from "@brain/api/shared";
+import { brainError } from "@brain/shared";
 import type { BrainMcpServer } from "../server.js";
 
 export interface McpRouteOptions {

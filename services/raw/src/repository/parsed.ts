@@ -4,7 +4,7 @@
  * list rather than 501.
  */
 
-import type { TenantScopedClient } from "@brain/api/shared";
+import type { TenantScopedClient } from "@brain/shared";
 
 export interface RawParsedRow {
   id: string;

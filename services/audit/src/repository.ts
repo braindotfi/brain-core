@@ -4,7 +4,7 @@
  * module provides the read/query surface and the anchor write path.
  */
 
-import type { TenantScopedClient } from "@brain/api/shared";
+import type { TenantScopedClient } from "@brain/shared";
 
 export interface AuditEventRow {
   id: string;

@@ -10,7 +10,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError, requireScope, type Scope, type ServiceCallContext } from "@brain/api/shared";
+import { brainError, requireScope, type Scope, type ServiceCallContext } from "@brain/shared";
 import type { LedgerService } from "../service/LedgerService.js";
 import { aggregateCashFlow, type CashFlowTransaction } from "./aggregate.js";
 

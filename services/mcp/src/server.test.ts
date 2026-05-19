@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, type Principal } from "@brain/api/shared";
+import { InMemoryAuditEmitter, type Principal } from "@brain/shared";
 import { BrainMcpServer } from "./server.js";
 import { FakeAuthVerifier, type AgentRecord } from "./auth.js";
 import type {
@@ -7,7 +7,7 @@ import type {
   IPaymentIntentService,
   IRawEvidenceService,
   IWikiMemoryService,
-} from "@brain/api/shared";
+} from "@brain/shared";
 
 const TENANT = "tnt_test";
 const AGENT_ID = "agent_payment01";

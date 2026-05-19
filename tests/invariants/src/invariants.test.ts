@@ -26,7 +26,7 @@ import {
   LEDGER_KINDS,
   WIKI_KINDS,
 } from "../../../schemas/index.js";
-import { InMemoryAuditEmitter, newTenantId, newUserId } from "@brain/api/shared";
+import { InMemoryAuditEmitter, newTenantId, newUserId } from "@brain/shared";
 import { recordTransactionRow, upsertCounterpartyRow } from "@brain/ledger";
 
 // Generated once per test run so every ID is a valid Brain ULID.
@@ -41,7 +41,7 @@ describe("invariant: every transaction belongs to an account", () => {
     // The contract's TypeScript shape forbids omitting account_id; this test
     // documents the property and is a guard against accidentally widening
     // the type.
-    type Required = keyof import("@brain/api/shared").RecordTransactionInput;
+    type Required = keyof import("@brain/shared").RecordTransactionInput;
     const r: Required = "account_id";
     expect(r).toBe("account_id");
   });
@@ -151,12 +151,12 @@ describe("invariant: every executed PaymentIntent has an audit trail", () => {
 // =============================================================================
 describe("invariant: every agent action has an agent_id", () => {
   it("ProposalRecord requires proposing_agent_id", () => {
-    type Required = keyof import("@brain/api/shared").ProposalRecord;
+    type Required = keyof import("@brain/shared").ProposalRecord;
     const r: Required = "proposing_agent_id";
     expect(r).toBe("proposing_agent_id");
   });
   it("PaymentIntent.created_by_agent_id is part of the contract", () => {
-    type Required = keyof import("@brain/api/shared").PaymentIntent;
+    type Required = keyof import("@brain/shared").PaymentIntent;
     const r: Required = "created_by_agent_id";
     expect(r).toBe("created_by_agent_id");
   });
@@ -240,7 +240,7 @@ describe("invariant: no payment can execute from Wiki data alone", () => {
     // GateDependencies expose resolveAccount, resolveCounterparty,
     // evaluatePolicy — all of which return Ledger rows. There's no
     // resolveWikiPage hook.
-    type Hooks = keyof import("@brain/api/shared").GateDependencies;
+    type Hooks = keyof import("@brain/shared").GateDependencies;
     const allowed: Hooks[] = [
       "resolveAgent",
       "resolveAccount",
@@ -271,7 +271,7 @@ describe("invariant: agents recommend from memory, execute from Ledger", () => {
 // =============================================================================
 describe("invariant: policy evaluation reads Ledger state", () => {
   it("§6 gate calls deps.evaluatePolicy(intent) where intent is a Ledger row shape", () => {
-    type GateIntent = import("@brain/api/shared").GatePaymentIntent;
+    type GateIntent = import("@brain/shared").GatePaymentIntent;
     // Spot-check that the intent shape only carries ids that exist in
     // Ledger tables. Wiki-only fields (e.g. body_md, slug) are absent.
     const allowedKeys = new Set<keyof GateIntent>([
@@ -321,7 +321,7 @@ describe("invariant: every Ledger row has source_ids OR evidence_ids", () => {
 // =============================================================================
 describe("invariant: audit events cannot be edited after creation", () => {
   it("AuditEmitter exposes only emit() — no update() / delete()", () => {
-    type Methods = keyof import("@brain/api/shared").AuditEmitter;
+    type Methods = keyof import("@brain/shared").AuditEmitter;
     const m: Methods = "emit";
     expect(m).toBe("emit");
   });

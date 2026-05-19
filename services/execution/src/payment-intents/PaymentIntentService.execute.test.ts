@@ -15,7 +15,7 @@ import {
   newAccountId,
   newCounterpartyId,
   newPolicyDecisionId,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type {
   GateAccount,
   GateAgent,
@@ -23,7 +23,7 @@ import type {
   GatePolicyDecision,
   GatePrincipal,
   ServiceCallContext,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Pool } from "pg";
 import { PaymentIntentService } from "./PaymentIntentService.js";
 import { ApprovalService } from "../approvals/ApprovalService.js";

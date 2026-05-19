@@ -10,7 +10,7 @@
  * @packageDocumentation
  */
 
-import { brainError, newSourceSyncJobId } from "@brain/api/shared";
+import { brainError, newSourceSyncJobId } from "@brain/shared";
 import {
   CONCRETE_SOURCE_TYPES,
   STUB_SOURCE_TYPES,

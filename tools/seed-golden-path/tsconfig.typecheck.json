@@ -6,7 +6,9 @@
     "noEmit": true,
     "paths": {
       "@brain/shared": ["../../shared/src/index.ts"],
-      "@brain/shared/*": ["../../shared/src/*.ts"]
+      "@brain/shared/*": ["../../shared/src/*.ts"],
+      "@brain/ledger": ["../../services/ledger/src/index.ts"],
+      "@brain/ledger/*": ["../../services/ledger/src/*.ts"]
     }
   },
   "include": ["src/**/*.ts"]

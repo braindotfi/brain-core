@@ -34,7 +34,7 @@ import {
   type GatePolicyDecision,
   type GatePrincipal,
   type GateResult,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import {
   appendApprovalId,
   appendExecutionReceiptId,

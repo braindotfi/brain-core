@@ -32,7 +32,7 @@ import {
   type LlmAdapter,
   type MetricsEmitter,
   type TenantScopedClient,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import type { Redis } from "ioredis";
 
 export interface AskOptions {

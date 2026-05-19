@@ -13,14 +13,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./shared": {
-      "types": "./dist/shared/index.d.ts",
-      "import": "./dist/shared/index.js"
-    },
-    "./shared/*": {
-      "types": "./dist/shared/*.d.ts",
-      "import": "./dist/shared/*.js"
     }
   },
   "scripts": {
@@ -36,6 +28,7 @@
     "dev": "tsx watch src/main.ts"
   },
   "dependencies": {
+    "@brain/shared": "workspace:*",
     "fastify": "^5.0.0",
     "fastify-plugin": "^5.0.1",
     "@fastify/sensible": "^6.0.1",

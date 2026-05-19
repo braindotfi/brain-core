@@ -17,7 +17,7 @@
  * Re-running the extractor against the same payload is a no-op.
  */
 
-import type { AuditEmitter, ServiceCallContext } from "@brain/api/shared";
+import type { AuditEmitter, ServiceCallContext } from "@brain/shared";
 import type { Pool } from "pg";
 import {
   recordTransactionRow,

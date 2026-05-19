@@ -6,7 +6,7 @@
  * /wiki/entity/{id}; deeper traversal is reserved for /wiki/question.
  */
 
-import type { TenantScopedClient } from "@brain/api/shared";
+import type { TenantScopedClient } from "@brain/shared";
 import type { Provenance, RelationKind } from "@brain/schemas";
 
 export interface WikiRelationRow {

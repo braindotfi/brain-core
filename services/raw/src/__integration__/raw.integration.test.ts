@@ -8,7 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { newTenantId } from "@brain/api/shared";
+import { newTenantId } from "@brain/shared";
 import { buildHarness, type Harness } from "./harness.js";
 
 const DESCRIBE = process.env.DATABASE_URL !== undefined ? describe : describe.skip;

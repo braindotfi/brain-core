@@ -12,7 +12,7 @@
  * a 0.5% tolerance handles minor rounding without matching wrong rows.
  */
 
-import { withTenantScope, type ServiceCallContext } from "@brain/api/shared";
+import { withTenantScope, type ServiceCallContext } from "@brain/shared";
 import type { Pool } from "pg";
 import { combine, amountScore, dateScore } from "./scoring.js";
 import { persistMatch } from "./persist.js";

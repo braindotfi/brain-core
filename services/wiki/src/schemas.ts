@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { type ValidateFunction } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { brainError } from "@brain/api/shared";
+import { brainError } from "@brain/shared";
 import { ENTITY_KINDS, RELATION_KINDS, type EntityKind, type RelationKind } from "@brain/schemas";
 
 export interface SchemaRegistry {

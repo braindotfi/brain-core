@@ -12,7 +12,7 @@
  * payment posting. The ±5 day window handles bank processing delays.
  */
 
-import { withTenantScope, type ServiceCallContext } from "@brain/api/shared";
+import { withTenantScope, type ServiceCallContext } from "@brain/shared";
 import type { Pool } from "pg";
 import { combine, amountScore, dateScore } from "./scoring.js";
 import { persistMatch } from "./persist.js";

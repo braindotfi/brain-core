@@ -12,10 +12,8 @@
 
 import { type FastifyInstance, type FastifyRequest, type FastifyReply } from "fastify";
 import { SiweMessage, generateNonce } from "siwe";
-import { brainId, newTokenId } from "../shared/ids.js";
-import type { JwtSigner } from "../shared/auth/signer.js";
-import { brainError } from "../shared/errors.js";
-import type { Scope } from "../shared/auth/scopes.js";
+import { brainId, newTokenId, brainError } from "@brain/shared";
+import type { JwtSigner, Scope } from "@brain/shared";
 
 export interface SiweOptions {
   signer: JwtSigner;

@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, MemoryBlobAdapter, newTenantId, newUserId } from "@brain/api/shared";
+import { InMemoryAuditEmitter, MemoryBlobAdapter, newTenantId, newUserId } from "@brain/shared";
 import { ingestOne } from "./ingest.js";
 
 function makeFakePool(options: { existing?: boolean } = {}): {

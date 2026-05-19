@@ -25,7 +25,7 @@
     "vitest": "^3.2.0"
   },
   "dependencies": {
-    "@brain/api": "workspace:*",
+    "@brain/shared": "workspace:*",
     "@brain/execution": "workspace:*",
     "@brain/ledger": "workspace:*",
     "@brain/wiki": "workspace:*",

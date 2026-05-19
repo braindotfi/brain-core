@@ -6,7 +6,7 @@ import {
   requestIdPlugin,
   type IdempotencyStore,
   type JwtVerifier,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import { registerPolicyRoutes } from "./routes.js";
 import type { PolicyDeps } from "./deps.js";
 

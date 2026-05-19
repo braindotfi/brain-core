@@ -11,7 +11,7 @@
  * amount/date the matcher skips the candidate rather than guessing.
  */
 
-import { withTenantScope, type ServiceCallContext } from "@brain/api/shared";
+import { withTenantScope, type ServiceCallContext } from "@brain/shared";
 import type { Pool } from "pg";
 import { combine, amountScore, dateScore, nameScore } from "./scoring.js";
 import { persistMatch } from "./persist.js";

@@ -13,7 +13,7 @@
  *   [cancelled]
  */
 
-import { brainError } from "@brain/api/shared";
+import { brainError } from "@brain/shared";
 
 export type PaymentIntentState =
   | "proposed"

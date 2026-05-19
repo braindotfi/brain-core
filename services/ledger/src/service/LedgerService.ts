@@ -28,7 +28,7 @@ import {
   type RecordTransactionInput,
   type UpsertAccountInput,
   type UpsertCounterpartyInput,
-} from "@brain/api/shared";
+} from "@brain/shared";
 import {
   findAccountById,
   findCounterpartyById,

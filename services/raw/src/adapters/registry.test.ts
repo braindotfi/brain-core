@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isBrainError } from "@brain/api/shared";
+import { isBrainError } from "@brain/shared";
 import { adapterForSourceType, adapterForWebhookProvider, listAdapters } from "./registry.js";
 
 describe("adapterForSourceType", () => {

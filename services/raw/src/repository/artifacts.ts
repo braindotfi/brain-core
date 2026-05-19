@@ -3,7 +3,7 @@
  * helper — never takes `tenantId` in a WHERE clause (see §1 principle 2).
  */
 
-import type { TenantScopedClient } from "@brain/api/shared";
+import type { TenantScopedClient } from "@brain/shared";
 
 export interface RawArtifactRow {
   id: string;

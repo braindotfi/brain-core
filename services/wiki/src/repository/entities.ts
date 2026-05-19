@@ -6,7 +6,7 @@
  * closes off the prior version's valid_to atomically inside a TX.
  */
 
-import type { TenantScopedClient } from "@brain/api/shared";
+import type { TenantScopedClient } from "@brain/shared";
 import {
   AGENT_CONTRIBUTED_CONFIDENCE_CEILING,
   type EntityKind,

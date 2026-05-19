@@ -10,7 +10,7 @@
  * API client itself ships in @brain/raw's `plaid` dep).
  */
 
-import { brainError } from "@brain/api/shared";
+import { brainError } from "@brain/shared";
 import type { FetchedArtifact, SourceAdapter } from "./types.js";
 
 interface PlaidWebhookEnvelope {

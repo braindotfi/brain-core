@@ -4,7 +4,7 @@
  * state changes is via these helpers.
  */
 
-import { brainError } from "@brain/api/shared";
+import { brainError } from "@brain/shared";
 
 // ---------------------------------------------------------------------------
 // §8.1 Proposal

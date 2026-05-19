@@ -1,4 +1,4 @@
-import type { TenantScopedClient } from "@brain/api/shared";
+import type { TenantScopedClient } from "@brain/shared";
 import type { LedgerRowCommon } from "./types.js";
 
 export interface TransactionRow extends LedgerRowCommon {

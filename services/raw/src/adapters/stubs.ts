@@ -10,7 +10,7 @@
  * bytes directly) while the webhook path returns 501.
  */
 
-import { brainError } from "@brain/api/shared";
+import { brainError } from "@brain/shared";
 import type { SourceAdapter } from "./types.js";
 
 function unsupportedWebhook(provider: string): NonNullable<SourceAdapter["handleWebhook"]> {

@@ -103,6 +103,9 @@ importers:
       '@brain/raw':
         specifier: workspace:*
         version: link:../raw
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
       '@brain/wiki':
         specifier: workspace:*
         version: link:../wiki
@@ -188,9 +191,9 @@ importers:
 
   services/audit:
     dependencies:
-      '@brain/api':
+      '@brain/shared':
         specifier: workspace:*
-        version: link:../api
+        version: link:../../shared
       fastify:
         specifier: ^5.0.0
         version: 5.8.5
@@ -225,15 +228,15 @@ importers:
 
   services/execution:
     dependencies:
-      '@brain/api':
-        specifier: workspace:*
-        version: link:../api
       '@brain/ledger':
         specifier: workspace:*
         version: link:../ledger
       '@brain/policy':
         specifier: workspace:*
         version: link:../policy
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
       fastify:
         specifier: ^5.0.0
         version: 5.8.5
@@ -265,9 +268,9 @@ importers:
 
   services/ledger:
     dependencies:
-      '@brain/api':
+      '@brain/shared':
         specifier: workspace:*
-        version: link:../api
+        version: link:../../shared
       fastify:
         specifier: ^5.0.0
         version: 5.8.5
@@ -299,15 +302,15 @@ importers:
 
   services/mcp:
     dependencies:
-      '@brain/api':
-        specifier: workspace:*
-        version: link:../api
       '@brain/execution':
         specifier: workspace:*
         version: link:../execution
       '@brain/ledger':
         specifier: workspace:*
         version: link:../ledger
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
       '@brain/wiki':
         specifier: workspace:*
         version: link:../wiki
@@ -339,9 +342,9 @@ importers:
 
   services/policy:
     dependencies:
-      '@brain/api':
+      '@brain/shared':
         specifier: workspace:*
-        version: link:../api
+        version: link:../../shared
       '@noble/hashes':
         specifier: ^1.5.0
         version: 1.8.0
@@ -379,9 +382,9 @@ importers:
 
   services/raw:
     dependencies:
-      '@brain/api':
+      '@brain/shared':
         specifier: workspace:*
-        version: link:../api
+        version: link:../../shared
       '@fastify/multipart':
         specifier: ^9.0.1
         version: 9.4.0
@@ -422,12 +425,12 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.30.0
         version: 0.30.1
-      '@brain/api':
-        specifier: workspace:*
-        version: link:../api
       '@brain/schemas':
         specifier: workspace:*
         version: link:../../schemas
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
       ajv:
         specifier: ^8.17.1
         version: 8.20.0
@@ -466,6 +469,79 @@ importers:
         specifier: ^3.2.0
         version: 3.2.4(@types/node@22.19.19)(tsx@4.22.0)
 
+  shared:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.30.0
+        version: 0.30.1
+      '@aws-sdk/client-s3':
+        specifier: ^3.670.0
+        version: 3.1047.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: ^3.670.0
+        version: 3.1047.0
+      '@azure/storage-blob':
+        specifier: ^12.25.0
+        version: 12.31.0
+      '@opentelemetry/api':
+        specifier: ^1.9.0
+        version: 1.9.1
+      bullmq:
+        specifier: ^5.21.0
+        version: 5.76.8
+      fastify:
+        specifier: ^5.0.0
+        version: 5.8.5
+      fastify-plugin:
+        specifier: ^5.0.1
+        version: 5.1.0
+      hot-shots:
+        specifier: ^10.2.1
+        version: 10.2.1
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.10.1
+      jose:
+        specifier: ^5.9.3
+        version: 5.10.0
+      openai:
+        specifier: ^4.68.0
+        version: 4.104.0(ws@8.20.1)(zod@3.25.76)
+      pg:
+        specifier: ^8.13.0
+        version: 8.20.0
+      pino:
+        specifier: ^9.4.0
+        version: 9.14.0
+      ulid:
+        specifier: ^2.3.0
+        version: 2.4.0
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.7.0
+        version: 22.19.19
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
+      '@vitest/coverage-v8':
+        specifier: ^3.2.0
+        version: 3.2.4(vitest@3.2.4(@types/node@22.19.19)(tsx@4.22.0))
+      eslint:
+        specifier: ^9.12.0
+        version: 9.39.4
+      fast-check:
+        specifier: ^3.23.1
+        version: 3.23.2
+      typescript:
+        specifier: ^5.6.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.4(@types/node@22.19.19)(tsx@4.22.0)
+
   tests/e2e:
     devDependencies:
       '@types/node':
@@ -480,15 +556,15 @@ importers:
 
   tests/invariants:
     dependencies:
-      '@brain/api':
-        specifier: workspace:*
-        version: link:../../services/api
       '@brain/execution':
         specifier: workspace:*
         version: link:../../services/execution
       '@brain/ledger':
         specifier: workspace:*
         version: link:../../services/ledger
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
     devDependencies:
       '@types/node':
         specifier: ^22.7.0
@@ -556,12 +632,12 @@ importers:
 
   tools/seed-golden-path:
     dependencies:
-      '@brain/api':
-        specifier: workspace:*
-        version: link:../../services/api
       '@brain/ledger':
         specifier: workspace:*
         version: link:../../services/ledger
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
       pg:
         specifier: ^8.13.0
         version: 8.20.0
