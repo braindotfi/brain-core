@@ -25,7 +25,7 @@ We use the information we collect to:
 * Send service-related and promotional communications
 * Comply with legal obligations and prevent fraud
 
-### Sharing and Disclosure
+### Sharing and disclosure
 
 We do not sell your personal data. We may share your information with third parties only in the following circumstances:
 
@@ -62,7 +62,7 @@ To exercise any of these rights, contact us at [legal@brain.fi](mailto:legal@bra
 
 Brain Finance Inc. is incorporated in the United States. As a result, your data may be processed and stored in countries other than your own. By using our Services, you consent to this transfer.
 
-### Changes to This Policy
+### Changes to this policy
 
 We may update this Privacy Policy at any time. We will communicate material changes via email or a prominent notice on our website before they take effect.
 

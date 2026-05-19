@@ -16,7 +16,7 @@ The Wiki layer handles three jobs that legacy memory systems split across separa
 
 Every fact in Wiki points back to verifiable evidence in Raw or Ledger. If the source moves, Wiki updates. If sources conflict, Ledger wins.
 
-### Comparison with RAG and Graph
+### Comparison with RAG and graph
 
 Most memory systems use one of two tools.
 

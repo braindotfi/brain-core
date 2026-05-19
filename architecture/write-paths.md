@@ -49,7 +49,7 @@ External agents with `raw:write` scope can push artifacts into the Raw layer. St
 
 [**→ Agent Contributions**](../protocol/agent-contributions.md)
 
-#### Exception 2: Agent-proposed PaymentIntents into Ledger
+#### Exception 2: agent-proposed PaymentIntents into Ledger
 
 Agents create PaymentIntent rows in the Ledger as proposals for financial actions. PaymentIntents are the only Ledger-write path that does not originate from a Raw extraction.
 

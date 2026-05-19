@@ -100,7 +100,7 @@ Brain action:
   - Emit audit event: policy.evaluated
 ```
 
-#### Step 6: Approval
+#### Step 6: approval
 
 ```
 Approver input:
@@ -116,7 +116,7 @@ Brain action:
   - Emit audit event: action.approved
 ```
 
-#### Step 7: Execution
+#### Step 7: execution
 
 Two paths, depending on the rail:
 

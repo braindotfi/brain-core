@@ -1,6 +1,6 @@
 # Terms of service
 
-## Terms of Service
+## Terms of service
 
 **Effective Date: January 1, 2026**
 
@@ -14,7 +14,7 @@ Questions about these Terms? Contact us at [legal@brain.fi](mailto:legal@brain.f
 
 You must be at least 18 years old and legally capable of entering into binding contracts. By using our Services, you represent and warrant that you meet these criteria.
 
-### Use of Services
+### Use of services
 
 You agree not to use our Services in any of the following ways:
 
@@ -45,7 +45,7 @@ Our Services, including any automated insights or agent outputs, are for informa
 
 The Services are provided **"as is"** and **"as available"** without warranties of any kind. Brain Finance Inc. expressly disclaims all warranties, whether express or implied, including implied warranties of merchantability, fitness for a particular purpose, and non-infringement.
 
-### Limitation of Liability
+### Limitation of liability
 
 To the fullest extent permitted by applicable law, Brain Finance Inc. shall not be liable for any indirect, incidental, special, or consequential damages arising from:
 
@@ -65,7 +65,7 @@ These Terms are governed by the laws of the United States. Any disputes arising 
 
 We reserve the right to suspend or terminate your access to our Services at our sole discretion, at any time and without notice, for any reason including, but not limited to, breach of these Terms.
 
-### Changes to These Terms
+### Changes to these terms
 
 We may update these Terms at any time. Material changes will be communicated via email or a prominent notice on our website before they take effect. Continued use of our Services after any changes constitutes your acceptance of the revised Terms.
 

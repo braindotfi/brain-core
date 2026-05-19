@@ -36,7 +36,7 @@ Authorization: Bearer <access_token>
 
 External agents authenticate using **Sign-In With X**, a generalization of EIP-4361 over Base.
 
-#### Step 1: Construct the SIWX message
+#### Step 1: construct the SIWX message
 
 ```
 brain.fi wants you to sign in with your Ethereum account:
@@ -50,11 +50,11 @@ Issued At: 2025-09-01T12:00:00Z
 Expiration Time: 2025-09-01T12:05:00Z
 ```
 
-#### Step 2: Sign with the agent's identity key
+#### Step 2: sign with the agent's identity key
 
 The agent signs the message with the key registered in `BrainMCPAgentRegistry`.
 
-#### Step 3: Exchange for an agent token
+#### Step 3: exchange for an agent token
 
 ```http
 POST /v1/auth/siwx
@@ -72,7 +72,7 @@ Content-Type: application/json
 }
 ```
 
-#### Step 4: Use the token
+#### Step 4: use the token
 
 ```http
 POST /v1/agents/payments-v1/propose

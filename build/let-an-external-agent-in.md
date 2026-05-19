@@ -18,7 +18,7 @@ External agents speak [MCP](https://modelcontextprotocol.io). Brain ships an MCP
 5. Every read and propose lands in the tenant's audit log.
 ```
 
-### Step 1: Register the agent
+### Step 1: register the agent
 
 Agent owners register once. Tenants do not see this step.
 
@@ -34,7 +34,7 @@ console.log(agent.id);       // ag_8231
 console.log(agent.txHash);   // BrainMCPAgentRegistry registration on Base
 ```
 
-### Step 2: Grant the agent scope
+### Step 2: grant the agent scope
 
 The tenant authorizes the agent for specific capabilities, on this tenant only.
 
@@ -64,7 +64,7 @@ The tenant signs an EIP-712 message under the hood; the SDK handles it. The gran
 External agents can **propose** but cannot **execute**. Execution is reserved for internal Brain workers running under tenant policy. This is the safety guarantee that makes external agents safe to authorize.
 {% endhint %}
 
-### Step 3: The agent connects
+### Step 3: the agent connects
 
 The agent owner points their MCP runtime at:
 
@@ -85,7 +85,7 @@ The runtime authenticates with a JWT signed by the agent's registered key. The f
 
 A tenant who granted only `ledger:read` and `wiki:read` will see exactly those tools and no others.
 
-### Step 4: The agent works
+### Step 4: the agent works
 
 From the agent's side, calls look like this.
 
@@ -106,7 +106,7 @@ From the agent's side, calls look like this.
 
 The same Policy gating, the same Wiki memory, the same audit emission as anything you'd call from your own backend. Identical guarantees.
 
-### Step 5: You watch
+### Step 5: you watch
 
 Every external agent action lands in the tenant's audit log.
 
