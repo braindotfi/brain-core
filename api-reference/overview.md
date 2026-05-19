@@ -18,7 +18,7 @@ Brain exposes a **REST + JSON-RPC HTTP surface** and an **MCP server surface**. 
 
 [**→ Authentication reference**](authentication.md)
 
-### Representative endpoints
+### Representative Endpoints
 
 ```
 POST   /v1/sources                  // connect a financial source
@@ -33,7 +33,7 @@ POST   /v1/actions/{id}/execute     // execute approved action
 GET    /v1/audit/{id}               // audit trail with Merkle proof
 ```
 
-### Endpoint reference
+### Endpoint Reference
 
 | Section                   | What's Covered                                         |
 | ------------------------- | ------------------------------------------------------ |
@@ -47,7 +47,7 @@ GET    /v1/audit/{id}               // audit trail with Merkle proof
 | Audit                     | Events, Merkle proofs, exports                         |
 | MCP Surface               | Tool list, namespacing, MCP-specific patterns          |
 
-### Provenance on every response
+### Provenance on Every Response
 
 Every response from Wiki, Policy, and Agent endpoints carries provenance.
 
@@ -71,7 +71,7 @@ The API is versioned in the URL path: `/v1/...`. Breaking changes always bump th
 | Changing default behaviour            | Yes                  |
 | Changing an HTTP status code          | Yes                  |
 
-### Rate limits
+### Rate Limits
 
 Rate limits apply per API key.
 
@@ -122,6 +122,6 @@ All errors share a common shape.
 | `429`  | Rate limit exceeded                       |
 | `500`  | Internal error (always logs a `trace_id`) |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🪪 Authentication</strong></td><td>OAuth and SIWX in detail.</td><td><a href="authentication.md">authentication.md</a></td><td></td></tr><tr><td><strong>🌐 MCP surface</strong></td><td>Same primitives, MCP shape.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr></tbody></table>

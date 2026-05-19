@@ -1,4 +1,4 @@
-# Agent contributions
+# Agent Contributions
 
 External agents do not just **read** Brain. With the right scope, they can **contribute** to Brain by pushing artifacts (transcripts, documents, structured observations) into the Raw layer, with cryptographic attribution.
 
@@ -14,7 +14,7 @@ External agents do not just **read** Brain. With the right scope, they can **con
 This is one of Brain's category-defining moves. Most "agent platforms" let agents act. Brain lets agents **contribute back** to the financial substrate, with cryptographic attribution and clear governance.
 {% endhint %}
 
-### Why agents contribute
+### Why Agents Contribute
 
 Most useful financial signals don't come from banks or ERPs. They come from conversations, emails, contracts, internal observations. An agent that sits in a customer's workflow accumulates context that Brain otherwise has no way to see.
 
@@ -28,7 +28,7 @@ Examples of what agents typically contribute:
 
 Without an agent contribution path, this evidence sits in the agent's head (or its short-term context). With one, it lands in Brain's Raw layer, gets fingerprinted and stored, and can be extracted into Ledger rows just like any other Raw artifact.
 
-### How a contribution flows
+### How a Contribution Flows
 
 ```
 External Agent
@@ -55,7 +55,7 @@ Ledger Layer
    │ confidence ≤ 0.5 until reviewed
 ```
 
-### What gets stored
+### What Gets Stored
 
 The Raw artifact carries everything an auditor would need.
 
@@ -68,7 +68,7 @@ The Raw artifact carries everything an auditor would need.
 | `source_ref.onchain_registration` | The `BrainMCPAgentRegistry` record id                               |
 | `blob_uri`                        | Pointer to the encrypted artifact in tenant-scoped Blob storage     |
 
-### Quarantine and trust escalation
+### Quarantine and Trust Escalation
 
 Brain does not auto-extract from agent contributions on the first N artifacts. By default, the first contributions from a newly registered agent land in **quarantine**: they're stored, hashed, attributed, but not fed into the extraction pipeline.
 
@@ -80,7 +80,7 @@ Brain does not auto-extract from agent contributions on the first N artifacts. B
 
 This is the safety valve that keeps malicious or buggy agents from polluting the Ledger before the tenant has had a chance to look at what they're contributing.
 
-### Confidence ceiling
+### Confidence Ceiling
 
 Even after extraction, derived Ledger rows that trace back to an `agent_contributed` Raw artifact carry `provenance = agent_contributed` and have their `confidence` capped at **0.5**. This means:
 
@@ -113,7 +113,7 @@ Every contribution emits both:
 
 The inner event includes the `sha256`, the contributing `agent_id`, the `tenant_id`, and the EIP-712 signature. A counterparty or auditor can verify the signature offline against the agent's on-chain registration.
 
-### What agents must not contribute
+### What Agents Must Not Contribute
 
 The MCP server validates artifact types and rejects shapes that don't match the schema. The pipeline also rejects content that:
 
@@ -124,6 +124,6 @@ The MCP server validates artifact types and rejects shapes that don't match the 
 | PII fields not allowed by the tenant's data-handling policy                   | Tenant policy boundary                                          |
 | Signed payloads where the signature does not match the agent's registered key | Identity boundary                                               |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📥 Raw and Ledger</strong></td><td>The substrate contributions land in.</td><td><a href="raw-and-ledger.md">raw-and-ledger.md</a></td><td></td></tr><tr><td><strong>🛠️ MCP Tools</strong></td><td>The <code>raw.contribute</code> tool reference.</td><td><a href="../mcp-server/tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 BrainMCPAgentRegistry</strong></td><td>Where scope is anchored.</td><td><a href="../smart-contracts/brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr></tbody></table>

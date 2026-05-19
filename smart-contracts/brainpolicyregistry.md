@@ -42,7 +42,7 @@ interface IBrainPolicyRegistry {
 }
 ```
 
-### EIP-712 type
+### EIP-712 Type
 
 Tenants sign the canonical hash, not the prose.
 
@@ -80,7 +80,7 @@ draft → compile → review → sign (EIP-712) → registerPolicy() → active
 | **Register** | `registerPolicy()` called on Base              |
 | **Active**   | Until superseded by a newer version or revoked |
 
-### What is on-chain vs off-chain
+### What Is on-Chain vs Off-Chain
 
 | On-chain                | Off-chain                 |
 | ----------------------- | ------------------------- |
@@ -106,7 +106,7 @@ revokePolicy(
 
 Revoking a version disables it immediately. The tenant must register a new active version before further policy-gated actions can run.
 
-### Active policy lookup
+### Active Policy Lookup
 
 ```solidity
 (uint64 version, bytes32 hash) = registry.activePolicy(tenantId);
@@ -114,7 +114,7 @@ Revoking a version disables it immediately. The tenant must register a new activ
 
 `BrainSmartAccount` uses this lookup during UserOp validation: the policy verdict attached to the UserOp must reference the active version's hash, or the UserOp is rejected.
 
-### Versioning rules
+### Versioning Rules
 
 | Rule                                                                            | Detail                            |
 | ------------------------------------------------------------------------------- | --------------------------------- |
@@ -133,6 +133,6 @@ The on-chain footprint is intentionally minimal. The hash commits to the policy 
 | `policyHash` is SHA-256 of compiled JSON         | The structure is hidden                                   |
 | Off-chain logic enforces canonical serialization | Two compilations of the same policy produce the same hash |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📋 Policy and permissioning</strong></td><td>The conceptual model.</td><td><a href="../protocol/policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr><tr><td><strong>🌐 Policy API</strong></td><td>HTTP reference for policy operations.</td><td><a href="../api-reference/policy-api.md">policy-api.md</a></td><td></td></tr><tr><td><strong>🔐 BrainSmartAccount</strong></td><td>How policy verdicts are validated on UserOps.</td><td><a href="brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr></tbody></table>

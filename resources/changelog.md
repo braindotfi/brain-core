@@ -4,7 +4,7 @@ User-visible changes to the Brain protocol, HTTP API, MCP surface, and
 SDK. Internal refactors, performance work, and bug fixes that don't
 change behaviour are omitted unless they affect integrators.
 
-## Current: six-layer protocol with MCP
+## Current: Six-Layer Protocol with MCP
 
 The current release introduces a Normalized Ledger between Raw and
 Wiki, splits Execution into a dedicated Agent layer, and adds the MCP
@@ -26,12 +26,12 @@ server.
 - **Execution renamed to Agent.** The Agent layer covers proposal, scope enforcement, and the propose-only MCP surface.
 - **Routes renamed.** `/agents/*`, `/payment-intents/*`, and `/agents/mcp` are the canonical paths. Legacy `/execution/*` routes continue to work with deprecation headers.
 
-### Six layers (was five)
+### Six Layers (Was Five)
 
 - The previous protocol had five layers: Raw, Wiki, Policy, Execution, Audit.
 - The current protocol has six: Raw, **Ledger**, Wiki, Policy, **Agent** (renamed from Execution), Audit.
 
-## Migration from the previous version
+## Migration from the Previous Version
 
 | If you were using              | Use instead                        |
 | ------------------------------ | ---------------------------------- |
@@ -45,7 +45,7 @@ server.
 Legacy routes are supported through 2026-Q2 with `Deprecation` and
 `Sunset` headers attached to every response.
 
-## Earlier: five-layer protocol
+## Earlier: Five-Layer Protocol
 
 - Five layers: Raw, Wiki, Policy, Execution, Audit.
 - Wiki was the source of truth for financial state.

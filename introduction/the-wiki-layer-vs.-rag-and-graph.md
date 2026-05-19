@@ -1,12 +1,12 @@
-# The Wiki layer vs. RAG and graph
+# The Wiki Layer vs. RAG and Graph
 
-### What it is
+### What It Is
 
 The Wiki layer is the contextual knowledge surface in Brain's stack. It sits between the Ledger (canonical state) and the Agent (execution), and gives agents the meaning they need to act intelligently on financial data.
 
 Think of it as Wikipedia for an autonomous financial system, except every article cites a primary source in the Ledger or Raw layer.
 
-### What it does
+### What It Does
 
 The Wiki layer handles three jobs that legacy memory systems split across separate tools:
 
@@ -16,7 +16,7 @@ The Wiki layer handles three jobs that legacy memory systems split across separa
 
 Every fact in Wiki points back to verifiable evidence in Raw or Ledger. If the source moves, Wiki updates. If sources conflict, Ledger wins.
 
-### Comparison with RAG and graph
+### Comparison with RAG and Graph
 
 Most memory systems use one of two tools.
 
@@ -28,7 +28,7 @@ Most memory systems use one of two tools.
 
 <table><thead><tr><th width="350">Capability</th><th>Wiki</th><th>RAG</th><th>Graph</th></tr></thead><tbody><tr><td>Semantic retrieval</td><td><strong>Yes</strong></td><td>Yes</td><td>Limited</td></tr><tr><td>Entity resolution</td><td><strong>Native</strong></td><td>No</td><td>Manual</td></tr><tr><td>Relationship traversal</td><td><strong>Yes</strong></td><td>No</td><td>Yes</td></tr><tr><td>Anchored to system of record</td><td><strong>Yes</strong></td><td>No</td><td>No</td></tr><tr><td>Provenance per fact</td><td><strong>Yes</strong></td><td>No</td><td>No</td></tr><tr><td>Conflict arbitration</td><td><strong>Ledger wins</strong></td><td>None</td><td>None</td></tr><tr><td>Suitable for autonomous money movement</td><td><strong>Yes</strong></td><td>No</td><td>No</td></tr></tbody></table>
 
-### Why this matters
+### Why This Matters
 
 When an agent is reasoning about money, "probably true" is not enough. A treasury agent that thinks the company has $4.2M in operating cash needs to be right, not approximately right. A lending agent applying a credit policy needs to know exactly which counterparty it is dealing with, not a fuzzy match.
 
@@ -40,7 +40,7 @@ The shorthand:
 * Graph connects right
 * Wiki _is_ right
 
-### How Wiki fits in Brain
+### How Wiki Fits in Brain
 
 Wiki is one of six layers in the Brain stack:
 

@@ -1,4 +1,4 @@
-# Rollback runbook
+# Rollback Runbook
 
 §10.3: "Rollback is one command: `az containerapp revision set-active --revision N-1`."
 
@@ -49,12 +49,12 @@ Contributor` on the resource group.
 
 5. Notify on-call via PagerDuty with the revision hashes and the reason.
 
-## Post-rollback
+## Post-Rollback
 
 - Open an incident ticket with the failing revision hash and the symptom
   that caused the rollback. §11.1 requires a post-mortem on every
   production rollback.
 - Migration rollback is NOT a general-purpose operation: §10.5 mandates
   forward-compatible migrations. If a migration is the root cause, the
-  fix is forward — a new migration that reconciles state — never a
+  fix is forward, a new migration that reconciles state, never a
   reverse migration.

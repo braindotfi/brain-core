@@ -13,7 +13,7 @@ hidden: true
 | **Email**              | Specific failed requests           | [support@brain.fi](mailto:support@brain.fi)                                                          |
 | **Security**           | Vulnerabilities only               | [security@brain.fi](mailto:security@brain.fi)                                                        |
 
-### When opening a ticket
+### When Opening a Ticket
 
 The single most useful thing you can include is a **trace ID**. Every API and MCP response carries one. Pasting a trace ID lets the support team pull the exact request, the policy version that evaluated it, and the audit event that recorded it.
 
@@ -34,7 +34,7 @@ try {
 | **Production** | 4 business hours | Email, Discord, dedicated Slack          |
 | **Enterprise** | 1 hour, 24/7     | All of the above plus on-call escalation |
 
-### Reporting a security issue
+### Reporting a Security Issue
 
 Please email [security@brain.fi](mailto:security@brain.fi) directly. Do not file public issues for security vulnerabilities. Brain runs a public bug bounty; details are on the security page.
 

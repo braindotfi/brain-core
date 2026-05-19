@@ -14,13 +14,13 @@ Agents propose actions. Policies decide what runs. Humans stay in control where 
 The MCP surface uses single-shot HTTP. One request, one response, one audit event. Streaming transports may follow once we see a use case that needs them.
 {% endhint %}
 
-### Surface map
+### Surface Map
 
 The MCP surface is intentionally small. **10 tools, 5 resource templates, 5 canned prompts.**
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ 10 Tools</strong></td><td>Five Ledger reads, two Wiki reads, one Raw contribute, one PaymentIntent propose, one agent action propose.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>📦 5 resources</strong></td><td>Resource templates addressable by <code>brain://</code> URIs: accounts, transactions, payment-intents, wiki pages, raw evidence.</td><td><a href="resources.md">resources.md</a></td><td></td></tr><tr><td><strong>💬 5 Prompts</strong></td><td>Canned prompts for the most common agent loops: cash flow, bills, spending, invoices, subscriptions.</td><td><a href="prompts.md">prompts.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT plus on-chain scope hash verification against <code>BrainMCPAgentRegistry</code>.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
 
-### What an external agent can do
+### What an External Agent Can Do
 
 | Capability               | Tools                                                                                                                             | On-chain Scope           |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
@@ -36,7 +36,7 @@ There is no `payment_intent.execute` on the MCP surface. External agents may **p
 
 [**→ The pre-execution gate**](../protocol/the-pre-execution-gate.md)
 
-### What makes the MCP surface different
+### What Makes the MCP Surface Different
 
 The MCP tools call the same Ledger, Wiki, and PaymentIntent code paths that back the HTTP API. That has three concrete consequences:
 
@@ -86,7 +86,7 @@ The MCP tools call the same Ledger, Wiki, and PaymentIntent code paths that back
             Audit events emitted at every step
 ```
 
-### A first call
+### A First Call
 
 ```http
 POST /v1/agents/mcp HTTP/1.1
@@ -129,6 +129,6 @@ Response:
 }
 ```
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 10 tools in detail.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>How JWT and on-chain scope verification work together.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>

@@ -2,13 +2,13 @@
 description: Authorize an MCP-compatible agent to read and propose on a tenant's behalf.
 ---
 
-# Let an external agent in
+# Let an External Agent In
 
 Goal: authorize an external agent (one you didn't write) to read a tenant's financial state and propose actions on the tenant's behalf, with the same policy and audit guarantees as anything you'd build yourself.
 
 External agents speak [MCP](https://modelcontextprotocol.io). Brain ships an MCP server. The integration is mostly authorization, not code.
 
-### The flow
+### The Flow
 
 ```
 1. Agent owner registers their agent with Brain.
@@ -18,7 +18,7 @@ External agents speak [MCP](https://modelcontextprotocol.io). Brain ships an MCP
 5. Every read and propose lands in the tenant's audit log.
 ```
 
-### Step 1: register the agent
+### Step 1: Register the Agent
 
 Agent owners register once. Tenants do not see this step.
 
@@ -34,7 +34,7 @@ console.log(agent.id);       // ag_8231
 console.log(agent.txHash);   // BrainMCPAgentRegistry registration on Base
 ```
 
-### Step 2: grant the agent scope
+### Step 2: Grant the Agent Scope
 
 The tenant authorizes the agent for specific capabilities, on this tenant only.
 
@@ -64,7 +64,7 @@ The tenant signs an EIP-712 message under the hood; the SDK handles it. The gran
 External agents can **propose** but cannot **execute**. Execution is reserved for internal Brain workers running under tenant policy. This is the safety guarantee that makes external agents safe to authorize.
 {% endhint %}
 
-### Step 3: the agent connects
+### Step 3: the Agent Connects
 
 The agent owner points their MCP runtime at:
 
@@ -85,7 +85,7 @@ The runtime authenticates with a JWT signed by the agent's registered key. The f
 
 A tenant who granted only `ledger:read` and `wiki:read` will see exactly those tools and no others.
 
-### Step 4: the agent works
+### Step 4: the Agent Works
 
 From the agent's side, calls look like this.
 
@@ -106,7 +106,7 @@ From the agent's side, calls look like this.
 
 The same Policy gating, the same Wiki memory, the same audit emission as anything you'd call from your own backend. Identical guarantees.
 
-### Step 5: you watch
+### Step 5: You Watch
 
 Every external agent action lands in the tenant's audit log.
 
@@ -121,7 +121,7 @@ events.data.forEach((e) => console.log(e.type, e.timestamp, e.summary));
 
 The Console shows agent activity in real time under **Agents → Activity**.
 
-### Revoking an agent
+### Revoking an Agent
 
 Revocation is immediate.
 
@@ -131,7 +131,7 @@ await brain.agents.revoke("acme", agent.id);
 
 Within at most 60 seconds (the on-chain scope cache window), the agent's calls fail. Already-stored evidence and prior actions remain (the audit log is immutable). Future calls are rejected.
 
-### What this enables
+### What This Enables
 
 | Pattern                  | Example                                                                                                |
 | ------------------------ | ------------------------------------------------------------------------------------------------------ |
@@ -140,7 +140,7 @@ Within at most 60 seconds (the on-chain scope cache window), the agent's calls f
 | **Cross-product agents** | An agent that contributes evidence (transcripts, contracts) to multiple tenants under their own scopes |
 | **Marketplaces**         | Tenants discover, authorize, and revoke agents from a marketplace without writing code                 |
 
-### What this does not enable
+### What This Does Not Enable
 
 | Pattern                                    | Why not                                                              |
 | ------------------------------------------ | -------------------------------------------------------------------- |
@@ -149,6 +149,6 @@ Within at most 60 seconds (the on-chain scope cache window), the agent's calls f
 | **Agents that bypass policy**              | All proposals run through the same Policy evaluator                  |
 | **Agents that read each other's evidence** | Tenant isolation extends to evidence contributed by agents           |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔌 MCP server</strong></td><td>The full reference for the MCP surface.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>📜 Audit trail</strong></td><td>Watch what external agents do.</td><td><a href="audit-every-action.md">audit-every-action.md</a></td><td></td></tr></tbody></table>

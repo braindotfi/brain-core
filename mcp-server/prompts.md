@@ -7,7 +7,7 @@ Brain's MCP server ships **5 canned prompts** for the most common agent loops. P
 | **MCP method**     | `prompts/get` and `prompts/list`  |
 | **Required scope** | Same as the underlying read tools |
 
-### Why canned prompts
+### Why Canned Prompts
 
 Most external agents end up reinventing the same five questions in their first day of integration. Canned prompts give them a one-shot way to get a high-quality answer without designing the chain themselves.
 
@@ -19,7 +19,7 @@ Most external agents end up reinventing the same five questions in their first d
 | `invoice_status`    | "What invoices are outstanding, and which are overdue?"                 | invoices, transactions, counterparties    |
 | `subscriptions`     | "What recurring subscriptions are we paying for, and which are unused?" | obligations, transactions, counterparties |
 
-### Anatomy of a prompt
+### Anatomy of a Prompt
 
 A prompt is a structured object that tells the agent's LLM how to use Brain's MCP surface to answer a specific class of question.
 
@@ -119,7 +119,7 @@ Typical inputs:
 
 Returns each subscription's `counterparty`, `monthly_amount`, `start_date`, `last_charge`, `recurrence`, and a `freshness` signal computed from related Raw evidence (e.g., when the agent has contributed usage transcripts via `raw.contribute`, those are surfaced here).
 
-### Listing and getting prompts
+### Listing and Getting Prompts
 
 ```http
 POST /v1/agents/mcp HTTP/1.1
@@ -145,6 +145,6 @@ The `prompts/get` response contains a `messages[]` array suitable for direct inj
 
 Like tools and resources, every `prompts/get` invocation emits an `agent.mcp.tool_called` audit event with `method: "prompts/get"` and the prompt name plus arguments in `inputs`.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 10 tools the prompts orchestrate.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>📦 Resources</strong></td><td>The 5 resource templates prompts can reference.</td><td><a href="resources.md">resources.md</a></td><td></td></tr></tbody></table>

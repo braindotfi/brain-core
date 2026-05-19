@@ -71,7 +71,7 @@ ScopeAttestation(
 | `notBefore`, `notAfter` | Validity window                                 |
 | `nonce`                 | Per-tenant, per-agent replay protection         |
 
-### Policy verdicts
+### Policy Verdicts
 
 The Policy verdict is signed off-chain by the Brain policy verifier key registered in the smart account.
 
@@ -86,7 +86,7 @@ The Policy verdict is signed off-chain by the Brain policy verifier key register
 A policy verdict for one UserOp cannot be used to validate any other UserOp. Even if a verdict is intercepted, it expires within 60 seconds and can only be used against the exact `userOpHash` it was bound to.
 {% endhint %}
 
-### Account-level limits
+### Account-Level Limits
 
 Global limits cap blast radius even when policy and scope are valid.
 
@@ -98,7 +98,7 @@ Global limits cap blast radius even when policy and scope are valid.
 
 `_withinLimits()` rejects UserOps that would exceed either ceiling.
 
-### EIP-7702 path
+### EIP-7702 Path
 
 For tenants who own an EOA and want smart-account semantics for a single session:
 
@@ -111,7 +111,7 @@ For tenants who own an EOA and want smart-account semantics for a single session
 
 This lets existing EOAs use Brain without redeploying as a new account.
 
-### Belt-and-braces enforcement
+### Belt-and-Braces Enforcement
 
 Policy is enforced **twice** by design.
 
@@ -122,7 +122,7 @@ Policy is enforced **twice** by design.
 
 Even if the off-chain backend is compromised, on-chain validation rejects UserOps without a valid, non-expired, scope-bound policy verdict.
 
-### Threat scenarios
+### Threat Scenarios
 
 | Scenario                                            | Outcome                                      |
 | --------------------------------------------------- | -------------------------------------------- |
@@ -132,6 +132,6 @@ Even if the off-chain backend is compromised, on-chain validation rejects UserOp
 | Backend replays an old verdict against a new UserOp | Reverts: verdict bound to wrong `userOpHash` |
 | Compromised key tries to submit beyond limits       | Reverts: "limits exceeded"                   |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🪪 BrainMCPAgentRegistry</strong></td><td>Where agent identity is checked.</td><td><a href="brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr><tr><td><strong>📋 BrainPolicyRegistry</strong></td><td>Where the active policy hash is anchored.</td><td><a href="brainpolicyregistry.md">brainpolicyregistry.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>The conceptual model.</td><td><a href="../concepts/agents.md">agents.md</a></td><td></td></tr></tbody></table>

@@ -50,7 +50,7 @@ interface IBrainMCPAgentRegistry {
 }
 ```
 
-### Agent record
+### Agent Record
 
 | Field            | Purpose                                                             |
 | ---------------- | ------------------------------------------------------------------- |
@@ -82,7 +82,7 @@ registry.registerAgent(agentRecord, ownerSig);
 
 The contract verifies the signature, stores the record, and emits `AgentRegistered`.
 
-### Per-tenant scoping
+### Per-Tenant Scoping
 
 Registration alone does not authorize an agent to act for any tenant. A tenant must explicitly grant scope per capability.
 
@@ -155,7 +155,7 @@ Tenants and other agents query the registry to discover agents by capability and
 Discovery is itself audited. Brain logs every selection event so a tenant can later verify why a particular agent was chosen.
 {% endhint %}
 
-### ERC-8004 alignment
+### ERC-8004 Alignment
 
 | ERC-8004 Concept       | Brain's Implementation                                 |
 | ---------------------- | ------------------------------------------------------ |
@@ -166,6 +166,6 @@ Discovery is itself audited. Brain logs every selection event so a tenant can la
 
 The contract is a thin layer over ERC-8004 with Brain-specific fields for MCP endpoint and explicit per-tenant scoping.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🤖 Agents</strong></td><td>The conceptual model.</td><td><a href="../concepts/agents.md">agents.md</a></td><td></td></tr><tr><td><strong>🔐 BrainSmartAccount</strong></td><td>How `isScoped()` is checked during UserOp validation.</td><td><a href="brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr><tr><td><strong>🌐 Agents API</strong></td><td>Register and scope agents over HTTP.</td><td><a href="../api-reference/agents-api.md">agents-api.md</a></td><td></td></tr></tbody></table>

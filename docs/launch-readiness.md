@@ -1,4 +1,4 @@
-# Brain — Public Launch Readiness & Next Steps
+# Brain, Public Launch Readiness & Next Steps
 
 **Audience**: CTO
 **Author**: engineering
@@ -11,7 +11,7 @@ Brain is technically close to a credible public launch. The SDK that the
 docs commit to now exists in code (8 PRs queued, 95 tests, full coverage
 of the documented surface). The HTTP API, contracts, and infra all
 shipped through v0.3. The remaining work is **operational** more than
-**implementation** — publish workflow, drift gates, security triage,
+**implementation**: publish workflow, drift gates, security triage,
 SLO commitments, and a staged invite-only → open-beta → GA rollout.
 
 **Two realistic paths:**
@@ -26,57 +26,57 @@ on-chain anchoring; "move fast and break things" is a category mistake.
 The 4-week shortcut buys little marketing momentum and costs us the
 incident headroom we'd need on day one.
 
-## 2. What's built
+## 2. What's Built
 
-### SDK — `@brain/sdk` ([clients/sdk](../clients/sdk))
+### SDK, `@brain/sdk` ([clients/sdk](../clients/sdk))
 
 Just landed across 8 PRs (see commit history `feat(sdk):` series). One
 typed client over the OpenAPI spec, plus a high-level `Brain` class
 mirroring every documented method on docs.brain.fi:
 
 - `brain.ask`, `brain.pay`, `brain.approve`, `brain.reject`, `brain.proof`,
-  `brain.snapshot`, `brain.trace` — flat helpers
+  `brain.snapshot`, `brain.trace`, flat helpers
 - `brain.accounts`, `.transactions`, `.counterparties`, `.obligations`,
   `.invoices`, `.balances`, `.audit`, `.payments`, `.actions`, `.agents`,
-  `.raw`, `.wiki`, `.policy`, `.cashFlow` — namespaced resources
+  `.raw`, `.wiki`, `.policy`, `.cashFlow`, namespaced resources
 - Idempotency keys on every mutating endpoint
 - Typed errors: `BrainAPIError`, `PolicyApprovalRequiredError`,
   `PolicyRejectedError`
 
 **98% line / 92% branch / 100% function coverage. 95 tests.**
 
-### HTTP API — `api.brain.fi/v1`
+### HTTP API, `api.brain.fi/v1`
 
 57 endpoints declared in [Brain_API_Specification.yaml](../Brain_API_Specification.yaml).
 Implementation distributed across nine service workspaces. Per
 [docs/v0.3-deliverables.md](v0.3-deliverables.md), v0.3 is the
-"ready-for-Series-A" milestone — but Series A readiness and public
+"ready-for-Series-A" milestone, but Series A readiness and public
 launch readiness are different bars (see §3).
 
-### Smart contracts — Base L2
+### Smart Contracts, Base L2
 
 Four contracts in [contracts/src](../contracts/src): `BrainAuditAnchor`,
 `BrainPolicyRegistry`, `BrainSmartAccount`, `BrainMCPAgentRegistry`.
 Audit findings addressed (recent commits). Deployment summary lives at
 [docs/deployment-2026-05-11.txt](deployment-2026-05-11.txt).
 
-### Docs — docs.brain.fi
+### Docs, docs.brain.fi
 
 GitBook-synced to `braindotfi/brain-core/main`. Content is cleaned up
 (duplicate trees removed). Some pre-existing `/broken/pages/` placeholder
-links remain (12 of them, mappable to existing pages — small PR pending).
+links remain (12 of them, mappable to existing pages, small PR pending).
 
-### Infra — Azure + ACR
+### Infra, Azure + ACR
 
 Per [docs/v0.3-deliverables.md](v0.3-deliverables.md): Terraform under
 `infra/`, main-branch CI deploys to staging, manual promote to prod.
 Rollback runbook at [docs/rollback.md](rollback.md).
 
-## 3. Gates before public launch
+## 3. Gates Before Public Launch
 
 Triaged by what they block.
 
-### P0 — blocks even a closed beta
+### P0, Blocks Even a Closed Beta
 
 | # | Gate | Status | Effort |
 |---|------|--------|--------|
@@ -85,16 +85,16 @@ Triaged by what they block.
 | P0.3 | Set up SDK release pipeline (semver tags → publish workflow) | not started | 1 day |
 | P0.4 | Fix monorepo lint break on `main` (Node globals, test parser) | broken in main | 0.5 days |
 | P0.5 | Triage 6 Dependabot vulns (4 high, 2 moderate) GitHub flags on push | not triaged | 0.5–2 days depending on root cause |
-| P0.6 | OpenAPI spec audit — we already found one duplicate `Agent:` schema; do a full pass for similar latent issues | partial (1 fix landed in SDK skeleton PR) | 0.5 day |
+| P0.6 | OpenAPI spec audit, we already found one duplicate `Agent:` schema; do a full pass for similar latent issues | partial (1 fix landed in SDK skeleton PR) | 0.5 day |
 | P0.7 | Doc-example smoke test (`1C`): CI extracts every TypeScript block from `*.md` and type-checks against the SDK. Without this we **will** ship docs that don't match the SDK | not started | 1 day |
 | P0.8 | Pick 5–10 design partners, get them signed under NDA | not started | depends on BD |
 
-### P1 — blocks open beta
+### P1, Blocks Open Beta
 
 | # | Gate | Status | Effort |
 |---|------|--------|--------|
 | P1.1 | Production / sandbox environment split documented and enforced | partially shipped (spec lists both) | 1 day |
-| P1.2 | Rate limiting policy documented and enforced (spec already declares 429s) | unknown — verify implementation | 1–2 days |
+| P1.2 | Rate limiting policy documented and enforced (spec already declares 429s) | unknown, verify implementation | 1–2 days |
 | P1.3 | Auth: SIWX flow end-to-end smoke test (issued under v0.3 PR4) | shipped | smoke-test only |
 | P1.4 | SLO commitment: target p99 latency + monthly availability per surface; publish on docs.brain.fi/resources/sla | not defined | 0.5 day + product call |
 | P1.5 | Status page (status.brain.fi) wired to actual production health probes | not started | 1 day |
@@ -106,11 +106,11 @@ Triaged by what they block.
 | P1.11 | Pricing + billing: per-call meter, plan tiers, free quota for sandbox | open product decision | depends on product |
 | P1.12 | API key issuance flow: self-serve registration, key rotation, scoping | unknown | 2–4 days |
 
-### P2 — blocks GA (general availability)
+### P2, Blocks GA (General Availability)
 
 | # | Gate | Status | Effort |
 |---|------|--------|--------|
-| P2.1 | External security audit (penetration test by reputable firm) — table stakes for FI customers | not started | 2–4 weeks (external) |
+| P2.1 | External security audit (penetration test by reputable firm), table stakes for FI customers | not started | 2–4 weeks (external) |
 | P2.2 | SOC 2 Type I in motion (Vanta/Drata/etc.) | unknown | 4–6 weeks |
 | P2.3 | On-call rotation defined, paging configured, runbooks current | partially (rollback.md exists) | 1 week |
 | P2.4 | Incident response drill (game day): simulate Postgres failover, rail outage, anchor publisher down | not started | 1 day exercise + prep |
@@ -118,11 +118,11 @@ Triaged by what they block.
 | P2.6 | 100-concurrent-agent load test on `/payment-intents/*` and pre-execution gate | not started | 2–3 days |
 | P2.7 | Marketing-ready launch site, blog post, design partner case studies | external | 1–2 weeks |
 | P2.8 | Support tier defined: docs + email + Slack + paid | not defined | product |
-| P2.9 | Multi-region failover validated (or explicitly single-region for v1.0) | unknown — review infra | 1 week if needed |
+| P2.9 | Multi-region failover validated (or explicitly single-region for v1.0) | unknown, review infra | 1 week if needed |
 
-## 4. Recommended launch sequence
+## 4. Recommended Launch Sequence
 
-### Week 1–3: closed invite-only beta
+### Week 1–3: Closed Invite-Only Beta
 
 - Merge SDK PRs, publish to chosen registry.
 - Close all P0 gates.
@@ -132,7 +132,7 @@ Triaged by what they block.
 - **Hard stop on advertising the URL.** Single-page "we're in private
   beta" gate on the sign-up flow.
 
-### Week 4–6: open beta (waitlist)
+### Week 4–6: Open Beta (Waitlist)
 
 - Close P1 gates.
 - Self-serve API key issuance with rate-limited free tier for sandbox.
@@ -150,7 +150,7 @@ Triaged by what they block.
 - Public security report (or summary) from the pen-test.
 - Marketing launch sequence.
 
-## 5. Concrete backlog (next 4 weeks)
+## 5. Concrete Backlog (Next 4 Weeks)
 
 The list is long but most items are 0.5–2 days. The critical path is
 P0 → P1.1–P1.5 → P1.11–P1.12.
@@ -178,65 +178,65 @@ P0 → P1.1–P1.5 → P1.11–P1.12.
 | product | Pricing model + billing flow | 1–2 weeks | P1.11 |
 | eng | Self-serve API key issuance + rotation | 2–4 days | P1.12 |
 
-## 6. Open product / strategy decisions
+## 6. Open Product / Strategy Decisions
 
 CTO calls needed before P1 work can land cleanly:
 
-1. **Publish target for `@brain/sdk`** — public npm registers us as
+1. **Publish target for `@brain/sdk`**: public npm registers us as
    "open source-y" and welcomes external auditing. Private GH Packages
    gives us tighter control but adds an npmrc auth step for customers.
    **Recommendation: public npm.** The docs already commit to
    `npm install @brain/sdk`; matching that is the lowest-friction
-   developer onramp. The implementation isn't a competitive moat —
+   developer onramp. The implementation isn't a competitive moat , 
    the protocol, the policy DSL, the on-chain anchoring, and the
    service surface are.
 
-2. **Versioning policy** — SDK semver, API URL versioning (`/v1`),
+2. **Versioning policy**: SDK semver, API URL versioning (`/v1`),
    doc versioning. Pick a clear rule: e.g., URL version bumps only on
    breaking change; SDK minor versions track non-breaking additions;
    docs always reflect the latest stable.
 
-3. **API key model** — single key per tenant (simple) or scoped keys
+3. **API key model**: single key per tenant (simple) or scoped keys
    per service / per environment (Stripe-style, more secure). The
    docs already show scoped MCP attestations for agents; we should
    align human-issued keys with the same shape.
 
-4. **Pricing model** — usage-based per-call? Per-tenant flat? Free
+4. **Pricing model**: usage-based per-call? Per-tenant flat? Free
    sandbox + paid prod? Decide before P1.11 lands so the billing
    integration knows what to count.
 
-5. **SLA tiers** — 99.9% default, 99.95% enterprise? Refunds on
+5. **SLA tiers**: 99.9% default, 99.95% enterprise? Refunds on
    miss? Define before contracts go to legal.
 
-6. **`tenantId` on flat SDK helpers** — currently a no-op argument
+6. **`tenantId` on flat SDK helpers**: currently a no-op argument
    matching the docs signature. Decision: either (a) extend the API
    to accept cross-tenant tokens with an `X-Tenant-Id` header, or
    (b) drop the argument from the SDK and update the docs to match.
-   Lean (a) — multi-tenant support is the natural ask from
+   Lean (a), multi-tenant support is the natural ask from
    enterprise prospects.
 
-7. **PaymentIntent ↔ AuditEvent linkage** — the SDK's `brain.proof`
+7. **PaymentIntent ↔ AuditEvent linkage**: the SDK's `brain.proof`
    currently requires the caller to resolve the event id via
    `brain.audit.history`. The intent shape doesn't carry an
    `audit_event_id`. Either add the field on the server side, or
    document the two-step lookup as the canonical flow. Affects every
    integration that wants to grab a proof.
 
-8. **Multipart raw upload** — the SDK only wraps URL-based
+8. **Multipart raw upload**: the SDK only wraps URL-based
    `/raw/ingest` today. Binary upload via multipart is the more
    common path for receipts/invoices/statements. Should land before
    open beta.
 
-9. **Doc-driven workflow ownership** — we decided GitBook is source
+9. **Doc-driven workflow ownership**: we decided GitBook is source
    of truth. Who has editor access? Who reviews doc-driven SDK
    changes? Recommended: docs PR triggers `1C` smoke test → if it
    fails, the SDK PR that makes it pass is the canonical follow-up.
 
-## 7. Risks I'd specifically call out
+## 7. Risks I'd Specifically Call Out
 
 - **The pre-execution gate is the most load-bearing piece of the
-  whole protocol.** If it has a concurrency bug — double-execute, race
-  on idempotency key, RLS bypass under load — that's a money-loss
+  whole protocol.** If it has a concurrency bug, double-execute, race
+  on idempotency key, RLS bypass under load, that's a money-loss
   incident on day one. P1.6 (concurrent load test) is non-negotiable
   before open beta.
 
@@ -245,7 +245,7 @@ CTO calls needed before P1 work can land cleanly:
   others. The 1C smoke test catches divergence between docs and SDK,
   but it does not catch divergence between SDK and **running server**.
   Recommend a separate CI job that runs the SDK's typed client against
-  a recorded server response set — or, better, an integration test
+  a recorded server response set, or, better, an integration test
   service that proxies real responses through.
 
 - **The SDK is brand new.** 95 tests is high coverage for the code we
@@ -268,7 +268,7 @@ CTO calls needed before P1 work can land cleanly:
   ready to ship 0.1.1 within hours, not days.
 
 - **Status page is more important than developers think.** When a
-  rail goes down, customers won't open a support ticket — they'll
+  rail goes down, customers won't open a support ticket, they'll
   assume our API is broken. A clear status page deflects 80% of
   support volume during incidents and tells the market we're
   operationally serious.

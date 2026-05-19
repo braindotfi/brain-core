@@ -1,4 +1,4 @@
-# Escrow and x402
+# Escrow and X402
 
 Where an external agent is paid for its work, Brain coordinates settlement **without ever custodying funds**. Two standards do the heavy lifting: ERC-8183 for escrowed jobs, x402 for HTTP-native machine payments.
 
@@ -7,7 +7,7 @@ Where an external agent is paid for its work, Brain coordinates settlement **wit
 | **ERC-8183** | Job-style work where payment releases on verified completion            |
 | **x402**     | Per-call API access where payment settles inline with each HTTP request |
 
-### ERC-8183 escrowed job flow
+### ERC-8183 Escrowed Job Flow
 
 The tenant locks payment. The agent does the work. Brain co-signs the release. Funds settle to the agent.
 
@@ -45,7 +45,7 @@ If verification fails, funds return to the tenant after a timeout.
 Brain is a **neutral verifier**, not a custodian. Funds move directly between the tenant's account and the agent's address. Brain signs that the work was done; it does not hold the money in transit.
 {% endhint %}
 
-### EIP-712 attestation type
+### EIP-712 Attestation Type
 
 ```
 JobCompletion(
@@ -64,7 +64,7 @@ JobCompletion(
 | `timestamp`  | Used to enforce job deadline           |
 | `nonce`      | Replay protection                      |
 
-### Dispute resolution
+### Dispute Resolution
 
 If the agent and tenant disagree on whether work was completed:
 
@@ -74,7 +74,7 @@ If the agent and tenant disagree on whether work was completed:
 | **Agent fails to submit before deadline**            | Funds return to tenant automatically                                    |
 | **Brain detects fraud**                              | Release blocked; reputation slashed against agent's `reputationRoot`    |
 
-### x402 machine-native payments
+### X402 Machine-Native Payments
 
 For HTTP-native settlement, Brain integrates **x402**: the resource server returns `402 Payment Required` with payment instructions; the calling agent retries with an x402 payment header backed by the tenant's smart account; settlement and audit happen in the same flow.
 
@@ -104,7 +104,7 @@ Agent                      Resource Server
 | **Validate and settle**  | Server validates the payment (or accepts a verifiable promise) and returns the resource |
 | **Audit**                | The full flow is logged as an audit event linked to the action                          |
 
-### When to use which
+### When to Use Which
 
 | Scenario                                | Standard                                |
 | --------------------------------------- | --------------------------------------- |
@@ -112,7 +112,7 @@ Agent                      Resource Server
 | Agent pays per-call for an API or tool  | x402                                    |
 | Agent pays another agent for a sub-task | x402 (immediate) or ERC-8183 (deferred) |
 
-### Where settlement is **not** Brain's job
+### Where Settlement Is **Not** Brain's Job
 
 | Boundary          | Who Handles                                    |
 | ----------------- | ---------------------------------------------- |
@@ -122,6 +122,6 @@ Agent                      Resource Server
 
 Brain coordinates and proves; it does not hold.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔐 BrainSmartAccount</strong></td><td>The smart account that locks and releases.</td><td><a href="brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr><tr><td><strong>🪪 BrainMCPAgentRegistry</strong></td><td>How agent reputation accumulates.</td><td><a href="brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>The conceptual model.</td><td><a href="../concepts/agents.md">agents.md</a></td><td></td></tr></tbody></table>

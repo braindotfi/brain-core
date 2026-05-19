@@ -1,8 +1,8 @@
-# Data flow
+# Data Flow
 
 End-to-end: from a webhook landing in the Raw Layer to an action executing on a rail and proof anchoring on Base.
 
-### The full flow
+### The Full Flow
 
 ```
 Source → Raw → Ledger → Wiki → Policy → Agent → Rail → Audit
@@ -18,11 +18,11 @@ Source → Raw → Ledger → Wiki → Policy → Agent → Rail → Audit
 | 6    | If approved, the **Agent** Layer executes through an external rail (bank API, payment processor, smart account on Base) |
 | 7    | Every step writes an **Audit** event with cryptographic links back to preceding ones                                    |
 
-### Step-by-step trace
+### Step-by-Step Trace
 
 Imagine a payments agent paying an invoice. Here is what every layer does.
 
-#### Step 1: Raw lands
+#### Step 1: Raw Lands
 
 ```
 External event:
@@ -35,7 +35,7 @@ Brain action:
   - Emit audit event: source.received
 ```
 
-#### Step 2: Ledger structures
+#### Step 2: Ledger Structures
 
 ```
 Extractor input:
@@ -53,7 +53,7 @@ Brain action:
   - Emit audit event: ledger.appended
 ```
 
-#### Step 3: Wiki updates
+#### Step 3: Wiki Updates
 
 ```
 Wiki input:
@@ -68,7 +68,7 @@ Wiki action:
   - Emit audit event: wiki.updated
 ```
 
-#### Step 4: Agent proposes
+#### Step 4: Agent Proposes
 
 ```
 Agent input:
@@ -83,7 +83,7 @@ Brain action:
   - Forward to Policy Engine.
 ```
 
-#### Step 5: Policy evaluates
+#### Step 5: Policy Evaluates
 
 ```
 Policy input:
@@ -100,7 +100,7 @@ Brain action:
   - Emit audit event: policy.evaluated
 ```
 
-#### Step 6: approval
+#### Step 6: Approval
 
 ```
 Approver input:
@@ -116,7 +116,7 @@ Brain action:
   - Emit audit event: action.approved
 ```
 
-#### Step 7: execution
+#### Step 7: Execution
 
 Two paths, depending on the rail:
 
@@ -149,7 +149,7 @@ Brain action:
   - Emit audit event: action.executed
 ```
 
-#### Step 8: Audit anchors
+#### Step 8: Audit Anchors
 
 ```
 Audit Layer:
@@ -164,7 +164,7 @@ Anchorer:
   - On-chain: RootAnchored event emitted.
 ```
 
-### End-to-end provenance
+### End-to-End Provenance
 
 Every step links back to every previous step.
 
@@ -184,6 +184,6 @@ A single Merkle proof against an anchored root verifies the entire chain.
 There is no point in this flow where Brain holds funds. Money moves directly between the tenant's accounts and counterparties on the tenant's chosen rails.
 {% endhint %}
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔒 Tenant isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>🛡️ Security and compliance</strong></td><td>Non-negotiable principles and compliance posture.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr><tr><td><strong>📜 BrainSmartAccount</strong></td><td>The on-chain validator.</td><td><a href="../smart-contracts/brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr></tbody></table>

@@ -1,4 +1,4 @@
-# MCP server (API reference)
+# MCP Server (API Reference)
 
 The MCP server is exposed at `POST /v1/agents/mcp`, JSON-RPC 2.0 over single-shot HTTP. This page is the API-style summary; for the full reference (tool list, resources, prompts, error codes, on-chain auth flow), see the dedicated MCP Server section.
 
@@ -32,13 +32,13 @@ Standard MCP JSON-RPC methods:
 | `prompts/list`             | List the 5 canned prompts                  |
 | `prompts/get`              | Render a canned prompt with arguments      |
 
-### The 10 tools
+### The 10 Tools
 
 Five Ledger reads, two Wiki reads, one Raw contribute, one PaymentIntent propose, one agent action propose. **No `payment_intent.execute`.**
 
 [**→ Tool reference**](../mcp-server/tools.md)
 
-### The 5 resources
+### The 5 Resources
 
 Resource templates addressable by `brain://` URIs:
 
@@ -52,7 +52,7 @@ brain://raw/{raw_artifact_id}
 
 [**→ Resources reference**](../mcp-server/resources.md)
 
-### The 5 prompts
+### The 5 Prompts
 
 `cash_flow_summary`, `bills_due`, `spending_change`, `invoice_status`, `subscriptions`.
 
@@ -64,7 +64,7 @@ JWT plus on-chain `scope_hash` verification against `BrainMCPAgentRegistry`. Thr
 
 [**→ Authentication reference**](../mcp-server/mcp-authentication.md)
 
-### Error codes
+### Error Codes
 
 | Code     | Meaning                                   |
 | -------- | ----------------------------------------- |
@@ -78,7 +78,7 @@ JWT plus on-chain `scope_hash` verification against `BrainMCPAgentRegistry`. Thr
 | `-32602` | Invalid params                            |
 | `-32603` | Internal error                            |
 
-### A first call
+### A First Call
 
 ```http
 POST /v1/agents/mcp HTTP/1.1
@@ -99,6 +99,6 @@ Content-Type: application/json
 }
 ```
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔌 MCP overview</strong></td><td>The full architecture and surface map.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>🛠️ Tools</strong></td><td>The 10 tools in detail.</td><td><a href="../mcp-server/tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT and on-chain scope verification.</td><td><a href="../mcp-server/mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>

@@ -8,7 +8,7 @@ Brain authenticates three caller types: humans, internal agents, and external ag
 | **Internal agent** | Brain-issued service token | Bearer service token             |
 | **External agent** | SIWX (EIP-4361 over Base)  | `agent_token` from SIWX exchange |
 
-### Human authentication (OAuth/SSO)
+### Human Authentication (OAuth/SSO)
 
 Brain integrates with Auth0 for OAuth and SAML SSO. The flow follows the standard authorization-code grant with PKCE.
 
@@ -32,11 +32,11 @@ GET /v1/ledger/transactions
 Authorization: Bearer <access_token>
 ```
 
-### External agent authentication (SIWX)
+### External Agent Authentication (SIWX)
 
 External agents authenticate using **Sign-In With X**, a generalization of EIP-4361 over Base.
 
-#### Step 1: construct the SIWX message
+#### Step 1: Construct the SIWX Message
 
 ```
 brain.fi wants you to sign in with your Ethereum account:
@@ -50,11 +50,11 @@ Issued At: 2025-09-01T12:00:00Z
 Expiration Time: 2025-09-01T12:05:00Z
 ```
 
-#### Step 2: sign with the agent's identity key
+#### Step 2: Sign with the Agent's Identity Key
 
 The agent signs the message with the key registered in `BrainMCPAgentRegistry`.
 
-#### Step 3: exchange for an agent token
+#### Step 3: Exchange for an Agent Token
 
 ```http
 POST /v1/auth/siwx
@@ -72,7 +72,7 @@ Content-Type: application/json
 }
 ```
 
-#### Step 4: use the token
+#### Step 4: Use the Token
 
 ```http
 POST /v1/agents/payments-v1/propose
@@ -84,7 +84,7 @@ X-Brain-Scope: <EIP-712 ScopeAttestation>
 Every action-class call must include an `X-Brain-Scope` header carrying the EIP-712 ScopeAttestation signed by the tenant. Reading endpoints (Wiki, Ledger, Audit) only require the agent token.
 {% endhint %}
 
-### ScopeAttestation EIP-712 type
+### ScopeAttestation EIP-712 Type
 
 ```
 ScopeAttestation(
@@ -99,7 +99,7 @@ ScopeAttestation(
 )
 ```
 
-### Token lifetimes
+### Token Lifetimes
 
 | Token                  | Default TTL | Refreshable             |
 | ---------------------- | ----------- | ----------------------- |
@@ -117,6 +117,6 @@ ScopeAttestation(
 | **Agent scope**          | `DELETE /v1/agents/{id}/scopes/{capability}`             |
 | **Agent registration**   | `POST /v1/agents/{id}/deactivate` (also called on-chain) |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🌐 API overview</strong></td><td>Endpoints, versioning, rate limits.</td><td><a href="overview.md">overview.md</a></td><td></td></tr><tr><td><strong>📜 BrainMCPAgentRegistry</strong></td><td>The on-chain agent registry.</td><td><a href="../smart-contracts/brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr></tbody></table>

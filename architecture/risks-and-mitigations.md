@@ -1,8 +1,8 @@
-# Risks and mitigations
+# Risks and Mitigations
 
 A frank inventory of the technical risks Brain faces and how the architecture addresses each one.
 
-### Source data quality
+### Source Data Quality
 
 **Risk.** Bank feeds and emails contain noise and gaps. An invoice arrives in five formats. Counterparty names vary across sources. Reconciliation is genuinely hard.
 
@@ -14,7 +14,7 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 | Replayable Raw layer                            | If the extractor improves, every higher layer can be rebuilt from Raw |
 | Human-in-the-loop reconciliation queue          | Low-confidence records routed to a human before they affect Wiki      |
 
-### Agent misbehaviour
+### Agent Misbehaviour
 
 **Risk.** A buggy or malicious agent could attempt unauthorized actions: overspending, paying the wrong counterparty, looping requests.
 
@@ -28,7 +28,7 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 | Account-level limits (per-tx, per-day)   | Hard cap on blast radius regardless of policy                                                   |
 | ERC-8004 reputation                      | Misbehaving agents accumulate negative attestations and lose access                             |
 
-### Policy ambiguity
+### Policy Ambiguity
 
 **Risk.** Plain-English policies can be ambiguous. "Allow recurring payments to known vendors". What counts as recurring? What counts as known?
 
@@ -41,7 +41,7 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 | Tenants sign the compiled form                   | Eliminates "but I meant..." disputes                        |
 | ESCALATE is the default for unmatched conditions | Edge cases route to humans, not silent ALLOW or silent DENY |
 
-### Source API failures and rate limits
+### Source API Failures and Rate Limits
 
 **Risk.** Upstream banks and processors have downtime, rate limits, and silent data loss.
 
@@ -53,7 +53,7 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 | Retries with exponential backoff | Transient failures recover automatically                          |
 | Replay from Raw                  | If an extractor needs to re-run, no need to re-pull from upstream |
 
-### Smart contract risk
+### Smart Contract Risk
 
 **Risk.** Bugs in `BrainSmartAccount` or `BrainAuditAnchor` could compromise execution or audit integrity.
 
@@ -67,7 +67,7 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 | 48-hour timelock on upgrades | Upgrades visible and delayed; tenants have time to respond   |
 | Anchorer keys on HSMs        | Compromise of the operational machine does not yield the key |
 
-### L2 finality and reorgs
+### L2 Finality and Reorgs
 
 **Risk.** Base, like any L2, can experience reorgs. An audit anchor that vanishes from the chain would be a problem.
 
@@ -79,7 +79,7 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 | Audit anchors reference the previous batch | Small reorg windows tolerated automatically                                              |
 | Off-chain log is canonical until anchored  | Anchoring is a commitment, not a creation. The audit log exists before it lands on-chain |
 
-### Privacy of audit anchors
+### Privacy of Audit Anchors
 
 **Risk.** Putting audit data on a public chain could leak tenant information.
 
@@ -93,7 +93,7 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 
 A counterparty verifying a proof receives only the specific event(s) the tenant chooses to share, plus the Merkle path. Everything else stays private.
 
-### Regulatory variance
+### Regulatory Variance
 
 **Risk.** Different jurisdictions have different rules: data residency, payment licensing, sanctions enforcement, AML reporting.
 
@@ -105,7 +105,7 @@ A counterparty verifying a proof receives only the specific event(s) the tenant 
 | Per-region deployments                     | Data residency requirements respected at the infrastructure level       |
 | Partnerships with regulated counterparties | UAE first via VARA-licensed entities; EU and US to follow               |
 
-### Risk summary
+### Risk Summary
 
 | Risk                | Severity Without Mitigation | Severity With Mitigation                  |
 | ------------------- | --------------------------- | ----------------------------------------- |
@@ -119,9 +119,9 @@ A counterparty verifying a proof receives only the specific event(s) the tenant 
 | Regulatory variance | High                        | Medium (handled per-region)               |
 
 {% hint style="info" %}
-This is not the complete threat model. Just the technical risks. Operational, governance, and business risks are addressed separately in compliance and operational documentation.
+This covers only the technical risks of the threat model. Operational, governance, and business risks are addressed separately in compliance and operational documentation.
 {% endhint %}
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛡️ Security and compliance</strong></td><td>Non-negotiable principles.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr><tr><td><strong>🔒 Tenant isolation</strong></td><td>How tenants are separated.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>📜 Smart contracts</strong></td><td>The on-chain enforcement layer.</td><td><a href="../smart-contracts/overview.md">overview.md</a></td><td></td></tr></tbody></table>

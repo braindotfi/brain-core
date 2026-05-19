@@ -2,7 +2,7 @@
 
 Create policies, register them on-chain, evaluate proposed actions, and query active policy state.
 
-### Create a policy
+### Create a Policy
 
 ```http
 POST /v1/policy
@@ -32,7 +32,7 @@ Content-Type: application/json
 The compiled JSON and a human-readable explanation are returned together. The tenant signs the **compiled hash**, not the prose. Verify the explanation matches your intent before signing.
 {% endhint %}
 
-### Sign and register
+### Sign and Register
 
 After review, the tenant signs an EIP-712 `PolicyRegistration` and registers on-chain.
 
@@ -59,7 +59,7 @@ Content-Type: application/json
 }
 ```
 
-### Get the active policy
+### Get the Active Policy
 
 ```http
 GET /v1/policy/active?tenantId=acme
@@ -77,7 +77,7 @@ Authorization: Bearer <token>
 }
 ```
 
-### Evaluate a hypothetical action
+### Evaluate a Hypothetical Action
 
 Dry-run an action against the active policy without proposing it.
 
@@ -109,7 +109,7 @@ Content-Type: application/json
 }
 ```
 
-### Three possible decisions
+### Three Possible Decisions
 
 | Decision   | Meaning                                                                              |
 | ---------- | ------------------------------------------------------------------------------------ |
@@ -117,7 +117,7 @@ Content-Type: application/json
 | `DENY`     | Action blocked; structured `reason` in the response                                  |
 | `ESCALATE` | Human approval required; `approvers` lists required signers                          |
 
-### Revoke a policy version
+### Revoke a Policy Version
 
 ```http
 POST /v1/policy/{policy_id}/revoke
@@ -131,7 +131,7 @@ Content-Type: application/json
 
 The tenant must register a new active version before further policy-gated actions can run.
 
-### List policy history
+### List Policy History
 
 ```http
 GET /v1/policy/history?tenantId=acme
@@ -147,6 +147,6 @@ Authorization: Bearer <token>
 }
 ```
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📋 Policy and permissioning</strong></td><td>The conceptual model.</td><td><a href="../protocol/policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr><tr><td><strong>📜 BrainPolicyRegistry</strong></td><td>The on-chain registry.</td><td><a href="../smart-contracts/brainpolicyregistry.md">brainpolicyregistry.md</a></td><td></td></tr></tbody></table>

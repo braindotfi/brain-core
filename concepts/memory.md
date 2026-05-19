@@ -6,7 +6,7 @@ description: What Brain knows about a tenant, where it came from, and how to que
 
 Brain holds, per tenant, a continuously updated record of every financial fact it has seen: transactions, balances, accounts, counterparties, obligations, invoices, contracts, on-chain transfers. You can query it as structured data or in natural language.
 
-### Two ways to read it
+### Two Ways to Read It
 
 ```typescript
 // Structured.
@@ -18,7 +18,7 @@ const answer = await brain.ask("acme", "What did we spend on AWS last month?");
 
 Both reach the same underlying record. Structured queries are precise and predictable. Natural-language questions are forgiving and discoverable. Use structured for code paths you'll hit often; use natural language for the questions you wouldn't have thought to filter for.
 
-### What goes in
+### What Goes In
 
 Brain ingests from any source the tenant authorizes:
 
@@ -34,7 +34,7 @@ Brain ingests from any source the tenant authorizes:
 
 You connect a source once. Brain handles the rest: pulling, parsing, normalizing, indexing, keeping it current.
 
-### Citations on every claim
+### Citations on Every Claim
 
 Every answer Brain gives carries citations back to source evidence.
 
@@ -55,7 +55,7 @@ answer.citations;
 
 You can render those citations in your UI as clickable proof. Open one and Brain returns the underlying transaction, invoice, or document.
 
-### What "continuously updated" means
+### What "Continuously Updated" Means
 
 | Trigger                         | Brain's response                                          |
 | ------------------------------- | --------------------------------------------------------- |
@@ -66,7 +66,7 @@ You can render those citations in your UI as clickable proof. Open one and Brain
 
 There's no batch job you wait for. The memory is current.
 
-### What "tenant-isolated" means
+### What "Tenant-Isolated" Means
 
 Each tenant has its own logical record. Cross-tenant access is impossible by construction:
 
@@ -78,7 +78,7 @@ Each tenant has its own logical record. Cross-tenant access is impossible by con
 
 You'll never accidentally surface one customer's data in another customer's response.
 
-### Memory compounds
+### Memory Compounds
 
 The longer Brain runs for a tenant, the better it gets:
 
@@ -89,7 +89,7 @@ The longer Brain runs for a tenant, the better it gets:
 | **First year**   | Year-over-year comparisons unlock; vendor history is deep     |
 | **Multi-year**   | Cross-period narratives are durable; switching costs are real |
 
-### Where this lives in the protocol
+### Where This Lives in the Protocol
 
 If you want to look under the hood, memory is built from three of Brain's six layers:
 

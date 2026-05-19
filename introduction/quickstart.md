@@ -12,7 +12,7 @@ By the end of this page, you'll have a working integration that reads a tenant's
 npm install @brain/sdk
 ```
 
-### 2. Get a key
+### 2. Get a Key
 
 Sign up at [console.brain.dev](https://console.brain.dev), create a tenant, and copy your sandbox API key (`brain_sk_test_...`).
 
@@ -57,7 +57,7 @@ console.log(proof.merklePath); // verifiable without trusting Brain
 
 That's it. You just touched all five capabilities of Brain through one client.
 
-### 4. What you just built
+### 4. What You Just Built
 
 | Line                    | What Brain did under the hood                                                                                 |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -69,7 +69,7 @@ That's it. You just touched all five capabilities of Brain through one client.
 
 You'll meet each of these underneath as you go deeper. For now, they're just five methods on one client.
 
-### Where to go next
+### Where to Go Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠 Build</strong></td><td>Task-shaped guides. Read a tenant's full financial picture, give an agent a spending limit, audit every action.</td><td><a href="../build/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>📐 Concepts</strong></td><td>The mental model in five minutes.</td><td><a href="../concepts/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>📦 Protocol</strong></td><td>The deep stack: six layers, smart contracts, on-chain anchoring.</td><td><a href="../protocol/overview.md">overview.md</a></td><td></td></tr></tbody></table>
 

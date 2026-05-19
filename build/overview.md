@@ -8,7 +8,7 @@ Each guide on this page solves one task end-to-end. Pick the one that matches wh
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📊 Read a financial picture</strong></td><td>Pull balances, transactions, obligations, and counterparties for a tenant.</td><td><a href="read-a-financial-picture.md">read-a-financial-picture.md</a></td><td></td></tr><tr><td><strong>💸 Pay an invoice safely</strong></td><td>Propose a payment, route to approval if needed, execute, get a receipt.</td><td><a href="pay-an-invoice-safely.md">pay-an-invoice-safely.md</a></td><td></td></tr><tr><td><strong>🛡 Give an agent a spending limit</strong></td><td>Define a policy in plain English. Brain enforces it on every proposed action.</td><td><a href="give-an-agent-a-spending-limit.md">give-an-agent-a-spending-limit.md</a></td><td></td></tr><tr><td><strong>📜 Audit every action</strong></td><td>Pull a verifiable trail of what your agent (or user) did.</td><td><a href="audit-every-action.md">audit-every-action.md</a></td><td></td></tr><tr><td><strong>🔌 Let an external agent in</strong></td><td>Authorize an MCP-compatible agent to read and propose on a tenant's behalf.</td><td><a href="let-an-external-agent-in.md">let-an-external-agent-in.md</a></td><td></td></tr></tbody></table>
 
-### What every guide assumes
+### What Every Guide Assumes
 
 | Assumption                    | How to satisfy                                            |
 | ----------------------------- | --------------------------------------------------------- |
@@ -22,7 +22,7 @@ import { Brain } from "@brain/sdk";
 export const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY });
 ```
 
-### What you'll keep coming back to
+### What You'll Keep Coming Back To
 
 | Pattern                          | Where                                                                      |
 | -------------------------------- | -------------------------------------------------------------------------- |

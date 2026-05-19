@@ -2,7 +2,7 @@
 
 Connect, list, and disconnect financial data sources for a tenant. A source is any system whose evidence flows into the Raw Layer.
 
-### Connect a source
+### Connect a Source
 
 ```http
 POST /v1/sources
@@ -29,7 +29,7 @@ Content-Type: application/json
 }
 ```
 
-### Source types
+### Source Types
 
 | Category       | `type` Values                                     |
 | -------------- | ------------------------------------------------- |
@@ -45,7 +45,7 @@ Content-Type: application/json
 Each source type accepts a different `credentials` shape. See the source-specific guides in the Console for the exact schema per provider.
 {% endhint %}
 
-### List sources
+### List Sources
 
 ```http
 GET /v1/sources?tenantId=acme&status=active
@@ -62,14 +62,14 @@ Authorization: Bearer <token>
 }
 ```
 
-### Get a single source
+### Get a Single Source
 
 ```http
 GET /v1/sources/{id}
 Authorization: Bearer <token>
 ```
 
-### Disconnect a source
+### Disconnect a Source
 
 ```http
 DELETE /v1/sources/{id}
@@ -80,7 +80,7 @@ Authorization: Bearer <token>
 Disconnecting a source triggers data minimization workflows: ingestion stops immediately, and per-tenant retention rules determine when historical Raw artifacts are deleted. Ledger records remain to preserve historical accuracy.
 {% endhint %}
 
-### Source status
+### Source Status
 
 | Status         | Meaning                                      |
 | -------------- | -------------------------------------------- |
@@ -90,14 +90,14 @@ Disconnecting a source triggers data minimization workflows: ingestion stops imm
 | `disconnected` | Tenant has disconnected; in retention window |
 | `deleted`      | Past retention; no Raw artifacts remain      |
 
-### Trigger a manual sync
+### Trigger a Manual Sync
 
 ```http
 POST /v1/sources/{id}/sync
 Authorization: Bearer <token>
 ```
 
-### Direct raw ingestion
+### Direct Raw Ingestion
 
 For sources Brain does not natively integrate, push raw artifacts directly.
 
@@ -113,6 +113,6 @@ file=@invoice_8231.pdf
 
 The artifact is content-addressed by SHA-256 and stored in the tenant's Azure Blob partition.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🧾 Ledger API</strong></td><td>Query the structured records produced from sources.</td><td><a href="ledger-api.md">ledger-api.md</a></td><td></td></tr><tr><td><strong>📥 Raw and Ledger</strong></td><td>The conceptual model.</td><td><a href="../protocol/raw-and-ledger.md">raw-and-ledger.md</a></td><td></td></tr></tbody></table>

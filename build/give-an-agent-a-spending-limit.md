@@ -2,11 +2,11 @@
 description: Define a policy in plain English. Brain enforces it on every proposed action.
 ---
 
-# Give an agent a spending limit
+# Give an Agent a Spending Limit
 
 Goal: write a sentence in English describing what an agent (or human user) can do with a tenant's money. Brain compiles it to a deterministic rule, signs it with the tenant's key, and enforces it on every proposed action.
 
-### The simplest policy
+### The Simplest Policy
 
 ```typescript
 const policy = await brain.policy.create("acme", {
@@ -21,7 +21,7 @@ await brain.policy.activate(policy.id);
 
 That's the whole flow. From this point on, every `brain.pay` call evaluates against this policy.
 
-### Reviewing what got compiled
+### Reviewing What Got Compiled
 
 The compiler returns the structured rules and a human-readable explanation. Always review before activating.
 
@@ -42,7 +42,7 @@ console.log(policy.rules);
 
 If the explanation matches your intent, activate. If not, edit the text and recompile.
 
-### Trying it before you ship it
+### Trying It Before You Ship It
 
 Dry-run a hypothetical action against the active policy.
 
@@ -78,7 +78,7 @@ Approvers are referenced by role or user.
 | `user:user_cfo`         | A specific user                       |
 | `any:role:cfo,role:ceo` | Either CFO or CEO                     |
 
-### Approving counterparties
+### Approving Counterparties
 
 Many policies key off "approved vendors." Mark counterparties as approved through the SDK or the Console.
 
@@ -90,7 +90,7 @@ await brain.counterparties.update("acme", "cp_vendor_x", {
 
 Once approved, payments to this counterparty fall under the "approved vendor" branch of the policy.
 
-### Multiple environments
+### Multiple Environments
 
 Policies are per-tenant, per-environment. Sandbox and production each have their own active policy. You'll typically:
 
@@ -99,7 +99,7 @@ Policies are per-tenant, per-environment. Sandbox and production each have their
 | **Sandbox**    | Loose (high limits, few required approvers) for testing           |
 | **Production** | Tight (low limits, multiple approvers, narrower vendor allowlist) |
 
-### Updating a policy
+### Updating a Policy
 
 Policies are versioned. New text creates a new version that supersedes the old one.
 
@@ -113,7 +113,7 @@ await brain.policy.activate(v2.id);
 
 The old version is automatically deactivated. Past actions remain bound to the version that was active when they were proposed; you can always see which version evaluated which action by reading the action's metadata.
 
-### What policy can express
+### What Policy Can Express
 
 | Concept                           | Example                                        |
 | --------------------------------- | ---------------------------------------------- |
@@ -125,10 +125,10 @@ The old version is automatically deactivated. Past actions remain bound to the v
 | **Approval requirements**         | "require approval from", "with sign-off by"    |
 | **Outright denial**               | "block", "do not allow", "reject"              |
 
-### What policy can't express in plain English (yet)
+### What Policy Can't Express in Plain English (Yet)
 
 Edge cases that need precise semantics. For these, you can author rules directly. See Policy in the Protocol section for the rule grammar.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>💸 Pay an invoice</strong></td><td>Watch the policy you just wrote enforce itself.</td><td><a href="pay-an-invoice-safely.md">pay-an-invoice-safely.md</a></td><td></td></tr><tr><td><strong>📜 Audit trail</strong></td><td>Every policy decision lands in the audit log.</td><td><a href="audit-every-action.md">audit-every-action.md</a></td><td></td></tr></tbody></table>

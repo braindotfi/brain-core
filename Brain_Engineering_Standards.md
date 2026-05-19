@@ -6,7 +6,7 @@ This document defines the conventions every engineer, contractor, and AI coding 
 
 Read alongside: Brain_API_Specification.yaml (the OpenAPI contract) and Brain_MVP_Architecture.md (the protocol blueprint, v0.3 = six layers).
 
-### What changed in v0.2.0
+### What Changed In v0.2.0
 
 v0.2.0 of this document realigns to the v0.3 architecture (six layers). Specifically:
 
@@ -20,7 +20,7 @@ v0.2.0 of this document realigns to the v0.3 architecture (six layers). Specific
 
 The §1 principles, the audit chain, and the v0.1.0 §3.1 auth model are otherwise unchanged.
 
-## 1. Non-negotiable principles
+## 1. Non-Negotiable Principles
 
 Five principles override every implementation preference. If a trade-off question comes up and these are on one side, they win.
 
@@ -34,7 +34,7 @@ Five principles override every implementation preference. If a trade-off questio
 
 **Deterministic pre-execution gate.** No financial execution path may bypass the §6 gate. Policy evaluation reads from Ledger state, not Wiki text. LLM judgment never replaces a deterministic precondition check on money movement. (See §6.)
 
-## 2. Repository layout
+## 2. Repository Layout
 
 One monorepo. Language-specific workspaces inside. Workspaces publish typed clients to each other.
 
@@ -64,9 +64,9 @@ brain/
 
 Every service owns its database schema. Cross-service reads go through the owning service's API, never direct database access. This is the rule that preserves the option to extract services later.
 
-## 3. Authentication and authorization
+## 3. Authentication and Authorization
 
-### 3.1 The auth model
+### 3.1 The Auth Model
 
 Bearer JWT on every endpoint except three: `/raw/webhooks/{provider}` (HMAC-signed), `/audit/verify` (public, pure function), and the root health check.
 
@@ -92,26 +92,26 @@ Scopes are `{layer}:{verb}` strings. The verb is one of `read`, `write`, `admin`
 
 Verb extensions for the Agent layer:
 
-- `agent:propose` — create non-financial proposals
-- `payment_intent:propose` — create PaymentIntent rows
-- `payment_intent:approve` — sign approvals on `confirm`-mode PaymentIntents
-- `payment_intent:execute` — trigger execution of an approved intent
+- `agent:propose`, create non-financial proposals
+- `payment_intent:propose`, create PaymentIntent rows
+- `payment_intent:approve`, sign approvals on `confirm`-mode PaymentIntents
+- `payment_intent:execute`, trigger execution of an approved intent
 
 External agents (`principal_type=agent`, registered in BrainMCPAgentRegistry) are granted scopes explicitly by the tenant at registration time via EIP-712 signature. The five scopes an external agent can hold are `ledger:read`, `wiki:read`, `raw:write` (for agent contributions), `payment_intent:propose`, and `agent:propose`. An agent granted `raw:write` can push artifacts into the Raw layer using `source_type=agent_contributed`. These artifacts flow through the extraction pipeline, but any derived **Ledger** rows carry `provenance=agent_contributed` and start at a confidence ceiling of 0.5 regardless of extractor certainty. Promotion above 0.5 requires independent corroboration or explicit tenant approval via `/wiki/annotate` (which writes through to the Ledger via a controlled service method). This governance boundary is enforced in the Ledger write path, not just documented here, and is non-negotiable.
 
 Scope to endpoint mapping is enforced in the API gateway, not in individual services. Services trust the scopes in the JWT but re-verify tenant_id equality on every query.
 
-### 3.3 Agent identities
+### 3.3 Agent Identities
 
 Every agent, internal or external, has its own JWT with `principal_type=agent`. The agent_id in the sub claim must match a row in the `agents` table. External agents registered via `/agents/register` (legacy: `/execution/agents/register`) receive their initial JWT immediately after the on-chain registration transaction confirms.
 
-### 3.4 HMAC webhooks
+### 3.4 HMAC Webhooks
 
 Each provider (Plaid, Stripe, NetSuite, Alchemy) has a provider-specific HMAC signature scheme. The `X-Brain-Signature` header is verified before the request body is parsed. Failed verification returns 401 and logs a security event. No exceptions.
 
-## 4. Error handling
+## 4. Error Handling
 
-### 4.1 The error envelope
+### 4.1 The Error Envelope
 
 Every non-2xx response body conforms to this shape:
 
@@ -132,11 +132,11 @@ Every non-2xx response body conforms to this shape:
 
 `code` is a stable machine-readable string. It never changes once shipped. Code strings follow `{domain}_{condition}` convention. See section 4.3 for the registry.
 
-### 4.2 Status code mapping
+### 4.2 Status Code Mapping
 
 Never return a 200 with an error in the body. HTTP status and error envelope are both mandatory and must agree.
 
-### 4.3 Error code registry
+### 4.3 Error Code Registry
 
 Codes are defined in `services/api/src/errors.ts` and regenerated into the OpenAPI spec. Adding a new code requires a PR that updates both. The registry:
 
@@ -192,7 +192,7 @@ The legacy `execution_*` codes remain shipped and equivalent to their `agent_*` 
 
 ## 5. Idempotency
 
-### 5.1 The two rules
+### 5.1 The Two Rules
 
 Every write endpoint is either naturally idempotent or accepts an `Idempotency-Key` header. Naturally idempotent means the same inputs always produce the same result regardless of how many times they are submitted. Examples: `/raw/ingest` (content-addressed by sha256), `/wiki/annotate` (derived from target + correction hash), `/ledger/normalize` (derived from raw_artifact id + parser version).
 
@@ -202,15 +202,15 @@ Explicit idempotency keys are scoped to the tenant and TTL'd at 24 hours in Redi
 
 Webhook handlers are idempotent by the provider's event_id. Plaid's `webhook_id`, Stripe's `id`, Alchemy's `id` field. The first handler to insert the event_id wins; subsequent retries return 202 with the stored result.
 
-### 5.3 Smart contract transactions
+### 5.3 Smart Contract Transactions
 
 Smart contract writes are idempotent by the nonce of the signing account and the canonical transaction hash. The audit publisher tracks the last published root per tenant and refuses to re-publish the same root.
 
-## 6. Pre-execution gate
+## 6. Pre-Execution Gate
 
 The pre-execution gate is the deterministic safety mechanism that runs before any action that touches money. No PaymentIntent execution path may bypass it. The gate produces a `PolicyDecision` that downstream layers consume as proof.
 
-### 6.1 What it covers
+### 6.1 What It Covers
 
 Any of the following must pass through the gate:
 
@@ -220,7 +220,7 @@ Any of the following must pass through the gate:
 - Any write to the tenant's BrainSmartAccount
 - Any agent action with a money-movement side effect
 
-### 6.2 The 13 deterministic checks
+### 6.2 The 13 Deterministic Checks
 
 The gate runs the following checks in order. Failure short-circuits and produces a `payment_intent_gate_failed` error with the failing check identified.
 
@@ -240,7 +240,7 @@ The gate runs the following checks in order. Failure short-circuits and produces
 
 Steps 12 and 13 are non-skippable even if every other check passes. The audit-before/audit-after pair is what makes execution forensically reconstructible.
 
-### 6.3 Where the gate lives
+### 6.3 Where the Gate Lives
 
 The gate is a shared primitive in `services/api/src/shared/gate/`, called by:
 
@@ -250,7 +250,7 @@ The gate is a shared primitive in `services/api/src/shared/gate/`, called by:
 
 Calling sites are enumerated in code; CI grep enforces no execution path bypasses it.
 
-### 6.4 What the gate must not do
+### 6.4 What the Gate Must Not Do
 
 - Read from the Wiki. Wiki text is not authoritative.
 - Defer to LLM judgment. Every check is deterministic.
@@ -278,12 +278,12 @@ Required metrics at MVP:
 
 - `brain.api.request.count` (tagged by endpoint, status_code, tenant_id)
 - `brain.api.request.duration` (same tags)
-- `brain.ledger.write.count` (tagged by entity, source — extracted | annotated | reconciled | agent_contributed)
+- `brain.ledger.write.count` (tagged by entity, source, extracted | annotated | reconciled | agent_contributed)
 - `brain.ledger.reconciliation.match.count` (tagged by match_type, status)
 - `brain.wiki.question.latency` (tagged by model, query_count)
 - `brain.wiki.question.cost` (LLM token cost per question)
 - `brain.policy.evaluation.duration` (tagged by decision)
-- `brain.gate.check.failure.count` (tagged by check_index 1..13, action_kind) — the pre-execution gate
+- `brain.gate.check.failure.count` (tagged by check_index 1..13, action_kind), the pre-execution gate
 - `brain.payment_intent.count` (tagged by status, agent_id, rail)
 - `brain.audit.anchor.lag` (time since last anchor publication)
 
@@ -308,20 +308,20 @@ Ticket conditions are everything else worth noticing. Ticket thresholds tuned mo
 
 ## 8. Testing
 
-### 8.1 The coverage contract
+### 8.1 The Coverage Contract
 
 - **Unit tests**: 80% line coverage on every service. Enforced in CI.
 - **Integration tests**: Every endpoint in the OpenAPI spec has at least one happy-path integration test and one error-path test.
 - **Property tests**: The policy evaluator, the Merkle anchor builder, the Ledger reconciliation matcher, the pre-execution gate, and the four smart contracts have property-based tests. The TypeScript ones use fast-check; the contracts use Foundry invariants.
 - **E2E tests**: The three Series A proof-points (six-layer end-to-end, Ledger compounding, external agent via MCP) each have a dedicated E2E test suite running against staging.
 
-### 8.2 Deterministic tests for non-deterministic components
+### 8.2 Deterministic Tests for Non-Deterministic Components
 
 `/wiki/question` is tested via a recorded-prompt harness: canonical question, frozen Ledger + Wiki state, recorded LLM response, assertion on structured output. New LLM behaviors require updating the frozen response, with a PR review that explicitly approves the change.
 
 Agent reasoning is tested similarly. The three MVP agents have 20+ canonical scenarios each, recorded and replayed.
 
-### 8.3 Smart contract testing
+### 8.3 Smart Contract Testing
 
 Foundry for everything. Every contract has:
 
@@ -352,11 +352,11 @@ Invariants enforced as test suites (lands alongside Phase 6 of the v0.3 refactor
 - Ledger records are derived from Raw evidence or external source ids.
 - Audit events cannot be edited after creation.
 
-## 9. State machines
+## 9. State Machines
 
 Five critical entities have explicit state machines. Every transition must be enforced in code and emit an audit event.
 
-### 9.1 Proposal (non-financial agent action)
+### 9.1 Proposal (Non-Financial Agent Action)
 
 ```
         ┌──────────────────────────────────┐
@@ -397,7 +397,7 @@ Transitions are driven by rail-specific callbacks (ACH return file, ERP write co
 
 Only one policy per tenant is active at a time. Activating version N+1 deactivates version N atomically.
 
-### 9.4 Agent registration
+### 9.4 Agent Registration
 
 ```
 [pending_onchain] ──> [active] ──> [revoked]
@@ -408,7 +408,7 @@ Only one policy per tenant is active at a time. Activating version N+1 deactivat
 
 An agent is not usable until the on-chain registration transaction confirms. Between submission and confirmation, the agent is in `pending_onchain` and rejects all proposal attempts.
 
-### 9.5 PaymentIntent (v0.2)
+### 9.5 PaymentIntent (V0.2)
 
 ```
 [proposed] ──> [pending_approval] ──> [approved] ──> [executed]
@@ -472,7 +472,7 @@ Each external dependency has a one-page contract. Summaries of the six MVP depen
 - Retry policy: 2 retries with model swap on the second attempt
 - Budget enforcement: per-tenant daily cap, 429 when exceeded
 
-### 10.6 Base L2 (direct)
+### 10.6 Base L2 (Direct)
 
 - Submitted transactions only, not RPC reads
 - Gas policy: priority fee at 20% above Base median, capped at $0.50/tx equivalent
@@ -498,7 +498,7 @@ Every service runs N and N-1 in parallel during a rolling deploy. Traffic is shi
 
 Azure Key Vault. Managed identities for service-to-vault access. No secrets in environment variables, config files, or application code. CI reads secrets from Key Vault at deploy time. Rotation schedule documented in `infra/secrets.md`.
 
-### 11.5 Data migrations
+### 11.5 Data Migrations
 
 Four rules:
 
@@ -511,7 +511,7 @@ Migrations are authored in `services/*/migrations/` and executed by the `tools/m
 
 ## 12. Security
 
-### 12.1 SOC 2 readiness
+### 12.1 SOC 2 Readiness
 
 SOC 2 Type 1 is a Month 12 deliverable. Every standard in this document exists partly to make that audit pass. The controls that matter most:
 
@@ -521,7 +521,7 @@ SOC 2 Type 1 is a Month 12 deliverable. Every standard in this document exists p
 - **Data protection**: encryption at rest (Azure-managed keys), encryption in transit (TLS 1.3), PII redaction at logging boundary
 - **Vendor management**: each dependency has the one-page contract referenced in section 10
 
-### 12.2 Threat model summary
+### 12.2 Threat Model Summary
 
 Documented in `docs/threat-model.md`. Primary threats:
 
@@ -532,11 +532,11 @@ Documented in `docs/threat-model.md`. Primary threats:
 - LLM prompt injection (mitigated by structured input validation, Ledger-grounded retrieval, and never executing unverified LLM output)
 - **Wiki-as-truth attack** (v0.2): a malicious agent or compromised ingestion path attempts to seed Wiki text that influences a downstream decision. Mitigated by §6 (Policy never reads Wiki) and §1 principle 5 (deterministic gate).
 
-### 12.3 Secrets in code
+### 12.3 Secrets in Code
 
 Prohibited. Pre-commit hook scans for common patterns. CI scans every PR. Any secret accidentally committed triggers immediate rotation and a security incident review.
 
-## 13. Code style
+## 13. Code Style
 
 ### 13.1 TypeScript
 
@@ -567,7 +567,7 @@ Prohibited. Pre-commit hook scans for common patterns. CI scans every PR. Any se
 - No merge without at least one review from a human engineer, regardless of whether an AI assistant wrote the code.
 - AI-generated PRs are labeled `ai-assisted` for tracking.
 
-## 14. How AI coding assistants should use this document
+## 14. How AI Coding Assistants Should Use This Document
 
 Two rules.
 
@@ -579,7 +579,7 @@ Specifically for Claude Code: reference `Brain_API_Specification.yaml` for every
 
 **v0.2 rule three (new)**: when an existing service or contract appears to violate the six-layer boundary (e.g. an agent reads Wiki text to decide a payment, or a Policy evaluator queries Wiki entities), STOP and surface it. Do not "fix" it by reproducing the violation in new code. The boundaries are non-negotiable.
 
-## 15. What this document does not cover
+## 15. What This Document Does Not Cover
 
 This is v0.2.0. It will grow. Topics explicitly deferred to later revisions:
 

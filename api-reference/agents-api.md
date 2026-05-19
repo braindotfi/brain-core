@@ -2,7 +2,7 @@
 
 Register agents, grant scope, list capabilities, and inspect reputation.
 
-### Register an agent
+### Register an Agent
 
 ```http
 POST /v1/agents
@@ -33,7 +33,7 @@ Response:
 
 The registration is anchored on `BrainMCPAgentRegistry` on Base.
 
-### Grant scope to an agent
+### Grant Scope to an Agent
 
 The tenant signs an EIP-712 ScopeAttestation and submits it.
 
@@ -69,7 +69,7 @@ ScopeAttestation(
 )
 ```
 
-### List agents
+### List Agents
 
 ```http
 GET /v1/agents?tenantId=acme&capability=pay_invoice
@@ -95,14 +95,14 @@ Response:
 }
 ```
 
-### Get an agent
+### Get an Agent
 
 ```http
 GET /v1/agents/{agent_id_or_address}
 Authorization: Bearer <token>
 ```
 
-### Pause / resume / revoke
+### Pause / Resume / Revoke
 
 ```http
 POST   /v1/agents/{agent_id}/pause
@@ -141,7 +141,7 @@ Response:
 Reputation is stored off-chain and committed as a Merkle root per agent. The `reputation_root` is registered in `BrainMCPAgentRegistry`. Verifiers receive the root and a Merkle proof for the specific attestation they care about.
 {% endhint %}
 
-### Submit a performance attestation
+### Submit a Performance Attestation
 
 After an action completes, the tenant can sign a performance attestation that contributes to the agent's reputation.
 
@@ -159,7 +159,7 @@ Content-Type: application/json
 }
 ```
 
-### Propose an action
+### Propose an Action
 
 This is where most agent activity happens. See the Actions API for the full proposal/approval/execution flow.
 
@@ -174,6 +174,6 @@ Content-Type: application/json
 }
 ```
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📤 Actions API</strong></td><td>Propose, approve, execute.</td><td><a href="actions-api.md">actions-api.md</a></td><td></td></tr><tr><td><strong>📜 BrainMCPAgentRegistry</strong></td><td>The on-chain registry.</td><td><a href="../smart-contracts/brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr></tbody></table>

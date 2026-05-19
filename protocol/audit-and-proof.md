@@ -1,12 +1,12 @@
-# Audit and proof
+# Audit and Proof
 
 Every event in Brain (ingestion, extraction, query, proposal, policy decision, approval, execution, settlement) emits an audit record into an append-only log. Records form a per-tenant **Merkle tree**. Tree roots are batched and anchored on-chain through `BrainAuditAnchor`.
 
-### Three properties this gives you
+### Three Properties This Gives You
 
 <table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>📜 Tenant-verifiable history</strong></td><td>A tenant can prove a specific decision occurred at a specific time, based on specific evidence, under a specific policy version.</td></tr><tr><td><strong>🤝 Counterparty-verifiable proofs</strong></td><td>A counterparty can verify a payment was authorized without seeing the underlying data, by checking a Merkle proof against an anchored root.</td></tr><tr><td><strong>🔒 No silent rewrites</strong></td><td>Brain itself cannot silently rewrite history. Anchors commit the past state to a public chain.</td></tr></tbody></table>
 
-### What every audit event commits to
+### What Every Audit Event Commits To
 
 Audit events are content-addressed. Each event commits to:
 
@@ -24,7 +24,7 @@ Audit events are content-addressed. Each event commits to:
 
 The `prev_event_hash` field means each event references the one before it, building a chain that breaks if anything is altered.
 
-### The hash chain in pictures
+### The Hash Chain in Pictures
 
 ```
 event_001     event_002     event_003     event_004
@@ -34,7 +34,7 @@ event_001     event_002     event_003     event_004
 
 Tamper with `event_002` and `B` changes. `event_003` still references the old `B` via its `prev=B` pointer. The chain breaks. Detection is automatic.
 
-### Merkle batching and on-chain anchoring
+### Merkle Batching and on-Chain Anchoring
 
 Events are batched into a per-tenant Merkle tree. Roots are anchored to Base L2 through `BrainAuditAnchor`.
 
@@ -48,7 +48,7 @@ Events are batched into a per-tenant Merkle tree. Roots are anchored to Base L2 
 
 [**→ BrainAuditAnchor smart contract**](../smart-contracts/brainauditanchor.md)
 
-### Pulling a proof
+### Pulling a Proof
 
 Counterparties verify Brain audit proofs by checking a Merkle proof against the on-chain anchored root.
 
@@ -86,7 +86,7 @@ On-chain anchors must not leak tenant data.
 
 Counterparties verifying a proof receive only the specific event(s) the tenant chooses to share, plus the Merkle path. Everything else stays private.
 
-### Compliance exports
+### Compliance Exports
 
 The Audit Layer also exposes structured exports for compliance reviews.
 
@@ -102,6 +102,6 @@ A public verifier endpoint is also available for counterparties to verify proofs
 **Audit compounds across counterparties.** As more counterparties accept Brain audit proofs, every party in the graph benefits from cheaper, faster verification.
 {% endhint %}
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📐 Policy</strong></td><td>How decisions feed the audit trail.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr><tr><td><strong>📜 BrainAuditAnchor</strong></td><td>The on-chain anchor contract.</td><td><a href="../smart-contracts/brainauditanchor.md">brainauditanchor.md</a></td><td></td></tr><tr><td><strong>🌐 Audit API</strong></td><td>Pull proofs programmatically.</td><td><a href="../api-reference/audit-api.md">audit-api.md</a></td><td></td></tr></tbody></table>

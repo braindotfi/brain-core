@@ -1,8 +1,8 @@
-# System overview
+# System Overview
 
 Brain is a layered protocol where information flows up and control flows down. Each tenant has its own logical instance of every layer, with hard isolation at the database, KMS, and policy boundaries.
 
-### At a glance
+### At a Glance
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -32,7 +32,7 @@ Brain is a layered protocol where information flows up and control flows down. E
                               └────────────────────────────────┘
 ```
 
-### What lives where
+### What Lives Where
 
 | Component                     | Location                                 | Notes                                            |
 | ----------------------------- | ---------------------------------------- | ------------------------------------------------ |
@@ -46,7 +46,7 @@ Brain is a layered protocol where information flows up and control flows down. E
 | **Policy hashes**             | `BrainPolicyRegistry` (Base L2)          | EIP-712 signed by tenant                         |
 | **Audit anchors**             | `BrainAuditAnchor` (Base L2)             | EIP-712 signed by Brain anchorer                 |
 
-### On-chain surface is intentionally small
+### On-Chain Surface Is Intentionally Small
 
 Brain's on-chain surface is intentionally minimal. **Most logic lives off-chain.** On-chain contracts exist for four narrow purposes:
 
@@ -61,7 +61,7 @@ All contracts are deployed on Base L2 and written in Solidity 0.8.x, built and t
 
 [**→ Smart contract overview**](../smart-contracts/overview.md)
 
-### Six layers, one API
+### Six Layers, One API
 
 The same API surface serves humans, internal agents, and external agents. Auth differs; primitives don't.
 
@@ -84,6 +84,6 @@ The same API surface serves humans, internal agents, and external agents. Auth d
 | **Base Sepolia**   | Sandbox for development                              |
 | **External rails** | Bank APIs, processors, custodians (off-chain)        |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📥 Data flow</strong></td><td>End-to-end walkthrough of an action.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🔒 Tenant isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>🛡️ Security and compliance</strong></td><td>Non-negotiable principles.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr></tbody></table>

@@ -2,11 +2,11 @@
 description: Pull balances, transactions, obligations, and counterparties for a tenant.
 ---
 
-# Read a financial picture
+# Read a Financial Picture
 
 Goal: get a structured view of a tenant's full financial state, ready to render in a dashboard or feed to an LLM.
 
-### In one call
+### In One Call
 
 ```typescript
 const picture = await brain.snapshot("acme");
@@ -20,7 +20,7 @@ picture.cashFlow;        // 30-day inflow/outflow summary
 
 `brain.snapshot` is a convenience wrapper. It runs a handful of underlying calls in parallel and stitches the response together. For full control, call them yourself.
 
-### In five calls
+### In Five Calls
 
 ```typescript
 const [accounts, transactions, obligations, counterparties, cashFlow] = await Promise.all([
@@ -32,7 +32,7 @@ const [accounts, transactions, obligations, counterparties, cashFlow] = await Pr
 ]);
 ```
 
-### Filtering transactions
+### Filtering Transactions
 
 ```typescript
 const txns = await brain.transactions.list("acme", {
@@ -59,7 +59,7 @@ console.log(txns.nextCursor);
 | `currency`               | ISO 4217 | When mixing currencies                                           |
 | `status`                 | enum\[]  | `pending`, `posted`, `cleared`, `failed`, `reversed`, `disputed` |
 
-### Asking questions instead of querying
+### Asking Questions Instead of Querying
 
 Sometimes you don't know what to filter on. Ask in natural language.
 
@@ -86,7 +86,7 @@ do {
 } while (cursor);
 ```
 
-### Subscribing to changes
+### Subscribing to Changes
 
 Instead of polling, subscribe.
 
@@ -110,6 +110,6 @@ Or use webhooks if you're running stateless services. Set the endpoint in the Co
 | `account.balance_changed` | New balance for an account              |
 | `obligation.due_soon`     | An obligation is N days from due        |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>💸 Pay an invoice</strong></td><td>Take action on what you just read.</td><td><a href="pay-an-invoice-safely.md">pay-an-invoice-safely.md</a></td><td></td></tr><tr><td><strong>🛡 Spending limits</strong></td><td>Let an agent read and act, with guardrails.</td><td><a href="give-an-agent-a-spending-limit.md">give-an-agent-a-spending-limit.md</a></td><td></td></tr></tbody></table>

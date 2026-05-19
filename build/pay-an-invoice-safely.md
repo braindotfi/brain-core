@@ -2,11 +2,11 @@
 description: Propose a payment, route to approval if needed, execute, get a receipt.
 ---
 
-# Pay an invoice safely
+# Pay an Invoice Safely
 
 Goal: pay an invoice with a single SDK call. If it's within the tenant's policy, it goes through. If not, it routes to a human approver. Either way, you get a receipt you can show a customer.
 
-### The simplest case
+### The Simplest Case
 
 ```typescript
 const action = await brain.pay("acme", { invoiceId: "inv_8231" });
@@ -17,7 +17,7 @@ console.log(action.status);
 // "rejected"       → policy said no
 ```
 
-### Handling all three outcomes
+### Handling All Three Outcomes
 
 ```typescript
 const action = await brain.pay("acme", { invoiceId: "inv_8231" });
@@ -39,7 +39,7 @@ switch (action.status) {
 }
 ```
 
-### Approving from your app
+### Approving from Your App
 
 ```typescript
 // In your approval UI, signed by the approver's key.
@@ -50,7 +50,7 @@ await brain.approve(actionId, { as: "user_cfo" });
 
 For multi-approver policies, every required approver calls `brain.approve`. Brain holds the action in `needs_approval` until the last one lands.
 
-### Rejecting from your app
+### Rejecting from Your App
 
 ```typescript
 await brain.reject(actionId, {
@@ -61,7 +61,7 @@ await brain.reject(actionId, {
 
 Rejection is final. The action moves to `rejected` and emits a webhook your app can react to.
 
-### Getting the receipt
+### Getting the Receipt
 
 Every executed action has a verifiable receipt.
 
@@ -76,7 +76,7 @@ proof.anchorTx;     // anchor transaction on Base L2
 
 If you ever need to prove to a customer that a payment happened, this is the thing to send them. They can verify it without a Brain account.
 
-### Paying without an invoice
+### Paying Without an Invoice
 
 Sometimes you're paying something that isn't a structured invoice yet (a vendor name and an amount, say). Pass the destination directly.
 
@@ -104,7 +104,7 @@ const action = await brain.pay("acme", {
 
 If your service crashes mid-call and your retry handler fires, you'll get the same action back. No duplicate payments.
 
-### Webhooks for long-running flows
+### Webhooks for Long-Running Flows
 
 Most ACH and wire payments don't settle instantly. Subscribe to the action's lifecycle.
 
@@ -129,7 +129,7 @@ app.post("/webhooks/brain", verifyBrainSig, (req, res) => {
 });
 ```
 
-### What if my action fails?
+### What if My Action Fails?
 
 Brain returns a structured failure code and never silently retries.
 
@@ -147,6 +147,6 @@ Brain returns a structured failure code and never silently retries.
 
 You can re-propose with a different source account, a different amount, or wait until the balance covers it.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛡 Spending limits</strong></td><td>Define what counts as "needs approval" in plain English.</td><td><a href="give-an-agent-a-spending-limit.md">give-an-agent-a-spending-limit.md</a></td><td></td></tr><tr><td><strong>📜 Audit trail</strong></td><td>Pull the full record of what happened and why.</td><td><a href="audit-every-action.md">audit-every-action.md</a></td><td></td></tr></tbody></table>

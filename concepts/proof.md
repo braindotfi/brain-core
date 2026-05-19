@@ -6,7 +6,7 @@ description: Why every claim Brain makes is verifiable.
 
 Every meaningful event Brain records is hashed, chained, and periodically anchored on Base L2. A counterparty, auditor, or end user can verify that a specific event happened, at a specific time, with a specific decision, **without trusting Brain**.
 
-### Two layers of proof
+### Two Layers of Proof
 
 | Layer              | What it proves                                                                        |
 | ------------------ | ------------------------------------------------------------------------------------- |
@@ -15,7 +15,7 @@ Every meaningful event Brain records is hashed, chained, and periodically anchor
 
 Citations make claims traceable inside Brain. Anchors make Brain's claims independently verifiable outside Brain.
 
-### What gets logged
+### What Gets Logged
 
 Every material state change emits an audit event:
 
@@ -32,7 +32,7 @@ Every material state change emits an audit event:
 
 Read endpoints (Wiki queries, Ledger reads) also land in the log. Anyone reviewing the trail can see exactly what was read, by whom, when.
 
-### Tamper-evidence
+### Tamper-Evidence
 
 Each event is hashed deterministically. Each event references the previous event's hash. The result is a per-tenant hash chain.
 
@@ -42,7 +42,7 @@ event_n.prev_hash = hash(event_{n-1})
 
 To rewrite history, you'd have to regenerate every subsequent hash. And you'd still have to fool the Merkle anchor on Base.
 
-### On-chain anchors
+### On-Chain Anchors
 
 Brain batches audit events into a Merkle tree per tenant and anchors the root on Base every 10 minutes (or sooner for high-severity events). Once anchored, the root is immutable.
 
@@ -56,7 +56,7 @@ proof.anchorTx;     // the transaction that anchored it
 
 A counterparty verifies on-chain by calling `BrainAuditAnchor.verify()` with the proof. They don't need a Brain account, an API key, or any access to the underlying data.
 
-### What's on-chain vs off-chain
+### What's on-Chain vs Off-Chain
 
 | On-chain                     | Off-chain                           |
 | ---------------------------- | ----------------------------------- |
@@ -67,7 +67,7 @@ A counterparty verifies on-chain by calling `BrainAuditAnchor.verify()` with the
 
 The on-chain footprint is intentionally minimal. The hash commits to history without revealing anything.
 
-### Privacy properties
+### Privacy Properties
 
 | Concern                             | How Brain handles                                                     |
 | ----------------------------------- | --------------------------------------------------------------------- |
@@ -76,13 +76,13 @@ The on-chain footprint is intentionally minimal. The hash commits to history wit
 | Anchor publisher compromise         | `batchIndex` is strictly monotonic; out-of-order submissions revert   |
 | Reorg drops an anchor               | Reads wait for finality; cross-batch references catch dropped anchors |
 
-### Why "anchored on-chain" matters
+### Why "Anchored on-Chain" Matters
 
 Most audit logs in fintech are SOC 2 documents and SQL exports. They prove that the vendor cared. They don't prove that the events happened as described.
 
 An on-chain anchor is the difference between **trust** and **verify**. Even if Brain disappeared tomorrow, the on-chain record would still be queryable on Base, and any party with a Merkle proof could prove what happened.
 
-### Where this lives in the protocol
+### Where This Lives in the Protocol
 
 The proof story is the Audit layer (Layer 6) plus three smart contracts:
 

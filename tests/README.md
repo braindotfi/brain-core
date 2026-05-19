@@ -1,4 +1,4 @@
-# Brain test suites
+# Brain Test Suites
 
 Per §7.1 of Engineering Standards, tests live in three tiers.
 
@@ -21,7 +21,7 @@ happy-path and one error-path integration test.
 
 ## E2E (`e2e/`)
 
-Full stack against the staging environment. Three suites land in stage-9 —
+Full stack against the staging environment. Three suites land in stage-9 , 
 these are the Series A proof points (§6 of `Brain_MVP_Architecture.md`):
 
 1. Five-layer end-to-end

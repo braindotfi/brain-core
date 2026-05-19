@@ -39,7 +39,7 @@ interface IBrainAuditAnchor {
 }
 ```
 
-### How anchoring works
+### How Anchoring Works
 
 ```
 Off-chain audit log
@@ -60,7 +60,7 @@ Off-chain audit log
 | 3    | The signed root is submitted via `anchorRoot()`                       |
 | 4    | Contract emits `RootAnchored`; the root becomes immutably retrievable |
 
-### Strict monotonicity
+### Strict Monotonicity
 
 The contract enforces that `batchIndex` per tenant increases monotonically.
 
@@ -72,7 +72,7 @@ The contract enforces that `batchIndex` per tenant increases monotonically.
 
 This prevents anchorer compromise from rewriting history by inserting older batches with conflicting roots.
 
-### Verification by counterparties
+### Verification by Counterparties
 
 A counterparty does not need a Brain account to verify an audit event. They just need:
 
@@ -93,7 +93,7 @@ If `valid` is true, the event is provably part of the anchored history at that b
 The verifier does not need to trust Brain. They only need to call a public view function on Base L2.
 {% endhint %}
 
-### Reorg tolerance
+### Reorg Tolerance
 
 Base L2 has fast finality, but small reorgs are possible.
 
@@ -103,7 +103,7 @@ Base L2 has fast finality, but small reorgs are possible.
 | **Cross-batch references**                 | Each new batch's auxiliary metadata references the previous batch hash     |
 | **Off-chain log canonical until anchored** | If a reorg drops an anchor, the off-chain log replays it in the next batch |
 
-### Anchorer key rotation
+### Anchorer Key Rotation
 
 Anchorer keys are rotated on a fixed schedule. The contract maintains a small set of authorized signers. Rotation is governed by the same 48-hour timelock that governs upgrades.
 
@@ -122,6 +122,6 @@ Only Merkle roots and hashed `tenantId` values are on-chain. Everything undernea
 | `root` (Merkle root)      | Individual audit events             |
 | `batchIndex`, `timestamp` | Event content, citations, decisions |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛡️ Audit and proof</strong></td><td>The conceptual model.</td><td><a href="../protocol/audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>🌐 Audit API</strong></td><td>Retrieve events and proofs over HTTP.</td><td><a href="../api-reference/audit-api.md">audit-api.md</a></td><td></td></tr></tbody></table>

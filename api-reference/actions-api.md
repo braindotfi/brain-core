@@ -2,7 +2,7 @@
 
 Propose, approve, and execute actions. Every action passes through the policy engine and emits an audit trail.
 
-### Propose an action
+### Propose an Action
 
 ```http
 POST /v1/agents/{agent_id}/propose
@@ -46,7 +46,7 @@ Response:
 | `ESCALATE` | The action is in pending state; named approvers must sign                          |
 | `DENY`     | The action will not execute; `reason` carries the structured cause                 |
 
-### Get an action
+### Get an Action
 
 ```http
 GET /v1/actions/{action_id}
@@ -72,7 +72,7 @@ Response:
 }
 ```
 
-### Approve an escalated action
+### Approve an Escalated Action
 
 The named approver signs an EIP-712 approval and submits it.
 
@@ -101,7 +101,7 @@ Response:
 
 Multiple approvers may be required (`2-of-3` thresholds, etc). The action remains pending until all required approvals are collected.
 
-### Execute an approved action
+### Execute an Approved Action
 
 ```http
 POST /v1/actions/{action_id}/execute
@@ -126,7 +126,7 @@ Response:
 | `smart_account` | On-chain via `BrainSmartAccount` UserOperation |
 | `x402`          | HTTP-native machine settlement                 |
 
-### Subscribe to action events
+### Subscribe to Action Events
 
 ```
 WSS /v1/actions/{action_id}/events
@@ -135,7 +135,7 @@ Authorization: Bearer <token>
 
 Event types: `proposed`, `policy.evaluated`, `escalated`, `approved`, `denied`, `executing`, `executed`, `failed`.
 
-### List actions
+### List Actions
 
 ```http
 GET /v1/actions?tenantId=acme&decision=ESCALATE&limit=50
@@ -144,7 +144,7 @@ Authorization: Bearer <token>
 
 Filters: `tenantId`, `agent_id`, `decision`, `type`, `from`, `to`, `cursor`, `limit`.
 
-### Cancel a pending action
+### Cancel a Pending Action
 
 If an action is in ESCALATE state and has not yet been approved or denied:
 
@@ -155,6 +155,6 @@ Authorization: Bearer <tenant token>
 
 The action is marked `cancelled`. An audit event records the cancellation.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📜 Audit API</strong></td><td>Pull proofs for executed actions.</td><td><a href="audit-api.md">audit-api.md</a></td><td></td></tr><tr><td><strong>🤖 Agents API</strong></td><td>Register agents and grant scope.</td><td><a href="agents-api.md">agents-api.md</a></td><td></td></tr></tbody></table>

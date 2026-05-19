@@ -1,8 +1,8 @@
-# MCP authentication
+# MCP Authentication
 
 External agents authenticate to Brain's MCP server with a **JWT** that anchors back to an on-chain registration in `BrainMCPAgentRegistry`. There are two layers of verification: the JWT itself, and the cryptographic match between the JWT's `scope_hash` claim and the on-chain hash.
 
-### The auth chain
+### The Auth Chain
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -36,7 +36,7 @@ External agents authenticate to Brain's MCP server with a **JWT** that anchors b
 └─────────────────────────────────────────────────┘
 ```
 
-### JWT structure
+### JWT Structure
 
 The JWT is signed by the agent's signing key (the same key registered in `BrainMCPAgentRegistry`).
 
@@ -61,7 +61,7 @@ The JWT is signed by the agent's signing key (the same key registered in `BrainM
 | `tenant_id`  | Tenant id, must match the agent's tenant in `BrainMCPAgentRegistry` |
 | `scope_hash` | Hash of the canonical scope document; must match on-chain           |
 
-### On-chain scope verification
+### On-Chain Scope Verification
 
 This is the move that makes Brain's agent surface different from a typical OAuth integration: **scope is anchored on-chain**.
 
@@ -93,7 +93,7 @@ The on-chain read is **cached for 60 seconds per agent**. This balances on-chain
 **Revocation is immediate and on-chain.** A tenant can revoke an agent's authorization at any time by calling `revokeAgent` on `BrainMCPAgentRegistry` with their EIP-712 signature. Within the cache window (<= 60 seconds), the MCP server rejects all subsequent calls.
 {% endhint %}
 
-### The five capability scopes
+### The Five Capability Scopes
 
 The canonical scope document enumerates which of these the tenant has granted to the agent.
 
@@ -107,7 +107,7 @@ The canonical scope document enumerates which of these the tenant has granted to
 
 A tenant can grant any subset. Unused scopes do not appear in the canonical document. The `scopeHash` is the SHA-256 of the canonical, lexicographically-sorted scope document.
 
-### Per-call scope enforcement
+### Per-Call Scope Enforcement
 
 Even after the three pre-call checks pass, each tool invocation is scope-checked. Calling `wiki.question` with a JWT that lacks `wiki:read` returns:
 
@@ -126,7 +126,7 @@ Even after the three pre-call checks pass, each tool invocation is scope-checked
 }
 ```
 
-### JSON-RPC error codes
+### JSON-RPC Error Codes
 
 | Code     | Meaning                                      |
 | -------- | -------------------------------------------- |
@@ -140,7 +140,7 @@ Even after the three pre-call checks pass, each tool invocation is scope-checked
 | `-32602` | Standard JSON-RPC: invalid params            |
 | `-32603` | Standard JSON-RPC: internal error            |
 
-### Token lifetimes
+### Token Lifetimes
 
 | Token                         | TTL           | Refreshable                 |
 | ----------------------------- | ------------- | --------------------------- |
@@ -148,7 +148,7 @@ Even after the three pre-call checks pass, each tool invocation is scope-checked
 | **Cached scope verification** | 60 seconds    | Auto-refreshes on next call |
 | **On-chain registration**     | Until revoked | N/A; on-chain               |
 
-### Revoking an agent
+### Revoking an Agent
 
 Two paths:
 
@@ -159,6 +159,6 @@ Two paths:
 
 After revocation, all calls fail with error `-32002` within the 60-second cache window.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 10 tools and their per-tool scope requirements.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 BrainMCPAgentRegistry</strong></td><td>The on-chain contract this all anchors to.</td><td><a href="../smart-contracts/brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr></tbody></table>

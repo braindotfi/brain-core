@@ -1,4 +1,4 @@
-# Brain infrastructure
+# Brain Infrastructure
 
 Terraform configuration for Brain's Azure stack. Full resources land in stage-8.
 

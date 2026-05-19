@@ -4,24 +4,24 @@ Financial Intelligence Protocol, Minimum Viable Build
 
 Brain Finance Inc. | Delaware | brain.fi v0.3, MVP Blueprint
 
-## Purpose of this document
+## Purpose of This Document
 
 This is the MVP architecture: the smallest thing we can build that (1) proves the six-layer protocol works end to end, (2) lands design-partner revenue, and (3) gives a Series A lead enough to underwrite the scale-up round.
 
 Everything that doesn't clear all three bars has been cut. Nothing in here is here because it sounds good, it's here because removing it breaks one of those three bars.
 
-### What changed in v0.3
+### What Changed In v0.3
 
 v0.3 introduces a Normalized Ledger layer between Raw and Wiki. v0.2 conflated normalized financial truth (transactions, accounts, balances, obligations) with the Wiki memory artifact. That worked for an early demo but blurred the responsibility between "machine-readable financial truth" and "human-readable financial memory." With the Ledger split out:
 
 - Raw remains source evidence.
-- Ledger owns machine-readable financial truth — the source from which Policy evaluates and Agents act.
+- Ledger owns machine-readable financial truth, the source from which Policy evaluates and Agents act.
 - Wiki becomes derived human-readable memory, regenerable from Ledger and Raw at any time.
 - Execution is renamed Agent to better describe its responsibility (proposing and orchestrating actions, not directly executing them).
 
 The smart contracts, the §1 principles, the audit chain, and the public API contract for Raw / Policy / Audit are unchanged. The Wiki API is preserved but its role in MVP shifts to memory rendering rather than authoritative storage.
 
-## 1. The protocol in one page
+## 1. The Protocol in One Page
 
 Brain turns financial activity into memory, memory into intelligence, and intelligence into execution. It does not hold funds. It does not move money directly. It sits between an account holder and their financial world as the structured intelligence layer.
 
@@ -58,7 +58,7 @@ Every action produces new Raw evidence, which updates the Ledger, which feeds Wi
 
 The Wiki is a compiled, continuously-updated memory artifact derived from Ledger + Raw, the same pattern as Karpathy's LLM Wiki, but online and multi-tenant. Source immutability means the Ledger and the Wiki can always be re-derived from Raw, which is the property that makes the protocol auditable.
 
-### Core principle
+### Core Principle
 
 | Layer  | Owns                                        |
 | ------ | ------------------------------------------- |
@@ -69,13 +69,13 @@ The Wiki is a compiled, continuously-updated memory artifact derived from Ledger
 | Agent  | Proposal/action orchestration               |
 | Audit  | Immutable proof of what happened and why    |
 
-## 2. Tech stack
+## 2. Tech Stack
 
 One stack. Boring on purpose. Every choice here is a default that gets the team to shipping fast and lets the interesting engineering happen in the domain layer, not the infrastructure.
 
 What's deliberately not in the stack: graph databases, Kafka, Kubernetes, a separate search service, a separate vector DB, a workflow engine (Temporal/Airflow), a feature flag service, Terraform Cloud. We will need some of these later. Not now.
 
-## 3. The six layers
+## 3. The Six Layers
 
 Each layer has a minimal public API and a minimal data model. Nothing else.
 
@@ -127,7 +127,7 @@ MVP scope. Five source adapters plus one agent-contribution path. The adapters a
 
 Agent contribution governance. An external agent can only contribute to Raw if its tenant's registration record in BrainMCPAgentRegistry explicitly grants the raw:write scope. The tenant authorizes this scope at agent registration time with an EIP-712 signature. Revocation is immediate and on-chain. Agent-contributed artifacts are filtered from standard extraction pipelines until the tenant confirms the agent is trusted (default trust level: quarantine on first N contributions, auto-approve after). This is what keeps agent contributions from polluting the Ledger.
 
-What Raw must not do. Raw must not store financial conclusions as authoritative facts. A receipt is a Raw artifact; the obligation it implies is a Ledger row derived from extraction. The two never share a column. Mutation of the original ingested payload is forbidden — only tombstoning and parser-output re-derivation are allowed.
+What Raw must not do. Raw must not store financial conclusions as authoritative facts. A receipt is a Raw artifact; the obligation it implies is a Ledger row derived from extraction. The two never share a column. Mutation of the original ingested payload is forbidden, only tombstoning and parser-output re-derivation are allowed.
 
 What's NOT in MVP. Real-time streaming. Slack/Teams adapters (though agents can contribute transcripts via the agent path). Non-EVM chains. Automatic redaction tooling (manual redaction endpoint only). Multi-region replication of the raw blob store (single region, backup only). A generic Bring-Your-Own-Source (BYOS) adapter framework letting developers write their own tenant-facing ingestion connectors. That capability is explicitly deferred to post-MVP and tracked separately.
 
@@ -281,7 +281,7 @@ Reconciliation coverage at v0.3 ship. The reconciliation engine is wired end-to-
 
 ### Layer 3: Wiki (Memory)
 
-What it does. Maintain human-readable memory over the Ledger and Raw layers: searchable pages, narrative summaries, and a natural-language Q&A endpoint. Wiki pages are derived artifacts — they regenerate from Ledger + Raw on demand and on schedule.
+What it does. Maintain human-readable memory over the Ledger and Raw layers: searchable pages, narrative summaries, and a natural-language Q&A endpoint. Wiki pages are derived artifacts, they regenerate from Ledger + Raw on demand and on schedule.
 
 Why Wiki is downstream of Ledger. Wiki text is for humans; Ledger is for machines. If you ask "What was my biggest expense last month?" the answer comes from Ledger (transactions table) with the prose composed by Wiki. If a Wiki page and the Ledger disagree, the Ledger wins, and the Wiki is regenerated.
 
@@ -339,17 +339,17 @@ POST /v1/wiki/annotate                      human correction; writes through Raw
 GET  /v1/wiki/schema                        page-type schemas
 ```
 
-The /question endpoint is where Claude sits in the hot path. It takes a natural-language question, consults Ledger for facts and Wiki pages for context, executes a small number of SQL queries, and composes an answer with evidence path. Crucially, the LLM grounds in **Ledger rows**, not in Wiki text — Wiki provides recall and retrieval scaffolding, but the cited facts come from the Ledger. This is Brain's "feel": ask anything about your money and get a grounded answer with receipts.
+The /question endpoint is where Claude sits in the hot path. It takes a natural-language question, consults Ledger for facts and Wiki pages for context, executes a small number of SQL queries, and composes an answer with evidence path. Crucially, the LLM grounds in **Ledger rows**, not in Wiki text, Wiki provides recall and retrieval scaffolding, but the cited facts come from the Ledger. This is Brain's "feel": ask anything about your money and get a grounded answer with receipts.
 
 Every wiki page should include the following sections (rendered as markdown):
 
-- **Current Truth** — the live Ledger summary
-- **Key Linked Entities** — counterparties, accounts, obligations
-- **Recent Activity** — last N transactions/events
-- **Open Questions / Missing Evidence** — what we haven't reconciled
-- **Risk Notes** — sanctions hits, anomaly flags, low-balance warnings
-- **Timeline** — bitemporal view of changes
-- **Evidence Links** — every fact's source `raw_parsed` id
+- **Current Truth**: the live Ledger summary
+- **Key Linked Entities**: counterparties, accounts, obligations
+- **Recent Activity**: last N transactions/events
+- **Open Questions / Missing Evidence**: what we haven't reconciled
+- **Risk Notes**: sanctions hits, anomaly flags, low-balance warnings
+- **Timeline**: bitemporal view of changes
+- **Evidence Links**: every fact's source `raw_parsed` id
 
 What Wiki must not do. Wiki text is never the source of truth for balances, obligations, transactions, or permissions. Policy never reads from Wiki. Execution never reads from Wiki. Agents may read Wiki for narrative recall, but every machine-checkable precondition comes from the Ledger.
 
@@ -428,13 +428,13 @@ MVP scope. Business policies only. Consumer "autonomy level" (Notify / Confirm /
 
 What's NOT in MVP. Multi-jurisdictional rules. Complex delegation chains. Policy diffing/merging. Policy linting.
 
-### Layer 5: Agent (Action orchestration)
+### Layer 5: Agent (Action Orchestration)
 
-What it does. Run specialized agents that read the Ledger, propose actions, pass them through Policy, orchestrate execution of approved actions through external rails, and log everything. The Agent layer **proposes and orchestrates** — it does not execute financial actions directly. Execution happens through provider rails (Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain) under a deterministic gate.
+What it does. Run specialized agents that read the Ledger, propose actions, pass them through Policy, orchestrate execution of approved actions through external rails, and log everything. The Agent layer **proposes and orchestrates**: it does not execute financial actions directly. Execution happens through provider rails (Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain) under a deterministic gate.
 
 Agents in MVP. Three. No more.
 
-reconciliation-agent: runs the reconciliation engine over Ledger transactions and documents, producing `ReconciliationMatch` rows and flagging mismatches. Zero write authority over money. Runs continuously. High ROI with no policy risk because it doesn't move money — the right first agent to demo.
+reconciliation-agent: runs the reconciliation engine over Ledger transactions and documents, producing `ReconciliationMatch` rows and flagging mismatches. Zero write authority over money. Runs continuously. High ROI with no policy risk because it doesn't move money, the right first agent to demo.
 
 payment-agent: proposes outbound payments from the obligations queue, creates a `PaymentIntent` row in `proposed` status, requests a `PolicyDecision`, and on `allow` (or after `confirm` approvers sign) dispatches the intent to the appropriate rail. Two execution rails: (a) fiat via the tenant's bank API when approved; (b) on-chain via the tenant's BrainSmartAccount (ERC-4337 smart account). Every on-chain action is pre-checked against the policy fingerprint registered in BrainPolicyRegistry and logged with a cryptographic receipt anchored via BrainAuditAnchor. Write authority is gated entirely by Policy, the agent cannot move funds outside the session key's scope under any circumstance.
 
@@ -490,7 +490,7 @@ POST /v1/payment-intents/{id}/approve            human approval for `confirm` in
 POST /v1/payment-intents/{id}/reject             human/agent rejection
 POST /v1/payment-intents/{id}/execute            execute approved intent through rail
 
-# MCP — external agent surface
+# MCP, external agent surface
 POST /v1/agents/mcp                              MCP JSON-RPC entry (replaces /execution/mcp)
 ```
 
@@ -498,9 +498,9 @@ Backward-compat note. The v0.2 routes `/execution/propose`, `/execution/execute`
 
 MCP interface. External agents (tenant-authorized) connect via MCP and get bidirectional access to Brain: they can read Ledger and Wiki, contribute Raw artifacts (transcripts, documents, structured observations) that flow through the extraction pipeline into Ledger rows with `provenance=agent_contributed`, and propose actions that pass through Policy and Audit like any internal agent would. Every authorized third-party agent is registered on-chain in BrainMCPAgentRegistry with its scope attestation. The scope explicitly enumerates which of these three capabilities (read, contribute, propose) the tenant has granted. This is one of Brain's category-defining moves: shipping a bidirectional agent-contribution protocol in MVP, with cryptographic attribution of every contribution, signals that the agent-economy thesis is real and that Brain is positioned as the substrate agents route through.
 
-MCP implementation (v0.3). The `@brain/mcp` workspace ships a JSON-RPC 2.0 dispatcher mounted at `POST /v1/agents/mcp`, single-shot HTTP transport (one request, one response — SSE / streamable transports are post-MVP behind a feature flag). The surface is:
+MCP implementation (v0.3). The `@brain/mcp` workspace ships a JSON-RPC 2.0 dispatcher mounted at `POST /v1/agents/mcp`, single-shot HTTP transport (one request, one response, SSE / streamable transports are post-MVP behind a feature flag). The surface is:
 
-- **10 tools** across four capability groups: Ledger read (`ledger.account.get`, `ledger.accounts.list`, `ledger.transactions.list`, `ledger.obligations.list`, `ledger.counterparties.list`), Wiki read (`wiki.question`, `wiki.page.get`), Raw contribute (`raw.contribute`), Payment-intent propose (`payment_intent.propose` — note: no `.execute`; the §6 13-step gate is the only execution path), and Agent action propose (`agent.action.propose`).
+- **10 tools** across four capability groups: Ledger read (`ledger.account.get`, `ledger.accounts.list`, `ledger.transactions.list`, `ledger.obligations.list`, `ledger.counterparties.list`), Wiki read (`wiki.question`, `wiki.page.get`), Raw contribute (`raw.contribute`), Payment-intent propose (`payment_intent.propose`, note: no `.execute`; the §6 13-step gate is the only execution path), and Agent action propose (`agent.action.propose`).
 - **5 resource templates** addressable by `brain://` URIs: ledger accounts, ledger transactions, ledger payment-intents, wiki pages, raw evidence.
 - **5 canned prompts** for the most common agent loops: cash flow summary, bills due, spending change, invoice status, subscriptions.
 
@@ -508,7 +508,7 @@ Auth chain. The Fastify `authPlugin` validates the JWT and resolves the principa
 
 Audit. Every successful `tools/call` and `resources/read` emits an outer `agent.mcp.tool_called` audit event. Tools that mutate state (e.g. `raw.contribute`, `payment_intent.propose`) emit their own inner audit events through the same `LedgerService` / `PaymentIntentService` methods the HTTP API uses, so policy gating + audit emission are identical between the HTTP and MCP paths.
 
-See `docs/mcp-architecture.md` for the full surface map, error-code table, and capability-negotiation details. Source lives under `services/mcp/src/`; the boot site wires it onto the existing Fastify app via the `registerMcp` callback on `buildExecutionApp` (no workspace cycle — `services/execution` stays unaware of `@brain/mcp`).
+See `docs/mcp-architecture.md` for the full surface map, error-code table, and capability-negotiation details. Source lives under `services/mcp/src/`; the boot site wires it onto the existing Fastify app via the `registerMcp` callback on `buildExecutionApp` (no workspace cycle, `services/execution` stays unaware of `@brain/mcp`).
 
 What Agent must not do. Agents must not mutate Raw, Ledger, Policy, or Audit stores directly. Every Ledger write that originates from agent reasoning (e.g. a `ReconciliationMatch` insert) goes through `LedgerService` methods that emit audit events. Every payment goes through `PaymentIntent` with a `PolicyDecision` and the §6-of-standards pre-execution gate. No financial execution path bypasses Policy.
 
@@ -563,9 +563,9 @@ Anchoring cadence in MVP. Hourly for all tenants. Per-event anchoring is a post-
 
 Export formats in MVP. JSONL and CSV. SOX-ready PDF is post-MVP, JSONL + a schema doc is sufficient for most audit and regulator workflows.
 
-## 4. Smart contracts
+## 4. Smart Contracts
 
-Four contracts in MVP, deployed to Base. Each is justified by a property that cannot be achieved off-chain. The contract surfaces are unchanged from v0.2 — the Ledger split is an off-chain refactor.
+Four contracts in MVP, deployed to Base. Each is justified by a property that cannot be achieved off-chain. The contract surfaces are unchanged from v0.2, the Ledger split is an off-chain refactor.
 
 ### BrainAuditAnchor
 
@@ -712,11 +712,11 @@ contract BrainMCPAgentRegistry {
 
 Third-party agents cannot self-register. Registration requires an EIP-712 signature from the tenant that authorizes the specific scope. The scope document itself stays off-chain; only its hash is anchored. The canonical scope document enumerates capability grants: `ledger:read`, `wiki:read`, `raw:write`, `payment_intent:propose`, `agent:propose`. A tenant grants any subset.
 
-### What's deferred
+### What's Deferred
 
 Any Brain-native token: not until post-PMF, per the business plan's own sequencing.
 
-## 5. What's out of scope for MVP
+## 5. What's Out of Scope for MVP
 
 Being explicit here matters. Investors will ask what the MVP doesn't do; this is the answer.
 
@@ -740,11 +740,11 @@ SOC 2 Type 2. Target Type 1 in MVP, Type 2 within 12 months of launch.
 
 Ledger entities beyond the eleven listed: positions, securities, FX rates, cost-basis lots, bond/equity holdings.
 
-## 6. What the MVP proves
+## 6. What the MVP Proves
 
 Investor-facing, three claims the MVP must defend:
 
-The six-layer stack works end to end. A design partner can connect their bank + ERP, get a continuously-normalized Ledger and continuously-compiled financial memory, author a policy, have an agent propose a payment that passes the deterministic pre-execution gate against the live Ledger, execute it, and export a tamper-evident audit record — all through Brain's API, in under 30 days of onboarding.
+The six-layer stack works end to end. A design partner can connect their bank + ERP, get a continuously-normalized Ledger and continuously-compiled financial memory, author a policy, have an agent propose a payment that passes the deterministic pre-execution gate against the live Ledger, execute it, and export a tamper-evident audit record, all through Brain's API, in under 30 days of onboarding.
 
 The compounding moat is real. Every day a design partner is on Brain, their Ledger gets measurably richer: more reconciled transactions, more verified counterparties, more obligations modeled, more documents linked. Wiki recall improves alongside. This is measurable and shown on a single chart in the investor deck.
 
@@ -752,7 +752,7 @@ External agents work under the same rules. An external agent connects via MCP, r
 
 Those three claims close the Series A. Everything in MVP serves them; everything cut from MVP doesn't.
 
-## 7. Team and sequencing
+## 7. Team and Sequencing
 
 Against the $4M seed's $2M product + engineering allocation:
 
@@ -768,7 +768,7 @@ Against the $4M seed's $2M product + engineering allocation:
 
 Six people, ~15 months of runway. Ships MVP in 6 months, lands 15 to 25 design partners in months 6 to 12, converts a subset to paid in months 9 to 15, closes Series A on the back of that revenue + the three proof points above.
 
-## 8. What we build next (not now)
+## 8. What We Build Next (Not Now)
 
 Signaled here for the investor conversation, not scoped for MVP:
 

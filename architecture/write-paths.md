@@ -1,10 +1,10 @@
-# Write paths
+# Write Paths
 
 Brain's six layers form a one-way upward data flow. Information flows up; control flows down. Within that flow, only **two write paths are allowed to write upward into the authoritative state** without coming from below: agent contributions to Raw, and agent-proposed PaymentIntents into Ledger.
 
 This page documents all write paths, where they originate, and what guarantees each one provides.
 
-### The six-layer write surface
+### The Six-Layer Write Surface
 
 ```
 ┌────────────────────────────────────────────────────┐
@@ -24,17 +24,17 @@ This page documents all write paths, where they originate, and what guarantees e
 
 (\*) Wiki annotations write through Raw, not directly into Ledger.
 
-### The default rule: information flows upward
+### The Default Rule: Information Flows Upward
 
 Each layer is derived from the layer below it. The Ledger is derived from Raw via deterministic extraction. The Wiki is regenerated from Ledger and Raw on demand. Policy reads from Ledger. Agents read from all of the above and write proposals.
 
 This rule has one purpose: **everything authoritative is replayable**. If an extractor changes, the Ledger can be re-derived from Raw. If a Wiki generator changes, pages can be re-rendered from Ledger and Raw. Source immutability at Raw is what makes the whole protocol auditable.
 
-### The two controlled exceptions
+### The Two Controlled Exceptions
 
 Two write paths break the strict bottom-up rule. They are explicit, scoped, and audited.
 
-#### Exception 1: Agent contributions to Raw
+#### Exception 1: Agent Contributions to Raw
 
 External agents with `raw:write` scope can push artifacts into the Raw layer. Stored, content-addressed, attributed to the agent's on-chain registration.
 
@@ -49,7 +49,7 @@ External agents with `raw:write` scope can push artifacts into the Raw layer. St
 
 [**→ Agent Contributions**](../protocol/agent-contributions.md)
 
-#### Exception 2: agent-proposed PaymentIntents into Ledger
+#### Exception 2: Agent-Proposed PaymentIntents into Ledger
 
 Agents create PaymentIntent rows in the Ledger as proposals for financial actions. PaymentIntents are the only Ledger-write path that does not originate from a Raw extraction.
 
@@ -63,7 +63,7 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 
 [**→ Payment Intents**](../protocol/payment-intents.md)
 
-### All write paths, by layer
+### All Write Paths, by Layer
 
 #### Raw
 
@@ -114,7 +114,7 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 | Every layer      | `audit_events` append-only writes         | Every material state change |
 | Anchor publisher | `audit_anchors` per published Merkle root | Hourly cadence       |
 
-### What is not allowed
+### What Is Not Allowed
 
 | Forbidden                                                                        | Why                                                             |
 | -------------------------------------------------------------------------------- | --------------------------------------------------------------- |
@@ -133,6 +133,6 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 | **Tenant trust**       | Agent contributions are quarantined and capped at 0.5 confidence until reviewed          |
 | **Counterparty trust** | Anyone with a Merkle proof can verify against the on-chain anchor without trusting Brain |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🏗️ System overview</strong></td><td>The full architecture top-down.</td><td><a href="system-overview.md">system-overview.md</a></td><td></td></tr><tr><td><strong>🌊 Data flow</strong></td><td>How a single source-of-truth event ripples up.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🛡️ Tenant isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr></tbody></table>

@@ -1,8 +1,8 @@
 # Sandbox Mode (`BRAIN_DEMO_MODE`)
 
-Run the full PaymentIntent PoC flow — Raw ingest → Ledger derive → §6 gate → Audit — using Plaid Sandbox and OpenAI, with no live chain calls, no Wirex/Crossmint, and no Policy service.
+Run the full PaymentIntent PoC flow, Raw ingest → Ledger derive → §6 gate → Audit, using Plaid Sandbox and OpenAI, with no live chain calls, no Wirex/Crossmint, and no Policy service.
 
-## What BRAIN_DEMO_MODE changes
+## What BRAIN_DEMO_MODE Changes
 
 | Area                      | Production                                            | `BRAIN_DEMO_MODE=true`                               |
 | ------------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
@@ -15,12 +15,12 @@ Run the full PaymentIntent PoC flow — Raw ingest → Ledger derive → §6 gat
 | `resolveAccount`          | Queries `ledger_accounts` by id                       | Queries `ledger_accounts` by id (same)               |
 | `resolveCounterparty`     | Queries `ledger_counterparties` by id                 | Queries `ledger_counterparties` by id (same)         |
 | `resolveRole`             | Queries role table                                    | Always returns `"owner"`                             |
-| Plaid webhook             | Rejects — key resolver not configured                 | Rejects with clear "use /raw/ingest" message         |
+| Plaid webhook             | Rejects, key resolver not configured                 | Rejects with clear "use /raw/ingest" message         |
 | MCP auth                  | `FakeAuthVerifier` (same in both modes for now)       | `FakeAuthVerifier`                                   |
 
 Setting `OPENAI_API_KEY` overrides the demo LLM fallback regardless of `BRAIN_DEMO_MODE`.
 
-## Five-command happy path
+## Five-Command Happy Path
 
 ```bash
 # 1. Start infrastructure
@@ -51,7 +51,7 @@ BRAIN_API_URL=http://localhost:3000 \
   pnpm run plaid:sandbox
 ```
 
-## Verification curls
+## Verification Curls
 
 ```bash
 T=$(node tools/dev-token/dist/index.js)
@@ -89,7 +89,7 @@ curl -s "localhost:3000/v1/audit/events?limit=10" \
   -H "Authorization: Bearer $T" | jq '.[].action'
 ```
 
-## Stubs NOT replaced by BRAIN_DEMO_MODE
+## Stubs NOT Replaced by BRAIN_DEMO_MODE
 
 These are out of scope for this PR and still throw in sandbox mode:
 
@@ -98,10 +98,10 @@ These are out of scope for this PR and still throw in sandbox mode:
 - NetSuite, Gmail, Stripe webhook handlers (return 501)
 - Wirex provisioning adapter (lives in BrainMVB, not brain-core)
 - Crossmint provisioning adapter (lives in BrainMVB)
-- Audit anchor publisher cron (separate process — not started by boot binary)
+- Audit anchor publisher cron (separate process, not started by boot binary)
 - `plaid_tx_v1` parser worker (no `raw_parsed` rows written; Ledger only via seed)
 - MCP on-chain auth (FakeAuthVerifier in both modes until stage-8)
 
-## Route prefix note
+## Route Prefix Note
 
 All service routes are mounted under `/v1` as of this PR, matching `Brain_API_Specification.yaml`. `GET /health` stays at the root (no prefix) for liveness probes.

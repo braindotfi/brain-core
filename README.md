@@ -8,7 +8,7 @@ Brain is a financial intelligence protocol exposed as a single API. You point Br
 
 Brain holds neither funds nor rail access. It sits between an account holder and their financial world as the structured intelligence layer: ingest, normalize, remember, govern, execute, prove.
 
-## How Brain is organized
+## How Brain Is Organized
 
 Brain is a layered protocol; information flows up and control flows down.
 
@@ -23,11 +23,11 @@ Brain is a layered protocol; information flows up and control flows down.
 
 Reads are grounded in evidence, writes emit audit events, and any financial action has to pass a deterministic pre-execution gate before it leaves the system. Nothing executes outside that gate.
 
-## What Brain is not
+## What Brain Is Not
 
 Brain is not a bank, a custodian, an accounting tool, an agent marketplace, or a generic assistant. Funds and custody belong to the account holder. Brain reads, reasons, governs, and proves; it does not own the assets it operates on.
 
-## A first integration
+## A First Integration
 
 ```typescript
 import { Brain } from "@brain/sdk";
@@ -48,7 +48,7 @@ That covers most of what a typical integration touches; no on-chain knowledge is
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🚀 Quickstart</strong></td><td>Five minutes from <code>npm install</code> to a working integration.</td><td><a href="introduction/quickstart.md">quickstart.md</a></td><td></td></tr><tr><td><strong>🛠 Build</strong></td><td>Task-shaped guides. The patterns most apps need in their first hour.</td><td><a href="build/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>📐 Concepts</strong></td><td>The mental model. Memory, policy, agents, proof.</td><td><a href="concepts/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>📦 Protocol</strong></td><td>The deep stack. Six layers, smart contracts, on-chain anchoring.</td><td><a href="protocol/overview.md">overview.md</a></td><td></td></tr></tbody></table>
 
-## Who Brain is for
+## Who Brain Is For
 
 | You're building                        | You use Brain to                                                                 |
 | -------------------------------------- | -------------------------------------------------------------------------------- |
@@ -58,7 +58,7 @@ That covers most of what a typical integration touches; no on-chain knowledge is
 | A treasury or operations dashboard     | Query the tenant's full money picture in natural language or structured calls    |
 | An external agent marketplace          | Plug into Brain's MCP surface. Same primitives, same audit semantics             |
 
-## What you can build
+## What You Can Build
 
 | In an afternoon                 | What it looks like                                                                |
 | ------------------------------- | --------------------------------------------------------------------------------- |
@@ -68,7 +68,7 @@ That covers most of what a typical integration touches; no on-chain knowledge is
 | An external agent integration   | Plug into any MCP-compatible runtime; full read and propose surface               |
 | A compliance trail              | Every read, every decision, every action, exportable as a tamper-evident log      |
 
-## What Brain handles for you
+## What Brain Handles for You
 
 | You don't write                          | Because Brain handles                                                        |
 | ---------------------------------------- | ---------------------------------------------------------------------------- |
@@ -78,7 +78,7 @@ That covers most of what a typical integration touches; no on-chain knowledge is
 | A safe execution path                    | A deterministic gate that checks every payment before it leaves              |
 | An audit trail your customers can verify | A Merkle-anchored history on Base L2                                         |
 
-## Integration surfaces
+## Integration Surfaces
 
 Brain exposes four surfaces. Pick whichever matches your stack. They share the same data, the same policy, and the same audit log.
 
@@ -89,7 +89,7 @@ Brain exposes four surfaces. Pick whichever matches your stack. They share the s
 | MCP server       | Third-party agents over the Model Context Protocol        | [MCP server](mcp-server/overview.md)            |
 | Smart contracts  | On-chain settlement, programmable accounts, scope attests | [Smart contracts](smart-contracts/overview.md)  |
 
-## A first request
+## A First Request
 
 ```bash
 npm install @brain/sdk
@@ -106,7 +106,7 @@ console.log(tenant.displayName);
 
 The full SDK surface (`brain.accounts`, `brain.transactions`, `brain.payments`, `brain.audit`, `brain.policy`, `brain.agents`, `brain.wiki`, and more) is documented in the [API reference](api-reference/overview.md). For raw HTTP access, see [Authentication](api-reference/authentication.md).
 
-## Next steps
+## Next Steps
 
 - Build it: [Quickstart](introduction/quickstart.md), then the [task-shaped guides](build/overview.md).
 - Understand it: [Concepts](concepts/overview.md), then [Protocol](protocol/overview.md).

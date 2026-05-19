@@ -1,4 +1,4 @@
-# Payment intents
+# Payment Intents
 
 A **PaymentIntent** is an agent-proposed financial action that lives as a row in the Ledger. It is the only path to financial execution in Brain. There is no shortcut.
 
@@ -13,7 +13,7 @@ A **PaymentIntent** is an agent-proposed financial action that lives as a row in
 PaymentIntents are the **second of two controlled write paths** into the Ledger. The first is Raw extraction. PaymentIntents are the only Ledger write that doesn't originate from a Raw artifact, by design.
 {% endhint %}
 
-### Why PaymentIntents are a Ledger entity
+### Why PaymentIntents Are a Ledger Entity
 
 A proposed payment is itself a financial fact. Treating it as a row in the Ledger has three consequences:
 
@@ -23,7 +23,7 @@ A proposed payment is itself a financial fact. Treating it as a row in the Ledge
 | **Provenance carries through**   | Every state transition becomes an audit event linked to the row                                               |
 | **Policy reads it directly**     | Policy evaluators read PaymentIntent fields and the live Ledger together; no shadow data model                |
 
-### The `ledger_payment_intents` row
+### The `ledger_payment_intents` Row
 
 ```sql
 ledger_payment_intents (
@@ -79,7 +79,7 @@ approved
 
 [**→ The Pre-Execution Gate**](the-pre-execution-gate.md)
 
-### State transitions
+### State Transitions
 
 | From               | To                 | Trigger                                       |
 | ------------------ | ------------------ | --------------------------------------------- |
@@ -94,7 +94,7 @@ approved
 
 Every transition emits an audit event. The full history of any PaymentIntent is reconstructable from `audit_events` ordered by `created_at`.
 
-### How agents create them
+### How Agents Create Them
 
 Internal agents call `PaymentIntentService.create()`. External agents call the MCP `payment_intent.propose` tool. **Both paths go through the same service method**, so policy evaluation, validation, and audit emission are identical.
 
@@ -116,7 +116,7 @@ console.log(intent.status);             // "proposed" → resolved by Policy
 console.log(intent.policyDecisionId);   // the PolicyDecision row to inspect
 ```
 
-### API surface
+### API Surface
 
 PaymentIntents are a Ledger entity but their lifecycle endpoints live in the Agent group.
 
@@ -130,7 +130,7 @@ PaymentIntents are a Ledger entity but their lifecycle endpoints live in the Age
 
 The MCP equivalent: `payment_intent.propose` for creation. **There is no `payment_intent.execute` on MCP**. Execution is reserved for internal Brain workers running under tenant policy.
 
-### Reading them like any other Ledger row
+### Reading Them Like Any Other Ledger Row
 
 Because PaymentIntents are a real Ledger entity, the Wiki and other agents query them the same way they query transactions or obligations.
 
@@ -151,6 +151,6 @@ A Wiki page about a vendor automatically includes their pending PaymentIntents i
 
 Every PaymentIntent creation requires an `idempotencyKey`. Brain stores it in a per-tenant index; retries with the same key return the existing PaymentIntent. This protects against double-proposal under network errors or agent retries.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🚪 Pre-execution gate</strong></td><td>The 13-step deterministic gate every payment must pass.</td><td><a href="the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>How internal and external agents propose actions.</td><td><a href="agents.md">agents.md</a></td><td></td></tr><tr><td><strong>📋 Policy and permissioning</strong></td><td>How Policy evaluates PaymentIntents.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr></tbody></table>

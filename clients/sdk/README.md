@@ -7,7 +7,7 @@ This package is the source-of-truth client that backs every code example on
 
 - A high-level `Brain` class with namespaced helpers (`brain.accounts.list`,
   `brain.transactions.get`, `brain.obligations.list`, …) as documented on
-  the homepage. The surface lands in slices — see Status below.
+  the homepage. The surface lands in slices, see Status below.
 - A low-level typed client (`createBrainHttpClient`) generated from
   [`Brain_API_Specification.yaml`](../../Brain_API_Specification.yaml) for
   power users who want raw HTTP access.
@@ -28,7 +28,7 @@ This package is the source-of-truth client that backs every code example on
 
 ## Usage
 
-### High-level (`Brain` class)
+### High-Level (`Brain` Class)
 
 ```typescript
 import { Brain } from "@brain/sdk";
@@ -56,7 +56,7 @@ const verification = await brain.audit.verify({
 });
 const proof = await brain.proof("evt_8231"); // shorthand for audit.get(id).inclusionProof
 
-// Payments — propose + execute compound
+// Payments, propose + execute compound
 const result = await brain.pay("acme", {
   action_type: "ach_outbound",
   source_account_id: "acct_8231",
@@ -80,18 +80,18 @@ const proposal = await brain.actions.propose({
   idempotencyKey: crypto.randomUUID(),
 });
 
-// Wiki — natural language Q&A grounded in the tenant ledger
+// Wiki, natural language Q&A grounded in the tenant ledger
 const answer = await brain.ask("acme", "did cloud spend grow faster than revenue this quarter?");
 const search = await brain.wiki.search({ q: "stripe", limit: 10 });
 const entity = await brain.wiki.getEntity("ent_8231", { includeNeighbors: true });
 
-// Policy — compose, sign, activate (EIP-712), evaluate, simulate
+// Policy, compose, sign, activate (EIP-712), evaluate, simulate
 const signingPayload = await brain.policy.compose("acme", dslDocument);
 // (sign signingPayload.typedData with authorised keys, then submit)
 await brain.policy.sign("acme", { contentHash: signingPayload.contentHash!, signatures });
 const decision = await brain.policy.evaluate("acme", action);
 
-// Agents — register, list, propose
+// Agents, register, list, propose
 const agents = await brain.agents.list();
 await brain.agents.register({
   agent_id: "ext_1",
@@ -99,13 +99,13 @@ await brain.agents.register({
   display_name: "Recon Bot",
 });
 
-// Raw ingestion — pull from a URL
+// Raw ingestion, pull from a URL
 await brain.raw.ingest({
   sourceType: "document",
   url: "https://example.com/invoice.pdf",
 });
 
-// Client-side compounds — multiple calls under the hood, no server endpoint
+// Client-side compounds, multiple calls under the hood, no server endpoint
 const snapshot = await brain.snapshot("acme"); // balances + tx + obligations
 const trace = await brain.trace("pi_8231"); // full audit chain for an action
 const summary = await brain.cashFlow.summarize({
@@ -120,7 +120,7 @@ On a non-2xx response, methods throw `BrainAPIError` carrying `status`,
 `code`, `traceId`, and structured `details` from the standard Brain error
 envelope.
 
-### Low-level (`createBrainHttpClient`)
+### Low-Level (`createBrainHttpClient`)
 
 For endpoints not yet wrapped by the `Brain` class, or for callers who
 want direct typed-fetch access:
@@ -136,7 +136,7 @@ const { data, error } = await http.GET("/audit/anchor/latest");
 ```
 
 The client is fully typed against the OpenAPI spec. Path, query, body, and
-response shapes are inferred — there is no hand-written type surface to drift.
+response shapes are inferred, there is no hand-written type surface to drift.
 
 ## Codegen
 
@@ -149,12 +149,12 @@ Regenerates `src/generated/openapi.d.ts` from
 generated file is committed so downstream consumers don't need to run codegen
 on `pnpm install`. CI runs `codegen:check` to catch drift.
 
-## Publish target
+## Publish Target
 
 `private: true` for now. Future intent: publish to GitHub Packages with
 private access (organisation members and authorised consumers only). The
 docs commit to `npm install @brain/sdk`; until a publish workflow lands, that
-command does not yet resolve — see Step 1A in the SDK plan thread for
+command does not yet resolve, see Step 1A in the SDK plan thread for
 sequencing.
 
 ## Conventions
@@ -162,7 +162,7 @@ sequencing.
 Follows the standard Brain TypeScript package layout: strict mode, ESM,
 `tsc -b` build, `dist/` output, Vitest with 80% line / 75% branch coverage.
 
-## Architecture notes
+## Architecture Notes
 
 - **Resource-per-namespace**: each `brain.<namespace>` is an instance of a
   `*Resource` class that wraps the typed HTTP client. Resources are
@@ -177,14 +177,14 @@ Follows the standard Brain TypeScript package layout: strict mode, ESM,
 - **Idempotency keys**: every mutating method on `payments` and
   `actions` accepts `idempotencyKey` and sends it as the
   `Idempotency-Key` HTTP header. Critical infrastructure for financial
-  APIs — set this on every retry-safe write from production callers.
+  APIs, set this on every retry-safe write from production callers.
 - **Compounds are client-side**: `brain.snapshot`, `brain.trace`, and
   `brain.cashFlow.summarize` issue multiple HTTP calls under the hood,
   no server endpoint backs them directly. If a server-side equivalent
   lands later, these can be retargeted without changing the public
   method signature.
 - **Tenant scoping**: most endpoints derive the tenant from the
-  authenticated principal. The `policy.*` methods are an exception —
+  authenticated principal. The `policy.*` methods are an exception , 
   they take `tenant_id` explicitly. Compound helpers that accept a
   `tenantId` argument (`pay`, `ask`, `snapshot`) match the documented
   signature but currently don't forward the value on the wire. Reserved

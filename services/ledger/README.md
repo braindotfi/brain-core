@@ -1,6 +1,6 @@
 # @brain/ledger
 
-Layer 2 — Normalized financial truth. Owns the eleven Ledger entities
+Layer 2, Normalized financial truth. Owns the eleven Ledger entities
 defined in `Brain_MVP_Architecture.md` §3 Layer 2:
 
 1. Account
@@ -32,7 +32,7 @@ What it does NOT yet do (lands in subsequent refactor phases):
 - Phase 4: implements the §6 pre-execution gate and the PaymentIntent execution flow.
 - Phase 5: implements the reconciliation engine.
 
-## Local development
+## Local Development
 
 ```bash
 pnpm -C services/ledger run typecheck
@@ -47,7 +47,7 @@ DATABASE_URL=postgres://brain:brain@localhost:5432/brain \
   node tools/migrate/dist/cli.js up
 ```
 
-## Layer boundary contract
+## Layer Boundary Contract
 
 The Ledger never reads from the Wiki. The Ledger never executes a payment.
 Mutations originate from Raw extraction, controlled service methods on

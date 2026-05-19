@@ -1,8 +1,8 @@
-# Policy and permissioning
+# Policy and Permissioning
 
 Tenants describe policy in **plain English**. The Policy compiler converts each policy into a deterministic guard expression that is evaluated for every proposed action. Policies are versioned and signed by the tenant via EIP-712, with hashes anchored on-chain through `BrainPolicyRegistry`.
 
-### Plain English in, deterministic guard out
+### Plain English in, Deterministic Guard Out
 
 You write the policy in natural language. Brain compiles it. You sign the compiled form, not the prose.
 
@@ -33,7 +33,7 @@ Compiles to:
 The compiler emits both the deterministic compiled policy **and** a human-readable explanation of what it will do. **Tenants sign the compiled form, not the prose.** This eliminates ambiguity at the moment of signing.
 {% endhint %}
 
-### The five elements of a policy
+### The Five Elements of a Policy
 
 Every policy has five elements.
 
@@ -45,7 +45,7 @@ Every policy has five elements.
 | **Conditions** | Thresholds, time windows, frequency caps, required approvers                 |
 | **Outcomes**   | ALLOW, DENY, or ESCALATE                                                     |
 
-### The three outcomes
+### The Three Outcomes
 
 Every policy evaluation produces exactly one of three outcomes.
 
@@ -55,7 +55,7 @@ Every policy evaluation produces exactly one of three outcomes.
 **ESCALATE is the default for unmatched conditions.** If the policy compiler cannot determine a clear ALLOW or DENY for a proposed action, the safe default is to require human review. Failure modes are explicit, not silent.
 {% endhint %}
 
-### Worked example: the $7,800 invoice
+### Worked Example: the $7,800 Invoice
 
 A walkthrough of the policy from the top of this page, applied to a real proposal:
 
@@ -71,7 +71,7 @@ A walkthrough of the policy from the top of this page, applied to a real proposa
 | 8    | Action moves to executable. `BrainSmartAccount` signs UserOperation OR bank API call dispatched                                   |
 | 9    | Audit Layer records: proposal, policy decision, approver identity, execution receipt, settlement confirmation, all linked by hash |
 
-### Versioning, signing, and anchoring
+### Versioning, Signing, and Anchoring
 
 Every policy version has a lifecycle.
 
@@ -103,7 +103,7 @@ PolicyRegistration(
 
 [**→ Smart contract reference**](../smart-contracts/overview.md)
 
-### How policy enforcement is layered
+### How Policy Enforcement Is Layered
 
 Policy is enforced **twice** by design.
 
@@ -118,6 +118,6 @@ Belt and braces. Even if the off-chain engine were compromised, the on-chain acc
 
 Policy verdicts are short-lived (default TTL 60 seconds) and bound to the `userOpHash`, so a verdict cannot be replayed against a different action.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🤖 Agents</strong></td><td>How agents propose actions and receive scope grants.</td><td><a href="agents.md">agents.md</a></td><td></td></tr><tr><td><strong>📜 Audit and Proof</strong></td><td>How every policy decision is captured.</td><td><a href="audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>📜 BrainPolicyRegistry</strong></td><td>The on-chain anchor.</td><td><a href="../smart-contracts/brainpolicyregistry.md">brainpolicyregistry.md</a></td><td></td></tr></tbody></table>

@@ -2,7 +2,7 @@
 
 Query the deterministic structured records produced from Raw evidence.
 
-### List transactions
+### List Transactions
 
 ```http
 GET /v1/ledger/transactions?tenantId=acme&from=2025-01-01&to=2025-03-31
@@ -29,7 +29,7 @@ Authorization: Bearer <token>
 }
 ```
 
-### Filter transactions
+### Filter Transactions
 
 | Query Param                | Type     | Description                |
 | -------------------------- | -------- | -------------------------- |
@@ -42,7 +42,7 @@ Authorization: Bearer <token>
 | `confidence_min`           | float    | Minimum confidence score   |
 | `include_superseded`       | boolean  | Default false              |
 
-### Get a single record
+### Get a Single Record
 
 ```http
 GET /v1/ledger/{id}
@@ -67,7 +67,7 @@ The response includes the full provenance chain.
 }
 ```
 
-### Other record types
+### Other Record Types
 
 The Ledger holds more than transactions.
 
@@ -83,7 +83,7 @@ The Ledger holds more than transactions.
 | `GET /v1/ledger/liabilities`    | Debts                                 |
 | `GET /v1/ledger/events`         | Lifecycle events tied to records      |
 
-### Provenance chain
+### Provenance Chain
 
 Every Ledger record carries:
 
@@ -98,7 +98,7 @@ Every Ledger record carries:
 Records are immutable. Corrections are written as superseding records that reference what they correct. The history is preserved.
 {% endhint %}
 
-### Reconcile mode
+### Reconcile Mode
 
 For records below a confidence threshold, Brain queues them in a reconciliation queue. The API exposes the queue for human review.
 
@@ -107,7 +107,7 @@ GET /v1/ledger/reconciliation_queue?tenantId=acme&confidence_max=0.7
 Authorization: Bearer <token>
 ```
 
-### Subscribe to changes
+### Subscribe to Changes
 
 For real-time updates, use the WebSocket endpoint.
 
@@ -117,6 +117,6 @@ wss://api.brain.fi/v1/ledger/stream?tenantId=acme&token=<bearer>
 
 Each message is a structured event: `record.created`, `record.superseded`, `record.confidence_updated`.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🧠 Wiki API</strong></td><td>Reason over the Ledger in natural language.</td><td><a href="wiki-api.md">wiki-api.md</a></td><td></td></tr><tr><td><strong>📥 Raw and Ledger</strong></td><td>The conceptual model.</td><td><a href="../protocol/raw-and-ledger.md">raw-and-ledger.md</a></td><td></td></tr></tbody></table>

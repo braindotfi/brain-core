@@ -19,7 +19,7 @@ remember   →   decide   →   execute   →   prove
 
 Everything else in this documentation is depth on those four steps.
 
-### Why this matters
+### Why This Matters
 
 Most fintech infrastructure stops at execution. The provider moves the money and confirms it landed. That leaves the integrating application to handle context, rules, and audit on its own. Brain is built around the fact that agents need all four steps, in order, on every action.
 
@@ -27,7 +27,7 @@ Most fintech infrastructure stops at execution. The provider moves the money and
 | -------------------------- | ------------------------- | ---------------------- | --------------------------------- |
 | Agent acts on partial data | Agent acts outside policy | Agent can't move money | Agent's actions can't be verified |
 
-### The four ideas in detail
+### The Four Ideas in Detail
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🧠 Memory</strong></td><td>What Brain knows about a tenant, where it came from, and how to query it.</td><td><a href="memory.md">memory.md</a></td><td></td></tr><tr><td><strong>🛡 Policy</strong></td><td>The rules a tenant signed. How decisions are made.</td><td><a href="policy.md">policy.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>Who can read, propose, and act. Internal and external.</td><td><a href="agents.md">agents.md</a></td><td></td></tr><tr><td><strong>📜 Proof</strong></td><td>Why every claim Brain makes is verifiable.</td><td><a href="proof.md">proof.md</a></td><td></td></tr></tbody></table>
 
@@ -69,7 +69,7 @@ await brain.pay("acme", {
 
 Retries with the same key return the existing action, so a network blip never produces a duplicate payment.
 
-### Where the depth lives
+### Where the Depth Lives
 
 When you're ready, the protocol underneath has more to offer. Each of those concepts maps to a specific layer.
 

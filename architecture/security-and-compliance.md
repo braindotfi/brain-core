@@ -1,12 +1,12 @@
-# Security and compliance
+# Security and Compliance
 
 Brain's security posture rests on a small set of non-negotiable principles. Each one shapes the architecture.
 
-### Non-negotiable principles
+### Non-Negotiable Principles
 
 <table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>🔒 Non-custodial</strong></td><td>Brain never takes custody of customer funds. Money flows directly between the tenant's accounts and counterparties on the tenant's chosen rails.</td></tr><tr><td><strong>🔐 Tenant-isolated</strong></td><td>Each tenant has dedicated logical partitions and DEKs wrapped by tenant-scoped KEKs in Azure Key Vault. Cross-tenant access is impossible by construction.</td></tr><tr><td><strong>📉 Data minimization</strong></td><td>Brain ingests only what enabled capabilities require. Revoking a source triggers retention and deletion workflows.</td></tr><tr><td><strong>🪪 RBAC across humans and agents</strong></td><td>Every API call is scoped by tenant, role, and policy. Agents are subjects in the same RBAC graph as humans.</td></tr><tr><td><strong>✋ Human approval thresholds</strong></td><td>Any action above a tenant-defined threshold, any new counterparty, or any new jurisdiction can require human sign-off before execution.</td></tr><tr><td><strong>📋 Compliance ready</strong></td><td>Sanctions screening, address risk, and anomaly enrichment run on every proposed action via Chainalysis and equivalents.</td></tr></tbody></table>
 
-### Standards and certifications
+### Standards and Certifications
 
 | Standard                  | Status                                       |
 | ------------------------- | -------------------------------------------- |
@@ -16,7 +16,7 @@ Brain's security posture rests on a small set of non-negotiable principles. Each
 | **Smart contract audits** | Independent audits before mainnet deployment |
 | **Bug bounty**            | Public coverage                              |
 
-### Three layers of action gating
+### Three Layers of Action Gating
 
 Every proposed action passes through three independent gates. **All three must pass.**
 
@@ -42,7 +42,7 @@ Executes
 **Defence in depth.** Even if the off-chain Policy Engine were fully compromised, the on-chain `BrainSmartAccount` would still reject UserOperations that lack a valid, non-expired, scope-bound policy verdict.
 {% endhint %}
 
-### Compliance enrichment
+### Compliance Enrichment
 
 Every proposed action that involves a payment is enriched with compliance data before policy evaluation.
 
@@ -54,7 +54,7 @@ Every proposed action that involves a payment is enriched with compliance data b
 
 The output of these checks feeds directly into Policy. A tenant policy can reference `counterparty.risk_score` or `counterparty.sanctions_status` like any other field.
 
-### Smart contract security
+### Smart Contract Security
 
 | Mitigation                       | Detail                                                         |
 | -------------------------------- | -------------------------------------------------------------- |
@@ -65,7 +65,7 @@ The output of these checks feeds directly into Policy. A tenant policy can refer
 | **Anchorer keys on HSMs**        | Hardware-backed signing for `BrainAuditAnchor`                 |
 | **EntryPoint isolation**         | Uses standard ERC-4337 EntryPoint; no custom verification path |
 
-### Privacy of audit anchors
+### Privacy of Audit Anchors
 
 On-chain anchors must not leak tenant data.
 
@@ -87,7 +87,7 @@ A counterparty verifying a Brain audit proof receives only the specific event(s)
 
 [**→ Audit and Proof in detail**](../protocol/audit-and-proof.md)
 
-### Human approval thresholds
+### Human Approval Thresholds
 
 Tenants define when humans must be in the loop. Every threshold is enforced at policy evaluation time.
 
@@ -101,6 +101,6 @@ Tenants define when humans must be in the loop. Every threshold is enforced at p
 
 These are configurable per tenant. The defaults err on the side of human review.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔒 Tenant isolation</strong></td><td>How separation is enforced at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>⚠️ Risks and mitigations</strong></td><td>Known risks and how Brain handles them.</td><td><a href="risks-and-mitigations.md">risks-and-mitigations.md</a></td><td></td></tr><tr><td><strong>📜 Smart contracts</strong></td><td>The on-chain enforcement layer.</td><td><a href="../smart-contracts/overview.md">overview.md</a></td><td></td></tr></tbody></table>

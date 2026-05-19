@@ -11,7 +11,7 @@
 
 <!-- Motivation / tracking issue link. -->
 
-## How to test
+## How to Test
 
 - [ ] Unit tests added / updated
 - [ ] Integration test covers happy-path and at least one error-path for each endpoint touched (§7.1)
@@ -24,6 +24,6 @@
 - [ ] No secrets in code, config, or commits (§11.3)
 - [ ] Labeled `ai-assisted` if written with AI assistance (§12.4)
 
-## Linked issue
+## Linked Issue
 
 <!-- Closes #123 -->

@@ -6,7 +6,7 @@ description: The rules a tenant signed. How decisions are made.
 
 ,Every action that touches a tenant's money runs through Policy. Policy is the rules a tenant has signed, expressed in plain English, compiled to deterministic checks, and evaluated on every proposed action.
 
-### Three possible outcomes
+### Three Possible Outcomes
 
 | Outcome          | Meaning                                                    |
 | ---------------- | ---------------------------------------------------------- |
@@ -16,7 +16,7 @@ description: The rules a tenant signed. How decisions are made.
 
 There is no fourth outcome. There is no override. There is no bypass.
 
-### Plain-English in, deterministic out
+### Plain-English in, Deterministic Out
 
 A tenant writes:
 
@@ -38,7 +38,7 @@ The tenant signs the **compiled** form. The compiler also returns a human-readab
 
 Policies are versioned. A new version supersedes the old one. Past actions remain bound to whichever version evaluated them, which means the audit log is reproducible: anyone can replay any past decision against the policy that was active at the time.
 
-### Where the rules live
+### Where the Rules Live
 
 Two layers, by design:
 
@@ -51,7 +51,7 @@ The on-chain layer is the belt and braces. Even if Brain's backend were fully co
 
 [**→ Smart contracts: BrainSmartAccount**](../smart-contracts/brainsmartaccount.md)
 
-### The pre-execution gate
+### The Pre-Execution Gate
 
 After Policy says `auto` (or after a human approves a `needs_approval`), one more check runs before money leaves: a deterministic 13-step gate that reads the **current** Ledger state. Account balance, counterparty status, idempotency, on-chain limits, audit-chain health.
 
@@ -59,11 +59,11 @@ Policy is the standing rule. The gate is the flight check. Both must pass.
 
 [**→ Protocol: The pre-execution gate**](../protocol/the-pre-execution-gate.md)
 
-### Why ESCALATE is the default
+### Why ESCALATE Is the Default
 
 Any action that doesn't match a rule is **escalated for approval**, not auto-allowed and not silently rejected. This is intentional: new scenarios fail-safe, in front of a human, instead of silently going in either direction.
 
-### What policy can express
+### What Policy Can Express
 
 | Concept             | Example                                                                        |
 | ------------------- | ------------------------------------------------------------------------------ |

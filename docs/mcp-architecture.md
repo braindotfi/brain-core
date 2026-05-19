@@ -1,9 +1,9 @@
 # Brain MCP Architecture
 
-Brain Finance Inc. | brain.fi v0.3 — MCP integration
+Brain Finance Inc. | brain.fi v0.3, MCP integration
 
 This document specifies how Brain exposes the Model Context Protocol
-(MCP) so that AI agents — internal and external — can connect to and
+(MCP) so that AI agents, internal and external, can connect to and
 operate against the six-layer protocol under the same governance the
 HTTP API enforces.
 
@@ -25,19 +25,19 @@ boundary:
 MCP is the standard those external agents reach for. By implementing the
 spec rather than a Brain-specific RPC, we let any MCP-aware client
 (Claude Desktop, custom-built agents, third-party integrations) connect
-without bespoke wiring. The protocol does not change the layer model —
+without bespoke wiring. The protocol does not change the layer model , 
 it is a _transport_ over the same six-layer policy/audit boundary.
 
-## What MCP gives an agent (and what it does not)
+## What MCP Gives an Agent (and What It Does Not)
 
 An MCP client connected to Brain can:
 
-- **List and call tools** — typed actions like `ledger.transactions.list`,
+- **List and call tools**: typed actions like `ledger.transactions.list`,
   `wiki.question`, `payment_intent.propose`. Each tool maps to a
   controlled service method.
-- **List and read resources** — typed identifiers like
+- **List and read resources**: typed identifiers like
   `brain://ledger/accounts/{id}` that resolve to a JSON snapshot.
-- **List and get prompts** — canonical question templates the client
+- **List and get prompts**: canonical question templates the client
   composes against (e.g. `wiki.question.cash_flow`).
 
 An MCP client _cannot_:
@@ -52,7 +52,7 @@ An MCP client _cannot_:
 - Skip an audit event. Every tool call emits one
   `agent.mcp.tool_called` audit event, regardless of outcome.
 
-## Where MCP lives in the layer map
+## Where MCP Lives in the Layer Map
 
 ```
    ┌────────────────────────────────────────────────────────────┐
@@ -87,7 +87,7 @@ The MCP server is **client-side of every other layer**. It calls the
 same `ILedgerService`, `IWikiMemoryService`, `IPaymentIntentService`,
 `IRawEvidenceService`, `IAgentService` contracts that the HTTP route
 handlers do. This is why a tool call gets identical policy gating and
-audit treatment to an HTTP call — they are the same code paths.
+audit treatment to an HTTP call, they are the same code paths.
 
 ## Transport
 
@@ -105,11 +105,11 @@ This is the simplest viable subset and matches Brain's existing
 is a post-MVP extension when there's demand for long-running tool calls
 or real-time resource updates.
 
-## Authentication and authorization
+## Authentication and Authorization
 
 Every MCP request must carry a Bearer JWT with `principal_type=agent`.
 The JWT is verified by the existing `authPlugin` upstream of the route
-handler — same code path as every other Brain endpoint.
+handler, same code path as every other Brain endpoint.
 
 After JWT verification, the MCP server runs four extra checks:
 
@@ -127,19 +127,19 @@ After JWT verification, the MCP server runs four extra checks:
    `payment_intent:propose`). The agent's JWT scopes must contain the
    tool's required set.
 4. **Tenant equality.** `agents.tenant_id` must match the JWT's
-   `tenant_id`. (Defense in depth — JWT verification already enforces
+   `tenant_id`. (Defense in depth, JWT verification already enforces
    this via the auth plugin.)
 
 For hot-path performance, on-chain scope-hash check (2) is cached for
 60 seconds per (agent_id, scope_hash) pair. Cache miss falls through to
 an `eth_call` against Base RPC.
 
-## Tool surface (v0.3)
+## Tool Surface (V0.3)
 
 Ten tools across four capability groups. Each tool name is an
 `{layer}.{noun}.{verb}` string; that's the convention.
 
-### `ledger:read` capability
+### `ledger:read` Capability
 
 | Tool                         | Maps to                            | Notes                             |
 | ---------------------------- | ---------------------------------- | --------------------------------- |
@@ -149,20 +149,20 @@ Ten tools across four capability groups. Each tool name is an
 | `ledger.obligations.list`    | `LedgerService.listObligations`    | Open obligations.                 |
 | `ledger.counterparties.list` | `LedgerService.listCounterparties` | Search by `q`.                    |
 
-### `wiki:read` capability
+### `wiki:read` Capability
 
 | Tool            | Maps to                   | Notes                                |
 | --------------- | ------------------------- | ------------------------------------ |
 | `wiki.question` | `askWiki` orchestrator    | Returns answer + cited evidence ids. |
 | `wiki.page.get` | `WikiPageService.getPage` | Markdown body of a page.             |
 
-### `raw:write` capability
+### `raw:write` Capability
 
 | Tool             | Maps to                                                           | Notes                            |
 | ---------------- | ----------------------------------------------------------------- | -------------------------------- |
 | `raw.contribute` | `IRawEvidenceService.ingest` with `source_type=agent_contributed` | Caps confidence at 0.5 per §3.2. |
 
-### `payment_intent:propose` and `agent:propose` capabilities
+### `payment_intent:propose` And `agent:propose` Capabilities
 
 | Tool                     | Maps to                       | Notes                                                  |
 | ------------------------ | ----------------------------- | ------------------------------------------------------ |
@@ -172,10 +172,10 @@ Ten tools across four capability groups. Each tool name is an
 A tool that the agent isn't scoped for is still **listed** (`tools/list`
 returns the full registry); attempting to **call** it returns
 `agent_scope_insufficient`. Listing without calling is information
-disclosure — but only of the surface, not the data — and it lets a
+disclosure, but only of the surface, not the data, and it lets a
 generic MCP client present a discoverable tool catalog.
 
-## Resource surface
+## Resource Surface
 
 Resources are read-only typed identifiers. Brain exposes:
 
@@ -188,31 +188,31 @@ Resources are read-only typed identifiers. Brain exposes:
 | `brain://wiki/pages/{slug}`                    | Wiki page (markdown body)          |
 | `brain://audit/events/{id}`                    | Audit event with inclusion proof   |
 
-Resources are syntactic sugar over the equivalent tools — useful for
+Resources are syntactic sugar over the equivalent tools, useful for
 clients that want stable URIs they can pin in their reasoning context.
 The same scope checks apply.
 
-## Prompt surface
+## Prompt Surface
 
 Prompts are templates the client can fill in and send back to
 `wiki.question`. Brain ships:
 
-- `wiki.question.cash_flow_summary` — "What is the cash flow for
+- `wiki.question.cash_flow_summary`, "What is the cash flow for
   {period}?"
-- `wiki.question.bills_due` — "What bills are due in the next {days}
+- `wiki.question.bills_due`, "What bills are due in the next {days}
   days?"
-- `wiki.question.spending_change` — "Why did spending change in
+- `wiki.question.spending_change`, "Why did spending change in
   {period}?"
-- `wiki.question.invoice_status` — "What's the status of invoice
+- `wiki.question.invoice_status`, "What's the status of invoice
   {invoice_number}?"
-- `wiki.question.subscriptions` — "Which subscriptions are active and
+- `wiki.question.subscriptions`, "Which subscriptions are active and
   cancelable?"
 
 Each prompt declares its argument list. The client interpolates and
 posts the result to the `wiki.question` tool. Prompts are convenience;
 the Q&A surface is the same.
 
-## Audit semantics
+## Audit Semantics
 
 Every tool call emits exactly one audit event:
 
@@ -246,7 +246,7 @@ rejection), the `agent.mcp.tool_called` event is still emitted with
 `outputs.ok = false` and the failure code. There is no path where an
 agent calls a tool and no audit event lands.
 
-## Capability negotiation
+## Capability Negotiation
 
 The `initialize` handshake response advertises:
 
@@ -269,7 +269,7 @@ The `initialize` handshake response advertises:
 notifications to the client. A client that asks for them gets a
 graceful empty response.
 
-## Failure-mode semantics
+## Failure-Mode Semantics
 
 Mapped onto the JSON-RPC error code space + Brain's error registry:
 
@@ -296,7 +296,7 @@ input schema: major bump (1.0.0) + a deprecation cycle described in the
 same standard as `/execution/*` legacy routes (Engineering Standards
 §4.3).
 
-## Testing strategy
+## Testing Strategy
 
 Unit tests at `services/mcp/src/**/*.test.ts`:
 
@@ -314,7 +314,7 @@ The recorded-prompt harness (Brain Engineering Standards §8.2) extends
 to MCP: each canonical agent scenario is a JSON-RPC transcript, replayed
 against frozen Ledger state, with the LLM response recorded.
 
-## Out of scope at v0.3
+## Out of Scope At v0.3
 
 - Streamable HTTP transport (SSE for server→client notifications).
 - Resource subscriptions.

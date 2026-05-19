@@ -26,7 +26,7 @@ try {
 }
 ```
 
-### Auth errors
+### Auth Errors
 
 | Code                 | Meaning                                                     | Fix                                                                                      |
 | -------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -35,7 +35,7 @@ try {
 | `AUTH_SIWX_INVALID`  | SIWX signature did not verify                               | Re-sign with the registered key                                                          |
 | `SCOPE_INSUFFICIENT` | Key or token lacks the required scope                       | Re-issue with the right scope, or use a different key                                    |
 
-### Tenant errors
+### Tenant Errors
 
 | Code                   | Meaning                                          | Fix                                                  |
 | ---------------------- | ------------------------------------------------ | ---------------------------------------------------- |
@@ -43,7 +43,7 @@ try {
 | `TENANT_SUSPENDED`     | The tenant is suspended                          | Contact support                                      |
 | `TENANT_ACCESS_DENIED` | The caller is authorized but not for this tenant | Check key scope                                      |
 
-### Source errors
+### Source Errors
 
 | Code                        | Meaning                                           | Fix                                   |
 | --------------------------- | ------------------------------------------------- | ------------------------------------- |
@@ -51,7 +51,7 @@ try {
 | `SOURCE_RATE_LIMIT`         | Upstream source returned 429                      | Wait and retry; check upstream status |
 | `SOURCE_CREDENTIAL_INVALID` | Credentials for the upstream source were rejected | Reconnect the source                  |
 
-### Policy and decision errors
+### Policy and Decision Errors
 
 | Code                | Meaning                                       | Fix                                 |
 | ------------------- | --------------------------------------------- | ----------------------------------- |
@@ -59,7 +59,7 @@ try {
 | `POLICY_DENIED`     | Action violates the active policy             | Read `details` for which rule fired |
 | `POLICY_ESCALATE`   | Action requires human approval before execute | Route to your approval UI           |
 
-### Agent and scope errors
+### Agent and Scope Errors
 
 | Code                  | Meaning                                      | Fix                                            |
 | --------------------- | -------------------------------------------- | ---------------------------------------------- |
@@ -68,7 +68,7 @@ try {
 | `SCOPE_HASH_MISMATCH` | JWT `scope_hash` doesn't match on-chain hash | Re-sign with current scope; could mean revoked |
 | `SCOPE_EXPIRED`       | Scope grant's `notAfter` window has passed   | Renew the grant                                |
 
-### Action errors
+### Action Errors
 
 | Code                      | Meaning                                                        | Fix                                |
 | ------------------------- | -------------------------------------------------------------- | ---------------------------------- |
@@ -78,7 +78,7 @@ try {
 | `LIMITS_EXCEEDED`         | Account-level per-tx or per-day limit exceeded                 | Adjust limits in the Console       |
 | `IDEMPOTENCY_KEY_REUSED`  | The same idempotency key was used for a different request body | Generate a new key                 |
 
-### Pre-execution gate failures
+### Pre-Execution Gate Failures
 
 | Code                           | Meaning                                                           |
 | ------------------------------ | ----------------------------------------------------------------- |
@@ -93,7 +93,7 @@ try {
 
 [**→ The pre-execution gate**](../protocol/the-pre-execution-gate.md)
 
-### Rate limiting
+### Rate Limiting
 
 | Code           | Detail                                          |
 | -------------- | ----------------------------------------------- |
@@ -101,7 +101,7 @@ try {
 
 The response includes a `Retry-After` header (seconds). Sandbox limits are 60 rpm, developer 600 rpm, production 6,000 rpm, enterprise custom.
 
-### Validation errors
+### Validation Errors
 
 | Code                     | Meaning                                                                 |
 | ------------------------ | ----------------------------------------------------------------------- |
@@ -109,7 +109,7 @@ The response includes a `Retry-After` header (seconds). Sandbox limits are 60 rp
 | `MISSING_REQUIRED_FIELD` | A required field is absent                                              |
 | `INVALID_CURSOR`         | The pagination cursor is malformed or expired                           |
 
-### Server errors
+### Server Errors
 
 | Code               | Meaning                           | Fix                                                       |
 | ------------------ | --------------------------------- | --------------------------------------------------------- |
@@ -117,7 +117,7 @@ The response includes a `Retry-After` header (seconds). Sandbox limits are 60 rp
 | `UPSTREAM_TIMEOUT` | A downstream source timed out     | Retry with backoff                                        |
 | `MAINTENANCE_MODE` | Brain is in scheduled maintenance | Check [status.brain.fi](https://status.brain.fi)          |
 
-### MCP-specific JSON-RPC codes
+### MCP-Specific JSON-RPC Codes
 
 | Code     | Meaning                                   |
 | -------- | ----------------------------------------- |
@@ -131,7 +131,7 @@ The response includes a `Retry-After` header (seconds). Sandbox limits are 60 rp
 | `-32602` | Invalid params                            |
 | `-32603` | Internal error                            |
 
-### Getting help
+### Getting Help
 
 | Channel                                        | Best for                                       |
 | ---------------------------------------------- | ---------------------------------------------- |

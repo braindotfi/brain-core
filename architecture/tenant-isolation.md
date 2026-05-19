@@ -1,8 +1,8 @@
-# Tenant isolation
+# Tenant Isolation
 
 Each tenant has its own logical instance of every layer, with hard isolation at the database, KMS, and policy boundaries. **Cross-tenant access is impossible by construction**, not by application-level access control.
 
-### Isolation by layer
+### Isolation by Layer
 
 | Layer      | Isolation Mechanism                                                                           |
 | ---------- | --------------------------------------------------------------------------------------------- |
@@ -13,7 +13,7 @@ Each tenant has its own logical instance of every layer, with hard isolation at 
 | **Agent**  | Scope grants are per-tenant. An agent active for tenant A has zero visibility into tenant B.  |
 | **Audit**  | Per-tenant hash chains. Per-tenant Merkle trees. Per-tenant anchored roots.                   |
 
-### Encryption hierarchy
+### Encryption Hierarchy
 
 ```
 Azure Key Vault
@@ -30,7 +30,7 @@ Azure Key Vault
 | **DEK wrapping**            | Each DEK wrapped by the tenant KEK. Compromise of one tenant cannot decrypt another              |
 | **Compromise blast radius** | A single compromised DEK exposes only the data encrypted with it, never the KEK or other tenants |
 
-### Customer-managed KMS
+### Customer-Managed KMS
 
 Enterprise tenants can bring their own KEK in their own KMS account.
 
@@ -41,7 +41,7 @@ Enterprise tenants can bring their own KEK in their own KMS account.
 | **Tenant can revoke decryption** | Via support                   | Instantly, by removing Brain's grant   |
 | **Compliance posture**           | SOC 2 + standard isolation    | "Brain cannot read our data" guarantee |
 
-### RBAC across humans and agents
+### RBAC Across Humans and Agents
 
 Every API call is scoped by tenant, role, and policy. Agents are subjects in the same RBAC graph as humans. There is no special case for agent calls.
 
@@ -63,7 +63,7 @@ ALLOW / ESCALATE / DENY
 | **Internal agent** | Service principal ID | Service credentials       |
 | **External agent** | Agent address        | SIWX (EIP-4361 over Base) |
 
-### On-chain isolation
+### On-Chain Isolation
 
 On-chain commitments are also tenant-isolated.
 
@@ -78,7 +78,7 @@ On-chain commitments are also tenant-isolated.
 Cross-tenant access is impossible at the protocol level, not just the application level. There is no "share data with another tenant" code path because there is no code path that accepts a foreign `tenantId`.
 {% endhint %}
 
-### Data minimisation
+### Data Minimisation
 
 Brain ingests only what enabled capabilities require. Revoking a source triggers retention and deletion workflows.
 
@@ -89,6 +89,6 @@ Brain ingests only what enabled capabilities require. Revoking a source triggers
 | **Retention window expires** | Raw artifacts deleted (Azure Blob lifecycle); Ledger records marked closed; Wiki references redacted |
 | **Tenant deletion request**  | Full tenant erasure, including off-chain DEKs (which renders any persisted ciphertext unreadable)    |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛡️ Security and compliance</strong></td><td>Non-negotiable principles, compliance posture.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr><tr><td><strong>⚠️ Risks and mitigations</strong></td><td>Known risks and how Brain handles them.</td><td><a href="risks-and-mitigations.md">risks-and-mitigations.md</a></td><td></td></tr></tbody></table>

@@ -2,7 +2,7 @@
 
 Natural-language and structured access to the tenant's memory graph.
 
-### Ask a question
+### Ask a Question
 
 ```http
 POST /v1/wiki/question
@@ -34,7 +34,7 @@ Content-Type: application/json
 Every Wiki answer carries provenance. Follow `citations[]` back to Ledger records and Raw artifacts. There is no claim Brain cannot back up with a source.
 {% endhint %}
 
-### Search entities
+### Search Entities
 
 ```http
 POST /v1/wiki/search
@@ -62,7 +62,7 @@ Content-Type: application/json
 }
 ```
 
-### Get an entity
+### Get an Entity
 
 ```http
 GET /v1/wiki/entities/{id}?tenantId=acme
@@ -90,14 +90,14 @@ Authorization: Bearer <token>
 }
 ```
 
-### Walk relationships
+### Walk Relationships
 
 ```http
 GET /v1/wiki/entities/{id}/relationships?tenantId=acme
 Authorization: Bearer <token>
 ```
 
-### Semantic search
+### Semantic Search
 
 For free-text queries that don't fit entity types:
 
@@ -126,7 +126,7 @@ Content-Type: application/json
 }
 ```
 
-### Subscribe to updates
+### Subscribe to Updates
 
 ```
 wss://api.brain.fi/v1/wiki/stream?tenantId=acme&token=<bearer>
@@ -134,7 +134,7 @@ wss://api.brain.fi/v1/wiki/stream?tenantId=acme&token=<bearer>
 
 Events: `entity.updated`, `narrative.added`, `summary.refreshed`.
 
-### Provenance fields
+### Provenance Fields
 
 | Field            | Description                                         |
 | ---------------- | --------------------------------------------------- |
@@ -142,6 +142,6 @@ Events: `entity.updated`, `narrative.added`, `summary.refreshed`.
 | `policy_version` | Active policy version when the query ran            |
 | `audit_event_id` | Audit event under which the call was logged         |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🧠 The Wiki</strong></td><td>The conceptual model.</td><td><a href="../protocol/the-wiki.md">the-wiki.md</a></td><td></td></tr></tbody></table>

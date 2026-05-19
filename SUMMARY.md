@@ -1,20 +1,20 @@
-# Table of contents
+# Table of Contents
 
 - [Welcome to Brain 🧠](README.md)
 
 ## Introduction
 
 - [Quickstart](introduction/quickstart.md)
-- [The Wiki layer vs. RAG and graph](introduction/the-wiki-layer-vs.-rag-and-graph.md)
+- [The Wiki Layer vs. RAG and Graph](introduction/the-wiki-layer-vs.-rag-and-graph.md)
 
 ## Build
 
 - [Overview](build/overview.md)
-- [Read a financial picture](build/read-a-financial-picture.md)
-- [Pay an invoice safely](build/pay-an-invoice-safely.md)
-- [Give an agent a spending limit](build/give-an-agent-a-spending-limit.md)
-- [Audit every action](build/audit-every-action.md)
-- [Let an external agent in](build/let-an-external-agent-in.md)
+- [Read a Financial Picture](build/read-a-financial-picture.md)
+- [Pay an Invoice Safely](build/pay-an-invoice-safely.md)
+- [Give an Agent a Spending Limit](build/give-an-agent-a-spending-limit.md)
+- [Audit Every Action](build/audit-every-action.md)
+- [Let an External Agent In](build/let-an-external-agent-in.md)
 
 ## Concepts
 
@@ -27,26 +27,26 @@
 ## Protocol
 
 - [Overview](protocol/overview.md)
-- [The six-layer stack](protocol/the-six-layer-stack.md)
+- [The Six-Layer Stack](protocol/the-six-layer-stack.md)
 - [Raw and Ledger](protocol/raw-and-ledger.md)
 - [The Wiki](protocol/the-wiki.md)
-- [Policy and permissioning](protocol/policy-and-permissioning.md)
+- [Policy and Permissioning](protocol/policy-and-permissioning.md)
 - [Agents](protocol/agents.md)
-- [Payment intents](protocol/payment-intents.md)
-- [The pre-execution gate](protocol/the-pre-execution-gate.md)
-- [Audit and proof](protocol/audit-and-proof.md)
-- [Agent contributions](protocol/agent-contributions.md)
+- [Payment Intents](protocol/payment-intents.md)
+- [The Pre-Execution Gate](protocol/the-pre-execution-gate.md)
+- [Audit and Proof](protocol/audit-and-proof.md)
+- [Agent Contributions](protocol/agent-contributions.md)
 
 ## Architecture
 
-- [System overview](architecture/system-overview.md)
-- [Data flow](architecture/data-flow.md)
-- [Write paths](architecture/write-paths.md)
-- [Tenant isolation](architecture/tenant-isolation.md)
-- [Security and compliance](architecture/security-and-compliance.md)
-- [Risks and mitigations](architecture/risks-and-mitigations.md)
+- [System Overview](architecture/system-overview.md)
+- [Data Flow](architecture/data-flow.md)
+- [Write Paths](architecture/write-paths.md)
+- [Tenant Isolation](architecture/tenant-isolation.md)
+- [Security and Compliance](architecture/security-and-compliance.md)
+- [Risks and Mitigations](architecture/risks-and-mitigations.md)
 
-## API reference
+## API Reference
 
 - [Overview](api-reference/overview.md)
 - [Authentication](api-reference/authentication.md)
@@ -57,24 +57,24 @@
 - [Agents API](api-reference/agents-api.md)
 - [Actions API](api-reference/actions-api.md)
 - [Audit API](api-reference/audit-api.md)
-- [MCP server (API reference)](api-reference/mcp-server-api-reference.md)
+- [MCP Server (API Reference)](api-reference/mcp-server-api-reference.md)
 
-## MCP server
+## MCP Server
 
 - [Overview](mcp-server/overview.md)
 - [Tools](mcp-server/tools.md)
 - [Resources](mcp-server/resources.md)
 - [Prompts](mcp-server/prompts.md)
-- [MCP authentication](mcp-server/mcp-authentication.md)
+- [MCP Authentication](mcp-server/mcp-authentication.md)
 
-## Smart contracts
+## Smart Contracts
 
 - [Overview](smart-contracts/overview.md)
 - [BrainAuditAnchor](smart-contracts/brainauditanchor.md)
 - [BrainPolicyRegistry](smart-contracts/brainpolicyregistry.md)
 - [BrainSmartAccount](smart-contracts/brainsmartaccount.md)
 - [BrainMCPAgentRegistry](smart-contracts/brainmcpagentregistry.md)
-- [Escrow and x402](smart-contracts/escrow-and-x402.md)
+- [Escrow and X402](smart-contracts/escrow-and-x402.md)
 
 ## Resources
 
@@ -89,6 +89,6 @@
 
 ## Legal
 
-- [Privacy policy](legal/privacy-policy.md)
-- [Terms of service](legal/terms-of-service.md)
+- [Privacy Policy](legal/privacy-policy.md)
+- [Terms of Service](legal/terms-of-service.md)
 - [Disclaimer](legal/disclaimer.md)

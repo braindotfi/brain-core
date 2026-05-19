@@ -2,7 +2,7 @@
 
 Brain's MCP surface exposes **10 tools** across four capability groups. Each tool requires a specific scope, granted to the agent via on-chain registration in `BrainMCPAgentRegistry`.
 
-### At a glance
+### At a Glance
 
 | Tool                         | Group          | Required Scope           | Mutates State                        |
 | ---------------------------- | -------------- | ------------------------ | ------------------------------------ |
@@ -21,7 +21,7 @@ Brain's MCP surface exposes **10 tools** across four capability groups. Each too
 **There is no `payment_intent.execute` tool.** External agents propose; humans (or internal Brain workers under an `auto` policy decision) execute. The 13-step pre-execution gate is the only path to settlement.
 {% endhint %}
 
-### Ledger reads
+### Ledger Reads
 
 #### `ledger.account.get`
 
@@ -93,7 +93,7 @@ List or search counterparties.
 | `type`            | string | Optional: `merchant`, `vendor`, `customer`, `employer`, `bank`, `wallet`, `exchange`, `tax_authority`, `other` |
 | `verified_status` | string | Optional                                                                                                       |
 
-### Wiki reads
+### Wiki Reads
 
 #### `wiki.question`
 
@@ -133,7 +133,7 @@ Fetch a Wiki page by slug or id. Eight page types are available: `/accounts/{id}
 
 The response includes the markdown body, structured sections (Current Truth, Key Linked Entities, Recent Activity, Open Questions, Risk Notes, Timeline, Evidence Links), and the `source_revision` checksum at render time.
 
-### Raw contribute
+### Raw Contribute
 
 #### `raw.contribute`
 
@@ -156,7 +156,7 @@ Confidence on derived Ledger rows is capped at **0.5** for `provenance=agent_con
 
 [**→ Agent Contributions**](../protocol/agent-contributions.md)
 
-### PaymentIntent propose
+### PaymentIntent Propose
 
 #### `payment_intent.propose`
 
@@ -178,7 +178,7 @@ Response includes the `payment_intent_id`, the `PolicyDecision`, and the next-st
 
 [**→ Payment Intents**](../protocol/payment-intents.md)
 
-### Agent action propose
+### Agent Action Propose
 
 #### `agent.action.propose`
 
@@ -194,7 +194,7 @@ Propose a non-financial action. Used by reconciliation, anomaly, or any agent ac
 
 The proposal goes through Policy and lands as a `proposals` row. Approval and dispatch follow the standard flow.
 
-### Per-call scope enforcement
+### Per-Call Scope Enforcement
 
 Even with the right top-level scope, each tool call is scope-checked at invocation. A token with `ledger:read` cannot call `wiki.question`. A token with `wiki:read` cannot call `raw.contribute`. The MCP layer rejects scope mismatches with JSON-RPC error `-32004` (scope insufficient).
 
@@ -202,6 +202,6 @@ Even with the right top-level scope, each tool call is scope-checked at invocati
 
 Mutating tools (`raw.contribute`, `payment_intent.propose`, `agent.action.propose`) require an `idempotency_key`. The key is per-tool, per-tenant, per-agent. Brain caches the response for 24 hours and returns the cached result on retry.
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📦 Resources</strong></td><td>Address Ledger and Raw rows by URI.</td><td><a href="resources.md">resources.md</a></td><td></td></tr><tr><td><strong>💬 Prompts</strong></td><td>Canned prompts for common agent loops.</td><td><a href="prompts.md">prompts.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT and on-chain scope verification.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>

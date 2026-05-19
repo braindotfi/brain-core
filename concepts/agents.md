@@ -14,7 +14,7 @@ In Brain, an **agent** is any non-human caller that proposes or executes actions
 
 All three hit the same endpoints, run through Policy, and land in the Audit log.
 
-### Internal vs external
+### Internal vs External
 
 You can use Brain in two ways: **build agents on top of it** or **let other people's agents in**.
 
@@ -29,7 +29,7 @@ Most apps start with internal agents. External agents become useful when:
 * You're building a marketplace where tenants pick agents
 * You're integrating a third-party assistant that should see a tenant's financial state
 
-### How agents act
+### How Agents Act
 
 Whether internal or external, the lifecycle is the same:
 
@@ -43,7 +43,7 @@ Whether internal or external, the lifecycle is the same:
 
 An agent proposes; Brain decides. Agents do not bypass Policy.
 
-### What external agents can do
+### What External Agents Can Do
 
 Tenant-granted scopes determine what an external agent sees and can do.
 
@@ -61,7 +61,7 @@ A tenant can grant any subset. Unused scopes don't appear in the agent's availab
 External agents can **propose** but cannot **execute**. Execution is reserved for internal Brain workers running under tenant policy. This is the safety guarantee that makes external agents safe to authorize.
 {% endhint %}
 
-### How external agents stay accountable
+### How External Agents Stay Accountable
 
 Three properties combine to make external agents safe:
 
@@ -73,11 +73,11 @@ Three properties combine to make external agents safe:
 
 If an agent goes rogue, you turn it off. The audit log shows exactly what it did, when, and under whose authorization.
 
-### How internal agents stay accountable
+### How Internal Agents Stay Accountable
 
 Same audit log, same Policy gating. Your server keys are scoped (you can issue narrow keys per service), and every call carries the key fingerprint. Compromised keys can be revoked, and the trail of what they did before revocation is recoverable.
 
-### What "MCP-compatible" means
+### What "MCP-Compatible" Means
 
 [MCP](https://modelcontextprotocol.io) is the open standard for connecting agents to tools and data sources. Brain runs an MCP server at `mcp.brain.fi`. Any agent built on an MCP-compatible runtime can connect.
 

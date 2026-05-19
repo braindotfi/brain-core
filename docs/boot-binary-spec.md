@@ -1,22 +1,22 @@
-# Boot binary specification — `services/api/src/main.ts`
+# Boot Binary Specification, `services/api/src/main.ts`
 
 Author: feature/mcp-server (post-merge to `main`)
-Status: spec — implementation deferred to next branch
+Status: spec, implementation deferred to next branch
 Audience: the engineer (likely the CTO) who will close gap #1 from
 `docs/v0.3-deliverables.md` so a live PoC can run.
 
-## Why this exists
+## Why This Exists
 
-The repo today has six service workspaces — `@brain/raw`,
+The repo today has six service workspaces, `@brain/raw`,
 `@brain/ledger`, `@brain/wiki`, `@brain/policy`, `@brain/execution`,
-`@brain/audit` — plus the MCP server `@brain/mcp`. Each exports a
+`@brain/audit`, plus the MCP server `@brain/mcp`. Each exports a
 `buildXApp(opts)` Fastify factory that mounts that layer's routes
 behind a shared auth / error / request-id plugin stack.
 
 **Nothing composes them.** `services/api/src/index.ts` is a stub that
 exports a service-name constant. There is no `main.ts`, no `bin`
 entry, no Dockerfile target, and no boot site that supplies the
-optional `registerMcp` callback to `buildExecutionApp` — which means
+optional `registerMcp` callback to `buildExecutionApp`, which means
 every deployed instance returns 404 on `POST /agents/mcp`.
 
 This spec describes the binary that closes that gap. After it lands:
@@ -26,9 +26,9 @@ This spec describes the binary that closes that gap. After it lands:
 - `infra/main.tf` Container Apps have a real image to run.
 - `pnpm install && pnpm run typecheck` exercises every workspace
   end-to-end (incidentally surfacing gap #4 from the deliverables
-  report — typecheck has never been run).
+  report, typecheck has never been run).
 
-## Architecture choice
+## Architecture Choice
 
 Single-process Fastify on a single port. Each layer mounts its
 routes as a Fastify plugin under the root app. Shared plugins
@@ -57,7 +57,7 @@ is post-MVP and changes nothing about the wire contract. Each
 layer's routes are encapsulated, so splitting later is a packaging
 change, not a re-architecture.
 
-## Required refactor: `register*Routes` exports per service
+## Required Refactor: `register*Routes` Exports per Service
 
 Today each service's `server.ts` exports only `buildXApp(opts)`,
 which constructs _its own_ Fastify instance with shared plugins.
@@ -68,14 +68,14 @@ pattern.
 For each of the six service workspaces, add one new export:
 
 ```ts
-// services/<layer>/src/server.ts (NEW — additive)
+// services/<layer>/src/server.ts (NEW, additive)
 export async function registerXRoutes(
   app: FastifyInstance,
   deps: XDeps,
 ): Promise<void> {
   // exact body of the existing route registration calls in
   // buildXApp, minus any shared-plugin (.register(authPlugin), etc.)
-  // calls — those are owned by the root.
+  // calls, those are owned by the root.
   app.get("/x/foo", ...);
   app.post("/x/bar", ...);
   // ...
@@ -101,9 +101,9 @@ Mechanical refactor. ~30 LOC per service × 6 services = ~180 LOC.
 **No behavior change for existing tests.**
 
 `services/execution/src/server.ts` already has a private
-`registerExecutionRoutes(app, deps)` — just export it.
+`registerExecutionRoutes(app, deps)`, just export it.
 
-## Boot binary: `services/api/src/main.ts`
+## Boot Binary: `services/api/src/main.ts`
 
 This is the new binary. ~200 LOC, all wiring.
 
@@ -170,7 +170,7 @@ async function main(): Promise<void> {
     pool,
     audit,
     resolveRole: async (id) => {
-      // lookup against agents / users tables — TODO
+      // lookup against agents / users tables, TODO
       return "unknown";
     },
   });
@@ -210,7 +210,7 @@ async function main(): Promise<void> {
     raw,
     paymentIntents,
     audit,
-    // agentService: optional — soft-degrades to audit-only stub
+    // agentService: optional, soft-degrades to audit-only stub
   });
 
   // -- Fastify root --------------------------------------------------
@@ -318,7 +318,7 @@ export function loadConfig(): AppConfig {
 }
 ```
 
-## Two adapters this binary needs
+## Two Adapters This Binary Needs
 
 These don't exist yet and are part of the boot binary work.
 
@@ -350,7 +350,7 @@ export function buildRawEvidenceService(deps: {
 ### `services/api/src/adapters/onchain-scope.ts`
 
 `McpAuthVerifier` accepts an `OnchainScopeChecker` dep. No concrete
-implementation exists yet — Stage 5 only deployed
+implementation exists yet, Stage 5 only deployed
 `BrainMCPAgentRegistry.sol`; nobody wired the off-chain client.
 Implement using ethers:
 
@@ -382,7 +382,7 @@ export function buildOnchainScopeChecker(opts: {
 }
 ```
 
-## `services/api/package.json` additions
+## `services/api/package.json` Additions
 
 ```json
 {
@@ -412,7 +412,7 @@ export function buildOnchainScopeChecker(opts: {
 }
 ```
 
-## Dockerfile (project root)
+## Dockerfile (Project Root)
 
 ```dockerfile
 FROM node:22-alpine AS build
@@ -436,7 +436,7 @@ HEALTHCHECK --interval=30s --timeout=3s \
 CMD ["node", "services/api/dist/main.js"]
 ```
 
-## How to verify locally
+## How to Verify Locally
 
 ```bash
 pnpm install
@@ -480,27 +480,27 @@ curl -X POST localhost:3000/agents/mcp \
 # → JSON-RPC InitializeResult with protocolVersion=2024-11-05
 ```
 
-## What this binary does NOT do
+## What This Binary Does NOT Do
 
 Out of scope; tracked separately:
 
 1. **Run the Python `services/agents/` workers.** Those are BullMQ
    consumers launched separately by `uv run` from the
    `services/agents/` workspace. Today the workspace is a stub
-   (`brain_agents/__init__.py` only) — closing that gap is a
+   (`brain_agents/__init__.py` only), closing that gap is a
    different ticket.
 2. **Apply migrations on boot.** Run `tools/migrate` separately.
    Auto-migrate-on-boot is a per-environment policy choice, not a
    binary concern.
 3. **Run the audit anchor publisher.** That's a periodic cron job
-   (hourly) deployed as its own Container App job — see
+   (hourly) deployed as its own Container App job, see
    `services/audit/src/publisher.ts`. The shared Postgres pool is
    the only thing they share.
 4. **Wire real Plaid / NetSuite / Gmail / Alchemy credentials.**
    Adapters exist; live credentials are a deployment-environment
    concern, not a binary concern.
 
-## Effort estimate
+## Effort Estimate
 
 | Step                                                           | LOC      | Time                                |
 | -------------------------------------------------------------- | -------- | ----------------------------------- |
@@ -515,28 +515,28 @@ Out of scope; tracked separately:
 | Surface and fix typecheck errors that show up                  | n/a      | **0–2 days unknown**                |
 | **Total**                                                      | **~600** | **~3 days** plus typecheck-fix tail |
 
-The "fix typecheck errors that show up" line is honest — the v0.3
+The "fix typecheck errors that show up" line is honest, the v0.3
 work has never been compiled. There may be import path issues,
 missing exports, signature drift across the seven workspaces. None
 of those bugs are deep, but they take real time to wade through.
 
-## After this binary lands
+## After This Binary Lands
 
 1. `pnpm install && pnpm run typecheck` runs cleanly across all
-   workspaces — closes gap #4 from `docs/v0.3-deliverables.md`.
-2. `POST /agents/mcp` is live in any deployed instance — closes
+   workspaces, closes gap #4 from `docs/v0.3-deliverables.md`.
+2. `POST /agents/mcp` is live in any deployed instance, closes
    gap #3 of the MCP feature's "known limitations".
-3. `infra/main.tf`'s Container App can target this binary —
+3. `infra/main.tf`'s Container App can target this binary , 
    gap #4 of "live PoC blockers" (no deployed instance) is half
    closed.
 4. Every other PoC step that needs "an actual API to talk to"
    becomes reachable. Specifically: an external MCP client
    (Claude Desktop with our connector, or a custom agent) can
-   complete the canonical PoC story — read ledger, identify a
+   complete the canonical PoC story, read ledger, identify a
    bill, contribute evidence to Raw, propose a PaymentIntent,
    §6 gate evaluates, audit chain captures everything.
 
-## Suggested branch + commit structure
+## Suggested Branch + Commit Structure
 
 Topic branch: `feature/api-boot-binary` off `main`.
 

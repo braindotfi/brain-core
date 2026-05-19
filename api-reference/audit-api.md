@@ -2,7 +2,7 @@
 
 Query audit events and pull Merkle proofs anchored to `BrainAuditAnchor` on Base.
 
-### Get an event
+### Get an Event
 
 ```http
 GET /v1/audit/{event_id}
@@ -27,7 +27,7 @@ Response:
 }
 ```
 
-### Pull a Merkle proof
+### Pull a Merkle Proof
 
 ```http
 GET /v1/audit/{event_id}/proof
@@ -47,7 +47,7 @@ Response:
 }
 ```
 
-### Verifying a proof
+### Verifying a Proof
 
 A counterparty can verify a proof in three ways.
 
@@ -86,7 +86,7 @@ Response:
 The public verifier requires no authentication. Anyone with a proof bundle can verify it.
 {% endhint %}
 
-### List events
+### List Events
 
 ```http
 GET /v1/audit?tenantId=acme&from=2025-01-01&to=2025-12-31&event_type=action.executed
@@ -95,7 +95,7 @@ Authorization: Bearer <token>
 
 Filters: `tenantId`, `event_type`, `actor`, `from`, `to`, `cursor`, `limit`.
 
-### Stream events
+### Stream Events
 
 ```
 WSS /v1/audit/stream?tenantId=acme
@@ -104,7 +104,7 @@ Authorization: Bearer <token>
 
 Subscribe to live events as they are written to the hash chain. Useful for SIEM integration and real-time monitoring.
 
-### Compliance exports
+### Compliance Exports
 
 ```http
 POST /v1/audit/exports
@@ -151,6 +151,6 @@ GET /v1/audit/exports/{export_id}
 | `financial_controls` | Approval chains, segregation-of-duties evidence |
 | `raw_jsonl`          | Full event log as JSON Lines                    |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📜 Audit Concepts</strong></td><td>How the hash chain and Merkle anchoring work.</td><td><a href="../protocol/audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>📜 BrainAuditAnchor</strong></td><td>The on-chain anchor contract.</td><td><a href="../smart-contracts/brainauditanchor.md">brainauditanchor.md</a></td><td></td></tr></tbody></table>

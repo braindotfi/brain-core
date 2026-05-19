@@ -2,11 +2,11 @@
 description: Pull a verifiable trail of what your agent (or user) did.
 ---
 
-# Audit every action
+# Audit Every Action
 
 Goal: pull a complete, tamper-evident record of every meaningful event for a tenant. Useful for compliance review, customer disputes, internal reporting, and proving to auditors that the right thing happened.
 
-### Reading the trail
+### Reading the Trail
 
 ```typescript
 const events = await brain.audit.list("acme", {
@@ -31,7 +31,7 @@ events.data.forEach((e) => {
 | `action.executed`     | An action settled on its rail         |
 | `audit.anchored`      | A Merkle root was anchored on Base    |
 
-### Verifying a specific action
+### Verifying a Specific Action
 
 For any action, you can pull a Merkle proof verifiable on-chain.
 
@@ -57,7 +57,7 @@ bool valid = brainAuditAnchor.verify(
 );
 ```
 
-### Pulling the trace for one action
+### Pulling the Trace for One Action
 
 Trace IDs link every event tied to one action.
 
@@ -77,7 +77,7 @@ console.log(trace.events);
 
 You can paste a trace ID into the Console to see the same view rendered visually.
 
-### Exporting for compliance review
+### Exporting for Compliance Review
 
 For SOC 2, ISO 27001, or any structured review, export the log as a file.
 
@@ -100,7 +100,7 @@ console.log(status.downloadUrl);  // signed URL valid for 24 hours
 
 The export contains every event in the range plus the Merkle proofs needed to verify any of them after the fact.
 
-### Streaming events live
+### Streaming Events Live
 
 Subscribe to the audit stream as events happen.
 
@@ -115,7 +115,7 @@ const unsubscribe = brain.audit.subscribe("acme", {
 
 Or use webhooks if you'd rather not hold an open connection.
 
-### Filtering by actor
+### Filtering by Actor
 
 Useful for "what did agent X do today?"
 
@@ -135,7 +135,7 @@ const trail = await brain.audit.list("acme", {
 });
 ```
 
-### What you don't have to worry about
+### What You Don't Have to Worry About
 
 | Concern               | Why Brain handles it                                                            |
 | --------------------- | ------------------------------------------------------------------------------- |
@@ -144,6 +144,6 @@ const trail = await brain.audit.list("acme", {
 | **Reorg safety**      | Reads wait for finality; cross-batch references catch dropped anchors           |
 | **Privacy**           | Only Merkle roots and hashed tenant IDs are on-chain; no payload data leaks     |
 
-### What's next
+### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔌 External agent</strong></td><td>Authorize an MCP-compatible agent and audit its actions the same way.</td><td><a href="let-an-external-agent-in.md">let-an-external-agent-in.md</a></td><td></td></tr><tr><td><strong>📦 Audit and Proof</strong></td><td>How the audit trail works underneath.</td><td><a href="audit-every-action.md">audit-every-action.md</a></td><td></td></tr></tbody></table>
