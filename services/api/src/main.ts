@@ -86,7 +86,8 @@ import {
   makeSandboxResolveCounterparty,
 } from "./sandbox/resolvers.js";
 
-import { BrainMcpServer, FakeAuthVerifier, registerMcpRoute } from "@brain/mcp";
+import { BrainMcpServer, FakeAuthVerifier, McpAuthVerifier, registerMcpRoute } from "@brain/mcp";
+import { createViemScopeChecker } from "./mcp/viemScopeChecker.js";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps } from "@brain/wiki";
@@ -335,6 +336,9 @@ async function main(): Promise<void> {
   if (cfg.BRAIN_DEMO_MODE && cfg.NODE_ENV === "production") {
     throw new Error("BRAIN_DEMO_MODE=true is not allowed in NODE_ENV=production");
   }
+  if (cfg.BRAIN_MCP_DEV_AUTH_BYPASS && cfg.NODE_ENV === "production") {
+    throw new Error("BRAIN_MCP_DEV_AUTH_BYPASS=true is not allowed in NODE_ENV=production");
+  }
 
   // Single source of truth for the demo HS256 secret. Used by both JwtVerifier
   // (to accept demo tokens) and JwtSigner (to mint them). Having it in two
@@ -474,16 +478,23 @@ async function main(): Promise<void> {
   };
 
   // -- MCP server -----------------------------------------------------
-  // TODO: swap FakeAuthVerifier for McpAuthVerifier with a real onchain
-  //       checker when BRAIN_MCP_DEV_AUTH_BYPASS is false.
-  const mcpAuthVerifier = new FakeAuthVerifier({
-    id: "agent_00000000000000000000000000",
-    tenant_id: "tnt_00000000000000000000000000",
-    state: "active",
-    scope_hash: null,
-    onchain_address: null,
-    role: "dev",
-  });
+  const mcpAuthVerifier =
+    cfg.BRAIN_MCP_DEV_AUTH_BYPASS && cfg.NODE_ENV !== "production"
+      ? new FakeAuthVerifier({
+          id: "agent_00000000000000000000000000",
+          tenant_id: "tnt_00000000000000000000000000",
+          state: "active",
+          scope_hash: null,
+          onchain_address: null,
+          role: "dev",
+        })
+      : new McpAuthVerifier(
+          pool,
+          createViemScopeChecker({
+            rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+            contractAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
+          }),
+        );
 
   const mcpServer = new BrainMcpServer({
     auth: mcpAuthVerifier,
