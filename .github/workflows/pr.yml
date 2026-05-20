@@ -97,6 +97,9 @@ jobs:
         with:
           version: stable
 
+      - name: Install forge dependencies
+        run: forge install foundry-rs/forge-std
+
       - name: forge fmt check
         run: forge fmt --check
         continue-on-error: true # no contracts yet — placeholder until stage-5
