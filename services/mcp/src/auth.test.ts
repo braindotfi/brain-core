@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
+import type * as BrainShared from "@brain/shared";
 
 // Must be declared before the module under test is imported so the mock
 // intercepts the withTenantScope call inside McpAuthVerifier.loadAgent.
 vi.mock("@brain/shared", async (importActual) => {
-  const actual = await importActual<typeof import("@brain/shared")>();
+  const actual = await importActual<typeof BrainShared>();
   return {
     ...actual,
     withTenantScope: vi.fn(async (_pool: unknown, _tenantId: unknown, fn: (c: unknown) => Promise<unknown>) =>

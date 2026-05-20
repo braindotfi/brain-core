@@ -67,6 +67,7 @@ export const BRAIN_ERROR_CODES = [
 
   // MCP / Agent registry
   "agent_not_registered",
+  "agent_scope_hash_missing",
   "agent_scope_hash_mismatch",
 
   // Execution
@@ -195,6 +196,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
 
   // 401 — MCP / on-chain agent
   agent_not_registered: 401,
+  agent_scope_hash_missing: 401,
   agent_scope_hash_mismatch: 401,
 
   // 404 — not found / tombstoned
