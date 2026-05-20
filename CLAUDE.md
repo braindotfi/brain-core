@@ -24,12 +24,12 @@ PRs produced with AI assistance must be labeled `ai-assisted` (§13.4).
 
 | #   | Layer  | Workspace                                 | Owns                                                 |
 | --- | ------ | ----------------------------------------- | ---------------------------------------------------- |
-| 1   | Raw    | `services/raw` (`@brain/raw`)             | Source evidence, immutable ingested payloads        |
+| 1   | Raw    | `services/raw` (`@brain/raw`)             | Source evidence, immutable ingested payloads         |
 | 2   | Ledger | `services/ledger` (`@brain/ledger`)       | Machine-readable financial truth (11 typed entities) |
 | 3   | Wiki   | `services/wiki` (`@brain/wiki`)           | Human-readable memory + narrative Q&A (pgvector)     |
 | 4   | Policy | `services/policy` (`@brain/policy`)       | Deterministic rule VM, EIP-712 signing (viem)        |
 | 5   | Agent  | `services/execution` (`@brain/execution`) | PaymentIntent, ApprovalService, orchestration        |
-| 5′  | MCP    | `services/mcp` (`@brain/mcp`)             | JSON-RPC 2.0 server, external agent surface         |
+| 5′  | MCP    | `services/mcp` (`@brain/mcp`)             | JSON-RPC 2.0 server, external agent surface          |
 | 6   | Audit  | `services/audit` (`@brain/audit`)         | Append-only Merkle-chained log + on-chain anchor     |
 
 Python agents (Plaid extractors, reasoners, three MVP agents) live in `services/agents/` (Python 3.12, uv-managed), outside the TS workspace.

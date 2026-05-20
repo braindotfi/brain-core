@@ -22,14 +22,14 @@ Both reach the same underlying record. Structured queries are precise and predic
 
 Brain ingests from any source the tenant authorizes:
 
-| Category                 | Examples                                                            |
-| ------------------------ | ------------------------------------------------------------------- |
-| **Banks and processors** | Plaid, direct bank APIs, Stripe, Adyen                              |
-| **On-chain**             | Wallets via Alchemy, contract event streams                         |
-| **ERPs**                 | NetSuite, SAP, Dynamics                                             |
-| **Accounting**           | QuickBooks, Xero                                                    |
-| **Payroll**              | Gusto, Rippling, ADP                                                |
-| **Documents**            | Email-attached invoices, CSV/PDF uploads                            |
+| Category                 | Examples                                                         |
+| ------------------------ | ---------------------------------------------------------------- |
+| **Banks and processors** | Plaid, direct bank APIs, Stripe, Adyen                           |
+| **On-chain**             | Wallets via Alchemy, contract event streams                      |
+| **ERPs**                 | NetSuite, SAP, Dynamics                                          |
+| **Accounting**           | QuickBooks, Xero                                                 |
+| **Payroll**              | Gusto, Rippling, ADP                                             |
+| **Documents**            | Email-attached invoices, CSV/PDF uploads                         |
 | **Agent contributions**  | Transcripts, signed contracts, observations from external agents |
 
 You connect a source once. Brain handles the rest: pulling, parsing, normalizing, indexing, keeping it current.

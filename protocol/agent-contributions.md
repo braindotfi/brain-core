@@ -59,14 +59,14 @@ Ledger Layer
 
 The Raw artifact carries everything an auditor would need.
 
-| Field                             | Source                                                              |
-| --------------------------------- | ------------------------------------------------------------------- |
-| `sha256`                          | Content hash, computed by Brain                                     |
-| `source_type`                     | `agent_contributed`                                                 |
-| `source_ref.agent_id`             | The contributing agent's id                                         |
-| `source_ref.signature`            | The agent's EIP-712 signature over content + tenant\_id + timestamp |
-| `source_ref.onchain_registration` | The `BrainMCPAgentRegistry` record id                               |
-| `blob_uri`                        | Pointer to the encrypted artifact in tenant-scoped Blob storage     |
+| Field                             | Source                                                             |
+| --------------------------------- | ------------------------------------------------------------------ |
+| `sha256`                          | Content hash, computed by Brain                                    |
+| `source_type`                     | `agent_contributed`                                                |
+| `source_ref.agent_id`             | The contributing agent's id                                        |
+| `source_ref.signature`            | The agent's EIP-712 signature over content + tenant_id + timestamp |
+| `source_ref.onchain_registration` | The `BrainMCPAgentRegistry` record id                              |
+| `blob_uri`                        | Pointer to the encrypted artifact in tenant-scoped Blob storage    |
 
 ### Quarantine and Trust Escalation
 

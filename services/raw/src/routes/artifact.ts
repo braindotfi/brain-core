@@ -4,13 +4,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import {
-  brainError,
-  isBrainId,
-  requireScope,
-  withTenantScope,
-  type Scope,
-} from "@brain/shared";
+import { brainError, isBrainId, requireScope, withTenantScope, type Scope } from "@brain/shared";
 import { findArtifactById, tombstoneArtifact } from "../repository/artifacts.js";
 import type { RawDeps } from "../deps.js";
 

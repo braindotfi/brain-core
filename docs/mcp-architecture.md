@@ -25,7 +25,7 @@ boundary:
 MCP is the standard those external agents reach for. By implementing the
 spec rather than a Brain-specific RPC, we let any MCP-aware client
 (Claude Desktop, custom-built agents, third-party integrations) connect
-without bespoke wiring. The protocol does not change the layer model , 
+without bespoke wiring. The protocol does not change the layer model ,
 it is a _transport_ over the same six-layer policy/audit boundary.
 
 ## What MCP Gives an Agent (and What It Does Not)

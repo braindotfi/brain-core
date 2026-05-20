@@ -50,8 +50,8 @@ Every fact Brain returns carries citations.
 ```typescript
 const answer = await brain.ask("acme", "What did we spend on AWS last month?");
 
-answer.text;        // a natural-language answer
-answer.citations;   // pointers back to the specific transactions, invoices, or evidence that produced the answer
+answer.text; // a natural-language answer
+answer.citations; // pointers back to the specific transactions, invoices, or evidence that produced the answer
 ```
 
 You never have to take Brain's word for anything. Every claim links back to source evidence.
@@ -62,7 +62,7 @@ Every mutating call accepts (and most require) an idempotency key.
 
 ```typescript
 await brain.pay("acme", {
-  invoiceId:      "inv_8231",
+  invoiceId: "inv_8231",
   idempotencyKey: "pay_inv_8231_2025_09",
 });
 ```

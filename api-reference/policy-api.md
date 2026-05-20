@@ -49,12 +49,12 @@ Content-Type: application/json
 ```json
 {
   "data": {
-    "policy_id":   "pol_8231",
-    "version":     4,
+    "policy_id": "pol_8231",
+    "version": 4,
     "policy_hash": "0xabc...",
-    "tx_hash":     "0xdef...",
-    "block":       9583122,
-    "status":      "active"
+    "tx_hash": "0xdef...",
+    "block": 9583122,
+    "status": "active"
   }
 }
 ```
@@ -100,10 +100,10 @@ Content-Type: application/json
 ```json
 {
   "data": {
-    "decision":      "ESCALATE",
-    "approvers":     ["role:cfo"],
+    "decision": "ESCALATE",
+    "approvers": ["role:cfo"],
     "policy_version": 4,
-    "matched_rule":  "amount >= 5000 && counterparty.known",
+    "matched_rule": "amount >= 5000 && counterparty.known",
     "audit_event_id": "evt_..."
   }
 }
@@ -142,7 +142,12 @@ Authorization: Bearer <token>
 {
   "data": [
     { "version": 4, "policy_hash": "0xabc...", "active_since": "2025-09-01T12:00:00Z" },
-    { "version": 3, "policy_hash": "0x123...", "active_from": "2025-06-01", "revoked_at": "2025-09-01T12:00:00Z" }
+    {
+      "version": 3,
+      "policy_hash": "0x123...",
+      "active_from": "2025-06-01",
+      "revoked_at": "2025-09-01T12:00:00Z"
+    }
   ]
 }
 ```

@@ -49,9 +49,9 @@ Brain batches audit events into a Merkle tree per tenant and anchors the root on
 ```typescript
 const proof = await brain.proof(actionId);
 
-proof.merklePath;   // sibling hashes from leaf to root
-proof.anchorRoot;   // the Merkle root anchored on Base
-proof.anchorTx;     // the transaction that anchored it
+proof.merklePath; // sibling hashes from leaf to root
+proof.anchorRoot; // the Merkle root anchored on Base
+proof.anchorTx; // the transaction that anchored it
 ```
 
 A counterparty verifies on-chain by calling `BrainAuditAnchor.verify()` with the proof. They don't need a Brain account, an API key, or any access to the underlying data.

@@ -43,7 +43,7 @@ External agents with `raw:write` scope can push artifacts into the Raw layer. St
 | **Originates from**                | External agent (off-protocol)                       |
 | **Writes to**                      | Raw                                                 |
 | **Required scope**                 | `raw:write` (on-chain in `BrainMCPAgentRegistry`)   |
-| **Signature requirement**          | EIP-712 over content + tenant\_id + timestamp       |
+| **Signature requirement**          | EIP-712 over content + tenant_id + timestamp        |
 | **Quarantine?**                    | Yes, for the first N contributions from a new agent |
 | **Confidence cap on derived rows** | 0.5                                                 |
 

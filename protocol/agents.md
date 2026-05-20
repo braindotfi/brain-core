@@ -94,15 +94,15 @@ This signed attestation is what `BrainSmartAccount.validateUserOp` checks at the
 
 ### What Brain Provides vs What the Agent Provides
 
-| Concern                             | Brain Provides                  | Agent Provides |
-| ----------------------------------- | ------------------------------- | :------------: |
+| Concern                             | Brain Provides                   | Agent Provides |
+| ----------------------------------- | -------------------------------- | :------------: |
 | **Verified financial context**      | ✅ Wiki + Ledger + citations     |                |
 | **Policy enforcement**              | ✅ Off-chain + on-chain          |                |
 | **Identity and reputation**         | ✅ ERC-8004 registry             |                |
 | **Audit trail**                     | ✅ Hash chain + Merkle anchor    |                |
 | **Settlement infrastructure**       | ✅ Smart account, ERC-8183, x402 |                |
-| **Domain logic for the capability** |                                 |        ✅       |
-| **The actual work**                 |                                 |        ✅       |
+| **Domain logic for the capability** |                                  |       ✅       |
+| **The actual work**                 |                                  |       ✅       |
 
 {% hint style="success" %}
 This is why the Agent Layer is open. The substrate is general-purpose. The capabilities are pluggable.

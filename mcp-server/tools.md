@@ -115,9 +115,9 @@ Returns:
 {
   "content": [{ "type": "text", "text": "..." }],
   "metadata": {
-    "ledger_evidence":  [ { "type": "ledger_transactions", "id": "tx_..." } ],
-    "wiki_pages_cited": [ { "slug": "/monthly-summaries/2025-09", "page_id": "wpg_..." } ],
-    "audit_event_id":   "evt_..."
+    "ledger_evidence": [{ "type": "ledger_transactions", "id": "tx_..." }],
+    "wiki_pages_cited": [{ "slug": "/monthly-summaries/2025-09", "page_id": "wpg_..." }],
+    "audit_event_id": "evt_..."
   }
 }
 ```
@@ -139,14 +139,14 @@ The response includes the markdown body, structured sections (Current Truth, Key
 
 Push a Raw artifact (transcript, document, structured observation) into the tenant's Raw layer. Artifact is content-addressed by SHA-256, attributed to the agent's on-chain registration record, and carries the agent's signature in its provenance.
 
-| Argument        | Type          | Description                                                           |
-| --------------- | ------------- | --------------------------------------------------------------------- |
-| `tenant_id`     | string        | Required                                                              |
-| `artifact_type` | string        | Required: `transcript`, `document`, `observation`                     |
-| `mime_type`     | string        | Required                                                              |
-| `content`       | base64 string | Required, the artifact bytes                                          |
-| `source_ref`    | object        | Optional: source-specific identifiers                                 |
-| `signature`     | hex string    | Required: the agent's signature over content + tenant\_id + timestamp |
+| Argument        | Type          | Description                                                          |
+| --------------- | ------------- | -------------------------------------------------------------------- |
+| `tenant_id`     | string        | Required                                                             |
+| `artifact_type` | string        | Required: `transcript`, `document`, `observation`                    |
+| `mime_type`     | string        | Required                                                             |
+| `content`       | base64 string | Required, the artifact bytes                                         |
+| `source_ref`    | object        | Optional: source-specific identifiers                                |
+| `signature`     | hex string    | Required: the agent's signature over content + tenant_id + timestamp |
 
 {% hint style="info" %}
 **Quarantine on first N contributions.** Agent-contributed artifacts are filtered from standard extraction pipelines until the tenant confirms the agent is trusted. Default trust level: quarantine for the first N contributions, auto-approve after.

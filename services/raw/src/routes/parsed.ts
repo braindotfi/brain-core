@@ -6,13 +6,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import {
-  brainError,
-  isBrainId,
-  requireScope,
-  withTenantScope,
-  type Scope,
-} from "@brain/shared";
+import { brainError, isBrainId, requireScope, withTenantScope, type Scope } from "@brain/shared";
 import { findArtifactById } from "../repository/artifacts.js";
 import { listParsedByArtifact } from "../repository/parsed.js";
 import type { RawDeps } from "../deps.js";

@@ -218,7 +218,7 @@ Follows the standard Brain TypeScript package layout: strict mode, ESM,
   lands later, these can be retargeted without changing the public
   method signature.
 - **Tenant scoping**: most endpoints derive the tenant from the
-  authenticated principal. The `policy.*` methods are an exception , 
+  authenticated principal. The `policy.*` methods are an exception ,
   they take `tenant_id` explicitly. Compound helpers that accept a
   `tenantId` argument (`pay`, `ask`, `snapshot`) match the documented
   signature but currently don't forward the value on the wire. Reserved

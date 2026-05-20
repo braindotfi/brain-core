@@ -13,17 +13,17 @@ Response:
 
 ```json
 {
-  "id":               "audit_evt_...",
-  "event_type":       "action.executed",
-  "tenant_id":        "acme",
-  "actor":            "0xagent...",
-  "timestamp":        "2025-09-01T12:00:00Z",
-  "inputs_hash":      "0x...",
-  "policy_version":   3,
-  "decision":         "ALLOW",
-  "reason":           null,
-  "prev_event_hash":  "0x...",
-  "batch_index":      4719
+  "id": "audit_evt_...",
+  "event_type": "action.executed",
+  "tenant_id": "acme",
+  "actor": "0xagent...",
+  "timestamp": "2025-09-01T12:00:00Z",
+  "inputs_hash": "0x...",
+  "policy_version": 3,
+  "decision": "ALLOW",
+  "reason": null,
+  "prev_event_hash": "0x...",
+  "batch_index": 4719
 }
 ```
 
@@ -76,8 +76,8 @@ Response:
 
 ```json
 {
-  "valid":          true,
-  "anchored_at":    "2025-09-01T12:10:00Z",
+  "valid": true,
+  "anchored_at": "2025-09-01T12:10:00Z",
   "anchored_block": 8829110
 }
 ```
@@ -123,10 +123,10 @@ Response:
 
 ```json
 {
-  "export_id":    "exp_...",
-  "format":       "soc2",
-  "status":       "preparing",
-  "expires_at":   "2025-09-02T12:00:00Z",
+  "export_id": "exp_...",
+  "format": "soc2",
+  "status": "preparing",
+  "expires_at": "2025-09-02T12:00:00Z",
   "download_url": null
 }
 ```
@@ -139,7 +139,7 @@ GET /v1/audit/exports/{export_id}
 
 ```json
 {
-  "status":       "ready",
+  "status": "ready",
   "download_url": "https://s3.../soc2-acme-2025.zip?X-Amz-..."
 }
 ```

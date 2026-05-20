@@ -51,7 +51,7 @@ if (action.status === "needs_approval") {
 
 // Pull a verifiable receipt.
 const proof = await brain.proof(action.id);
-console.log(proof.txHash);     // on-chain anchor on Base
+console.log(proof.txHash); // on-chain anchor on Base
 console.log(proof.merklePath); // verifiable without trusting Brain
 ```
 

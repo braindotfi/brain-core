@@ -87,9 +87,9 @@ Typical inputs:
 
 ```json
 {
-  "tenant_id":  "acme",
-  "current_period":  "2025-09",
-  "compare_period":  "2025-08"
+  "tenant_id": "acme",
+  "current_period": "2025-09",
+  "compare_period": "2025-08"
 }
 ```
 

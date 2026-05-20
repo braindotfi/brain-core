@@ -53,7 +53,7 @@ Content-Type: application/json
 {
   "data": [
     {
-      "id":   "cp_aws",
+      "id": "cp_aws",
       "type": "counterparty",
       "name": "Amazon Web Services",
       "score": 0.97
@@ -83,9 +83,7 @@ Authorization: Bearer <token>
       { "to": "acct_aws_main", "type": "billed_via" },
       { "to": "cc_engineering", "type": "charged_to" }
     ],
-    "recent_ledger": [
-      { "id": "tx_4127", "date": "2025-08-01", "amount": "61404.12" }
-    ]
+    "recent_ledger": [{ "id": "tx_4127", "date": "2025-08-01", "amount": "61404.12" }]
   }
 }
 ```
@@ -117,7 +115,7 @@ Content-Type: application/json
 {
   "data": [
     {
-      "entity_id":  "cp_aws",
+      "entity_id": "cp_aws",
       "narrative_id": "narr_q2_summary",
       "score": 0.91,
       "snippet": "AWS spend grew 12% in Q2 versus Q1, driven by..."

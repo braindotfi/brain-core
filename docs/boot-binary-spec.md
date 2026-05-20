@@ -526,7 +526,7 @@ of those bugs are deep, but they take real time to wade through.
    workspaces, closes gap #4 from `docs/v0.3-deliverables.md`.
 2. `POST /agents/mcp` is live in any deployed instance, closes
    gap #3 of the MCP feature's "known limitations".
-3. `infra/main.tf`'s Container App can target this binary , 
+3. `infra/main.tf`'s Container App can target this binary ,
    gap #4 of "live PoC blockers" (no deployed instance) is half
    closed.
 4. Every other PoC step that needs "an actual API to talk to"

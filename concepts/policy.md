@@ -27,7 +27,11 @@ Brain compiles to:
 ```json
 [
   { "if": "amount < 5000 && counterparty.known", "then": "auto" },
-  { "if": "amount >= 5000 && counterparty.known", "then": "needs_approval", "approvers": ["role:cfo"] },
+  {
+    "if": "amount >= 5000 && counterparty.known",
+    "then": "needs_approval",
+    "approvers": ["role:cfo"]
+  },
   { "if": "!counterparty.known", "then": "rejected", "reason": "new_counterparty_review_required" }
 ]
 ```

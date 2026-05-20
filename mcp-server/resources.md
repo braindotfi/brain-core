@@ -107,9 +107,24 @@ Lists the URI patterns Brain advertises:
       "description": "A single money-movement event.",
       "mimeType": "application/json"
     },
-    { "uriTemplate": "brain://ledger/payment-intents/{payment_intent_id}", "name": "Payment intent", "description": "An agent-proposed financial action.", "mimeType": "application/json" },
-    { "uriTemplate": "brain://wiki/{slug}", "name": "Wiki page", "description": "Human-readable financial memory page.", "mimeType": "text/markdown" },
-    { "uriTemplate": "brain://raw/{raw_artifact_id}", "name": "Raw evidence", "description": "Source evidence (immutable).", "mimeType": "application/json" }
+    {
+      "uriTemplate": "brain://ledger/payment-intents/{payment_intent_id}",
+      "name": "Payment intent",
+      "description": "An agent-proposed financial action.",
+      "mimeType": "application/json"
+    },
+    {
+      "uriTemplate": "brain://wiki/{slug}",
+      "name": "Wiki page",
+      "description": "Human-readable financial memory page.",
+      "mimeType": "text/markdown"
+    },
+    {
+      "uriTemplate": "brain://raw/{raw_artifact_id}",
+      "name": "Raw evidence",
+      "description": "Source evidence (immutable).",
+      "mimeType": "application/json"
+    }
   ]
 }
 ```

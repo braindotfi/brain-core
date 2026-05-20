@@ -36,19 +36,19 @@ RAG and graphs are useful tools, but they are retrieval systems, not systems of 
 
 The shorthand:
 
-* RAG sounds right
-* Graph connects right
-* Wiki _is_ right
+- RAG sounds right
+- Graph connects right
+- Wiki _is_ right
 
 ### How Wiki Fits in Brain
 
 Wiki is one of six layers in the Brain stack:
 
-* **Raw** ingests signals
-* **Ledger** maintains canonical state
-* **Wiki** provides semantic context, grounded in Ledger
-* **Policy** defines what agents are allowed to do
-* **Agent** executes within policy, using Wiki to understand context
-* **Audit** records every action with cryptographic provenance
+- **Raw** ingests signals
+- **Ledger** maintains canonical state
+- **Wiki** provides semantic context, grounded in Ledger
+- **Policy** defines what agents are allowed to do
+- **Agent** executes within policy, using Wiki to understand context
+- **Audit** records every action with cryptographic provenance
 
 Wiki is what makes Brain agents knowledgeable. Ledger is what makes them correct. Policy is what makes them safe. Audit is what makes them accountable. Together, they are what makes autonomous financial action trustworthy.

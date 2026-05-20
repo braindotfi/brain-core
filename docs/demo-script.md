@@ -76,7 +76,7 @@ curl -s -X POST http://localhost:3000/v1/agents/mcp \
   }'
 ```
 
-Response carries a `payment_intent_id`. Note: agents can only *propose* — they can never execute.
+Response carries a `payment_intent_id`. Note: agents can only _propose_ — they can never execute.
 
 ---
 

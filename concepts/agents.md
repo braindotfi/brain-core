@@ -6,10 +6,10 @@ description: Who can read, propose, and act. Internal and external.
 
 In Brain, an **agent** is any non-human caller that proposes or executes actions on a tenant's behalf. Agents and humans share the same authorization model. The only thing that differs is the credential.
 
-| Caller                                | Credential                                |
-| ------------------------------------- | ----------------------------------------- |
-| **Human**                             | OAuth/SSO via the Console                 |
-| **Internal agent** (your backend)     | Server API key                            |
+| Caller                                    | Credential                                |
+| ----------------------------------------- | ----------------------------------------- |
+| **Human**                                 | OAuth/SSO via the Console                 |
+| **Internal agent** (your backend)         | Server API key                            |
 | **External agent** (third-party software) | JWT, anchored to an on-chain registration |
 
 All three hit the same endpoints, run through Policy, and land in the Audit log.
@@ -25,9 +25,9 @@ You can use Brain in two ways: **build agents on top of it** or **let other peop
 
 Most apps start with internal agents. External agents become useful when:
 
-* Your tenant wants to use a specialist agent (a vendor-management bot, a treasury agent) you didn't build
-* You're building a marketplace where tenants pick agents
-* You're integrating a third-party assistant that should see a tenant's financial state
+- Your tenant wants to use a specialist agent (a vendor-management bot, a treasury agent) you didn't build
+- You're building a marketplace where tenants pick agents
+- You're integrating a third-party assistant that should see a tenant's financial state
 
 ### How Agents Act
 

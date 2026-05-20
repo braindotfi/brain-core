@@ -42,12 +42,12 @@ The JWT is signed by the agent's signing key (the same key registered in `BrainM
 
 ```json
 {
-  "iss":        "agent:0xAgentAddress",
-  "sub":        "tenant:acme",
-  "iat":        1735689600,
-  "exp":        1735693200,
-  "agent_id":   "ag_8231",
-  "tenant_id":  "acme",
+  "iss": "agent:0xAgentAddress",
+  "sub": "tenant:acme",
+  "iat": 1735689600,
+  "exp": 1735693200,
+  "agent_id": "ag_8231",
+  "tenant_id": "acme",
   "scope_hash": "0xabc123..."
 }
 ```
