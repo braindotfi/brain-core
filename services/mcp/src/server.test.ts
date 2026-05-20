@@ -341,3 +341,284 @@ describe("BrainMcpServer.handle — payment_intent.propose scope gate", () => {
     expect(audit.events.some((e) => e.action === "agent.mcp.tool_called")).toBe(true);
   });
 });
+
+describe("BrainMcpServer.handle — remaining prompt renders", () => {
+  it("prompts/get renders wiki.question.bills_due with default days", async () => {
+    const { server, p } = makeServer();
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "wiki.question.bills_due", arguments: {} },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { messages: Array<{ content: { text: string } }> };
+      expect(r.messages[0]!.content.text).toContain("7");
+    }
+  });
+
+  it("prompts/get renders wiki.question.spending_change", async () => {
+    const { server, p } = makeServer();
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "wiki.question.spending_change", arguments: { period: "2026-Q1" } },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { messages: Array<{ content: { text: string } }> };
+      expect(r.messages[0]!.content.text).toContain("2026-Q1");
+    }
+  });
+
+  it("prompts/get renders wiki.question.invoice_status", async () => {
+    const { server, p } = makeServer();
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "wiki.question.invoice_status", arguments: { invoice_number: "INV-42" } },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { messages: Array<{ content: { text: string } }> };
+      expect(r.messages[0]!.content.text).toContain("INV-42");
+    }
+  });
+
+  it("prompts/get renders wiki.question.subscriptions (no args)", async () => {
+    const { server, p } = makeServer();
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "wiki.question.subscriptions", arguments: {} },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { messages: Array<{ content: { text: string } }> };
+      expect(r.messages[0]!.content.text).toContain("subscriptions");
+    }
+  });
+
+  it("prompts/get rejects unknown prompt name", async () => {
+    const { server, p } = makeServer();
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "no.such.prompt", arguments: {} },
+      },
+      p,
+    );
+    expect("error" in res && res.error.code).toBe(-32602);
+  });
+});
+
+describe("BrainMcpServer.handle — wiki.page.get tool", () => {
+  it("returns not-found summary when page is null", async () => {
+    const { server, p } = makeServer(["wiki:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "wiki.page.get", arguments: { slug_or_id: "/accounts/acct_MISSING" } },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { content: Array<{ text: string }> };
+      expect(r.content[0]!.text).toContain("No wiki page");
+    }
+  });
+
+  it("returns page body when page is found", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const wiki = fakeWiki();
+    (wiki.getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "wpg_01",
+      slug: "/accounts/acct_1",
+      entity_type: "account",
+      entity_id: "acct_1",
+      body_md: "# Account summary\nBalance: $1,000",
+      generated_at: new Date().toISOString(),
+    });
+    const server = new BrainMcpServer({
+      auth: new FakeAuthVerifier(ACTIVE_AGENT),
+      ledger: fakeLedger(),
+      wiki,
+      raw: fakeRaw(),
+      paymentIntents: fakePI(),
+      audit,
+    });
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "wiki.page.get", arguments: { slug_or_id: "/accounts/acct_1" } },
+      },
+      principal(["wiki:read"]),
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { content: Array<{ text: string }> };
+      expect(r.content[0]!.text).toContain("Account summary");
+    }
+  });
+});
+
+describe("BrainMcpServer.handle — wiki.question optional params and evidence", () => {
+  it("passes as_of and max_evidence_depth through to wiki service", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const wiki = fakeWiki();
+    (wiki.question as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      question: "any",
+      answer: "Balance is $500",
+      evidence: [{ entityId: "tx_01", entityType: "transaction", excerpt: "outflow $50" }],
+      model: "test",
+      usage: { inputTokens: 2, outputTokens: 2 },
+    });
+    const server = new BrainMcpServer({
+      auth: new FakeAuthVerifier(ACTIVE_AGENT),
+      ledger: fakeLedger(),
+      wiki,
+      raw: fakeRaw(),
+      paymentIntents: fakePI(),
+      audit,
+    });
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "wiki.question",
+          arguments: { question: "any", as_of: "2026-01-01T00:00:00Z", max_evidence_depth: 2 },
+        },
+      },
+      principal(["wiki:read"]),
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { content: Array<{ text: string }> };
+      expect(r.content[0]!.text).toContain("tx_01");
+    }
+  });
+});
+
+describe("BrainMcpServer.handle — payment_intent.propose status variants", () => {
+  function makeServerWithStatus(status: string) {
+    const audit = new InMemoryAuditEmitter();
+    const pi: IPaymentIntentService = {
+      create: vi.fn(async (_ctx, input) => ({
+        id: "pi_S",
+        owner_id: TENANT,
+        source_ids: [],
+        evidence_ids: [],
+        provenance: "inferred" as const,
+        confidence: 1,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        created_by_agent_id: null,
+        action_type: input.action_type,
+        source_account_id: input.source_account_id,
+        destination_counterparty_id: input.destination_counterparty_id,
+        amount: input.amount,
+        currency: input.currency,
+        obligation_id: null,
+        invoice_id: null,
+        status: status as never,
+        policy_decision_id: "pd_S",
+        approval_ids: [],
+        execution_receipt_ids: [],
+      })),
+      get: vi.fn(async () => null),
+      list: vi.fn(async () => []),
+      approve: vi.fn(),
+      reject: vi.fn(),
+      cancel: vi.fn(),
+      execute: vi.fn(),
+    } as unknown as IPaymentIntentService;
+    const server = new BrainMcpServer({
+      auth: new FakeAuthVerifier(ACTIVE_AGENT),
+      ledger: fakeLedger(),
+      wiki: fakeWiki(),
+      raw: fakeRaw(),
+      paymentIntents: pi,
+      audit,
+    });
+    return { server, p: principal(["payment_intent:propose"]) };
+  }
+
+  it("shows pending_approval guidance", async () => {
+    const { server, p } = makeServerWithStatus("pending_approval");
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "payment_intent.propose",
+          arguments: {
+            action_type: "ach_outbound",
+            source_account_id: "acct_x",
+            destination_counterparty_id: "cp_y",
+            amount: "1.00",
+            currency: "USD",
+          },
+        },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { content: Array<{ text: string }> };
+      expect(r.content[0]!.text).toContain("confirm");
+    }
+  });
+
+  it("shows rejected guidance", async () => {
+    const { server, p } = makeServerWithStatus("rejected");
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "payment_intent.propose",
+          arguments: {
+            action_type: "ach_outbound",
+            source_account_id: "acct_x",
+            destination_counterparty_id: "cp_y",
+            amount: "1.00",
+            currency: "USD",
+          },
+        },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { content: Array<{ text: string }> };
+      expect(r.content[0]!.text).toContain("reject");
+    }
+  });
+});

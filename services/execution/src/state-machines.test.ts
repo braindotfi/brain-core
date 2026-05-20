@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import {
+  assertAgentTransition,
+  assertExecutionTransition,
+  assertProposalTransition,
   isValidAgentTransition,
   isValidExecutionTransition,
   isValidProposalTransition,
@@ -80,5 +83,26 @@ describe("§8.4 agent registration", () => {
         },
       ),
     );
+  });
+});
+
+describe("assert* helpers throw on invalid transitions", () => {
+  it("assertProposalTransition does not throw on valid transition", () => {
+    expect(() => assertProposalTransition("pending", "approved")).not.toThrow();
+  });
+  it("assertProposalTransition throws on invalid transition", () => {
+    expect(() => assertProposalTransition("rejected", "approved")).toThrow();
+  });
+  it("assertExecutionTransition does not throw on valid transition", () => {
+    expect(() => assertExecutionTransition("dispatched", "in_flight")).not.toThrow();
+  });
+  it("assertExecutionTransition throws on invalid transition", () => {
+    expect(() => assertExecutionTransition("completed", "in_flight")).toThrow();
+  });
+  it("assertAgentTransition does not throw on valid transition", () => {
+    expect(() => assertAgentTransition("pending_onchain", "active")).not.toThrow();
+  });
+  it("assertAgentTransition throws on invalid transition", () => {
+    expect(() => assertAgentTransition("revoked", "active")).toThrow();
   });
 });

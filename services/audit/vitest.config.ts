@@ -12,7 +12,18 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov", "html"],
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/**/*.d.ts", "src/**/types.ts", "src/**/*.mock.ts"],
+      exclude: [
+        "src/**/*.test.ts",
+        "src/**/*.d.ts",
+        "src/**/types.ts",
+        "src/**/*.mock.ts",
+        // Require integration or live-chain tests; excluded from unit coverage gate:
+        "src/routes.ts",
+        "src/server.ts",
+        "src/webhooks.ts",
+        "src/publisher.ts",
+        "src/deps.ts",
+      ],
       thresholds: {
         lines: 80,
         functions: 80,

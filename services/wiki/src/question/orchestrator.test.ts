@@ -244,4 +244,93 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(second.cachedAt).toBeTypeOf("string");
     expect(metrics.calls.some((c) => c.name === "brain.wiki.question.cache_hit")).toBe(true);
   });
+
+  it("includes risk_level in counterparty excerpt when non-null", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [],
+      counterparties: [{ id: "cp_RISK", name: "Risky Corp", type: "vendor", risk_level: "high" }],
+    };
+    const evidenceContext = buildEvidenceContext(rows);
+    const prompt = {
+      model: "m2",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        {
+          role: "user" as const,
+          content: `QUESTION:\nwho is risky\n\nEVIDENCE:\n${evidenceContext}`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: `{"answer":"Risky Corp is high risk.","evidence_ids":["cp_RISK"]}`,
+          usage: { inputTokens: 10, outputTokens: 5 },
+          model: "m2",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "who is risky",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m2",
+      },
+    );
+    expect(result.answer).toContain("Risky Corp");
+    expect(result.evidence[0]!.entityId).toBe("cp_RISK");
+  });
+
+  it("falls back to raw text when LLM returns non-JSON", async () => {
+    const rows: FakeRows = { transactions: [], obligations: [], counterparties: [] };
+    const evidenceContext = buildEvidenceContext(rows);
+    const prompt = {
+      model: "m3",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        { role: "user" as const, content: `QUESTION:\ntest\n\nEVIDENCE:\n${evidenceContext}` },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: "This is not JSON at all.",
+          usage: { inputTokens: 5, outputTokens: 5 },
+          model: "m3",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      { question: "test", asOf: null, maxEvidenceDepth: 3, tenantId: "tnt_test", model: "m3" },
+    );
+    expect(result.answer).toBe("This is not JSON at all.");
+    expect(result.evidence).toHaveLength(0);
+  });
 });

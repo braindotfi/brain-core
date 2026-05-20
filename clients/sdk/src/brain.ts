@@ -122,6 +122,14 @@ export class Brain {
     return this._token.length > 11 ? `${this._token.slice(0, 11)}***` : "***";
   }
 
+  getMaskedApiKey(): string {
+    return this.getMaskedToken();
+  }
+
+  getFetch(): typeof globalThis.fetch {
+    return this._fetch;
+  }
+
   /**
    * Documented as `brain.snapshot(tenantId)` on the homepage. Returns a
    * tenant's current financial picture: balances + recent transactions

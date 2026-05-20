@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
-import { isValidPaymentIntentTransition, type PaymentIntentState } from "./state-machine.js";
+import {
+  assertPaymentIntentTransition,
+  isValidPaymentIntentTransition,
+  type PaymentIntentState,
+} from "./state-machine.js";
 
 const ALL: PaymentIntentState[] = [
   "proposed",
@@ -68,5 +72,13 @@ describe("§9.5 PaymentIntent state machine", () => {
         },
       ),
     );
+  });
+
+  it("assertPaymentIntentTransition does not throw on valid transition", () => {
+    expect(() => assertPaymentIntentTransition("proposed", "approved")).not.toThrow();
+  });
+
+  it("assertPaymentIntentTransition throws on invalid transition", () => {
+    expect(() => assertPaymentIntentTransition("rejected", "approved")).toThrow();
   });
 });

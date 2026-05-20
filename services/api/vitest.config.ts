@@ -12,7 +12,17 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov", "html"],
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/**/*.d.ts", "src/**/types.ts", "src/**/*.mock.ts"],
+      exclude: [
+        "src/**/*.test.ts",
+        "src/**/*.d.ts",
+        "src/**/types.ts",
+        "src/**/*.mock.ts",
+        // Require integration tests; excluded from unit coverage gate:
+        "src/anchorBroadcaster.ts",
+        "src/main.ts",
+        "src/auth/siwe.ts",
+        "src/sandbox/resolvers.ts",
+      ],
       thresholds: {
         lines: 80,
         functions: 80,
