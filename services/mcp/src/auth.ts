@@ -85,19 +85,22 @@ export class McpAuthVerifier implements AuthVerifier {
       throw brainError("auth_tenant_mismatch", "agent tenant does not match JWT tenant");
     }
 
-    if (agent.scope_hash !== null) {
-      const offchainHex = Buffer.from(agent.scope_hash).toString("hex");
-      const onchainHex = await this.onchainScopeHashCached(agent.id);
-      if (onchainHex === null) {
-        throw brainError("agent_scope_hash_mismatch", "agent not registered on-chain", {
-          details: { agent_id: agent.id },
-        });
-      }
-      if (onchainHex.toLowerCase() !== offchainHex.toLowerCase()) {
-        throw brainError("agent_scope_hash_mismatch", "scope hash drift detected", {
-          details: { agent_id: agent.id, offchain_hash: offchainHex, onchain_hash: onchainHex },
-        });
-      }
+    if (agent.scope_hash === null) {
+      throw brainError("agent_scope_hash_missing", "agent has no on-chain scope attestation", {
+        details: { agent_id: agent.id },
+      });
+    }
+    const offchainHex = Buffer.from(agent.scope_hash).toString("hex");
+    const onchainHex = await this.onchainScopeHashCached(agent.id);
+    if (onchainHex === null) {
+      throw brainError("agent_scope_hash_mismatch", "agent not registered on-chain", {
+        details: { agent_id: agent.id },
+      });
+    }
+    if (onchainHex.toLowerCase() !== offchainHex.toLowerCase()) {
+      throw brainError("agent_scope_hash_mismatch", "scope hash drift detected", {
+        details: { agent_id: agent.id, offchain_hash: offchainHex, onchain_hash: onchainHex },
+      });
     }
 
     return {
