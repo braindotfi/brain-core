@@ -39,6 +39,9 @@ jobs:
       - name: Lint (ESLint + Prettier)
         run: pnpm run lint
 
+      - name: Build workspace packages
+        run: pnpm run build
+
       - name: Typecheck
         run: pnpm run typecheck
 
