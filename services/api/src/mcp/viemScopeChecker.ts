@@ -1,6 +1,9 @@
 import { createPublicClient, http, keccak256, toBytes } from "viem";
 import { baseSepolia } from "viem/chains";
-import type { OnchainScopeChecker } from "@brain/mcp";
+
+export interface OnchainScopeChecker {
+  getOnchainScopeHash(agentId: string): Promise<string | null>;
+}
 
 const BRAIN_MCP_AGENT_REGISTRY_ABI = [
   {
