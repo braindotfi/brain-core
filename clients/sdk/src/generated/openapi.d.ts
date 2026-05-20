@@ -925,7 +925,7 @@ export interface paths {
             cookie?: never;
         };
         /** List configured agents for the current tenant */
-        get: operations["listAgents"];
+        get: operations["listExecutionAgents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -964,7 +964,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get agent configuration and on-chain registration */
-        get: operations["getAgent"];
+        get: operations["getExecutionAgent"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3211,7 +3211,7 @@ export interface operations {
             };
         };
     };
-    listAgents: {
+    listExecutionAgents: {
         parameters: {
             query?: never;
             header?: never;
@@ -3267,7 +3267,7 @@ export interface operations {
             };
         };
     };
-    getAgent: {
+    getExecutionAgent: {
         parameters: {
             query?: never;
             header?: never;

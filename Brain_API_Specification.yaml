@@ -294,7 +294,7 @@ paths:
                   accounts:
                     type: array
                     items: { $ref: '#/components/schemas/Account' }
-                  next_cursor: { type: string, nullable: true }
+                  next_cursor: { type: [string, "null"] }
 
   /ledger/accounts/{account_id}:
     get:
@@ -383,7 +383,7 @@ paths:
                   transactions:
                     type: array
                     items: { $ref: '#/components/schemas/Transaction' }
-                  next_cursor: { type: string, nullable: true }
+                  next_cursor: { type: [string, "null"] }
 
   /ledger/transactions/{transaction_id}:
     get:
@@ -792,7 +792,7 @@ paths:
                   results:
                     type: array
                     items: { $ref: '#/components/schemas/WikiEntity' }
-                  next_cursor: { type: string, nullable: true }
+                  next_cursor: { type: [string, "null"] }
 
   /wiki/question:
     post:
@@ -1139,7 +1139,7 @@ paths:
                       type: object
                       properties:
                         proposal_id: { type: string }
-                        payment_intent_id: { type: string, nullable: true }
+                        payment_intent_id: { type: [string, "null"] }
                         status: { type: string }
                         created_at: { type: string, format: date-time }
 
@@ -1481,7 +1481,7 @@ paths:
     get:
       tags: [Execution]
       summary: List configured agents for the current tenant
-      operationId: listAgents
+      operationId: listExecutionAgents
       responses:
         '200':
           description: Agent list
@@ -1535,7 +1535,7 @@ paths:
     get:
       tags: [Execution]
       summary: Get agent configuration and on-chain registration
-      operationId: getAgent
+      operationId: getExecutionAgent
       parameters:
         - name: agent_id
           in: path
@@ -1630,7 +1630,7 @@ paths:
                   events:
                     type: array
                     items: { $ref: '#/components/schemas/AuditEvent' }
-                  next_cursor: { type: string, nullable: true }
+                  next_cursor: { type: [string, "null"] }
 
   /audit/event/{event_id}:
     get:
@@ -1744,7 +1744,7 @@ paths:
                 type: object
                 properties:
                   verified: { type: boolean }
-                  onchain_block: { type: integer, nullable: true }
+                  onchain_block: { type: [integer, "null"] }
 
 components:
 
@@ -1912,7 +1912,7 @@ components:
           type: object
           additionalProperties: true
         valid_from: { type: string, format: date-time }
-        valid_to: { type: string, format: date-time, nullable: true }
+        valid_to: { type: [string, "null"], format: date-time }
         provenance: { $ref: '#/components/schemas/Provenance' }
         confidence: { type: number, minimum: 0, maximum: 1 }
         source_evidence:
@@ -1938,7 +1938,7 @@ components:
           type: object
           additionalProperties: true
         valid_from: { type: string, format: date-time }
-        valid_to: { type: string, format: date-time, nullable: true }
+        valid_to: { type: [string, "null"], format: date-time }
         provenance: { $ref: '#/components/schemas/Provenance' }
         confidence: { type: number, minimum: 0, maximum: 1 }
         source_evidence:
@@ -1974,8 +1974,8 @@ components:
             properties:
               step: { type: integer }
               description: { type: string }
-              entity_id: { type: string, format: uuid, nullable: true }
-              sql_query: { type: string, nullable: true }
+              entity_id: { type: [string, "null"], format: uuid }
+              sql_query: { type: [string, "null"] }
               result_summary: { type: string }
         llm_metadata:
           type: object
@@ -2026,10 +2026,9 @@ components:
               address: { type: string }
               signature: { type: string }
         activated_at: { type: string, format: date-time }
-        deactivated_at: { type: string, format: date-time, nullable: true }
+        deactivated_at: { type: [string, "null"], format: date-time }
         onchain_tx_hash:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Set for enterprise tier after BrainPolicyRegistry registration
 
     PolicyDSL:
@@ -2149,7 +2148,7 @@ components:
           items: { type: string }
         status: { $ref: '#/components/schemas/ProposalStatus' }
         created_at: { type: string, format: date-time }
-        idempotency_key: { type: string, nullable: true }
+        idempotency_key: { type: [string, "null"] }
 
     ExecutionStatus:
       type: string
@@ -2167,11 +2166,10 @@ components:
           type: object
           additionalProperties: true
         started_at: { type: string, format: date-time }
-        completed_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: [string, "null"], format: date-time }
         status: { $ref: '#/components/schemas/ExecutionStatus' }
         error:
-          type: string
-          nullable: true
+          type: [string, "null"]
 
     AgentScope:
       type: object
@@ -2231,21 +2229,17 @@ components:
           type: object
           additionalProperties: true
         policy_version:
-          type: integer
-          nullable: true
+          type: [integer, "null"]
         policy_decision_id:
-          type: string
-          nullable: true
+          type: [string, "null"]
         before_state:
-          type: object
+          type: [object, "null"]
           additionalProperties: true
-          nullable: true
         after_state:
-          type: object
+          type: [object, "null"]
           additionalProperties: true
-          nullable: true
         event_hash: { type: string }
-        prev_event_hash: { type: string, nullable: true }
+        prev_event_hash: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
 
     #
@@ -2283,15 +2277,15 @@ components:
         - type: object
           required: [id, owner_id, account_type, name, currency, status]
           properties:
-            institution: { type: string, nullable: true }
-            external_account_id: { type: string, nullable: true }
+            institution: { type: [string, "null"] }
+            external_account_id: { type: [string, "null"] }
             account_type:
               type: string
               enum: [bank_checking, bank_savings, card, loan, line_of_credit, onchain]
             name: { type: string }
             currency: { type: string, pattern: '^[A-Z]{3}$' }
-            current_balance: { type: string, nullable: true }
-            available_balance: { type: string, nullable: true }
+            current_balance: { type: [string, "null"] }
+            available_balance: { type: [string, "null"] }
             status:
               type: string
               enum: [active, closed, frozen, pending]
@@ -2305,8 +2299,8 @@ components:
             account_id: { type: string }
             as_of: { type: string, format: date-time }
             current_balance: { type: string }
-            available_balance: { type: string, nullable: true }
-            pending_balance: { type: string, nullable: true }
+            available_balance: { type: [string, "null"] }
+            pending_balance: { type: [string, "null"] }
             currency: { type: string, pattern: '^[A-Z]{3}$' }
 
     Transaction:
@@ -2316,25 +2310,24 @@ components:
           required: [id, owner_id, account_id, amount, currency, direction, transaction_date, status]
           properties:
             account_id: { type: string }
-            external_transaction_id: { type: string, nullable: true }
+            external_transaction_id: { type: [string, "null"] }
             amount: { type: string, pattern: '^-?\d+(\.\d+)?$' }
             currency: { type: string, pattern: '^[A-Z]{3}$' }
             direction:
               type: string
               enum: [inflow, outflow, transfer, adjustment]
             transaction_date: { type: string, format: date-time }
-            posted_date: { type: string, format: date-time, nullable: true }
-            counterparty_id: { type: string, nullable: true }
-            category_id: { type: string, nullable: true }
+            posted_date: { type: [string, "null"], format: date-time }
+            counterparty_id: { type: [string, "null"] }
+            category_id: { type: [string, "null"] }
             status:
               type: string
               enum: [pending, posted, cleared, failed, reversed, disputed]
-            description_raw: { type: string, nullable: true }
-            description_normalized: { type: string, nullable: true }
+            description_raw: { type: [string, "null"] }
+            description_normalized: { type: [string, "null"] }
             reconciliation_status:
-              type: string
+              type: [string, "null"]
               enum: [unreconciled, matched, partial, disputed]
-              nullable: true
 
     Counterparty:
       allOf:
@@ -2343,18 +2336,16 @@ components:
           required: [id, owner_id, name, type]
           properties:
             name: { type: string }
-            normalized_name: { type: string, nullable: true }
+            normalized_name: { type: [string, "null"] }
             type:
               type: string
               enum: [merchant, vendor, customer, employer, bank, wallet, exchange, tax_authority, other]
             risk_level:
-              type: string
+              type: [string, "null"]
               enum: [low, medium, high, sanctioned]
-              nullable: true
             verified_status:
-              type: string
+              type: [string, "null"]
               enum: [unverified, self_attested, document_verified, sanctions_cleared]
-              nullable: true
             aliases:
               type: array
               items: { type: string }
@@ -2373,10 +2364,10 @@ components:
               enum: [bill, invoice, subscription, loan, rent, payroll, tax, card_statement, other]
             counterparty_id: { type: string }
             amount_due: { type: string }
-            minimum_due: { type: string, nullable: true }
+            minimum_due: { type: [string, "null"] }
             currency: { type: string, pattern: '^[A-Z]{3}$' }
             due_date: { type: string, format: date-time }
-            recurrence: { type: string, nullable: true }
+            recurrence: { type: [string, "null"] }
             status:
               type: string
               enum: [upcoming, due, paid, overdue, cancelled, disputed]
@@ -2393,7 +2384,7 @@ components:
             document_type:
               type: string
               enum: [invoice, receipt, bank_statement, card_statement, contract, payroll, tax, other]
-            source_uri: { type: string, nullable: true }
+            source_uri: { type: [string, "null"] }
             extracted_fields:
               type: object
               additionalProperties: true
@@ -2415,7 +2406,7 @@ components:
         id: { type: string }
         owner_id: { type: string }
         name: { type: string }
-        parent_id: { type: string, nullable: true }
+        parent_id: { type: [string, "null"] }
         kind:
           type: string
           enum: [expense, income, transfer, other]
@@ -2430,8 +2421,8 @@ components:
           properties:
             from_account_id: { type: string }
             to_account_id: { type: string }
-            from_transaction_id: { type: string, nullable: true }
-            to_transaction_id: { type: string, nullable: true }
+            from_transaction_id: { type: [string, "null"] }
+            to_transaction_id: { type: [string, "null"] }
             amount: { type: string }
             currency: { type: string, pattern: '^[A-Z]{3}$' }
             transfer_date: { type: string, format: date-time }
@@ -2448,10 +2439,10 @@ components:
             invoice_number: { type: string }
             counterparty_id: { type: string }
             amount_due: { type: string }
-            amount_paid: { type: string, nullable: true }
+            amount_paid: { type: [string, "null"] }
             currency: { type: string, pattern: '^[A-Z]{3}$' }
             issue_date: { type: string, format: date-time }
-            due_date: { type: string, format: date-time, nullable: true }
+            due_date: { type: [string, "null"], format: date-time }
             status:
               type: string
               enum: [draft, sent, partial, paid, overdue, cancelled, disputed]
@@ -2476,12 +2467,12 @@ components:
             destination_counterparty_id: { type: string }
             amount: { type: string }
             currency: { type: string, pattern: '^[A-Z]{3}$' }
-            obligation_id: { type: string, nullable: true }
-            invoice_id: { type: string, nullable: true }
+            obligation_id: { type: [string, "null"] }
+            invoice_id: { type: [string, "null"] }
             status:
               type: string
               enum: [proposed, pending_approval, approved, rejected, executed, failed, cancelled]
-            policy_decision_id: { type: string, nullable: true }
+            policy_decision_id: { type: [string, "null"] }
             approval_ids:
               type: array
               items: { type: string }
@@ -2516,7 +2507,7 @@ components:
         evidence_ids:
           type: array
           items: { type: string }
-        explanation: { type: string, nullable: true }
+        explanation: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -2532,7 +2523,7 @@ components:
         page_type:
           type: string
           enum: [account, counterparty, obligation, invoice, agent, policy, monthly_summary, cash_flow]
-        subject_id: { type: string, nullable: true }
+        subject_id: { type: [string, "null"] }
         slug: { type: string }
         body_md:
           type: string
@@ -2563,18 +2554,16 @@ components:
           enum: [reconciliation, payment, anomaly, partner]
         display_name: { type: string }
         scope_hash:
-          type: string
+          type: [string, "null"]
           pattern: '^[0-9a-f]{64}$'
-          nullable: true
         onchain_address:
-          type: string
+          type: [string, "null"]
           pattern: '^0x[a-fA-F0-9]{40}$'
-          nullable: true
         state:
           type: string
           enum: [pending_onchain, active, revoked, failed]
-        registered_tx: { type: string, nullable: true }
-        registered_at: { type: string, format: date-time, nullable: true }
+        registered_tx: { type: [string, "null"] }
+        registered_at: { type: [string, "null"], format: date-time }
 
     #
     # MCP — JSON-RPC 2.0 envelopes for the /agents/mcp surface
