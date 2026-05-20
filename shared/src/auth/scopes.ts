@@ -55,6 +55,7 @@ export const VALID_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "payment_intent:approve",
   "payment_intent:execute",
   "audit:read",
+  "audit:write",
   "audit:admin",
 ]);
 

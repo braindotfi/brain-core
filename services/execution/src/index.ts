@@ -44,5 +44,5 @@ export { registerExecutionRoutes } from "./routes.js";
 export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
 
 // Repository primitives exposed for boot-binary dependency wiring.
-export { findAgent } from "./repository.js";
-export type { AgentRow } from "./repository.js";
+export { findAgent, findUser } from "./repository.js";
+export type { AgentRow, UserRow } from "./repository.js";
