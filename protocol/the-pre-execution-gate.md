@@ -22,21 +22,21 @@ Think of Policy as the **standing rule** and the gate as the **flight check**. B
 
 The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol.
 
-| #  | Step                                                                                           | Reads From                              |
-| -- | ---------------------------------------------------------------------------------------------- | --------------------------------------- |
-| 1  | PaymentIntent exists and is in `approved` status                                               | `ledger_payment_intents`                |
-| 2  | PolicyDecision exists, matches the intent, and was for the active policy version               | `policy_decisions`                      |
-| 3  | Idempotency key has not already produced an execution receipt                                  | `executions`                            |
-| 4  | Source account is active and not frozen                                                        | `ledger_accounts`                       |
-| 5  | Source account current balance ≥ amount (with currency match)                                  | `ledger_accounts.current_balance`       |
-| 6  | Destination counterparty is verified or fits a Policy-allowed pattern                          | `ledger_counterparties.verified_status` |
-| 7  | Destination counterparty is not sanctioned                                                     | `ledger_counterparties.risk_level`      |
-| 8  | Required approver signatures are present, valid, and signed against the same PolicyDecision id | `approvals`                             |
-| 9  | Active policy hash matches the policy hash anchored on-chain (where applicable)                | `BrainPolicyRegistry`                   |
-| 10 | For on-chain rails: session key validity window covers the call moment                         | `BrainSmartAccount.SessionKey`          |
-| 11 | For on-chain rails: rail-specific limits (per-tx, per-period) not exceeded                     | `BrainSmartAccount.SessionKey`          |
-| 12 | No conflicting in-flight execution for the same source account within the configured cooldown  | `executions`                            |
-| 13 | Audit chain is healthy (latest anchor not stale beyond threshold)                              | `audit_anchors`                         |
+| #   | Step                                                                                           | Reads From                              |
+| --- | ---------------------------------------------------------------------------------------------- | --------------------------------------- |
+| 1   | PaymentIntent exists and is in `approved` status                                               | `ledger_payment_intents`                |
+| 2   | PolicyDecision exists, matches the intent, and was for the active policy version               | `policy_decisions`                      |
+| 3   | Idempotency key has not already produced an execution receipt                                  | `executions`                            |
+| 4   | Source account is active and not frozen                                                        | `ledger_accounts`                       |
+| 5   | Source account current balance ≥ amount (with currency match)                                  | `ledger_accounts.current_balance`       |
+| 6   | Destination counterparty is verified or fits a Policy-allowed pattern                          | `ledger_counterparties.verified_status` |
+| 7   | Destination counterparty is not sanctioned                                                     | `ledger_counterparties.risk_level`      |
+| 8   | Required approver signatures are present, valid, and signed against the same PolicyDecision id | `approvals`                             |
+| 9   | Active policy hash matches the policy hash anchored on-chain (where applicable)                | `BrainPolicyRegistry`                   |
+| 10  | For on-chain rails: session key validity window covers the call moment                         | `BrainSmartAccount.SessionKey`          |
+| 11  | For on-chain rails: rail-specific limits (per-tx, per-period) not exceeded                     | `BrainSmartAccount.SessionKey`          |
+| 12  | No conflicting in-flight execution for the same source account within the configured cooldown  | `executions`                            |
+| 13  | Audit chain is healthy (latest anchor not stale beyond threshold)                              | `audit_anchors`                         |
 
 If **any** step fails, the PaymentIntent transitions to `failed` with a structured reason. No rail call is made.
 
@@ -81,8 +81,8 @@ Failure is structured.
     "step": 5,
     "reason": "INSUFFICIENT_BALANCE",
     "expected_min": "61404.12 USD",
-    "observed":     "58901.04 USD",
-    "ledger_row":   "acct_ops"
+    "observed": "58901.04 USD",
+    "ledger_row": "acct_ops"
   },
   "audit_event_id": "evt_..."
 }

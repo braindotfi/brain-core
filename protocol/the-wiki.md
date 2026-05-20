@@ -35,7 +35,7 @@ Every answer carries citations into the Ledger and Raw. Any claim is traceable b
 ```typescript
 const answer = await brain.wiki.question({
   tenantId: "acme",
-  question: "What did we spend on AWS last quarter, by environment?"
+  question: "What did we spend on AWS last quarter, by environment?",
 });
 
 // answer.text         → fluent natural-language response

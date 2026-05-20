@@ -39,6 +39,9 @@ jobs:
       - name: Lint (ESLint + Prettier)
         run: pnpm run lint
 
+      - name: Build workspace packages
+        run: pnpm run build
+
       - name: Typecheck
         run: pnpm run typecheck
 
@@ -98,7 +101,7 @@ jobs:
           version: stable
 
       - name: Install forge dependencies
-        run: forge install foundry-rs/forge-std --no-commit
+        run: forge install foundry-rs/forge-std
 
       - name: forge fmt check
         run: forge fmt --check

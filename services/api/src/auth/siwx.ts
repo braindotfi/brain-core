@@ -25,6 +25,7 @@
  */
 
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import type { Redis } from "ioredis";
 import { SiweMessage, generateNonce } from "siwe";
 import { brainError, brainId, newAgentId, newTokenId } from "@brain/shared";
 import type { JwtSigner, Scope } from "@brain/shared";
@@ -59,6 +60,8 @@ export interface SiwxOptions {
   /** EIP-4361 `domain` claim. Defaults to `"api.brain.fi"`. */
   readonly domain?: string;
   readonly registry: AgentRegistryLookup;
+  /** Redis client for nonce persistence across replicas. */
+  readonly redis: Redis;
   /** Override the token TTL for tests. */
   readonly tokenTtlSeconds?: number;
   /**
@@ -68,17 +71,12 @@ export interface SiwxOptions {
   readonly demoMode?: boolean;
 }
 
-interface NonceEntry {
-  readonly nonce: string;
-  readonly expires: number;
-}
+const NONCE_KEY = (sessionId: string): string => `siwx:nonce:${sessionId}`;
 
 export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions): Promise<void> {
   const domain = opts.domain ?? "api.brain.fi";
   const tokenTtl = opts.tokenTtlSeconds ?? DEFAULT_AGENT_TTL_SECONDS;
-  // In-process nonce store keyed by session_id. 5-minute TTL.
-  // Follow-up commit swaps to Redis for multi-instance correctness.
-  const nonces = new Map<string, NonceEntry>();
+  const nonceTtlSecs = Math.ceil(NONCE_TTL_MS / 1000);
 
   app.post(
     "/auth/siwx/challenge",
@@ -86,10 +84,7 @@ export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions
     async (_req: FastifyRequest, reply: FastifyReply) => {
       const nonce = generateNonce();
       const sessionId = brainId("token");
-      nonces.set(sessionId, {
-        nonce,
-        expires: Date.now() + NONCE_TTL_MS,
-      });
+      await opts.redis.setex(NONCE_KEY(sessionId), nonceTtlSecs, nonce);
       reply.status(200);
       return { nonce, session_id: sessionId, domain };
     },
@@ -151,13 +146,11 @@ export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions
       // to detect replays.
       let expectedNonce: string | undefined;
       if (typeof sessionId === "string") {
-        const stored = nonces.get(sessionId);
-        if (stored === undefined || stored.expires < Date.now()) {
+        const stored = await opts.redis.getdel(NONCE_KEY(sessionId));
+        if (stored === null) {
           throw brainError("auth_siwx_invalid", "SIWX session_id missing or expired");
         }
-        expectedNonce = stored.nonce;
-        // Consume the session so the same nonce can't be replayed.
-        nonces.delete(sessionId);
+        expectedNonce = stored;
       }
 
       let parsed: SiweMessage;

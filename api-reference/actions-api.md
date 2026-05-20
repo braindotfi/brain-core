@@ -24,17 +24,17 @@ Response:
 
 ```json
 {
-  "actionId":         "act_...",
-  "decision":         "ESCALATE",
-  "reason":           "amount_above_threshold",
-  "policy_version":   3,
-  "approvers":        ["role:cfo"],
+  "actionId": "act_...",
+  "decision": "ESCALATE",
+  "reason": "amount_above_threshold",
+  "policy_version": 3,
+  "approvers": ["role:cfo"],
   "wiki_context": {
-    "vendor_history":   "Vendor X: known, status=approved, 14 prior payments",
-    "ledger_refs":      ["ledger_71022", "ledger_71023"]
+    "vendor_history": "Vendor X: known, status=approved, 14 prior payments",
+    "ledger_refs": ["ledger_71022", "ledger_71023"]
   },
-  "signed_verdict":   null,
-  "audit_event_id":   "audit_evt_..."
+  "signed_verdict": null,
+  "audit_event_id": "audit_evt_..."
 }
 ```
 
@@ -57,18 +57,15 @@ Response:
 
 ```json
 {
-  "id":              "act_...",
-  "agent_id":        "ag_...",
-  "tenantId":        "acme",
-  "type":            "pay_invoice",
-  "decision":        "ESCALATE",
-  "approvers":       ["role:cfo"],
-  "approvals":       [],
-  "executed_at":     null,
-  "audit_events": [
-    "audit_evt_proposed_...",
-    "audit_evt_evaluated_..."
-  ]
+  "id": "act_...",
+  "agent_id": "ag_...",
+  "tenantId": "acme",
+  "type": "pay_invoice",
+  "decision": "ESCALATE",
+  "approvers": ["role:cfo"],
+  "approvals": [],
+  "executed_at": null,
+  "audit_events": ["audit_evt_proposed_...", "audit_evt_evaluated_..."]
 }
 ```
 
@@ -91,11 +88,11 @@ Response:
 
 ```json
 {
-  "actionId":      "act_...",
-  "decision":      "ALLOW",
-  "approvals":     [{ "role": "cfo", "signed_at": "..." }],
-  "signed_verdict":"0x...",
-  "expires_at":    "2025-09-01T12:01:00Z"
+  "actionId": "act_...",
+  "decision": "ALLOW",
+  "approvals": [{ "role": "cfo", "signed_at": "..." }],
+  "signed_verdict": "0x...",
+  "expires_at": "2025-09-01T12:01:00Z"
 }
 ```
 
@@ -112,10 +109,10 @@ Response:
 
 ```json
 {
-  "actionId":       "act_...",
-  "rail":           "smart_account",
-  "tx_hash":        "0xabc...",
-  "settled_at":     "2025-09-01T...",
+  "actionId": "act_...",
+  "rail": "smart_account",
+  "tx_hash": "0xabc...",
+  "settled_at": "2025-09-01T...",
   "audit_event_id": "audit_evt_executed_..."
 }
 ```

@@ -34,7 +34,7 @@ describe("Brain.payments", () => {
     const { fetch, calls } = mockSequence([
       { status: 201, body: { id: "pi_1", status: "approved" } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const intent = await brain.payments.create({
       ...BASE_INTENT_PARAMS,
@@ -55,7 +55,7 @@ describe("Brain.payments", () => {
     const { fetch, calls } = mockSequence([
       { status: 201, body: { id: "pi_1", status: "approved" } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.payments.create(BASE_INTENT_PARAMS);
 
@@ -66,7 +66,7 @@ describe("Brain.payments", () => {
     const { fetch, calls } = mockSequence([
       { status: 200, body: { id: "pi_1", status: "executed" } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const intent = await brain.payments.get("pi_1");
 
@@ -78,7 +78,7 @@ describe("Brain.payments", () => {
     const { fetch, calls } = mockSequence([
       { status: 200, body: { id: "pi_1", status: "approved" } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const intent = await brain.payments.approve("pi_1");
 
@@ -91,7 +91,7 @@ describe("Brain.payments", () => {
     const { fetch, calls } = mockSequence([
       { status: 200, body: { id: "pi_1", status: "rejected" } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.payments.reject("pi_1", { reason: "duplicate" });
 
@@ -103,7 +103,7 @@ describe("Brain.payments", () => {
     const { fetch, calls } = mockSequence([
       { status: 200, body: { id: "pi_1", status: "rejected" } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.payments.reject("pi_1");
 
@@ -123,7 +123,7 @@ describe("Brain.payments", () => {
         },
       },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const receipt = await brain.payments.execute("pi_1");
 
@@ -149,7 +149,7 @@ describe("Brain.pay (compound)", () => {
         body: { execution_id: "ex_1", status: "dispatched" },
       },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.pay("acme", BASE_INTENT_PARAMS);
 
@@ -171,7 +171,7 @@ describe("Brain.pay (compound)", () => {
         },
       },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await expect(brain.pay("acme", BASE_INTENT_PARAMS)).rejects.toMatchObject({
       name: "PolicyApprovalRequiredError",
@@ -192,7 +192,7 @@ describe("Brain.pay (compound)", () => {
         },
       },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await expect(brain.pay("acme", BASE_INTENT_PARAMS)).rejects.toBeInstanceOf(PolicyRejectedError);
     expect(calls).toHaveLength(1);
@@ -202,7 +202,7 @@ describe("Brain.pay (compound)", () => {
     const { fetch, calls } = mockSequence([
       { status: 201, body: { id: "pi_1", status: "proposed" } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.pay("acme", BASE_INTENT_PARAMS);
 
@@ -218,7 +218,7 @@ describe("Brain.pay (compound)", () => {
         body: { code: "forbidden", message: "no auth" },
       },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await expect(brain.pay("acme", BASE_INTENT_PARAMS)).rejects.toBeInstanceOf(BrainAPIError);
   });
@@ -229,7 +229,7 @@ describe("Brain.approve / Brain.reject (flat helpers)", () => {
     const { fetch, calls } = mockSequence([
       { status: 200, body: { id: "pi_1", status: "approved" } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.approve("pi_1");
 
@@ -240,7 +240,7 @@ describe("Brain.approve / Brain.reject (flat helpers)", () => {
     const { fetch, calls } = mockSequence([
       { status: 200, body: { id: "pi_1", status: "rejected" } },
     ]);
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.reject("pi_1", { reason: "fraud" });
 

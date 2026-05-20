@@ -21,13 +21,13 @@ Response:
 
 ```json
 {
-  "id":              "ag_...",
-  "address":         "0xagent...",
-  "identity_root":   "0x...",
+  "id": "ag_...",
+  "address": "0xagent...",
+  "identity_root": "0x...",
   "reputation_root": "0x...",
-  "registered_at":   "2025-09-01T...",
-  "active":          true,
-  "anchored_tx_hash":"0x..."
+  "registered_at": "2025-09-01T...",
+  "active": true,
+  "anchored_tx_hash": "0x..."
 }
 ```
 
@@ -82,12 +82,12 @@ Response:
 {
   "items": [
     {
-      "id":              "ag_...",
-      "address":         "0xagent...",
-      "capabilities":    ["pay_invoice"],
-      "reputation_score":94,
-      "active":          true,
-      "scope_grants":    [
+      "id": "ag_...",
+      "address": "0xagent...",
+      "capabilities": ["pay_invoice"],
+      "reputation_score": 94,
+      "active": true,
+      "scope_grants": [
         { "capability": "pay_invoice", "max_amount": "10000_000000", "expires_at": "..." }
       ]
     }
@@ -113,8 +113,8 @@ DELETE /v1/agents/{agent_id}
 | State       | What It Means                                         | Reversible |
 | ----------- | ----------------------------------------------------- | ---------- |
 | **Active**  | Agent can propose actions                             | n/a        |
-| **Paused**  | Proposals rejected; identity and reputation preserved | ✅ Yes      |
-| **Revoked** | Permanent termination; record preserved for audit     | ❌ No       |
+| **Paused**  | Proposals rejected; identity and reputation preserved | ✅ Yes     |
+| **Revoked** | Permanent termination; record preserved for audit     | ❌ No      |
 
 ### Reputation
 
@@ -127,13 +127,13 @@ Response:
 
 ```json
 {
-  "score":               94,
-  "successful_actions":  412,
-  "failed_actions":      3,
-  "completed_payments":  209,
-  "reputation_root":     "0x...",
-  "merkle_proof":        ["0x...", "..."],
-  "last_updated":        "2025-09-01T..."
+  "score": 94,
+  "successful_actions": 412,
+  "failed_actions": 3,
+  "completed_payments": 209,
+  "reputation_root": "0x...",
+  "merkle_proof": ["0x...", "..."],
+  "last_updated": "2025-09-01T..."
 }
 ```
 

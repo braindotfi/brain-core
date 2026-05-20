@@ -56,6 +56,7 @@ export interface GoldenPathSeed {
     figma: CounterpartyRow;
     notion: CounterpartyRow;
     aws: CounterpartyRow;
+    stripe: CounterpartyRow;
     duplicateMerchant: CounterpartyRow;
   };
   obligations: {
@@ -184,7 +185,7 @@ async function seedCounterparties(
 
   return {
     employer: await cp({
-      name: "Acme Holdings",
+      name: "Brain Inc.",
       type: "employer",
       risk_level: "low",
       verified_status: "document_verified",
@@ -202,6 +203,12 @@ async function seedCounterparties(
     notion: await cp({ name: "Notion Labs", type: "merchant", risk_level: "low" }),
     aws: await cp({
       name: "Amazon Web Services",
+      type: "vendor",
+      risk_level: "low",
+      verified_status: "document_verified",
+    }),
+    stripe: await cp({
+      name: "Stripe Inc.",
       type: "vendor",
       risk_level: "low",
       verified_status: "document_verified",

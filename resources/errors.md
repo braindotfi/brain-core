@@ -7,9 +7,9 @@ Every error Brain returns includes a structured `code`, a human-readable `messag
 ```json
 {
   "error": {
-    "code":     "POLICY_DENIED",
-    "message":  "Counterparty not in approved allowlist",
-    "traceId":  "trc_8f3a92..."
+    "code": "POLICY_DENIED",
+    "message": "Counterparty not in approved allowlist",
+    "traceId": "trc_8f3a92..."
   }
 }
 ```

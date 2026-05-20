@@ -16,10 +16,10 @@ SLO commitments, and a staged invite-only → open-beta → GA rollout.
 
 **Two realistic paths:**
 
-| Path | Timeline | Audience exposed | Risk profile |
-|------|----------|------------------|--------------|
-| **A. Closed beta now → open beta in 4 wks → GA in 8 wks** | 8 weeks | 5–10 design partners → ~100 → public | Low; we control blast radius at each gate |
-| **B. Public beta in 2 wks → GA in 4 wks** | 4 weeks | Public from week 2 | High; we ship before we've stress-tested |
+| Path                                                      | Timeline | Audience exposed                     | Risk profile                              |
+| --------------------------------------------------------- | -------- | ------------------------------------ | ----------------------------------------- |
+| **A. Closed beta now → open beta in 4 wks → GA in 8 wks** | 8 weeks  | 5–10 design partners → ~100 → public | Low; we control blast radius at each gate |
+| **B. Public beta in 2 wks → GA in 4 wks**                 | 4 weeks  | Public from week 2                   | High; we ship before we've stress-tested  |
 
 **Recommendation: Path A.** This is a financial-action protocol with
 on-chain anchoring; "move fast and break things" is a category mistake.
@@ -78,47 +78,47 @@ Triaged by what they block.
 
 ### P0, Blocks Even a Closed Beta
 
-| # | Gate | Status | Effort |
-|---|------|--------|--------|
-| P0.1 | Merge the 8 SDK PRs and publish to a registry | not started | 1–2 days |
-| P0.2 | Decide publish target: **public npm** vs **GitHub Packages private** | open decision | 1 hour |
-| P0.3 | Set up SDK release pipeline (semver tags → publish workflow) | not started | 1 day |
-| P0.4 | Fix monorepo lint break on `main` (Node globals, test parser) | broken in main | 0.5 days |
-| P0.5 | Triage 6 Dependabot vulns (4 high, 2 moderate) GitHub flags on push | not triaged | 0.5–2 days depending on root cause |
-| P0.6 | OpenAPI spec audit, we already found one duplicate `Agent:` schema; do a full pass for similar latent issues | partial (1 fix landed in SDK skeleton PR) | 0.5 day |
-| P0.7 | Doc-example smoke test (`1C`): CI extracts every TypeScript block from `*.md` and type-checks against the SDK. Without this we **will** ship docs that don't match the SDK | not started | 1 day |
-| P0.8 | Pick 5–10 design partners, get them signed under NDA | not started | depends on BD |
+| #    | Gate                                                                                                                                                                       | Status                                    | Effort                             |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ---------------------------------- |
+| P0.1 | Merge the 8 SDK PRs and publish to a registry                                                                                                                              | not started                               | 1–2 days                           |
+| P0.2 | Decide publish target: **public npm** vs **GitHub Packages private**                                                                                                       | open decision                             | 1 hour                             |
+| P0.3 | Set up SDK release pipeline (semver tags → publish workflow)                                                                                                               | not started                               | 1 day                              |
+| P0.4 | Fix monorepo lint break on `main` (Node globals, test parser)                                                                                                              | broken in main                            | 0.5 days                           |
+| P0.5 | Triage 6 Dependabot vulns (4 high, 2 moderate) GitHub flags on push                                                                                                        | not triaged                               | 0.5–2 days depending on root cause |
+| P0.6 | OpenAPI spec audit, we already found one duplicate `Agent:` schema; do a full pass for similar latent issues                                                               | partial (1 fix landed in SDK skeleton PR) | 0.5 day                            |
+| P0.7 | Doc-example smoke test (`1C`): CI extracts every TypeScript block from `*.md` and type-checks against the SDK. Without this we **will** ship docs that don't match the SDK | not started                               | 1 day                              |
+| P0.8 | Pick 5–10 design partners, get them signed under NDA                                                                                                                       | not started                               | depends on BD                      |
 
 ### P1, Blocks Open Beta
 
-| # | Gate | Status | Effort |
-|---|------|--------|--------|
-| P1.1 | Production / sandbox environment split documented and enforced | partially shipped (spec lists both) | 1 day |
-| P1.2 | Rate limiting policy documented and enforced (spec already declares 429s) | unknown, verify implementation | 1–2 days |
-| P1.3 | Auth: SIWX flow end-to-end smoke test (issued under v0.3 PR4) | shipped | smoke-test only |
-| P1.4 | SLO commitment: target p99 latency + monthly availability per surface; publish on docs.brain.fi/resources/sla | not defined | 0.5 day + product call |
-| P1.5 | Status page (status.brain.fi) wired to actual production health probes | not started | 1 day |
-| P1.6 | Pre-execution gate (§6 13-step) stress-tested under concurrency: no double-spends under load | shipped per v0.3; needs load test | 1–2 days |
-| P1.7 | Tenant isolation evidence: RLS verified end-to-end across all nine services | shipped per recent commits; needs cross-tenant pen-test | 1 day |
-| P1.8 | Audit-anchor on-chain verification: end-to-end test from `audit.verify` → `BrainAuditAnchor.verify` on Base | shipped per stage-9; smoke-test before launch | 0.5 day |
-| P1.9 | Terms of Service + Privacy Policy + Disclaimer reviewed by counsel for API consumers (not just web users) | docs exist; legal review status unknown | external |
-| P1.10 | DPA template for enterprise prospects | not started | external |
-| P1.11 | Pricing + billing: per-call meter, plan tiers, free quota for sandbox | open product decision | depends on product |
-| P1.12 | API key issuance flow: self-serve registration, key rotation, scoping | unknown | 2–4 days |
+| #     | Gate                                                                                                          | Status                                                  | Effort                 |
+| ----- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ---------------------- |
+| P1.1  | Production / sandbox environment split documented and enforced                                                | partially shipped (spec lists both)                     | 1 day                  |
+| P1.2  | Rate limiting policy documented and enforced (spec already declares 429s)                                     | unknown, verify implementation                          | 1–2 days               |
+| P1.3  | Auth: SIWX flow end-to-end smoke test (issued under v0.3 PR4)                                                 | shipped                                                 | smoke-test only        |
+| P1.4  | SLO commitment: target p99 latency + monthly availability per surface; publish on docs.brain.fi/resources/sla | not defined                                             | 0.5 day + product call |
+| P1.5  | Status page (status.brain.fi) wired to actual production health probes                                        | not started                                             | 1 day                  |
+| P1.6  | Pre-execution gate (§6 13-step) stress-tested under concurrency: no double-spends under load                  | shipped per v0.3; needs load test                       | 1–2 days               |
+| P1.7  | Tenant isolation evidence: RLS verified end-to-end across all nine services                                   | shipped per recent commits; needs cross-tenant pen-test | 1 day                  |
+| P1.8  | Audit-anchor on-chain verification: end-to-end test from `audit.verify` → `BrainAuditAnchor.verify` on Base   | shipped per stage-9; smoke-test before launch           | 0.5 day                |
+| P1.9  | Terms of Service + Privacy Policy + Disclaimer reviewed by counsel for API consumers (not just web users)     | docs exist; legal review status unknown                 | external               |
+| P1.10 | DPA template for enterprise prospects                                                                         | not started                                             | external               |
+| P1.11 | Pricing + billing: per-call meter, plan tiers, free quota for sandbox                                         | open product decision                                   | depends on product     |
+| P1.12 | API key issuance flow: self-serve registration, key rotation, scoping                                         | unknown                                                 | 2–4 days               |
 
 ### P2, Blocks GA (General Availability)
 
-| # | Gate | Status | Effort |
-|---|------|--------|--------|
-| P2.1 | External security audit (penetration test by reputable firm), table stakes for FI customers | not started | 2–4 weeks (external) |
-| P2.2 | SOC 2 Type I in motion (Vanta/Drata/etc.) | unknown | 4–6 weeks |
-| P2.3 | On-call rotation defined, paging configured, runbooks current | partially (rollback.md exists) | 1 week |
-| P2.4 | Incident response drill (game day): simulate Postgres failover, rail outage, anchor publisher down | not started | 1 day exercise + prep |
-| P2.5 | Customer SLAs in contracts: 99.9% / 99.95% by tier | not defined | product + legal |
-| P2.6 | 100-concurrent-agent load test on `/payment-intents/*` and pre-execution gate | not started | 2–3 days |
-| P2.7 | Marketing-ready launch site, blog post, design partner case studies | external | 1–2 weeks |
-| P2.8 | Support tier defined: docs + email + Slack + paid | not defined | product |
-| P2.9 | Multi-region failover validated (or explicitly single-region for v1.0) | unknown, review infra | 1 week if needed |
+| #    | Gate                                                                                               | Status                         | Effort                |
+| ---- | -------------------------------------------------------------------------------------------------- | ------------------------------ | --------------------- |
+| P2.1 | External security audit (penetration test by reputable firm), table stakes for FI customers        | not started                    | 2–4 weeks (external)  |
+| P2.2 | SOC 2 Type I in motion (Vanta/Drata/etc.)                                                          | unknown                        | 4–6 weeks             |
+| P2.3 | On-call rotation defined, paging configured, runbooks current                                      | partially (rollback.md exists) | 1 week                |
+| P2.4 | Incident response drill (game day): simulate Postgres failover, rail outage, anchor publisher down | not started                    | 1 day exercise + prep |
+| P2.5 | Customer SLAs in contracts: 99.9% / 99.95% by tier                                                 | not defined                    | product + legal       |
+| P2.6 | 100-concurrent-agent load test on `/payment-intents/*` and pre-execution gate                      | not started                    | 2–3 days              |
+| P2.7 | Marketing-ready launch site, blog post, design partner case studies                                | external                       | 1–2 weeks             |
+| P2.8 | Support tier defined: docs + email + Slack + paid                                                  | not defined                    | product               |
+| P2.9 | Multi-region failover validated (or explicitly single-region for v1.0)                             | unknown, review infra          | 1 week if needed      |
 
 ## 4. Recommended Launch Sequence
 
@@ -155,28 +155,28 @@ Triaged by what they block.
 The list is long but most items are 0.5–2 days. The critical path is
 P0 → P1.1–P1.5 → P1.11–P1.12.
 
-| Owner | Item | Estimate | Gate |
-|-------|------|----------|------|
-| eng | Merge `claude/jovial-hellman-64d048` (1A SDK skeleton) | 0.5 day | P0.1 |
-| eng | Rebase + merge 1B.1 → 1B.7 SDK slices in order | 2 days | P0.1 |
-| eng | Decide + configure publish target (npm public vs GH Packages) | 0.5 day | P0.2 |
-| eng | Add GitHub Actions release workflow (tag push → publish) | 1 day | P0.3 |
-| eng | Fix `eslint.config.mjs` Node globals + add `tsconfig.lint.json` per package | 0.5 day | P0.4 |
-| eng | Triage 6 Dependabot vulns; upgrade or document risk | 0.5–2 days | P0.5 |
-| eng | Full OpenAPI spec audit (validate, find latent dups, snake/camel) | 0.5 day | P0.6 |
-| eng | 1C doc-example smoke test in CI | 1 day | P0.7 |
-| BD/CEO | Identify + sign 5–10 design partners | 1 week | P0.8 |
-| eng | Sandbox + prod env separation documented and rate-limited | 1–2 days | P1.1, P1.2 |
-| eng | SIWX end-to-end smoke test (re-verify v0.3 PR4) | 0.5 day | P1.3 |
-| product | Define SLO targets per surface + publish | 0.5 day | P1.4 |
-| eng | Status page (Statuspage / Atlassian / built-in) wired to prod probes | 1 day | P1.5 |
-| eng | Pre-exec gate concurrency load test | 1–2 days | P1.6 |
-| eng | Cross-tenant pen-test (internal) of RLS | 1 day | P1.7 |
-| eng | Audit-anchor on-chain verification smoke test | 0.5 day | P1.8 |
-| legal | ToS / Privacy / Disclaimer review for API users | external | P1.9 |
-| legal | DPA template | external | P1.10 |
-| product | Pricing model + billing flow | 1–2 weeks | P1.11 |
-| eng | Self-serve API key issuance + rotation | 2–4 days | P1.12 |
+| Owner   | Item                                                                        | Estimate   | Gate       |
+| ------- | --------------------------------------------------------------------------- | ---------- | ---------- |
+| eng     | Merge `claude/jovial-hellman-64d048` (1A SDK skeleton)                      | 0.5 day    | P0.1       |
+| eng     | Rebase + merge 1B.1 → 1B.7 SDK slices in order                              | 2 days     | P0.1       |
+| eng     | Decide + configure publish target (npm public vs GH Packages)               | 0.5 day    | P0.2       |
+| eng     | Add GitHub Actions release workflow (tag push → publish)                    | 1 day      | P0.3       |
+| eng     | Fix `eslint.config.mjs` Node globals + add `tsconfig.lint.json` per package | 0.5 day    | P0.4       |
+| eng     | Triage 6 Dependabot vulns; upgrade or document risk                         | 0.5–2 days | P0.5       |
+| eng     | Full OpenAPI spec audit (validate, find latent dups, snake/camel)           | 0.5 day    | P0.6       |
+| eng     | 1C doc-example smoke test in CI                                             | 1 day      | P0.7       |
+| BD/CEO  | Identify + sign 5–10 design partners                                        | 1 week     | P0.8       |
+| eng     | Sandbox + prod env separation documented and rate-limited                   | 1–2 days   | P1.1, P1.2 |
+| eng     | SIWX end-to-end smoke test (re-verify v0.3 PR4)                             | 0.5 day    | P1.3       |
+| product | Define SLO targets per surface + publish                                    | 0.5 day    | P1.4       |
+| eng     | Status page (Statuspage / Atlassian / built-in) wired to prod probes        | 1 day      | P1.5       |
+| eng     | Pre-exec gate concurrency load test                                         | 1–2 days   | P1.6       |
+| eng     | Cross-tenant pen-test (internal) of RLS                                     | 1 day      | P1.7       |
+| eng     | Audit-anchor on-chain verification smoke test                               | 0.5 day    | P1.8       |
+| legal   | ToS / Privacy / Disclaimer review for API users                             | external   | P1.9       |
+| legal   | DPA template                                                                | external   | P1.10      |
+| product | Pricing model + billing flow                                                | 1–2 weeks  | P1.11      |
+| eng     | Self-serve API key issuance + rotation                                      | 2–4 days   | P1.12      |
 
 ## 6. Open Product / Strategy Decisions
 
@@ -187,7 +187,7 @@ CTO calls needed before P1 work can land cleanly:
    gives us tighter control but adds an npmrc auth step for customers.
    **Recommendation: public npm.** The docs already commit to
    `npm install @brain/sdk`; matching that is the lowest-friction
-   developer onramp. The implementation isn't a competitive moat , 
+   developer onramp. The implementation isn't a competitive moat ,
    the protocol, the policy DSL, the on-chain anchoring, and the
    service surface are.
 
@@ -249,7 +249,7 @@ CTO calls needed before P1 work can land cleanly:
   service that proxies real responses through.
 
 - **The SDK is brand new.** 95 tests is high coverage for the code we
-  wrote but zero real-world miles. The first design partners *will*
+  wrote but zero real-world miles. The first design partners _will_
   find bugs we can't predict. Closed beta is for catching these
   before they hit production load.
 

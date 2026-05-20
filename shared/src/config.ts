@@ -57,6 +57,10 @@ const envSchema = z.object({
   // ---- Limits ----
   REQUEST_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(52_428_800), // 50 MiB cap
 
+  // ---- CORS ----
+  /** Comma-separated list of allowed origins. Use "*" only in local dev — never in staging/prod. */
+  CORS_ALLOWED_ORIGINS: z.string().default("http://localhost:5173,http://localhost:3000"),
+
   // ---- LLM (OpenAI) ----
   OPENAI_API_KEY: z.string().min(1).optional(),
   WIKI_LLM_MODEL: z.string().default("gpt-4o-mini"),
@@ -66,8 +70,11 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
 
   // ---- Sandbox / demo mode ----
-  /** Set to true to enable sandbox-friendly stub overrides (no live credentials required). */
-  BRAIN_DEMO_MODE: z.coerce.boolean().default(false),
+  /** Set to "true" to enable sandbox-friendly stub overrides (no live credentials required). */
+  BRAIN_DEMO_MODE: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
 
   // ---- Plaid (consumed by tools/plaid-sandbox and Raw webhook verifier) ----
   PLAID_CLIENT_ID: z.string().min(1).optional(),
@@ -80,6 +87,10 @@ const envSchema = z.object({
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
     .default("0xd1558828ef31630164aa8942dd41bc63a4d8bed7"),
+  POLICY_REGISTRY_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .default("0x683893ccd84d9a3487095d09fed324b6b8ea2501"),
   BRAIN_MCP_DEV_AUTH_BYPASS: z.coerce.boolean().default(false),
 
   // ---- On-chain rails (Base Sepolia) ----

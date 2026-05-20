@@ -24,7 +24,7 @@ describe("Brain.audit", () => {
       events: [{ id: "evt_1" }, { id: "evt_2" }],
       next_cursor: "c1",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const page = await brain.audit.list({ layer: "execution", limit: 100 });
 
@@ -36,7 +36,7 @@ describe("Brain.audit", () => {
 
   it("list returns empty events and null cursor on empty body", async () => {
     const { fetch } = mockFetch(200, {});
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const page = await brain.audit.list();
 
@@ -54,7 +54,7 @@ describe("Brain.audit", () => {
         anchor_block: 42,
       },
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const { event, inclusionProof } = await brain.audit.get("evt_1");
 
@@ -70,7 +70,7 @@ describe("Brain.audit", () => {
 
   it("get tolerates absent inclusion_proof", async () => {
     const { fetch } = mockFetch(200, { event: { id: "evt_1" } });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const { inclusionProof } = await brain.audit.get("evt_1");
 
@@ -80,7 +80,7 @@ describe("Brain.audit", () => {
 
   it("get throws when event is missing", async () => {
     const { fetch } = mockFetch(200, {});
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await expect(brain.audit.get("evt_1")).rejects.toBeInstanceOf(BrainAPIError);
   });
@@ -91,7 +91,7 @@ describe("Brain.audit", () => {
       entity_id: "pi_1",
       events: [{ id: "evt_1" }],
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.audit.history("payment_intent", "pi_1");
 
@@ -103,7 +103,7 @@ describe("Brain.audit", () => {
 
   it("history returns empty events when body has none", async () => {
     const { fetch } = mockFetch(200, {});
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.audit.history("transaction", "tx_1");
 
@@ -115,7 +115,7 @@ describe("Brain.audit", () => {
       job_id: "job_1",
       status_url: "https://api.brain.fi/v1/audit/export/jobs/job_1",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const job = await brain.audit.export({
       format: "jsonl",
@@ -136,7 +136,7 @@ describe("Brain.audit", () => {
       verified: true,
       onchain_block: 100,
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.audit.verify({
       eventHash: "0xhash",
@@ -154,7 +154,7 @@ describe("Brain.audit", () => {
 
   it("verify defaults verified=false and onchainBlock=null when fields missing", async () => {
     const { fetch } = mockFetch(200, {});
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.audit.verify({
       eventHash: "0xhash",
@@ -174,7 +174,7 @@ describe("Brain.audit", () => {
       onchain_tx_hash: "0xtx",
       onchain_block_number: 42,
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const anchor = await brain.audit.anchor.latest();
 
@@ -201,7 +201,7 @@ describe("Brain.proof", () => {
         anchor_block: 42,
       },
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const proof = await brain.proof("evt_1");
 
@@ -215,7 +215,7 @@ describe("Brain.proof", () => {
       code: "not_found",
       message: "no such event",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await expect(brain.proof("missing")).rejects.toMatchObject({
       status: 404,

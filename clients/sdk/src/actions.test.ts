@@ -30,7 +30,7 @@ describe("Brain.actions", () => {
       id: "prop_1",
       status: "pending",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const proposal = await brain.actions.propose({
       agentId: "agent_1",
@@ -48,7 +48,7 @@ describe("Brain.actions", () => {
 
   it("propose omits idempotency_key when not provided", async () => {
     const { fetch, calls } = mockFetch(201, { id: "prop_1" });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.actions.propose({ agentId: "agent_1", action: ACTION });
 
@@ -62,7 +62,7 @@ describe("Brain.actions", () => {
       execution_id: "ex_1",
       status: "started",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.actions.execute({
       proposalId: "prop_1",
@@ -79,7 +79,7 @@ describe("Brain.actions", () => {
       execution_id: "ex_1",
       status: "started",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.actions.execute({ proposalId: "prop_1" });
 
@@ -92,7 +92,7 @@ describe("Brain.actions", () => {
       id: "prop_1",
       status: "approved",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.actions.approve({
       proposalId: "prop_1",
@@ -106,7 +106,7 @@ describe("Brain.actions", () => {
 
   it("escalate posts proposal_id and reason", async () => {
     const { fetch, calls } = mockFetch(200, {});
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.actions.escalate({
       proposalId: "prop_1",
@@ -123,7 +123,7 @@ describe("Brain.actions", () => {
       id: "ex_1",
       status: "succeeded",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const execution = await brain.actions.get("ex_1");
 

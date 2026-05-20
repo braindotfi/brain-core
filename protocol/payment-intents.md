@@ -101,19 +101,19 @@ Internal agents call `PaymentIntentService.create()`. External agents call the M
 ```typescript
 // Internal agent (TypeScript)
 const intent = await paymentIntentService.create({
-  ownerId:                "acme",
-  createdByAgentId:       "ag_payment_v1",
-  actionType:             "ach_outbound",
-  sourceAccountId:        "acct_ops",
+  ownerId: "acme",
+  createdByAgentId: "ag_payment_v1",
+  actionType: "ach_outbound",
+  sourceAccountId: "acct_ops",
   destinationCounterpartyId: "cp_aws",
-  amount:                 "61404.12",
-  currency:               "USD",
-  obligationId:           "ob_aws_2025_09",
-  idempotencyKey:         "pi_2025_09_aws_001",
+  amount: "61404.12",
+  currency: "USD",
+  obligationId: "ob_aws_2025_09",
+  idempotencyKey: "pi_2025_09_aws_001",
 });
 
-console.log(intent.status);             // "proposed" → resolved by Policy
-console.log(intent.policyDecisionId);   // the PolicyDecision row to inspect
+console.log(intent.status); // "proposed" → resolved by Policy
+console.log(intent.policyDecisionId); // the PolicyDecision row to inspect
 ```
 
 ### API Surface
@@ -141,8 +141,7 @@ GET /v1/ledger/payment-intents?status=pending_approval&owner=acme
 Or in the MCP:
 
 ```json
-{ "method": "resources/read",
-  "params": { "uri": "brain://ledger/payment-intents/pi_a1b2c3" } }
+{ "method": "resources/read", "params": { "uri": "brain://ledger/payment-intents/pi_a1b2c3" } }
 ```
 
 A Wiki page about a vendor automatically includes their pending PaymentIntents in the **Recent Activity** section.

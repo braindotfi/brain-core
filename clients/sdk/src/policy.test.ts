@@ -20,7 +20,7 @@ function mockFetch(
 describe("Brain.policy", () => {
   it("get returns the active policy", async () => {
     const { fetch, calls } = mockFetch(200, { version: 3 });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const policy = await brain.policy.get("acme");
 
@@ -32,7 +32,7 @@ describe("Brain.policy", () => {
     const { fetch, calls } = mockFetch(200, {
       versions: [{ version: 1 }, { version: 2 }],
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const versions = await brain.policy.listVersions("acme");
 
@@ -42,7 +42,7 @@ describe("Brain.policy", () => {
 
   it("listVersions defaults to empty array on empty body", async () => {
     const { fetch } = mockFetch(200, {});
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     expect(await brain.policy.listVersions("acme")).toEqual([]);
   });
@@ -53,7 +53,7 @@ describe("Brain.policy", () => {
       typed_data: { domain: { name: "Brain" } },
       required_signers: ["0x111", "0x222"],
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const payload = await brain.policy.compose("acme", {
       rules: [{ kind: "limit", amount: "1000" }],
@@ -67,7 +67,7 @@ describe("Brain.policy", () => {
 
   it("compose defaults requiredSigners to empty array", async () => {
     const { fetch } = mockFetch(200, { content_hash: "0xabc" });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const payload = await brain.policy.compose("acme", {} as never);
 
@@ -76,7 +76,7 @@ describe("Brain.policy", () => {
 
   it("sign submits content_hash and signatures snake_cased", async () => {
     const { fetch, calls } = mockFetch(201, { version: 4 });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const policy = await brain.policy.sign("acme", {
       contentHash: "0xabc",
@@ -92,7 +92,7 @@ describe("Brain.policy", () => {
 
   it("activate is an alias for sign", async () => {
     const { fetch, calls } = mockFetch(201, { version: 4 });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.policy.activate("acme", {
       contentHash: "0xabc",
@@ -104,7 +104,7 @@ describe("Brain.policy", () => {
 
   it("evaluate returns the decision", async () => {
     const { fetch, calls } = mockFetch(200, { decision: "allow" });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.policy.evaluate("acme", {
       type: "outbound_payment",
@@ -116,7 +116,7 @@ describe("Brain.policy", () => {
 
   it("simulate forwards action + version", async () => {
     const { fetch, calls } = mockFetch(200, { decision: "confirm" });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.policy.simulate("acme", {
       action: { type: "outbound_payment" } as never,

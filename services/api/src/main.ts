@@ -11,6 +11,9 @@
  */
 
 import Fastify from "fastify";
+import fastifyCors from "@fastify/cors";
+import fastifyHelmet from "@fastify/helmet";
+import fastifyRateLimit from "@fastify/rate-limit";
 import { Redis } from "ioredis";
 import {
   authPlugin,
@@ -23,7 +26,7 @@ import {
   WebhookDispatcher,
   WebhookAuditEmitter,
   RedisIdempotencyStore,
-  InMemoryRevocationStore,
+  RedisRevocationStore,
   createLogger,
   createPool,
   MemoryBlobAdapter,
@@ -35,6 +38,7 @@ import {
   loadConfig,
   brainError,
   withTenantScope,
+  newTokenId,
   type IRawEvidenceService,
   type IWikiMemoryService,
   type ServiceCallContext,
@@ -48,6 +52,7 @@ import {
 } from "@brain/shared";
 
 import { registerSiwxRoutes, StubAgentRegistry } from "./auth/siwx.js";
+import { createViemAnchorBroadcaster } from "./anchorBroadcaster.js";
 
 import { registerRawPlugin, ingestOne, type RegisterRawPluginOptions } from "@brain/raw";
 
@@ -68,7 +73,7 @@ import {
 } from "@brain/execution";
 import type { ExecutionDeps } from "@brain/execution";
 
-import { registerAuditRoutes } from "@brain/audit";
+import { registerAuditRoutes, publishAnchor } from "@brain/audit";
 import type { AuditDeps } from "@brain/audit";
 
 import {
@@ -327,18 +332,24 @@ async function main(): Promise<void> {
     new WebhookDispatcher(pool),
   );
 
-  // In demo mode use a local HS256 secret so tokens issued by registerSiwxRoutes
-  // (and any future local issuer) are verifiable without a live JWKS endpoint.
-  // Never set secret in production — keep AUTH_JWKS_URL for asymmetric verification.
+  if (cfg.BRAIN_DEMO_MODE && cfg.NODE_ENV === "production") {
+    throw new Error("BRAIN_DEMO_MODE=true is not allowed in NODE_ENV=production");
+  }
+
+  // Single source of truth for the demo HS256 secret. Used by both JwtVerifier
+  // (to accept demo tokens) and JwtSigner (to mint them). Having it in two
+  // inline literals means a typo breaks verification silently.
   const DEMO_SIGN_SECRET = "brain-demo-mode-insecure-dev-only";
+  const DEMO_GOLDEN_USER = "usr_01GOLDEN00000000000000000" as const;
+  const DEMO_GOLDEN_TENANT = "tnt_01GOLDEN00000000000000000" as const;
+
   const jwtVerifier = new JwtVerifier({
     jwksUrl: cfg.AUTH_JWKS_URL,
     ...(cfg.BRAIN_DEMO_MODE ? { secret: DEMO_SIGN_SECRET } : {}),
     issuer: cfg.AUTH_ISSUER,
     audience: cfg.AUTH_AUDIENCE,
     clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
-    // TODO: swap to RedisRevocationStore in production.
-    revocation: new InMemoryRevocationStore(),
+    revocation: new RedisRevocationStore(redis),
   });
 
   // -- blob adapter (MemoryBlobAdapter until Azure/S3 creds are set) ---
@@ -390,7 +401,7 @@ async function main(): Promise<void> {
     audit,
     // Base Sepolia chain id.
     chainId: 84532,
-    policyRegistryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
+    policyRegistryAddress: cfg.POLICY_REGISTRY_ADDRESS as `0x${string}`,
   };
 
   const policyService = new PolicyService({ pool, audit });
@@ -447,7 +458,20 @@ async function main(): Promise<void> {
     resolveRole,
   };
 
-  const auditDeps: AuditDeps = { pool, audit };
+  const anchorBroadcaster =
+    cfg.AUDIT_PUBLISHER_KEY !== undefined
+      ? createViemAnchorBroadcaster({
+          privateKey: cfg.AUDIT_PUBLISHER_KEY as `0x${string}`,
+          contractAddress: cfg.AUDIT_ANCHOR_ADDRESS as `0x${string}`,
+          rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+        })
+      : undefined;
+
+  const auditDeps: AuditDeps = {
+    pool,
+    audit,
+    ...(anchorBroadcaster !== undefined ? { broadcaster: anchorBroadcaster } : {}),
+  };
 
   // -- MCP server -----------------------------------------------------
   // TODO: swap FakeAuthVerifier for McpAuthVerifier with a real onchain
@@ -475,7 +499,16 @@ async function main(): Promise<void> {
     logger: true,
     bodyLimit: cfg.REQUEST_BODY_LIMIT_BYTES,
     disableRequestLogging: false,
+    trustProxy: true,
   });
+
+  // Security plugins registered before routes.
+  const corsOrigins = cfg.CORS_ALLOWED_ORIGINS.split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  await app.register(fastifyCors, { origin: corsOrigins, credentials: true });
+  await app.register(fastifyHelmet, { contentSecurityPolicy: false });
+  await app.register(fastifyRateLimit, { max: 300, timeWindow: "1 minute" });
 
   // Shared plugins registered ONCE.
   await app.register(requestIdPlugin);
@@ -563,15 +596,55 @@ async function main(): Promise<void> {
         const demoSigner = new JwtSigner({
           issuer: cfg.AUTH_ISSUER,
           audience: cfg.AUTH_AUDIENCE,
-          key: { kty: "oct", k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"), alg: "HS256" },
+          key: {
+            kty: "oct",
+            k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"),
+            alg: "HS256",
+          },
           algorithm: "HS256",
         });
         await v1.register(async (child) =>
           registerSiwxRoutes(child, {
             signer: demoSigner,
             registry: new StubAgentRegistry(),
+            redis,
             demoMode: true,
           }),
+        );
+
+        // GET /v1/demo/token — mints a short-lived read-heavy demo JWT for the
+        // golden-path tenant. Scoped to the minimum needed for the quickstart;
+        // audit:admin and payment_intent:execute are intentionally excluded.
+        v1.get(
+          "/demo/token",
+          { config: { skipAuth: true, rateLimit: { max: 5, timeWindow: "1 minute" } } },
+          async (_req, reply) => {
+            const DEMO_TTL_S = 15 * 60; // 15 minutes
+            const token = await demoSigner.sign({
+              id: DEMO_GOLDEN_USER,
+              type: "user",
+              tenantId: DEMO_GOLDEN_TENANT,
+              tokenId: newTokenId(),
+              expiresAt: Math.floor(Date.now() / 1000) + DEMO_TTL_S,
+              scopes: [
+                "ledger:read",
+                "wiki:read",
+                "raw:read",
+                "raw:write",
+                "policy:read",
+                "execution:read",
+                "execution:propose",
+                "payment_intent:propose",
+                "payment_intent:approve",
+                "audit:read",
+              ],
+            });
+            return reply.send({
+              token,
+              tenant_id: DEMO_GOLDEN_TENANT,
+              expires_in: DEMO_TTL_S,
+            });
+          },
         );
       }
     },
@@ -581,6 +654,48 @@ async function main(): Promise<void> {
   // -- background workers ---------------------------------------------
   const normalizeWorker = startNormalizeWorker({ pool, audit });
 
+  let anchorTimer: NodeJS.Timeout | undefined;
+  let anchorShutdown = false;
+
+  if (anchorBroadcaster !== undefined) {
+    const intervalMs = cfg.AUDIT_ANCHOR_INTERVAL_MS;
+    let anchorRunning = false;
+
+    const runAnchor = async (): Promise<void> => {
+      if (anchorRunning) return;
+      anchorRunning = true;
+      const now = new Date();
+      const periodStart = new Date(now.getTime() - intervalMs);
+      try {
+        const res = await pool.query<{ tenant_id: string }>(
+          "SELECT DISTINCT tenant_id FROM audit_events WHERE created_at >= $1",
+          [periodStart],
+        );
+        for (const row of res.rows) {
+          try {
+            await publishAnchor(pool, anchorBroadcaster, {
+              tenantId: row.tenant_id,
+              periodStart,
+              periodEnd: now,
+            });
+          } catch (err) {
+            log.error({ err, tenantId: row.tenant_id }, "anchor publish failed");
+          }
+        }
+      } catch (err) {
+        log.error({ err }, "anchor tenant query failed");
+      } finally {
+        anchorRunning = false;
+        if (!anchorShutdown) {
+          anchorTimer = setTimeout(() => void runAnchor(), intervalMs);
+        }
+      }
+    };
+
+    anchorTimer = setTimeout(() => void runAnchor(), intervalMs);
+    log.info({ intervalMs }, "anchor publisher started");
+  }
+
   // -- listen ---------------------------------------------------------
   await app.listen({ host: "0.0.0.0", port: cfg.PORT });
   log.info({ port: cfg.PORT, version: cfg.SERVICE_VERSION }, "brain-server up");
@@ -588,6 +703,8 @@ async function main(): Promise<void> {
   // -- graceful shutdown ----------------------------------------------
   const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, "shutting down");
+    anchorShutdown = true;
+    if (anchorTimer !== undefined) clearTimeout(anchorTimer);
     normalizeWorker.stop();
     try {
       await app.close();

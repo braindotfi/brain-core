@@ -1,0 +1,15 @@
+.git
+.github
+node_modules
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+services/agents
+contracts
+infra
+docs
+coverage
+.turbo
+.env
+.env.local
+.env.*.local

@@ -84,6 +84,7 @@ export const BRAIN_ERROR_CODES = [
   "audit_event_not_found",
   "audit_proof_invalid",
   "audit_anchor_not_yet_published",
+  "audit_no_events",
 
   // Infrastructure
   "dependency_unavailable",
@@ -231,6 +232,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   payment_intent_invalid_state: 409,
   payment_intent_gate_failed: 409,
   audit_anchor_not_yet_published: 409,
+  audit_no_events: 422,
 
   // 503 — dependency / rail outage
   execution_rail_unavailable: 503,

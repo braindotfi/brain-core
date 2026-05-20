@@ -36,12 +36,12 @@ app at `POST /agents/mcp`. Boot the execution service to expose it.
 
 ## Where the Logic Lives
 
-| File                    | Purpose                                               |
-| ----------------------- | ----------------------------------------------------- |
+| File                    | Purpose                                              |
+| ----------------------- | ---------------------------------------------------- |
 | `src/server.ts`         | `BrainMcpServer`, JSON-RPC dispatcher + auth + audit |
-| `src/dispatcher.ts`     | JSON-RPC 2.0 message parsing                          |
-| `src/auth.ts`           | Agent identity + scope-hash verification              |
-| `src/tools/*.ts`        | One file per capability group                         |
-| `src/resources.ts`      | `brain://...` URI resolver                            |
-| `src/prompts.ts`        | Canonical question templates                          |
-| `src/transport/http.ts` | Fastify-compatible request handler                    |
+| `src/dispatcher.ts`     | JSON-RPC 2.0 message parsing                         |
+| `src/auth.ts`           | Agent identity + scope-hash verification             |
+| `src/tools/*.ts`        | One file per capability group                        |
+| `src/resources.ts`      | `brain://...` URI resolver                           |
+| `src/prompts.ts`        | Canonical question templates                         |
+| `src/transport/http.ts` | Fastify-compatible request handler                   |

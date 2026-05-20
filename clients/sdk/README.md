@@ -26,6 +26,40 @@ This package is the source-of-truth client that backs every code example on
 | 1B.7  | Client-side compounds: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`                                                  | **shipping in this PR** |
 | 1C    | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package)                        | not yet implemented     |
 
+## Quickstart against the hosted sandbox
+
+The Brain sandbox is hosted at `https://api.brain.dev/v1` and runs in demo
+mode with a pre-seeded golden-path dataset (Brain Inc. accounts, Stripe
+counterparty, invoices).
+
+**Step 1 — get a demo token:**
+
+```bash
+export BRAIN_TOKEN=$(curl -s https://api.brain.dev/v1/demo/token | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).token))")
+```
+
+**Step 2 — run the quickstart:**
+
+```bash
+BRAIN_BASE_URL=https://api.brain.dev/v1 \
+  npx tsx clients/sdk/examples/quickstart.ts
+```
+
+Or from within the workspace after `pnpm install`:
+
+```bash
+BRAIN_TOKEN=$(curl -s https://api.brain.dev/v1/demo/token | jq -r .token) \
+BRAIN_BASE_URL=https://api.brain.dev/v1 \
+  pnpm -C clients/sdk exec tsx examples/quickstart.ts
+```
+
+The token is valid for 24 hours. To reset the dataset between demo sessions:
+
+```bash
+# (on the server, or via API — see docs/demo-script.md for the pre-flight checklist)
+pnpm run demo:reset
+```
+
 ## Usage
 
 ### High-Level (`Brain` Class)
@@ -33,7 +67,7 @@ This package is the source-of-truth client that backs every code example on
 ```typescript
 import { Brain } from "@brain/sdk";
 
-const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY! });
+const brain = new Brain({ token: process.env.BRAIN_TOKEN! });
 
 // Ledger reads
 const { accounts, nextCursor } = await brain.accounts.list({ status: "active" });
@@ -129,7 +163,7 @@ want direct typed-fetch access:
 import { createBrainHttpClient } from "@brain/sdk";
 
 const http = createBrainHttpClient({
-  apiKey: process.env.BRAIN_API_KEY!,
+  token: process.env.BRAIN_TOKEN!,
 });
 
 const { data, error } = await http.GET("/audit/anchor/latest");
@@ -184,7 +218,7 @@ Follows the standard Brain TypeScript package layout: strict mode, ESM,
   lands later, these can be retargeted without changing the public
   method signature.
 - **Tenant scoping**: most endpoints derive the tenant from the
-  authenticated principal. The `policy.*` methods are an exception , 
+  authenticated principal. The `policy.*` methods are an exception ,
   they take `tenant_id` explicitly. Compound helpers that accept a
   `tenantId` argument (`pay`, `ask`, `snapshot`) match the documented
   signature but currently don't forward the value on the wire. Reserved

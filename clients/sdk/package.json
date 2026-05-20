@@ -1,6 +1,6 @@
 {
   "name": "@brain/sdk",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.0",
   "private": true,
   "description": "Typed client for the Brain HTTP API. Generated from Brain_API_Specification.yaml.",
   "type": "module",

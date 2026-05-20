@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { dispatch, parseRequest } from "./dispatcher.js";
+import { dispatch, invalidParams, parseRequest } from "./dispatcher.js";
 import {
   JSON_RPC_INTERNAL_ERROR,
   JSON_RPC_METHOD_NOT_FOUND,
@@ -25,6 +25,34 @@ describe("parseRequest", () => {
   it("normalizes missing params to {}", () => {
     const r = parseRequest({ jsonrpc: "2.0", id: 1, method: "ping" });
     expect(r!.params).toEqual({});
+  });
+  it("treats missing id as notification (id=null)", () => {
+    const r = parseRequest({ jsonrpc: "2.0", method: "ping", params: {} });
+    expect(r).not.toBeNull();
+    expect(r!.id).toBeNull();
+  });
+  it("normalizes invalid id type to null", () => {
+    const r = parseRequest({ jsonrpc: "2.0", id: { nested: true }, method: "ping" });
+    expect(r).not.toBeNull();
+    expect(r!.id).toBeNull();
+  });
+});
+
+describe("invalidParams", () => {
+  it("throws with code request_params_invalid", () => {
+    expect(() => invalidParams("bad input")).toThrow();
+    try {
+      invalidParams("bad input");
+    } catch (e) {
+      expect((e as { code: string }).code).toBe("request_params_invalid");
+    }
+  });
+  it("attaches details when provided", () => {
+    try {
+      invalidParams("bad input", { field: "x" });
+    } catch (e) {
+      expect((e as { details: unknown }).details).toEqual({ field: "x" });
+    }
   });
 });
 

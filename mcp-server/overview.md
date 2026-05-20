@@ -115,9 +115,7 @@ Response:
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "content": [
-      { "type": "text", "text": "AWS at $61,404 across 3 environments." }
-    ],
+    "content": [{ "type": "text", "text": "AWS at $61,404 across 3 environments." }],
     "metadata": {
       "ledger_evidence": [
         { "type": "ledger_transactions", "id": "tx_4127" },

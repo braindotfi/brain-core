@@ -16,15 +16,12 @@ Compiles to:
 
 ```json
 {
-  "subject":  { "agent_capability": "pay_invoice" },
+  "subject": { "agent_capability": "pay_invoice" },
   "resource": { "counterparty.status": ["approved"] },
   "rules": [
-    { "if": "amount < 5000 && counterparty.known",
-      "then": "ALLOW" },
-    { "if": "amount >= 5000 && counterparty.known",
-      "then": "ESCALATE", "approvers": ["role:cfo"] },
-    { "if": "!counterparty.known",
-      "then": "DENY", "reason": "new_counterparty_review_required" }
+    { "if": "amount < 5000 && counterparty.known", "then": "ALLOW" },
+    { "if": "amount >= 5000 && counterparty.known", "then": "ESCALATE", "approvers": ["role:cfo"] },
+    { "if": "!counterparty.known", "then": "DENY", "reason": "new_counterparty_review_required" }
   ]
 }
 ```

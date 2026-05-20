@@ -103,9 +103,9 @@ All errors share a common shape.
 ```json
 {
   "error": {
-    "code":     "policy.denied",
-    "message":  "Counterparty not approved",
-    "details":  { "counterparty_id": "cp_x", "policy_version": 3 },
+    "code": "policy.denied",
+    "message": "Counterparty not approved",
+    "details": { "counterparty_id": "cp_x", "policy_version": 3 },
     "trace_id": "trc_8f3a92..."
   }
 }

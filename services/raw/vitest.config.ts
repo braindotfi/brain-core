@@ -12,7 +12,19 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov", "html"],
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/**/*.d.ts", "src/**/types.ts", "src/**/*.mock.ts"],
+      exclude: [
+        "src/**/*.test.ts",
+        "src/**/*.d.ts",
+        "src/**/types.ts",
+        "src/**/*.mock.ts",
+        // Require integration or live-API tests; excluded from unit coverage gate:
+        "src/deps.ts",
+        "src/server.ts",
+        "src/__integration__/**",
+        "src/routes/**",
+        "src/sources/routes.ts",
+        "src/adapters/plaid.ts",
+      ],
       thresholds: {
         lines: 80,
         functions: 80,

@@ -60,9 +60,7 @@ The response includes the full provenance chain.
     "raw_refs": ["sha256:def..."],
     "extractor_version": "v3.2",
     "confidence": 1.0,
-    "history": [
-      { "id": "tx_001", "amount": "1234.56", "extractor_version": "v3.1" }
-    ]
+    "history": [{ "id": "tx_001", "amount": "1234.56", "extractor_version": "v3.1" }]
   }
 }
 ```

@@ -7,12 +7,7 @@
  */
 
 import Fastify, { type FastifyInstance } from "fastify";
-import {
-  authPlugin,
-  errorHandlerPlugin,
-  requestIdPlugin,
-  type JwtVerifier,
-} from "@brain/shared";
+import { authPlugin, errorHandlerPlugin, requestIdPlugin, type JwtVerifier } from "@brain/shared";
 import { LedgerService } from "./service/LedgerService.js";
 import { ReconciliationService } from "./reconciliation/ReconciliationService.js";
 import { registerLedgerRoutes } from "./routes/index.js";

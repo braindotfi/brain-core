@@ -5,13 +5,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import {
-  brainError,
-  isBrainId,
-  requireScope,
-  withTenantScope,
-  type Scope,
-} from "@brain/shared";
+import { brainError, isBrainId, requireScope, withTenantScope, type Scope } from "@brain/shared";
 import { findEntityAsOf, listEntityVersions, type WikiEntityRow } from "../repository/entities.js";
 import { findOneHopNeighbors } from "../repository/relations.js";
 import type { WikiDeps } from "../deps.js";

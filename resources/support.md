@@ -21,7 +21,7 @@ The single most useful thing you can include is a **trace ID**. Every API and MC
 try {
   await brain.pay("acme", { invoiceId: "inv_8231" });
 } catch (err) {
-  console.log(err.traceId);  // include this in the ticket
+  console.log(err.traceId); // include this in the ticket
 }
 ```
 
@@ -37,4 +37,3 @@ try {
 ### Reporting a Security Issue
 
 Please email [security@brain.fi](mailto:security@brain.fi) directly. Do not file public issues for security vulnerabilities. Brain runs a public bug bounty; details are on the security page.
-

@@ -22,7 +22,7 @@ describe("Brain.wiki", () => {
     const { fetch, calls } = mockFetch(200, {
       answer: "your cash is fine",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const answer = await brain.wiki.question({
       question: "what's my cash position?",
@@ -39,7 +39,7 @@ describe("Brain.wiki", () => {
 
   it("question omits optional fields when not provided", async () => {
     const { fetch, calls } = mockFetch(200, {});
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.wiki.question({ question: "q?" });
 
@@ -53,7 +53,7 @@ describe("Brain.wiki", () => {
       results: [{ id: "ent_1" }],
       next_cursor: "c1",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.wiki.search({ q: "acme", limit: 25 });
 
@@ -65,7 +65,7 @@ describe("Brain.wiki", () => {
 
   it("search returns empty results + null cursor on empty body", async () => {
     const { fetch } = mockFetch(200, {});
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const r = await brain.wiki.search();
 
@@ -78,7 +78,7 @@ describe("Brain.wiki", () => {
       entity: { id: "ent_1" },
       neighbors: [{ relation: { type: "owns" }, entity: { id: "ent_2" } }],
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.wiki.getEntity("ent_1", {
       includeNeighbors: true,
@@ -94,7 +94,7 @@ describe("Brain.wiki", () => {
 
   it("getEntity returns empty neighbors when none", async () => {
     const { fetch } = mockFetch(200, { entity: { id: "ent_1" } });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.wiki.getEntity("ent_1");
 
@@ -106,7 +106,7 @@ describe("Brain.wiki", () => {
       entity_id: "ent_1",
       evidence: [],
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const ev = await brain.wiki.getEvidence("ent_1");
 
@@ -122,7 +122,7 @@ describe("Brain.wiki", () => {
         { id: "ent_1", _v: 2 },
       ],
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const h = await brain.wiki.getHistory("ent_1");
 
@@ -136,7 +136,7 @@ describe("Brain.wiki", () => {
       annotation_id: "ann_1",
       new_version_id: "ver_2",
     });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const r = await brain.wiki.annotate({
       target: "entity",
@@ -150,7 +150,7 @@ describe("Brain.wiki", () => {
 
   it("schema forwards kind query", async () => {
     const { fetch, calls } = mockFetch(200, { kinds: {} });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.wiki.schema({ kind: "account" });
 
@@ -161,7 +161,7 @@ describe("Brain.wiki", () => {
 describe("Brain.ask (compound)", () => {
   it("delegates to wiki.question", async () => {
     const { fetch, calls } = mockFetch(200, { answer: "yes" });
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     const answer = await brain.ask("acme", "is this working?");
 
@@ -173,7 +173,7 @@ describe("Brain.ask (compound)", () => {
 
   it("forwards optional asOf / maxEvidenceDepth", async () => {
     const { fetch, calls } = mockFetch(200, {});
-    const brain = new Brain({ apiKey: "k", fetch });
+    const brain = new Brain({ token: "k", fetch });
 
     await brain.ask("acme", "q?", { maxEvidenceDepth: 7 });
 

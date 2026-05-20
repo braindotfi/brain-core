@@ -111,7 +111,7 @@ The full SDK surface (`brain.accounts`, `brain.transactions`, `brain.payments`, 
 
 ## Next Steps
 
-* Build it: [Quickstart](introduction/quickstart.md), then the [task-shaped guides](build/overview.md).
-* Understand it: [Concepts](concepts/overview.md), then [Protocol](protocol/overview.md).
-* Integrate an external agent: [MCP server](mcp-server/overview.md).
-* Verify a payment on-chain: [Smart contracts](smart-contracts/overview.md) and [BrainAuditAnchor](smart-contracts/brainauditanchor.md).
+- Build it: [Quickstart](introduction/quickstart.md), then the [task-shaped guides](build/overview.md).
+- Understand it: [Concepts](concepts/overview.md), then [Protocol](protocol/overview.md).
+- Integrate an external agent: [MCP server](mcp-server/overview.md).
+- Verify a payment on-chain: [Smart contracts](smart-contracts/overview.md) and [BrainAuditAnchor](smart-contracts/brainauditanchor.md).
