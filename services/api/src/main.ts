@@ -88,6 +88,8 @@ import {
 
 import { BrainMcpServer, FakeAuthVerifier, McpAuthVerifier, registerMcpRoute } from "@brain/mcp";
 import { createViemScopeChecker } from "./mcp/viemScopeChecker.js";
+import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
+import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps } from "@brain/wiki";
@@ -540,34 +542,45 @@ async function main(): Promise<void> {
   // Raw: also registers content-type parsers + multipart inside registerRawPlugin.
   const rawOpts: RegisterRawPluginOptions = {
     plaidVerify: {
-      // In production supply a real key resolver backed by Plaid JWKS.
-      // In demo mode the sandbox CLI uses /raw/ingest (not the webhook route),
-      // so this resolver is only reached if someone explicitly POSTs to
-      // /raw/webhooks/plaid — it rejects with a clear error either way.
-      keyResolver: cfg.BRAIN_DEMO_MODE
-        ? async (_kid: string): Promise<never> => {
-            throw brainError(
-              "raw_webhook_signature_invalid",
-              "Plaid webhook signing not configured — use /raw/ingest in demo mode",
-            );
-          }
-        : async (): Promise<never> => {
-            throw brainError("raw_webhook_signature_invalid", "Plaid key resolver not configured");
-          },
+      keyResolver:
+        cfg.BRAIN_DEMO_MODE
+          ? async (_kid: string): Promise<never> => {
+              throw brainError(
+                "raw_webhook_signature_invalid",
+                "Plaid webhook signing not configured — use /raw/ingest in demo mode",
+              );
+            }
+          : cfg.PLAID_CLIENT_ID !== undefined && cfg.PLAID_SECRET !== undefined
+            ? createPlaidKeyResolver({
+                clientId: cfg.PLAID_CLIENT_ID,
+                secret: cfg.PLAID_SECRET,
+                env: cfg.PLAID_ENV,
+              })
+            : async (): Promise<never> => {
+                throw brainError(
+                  "raw_webhook_signature_invalid",
+                  "Plaid webhook signing not configured — set PLAID_CLIENT_ID and PLAID_SECRET",
+                );
+              },
       clockToleranceSeconds: 300,
     },
-    resolveWebhookTenant: async (
-      _provider: string,
-      _body: Buffer,
-      headers: Record<string, unknown>,
-    ): Promise<string> => {
-      // TODO: implement real tenant resolution from Plaid item_id lookup.
-      const devTenantHeader = headers["x-dev-tenant-id"];
-      if (typeof devTenantHeader === "string" && devTenantHeader.length > 0) {
-        return devTenantHeader;
-      }
-      throw brainError("auth_tenant_mismatch", "cannot resolve webhook tenant — not configured");
-    },
+    resolveWebhookTenant:
+      cfg.BRAIN_DEMO_MODE
+        ? async (
+            _provider: string,
+            _body: Buffer,
+            headers: Record<string, unknown>,
+          ): Promise<string> => {
+            const devTenantHeader = headers["x-dev-tenant-id"];
+            if (typeof devTenantHeader === "string" && devTenantHeader.length > 0) {
+              return devTenantHeader;
+            }
+            throw brainError(
+              "auth_tenant_mismatch",
+              "cannot resolve webhook tenant — use x-dev-tenant-id header in demo mode",
+            );
+          }
+        : createPlaidTenantResolver(pool),
   };
 
   // Mount all service routes under /v1 to match Brain_API_Specification.yaml.
