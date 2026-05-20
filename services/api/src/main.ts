@@ -70,6 +70,7 @@ import {
   PaymentIntentService,
   defaultRails,
   findAgent,
+  findUser,
 } from "@brain/execution";
 import type { ExecutionDeps } from "@brain/execution";
 
@@ -298,10 +299,10 @@ function makeResolveRole(
   pool: ReturnType<typeof createPool>,
 ): (ctx: ServiceCallContext, principalId: string) => Promise<string | null> {
   return async (ctx, principalId) => {
-    const row = await withTenantScope(pool, ctx.tenantId, (c) => findAgent(c, principalId));
-    if (row !== null) return row.role;
-    // TODO: users-role table not yet modeled — see audit §6 cross-cutting.
-    return null;
+    const agentRow = await withTenantScope(pool, ctx.tenantId, (c) => findAgent(c, principalId));
+    if (agentRow !== null) return agentRow.role;
+    const userRow = await withTenantScope(pool, ctx.tenantId, (c) => findUser(c, principalId));
+    return userRow?.role ?? null;
   };
 }
 

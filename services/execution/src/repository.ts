@@ -1,5 +1,5 @@
 /**
- * proposals / executions / agents repositories. All tenant-scoped.
+ * proposals / executions / agents / users repositories. All tenant-scoped.
  */
 
 import type { TenantScopedClient } from "@brain/shared";
@@ -259,4 +259,25 @@ export async function transitionAgent(
   const row = rows[0];
   if (row === undefined) throw new Error(`agent ${id} not in state ${from}`);
   return row;
+}
+
+// ---------- users ----------
+
+export interface UserRow {
+  id: string;
+  tenant_id: string;
+  email: string;
+  role: "owner" | "admin" | "approver" | "viewer";
+  created_at: Date;
+}
+
+export async function findUser(
+  client: TenantScopedClient,
+  id: string,
+): Promise<UserRow | null> {
+  const { rows } = await client.query<UserRow>(
+    `SELECT * FROM users WHERE id = $1 LIMIT 1`,
+    [id],
+  );
+  return rows[0] ?? null;
 }
