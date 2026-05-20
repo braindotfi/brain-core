@@ -19,7 +19,7 @@ export const agentProposeTool: Tool<AgentProposeInput> = {
   name: "agent.action.propose",
   description:
     "Propose a non-financial action (e.g., flag anomaly, suggest categorization). Brain evaluates against the active policy and returns the proposal id + decision.",
-  requiredScopes: ["agent:propose"],
+  requiredScopes: ["execution:propose"],
   inputSchema: {
     type: "object",
     required: ["action"],
