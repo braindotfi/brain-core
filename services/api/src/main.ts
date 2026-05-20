@@ -543,45 +543,43 @@ async function main(): Promise<void> {
   // Raw: also registers content-type parsers + multipart inside registerRawPlugin.
   const rawOpts: RegisterRawPluginOptions = {
     plaidVerify: {
-      keyResolver:
-        cfg.BRAIN_DEMO_MODE
-          ? async (_kid: string): Promise<never> => {
-              throw brainError(
-                "raw_webhook_signature_invalid",
-                "Plaid webhook signing not configured — use /raw/ingest in demo mode",
-              );
-            }
-          : cfg.PLAID_CLIENT_ID !== undefined && cfg.PLAID_SECRET !== undefined
-            ? createPlaidKeyResolver({
-                clientId: cfg.PLAID_CLIENT_ID,
-                secret: cfg.PLAID_SECRET,
-                env: cfg.PLAID_ENV,
-              })
-            : async (): Promise<never> => {
-                throw brainError(
-                  "raw_webhook_signature_invalid",
-                  "Plaid webhook signing not configured — set PLAID_CLIENT_ID and PLAID_SECRET",
-                );
-              },
-      clockToleranceSeconds: 300,
-    },
-    resolveWebhookTenant:
-      cfg.BRAIN_DEMO_MODE
-        ? async (
-            _provider: string,
-            _body: Buffer,
-            headers: Record<string, unknown>,
-          ): Promise<string> => {
-            const devTenantHeader = headers["x-dev-tenant-id"];
-            if (typeof devTenantHeader === "string" && devTenantHeader.length > 0) {
-              return devTenantHeader;
-            }
+      keyResolver: cfg.BRAIN_DEMO_MODE
+        ? async (_kid: string): Promise<never> => {
             throw brainError(
-              "auth_tenant_mismatch",
-              "cannot resolve webhook tenant — use x-dev-tenant-id header in demo mode",
+              "raw_webhook_signature_invalid",
+              "Plaid webhook signing not configured — use /raw/ingest in demo mode",
             );
           }
-        : createPlaidTenantResolver(pool),
+        : cfg.PLAID_CLIENT_ID !== undefined && cfg.PLAID_SECRET !== undefined
+          ? createPlaidKeyResolver({
+              clientId: cfg.PLAID_CLIENT_ID,
+              secret: cfg.PLAID_SECRET,
+              env: cfg.PLAID_ENV,
+            })
+          : async (): Promise<never> => {
+              throw brainError(
+                "raw_webhook_signature_invalid",
+                "Plaid webhook signing not configured — set PLAID_CLIENT_ID and PLAID_SECRET",
+              );
+            },
+      clockToleranceSeconds: 300,
+    },
+    resolveWebhookTenant: cfg.BRAIN_DEMO_MODE
+      ? async (
+          _provider: string,
+          _body: Buffer,
+          headers: Record<string, unknown>,
+        ): Promise<string> => {
+          const devTenantHeader = headers["x-dev-tenant-id"];
+          if (typeof devTenantHeader === "string" && devTenantHeader.length > 0) {
+            return devTenantHeader;
+          }
+          throw brainError(
+            "auth_tenant_mismatch",
+            "cannot resolve webhook tenant — use x-dev-tenant-id header in demo mode",
+          );
+        }
+      : createPlaidTenantResolver(pool),
   };
 
   // Mount all service routes under /v1 to match Brain_API_Specification.yaml.

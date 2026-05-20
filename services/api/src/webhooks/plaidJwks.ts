@@ -24,9 +24,7 @@ export interface PlaidJwksOptions {
   env: "sandbox" | "development" | "production";
 }
 
-export function createPlaidKeyResolver(
-  opts: PlaidJwksOptions,
-): (kid: string) => Promise<JWK> {
+export function createPlaidKeyResolver(opts: PlaidJwksOptions): (kid: string) => Promise<JWK> {
   const cache = new Map<string, JWK>();
   const baseUrl = PLAID_BASE_URLS[opts.env] ?? PLAID_BASE_URLS["sandbox"];
 

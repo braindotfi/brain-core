@@ -271,13 +271,7 @@ export interface UserRow {
   created_at: Date;
 }
 
-export async function findUser(
-  client: TenantScopedClient,
-  id: string,
-): Promise<UserRow | null> {
-  const { rows } = await client.query<UserRow>(
-    `SELECT * FROM users WHERE id = $1 LIMIT 1`,
-    [id],
-  );
+export async function findUser(client: TenantScopedClient, id: string): Promise<UserRow | null> {
+  const { rows } = await client.query<UserRow>(`SELECT * FROM users WHERE id = $1 LIMIT 1`, [id]);
   return rows[0] ?? null;
 }

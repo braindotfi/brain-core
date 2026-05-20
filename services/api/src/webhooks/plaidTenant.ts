@@ -17,13 +17,14 @@ interface PlaidWebhookEnvelope {
   item_id?: string;
 }
 
-type TenantResolver = (provider: string, body: Buffer, headers: Record<string, unknown>) => Promise<string>;
+type TenantResolver = (
+  provider: string,
+  body: Buffer,
+  headers: Record<string, unknown>,
+) => Promise<string>;
 
 export function createPlaidTenantResolver(pool: Pool): TenantResolver {
-  return async function resolvePlaidTenant(
-    provider: string,
-    body: Buffer,
-  ): Promise<string> {
+  return async function resolvePlaidTenant(provider: string, body: Buffer): Promise<string> {
     if (provider !== "plaid") {
       throw brainError("auth_tenant_mismatch", `no tenant resolver for provider: ${provider}`);
     }

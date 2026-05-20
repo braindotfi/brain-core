@@ -17,7 +17,9 @@ describe("createPlaidTenantResolver", () => {
 
     const tenantId = await resolver("plaid", body, headers);
     expect(tenantId).toBe("tnt_abc");
-    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining("raw_plaid_items"), ["item_123"]);
+    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining("raw_plaid_items"), [
+      "item_123",
+    ]);
   });
 
   it("throws auth_tenant_mismatch when item_id not found", async () => {
@@ -25,7 +27,9 @@ describe("createPlaidTenantResolver", () => {
     const resolver = createPlaidTenantResolver(pool as never);
     const body = Buffer.from(JSON.stringify({ item_id: "unknown" }));
 
-    await expect(resolver("plaid", body, headers)).rejects.toMatchObject({ code: "auth_tenant_mismatch" });
+    await expect(resolver("plaid", body, headers)).rejects.toMatchObject({
+      code: "auth_tenant_mismatch",
+    });
   });
 
   it("throws request_body_invalid when item_id is absent", async () => {
@@ -33,7 +37,9 @@ describe("createPlaidTenantResolver", () => {
     const resolver = createPlaidTenantResolver(pool as never);
     const body = Buffer.from(JSON.stringify({ webhook_type: "TRANSACTIONS" }));
 
-    await expect(resolver("plaid", body, headers)).rejects.toMatchObject({ code: "request_body_invalid" });
+    await expect(resolver("plaid", body, headers)).rejects.toMatchObject({
+      code: "request_body_invalid",
+    });
   });
 
   it("throws request_body_invalid for non-JSON body", async () => {
@@ -41,13 +47,17 @@ describe("createPlaidTenantResolver", () => {
     const resolver = createPlaidTenantResolver(pool as never);
     const body = Buffer.from("not json");
 
-    await expect(resolver("plaid", body, headers)).rejects.toMatchObject({ code: "request_body_invalid" });
+    await expect(resolver("plaid", body, headers)).rejects.toMatchObject({
+      code: "request_body_invalid",
+    });
   });
 
   it("throws auth_tenant_mismatch for non-plaid provider", async () => {
     const pool = makePool([]);
     const resolver = createPlaidTenantResolver(pool as never);
 
-    await expect(resolver("stripe", Buffer.alloc(0), headers)).rejects.toMatchObject({ code: "auth_tenant_mismatch" });
+    await expect(resolver("stripe", Buffer.alloc(0), headers)).rejects.toMatchObject({
+      code: "auth_tenant_mismatch",
+    });
   });
 });

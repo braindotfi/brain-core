@@ -8,8 +8,9 @@ vi.mock("@brain/shared", async (importActual) => {
   const actual = await importActual<typeof BrainShared>();
   return {
     ...actual,
-    withTenantScope: vi.fn(async (_pool: unknown, _tenantId: unknown, fn: (c: unknown) => Promise<unknown>) =>
-      fn({ query: vi.fn() }),
+    withTenantScope: vi.fn(
+      async (_pool: unknown, _tenantId: unknown, fn: (c: unknown) => Promise<unknown>) =>
+        fn({ query: vi.fn() }),
     ),
   };
 });
