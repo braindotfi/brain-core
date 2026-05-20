@@ -1,7 +1,20 @@
 import { createPublicClient, createWalletClient, http, keccak256, toBytes, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
-import type { AnchorBroadcaster, BroadcastInput, BroadcastResult } from "@brain/audit";
+// Inlined from @brain/audit to avoid a circular tsc project-reference:
+// services/audit references ../api, so services/api cannot import @brain/audit.
+interface BroadcastInput {
+  tenantId: string;
+  merkleRoot: Buffer;
+  eventCount: number;
+  periodStart: Date;
+  periodEnd: Date;
+}
+interface BroadcastResult {
+  txHash: Buffer;
+  blockNumber: bigint;
+}
+type AnchorBroadcaster = (input: BroadcastInput) => Promise<BroadcastResult>;
 
 const BRAIN_AUDIT_ANCHOR_ABI = [
   {
