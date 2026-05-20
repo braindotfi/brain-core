@@ -118,12 +118,8 @@ export class Brain {
     this.cashFlow = new CashFlowResource(this);
   }
 
-  getMaskedApiKey(): string {
+  getMaskedToken(): string {
     return this._token.length > 11 ? `${this._token.slice(0, 11)}***` : "***";
-  }
-
-  getFetch(): typeof globalThis.fetch {
-    return this._fetch;
   }
 
   /**

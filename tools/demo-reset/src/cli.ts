@@ -18,6 +18,9 @@ import { Pool } from "pg";
 import { InMemoryAuditEmitter } from "@brain/shared";
 import { seedGoldenPath } from "@brain/seed-golden-path";
 
+// audit_events and audit_anchors are intentionally excluded — the audit log is
+// append-only per the non-negotiable principles in CLAUDE.md. Demo resets
+// clear business-entity state only; the audit chain must survive resets.
 const DEMO_TABLES = [
   "payment_intents",
   "transactions",
@@ -25,8 +28,6 @@ const DEMO_TABLES = [
   "obligations",
   "documents",
   "wiki_pages",
-  "audit_anchors",
-  "audit_events",
   "accounts",
   "counterparties",
 ] as const;
@@ -78,11 +79,16 @@ async function main(): Promise<number> {
     process.stdout.write(`demo-reset: done in ${elapsed}ms\n`);
     return 0;
   } catch (err: unknown) {
-    process.stderr.write(`demo-reset: failed — ${String(err)}\n`);
+    const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    process.stderr.write(`demo-reset: failed — ${msg}\n`);
     return 1;
   } finally {
     await pool.end();
   }
 }
 
-main().then((code) => process.exit(code)).catch(() => process.exit(1));
+main().then((code) => process.exit(code)).catch((err: unknown) => {
+  const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  process.stderr.write(`demo-reset: unhandled error — ${msg}\n`);
+  process.exit(1);
+});

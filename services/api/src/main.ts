@@ -336,14 +336,16 @@ async function main(): Promise<void> {
     throw new Error("BRAIN_DEMO_MODE=true is not allowed in NODE_ENV=production");
   }
 
-  // In demo mode use a local HS256 secret so tokens issued by registerSiwxRoutes
-  // are verifiable without a live JWKS endpoint.
-  // DEMO_SIGN_SECRET is intentionally scoped here — never accessible in production paths.
+  // Single source of truth for the demo HS256 secret. Used by both JwtVerifier
+  // (to accept demo tokens) and JwtSigner (to mint them). Having it in two
+  // inline literals means a typo breaks verification silently.
+  const DEMO_SIGN_SECRET = "brain-demo-mode-insecure-dev-only";
+  const DEMO_GOLDEN_USER = "usr_01GOLDEN00000000000000000" as const;
+  const DEMO_GOLDEN_TENANT = "tnt_01GOLDEN00000000000000000" as const;
+
   const jwtVerifier = new JwtVerifier({
     jwksUrl: cfg.AUTH_JWKS_URL,
-    ...(cfg.BRAIN_DEMO_MODE
-      ? { secret: "brain-demo-mode-insecure-dev-only" }
-      : {}),
+    ...(cfg.BRAIN_DEMO_MODE ? { secret: DEMO_SIGN_SECRET } : {}),
     issuer: cfg.AUTH_ISSUER,
     audience: cfg.AUTH_AUDIENCE,
     clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
@@ -501,7 +503,11 @@ async function main(): Promise<void> {
   });
 
   // Security plugins registered before routes.
-  await app.register(fastifyCors, { origin: true, credentials: true });
+  const corsOrigins = cfg.CORS_ALLOWED_ORIGINS
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  await app.register(fastifyCors, { origin: corsOrigins, credentials: true });
   await app.register(fastifyHelmet, { contentSecurityPolicy: false });
   await app.register(fastifyRateLimit, { max: 300, timeWindow: "1 minute" });
 
@@ -591,7 +597,11 @@ async function main(): Promise<void> {
         const demoSigner = new JwtSigner({
           issuer: cfg.AUTH_ISSUER,
           audience: cfg.AUTH_AUDIENCE,
-          key: { kty: "oct", k: Buffer.from("brain-demo-mode-insecure-dev-only").toString("base64url"), alg: "HS256" },
+          key: {
+            kty: "oct",
+            k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"),
+            alg: "HS256",
+          },
           algorithm: "HS256",
         });
         await v1.register(async (child) =>
@@ -603,38 +613,40 @@ async function main(): Promise<void> {
           }),
         );
 
-      // GET /v1/demo/token — mints a long-lived demo JWT for the golden-path tenant.
-      // Investors paste the returned token into the SDK quickstart or curl commands.
-      v1.get("/demo/token", { config: { skipAuth: true } }, async (_req, reply) => {
-        const DEMO_TTL_S = 24 * 60 * 60; // 24 hours
-        const token = await demoSigner.sign({
-          id: "usr_01GOLDEN00000000000000000",
-          type: "user",
-          tenantId: "tnt_01GOLDEN00000000000000000",
-          tokenId: newTokenId(),
-          expiresAt: Math.floor(Date.now() / 1000) + DEMO_TTL_S,
-          scopes: [
-            "ledger:read",
-            "wiki:read",
-            "raw:read",
-            "raw:write",
-            "policy:read",
-            "execution:read",
-            "execution:write",
-            "execution:propose",
-            "payment_intent:propose",
-            "payment_intent:approve",
-            "payment_intent:execute",
-            "audit:read",
-            "audit:admin",
-          ],
-        });
-        return reply.send({
-          token,
-          tenant_id: "tnt_01GOLDEN00000000000000000",
-          expires_in: DEMO_TTL_S,
-        });
-      });
+        // GET /v1/demo/token — mints a short-lived read-heavy demo JWT for the
+        // golden-path tenant. Scoped to the minimum needed for the quickstart;
+        // audit:admin and payment_intent:execute are intentionally excluded.
+        v1.get(
+          "/demo/token",
+          { config: { skipAuth: true, rateLimit: { max: 5, timeWindow: "1 minute" } } },
+          async (_req, reply) => {
+            const DEMO_TTL_S = 15 * 60; // 15 minutes
+            const token = await demoSigner.sign({
+              id: DEMO_GOLDEN_USER,
+              type: "user",
+              tenantId: DEMO_GOLDEN_TENANT,
+              tokenId: newTokenId(),
+              expiresAt: Math.floor(Date.now() / 1000) + DEMO_TTL_S,
+              scopes: [
+                "ledger:read",
+                "wiki:read",
+                "raw:read",
+                "raw:write",
+                "policy:read",
+                "execution:read",
+                "execution:propose",
+                "payment_intent:propose",
+                "payment_intent:approve",
+                "audit:read",
+              ],
+            });
+            return reply.send({
+              token,
+              tenant_id: DEMO_GOLDEN_TENANT,
+              expires_in: DEMO_TTL_S,
+            });
+          },
+        );
       }
     },
     { prefix: "/v1" },
@@ -644,35 +656,44 @@ async function main(): Promise<void> {
   const normalizeWorker = startNormalizeWorker({ pool, audit });
 
   let anchorTimer: NodeJS.Timeout | undefined;
+  let anchorShutdown = false;
+
   if (anchorBroadcaster !== undefined) {
     const intervalMs = cfg.AUDIT_ANCHOR_INTERVAL_MS;
-    const runAnchor = (): void => {
+    let anchorRunning = false;
+
+    const runAnchor = async (): Promise<void> => {
+      if (anchorRunning) return;
+      anchorRunning = true;
       const now = new Date();
       const periodStart = new Date(now.getTime() - intervalMs);
-      // Query all tenants that have unanchored events and publish for each.
-      void pool
-        .query<{ tenant_id: string }>(
+      try {
+        const res = await pool.query<{ tenant_id: string }>(
           "SELECT DISTINCT tenant_id FROM audit_events WHERE created_at >= $1",
           [periodStart],
-        )
-        .then(async (res) => {
-          for (const row of res.rows) {
-            try {
-              await publishAnchor(pool, anchorBroadcaster, {
-                tenantId: row.tenant_id,
-                periodStart,
-                periodEnd: now,
-              });
-            } catch (err) {
-              log.error({ err, tenantId: row.tenant_id }, "anchor publish failed");
-            }
+        );
+        for (const row of res.rows) {
+          try {
+            await publishAnchor(pool, anchorBroadcaster, {
+              tenantId: row.tenant_id,
+              periodStart,
+              periodEnd: now,
+            });
+          } catch (err) {
+            log.error({ err, tenantId: row.tenant_id }, "anchor publish failed");
           }
-        })
-        .catch((err: unknown) => {
-          log.error({ err }, "anchor tenant query failed");
-        });
+        }
+      } catch (err) {
+        log.error({ err }, "anchor tenant query failed");
+      } finally {
+        anchorRunning = false;
+        if (!anchorShutdown) {
+          anchorTimer = setTimeout(() => void runAnchor(), intervalMs);
+        }
+      }
     };
-    anchorTimer = setInterval(runAnchor, intervalMs);
+
+    anchorTimer = setTimeout(() => void runAnchor(), intervalMs);
     log.info({ intervalMs }, "anchor publisher started");
   }
 
@@ -683,7 +704,8 @@ async function main(): Promise<void> {
   // -- graceful shutdown ----------------------------------------------
   const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, "shutting down");
-    if (anchorTimer !== undefined) clearInterval(anchorTimer);
+    anchorShutdown = true;
+    if (anchorTimer !== undefined) clearTimeout(anchorTimer);
     normalizeWorker.stop();
     try {
       await app.close();

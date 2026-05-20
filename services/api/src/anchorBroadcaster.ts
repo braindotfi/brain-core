@@ -57,7 +57,16 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
       ],
     });
 
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+    const RECEIPT_TIMEOUT_MS = 5 * 60 * 1000;
+    const receipt = await Promise.race([
+      publicClient.waitForTransactionReceipt({ hash: txHash }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`waitForTransactionReceipt timed out after ${RECEIPT_TIMEOUT_MS / 1000}s`)),
+          RECEIPT_TIMEOUT_MS,
+        ),
+      ),
+    ]);
     return {
       txHash: Buffer.from(txHash.slice(2), "hex"),
       blockNumber: receipt.blockNumber,

@@ -57,6 +57,10 @@ const envSchema = z.object({
   // ---- Limits ----
   REQUEST_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(52_428_800), // 50 MiB cap
 
+  // ---- CORS ----
+  /** Comma-separated list of allowed origins. Use "*" only in local dev — never in staging/prod. */
+  CORS_ALLOWED_ORIGINS: z.string().default("http://localhost:5173,http://localhost:3000"),
+
   // ---- LLM (OpenAI) ----
   OPENAI_API_KEY: z.string().min(1).optional(),
   WIKI_LLM_MODEL: z.string().default("gpt-4o-mini"),

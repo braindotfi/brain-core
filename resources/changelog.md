@@ -6,6 +6,22 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.3.1 (poc-investor-demo)
+
+#### Breaking changes
+
+- **`BRAIN_DEMO_MODE` env var now requires literal `"true"` or `"false"`.** Previously `z.coerce.boolean()` silently coerced `"false"`, `"0"`, `"no"` to `true`. Update any `.env` or CI config using those forms.
+- **`Brain.getMaskedApiKey()` renamed to `getMaskedToken()`.** Follows the `apiKey → token` rename in this release.
+
+#### Added
+
+- `Dockerfile` — multi-stage build for the `brain-server` single-process boot binary.
+- `GET /v1/demo/token` — mints a 15-minute read-heavy JWT for the golden demo tenant (requires `BRAIN_DEMO_MODE=true`, refused in `NODE_ENV=production`).
+- `POST /v1/audit/anchor/publish` — on-demand anchor trigger (requires `audit:admin`, 60s per-tenant cooldown).
+- Live viem anchor broadcaster — `AUDIT_PUBLISHER_KEY` + `AUDIT_ANCHOR_ADDRESS` wires on-chain anchoring to Base Sepolia.
+- `CORS_ALLOWED_ORIGINS` config variable — replaces the previous reflect-any-origin behaviour.
+- `tools/demo-reset` — wipes and re-seeds golden-path demo-tenant business entities; audit log preserved.
+
 ## Current: Six-Layer Protocol with MCP
 
 The current release introduces a Normalized Ledger between Raw and Wiki, splits Execution into a dedicated Agent layer, and adds the MCP server.

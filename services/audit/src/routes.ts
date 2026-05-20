@@ -196,9 +196,25 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
   // Only registered when a broadcaster is wired in.
   if (deps.broadcaster !== undefined) {
     const broadcaster = deps.broadcaster;
+    // Per-tenant cooldown to prevent rapid re-anchoring and runaway on-chain spend.
+    const PUBLISH_COOLDOWN_MS = 60_000;
+    const lastPublishTime = new Map<string, number>();
+
     app.post("/audit/anchor/publish", async (request, reply) => {
       const principal = requirePrincipal(request);
       requireScope(principal.scopes, "audit:admin" as Scope);
+
+      const lastRun = lastPublishTime.get(principal.tenantId) ?? 0;
+      const msUntilReady = lastRun + PUBLISH_COOLDOWN_MS - Date.now();
+      if (msUntilReady > 0) {
+        throw brainError(
+          "rate_limited",
+          `anchor cooling down — retry in ${Math.ceil(msUntilReady / 1000)}s`,
+          { details: { retry_after_seconds: Math.ceil(msUntilReady / 1000) } },
+        );
+      }
+      lastPublishTime.set(principal.tenantId, Date.now());
+
       const now = new Date();
       const periodStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const anchor = await publishAnchor(deps.pool, broadcaster, {
