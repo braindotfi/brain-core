@@ -87,8 +87,10 @@ async function main(): Promise<number> {
   }
 }
 
-main().then((code) => process.exit(code)).catch((err: unknown) => {
-  const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
-  process.stderr.write(`demo-reset: unhandled error — ${msg}\n`);
-  process.exit(1);
-});
+main()
+  .then((code) => process.exit(code))
+  .catch((err: unknown) => {
+    const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    process.stderr.write(`demo-reset: unhandled error — ${msg}\n`);
+    process.exit(1);
+  });

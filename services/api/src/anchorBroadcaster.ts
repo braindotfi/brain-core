@@ -62,7 +62,10 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
       publicClient.waitForTransactionReceipt({ hash: txHash }),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error(`waitForTransactionReceipt timed out after ${RECEIPT_TIMEOUT_MS / 1000}s`)),
+          () =>
+            reject(
+              new Error(`waitForTransactionReceipt timed out after ${RECEIPT_TIMEOUT_MS / 1000}s`),
+            ),
           RECEIPT_TIMEOUT_MS,
         ),
       ),
