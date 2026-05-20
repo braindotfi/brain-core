@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import type { TenantScopedClient } from "@brain/shared";
 import { listParsedByArtifact } from "./parsed.js";
 
-function fakeClient() {
+function fakeClient(): { client: TenantScopedClient; log: { sql: string; values: unknown[] }[] } {
   const log: { sql: string; values: unknown[] }[] = [];
   const client = {
     query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
@@ -9,7 +10,7 @@ function fakeClient() {
       return { rows: [], rowCount: 0 };
     }),
   };
-  return { client, log };
+  return { client: client as unknown as TenantScopedClient, log };
 }
 
 describe("listParsedByArtifact", () => {

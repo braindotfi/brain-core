@@ -10,7 +10,7 @@ describe("stub adapters", () => {
   ] as const) {
     it(`${name}.handleWebhook throws a 501 brain error`, async () => {
       const handler = adapter.handleWebhook!;
-      await expect(handler({} as never)).rejects.toMatchObject({
+      await expect(handler("tenant_1", Buffer.from(""), {})).rejects.toMatchObject({
         statusCode: 501,
       });
     });

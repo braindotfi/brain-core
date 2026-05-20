@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { TenantScopedClient } from "@brain/shared";
 import { findTransactionById, listTransactions } from "./transactions.js";
 import { findLatestBalance, listBalances } from "./balances.js";
 import { findCategoryById, listCategories } from "./categories.js";
@@ -7,7 +8,9 @@ import { findInvoiceById, listInvoices } from "./invoices.js";
 import { findObligationById, listObligations } from "./obligations.js";
 import { findTransferById, listTransfers } from "./transfers.js";
 
-function fakeClient(rows: unknown[] = []) {
+type FakeClient = TenantScopedClient & { _log: { sql: string; values: unknown[] }[] };
+
+function fakeClient(rows: unknown[] = []): FakeClient {
   const log: { sql: string; values: unknown[] }[] = [];
   const client = {
     _log: log,
@@ -16,7 +19,7 @@ function fakeClient(rows: unknown[] = []) {
       return { rows: [...rows], rowCount: rows.length };
     }),
   };
-  return client;
+  return client as unknown as FakeClient;
 }
 
 // ---- transactions ----

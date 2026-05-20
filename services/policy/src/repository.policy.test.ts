@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { TenantScopedClient } from "@brain/shared";
 import {
   getActive,
   getByVersion,
@@ -8,7 +9,12 @@ import {
   transition,
 } from "./repository.js";
 
-function fakeClient(rows: unknown[] = []) {
+type FakeClient = TenantScopedClient & {
+  _log: { sql: string; values: unknown[] }[];
+  _callCount: () => number;
+};
+
+function fakeClient(rows: unknown[] = []): FakeClient {
   const log: { sql: string; values: unknown[] }[] = [];
   let callCount = 0;
   const client = {
@@ -20,14 +26,14 @@ function fakeClient(rows: unknown[] = []) {
       return { rows: [...rows], rowCount: rows.length };
     }),
   };
-  return client;
+  return client as unknown as FakeClient;
 }
 
 const stubPolicy = {
   id: "pol_1",
   tenant_id: "t1",
   version: 1,
-  content: { rules: [] },
+  content: { version: 1, rules: [] },
   content_hash: Buffer.from("ab", "hex"),
   quorum_required: 2,
   state: "draft" as const,
@@ -44,7 +50,7 @@ describe("insertPolicy", () => {
       id: "pol_1",
       tenantId: "t1",
       version: 1,
-      content: { rules: [] },
+      content: { version: 1, rules: [] },
       contentHash: Buffer.from("ab", "hex"),
       quorumRequired: 2,
       state: "draft",
@@ -62,7 +68,7 @@ describe("insertPolicy", () => {
         id: "pol_x",
         tenantId: "t1",
         version: 2,
-        content: {},
+        content: { version: 2, rules: [] },
         contentHash: Buffer.from("cc", "hex"),
         quorumRequired: 1,
         state: "draft",
@@ -147,7 +153,7 @@ describe("transition", () => {
         client._log.push({ sql, values: Array.from(values ?? []) });
         return { rows: call++ === 0 ? [] : [activated], rowCount: 1 };
       }),
-    };
+    } as unknown as FakeClient;
     const result = await transition(client, "pol_1", "pending_signatures", "active");
     expect(result).toBe(activated);
     expect(client._log[0]!.sql).toContain("state = 'deactivated'");

@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import type { TenantScopedClient } from "@brain/shared";
 import { findArtifactById, insertOrReuseArtifact, tombstoneArtifact } from "./artifacts.js";
 
-function fakeClient(rows: unknown[] = []) {
+function fakeClient(rows: unknown[] = []): {
+  client: TenantScopedClient;
+  log: { sql: string; values: unknown[] }[];
+} {
   const log: { sql: string; values: unknown[] }[] = [];
   const client = {
     query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
@@ -9,7 +13,7 @@ function fakeClient(rows: unknown[] = []) {
       return { rows: [...rows], rowCount: rows.length };
     }),
   };
-  return { client, log };
+  return { client: client as unknown as TenantScopedClient, log };
 }
 
 const stubRow = {
@@ -118,7 +122,7 @@ describe("tombstoneArtifact", () => {
         // First call is findArtifactById, second is the UPDATE
         return { rows: call++ === 0 ? [stubRow] : [], rowCount: 1 };
       }),
-    };
+    } as unknown as TenantScopedClient;
     const at = new Date("2024-06-01");
     const result = await tombstoneArtifact(client, "raw_1", at);
     expect(result).toEqual({ alreadyTombstoned: false, notFound: false });

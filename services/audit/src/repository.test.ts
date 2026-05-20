@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { TenantScopedClient } from "@brain/shared";
 import {
   SUPPORTED_AUDIT_ENTITY_TYPES,
   findEventsByEntity,
@@ -18,18 +19,18 @@ import {
  * policy_decision_id).
  */
 
-function fakeClient(): {
-  client: { query: ReturnType<typeof vi.fn> };
+function fakeClient(rows: unknown[] = []): {
+  client: TenantScopedClient;
   log: { sql: string; values: unknown[] }[];
 } {
   const log: { sql: string; values: unknown[] }[] = [];
   const client = {
     query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
       log.push({ sql, values: Array.from(values ?? []) });
-      return { rows: [], rowCount: 0 };
+      return { rows: [...rows], rowCount: rows.length };
     }),
   };
-  return { client, log };
+  return { client: client as unknown as TenantScopedClient, log };
 }
 
 describe("SUPPORTED_AUDIT_ENTITY_TYPES", () => {
@@ -128,14 +129,8 @@ describe("findEvent", () => {
   });
 
   it("returns the first row when present", async () => {
-    const log: unknown[] = [];
     const fakeRow = { id: "evt_123" };
-    const client = {
-      query: vi.fn(async () => {
-        log.push(1);
-        return { rows: [fakeRow], rowCount: 1 };
-      }),
-    };
+    const { client } = fakeClient([fakeRow]);
     const result = await findEvent(client, "evt_123");
     expect(result).toBe(fakeRow);
   });
@@ -157,9 +152,7 @@ describe("listEventsForAnchor", () => {
 describe("insertAnchor", () => {
   it("inserts anchor row and returns it", async () => {
     const fakeRow = { id: "anc_1", tenant_id: "t1" };
-    const client = {
-      query: vi.fn(async () => ({ rows: [fakeRow], rowCount: 1 })),
-    };
+    const { client, log } = fakeClient([fakeRow]);
     const root = Buffer.from("abc");
     const result = await insertAnchor(client, {
       id: "anc_1",
@@ -170,15 +163,12 @@ describe("insertAnchor", () => {
       periodEnd: new Date("2024-01-31"),
     });
     expect(result).toBe(fakeRow);
-    const call = client.query.mock.calls[0] as [string, unknown[]];
-    expect(call[0]).toContain("INSERT INTO audit_anchors");
-    expect(call[0]).toContain("RETURNING *");
+    expect(log[0]!.sql).toContain("INSERT INTO audit_anchors");
+    expect(log[0]!.sql).toContain("RETURNING *");
   });
 
   it("throws when insert returns no row", async () => {
-    const client = {
-      query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
-    };
+    const { client } = fakeClient([]);
     await expect(
       insertAnchor(client, {
         id: "anc_2",
