@@ -65,7 +65,7 @@ async def test_health(client: httpx.AsyncClient) -> None:
     resp = await client.get("/health")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["ok"] == "true"
+    assert body["ok"] is True
     assert body["service"] == "brain-agents"
 
 
