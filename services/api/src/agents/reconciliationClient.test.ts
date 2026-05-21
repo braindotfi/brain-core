@@ -105,7 +105,6 @@ describe("ReconciliationAgentClient — unimplemented stubs", () => {
         scope_hash: null,
         onchain_address: null,
         registered_tx: null,
-        registered_at: null,
       }),
     ).rejects.toMatchObject({ code: "internal_server_error" });
   });
