@@ -31,9 +31,7 @@ export function initTracing(opts: {
 
   provider = new NodeTracerProvider({ resource });
   provider.addSpanProcessor(
-    new BatchSpanProcessor(
-      new OTLPTraceExporter({ url: `${opts.otlpEndpoint}/v1/traces` }),
-    ),
+    new BatchSpanProcessor(new OTLPTraceExporter({ url: `${opts.otlpEndpoint}/v1/traces` })),
   );
   provider.register();
 }

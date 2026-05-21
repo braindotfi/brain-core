@@ -52,11 +52,7 @@ import {
   type AnnotationInput,
 } from "@brain/shared";
 
-import {
-  registerSiwxRoutes,
-  StubAgentRegistry,
-  PostgresAgentRegistry,
-} from "./auth/siwx.js";
+import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { createViemAnchorBroadcaster } from "./anchorBroadcaster.js";
 
 import {
@@ -163,9 +159,7 @@ function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
       };
     },
     async signedUrl(ctx: ServiceCallContext, rawId: string, ttlSeconds: number): Promise<string> {
-      const row = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
-        findArtifactById(c, rawId),
-      );
+      const row = await withTenantScope(deps.pool, ctx.tenantId, (c) => findArtifactById(c, rawId));
       if (row === null) {
         throw brainError("raw_artifact_not_found", "no such raw artifact", {
           details: { raw_id: rawId },
@@ -405,7 +399,9 @@ async function main(): Promise<void> {
     throw new Error("BRAIN_MCP_DEV_AUTH_BYPASS=true is not allowed in NODE_ENV=production");
   }
   if (cfg.BLOB_BACKEND === "memory" && cfg.NODE_ENV === "production") {
-    throw new Error("BLOB_BACKEND=memory is not allowed in NODE_ENV=production — set BLOB_BACKEND=azure");
+    throw new Error(
+      "BLOB_BACKEND=memory is not allowed in NODE_ENV=production — set BLOB_BACKEND=azure",
+    );
   }
 
   // Single source of truth for the demo HS256 secret. Used by both JwtVerifier

@@ -53,17 +53,11 @@ export class ReconciliationAgentClient implements IAgentService {
   // ---------------------------------------------------------------------------
 
   public async list(_ctx: ServiceCallContext): Promise<AgentRecord[]> {
-    throw brainError(
-      "internal_server_error",
-      "ReconciliationAgentClient does not support list()",
-    );
+    throw brainError("internal_server_error", "ReconciliationAgentClient does not support list()");
   }
 
   public async get(_ctx: ServiceCallContext, _agentId: string): Promise<AgentRecord | null> {
-    throw brainError(
-      "internal_server_error",
-      "ReconciliationAgentClient does not support get()",
-    );
+    throw brainError("internal_server_error", "ReconciliationAgentClient does not support get()");
   }
 
   public async register(
@@ -87,10 +81,7 @@ export class ReconciliationAgentClient implements IAgentService {
     );
   }
 
-  public async approve(
-    _ctx: ServiceCallContext,
-    _proposalId: string,
-  ): Promise<ProposalRecord> {
+  public async approve(_ctx: ServiceCallContext, _proposalId: string): Promise<ProposalRecord> {
     throw brainError(
       "internal_server_error",
       "ReconciliationAgentClient does not support approve()",
