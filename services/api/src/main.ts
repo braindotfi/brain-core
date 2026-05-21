@@ -29,7 +29,7 @@ import {
   RedisRevocationStore,
   createLogger,
   createPool,
-  MemoryBlobAdapter,
+  createBlobAdapter,
   MockMetrics,
   DeterministicEmbeddingAdapter,
   OpenAICompletionAdapter,
@@ -342,6 +342,9 @@ async function main(): Promise<void> {
   if (cfg.BRAIN_MCP_DEV_AUTH_BYPASS && cfg.NODE_ENV === "production") {
     throw new Error("BRAIN_MCP_DEV_AUTH_BYPASS=true is not allowed in NODE_ENV=production");
   }
+  if (cfg.BLOB_BACKEND === "memory" && cfg.NODE_ENV === "production") {
+    throw new Error("BLOB_BACKEND=memory is not allowed in NODE_ENV=production — set BLOB_BACKEND=azure");
+  }
 
   // Single source of truth for the demo HS256 secret. Used by both JwtVerifier
   // (to accept demo tokens) and JwtSigner (to mint them). Having it in two
@@ -359,9 +362,17 @@ async function main(): Promise<void> {
     revocation: new RedisRevocationStore(redis),
   });
 
-  // -- blob adapter (MemoryBlobAdapter until Azure/S3 creds are set) ---
-  // TODO: wire to createBlobAdapter with real creds from config.
-  const blob = new MemoryBlobAdapter();
+  // -- blob adapter — azure in production, memory in local dev ---
+  const blob = createBlobAdapter({
+    backend: cfg.BLOB_BACKEND,
+    container: cfg.BLOB_CONTAINER,
+    ...(cfg.AZURE_BLOB_ACCOUNT_NAME !== undefined
+      ? { azureAccountName: cfg.AZURE_BLOB_ACCOUNT_NAME }
+      : {}),
+    ...(cfg.AZURE_BLOB_ACCOUNT_KEY !== undefined
+      ? { azureAccountKey: cfg.AZURE_BLOB_ACCOUNT_KEY }
+      : {}),
+  });
 
   // -- layer deps objects ---------------------------------------------
   const rawDeps: RawDeps = { pool, blob, audit };
