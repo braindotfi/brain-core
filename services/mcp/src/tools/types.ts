@@ -28,9 +28,8 @@ export interface ToolContext {
   wiki: IWikiMemoryService;
   raw: IRawEvidenceService;
   paymentIntents: IPaymentIntentService;
-  /** Optional — the Agent layer's proposal service. Wired in production
-   *  alongside the other services; tests may omit it (the
-   *  agent.action.propose tool soft-degrades to an audit-only stub). */
+  /** Optional — the Agent layer's proposal service. Wired when AGENT_SERVICE_URL
+   *  is set; agent.action.propose returns internal_server_error when absent. */
   agentService?: IAgentService;
   audit: AuditEmitter;
 }

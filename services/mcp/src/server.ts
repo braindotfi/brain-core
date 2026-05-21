@@ -46,7 +46,7 @@ export interface McpServerDeps {
   wiki: IWikiMemoryService;
   raw: IRawEvidenceService;
   paymentIntents: IPaymentIntentService;
-  /** Optional. When unwired, agent.action.propose returns an audit-only stub. */
+  /** Optional. When absent, agent.action.propose returns internal_server_error. */
   agentService?: IAgentService;
   audit: AuditEmitter;
 }
