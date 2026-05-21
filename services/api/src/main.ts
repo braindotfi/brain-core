@@ -139,8 +139,7 @@ try {
 //
 // @brain/raw exports ingestOne (a standalone function) but the MCP server
 // and other callers expect IRawEvidenceService (a service-shaped object).
-// This adapter bridges them. Unimplemented methods throw stubs.
-// TODO: wire signedUrl, listParsed, tombstone to the raw repository helpers.
+// This adapter bridges them.
 // ---------------------------------------------------------------------------
 
 function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
@@ -231,9 +230,8 @@ function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
 // IWikiMemoryService adapter
 //
 // The MCP server needs IWikiMemoryService. WikiPageService covers
-// listPages / getPage / search / regenerate. The question path and annotate
-// are stubbed pending LLM + write-through wiring.
-// TODO: wire question to askWiki, wire annotate to the write-through path.
+// listPages / getPage / search / regenerate / question. annotate is stubbed
+// pending the write-through path (refactor-4).
 // ---------------------------------------------------------------------------
 
 function buildWikiMemoryService(
@@ -284,7 +282,7 @@ function buildWikiMemoryService(
         ...(result.cachedAt !== undefined ? { cachedAt: result.cachedAt } : {}),
       };
     },
-    // TODO: wire to the annotate write-through path.
+    // annotate write-through deferred to refactor-4.
     async annotate(
       _ctx: ServiceCallContext,
       _input: AnnotationInput,
@@ -693,7 +691,7 @@ async function main(): Promise<void> {
       await v1.register(async (child) => registerMcpRoute(child, mcpServer));
       // SIWX (agent auth) — always wired. Production requires AUTH_SIGN_KEY
       // (a JWK JSON string) backed by Azure Key Vault.
-      if (process.env.NODE_ENV === "production" && cfg.AUTH_SIGN_KEY === undefined) {
+      if (cfg.NODE_ENV === "production" && cfg.AUTH_SIGN_KEY === undefined) {
         throw new Error(
           "AUTH_SIGN_KEY must be set in production — configure a JWK signing key in Azure Key Vault",
         );
