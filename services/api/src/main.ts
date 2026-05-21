@@ -10,6 +10,7 @@
  * layer mount map.
  */
 
+import { initTracing, shutdownTracing } from "./instrumentation.js";
 import Fastify from "fastify";
 import fastifyCors from "@fastify/cors";
 import fastifyHelmet from "@fastify/helmet";
@@ -364,6 +365,12 @@ function makeResolveRole(
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
+
+  initTracing({
+    otlpEndpoint: cfg.OTEL_EXPORTER_OTLP_ENDPOINT,
+    serviceName: cfg.SERVICE_NAME,
+    serviceVersion: cfg.SERVICE_VERSION,
+  });
 
   const log = createLogger({
     level: cfg.LOG_LEVEL,
@@ -807,6 +814,7 @@ async function main(): Promise<void> {
     } catch (err) {
       log.error({ err }, "redis.disconnect failed");
     }
+    await shutdownTracing();
     process.exit(0);
   };
 
