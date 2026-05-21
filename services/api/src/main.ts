@@ -101,6 +101,7 @@ import {
 
 import { BrainMcpServer, FakeAuthVerifier, McpAuthVerifier, registerMcpRoute } from "@brain/mcp";
 import { createViemScopeChecker } from "./mcp/viemScopeChecker.js";
+import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
 
@@ -580,6 +581,9 @@ async function main(): Promise<void> {
     raw: rawEvidenceService,
     paymentIntents: paymentIntentService,
     audit,
+    ...(cfg.AGENT_SERVICE_URL !== undefined
+      ? { agentService: new ReconciliationAgentClient(cfg.AGENT_SERVICE_URL) }
+      : {}),
   });
 
   // -- Fastify root app -----------------------------------------------
