@@ -162,9 +162,7 @@ async def test_agent_analyze_handles_empty_llm_response() -> None:
     mock_openai.chat = MagicMock()
     mock_openai.chat.completions = MagicMock()
     mock_openai.chat.completions.create = AsyncMock(
-        return_value=MagicMock(
-            choices=[MagicMock(message=MagicMock(content=None))]
-        )
+        return_value=MagicMock(choices=[MagicMock(message=MagicMock(content=None))])
     )
     agent = ReconciliationAgent(mock_openai, "gpt-4o-mini")
     result = await agent.analyze({"kind": "reconciliation"})
@@ -179,9 +177,7 @@ async def test_agent_analyze_handles_empty_llm_response() -> None:
 async def test_brain_client_calls_correct_endpoint() -> None:
     """Verifies the client hits /v1/execution/propose with the right body."""
     with respx.mock() as mock:
-        mock.post("http://localhost:3001/v1/execution/propose").respond(
-            200, json=MOCK_PROPOSAL
-        )
+        mock.post("http://localhost:3001/v1/execution/propose").respond(200, json=MOCK_PROPOSAL)
         api_client = BrainApiClient("http://localhost:3001", "test-token")
         result = await api_client.propose({"kind": "reconciliation"}, "agent_01TEST")
 
