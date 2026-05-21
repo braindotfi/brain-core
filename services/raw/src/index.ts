@@ -20,3 +20,14 @@ export {
   adapterForWebhookProvider,
   listAdapters,
 } from "./adapters/registry.js";
+
+export {
+  findArtifactById,
+  tombstoneArtifact,
+  type RawArtifactRow,
+} from "./repository/artifacts.js";
+export {
+  listParsedByArtifact,
+  type RawParsedRow,
+  type ListParsedFilters,
+} from "./repository/parsed.js";

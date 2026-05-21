@@ -54,7 +54,14 @@ import {
 import { registerSiwxRoutes, StubAgentRegistry } from "./auth/siwx.js";
 import { createViemAnchorBroadcaster } from "./anchorBroadcaster.js";
 
-import { registerRawPlugin, ingestOne, type RegisterRawPluginOptions } from "@brain/raw";
+import {
+  registerRawPlugin,
+  ingestOne,
+  findArtifactById,
+  tombstoneArtifact,
+  listParsedByArtifact,
+  type RegisterRawPluginOptions,
+} from "@brain/raw";
 
 import { LedgerService, registerLedgerPlugin, startNormalizeWorker } from "@brain/ledger";
 
@@ -150,21 +157,66 @@ function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
         deduplicated: result.deduplicated,
       };
     },
-    async signedUrl(
-      _ctx: ServiceCallContext,
-      _rawId: string,
-      _ttlSeconds: number,
-    ): Promise<string> {
-      // TODO: implement via blob.signedUrl + artifact repository lookup.
-      throw brainError("internal_server_error", "signedUrl not yet wired in boot binary");
+    async signedUrl(ctx: ServiceCallContext, rawId: string, ttlSeconds: number): Promise<string> {
+      const row = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+        findArtifactById(c, rawId),
+      );
+      if (row === null) {
+        throw brainError("raw_artifact_not_found", "no such raw artifact", {
+          details: { raw_id: rawId },
+        });
+      }
+      if (row.tombstoned_at !== null) {
+        throw brainError("raw_artifact_tombstoned", "artifact has been tombstoned", {
+          details: { raw_id: rawId },
+        });
+      }
+      return deps.blob.signedUrl(row.blob_uri, { expiresInSeconds: ttlSeconds });
     },
-    async listParsed(_ctx: ServiceCallContext, _rawId: string): Promise<ParsedOutput[]> {
-      // TODO: implement via listParsedByArtifact from @brain/raw repository.
-      throw brainError("internal_server_error", "listParsed not yet wired in boot binary");
+    async listParsed(ctx: ServiceCallContext, rawId: string): Promise<ParsedOutput[]> {
+      const rows = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+        listParsedByArtifact(c, rawId),
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        rawArtifactId: r.raw_artifact_id,
+        parser: r.parser,
+        parserVersion: r.parser_version,
+        extracted: r.extracted,
+        confidence: r.confidence,
+        extractedAt: r.extracted_at.toISOString(),
+      }));
     },
-    async tombstone(_ctx: ServiceCallContext, _rawId: string): Promise<void> {
-      // TODO: implement via tombstoneArtifact from @brain/raw repository.
-      throw brainError("internal_server_error", "tombstone not yet wired in boot binary");
+    async tombstone(ctx: ServiceCallContext, rawId: string): Promise<void> {
+      const outcome = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+        tombstoneArtifact(c, rawId),
+      );
+      if (outcome.notFound) {
+        throw brainError("raw_artifact_not_found", "no such raw artifact", {
+          details: { raw_id: rawId },
+        });
+      }
+      if (!outcome.alreadyTombstoned) {
+        // Tombstone blob metadata too; best-effort, row tombstone is authoritative.
+        try {
+          const row = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+            findArtifactById(c, rawId),
+          );
+          if (row !== null) {
+            await deps.blob.tombstone(row.blob_uri, ctx.actor);
+          }
+        } catch {
+          /* blob tombstone is best-effort */
+        }
+        await deps.audit.emit({
+          tenantId: ctx.tenantId,
+          layer: "raw",
+          actor: ctx.actor,
+          action: "raw.tombstone",
+          inputs: { raw_id: rawId },
+          outputs: {},
+        });
+      }
     },
   };
 }
