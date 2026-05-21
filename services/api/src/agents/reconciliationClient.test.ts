@@ -32,10 +32,7 @@ describe("ReconciliationAgentClient.propose", () => {
   });
 
   it("returns ProposalRecord on 200 response", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: async () => PROPOSAL }),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => PROPOSAL }));
     const result = await client.propose(CTX, "agent_01TEST000000000000000000", {
       action: { kind: "reconciliation" },
     });
@@ -43,9 +40,7 @@ describe("ReconciliationAgentClient.propose", () => {
   });
 
   it("posts to /run/reconciliation with correct body", async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: async () => PROPOSAL });
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => PROPOSAL });
     vi.stubGlobal("fetch", mockFetch);
 
     await client.propose(CTX, "agent_01TEST000000000000000000", {
@@ -64,10 +59,7 @@ describe("ReconciliationAgentClient.propose", () => {
   });
 
   it("throws internal_server_error when fetch rejects (network error)", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockRejectedValue(new Error("connection refused")),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection refused")));
     await expect(
       client.propose(CTX, "agent_01TEST000000000000000000", { action: {} }),
     ).rejects.toMatchObject({ code: "internal_server_error" });

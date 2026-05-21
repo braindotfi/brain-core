@@ -369,9 +369,7 @@ describe("PostgresAgentRegistry", () => {
       },
     ]);
     const registry = new PostgresAgentRegistry(pool);
-    const result = await registry.resolveByAddress(
-      "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-    );
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result).not.toBeNull();
     expect(result?.agentId).toBe("agent_01RECON000000000000000000");
     expect(result?.tenantId).toBe("tnt_01RECON00000000000000000");
@@ -392,9 +390,7 @@ describe("PostgresAgentRegistry", () => {
       },
     ]);
     const registry = new PostgresAgentRegistry(pool);
-    const result = await registry.resolveByAddress(
-      "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-    );
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopeHash).toBe("0x" + "aa".repeat(32));
   });
 
@@ -409,9 +405,7 @@ describe("PostgresAgentRegistry", () => {
       },
     ]);
     const registry = new PostgresAgentRegistry(pool);
-    const result = await registry.resolveByAddress(
-      "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-    );
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopeHash).toBe(
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     );
@@ -428,9 +422,7 @@ describe("PostgresAgentRegistry", () => {
       },
     ]);
     const registry = new PostgresAgentRegistry(pool);
-    const result = await registry.resolveByAddress(
-      "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-    );
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopes).toContain("payment_intent:propose");
     expect(result?.scopes).not.toContain("raw:write");
   });
@@ -446,9 +438,7 @@ describe("PostgresAgentRegistry", () => {
       },
     ]);
     const registry = new PostgresAgentRegistry(pool);
-    const result = await registry.resolveByAddress(
-      "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-    );
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopes).toContain("audit:read");
     expect(result?.scopes).not.toContain("execution:propose");
   });
