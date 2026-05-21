@@ -52,7 +52,11 @@ import {
   type AnnotationInput,
 } from "@brain/shared";
 
-import { registerSiwxRoutes, StubAgentRegistry } from "./auth/siwx.js";
+import {
+  registerSiwxRoutes,
+  StubAgentRegistry,
+  PostgresAgentRegistry,
+} from "./auth/siwx.js";
 import { createViemAnchorBroadcaster } from "./anchorBroadcaster.js";
 
 import {
@@ -683,28 +687,36 @@ async function main(): Promise<void> {
       });
       await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
       await v1.register(async (child) => registerMcpRoute(child, mcpServer));
-      // SIWX (agent auth) — wired in demo mode only. Production wiring requires
-      // an AUTH_SIGN_KEY config variable backed by Azure Key Vault (follow-up).
-      if (cfg.BRAIN_DEMO_MODE) {
-        const demoSigner = new JwtSigner({
-          issuer: cfg.AUTH_ISSUER,
-          audience: cfg.AUTH_AUDIENCE,
-          key: {
-            kty: "oct",
-            k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"),
-            alg: "HS256",
-          },
-          algorithm: "HS256",
-        });
-        await v1.register(async (child) =>
-          registerSiwxRoutes(child, {
-            signer: demoSigner,
-            registry: new StubAgentRegistry(),
-            redis,
-            demoMode: true,
-          }),
+      // SIWX (agent auth) — always wired. Production requires AUTH_SIGN_KEY
+      // (a JWK JSON string) backed by Azure Key Vault.
+      if (process.env.NODE_ENV === "production" && cfg.AUTH_SIGN_KEY === undefined) {
+        throw new Error(
+          "AUTH_SIGN_KEY must be set in production — configure a JWK signing key in Azure Key Vault",
         );
+      }
+      const siwxJwk =
+        cfg.AUTH_SIGN_KEY !== undefined
+          ? (JSON.parse(cfg.AUTH_SIGN_KEY) as { kty: string; alg?: string; [k: string]: unknown })
+          : { kty: "oct", k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"), alg: "HS256" };
+      const siwxSigner = new JwtSigner({
+        issuer: cfg.AUTH_ISSUER,
+        audience: cfg.AUTH_AUDIENCE,
+        key: siwxJwk,
+        algorithm: typeof siwxJwk.alg === "string" ? siwxJwk.alg : "HS256",
+      });
+      const agentRegistry = cfg.BRAIN_DEMO_MODE
+        ? new StubAgentRegistry()
+        : new PostgresAgentRegistry(pool);
+      await v1.register(async (child) =>
+        registerSiwxRoutes(child, {
+          signer: siwxSigner,
+          registry: agentRegistry,
+          redis,
+          ...(cfg.BRAIN_DEMO_MODE ? { demoMode: true } : {}),
+        }),
+      );
 
+      if (cfg.BRAIN_DEMO_MODE) {
         // GET /v1/demo/token — mints a short-lived read-heavy demo JWT for the
         // golden-path tenant. Scoped to the minimum needed for the quickstart;
         // audit:admin and payment_intent:execute are intentionally excluded.
@@ -713,7 +725,7 @@ async function main(): Promise<void> {
           { config: { skipAuth: true, rateLimit: { max: 5, timeWindow: "1 minute" } } },
           async (_req, reply) => {
             const DEMO_TTL_S = 15 * 60; // 15 minutes
-            const token = await demoSigner.sign({
+            const token = await siwxSigner.sign({
               id: DEMO_GOLDEN_USER,
               type: "user",
               tenantId: DEMO_GOLDEN_TENANT,
