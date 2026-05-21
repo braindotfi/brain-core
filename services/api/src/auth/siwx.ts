@@ -26,6 +26,7 @@
 
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { Redis } from "ioredis";
+import type { Pool } from "pg";
 import { SiweMessage, generateNonce } from "siwe";
 import { brainError, brainId, newAgentId, newTokenId } from "@brain/shared";
 import type { JwtSigner, Scope } from "@brain/shared";
@@ -245,6 +246,76 @@ export class StubAgentRegistry implements AgentRegistryLookup {
         "execution:propose",
       ] as Scope[],
       scopeHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Production registry — Postgres lookup by onchain_address.
+// ---------------------------------------------------------------------------
+
+interface AgentLookupRow {
+  id: string;
+  tenant_id: string;
+  role: string;
+  scope_hash: Buffer | null;
+  state: string;
+}
+
+/**
+ * Scope set per agent role. Agents register with a role; SIWX issues a JWT
+ * carrying these scopes. The scope_hash in the agents table must match the
+ * hash of this set as registered on-chain in BrainMCPAgentRegistry.
+ */
+function scopesForRole(role: string): Scope[] {
+  switch (role) {
+    case "reconciliation":
+      return ["ledger:read", "wiki:read", "raw:write", "execution:propose"];
+    case "payment":
+      return ["ledger:read", "wiki:read", "payment_intent:propose", "execution:propose"];
+    case "anomaly":
+      return ["ledger:read", "wiki:read"];
+    case "partner":
+      return [
+        "ledger:read",
+        "wiki:read",
+        "raw:write",
+        "payment_intent:propose",
+        "execution:propose",
+      ];
+    default:
+      // dev / unknown — read-heavy, no execution
+      return ["ledger:read", "wiki:read", "raw:read", "policy:read", "audit:read"];
+  }
+}
+
+/**
+ * Production agent registry. Queries the agents table by onchain_address
+ * without tenant scope (SIWX is the cross-tenant address→agent lookup entry
+ * point; the connection user bypasses RLS for this privileged route).
+ */
+export class PostgresAgentRegistry implements AgentRegistryLookup {
+  public constructor(private readonly pool: Pool) {}
+
+  public async resolveByAddress(address: string): Promise<AgentResolution | null> {
+    const { rows } = await this.pool.query<AgentLookupRow>(
+      `SELECT id, tenant_id, role, scope_hash, state
+         FROM agents
+        WHERE LOWER(onchain_address) = LOWER($1)
+          AND state = 'active'
+        LIMIT 1`,
+      [address],
+    );
+    const row = rows[0];
+    if (row === undefined) return null;
+    return {
+      agentId: row.id,
+      tenantId: row.tenant_id,
+      scopes: scopesForRole(row.role),
+      scopeHash:
+        row.scope_hash !== null
+          ? `0x${Buffer.from(row.scope_hash).toString("hex")}`
+          : "0x0000000000000000000000000000000000000000000000000000000000000000",
     };
   }
 }

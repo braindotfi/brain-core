@@ -10,6 +10,7 @@
  * layer mount map.
  */
 
+import { initTracing, shutdownTracing } from "./instrumentation.js";
 import Fastify from "fastify";
 import fastifyCors from "@fastify/cors";
 import fastifyHelmet from "@fastify/helmet";
@@ -29,7 +30,7 @@ import {
   RedisRevocationStore,
   createLogger,
   createPool,
-  MemoryBlobAdapter,
+  createBlobAdapter,
   MockMetrics,
   DeterministicEmbeddingAdapter,
   OpenAICompletionAdapter,
@@ -51,10 +52,17 @@ import {
   type AnnotationInput,
 } from "@brain/shared";
 
-import { registerSiwxRoutes, StubAgentRegistry } from "./auth/siwx.js";
+import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { createViemAnchorBroadcaster } from "./anchorBroadcaster.js";
 
-import { registerRawPlugin, ingestOne, type RegisterRawPluginOptions } from "@brain/raw";
+import {
+  registerRawPlugin,
+  ingestOne,
+  findArtifactById,
+  tombstoneArtifact,
+  listParsedByArtifact,
+  type RegisterRawPluginOptions,
+} from "@brain/raw";
 
 import { LedgerService, registerLedgerPlugin, startNormalizeWorker } from "@brain/ledger";
 
@@ -89,6 +97,7 @@ import {
 
 import { BrainMcpServer, FakeAuthVerifier, McpAuthVerifier, registerMcpRoute } from "@brain/mcp";
 import { createViemScopeChecker } from "./mcp/viemScopeChecker.js";
+import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
 
@@ -126,8 +135,7 @@ try {
 //
 // @brain/raw exports ingestOne (a standalone function) but the MCP server
 // and other callers expect IRawEvidenceService (a service-shaped object).
-// This adapter bridges them. Unimplemented methods throw stubs.
-// TODO: wire signedUrl, listParsed, tombstone to the raw repository helpers.
+// This adapter bridges them.
 // ---------------------------------------------------------------------------
 
 function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
@@ -150,21 +158,64 @@ function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
         deduplicated: result.deduplicated,
       };
     },
-    async signedUrl(
-      _ctx: ServiceCallContext,
-      _rawId: string,
-      _ttlSeconds: number,
-    ): Promise<string> {
-      // TODO: implement via blob.signedUrl + artifact repository lookup.
-      throw brainError("internal_server_error", "signedUrl not yet wired in boot binary");
+    async signedUrl(ctx: ServiceCallContext, rawId: string, ttlSeconds: number): Promise<string> {
+      const row = await withTenantScope(deps.pool, ctx.tenantId, (c) => findArtifactById(c, rawId));
+      if (row === null) {
+        throw brainError("raw_artifact_not_found", "no such raw artifact", {
+          details: { raw_id: rawId },
+        });
+      }
+      if (row.tombstoned_at !== null) {
+        throw brainError("raw_artifact_tombstoned", "artifact has been tombstoned", {
+          details: { raw_id: rawId },
+        });
+      }
+      return deps.blob.signedUrl(row.blob_uri, { expiresInSeconds: ttlSeconds });
     },
-    async listParsed(_ctx: ServiceCallContext, _rawId: string): Promise<ParsedOutput[]> {
-      // TODO: implement via listParsedByArtifact from @brain/raw repository.
-      throw brainError("internal_server_error", "listParsed not yet wired in boot binary");
+    async listParsed(ctx: ServiceCallContext, rawId: string): Promise<ParsedOutput[]> {
+      const rows = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+        listParsedByArtifact(c, rawId),
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        rawArtifactId: r.raw_artifact_id,
+        parser: r.parser,
+        parserVersion: r.parser_version,
+        extracted: r.extracted,
+        confidence: r.confidence,
+        extractedAt: r.extracted_at.toISOString(),
+      }));
     },
-    async tombstone(_ctx: ServiceCallContext, _rawId: string): Promise<void> {
-      // TODO: implement via tombstoneArtifact from @brain/raw repository.
-      throw brainError("internal_server_error", "tombstone not yet wired in boot binary");
+    async tombstone(ctx: ServiceCallContext, rawId: string): Promise<void> {
+      const outcome = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+        tombstoneArtifact(c, rawId),
+      );
+      if (outcome.notFound) {
+        throw brainError("raw_artifact_not_found", "no such raw artifact", {
+          details: { raw_id: rawId },
+        });
+      }
+      if (!outcome.alreadyTombstoned) {
+        // Tombstone blob metadata too; best-effort, row tombstone is authoritative.
+        try {
+          const row = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+            findArtifactById(c, rawId),
+          );
+          if (row !== null) {
+            await deps.blob.tombstone(row.blob_uri, ctx.actor);
+          }
+        } catch {
+          /* blob tombstone is best-effort */
+        }
+        await deps.audit.emit({
+          tenantId: ctx.tenantId,
+          layer: "raw",
+          actor: ctx.actor,
+          action: "raw.tombstone",
+          inputs: { raw_id: rawId },
+          outputs: {},
+        });
+      }
     },
   };
 }
@@ -173,9 +224,8 @@ function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
 // IWikiMemoryService adapter
 //
 // The MCP server needs IWikiMemoryService. WikiPageService covers
-// listPages / getPage / search / regenerate. The question path and annotate
-// are stubbed pending LLM + write-through wiring.
-// TODO: wire question to askWiki, wire annotate to the write-through path.
+// listPages / getPage / search / regenerate / question. annotate is stubbed
+// pending the write-through path (refactor-4).
 // ---------------------------------------------------------------------------
 
 function buildWikiMemoryService(
@@ -226,7 +276,7 @@ function buildWikiMemoryService(
         ...(result.cachedAt !== undefined ? { cachedAt: result.cachedAt } : {}),
       };
     },
-    // TODO: wire to the annotate write-through path.
+    // annotate write-through deferred to refactor-4.
     async annotate(
       _ctx: ServiceCallContext,
       _input: AnnotationInput,
@@ -313,6 +363,12 @@ function makeResolveRole(
 async function main(): Promise<void> {
   const cfg = loadConfig();
 
+  initTracing({
+    otlpEndpoint: cfg.OTEL_EXPORTER_OTLP_ENDPOINT,
+    serviceName: cfg.SERVICE_NAME,
+    serviceVersion: cfg.SERVICE_VERSION,
+  });
+
   const log = createLogger({
     level: cfg.LOG_LEVEL,
     service: cfg.SERVICE_NAME,
@@ -342,6 +398,11 @@ async function main(): Promise<void> {
   if (cfg.BRAIN_MCP_DEV_AUTH_BYPASS && cfg.NODE_ENV === "production") {
     throw new Error("BRAIN_MCP_DEV_AUTH_BYPASS=true is not allowed in NODE_ENV=production");
   }
+  if (cfg.BLOB_BACKEND === "memory" && cfg.NODE_ENV === "production") {
+    throw new Error(
+      "BLOB_BACKEND=memory is not allowed in NODE_ENV=production — set BLOB_BACKEND=azure",
+    );
+  }
 
   // Single source of truth for the demo HS256 secret. Used by both JwtVerifier
   // (to accept demo tokens) and JwtSigner (to mint them). Having it in two
@@ -359,9 +420,17 @@ async function main(): Promise<void> {
     revocation: new RedisRevocationStore(redis),
   });
 
-  // -- blob adapter (MemoryBlobAdapter until Azure/S3 creds are set) ---
-  // TODO: wire to createBlobAdapter with real creds from config.
-  const blob = new MemoryBlobAdapter();
+  // -- blob adapter — azure in production, memory in local dev ---
+  const blob = createBlobAdapter({
+    backend: cfg.BLOB_BACKEND,
+    container: cfg.BLOB_CONTAINER,
+    ...(cfg.AZURE_BLOB_ACCOUNT_NAME !== undefined
+      ? { azureAccountName: cfg.AZURE_BLOB_ACCOUNT_NAME }
+      : {}),
+    ...(cfg.AZURE_BLOB_ACCOUNT_KEY !== undefined
+      ? { azureAccountKey: cfg.AZURE_BLOB_ACCOUNT_KEY }
+      : {}),
+  });
 
   // -- layer deps objects ---------------------------------------------
   const rawDeps: RawDeps = { pool, blob, audit };
@@ -506,6 +575,9 @@ async function main(): Promise<void> {
     raw: rawEvidenceService,
     paymentIntents: paymentIntentService,
     audit,
+    ...(cfg.AGENT_SERVICE_URL !== undefined
+      ? { agentService: new ReconciliationAgentClient(cfg.AGENT_SERVICE_URL) }
+      : {}),
   });
 
   // -- Fastify root app -----------------------------------------------
@@ -613,28 +685,36 @@ async function main(): Promise<void> {
       });
       await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
       await v1.register(async (child) => registerMcpRoute(child, mcpServer));
-      // SIWX (agent auth) — wired in demo mode only. Production wiring requires
-      // an AUTH_SIGN_KEY config variable backed by Azure Key Vault (follow-up).
-      if (cfg.BRAIN_DEMO_MODE) {
-        const demoSigner = new JwtSigner({
-          issuer: cfg.AUTH_ISSUER,
-          audience: cfg.AUTH_AUDIENCE,
-          key: {
-            kty: "oct",
-            k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"),
-            alg: "HS256",
-          },
-          algorithm: "HS256",
-        });
-        await v1.register(async (child) =>
-          registerSiwxRoutes(child, {
-            signer: demoSigner,
-            registry: new StubAgentRegistry(),
-            redis,
-            demoMode: true,
-          }),
+      // SIWX (agent auth) — always wired. Production requires AUTH_SIGN_KEY
+      // (a JWK JSON string) backed by Azure Key Vault.
+      if (cfg.NODE_ENV === "production" && cfg.AUTH_SIGN_KEY === undefined) {
+        throw new Error(
+          "AUTH_SIGN_KEY must be set in production — configure a JWK signing key in Azure Key Vault",
         );
+      }
+      const siwxJwk =
+        cfg.AUTH_SIGN_KEY !== undefined
+          ? (JSON.parse(cfg.AUTH_SIGN_KEY) as { kty: string; alg?: string; [k: string]: unknown })
+          : { kty: "oct", k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"), alg: "HS256" };
+      const siwxSigner = new JwtSigner({
+        issuer: cfg.AUTH_ISSUER,
+        audience: cfg.AUTH_AUDIENCE,
+        key: siwxJwk,
+        algorithm: typeof siwxJwk.alg === "string" ? siwxJwk.alg : "HS256",
+      });
+      const agentRegistry = cfg.BRAIN_DEMO_MODE
+        ? new StubAgentRegistry()
+        : new PostgresAgentRegistry(pool);
+      await v1.register(async (child) =>
+        registerSiwxRoutes(child, {
+          signer: siwxSigner,
+          registry: agentRegistry,
+          redis,
+          ...(cfg.BRAIN_DEMO_MODE ? { demoMode: true } : {}),
+        }),
+      );
 
+      if (cfg.BRAIN_DEMO_MODE) {
         // GET /v1/demo/token — mints a short-lived read-heavy demo JWT for the
         // golden-path tenant. Scoped to the minimum needed for the quickstart;
         // audit:admin and payment_intent:execute are intentionally excluded.
@@ -643,7 +723,7 @@ async function main(): Promise<void> {
           { config: { skipAuth: true, rateLimit: { max: 5, timeWindow: "1 minute" } } },
           async (_req, reply) => {
             const DEMO_TTL_S = 15 * 60; // 15 minutes
-            const token = await demoSigner.sign({
+            const token = await siwxSigner.sign({
               id: DEMO_GOLDEN_USER,
               type: "user",
               tenantId: DEMO_GOLDEN_TENANT,
@@ -744,6 +824,7 @@ async function main(): Promise<void> {
     } catch (err) {
       log.error({ err }, "redis.disconnect failed");
     }
+    await shutdownTracing();
     process.exit(0);
   };
 

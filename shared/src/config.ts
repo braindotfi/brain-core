@@ -114,6 +114,24 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(60 * 60 * 1000),
+
+  // ---- Blob storage ----
+  /** Storage backend. Use "azure" in staging/production, "memory" in local dev only. */
+  BLOB_BACKEND: z.enum(["azure", "s3", "memory"]).default("memory"),
+  /** Azure container name or S3 bucket name. */
+  BLOB_CONTAINER: z.string().default("brain-artifacts"),
+  /** Azure storage account name (required when BLOB_BACKEND=azure). */
+  AZURE_BLOB_ACCOUNT_NAME: z.string().optional(),
+  /** Azure storage account key (required when BLOB_BACKEND=azure). */
+  AZURE_BLOB_ACCOUNT_KEY: z.string().optional(),
+
+  // ---- Agent service ----
+  /** Base URL of the brain-agents FastAPI service. Required when running the agent layer. */
+  AGENT_SERVICE_URL: z.string().url().optional(),
+
+  // ---- SIWX (agent onboarding) ----
+  /** JWK JSON string used to sign SIWX JWTs. Required in production; demo mode uses its own key. */
+  AUTH_SIGN_KEY: z.string().optional(),
 });
 
 export type BrainConfig = z.infer<typeof envSchema>;

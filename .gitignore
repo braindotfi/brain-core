@@ -35,6 +35,7 @@ env/
 .tox/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 
 # Foundry / Solidity

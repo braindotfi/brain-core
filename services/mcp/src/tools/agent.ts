@@ -7,6 +7,7 @@
  * `payment_intent.propose` instead, which carries its own §6 gate.
  */
 
+import { brainError } from "@brain/shared";
 import { type Tool, type ToolContext, type ToolResult } from "./types.js";
 
 interface AgentProposeInput {
@@ -55,22 +56,10 @@ export const agentProposeTool: Tool<AgentProposeInput> = {
     // rather than failing — this keeps the tool callable in isolation.
     const svc = ctx.agentService;
     if (svc === undefined) {
-      // Soft-degrade: emit an audit and return a synthetic id. This keeps
-      // the tool callable in environments where the Agent layer isn't
-      // wired (e.g. mock-pool unit tests). Production always wires svc.
-      const stubId = `prop_stub_${Date.now().toString(36)}`;
-      await ctx.audit.emit({
-        tenantId: ctx.ctx.tenantId,
-        layer: "agent",
-        actor: ctx.ctx.actor,
-        action: "agent.action.propose.unwired",
-        inputs: { action_kind: String(input.action.kind ?? "unknown") },
-        outputs: { stub_id: stubId },
-      });
-      return {
-        payload: { proposal_id: stubId, status: "unwired", note: "IAgentService not configured" },
-        summary: `Proposal recorded as audit-only stub \`${stubId}\` (Agent service not wired in this environment).`,
-      };
+      throw brainError(
+        "internal_server_error",
+        "agent.action.propose is not available — AGENT_SERVICE_URL not configured",
+      );
     }
     const proposal = await svc.propose(ctx.ctx, ctx.agent.id, { action: input.action });
     return {

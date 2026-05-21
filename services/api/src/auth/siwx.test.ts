@@ -1,11 +1,13 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import type { Pool, QueryResult } from "pg";
 import type { Redis } from "ioredis";
 import { SiweMessage } from "siwe";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandlerPlugin, requestIdPlugin, JwtSigner } from "@brain/shared";
 import {
   StubAgentRegistry,
+  PostgresAgentRegistry,
   registerSiwxRoutes,
   type AgentRegistryLookup,
   type AgentResolution,
@@ -340,6 +342,105 @@ describe("POST /auth/siwx — demo mode", () => {
     };
     // JTI is embedded in the JWT — tokens must not be identical.
     expect(r1.access_token).not.toBe(r2.access_token);
+  });
+});
+
+describe("PostgresAgentRegistry", () => {
+  function makePool(rows: unknown[]): Pool {
+    return {
+      query: vi.fn().mockResolvedValue({ rows } as unknown as QueryResult),
+    } as unknown as Pool;
+  }
+
+  it("returns null when no agent row is found", async () => {
+    const registry = new PostgresAgentRegistry(makePool([]));
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    expect(result).toBeNull();
+  });
+
+  it("returns AgentResolution with scopes for reconciliation role", async () => {
+    const pool = makePool([
+      {
+        id: "agent_01RECON000000000000000000",
+        tenant_id: "tnt_01RECON00000000000000000",
+        role: "reconciliation",
+        scope_hash: null,
+        state: "active",
+      },
+    ]);
+    const registry = new PostgresAgentRegistry(pool);
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    expect(result).not.toBeNull();
+    expect(result?.agentId).toBe("agent_01RECON000000000000000000");
+    expect(result?.tenantId).toBe("tnt_01RECON00000000000000000");
+    expect(result?.scopes).toContain("ledger:read");
+    expect(result?.scopes).toContain("execution:propose");
+    expect(result?.scopes).not.toContain("payment_intent:propose");
+  });
+
+  it("decodes scope_hash Buffer to 0x-prefixed hex string", async () => {
+    const hashBytes = Buffer.from("aa".repeat(32), "hex");
+    const pool = makePool([
+      {
+        id: "agent_01HASH0000000000000000000",
+        tenant_id: "tnt_01HASH000000000000000000",
+        role: "payment",
+        scope_hash: hashBytes,
+        state: "active",
+      },
+    ]);
+    const registry = new PostgresAgentRegistry(pool);
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    expect(result?.scopeHash).toBe("0x" + "aa".repeat(32));
+  });
+
+  it("uses zero hash when scope_hash column is null", async () => {
+    const pool = makePool([
+      {
+        id: "agent_01ZERO0000000000000000000",
+        tenant_id: "tnt_01ZERO000000000000000000",
+        role: "anomaly",
+        scope_hash: null,
+        state: "active",
+      },
+    ]);
+    const registry = new PostgresAgentRegistry(pool);
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    expect(result?.scopeHash).toBe(
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+    );
+  });
+
+  it("issues payment scopes for payment role", async () => {
+    const pool = makePool([
+      {
+        id: "agent_01PAY00000000000000000000",
+        tenant_id: "tnt_01PAY0000000000000000000",
+        role: "payment",
+        scope_hash: null,
+        state: "active",
+      },
+    ]);
+    const registry = new PostgresAgentRegistry(pool);
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    expect(result?.scopes).toContain("payment_intent:propose");
+    expect(result?.scopes).not.toContain("raw:write");
+  });
+
+  it("issues read-only scopes for unknown role", async () => {
+    const pool = makePool([
+      {
+        id: "agent_01DEV00000000000000000000",
+        tenant_id: "tnt_01DEV0000000000000000000",
+        role: "unknown_future_role",
+        scope_hash: null,
+        state: "active",
+      },
+    ]);
+    const registry = new PostgresAgentRegistry(pool);
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    expect(result?.scopes).toContain("audit:read");
+    expect(result?.scopes).not.toContain("execution:propose");
   });
 });
 
