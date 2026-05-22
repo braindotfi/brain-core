@@ -3,7 +3,7 @@
 **Date:** 2026-05-22  
 **Branch / Commit:** `main` @ `16eacff` + demo P0/P1 patches (see §6)  
 **Environment:** Linux, Node 22.20, pnpm 9.12, Python 3.12, uv 0.8, Docker Compose v2, Foundry (forge) installed  
-**Demo mode:** `BRAIN_DEMO_MODE=true`, `BRAIN_MCP_DEV_AUTH_BYPASS=true`, `AUDIT_PUBLISHER_KEY` unset (no on-chain anchor)
+**Demo mode:** `BRAIN_DEMO_MODE=true`, `BRAIN_MCP_DEV_AUTH_BYPASS=true`, `AUDIT_PUBLISHER_KEY` set → on-chain anchor live (Base Sepolia block 41834398)
 
 ---
 
@@ -19,11 +19,13 @@
 | E2E proof-points | ❌ 2 of 2 fail (wiki unpopulated); 1 skipped (no ext-agent token) |
 | Golden-path payment (end-to-end) | ✅ Create → §6 gate (13 checks) → Execute → Audit chain with Merkle proof |
 | Policy VM (real evaluation) | ✅ 3-rule policy: auto-allow / confirm / reject — all three outcomes live against the gate |
-| MCP surface | ✅ 10 tools enumerated; `tools/call` functional |
+| MCP surface | ✅ 10 tools live; full payment proposal flow (approved / pending_approval / rejected) driven via JSON-RPC |
+| On-chain audit anchor | ✅ 17 events anchored to Base Sepolia — tx `0x96d0b81d…`, block 41834398, Merkle root `2a0c5508…` |
 
 **Three-bullet headline:**
 - The §6 deterministic pre-execution gate is fully operational with **real policy evaluation** — three policy rules (auto-allow ≤$1k, confirm $1k–$10k, reject >$10k) produce three distinct PI statuses at creation time (`approved` / `pending_approval` / `rejected`), each backed by a `policy_decisions` row and an audit event.
 - All three original P0 blockers resolved: execution FK constraint dropped (migration 0006), missing audit `after` event fixed with try/catch wrap, MCP `tools/list` now returns all 10 tools after dev-bypass principal check was moved to the HTTP transport layer.
+- The full MCP JSON-RPC surface is operational end-to-end: `scripts/demo/mcp-demo.sh` drives three payment proposals through the MCP interface — `approved`, `pending_approval`, `rejected` — all backed by real policy decisions and audit events. The on-chain audit anchor is live: 17 events anchored to Base Sepolia by wallet `0x41D4ce9D…` (publisher), tx `0x96d0b81d…`, block 41834398.
 - Unit tests and Foundry contracts are production-grade; five boot-time config bugs required patching before zero-touch startup is possible — these are tracked in §6.
 
 ---
@@ -252,34 +254,73 @@ The audit log shows `policy.evaluate` events with `matched_rule_id` and `outcome
 
 **Owns:** JSON-RPC 2.0 server. 10 tools (ledger reads, wiki Q&A, raw contribute, payment/agent proposals), 6 resource URIs, 5 prompts.
 
-**What we ran:**
-- `POST /v1/agents/mcp` `{"method": "tools/list"}` → `{"result": {"tools": []}}` — 0 tools returned
+**What we ran (`scripts/demo/mcp-demo.sh`):**
+
+```bash
+# All calls via: POST /v1/agents/mcp  {"jsonrpc":"2.0","method":"...","params":{...}}
+
+# Enumerate tools
+tools/list  →  10 tools registered:
+  ledger.account.get, ledger.accounts.list, ledger.transactions.list,
+  ledger.obligations.list, ledger.counterparties.list,
+  wiki.question, wiki.page.get, raw.contribute,
+  payment_intent.propose, agent.action.propose
+
+# Read financial state through MCP
+tools/call ledger.accounts.list   →  3 accounts (Chase Checking $1200, Chase Savings $8500, Amex Platinum $850)
+tools/call ledger.obligations.list (status=upcoming) →  5 upcoming subscriptions
+
+# Three-way payment proposal through MCP → real policy VM
+tools/call payment_intent.propose  amount=800.00   →  pi_01KS7CFZDZ0AGPAA2WFVFDHDY2  status: approved         pd_01KS7CFZDF8AGEVC0Q76HZKDEQ
+tools/call payment_intent.propose  amount=5000.00  →  pi_01KS7CFZFP7CT325ZT8HY8JHH7  status: pending_approval  pd_01KS7CFZF7JNKN23FXHSXMPD8X
+tools/call payment_intent.propose  amount=15000.00 →  pi_01KS7CFZHERYN1M8TD17AF8WCJ  status: rejected          pd_01KS7CFZGZ7DQFRXN4KCXNED10
+```
+
+Each proposal hits the same `PaymentIntentService.create()` path as the HTTP API — policy VM fires, `policy_decisions` row inserted, audit event emitted. `payment_intent.execute` is **not exposed** via MCP by design; the agent can only propose.
 
 **Test posture:** 4 files, 52 tests, all pass.
 
 **Gaps:**
 | Severity | Finding | Location |
 |----------|---------|----------|
-| P0 | `tools/list` returns empty array — `IAgentService` not wired at boot; MCP dispatcher cannot enumerate tools | `src/tools/agent.ts:55` (confirmed-existing) |
-| P1 | `agent.action.propose` degrades to "audit-only stub" (no real agent service wired) | `src/tools/agent.ts:55` |
+| ~~P0~~ **RESOLVED** | ~~`tools/list` returns empty array~~ — fixed; `IAgentService` wired, dev-bypass principal check moved to transport layer | `services/mcp/src/transport/http.ts` |
+| P1 | `agent.action.propose` degrades to audit-only stub (no real agent service wired unless `AGENT_SERVICE_URL` set) | `src/tools/agent.ts:55` |
 
 ---
 
 ### Layer 6 — Audit (`services/audit`)
 
-**Owns:** Append-only Merkle-chained audit log. On-chain anchor publisher (skipped locally — `AUDIT_PUBLISHER_KEY` unset).
+**Owns:** Append-only Merkle-chained audit log. On-chain anchor publisher.
 
 **What we ran:**
-- `GET /v1/audit/events` → 4 events, all with `event_hash` and `prev_event_hash` ✓ (Merkle chain live)
-- `GET /v1/audit/anchor/latest` → `audit_anchor_not_yet_published` (expected — publisher disabled)
+
+```bash
+# Merkle chain
+GET /v1/audit/events  →  events with event_hash + prev_event_hash on every row ✓
+
+# On-chain anchor — triggered via POST /v1/demo/anchor/trigger
+# (server auto-fired at 10s after boot in demo mode)
+anchor_01KS7BE5D8745NKMZTX4QMHZ0F:
+  tenant_id:    tnt_00000000010000000000000000
+  event_count:  17
+  merkle_root:  2a0c5508b7c66833a86a0357fa113f9acbb6918bce3f0d84660d91ddf07e733a
+  onchain_tx:   0x96d0b81df6341de2152f30ad2b928bd4a22153dbedd549939db8ed085f595c09
+  block:        41834398 (Base Sepolia)
+  from:         0x41D4ce9D9Fe968Ca1230bDc296B28fdc9AA6FF6E  (publisher wallet)
+  to:           0xb900aDd824064098342c869ff83efdeB05eB95Ce  (BrainAuditAnchor)
+  published_at: 2026-05-22 08:04:42 UTC
+```
+
+Verified on-chain via `cast tx 0x96d0b81d…` — from/to match publisher wallet and contract address. `BrainAuditAnchor.verifyInclusion()` can prove any of the 17 events against this root without trusting Brain.
 
 **Test posture:** 3 files, 25 tests, all pass. Zero stubs.
 
 **Gaps:**
 | Severity | Finding | Location |
 |----------|---------|----------|
-| P0 | `payment_intent.execute.after` not emitted when gate passes but downstream DB write fails (see Execution §5 above) — leaves audit chain open | runtime observation |
-| P2 | Anchor publisher disabled locally (by design — `AUDIT_PUBLISHER_KEY` unset); `GET /v1/audit/anchors` route doesn't exist (route is `GET /v1/audit/anchor/latest`) | `src/routes.ts:176` |
+| ~~P0~~ **RESOLVED** | ~~`payment_intent.execute.after` not emitted when gate passes but DB write fails~~ — fixed with try/catch wrap; `execute.after` always emits | `services/execution/src/payment-intents/PaymentIntentService.ts` |
+| ~~P2~~ **RESOLVED** | ~~Anchor publisher disabled locally~~ — `AUDIT_PUBLISHER_KEY` now set; anchor fires on demand via `POST /v1/demo/anchor/trigger` and auto at 10s in demo mode | `services/api/src/main.ts` |
+| P2 | `GET /v1/audit/anchors` (plural) route does not exist — correct route is `GET /v1/audit/anchor/latest` | `src/routes.ts:176` |
 
 ---
 
@@ -356,7 +397,18 @@ node tools/migrate/dist/cli.js up                            # DATABASE_URL from
 node tools/seed-golden-path/dist/cli.js                      # with fixed ULIDs below
 pnpm -C services/api run dev                                 # brain-server :3000
 
-# Golden-path flow
+# Activate demo policy (real policy VM — bypasses EIP-712 for demo only)
+curl -X POST http://localhost:3000/v1/demo/policy/activate \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
+
+# MCP demo — drives full payment proposal flow via JSON-RPC
+bash scripts/demo/mcp-demo.sh
+
+# On-chain anchor trigger
+curl -X POST http://localhost:3000/v1/demo/anchor/trigger \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
+
+# Golden-path HTTP flow
 TOKEN=$(curl -s http://localhost:3000/v1/demo/token | jq -r .token)
 curl -X POST http://localhost:3000/v1/payment-intents -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{ ... }'
@@ -387,6 +439,9 @@ pnpm run contracts:test
 | `services/api/src/main.ts` | Remove sandbox bypass from `evaluatePaymentIntent`; always call `policyService.evaluateForGate` | Real policy VM now evaluates every payment intent |
 | `services/api/src/main.ts` | Add `POST /v1/demo/policy/activate` route (demo mode only) | Seeds a 3-rule active policy without EIP-712 signing ceremony |
 | `services/api/src/main.ts` | Add `"policy:write"` to demo token scopes | Required for demo policy activate endpoint |
+| `services/api/src/main.ts` | Add `POST /v1/demo/anchor/trigger`; wire `triggerAnchor` closure; first run at 10s in demo mode | On-demand on-chain anchor publication for demos |
+| `.env` | Added `0x` prefix to `AUDIT_PUBLISHER_KEY` (64-char hex key was missing prefix) | Zod regex `/^0x[0-9a-fA-F]{64}$/` rejected the key |
+| `scripts/demo/mcp-demo.sh` | New script — drives full payment proposal flow via MCP JSON-RPC (tools/list, ledger reads, three proposals) | Demonstrates MCP surface end-to-end |
 
 ### Golden-path demo IDs
 
