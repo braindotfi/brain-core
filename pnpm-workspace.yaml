@@ -7,6 +7,7 @@ packages:
   - "services/wiki"
   - "services/policy"
   - "services/execution"
+  - "services/agent-router"
   - "services/mcp"
   - "services/audit"
   - "clients/*"
