@@ -79,6 +79,9 @@ importers:
       '@brain/shared':
         specifier: workspace:*
         version: link:../../shared
+      bullmq:
+        specifier: ^5.21.0
+        version: 5.76.8
       fastify:
         specifier: ^5.0.0
         version: 5.8.5

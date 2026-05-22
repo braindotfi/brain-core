@@ -272,6 +272,10 @@ export class PaymentIntentService implements IPaymentIntentService {
       inputs: { payment_intent_id: id, reason: reason ?? null },
       outputs: { status: "rejected" },
     });
+    // INTEGRATION POINT (agent-router, Phase 1): a failed/rejected payment is
+    // where a `payment.failed` domain event would be emitted via @brain/shared
+    // `emitDomainEvent`, so the router can route to the collections agent.
+    // Wiring the enqueue dep into this service is a follow-up.
     return toRecord(updated);
   }
 

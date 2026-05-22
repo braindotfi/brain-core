@@ -13,3 +13,11 @@ export { AgentRouter, type AgentRouterDeps } from "./router.js";
 export { registerAgentRouterRoutes, type AgentRouterRouteDeps } from "./route.js";
 export * from "./agents/handler.js";
 export { internalAgentCatalog, internalAgentHandlers } from "./agents/registry.js";
+export {
+  routeAndPropose,
+  createAgentRouteWorker,
+  type RouteAndProposeDeps,
+  type RouteAndProposeResult,
+  type AgentRouteWorkerDeps,
+} from "./worker.js";
+export * from "./registration.js";

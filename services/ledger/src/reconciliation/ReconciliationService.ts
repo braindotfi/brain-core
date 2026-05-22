@@ -80,6 +80,10 @@ export class ReconciliationService implements IReconciliationService {
     }
 
     const totalCreated = summary.reduce((acc, r) => acc + r.matchesProduced.length, 0);
+    // INTEGRATION POINT (agent-router, Phase 1): when matches are produced this
+    // is where a `reconciliation.candidate_found` domain event would be emitted
+    // via @brain/shared `emitDomainEvent`, so the router can route to the
+    // reconciliation agent. Wiring the enqueue dep into this service is a follow-up.
     await this.deps.audit.emit({
       tenantId: ctx.tenantId,
       layer: "ledger",

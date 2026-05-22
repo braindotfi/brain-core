@@ -114,3 +114,6 @@ export * from "./gate/index.js";
 
 // Agent primitives (capability hashing, execution-mode resolution).
 export * from "./agents/index.js";
+
+// Domain-event vocabulary + routing enqueue (event-driven agent routing).
+export * from "./events/triggers.js";

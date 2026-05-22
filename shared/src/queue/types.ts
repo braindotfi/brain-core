@@ -16,6 +16,7 @@ export const QUEUE_NAMES = {
   agentReconcile: "brain.agent.reconcile",
   agentPayment: "brain.agent.payment",
   agentAnomaly: "brain.agent.anomaly",
+  agentRoute: "brain.agent.route",
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
