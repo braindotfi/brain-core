@@ -77,6 +77,7 @@ import {
   registerPaymentIntentRoutes,
   ApprovalService,
   PaymentIntentService,
+  AgentService,
   defaultRails,
   findAgent,
   findUser,
@@ -569,16 +570,20 @@ async function main(): Promise<void> {
           }),
         );
 
+  const agentService = new AgentService({
+    pool,
+    audit,
+    evaluatePolicy: evaluateLegacyPolicy,
+  });
+
   const mcpServer = new BrainMcpServer({
     auth: mcpAuthVerifier,
     ledger: ledgerService,
     wiki: wikiService,
     raw: rawEvidenceService,
     paymentIntents: paymentIntentService,
+    agentService,
     audit,
-    ...(cfg.AGENT_SERVICE_URL !== undefined
-      ? { agentService: new ReconciliationAgentClient(cfg.AGENT_SERVICE_URL) }
-      : {}),
   });
 
   // -- Fastify root app -----------------------------------------------
@@ -785,6 +790,12 @@ async function main(): Promise<void> {
               },
               require: "owner_approval",
               execute: "confirm",
+            },
+            {
+              id: "auto-agent-action",
+              applies_to: ["agent_action"],
+              when: {},
+              execute: "auto",
             },
           ],
         };

@@ -24,6 +24,7 @@ export type ApplyTo =
   | "inbound_payment"
   | "ledger_write"
   | "onchain_tx"
+  | "agent_action"
   | "any";
 export type ExecuteMode = "auto" | "confirm" | "reject";
 

@@ -15,8 +15,10 @@ export { buildExecutionApp, type BuildExecutionAppOptions } from "./server.js";
 export type { ExecutionDeps } from "./deps.js";
 export * from "./state-machines.js";
 
-// Phase 4 — PaymentIntent lifecycle.
+// Phase 4 — PaymentIntent lifecycle + non-financial agent proposals.
 export { PaymentIntentService } from "./payment-intents/PaymentIntentService.js";
+export { AgentService } from "./AgentService.js";
+export type { AgentServiceDeps } from "./AgentService.js";
 export type {
   PaymentIntentServiceDeps,
   PaymentIntentPolicyEvaluator,
