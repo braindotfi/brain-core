@@ -1,0 +1,27 @@
+import type { InternalAgentDefinition } from "@brain/schemas";
+
+/** Collections (business). Capability keccak256("collections_followup"). */
+export const collectionsDefinition: InternalAgentDefinition = {
+  agent_key: "collections",
+  display_name: "Collections",
+  provenance: "internal",
+  category: "business",
+  capabilities: ["collections_followup"],
+  triggers: ["invoice.overdue", "payment.failed", "receivable.aging_threshold_crossed"],
+  intent_patterns: [
+    "follow up on overdue invoice",
+    "chase late payment",
+    "remind customer about unpaid invoice",
+  ],
+  readable_data: [
+    "ledger:invoices",
+    "ledger:counterparties",
+    "ledger:transactions",
+    "wiki:counterparty",
+  ],
+  risk_level: "medium",
+  minimum_confidence: 0.75,
+  required_evidence: ["invoice", "counterparty"],
+  default_authority: "propose",
+  enabled_by_default: true,
+};

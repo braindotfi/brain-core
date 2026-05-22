@@ -10,7 +10,10 @@
     "agent_id": { "type": "string", "pattern": "^agent_[0-9A-HJKMNP-TV-Z]{26}$" },
     "display_name": { "type": "string", "maxLength": 200 },
     "kind": { "type": "string", "enum": ["internal", "external"] },
-    "role": { "type": "string", "enum": ["reconciliation", "payment", "anomaly", "partner"] },
+    "role": {
+      "type": "string",
+      "enum": ["reconciliation", "payment", "anomaly", "partner", "collections", "treasury"]
+    },
     "scope_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "onchain_address": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" },
     "registered_at": { "type": "string", "format": "date-time" }

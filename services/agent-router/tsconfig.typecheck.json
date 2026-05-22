@@ -8,7 +8,8 @@
       "@brain/shared": ["../../shared/src/index.ts"],
       "@brain/shared/*": ["../../shared/src/*.ts"],
       "@brain/schemas": ["../../schemas/index.ts"],
-      "@brain/schemas/*": ["../../schemas/*.ts"]
+      "@brain/schemas/*": ["../../schemas/*.ts"],
+      "@brain/policy": ["../../services/policy/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "collections_followups_auto",
+      "applies_to": ["any"],
+      "when": { "agent.role": "collections" },
+      "execute": "auto"
+    }
+  ]
+}

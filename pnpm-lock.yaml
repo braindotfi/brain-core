@@ -83,6 +83,9 @@ importers:
         specifier: ^5.0.0
         version: 5.8.5
     devDependencies:
+      '@brain/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@types/node':
         specifier: ^22.7.0
         version: 22.19.19

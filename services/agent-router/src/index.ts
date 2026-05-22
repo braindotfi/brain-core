@@ -11,3 +11,5 @@ export * from "./intent-classifier.js";
 export * from "./evidence-gatherer.js";
 export { AgentRouter, type AgentRouterDeps } from "./router.js";
 export { registerAgentRouterRoutes, type AgentRouterRouteDeps } from "./route.js";
+export * from "./agents/handler.js";
+export { internalAgentCatalog, internalAgentHandlers } from "./agents/registry.js";

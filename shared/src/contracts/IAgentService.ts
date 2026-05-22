@@ -19,8 +19,10 @@ import type { ServiceCallContext } from "./types.js";
 
 export interface AgentRecord {
   id: string;
+  // `kind` is the agent's provenance — matches InternalAgentDefinition.provenance.
   kind: "internal" | "external";
-  role: "reconciliation" | "payment" | "anomaly" | "partner";
+  // Domain function. Extended additively as internal agents ship.
+  role: "reconciliation" | "payment" | "anomaly" | "partner" | "collections" | "treasury";
   display_name: string;
   scope_hash: string | null;
   onchain_address: string | null;

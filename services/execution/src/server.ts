@@ -39,6 +39,21 @@ export interface BuildExecutionAppOptions {
    *   });
    */
   registerMcp?: (app: FastifyInstance) => Promise<void>;
+  /**
+   * Optional agent-router wiring hook, same decoupling rationale as
+   * registerMcp. The boot site constructs an AgentRouter (from
+   * `@brain/agent-router`) over the internal-agent catalog and passes a
+   * function that mounts POST /agents/route. When omitted, the route is
+   * absent. services/execution stays unaware of @brain/agent-router (no cycle).
+   *
+   *   import { AgentRouter, registerAgentRouterRoutes, internalAgentCatalog } from "@brain/agent-router";
+   *   const router = new AgentRouter({ catalog: () => internalAgentCatalog, ... });
+   *   const app = await buildExecutionApp({
+   *     deps, jwtVerifier,
+   *     registerAgentRouter: (a) => registerAgentRouterRoutes(a, { router }),
+   *   });
+   */
+  registerAgentRouter?: (app: FastifyInstance) => Promise<void>;
 }
 
 export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise<FastifyInstance> {
@@ -99,6 +114,11 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
   // /execution/mcp ping stub still answers.
   if (opts.registerMcp !== undefined) {
     await opts.registerMcp(app);
+  }
+
+  // Phase 1: optional agent-router route (POST /agents/route → /v1/agents/route).
+  if (opts.registerAgentRouter !== undefined) {
+    await opts.registerAgentRouter(app);
   }
 
   return app;

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "treasury_sweep_within_limit",
+      "applies_to": ["outbound_payment", "onchain_tx"],
+      "when": { "agent.role": "treasury", "amount.lte": { "currency": "USD", "value": "100000" } },
+      "execute": "auto"
+    },
+    {
+      "id": "treasury_sweep_large",
+      "applies_to": ["outbound_payment", "onchain_tx"],
+      "when": { "agent.role": "treasury", "amount.gt": { "currency": "USD", "value": "100000" } },
+      "require": "cfo_approval",
+      "execute": "confirm"
+    },
+    {
+      "id": "treasury_advisory_auto",
+      "applies_to": ["any"],
+      "when": { "agent.role": "treasury" },
+      "execute": "auto"
+    }
+  ]
+}
