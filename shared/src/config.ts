@@ -128,6 +128,14 @@ const envSchema = z.object({
   // ---- Agent service ----
   /** Base URL of the brain-agents FastAPI service. Required when running the agent layer. */
   AGENT_SERVICE_URL: z.string().url().optional(),
+  /**
+   * Intent-classifier strategy for the agent router (Phase 4 feature flag).
+   * "rules" (default) keeps the deterministic token-overlap classifier.
+   * "embedding" uses the embedding classifier with the rules classifier as a
+   * fallback (paraphrase-aware). Requires an embedding adapter (OPENAI_API_KEY
+   * for real embeddings; otherwise the deterministic test adapter is used).
+   */
+  AGENT_INTENT_CLASSIFIER: z.enum(["rules", "embedding"]).default("rules"),
 
   // ---- SIWX (agent onboarding) ----
   /** JWK JSON string used to sign SIWX JWTs. Required in production; demo mode uses its own key. */

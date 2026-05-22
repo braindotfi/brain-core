@@ -49,6 +49,15 @@ Some triggers match agents of different categories. `cash.balance_high`, for exa
 
 A category mismatch is a **scoring downgrade, not a hard reject**. A mismatched agent can still be selected when it is the best or only match, so an explicit user intent overrides the default category preference. Agnostic agents (which serve both categories) take no penalty, and when no tenant category is resolved the router is category-blind.
 
+#### Intent matching
+
+When a request carries a free-form intent rather than a domain event, the router scores it against each agent's declared `intent_patterns`. Two classifier strategies share one interface, selected by the `AGENT_INTENT_CLASSIFIER` flag:
+
+- **`rules`** (default) — a deterministic token-overlap classifier. Fast and dependency-free, but it only matches phrasings that share words with a pattern.
+- **`embedding`** — embeds the intent and the patterns and scores by cosine similarity, so paraphrases match ("chase late-paying customers" routes to Collections even though it shares no tokens with "follow up on overdue invoice"). Pattern embeddings are cached and reindexed when the catalog changes.
+
+The embedding classifier keeps the rules classifier as a **live fallback**: when an intent scores below the similarity threshold (or the embedding service is unavailable) the router falls back to token overlap. Selection scoring is unchanged — only the source of the intent-match score differs.
+
 ### Three Execution Paths
 
 Approved actions execute through one of three paths.

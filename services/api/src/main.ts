@@ -99,10 +99,14 @@ import {
 import { BrainMcpServer, FakeAuthVerifier, McpAuthVerifier, registerMcpRoute } from "@brain/mcp";
 import {
   AgentRouter,
+  EmbeddingIntentClassifier,
+  FallbackIntentClassifier,
   RulesIntentClassifier,
   StaticEvidenceGatherer,
   createAgentRouteWorker,
+  reindexIntentClassifier,
   registerAgentRouterRoutes,
+  type IntentClassifier,
 } from "@brain/agent-router";
 import { internalAgentCatalog, internalAgentHandlers } from "@brain/internal-agents";
 import { createViemScopeChecker } from "./mcp/viemScopeChecker.js";
@@ -604,9 +608,24 @@ async function main(): Promise<void> {
   // registry. For now the Brain-shipped internal agents' capabilities are
   // treated as scoped (they are enabled_by_default).
   const internalAgentCapabilities = new Set(internalAgentCatalog.flatMap((d) => d.capabilities));
+  // Intent-classifier strategy (Phase 4 feature flag). "rules" (default) keeps
+  // the deterministic token-overlap classifier; "embedding" makes the router
+  // paraphrase-aware via embeddings, with the rules classifier as a live
+  // fallback when the embedding adapter returns no match or is unavailable.
+  const rulesClassifier = new RulesIntentClassifier();
+  let agentClassifier: IntentClassifier = rulesClassifier;
+  if (cfg.AGENT_INTENT_CLASSIFIER === "embedding") {
+    const embeddingClassifier = new EmbeddingIntentClassifier(embed, {
+      model: cfg.WIKI_EMBED_MODEL,
+    });
+    // Warm the pattern cache so the first live request avoids embed latency.
+    // Fire-and-forget: a miss is filled lazily on first use.
+    void reindexIntentClassifier(embeddingClassifier, internalAgentCatalog);
+    agentClassifier = new FallbackIntentClassifier(embeddingClassifier, rulesClassifier);
+  }
   const agentRouter = new AgentRouter({
     catalog: () => internalAgentCatalog,
-    classifier: new RulesIntentClassifier(),
+    classifier: agentClassifier,
     evidence: agentEvidence,
     getScopedCapabilities: () => internalAgentCapabilities,
     // TODO(phase-3): resolve the tenant category from a signed JWT claim or a

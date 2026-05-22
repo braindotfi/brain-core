@@ -8,6 +8,8 @@
 
 export * from "./types.js";
 export * from "./intent-classifier.js";
+export * from "./embedding-classifier.js";
+export * from "./intent-decomposer.js";
 export * from "./evidence-gatherer.js";
 export { AgentRouter, type AgentRouterDeps } from "./router.js";
 export { registerAgentRouterRoutes, type AgentRouterRouteDeps } from "./route.js";

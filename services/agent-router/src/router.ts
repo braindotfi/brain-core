@@ -82,7 +82,9 @@ export class AgentRouter {
     });
 
     const catalog = await this.deps.catalog();
-    const candidates = catalog.filter((def) => def.enabled_by_default && this.matches(def, input));
+    const enabled = catalog.filter((def) => def.enabled_by_default);
+    const matchFlags = await Promise.all(enabled.map((def) => this.matches(def, input)));
+    const candidates = enabled.filter((_, i) => matchFlags[i]);
 
     if (candidates.length === 0) {
       return this.noMatch(ctx, input, "no_match", "no agent matches the event or intent");
@@ -144,14 +146,13 @@ export class AgentRouter {
     return decision;
   }
 
-  private matches(def: InternalAgentDefinition, input: RoutingInput): boolean {
+  private async matches(def: InternalAgentDefinition, input: RoutingInput): Promise<boolean> {
     if (input.event !== undefined && def.triggers.includes(input.event)) {
       return true;
     }
     if (input.intent !== undefined) {
-      return (
-        this.deps.classifier.classify(input.intent, def.intent_patterns) >= INTENT_MATCH_THRESHOLD
-      );
+      const score = await this.deps.classifier.classify(input.intent, def.intent_patterns);
+      return score >= INTENT_MATCH_THRESHOLD;
     }
     return false;
   }
@@ -164,7 +165,7 @@ export class AgentRouter {
     const triggerMatch = input.event !== undefined && def.triggers.includes(input.event) ? 1 : 0;
     const intentScore =
       input.intent !== undefined
-        ? this.deps.classifier.classify(input.intent, def.intent_patterns)
+        ? await this.deps.classifier.classify(input.intent, def.intent_patterns)
         : 0;
     const bundle = await this.deps.evidence.gather({
       tenantId: input.tenant_id,
