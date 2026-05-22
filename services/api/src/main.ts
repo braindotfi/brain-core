@@ -97,6 +97,15 @@ import {
 } from "./sandbox/resolvers.js";
 
 import { BrainMcpServer, FakeAuthVerifier, McpAuthVerifier, registerMcpRoute } from "@brain/mcp";
+import {
+  AgentRouter,
+  RulesIntentClassifier,
+  StaticEvidenceGatherer,
+  createAgentRouteWorker,
+  registerAgentRouterRoutes,
+  internalAgentCatalog,
+  internalAgentHandlers,
+} from "@brain/agent-router";
 import { createViemScopeChecker } from "./mcp/viemScopeChecker.js";
 import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
@@ -586,6 +595,33 @@ async function main(): Promise<void> {
     audit,
   });
 
+  // -- Agent router (Phase 1) -----------------------------------------
+  // Shared StaticEvidenceGatherer for now.
+  // TODO(phase-1): wire Wiki citations + Ledger references into a
+  // ServiceEvidenceGatherer. Until then evidence is empty, so agents with
+  // required_evidence resolve to notify_only (the safe default).
+  const agentEvidence = new StaticEvidenceGatherer();
+  // TODO(phase-1): enforce real per-tenant on-chain scope grants via the agent
+  // registry. For now the Brain-shipped internal agents' capabilities are
+  // treated as scoped (they are enabled_by_default).
+  const internalAgentCapabilities = new Set(internalAgentCatalog.flatMap((d) => d.capabilities));
+  const agentRouter = new AgentRouter({
+    catalog: () => internalAgentCatalog,
+    classifier: new RulesIntentClassifier(),
+    evidence: agentEvidence,
+    getScopedCapabilities: () => internalAgentCapabilities,
+    audit,
+  });
+
+  // Delegate the reconciliation agent to the Python reconciliation service when
+  // RECONCILIATION_AGENT_URL is set; otherwise reconciliation uses the default
+  // AgentService. ReconciliationAgentClient is itself an IAgentService.
+  const reconciliationAgentUrl = process.env.RECONCILIATION_AGENT_URL;
+  const agentOverrides =
+    reconciliationAgentUrl !== undefined
+      ? { reconciliation: new ReconciliationAgentClient(reconciliationAgentUrl) }
+      : {};
+
   // -- Fastify root app -----------------------------------------------
   const app = Fastify({
     logger: true,
@@ -695,6 +731,8 @@ async function main(): Promise<void> {
           skipPrincipalTypeCheck: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,
         }),
       );
+      // POST /v1/agents/route — multi-agent router (Phase 1).
+      await v1.register(async (child) => registerAgentRouterRoutes(child, { router: agentRouter }));
       // SIWX (agent auth) — always wired. Production requires AUTH_SIGN_KEY
       // (a JWK JSON string) backed by Azure Key Vault.
       if (cfg.NODE_ENV === "production" && cfg.AUTH_SIGN_KEY === undefined) {
@@ -827,7 +865,14 @@ async function main(): Promise<void> {
                  (id, tenant_id, version, content, content_hash, quorum_required,
                   state, created_by, activated_at)
                VALUES ($1,$2,$3,$4,$5,1,'active',$6,now())`,
-              [id, req.principal!.tenantId, content.version, JSON.stringify(content), hash, req.principal!.id],
+              [
+                id,
+                req.principal!.tenantId,
+                content.version,
+                JSON.stringify(content),
+                hash,
+                req.principal!.id,
+              ],
             );
           });
 
@@ -836,7 +881,11 @@ async function main(): Promise<void> {
             layer: "policy",
             actor: req.principal.id,
             action: "policy.activate",
-            inputs: { version: content.version, policy_hash: hash.toString("hex"), demo_bypass: true },
+            inputs: {
+              version: content.version,
+              policy_hash: hash.toString("hex"),
+              demo_bypass: true,
+            },
             outputs: { policy_id: id, state: "active" },
           });
 
@@ -859,7 +908,10 @@ async function main(): Promise<void> {
           }
           await triggerAnchor();
           reply.status(200);
-          return { triggered: true, message: "anchor published — check GET /v1/audit/anchor/latest" };
+          return {
+            triggered: true,
+            message: "anchor published — check GET /v1/audit/anchor/latest",
+          };
         });
       }
     },
@@ -917,6 +969,22 @@ async function main(): Promise<void> {
     log.info({ intervalMs, firstRunMs }, "anchor publisher started");
   }
 
+  // -- Agent-route worker (Phase 1) -----------------------------------
+  // Consumes brain.agent.route jobs: route to an agent, then propose through
+  // the existing path (never executes). Domain-event producers are still
+  // integration markers, so the queue stays idle until they emit. The
+  // reconciliation override delegates to the Python agent when configured.
+  const agentRouteWorker = createAgentRouteWorker({
+    router: agentRouter,
+    handlers: internalAgentHandlers,
+    evidence: agentEvidence,
+    propose: { agents: agentService, paymentIntents: paymentIntentService },
+    agentOverrides,
+    redisUrl: cfg.REDIS_URL,
+    actor: "agent_router_worker",
+  });
+  log.info("agent-route worker started");
+
   // -- listen ---------------------------------------------------------
   await app.listen({ host: "0.0.0.0", port: cfg.PORT });
   log.info({ port: cfg.PORT, version: cfg.SERVICE_VERSION }, "brain-server up");
@@ -927,6 +995,11 @@ async function main(): Promise<void> {
     anchorShutdown = true;
     if (anchorTimer !== undefined) clearTimeout(anchorTimer);
     normalizeWorker.stop();
+    try {
+      await agentRouteWorker.close();
+    } catch (err) {
+      log.error({ err }, "agentRouteWorker.close failed");
+    }
     try {
       await app.close();
     } catch (err) {
