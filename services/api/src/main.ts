@@ -123,7 +123,7 @@ try {
     | ((path: string) => void)
     | undefined;
   if (loadEnv !== undefined) {
-    const path = new URL("../../../../.env", import.meta.url).pathname;
+    const path = new URL("../../../.env", import.meta.url).pathname;
     loadEnv(path);
   }
 } catch {
@@ -408,8 +408,8 @@ async function main(): Promise<void> {
   // (to accept demo tokens) and JwtSigner (to mint them). Having it in two
   // inline literals means a typo breaks verification silently.
   const DEMO_SIGN_SECRET = "brain-demo-mode-insecure-dev-only";
-  const DEMO_GOLDEN_USER = "usr_01GOLDEN00000000000000000" as const;
-  const DEMO_GOLDEN_TENANT = "tnt_01GOLDEN00000000000000000" as const;
+  const DEMO_GOLDEN_USER = "user_00000000020000000000000001" as const;
+  const DEMO_GOLDEN_TENANT = "tnt_00000000010000000000000000" as const;
 
   const jwtVerifier = new JwtVerifier({
     jwksUrl: cfg.AUTH_JWKS_URL,
@@ -684,7 +684,11 @@ async function main(): Promise<void> {
         await registerPaymentIntentRoutes(child, piService);
       });
       await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
-      await v1.register(async (child) => registerMcpRoute(child, mcpServer));
+      await v1.register(async (child) =>
+        registerMcpRoute(child, mcpServer, {
+          skipPrincipalTypeCheck: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,
+        }),
+      );
       // SIWX (agent auth) — always wired. Production requires AUTH_SIGN_KEY
       // (a JWK JSON string) backed by Azure Key Vault.
       if (cfg.NODE_ENV === "production" && cfg.AUTH_SIGN_KEY === undefined) {
@@ -739,6 +743,7 @@ async function main(): Promise<void> {
                 "execution:propose",
                 "payment_intent:propose",
                 "payment_intent:approve",
+                "payment_intent:execute",
                 "audit:read",
               ],
             });
