@@ -73,6 +73,9 @@ importers:
 
   services/agent-router:
     dependencies:
+      '@brain/internal-agents':
+        specifier: workspace:*
+        version: link:../internal-agents
       '@brain/schemas':
         specifier: workspace:*
         version: link:../../schemas
@@ -128,6 +131,9 @@ importers:
       '@brain/execution':
         specifier: workspace:*
         version: link:../execution
+      '@brain/internal-agents':
+        specifier: workspace:*
+        version: link:../internal-agents
       '@brain/ledger':
         specifier: workspace:*
         version: link:../ledger
@@ -314,6 +320,34 @@ importers:
       fast-check:
         specifier: ^3.23.1
         version: 3.23.2
+      typescript:
+        specifier: ^5.6.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.4(@types/node@22.19.19)(tsx@4.22.0)
+
+  services/internal-agents:
+    dependencies:
+      '@brain/schemas':
+        specifier: workspace:*
+        version: link:../../schemas
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      '@brain/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@types/node':
+        specifier: ^22.7.0
+        version: 22.19.19
+      '@vitest/coverage-v8':
+        specifier: ^3.2.0
+        version: 3.2.4(vitest@3.2.4(@types/node@22.19.19)(tsx@4.22.0))
+      eslint:
+        specifier: ^9.12.0
+        version: 9.39.4
       typescript:
         specifier: ^5.6.2
         version: 5.9.3

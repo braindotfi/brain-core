@@ -25,18 +25,6 @@ export interface RoutingInput {
  */
 export type RoutingPolicyStatus = "routed" | "unscoped" | "no_match";
 
-export interface Evidence {
-  readonly kind: string;
-  readonly ref: string;
-  readonly excerpt?: string;
-}
-
-export interface EvidenceBundle {
-  readonly items: readonly Evidence[];
-  /** Fraction of required evidence kinds present (0..1). */
-  readonly completeness: number;
-}
-
 export interface RoutingDecision {
   readonly selected_agent_id: string | null;
   readonly fallback_agent_ids: readonly string[];

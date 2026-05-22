@@ -4,7 +4,8 @@ import type { InternalAgentDefinition } from "@brain/schemas";
 import { AgentRouter, type AgentRouterDeps } from "./router.js";
 import { RulesIntentClassifier } from "./intent-classifier.js";
 import { StaticEvidenceGatherer } from "./evidence-gatherer.js";
-import type { CandidateSignals, Evidence } from "./types.js";
+import type { Evidence } from "@brain/internal-agents";
+import type { CandidateSignals } from "./types.js";
 
 const COLLECTIONS: InternalAgentDefinition = {
   agent_key: "collections",

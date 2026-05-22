@@ -9,8 +9,7 @@
       "@brain/shared/*": ["../../shared/src/*.ts"],
       "@brain/schemas": ["../../schemas/index.ts"],
       "@brain/schemas/*": ["../../schemas/*.ts"],
-      "@brain/policy": ["../../services/policy/src/index.ts"],
-      "@brain/internal-agents": ["../internal-agents/src/index.ts"]
+      "@brain/policy": ["../../services/policy/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

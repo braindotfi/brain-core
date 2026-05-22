@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryAuditEmitter, capabilityHash, type ServiceCallContext } from "@brain/shared";
-import { AgentRouter } from "../router.js";
-import { RulesIntentClassifier } from "../intent-classifier.js";
-import { StaticEvidenceGatherer } from "../evidence-gatherer.js";
-import type { Evidence } from "../types.js";
-import { internalAgentCatalog, internalAgentHandlers } from "./registry.js";
+import { AgentRouter } from "./router.js";
+import { RulesIntentClassifier } from "./intent-classifier.js";
+import { StaticEvidenceGatherer } from "./evidence-gatherer.js";
+import { internalAgentCatalog, internalAgentHandlers, type Evidence } from "@brain/internal-agents";
 
 const CTX: ServiceCallContext = { tenantId: "tnt_acme", actor: "user_1" };
 

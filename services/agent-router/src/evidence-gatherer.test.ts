@@ -4,7 +4,7 @@ import {
   StaticEvidenceGatherer,
   evidenceCompleteness,
 } from "./evidence-gatherer.js";
-import type { Evidence } from "./types.js";
+import type { Evidence } from "@brain/internal-agents";
 
 const items: Evidence[] = [
   { kind: "invoice", ref: "inv_1" },

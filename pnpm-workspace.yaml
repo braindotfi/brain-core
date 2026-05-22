@@ -8,6 +8,7 @@ packages:
   - "services/policy"
   - "services/execution"
   - "services/agent-router"
+  - "services/internal-agents"
   - "services/mcp"
   - "services/audit"
   - "clients/*"

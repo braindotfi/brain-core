@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { evaluate, type Action, type PolicyDocument } from "@brain/policy";
 import type { IAgentService, IPaymentIntentService, ServiceCallContext } from "@brain/shared";
-import type { EvidenceBundle } from "../types.js";
+import type { EvidenceBundle } from "./evidence.js";
 import { proposeAction, type ProposedAction } from "./handler.js";
 import { collectionsHandler } from "./collections/handler.js";
 import { treasuryHandler } from "./treasury/handler.js";

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { capabilityHash } from "@brain/shared";
-import { internalAgentCatalog } from "./agents/registry.js";
+import { internalAgentCatalog } from "./registry.js";
 import { buildInternalAgentRegistration, buildInternalAgentRegistrations } from "./registration.js";
-import { collectionsDefinition } from "./agents/collections/definition.js";
+import { collectionsDefinition } from "./collections/definition.js";
 
 describe("buildInternalAgentRegistration", () => {
   it("derives capability hashes, agent id hash, and scope hash", () => {

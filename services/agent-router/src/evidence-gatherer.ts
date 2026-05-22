@@ -10,7 +10,7 @@
  * composition root wires IWikiMemoryService / ILedgerService to them.
  */
 
-import type { Evidence, EvidenceBundle } from "./types.js";
+import type { Evidence, EvidenceBundle } from "@brain/internal-agents";
 
 export interface EvidenceQuery {
   readonly tenantId: string;

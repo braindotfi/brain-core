@@ -19,7 +19,7 @@ import {
 } from "@brain/shared";
 import type { AgentRouter } from "./router.js";
 import type { EvidenceGatherer } from "./evidence-gatherer.js";
-import { proposeAction, type InternalAgentHandler, type ProposeDeps } from "./agents/handler.js";
+import { proposeAction, type InternalAgentHandler, type ProposeDeps } from "@brain/internal-agents";
 import type { RoutingInput } from "./types.js";
 
 export interface RouteAndProposeDeps {

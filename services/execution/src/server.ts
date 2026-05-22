@@ -46,7 +46,8 @@ export interface BuildExecutionAppOptions {
    * function that mounts POST /agents/route. When omitted, the route is
    * absent. services/execution stays unaware of @brain/agent-router (no cycle).
    *
-   *   import { AgentRouter, registerAgentRouterRoutes, internalAgentCatalog } from "@brain/agent-router";
+   *   import { AgentRouter, registerAgentRouterRoutes } from "@brain/agent-router";
+   *   import { internalAgentCatalog } from "@brain/internal-agents";
    *   const router = new AgentRouter({ catalog: () => internalAgentCatalog, ... });
    *   const app = await buildExecutionApp({
    *     deps, jwtVerifier,

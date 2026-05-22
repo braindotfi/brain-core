@@ -16,7 +16,7 @@ import type {
   IPaymentIntentService,
   ServiceCallContext,
 } from "@brain/shared";
-import type { EvidenceBundle } from "../types.js";
+import type { EvidenceBundle } from "./evidence.js";
 
 export type ProposedAction =
   | { readonly channel: "agent"; readonly action: Record<string, unknown> }

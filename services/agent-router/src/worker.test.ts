@@ -8,9 +8,8 @@ import {
 import { AgentRouter } from "./router.js";
 import { RulesIntentClassifier } from "./intent-classifier.js";
 import { StaticEvidenceGatherer } from "./evidence-gatherer.js";
-import { internalAgentCatalog, internalAgentHandlers } from "./agents/registry.js";
+import { internalAgentCatalog, internalAgentHandlers, type Evidence } from "@brain/internal-agents";
 import { routeAndPropose, type RouteAndProposeDeps } from "./worker.js";
-import type { Evidence } from "./types.js";
 
 const CTX: ServiceCallContext = { tenantId: "tnt_acme", actor: "agent_system" };
 const EVIDENCE: Evidence[] = [

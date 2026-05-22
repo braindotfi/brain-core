@@ -103,9 +103,8 @@ import {
   StaticEvidenceGatherer,
   createAgentRouteWorker,
   registerAgentRouterRoutes,
-  internalAgentCatalog,
-  internalAgentHandlers,
 } from "@brain/agent-router";
+import { internalAgentCatalog, internalAgentHandlers } from "@brain/internal-agents";
 import { createViemScopeChecker } from "./mcp/viemScopeChecker.js";
 import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";

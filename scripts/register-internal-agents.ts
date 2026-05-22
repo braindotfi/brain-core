@@ -19,7 +19,7 @@
  * MCP_AGENT_REGISTRY_ADDRESS, TENANT_ID, TENANT_SIGNER_PRIVATE_KEY).
  */
 
-import { buildInternalAgentRegistrations, internalAgentCatalog } from "@brain/agent-router";
+import { buildInternalAgentRegistrations, internalAgentCatalog } from "@brain/internal-agents";
 
 function main(): void {
   const broadcast = process.argv.includes("--broadcast");
