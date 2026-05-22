@@ -1,7 +1,7 @@
 # Brain-core Local Demo — Findings
 
 **Date:** 2026-05-22  
-**Branch / Commit:** `main` @ `16eacff` (feat: close closed-beta P1 blockers)  
+**Branch / Commit:** `main` @ `16eacff` + demo P0/P1 patches (see §6)  
 **Environment:** Linux, Node 22.20, pnpm 9.12, Python 3.12, uv 0.8, Docker Compose v2, Foundry (forge) installed  
 **Demo mode:** `BRAIN_DEMO_MODE=true`, `BRAIN_MCP_DEV_AUTH_BYPASS=true`, `AUDIT_PUBLISHER_KEY` unset (no on-chain anchor)
 
@@ -18,10 +18,11 @@
 | Python agents | ✅ 9 pass, 90.82% coverage |
 | E2E proof-points | ❌ 2 of 2 fail (wiki unpopulated); 1 skipped (no ext-agent token) |
 | Golden-path payment (end-to-end) | ✅ Create → §6 gate (13 checks) → Execute → Audit chain with Merkle proof |
+| Policy VM (real evaluation) | ✅ 3-rule policy: auto-allow / confirm / reject — all three outcomes live against the gate |
 | MCP surface | ✅ 10 tools enumerated; `tools/call` functional |
 
 **Three-bullet headline:**
-- The §6 deterministic pre-execution gate is fully operational — 13 checks, correct balance rejection with structured error, and a complete `before`/`after` Merkle-chained audit pair on both success and failure.
+- The §6 deterministic pre-execution gate is fully operational with **real policy evaluation** — three policy rules (auto-allow ≤$1k, confirm $1k–$10k, reject >$10k) produce three distinct PI statuses at creation time (`approved` / `pending_approval` / `rejected`), each backed by a `policy_decisions` row and an audit event.
 - All three original P0 blockers resolved: execution FK constraint dropped (migration 0006), missing audit `after` event fixed with try/catch wrap, MCP `tools/list` now returns all 10 tools after dev-bypass principal check was moved to the HTTP transport layer.
 - Unit tests and Foundry contracts are production-grade; five boot-time config bugs required patching before zero-touch startup is possible — these are tracked in §6.
 
@@ -188,17 +189,41 @@ Merkle chain: each event's prev_event_hash links to the prior event's hash ✓
 
 **Owns:** Deterministic rule VM; EIP-712 signing; one `policy_decisions` row per evaluation.
 
-**What we ran:**
-- `GET /v1/policy/tnt_00000000010000000000000000` → empty object (no policy compiled for demo tenant)
-- Policy evaluation ran implicitly during PI creation — `policy_decision_id` present on every created PI ✓
+**What we ran (updated — real policy evaluation active):**
+
+```bash
+# Activate 3-rule demo policy (bypasses EIP-712 ceremony, demo mode only)
+POST /v1/demo/policy/activate  →  { policy_id: "pol_01KS79SBCP52M07VQP3064DDGR", state: "active", version: 1 }
+
+# Dry-run evaluate (all three branches)
+POST /v1/policy/tnt_.../evaluate  amount=$800   →  { outcome: "allow",   matched_rule_id: "auto-small-payment" }
+POST /v1/policy/tnt_.../evaluate  amount=$5000  →  { outcome: "confirm", matched_rule_id: "confirm-mid-payment", required_approvers: ["owner"] }
+POST /v1/policy/tnt_.../evaluate  amount=$15000 →  { outcome: "reject",  matched_rule_id: "reject-excessive-payment" }
+
+# Live gate — three PIs created simultaneously
+POST /v1/payment-intents  amount=800.00   →  status: "approved"         (policy: auto-allow)
+POST /v1/payment-intents  amount=5000.00  →  status: "pending_approval"  (policy: confirm — owner must sign)
+POST /v1/payment-intents  amount=15000.00 →  status: "rejected"          (policy: explicit reject, never queued)
+```
+
+The audit log shows `policy.evaluate` events with `matched_rule_id` and `outcome` for every PI creation — decisions are persisted in `policy_decisions` and cross-referenced in the PI row via `policy_decision_id`.
+
+**Policy rules in effect:**
+| Rule ID | Condition | Outcome |
+|---------|-----------|---------|
+| `auto-small-payment` | `amount.lte USD 1000.00` | auto → `approved` |
+| `reject-excessive-payment` | `amount.gt USD 10000.00` | reject → `rejected` |
+| `confirm-mid-payment` | `amount.gt USD 1000.00` AND `amount.lte USD 10000.00`, `require: owner_approval` | confirm → `pending_approval` |
+| (default-deny) | no rule matched | reject |
 
 **Test posture:** 6 files, 41 tests, all pass. Cleanest layer — zero stubs found.
 
 **Gaps:**
 | Severity | Finding | Location |
 |----------|---------|----------|
-| P1 | No default policy compiled for demo tenant on seed — `/v1/policy/:tenant_id` returns empty; `evaluatePaymentIntent` uses a stub resolver not the production VM | `services/policy` (confirmed-existing from v0.3-deliverables.md) |
+| ~~P1~~ **RESOLVED** | ~~No default policy compiled for demo tenant; `evaluatePaymentIntent` bypassed the VM~~ — real `policyService.evaluateForGate` now used unconditionally; `POST /v1/demo/policy/activate` seeds the policy | `services/api/src/main.ts` |
 | P2 | `POLICY_REGISTRY_ADDRESS` absent from `.env` — on-chain policy registry lookup skipped silently | `.env` |
+| P2 | EIP-712 signing ceremony still required for production policy activation — no shortcut exists outside demo mode | `services/policy/src/routes.ts:121` |
 
 ---
 
@@ -355,6 +380,13 @@ pnpm run contracts:test
 | `services/api/src/main.ts:411` | `usr_00000000020000000000000001` → `user_00000000020000000000000001` | JWT prefix must be `user_` not `usr_` |
 | `services/api/src/main.ts:732` | Added `"payment_intent:execute"` to demo token scopes | Execute route gated on this scope |
 | `.env:40` | `ANTHROPIC_API_KEY=` → commented out | Empty string fails Zod `.string().min(1).optional()` |
+| `services/execution/migrations/0006_executions_soft_pi_ref.sql` | New migration: drop `executions_proposal_id_fkey` | v0.3 PIs in `ledger.payment_intents`; FK caused every execute to 500 |
+| `services/execution/src/payment-intents/PaymentIntentService.ts` | Wrap persist block in try/catch; always emit `execute.after` | §6 mandatory close event was missing on DB failure |
+| `services/mcp/src/auth.ts` | Remove `principal.type !== "agent"` check from `FakeAuthVerifier` | Dev bypass was blocking user principals from calling MCP tools |
+| `services/mcp/src/transport/http.ts` | Add `skipPrincipalTypeCheck` option; wire via `BRAIN_MCP_DEV_AUTH_BYPASS` | MCP tools/list returned 0 tools in demo mode |
+| `services/api/src/main.ts` | Remove sandbox bypass from `evaluatePaymentIntent`; always call `policyService.evaluateForGate` | Real policy VM now evaluates every payment intent |
+| `services/api/src/main.ts` | Add `POST /v1/demo/policy/activate` route (demo mode only) | Seeds a 3-rule active policy without EIP-712 signing ceremony |
+| `services/api/src/main.ts` | Add `"policy:write"` to demo token scopes | Required for demo policy activate endpoint |
 
 ### Golden-path demo IDs
 

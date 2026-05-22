@@ -40,6 +40,7 @@ import {
   brainError,
   withTenantScope,
   newTokenId,
+  newPolicyId,
   type IRawEvidenceService,
   type IWikiMemoryService,
   type ServiceCallContext,
@@ -68,8 +69,8 @@ import { LedgerService, registerLedgerPlugin, startNormalizeWorker } from "@brai
 
 import { WikiPageService, registerWikiPlugin, loadRegistry, askWiki } from "@brain/wiki";
 
-import { registerPolicyRoutes, PolicyService } from "@brain/policy";
-import type { PolicyDeps } from "@brain/policy";
+import { registerPolicyRoutes, PolicyService, contentHash } from "@brain/policy";
+import type { PolicyDeps, PolicyDocument } from "@brain/policy";
 
 import {
   registerExecutionRoutes,
@@ -86,7 +87,6 @@ import { registerAuditRoutes, publishAnchor } from "@brain/audit";
 import type { AuditDeps } from "@brain/audit";
 
 import {
-  sandboxEvaluatePaymentIntent,
   sandboxEvaluateLegacyPolicy,
   sandboxResolveAgent,
   sandboxResolvePrincipal,
@@ -494,10 +494,8 @@ async function main(): Promise<void> {
     ? makeSandboxResolveCounterparty(pool)
     : makeResolveCounterparty(ledgerService);
   const resolvePrincipal = cfg.BRAIN_DEMO_MODE ? sandboxResolvePrincipal : resolvePrincipalFromCtx;
-  const evaluatePaymentIntent = cfg.BRAIN_DEMO_MODE
-    ? sandboxEvaluatePaymentIntent
-    : (ctx: ServiceCallContext, intent: GatePaymentIntent) =>
-        policyService.evaluateForGate(ctx, intent);
+  const evaluatePaymentIntent = (ctx: ServiceCallContext, intent: GatePaymentIntent) =>
+    policyService.evaluateForGate(ctx, intent);
   const evaluateLegacyPolicy = cfg.BRAIN_DEMO_MODE
     ? sandboxEvaluateLegacyPolicy
     : async (tenantId: string, action: Record<string, unknown>) =>
@@ -739,6 +737,7 @@ async function main(): Promise<void> {
                 "raw:read",
                 "raw:write",
                 "policy:read",
+                "policy:write",
                 "execution:read",
                 "execution:propose",
                 "payment_intent:propose",
@@ -754,6 +753,82 @@ async function main(): Promise<void> {
             });
           },
         );
+
+        // POST /v1/demo/policy/activate — inserts a 3-rule demo policy as
+        // active for the requester's tenant. Bypasses the EIP-712 signing
+        // ceremony so investors/demo operators can activate a policy with a
+        // single curl. Only available in BRAIN_DEMO_MODE=true.
+        const DEMO_POLICY: PolicyDocument = {
+          version: 1,
+          rules: [
+            {
+              id: "auto-small-payment",
+              applies_to: ["outbound_payment"],
+              when: { "amount.lte": { currency: "USD", value: "1000.00" } },
+              execute: "auto",
+            },
+            {
+              id: "reject-excessive-payment",
+              applies_to: ["outbound_payment"],
+              when: { "amount.gt": { currency: "USD", value: "10000.00" } },
+              execute: "reject",
+            },
+            {
+              id: "confirm-mid-payment",
+              applies_to: ["outbound_payment"],
+              when: {
+                "amount.gt": { currency: "USD", value: "1000.00" },
+                "amount.lte": { currency: "USD", value: "10000.00" },
+              },
+              require: "owner_approval",
+              execute: "confirm",
+            },
+          ],
+        };
+
+        v1.post("/demo/policy/activate", { config: { skipAuth: false } }, async (req, reply) => {
+          if (req.principal === undefined) {
+            throw brainError("auth_token_missing", "principal required");
+          }
+          if (!req.principal.scopes.includes("policy:write")) {
+            throw brainError("auth_scope_insufficient", "policy:write required");
+          }
+
+          const body = req.body as { content?: PolicyDocument } | undefined;
+          const content: PolicyDocument = body?.content ?? DEMO_POLICY;
+
+          if (typeof content.version !== "number" || !Array.isArray(content.rules)) {
+            throw brainError("policy_rule_invalid", "content must be { version, rules[] }");
+          }
+
+          const id = newPolicyId();
+          const hash = contentHash(content);
+
+          await withTenantScope(pool, req.principal.tenantId, async (c) => {
+            await c.query(
+              `UPDATE policies SET state = 'deactivated', deactivated_at = now() WHERE state = 'active'`,
+            );
+            await c.query(
+              `INSERT INTO policies
+                 (id, tenant_id, version, content, content_hash, quorum_required,
+                  state, created_by, activated_at)
+               VALUES ($1,$2,$3,$4,$5,1,'active',$6,now())`,
+              [id, req.principal!.tenantId, content.version, JSON.stringify(content), hash, req.principal!.id],
+            );
+          });
+
+          await audit.emit({
+            tenantId: req.principal.tenantId,
+            layer: "policy",
+            actor: req.principal.id,
+            action: "policy.activate",
+            inputs: { version: content.version, policy_hash: hash.toString("hex"), demo_bypass: true },
+            outputs: { policy_id: id, state: "active" },
+          });
+
+          reply.status(200);
+          return { policy_id: id, state: "active", version: content.version, rules: content.rules };
+        });
       }
     },
     { prefix: "/v1" },
