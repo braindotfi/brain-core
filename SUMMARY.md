@@ -22,6 +22,7 @@
 - [Memory](concepts/memory.md)
 - [Policy](concepts/policy.md)
 - [Agents](concepts/agents.md)
+- [Internal Agents](concepts/internal-agents.md)
 - [Proof](concepts/proof.md)
 
 ## Protocol

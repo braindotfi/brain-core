@@ -174,6 +174,47 @@ Content-Type: application/json
 }
 ```
 
+### Route to an Agent
+
+Ask Brain which agent should handle an event or a natural-language intent. The router filters candidates by capability and by the tenant's scope grants, scores them, and returns the best agent plus fallbacks. Routing only selects; the selected agent still proposes through `POST /v1/agents/{id}/propose`, which runs Policy and the pre-execution gate. The selection is itself an audit event.
+
+```http
+POST /v1/agents/route
+Authorization: Bearer <tenant token>
+Content-Type: application/json
+
+{
+  "tenant_id": "acme",
+  "event":     "invoice.overdue",
+  "context":   { "invoice_id": "inv_8231", "counterparty_id": "cp_x" }
+}
+```
+
+Supply `event` (a domain-event name) or `intent` (free-form text), and optional `context`. Requires the `execution:read` scope; `tenant_id` must match the authenticated tenant.
+
+Response:
+
+```json
+{
+  "selected_agent_id":  "collections",
+  "fallback_agent_ids": [],
+  "confidence":         0.92,
+  "evidence_score":     1,
+  "policy_status":      "routed",
+  "execution_mode":     "propose",
+  "reason":             "selected collections (confidence 0.92)"
+}
+```
+
+| Field                | Meaning                                                              |
+| -------------------- | -------------------------------------------------------------------- |
+| `selected_agent_id`  | The chosen agent, or `null` when nothing matches                     |
+| `fallback_agent_ids` | Other eligible agents, best first                                    |
+| `confidence`         | Router confidence in the selection (0..1)                            |
+| `evidence_score`     | Fraction of the agent's required evidence that is present (0..1)     |
+| `policy_status`      | `routed`, `unscoped` (matched but tenant scoped none), or `no_match` |
+| `execution_mode`     | `execute`, `propose`, `confirm`, `notify_only`, `reject`, or `null`  |
+
 ### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📤 Actions API</strong></td><td>Propose, approve, execute.</td><td><a href="actions-api.md">actions-api.md</a></td><td></td></tr><tr><td><strong>📜 BrainMCPAgentRegistry</strong></td><td>The on-chain registry.</td><td><a href="../smart-contracts/brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr></tbody></table>

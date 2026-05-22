@@ -6,6 +6,10 @@ The Agent Layer coordinates **internal and external agents**. Brain ships a smal
 Brain does not need to build every agent. **It is the substrate they share.** External agents listed on Brain do not need to ship their own ledger, memory, policy engine, or audit pipeline.
 {% endhint %}
 
+{% hint style="info" %}
+**Internal agents are first-class participants of this same layer.** A Brain-shipped agent registers in the same `BrainMCPAgentRegistry`, carries the same per-tenant `ScopeAttestation`, and passes the same `BrainSmartAccount` validation as any external agent. The only difference is a `provenance: "internal"` metadata field and that Brain operates the execution key. There is no separate native-agent path. See [Internal agents](../concepts/internal-agents.md).
+{% endhint %}
+
 ### Agents Are First-Class Entities
 
 Each agent has four attributes registered on-chain or referenced from on-chain.
