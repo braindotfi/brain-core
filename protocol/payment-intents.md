@@ -128,7 +128,7 @@ PaymentIntents are a Ledger entity but their lifecycle endpoints live in the Age
 | `POST` | `/v1/payment-intents/{id}/reject`  | Reject                                           |
 | `POST` | `/v1/payment-intents/{id}/execute` | Execute approved intent through rail             |
 
-The MCP equivalent: `payment_intent.propose` for creation. **There is no `payment_intent.execute` on MCP**. Execution is reserved for internal Brain workers running under tenant policy.
+The MCP equivalent: `payment_intent.propose` for creation. **There is no `payment_intent.execute` on MCP** — execution runs through the `/execute` endpoint above, gated by the deterministic pre-execution gate and, on the smart-account rail, the four on-chain checks in `BrainSmartAccount`.
 
 ### Reading Them Like Any Other Ledger Row
 

@@ -57,11 +57,11 @@ The tenant signs an EIP-712 message under the hood; the SDK handles it. The gran
 | `ledger:read`            | Read accounts, transactions, obligations, counterparties                 |
 | `wiki:read`              | Ask natural-language questions; get cited answers                        |
 | `raw:write`              | Push artifacts (transcripts, documents) into the tenant's evidence layer |
-| `payment_intent:propose` | Propose payments (cannot execute)                                        |
+| `payment_intent:propose` | Propose payments for policy evaluation                                   |
 | `agent:propose`          | Propose non-financial actions (reconciliation matches, anomaly flags)    |
 
-{% hint style="warning" %}
-External agents can **propose** but cannot **execute**. Execution is reserved for internal Brain workers running under tenant policy. This is the safety guarantee that makes external agents safe to authorize.
+{% hint style="info" %}
+The MCP tool surface is propose-only — there is no execute tool. External agents still execute, but through the smart-account UserOp path, where every action is gated by four independent checks: on-chain agent registration, a tenant-signed EIP-712 ScopeAttestation, a Brain-signed policy verdict bound to the specific UserOperation, and account-level limits. Nothing runs outside an envelope the tenant has signed, and Brain never holds funds.
 {% endhint %}
 
 ### Step 3: the Agent Connects
@@ -144,7 +144,7 @@ Within at most 60 seconds (the on-chain scope cache window), the agent's calls f
 
 | Pattern                                    | Why not                                                              |
 | ------------------------------------------ | -------------------------------------------------------------------- |
-| **External agents that execute**           | Execution is internal-only by design                                 |
+| **Execution outside a signed envelope**    | Every execution is gated by four on-chain checks; nothing runs without a tenant-signed scope and a fresh, bound policy verdict |
 | **Agents that read across tenants**        | Scope is per-tenant; cross-tenant requires explicit, separate grants |
 | **Agents that bypass policy**              | All proposals run through the same Policy evaluator                  |
 | **Agents that read each other's evidence** | Tenant isolation extends to evidence contributed by agents           |
