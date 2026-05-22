@@ -408,19 +408,26 @@ export class PaymentIntentService implements IPaymentIntentService {
     }
 
     // Persist the execution row, link it to the PaymentIntent, transition.
-    await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
-      await insertExecution(c, {
-        id: executionId,
-        tenantId: ctx.tenantId,
-        proposalId: intent.id,
-        rail: railName,
-        status: "dispatched",
-        idempotencyKey,
+    // The execute.after audit event is emitted unconditionally so the §6
+    // audit pair is always closed, even if the DB write fails.
+    let persistError: Error | undefined;
+    try {
+      await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+        await insertExecution(c, {
+          id: executionId,
+          tenantId: ctx.tenantId,
+          proposalId: intent.id,
+          rail: railName,
+          status: "dispatched",
+          idempotencyKey,
+        });
+        await transitionExecution(c, executionId, "dispatched", "in_flight");
+        await transitionPaymentIntent(c, intent.id, "approved", "executed");
+        await appendExecutionReceiptId(c, intent.id, executionId);
       });
-      await transitionExecution(c, executionId, "dispatched", "in_flight");
-      await transitionPaymentIntent(c, intent.id, "approved", "executed");
-      await appendExecutionReceiptId(c, intent.id, executionId);
-    });
+    } catch (err) {
+      persistError = err instanceof Error ? err : new Error(String(err));
+    }
 
     await this.deps.audit.emit({
       tenantId: ctx.tenantId,
@@ -428,13 +435,17 @@ export class PaymentIntentService implements IPaymentIntentService {
       actor: ctx.actor,
       action: "payment_intent.execute.after",
       inputs: { payment_intent_id: id, rail: railName, execution_id: executionId },
-      outputs: {
-        ok: true,
-        rail_receipt: dispatchOutcome.receipt,
-        gate_audit_before: gate.auditBeforeEventId,
-      },
+      outputs: persistError
+        ? { ok: false, error: persistError.message }
+        : { ok: true, rail_receipt: dispatchOutcome.receipt, gate_audit_before: gate.auditBeforeEventId },
       policyDecisionId: gate.policyDecisionId,
     });
+
+    if (persistError !== undefined) {
+      throw brainError("internal_server_error", "execution persist failed", {
+        cause: persistError,
+      });
+    }
 
     return {
       payment_intent_id: intent.id,
