@@ -609,6 +609,12 @@ async function main(): Promise<void> {
     classifier: new RulesIntentClassifier(),
     evidence: agentEvidence,
     getScopedCapabilities: () => internalAgentCapabilities,
+    // TODO(phase-3): resolve the tenant category from a signed JWT claim or a
+    // tenant record. Until then every tenant is treated as "business", which
+    // keeps shared triggers (e.g. cash.balance_high) routing to the business
+    // agent deterministically; consumer routing activates once a real source
+    // is wired.
+    getTenantCategory: () => "business",
     audit,
   });
 

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "financial_health_auto",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "financial_health" },
+      "execute": "auto"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "savings_transfer_within_cap",
+      "applies_to": ["outbound_payment", "onchain_tx"],
+      "when": { "agent.role": "savings", "amount.lte": { "currency": "USD", "value": "2000" } },
+      "require": "single_signer",
+      "execute": "confirm"
+    },
+    {
+      "id": "savings_transfer_over_cap",
+      "applies_to": ["outbound_payment", "onchain_tx"],
+      "when": { "agent.role": "savings", "amount.gt": { "currency": "USD", "value": "2000" } },
+      "execute": "reject"
+    },
+    {
+      "id": "savings_advisory_auto",
+      "applies_to": ["any"],
+      "when": { "agent.role": "savings" },
+      "execute": "auto"
+    }
+  ]
+}

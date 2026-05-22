@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "tax_prep_auto",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "tax_prep" },
+      "execute": "auto"
+    }
+  ]
+}

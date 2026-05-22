@@ -43,6 +43,12 @@ Selection itself is an audited event
 
 [**→ Smart contract reference**](../smart-contracts/overview.md)
 
+#### Category-aware selection
+
+Some triggers match agents of different categories. `cash.balance_high`, for example, matches a business **Treasury** agent and a consumer **Savings** agent. The router resolves the tenant's category (business or consumer) and adds it to scoring: a candidate whose category matches the tenant is preferred, so a business tenant routes to Treasury and a consumer tenant routes to Savings.
+
+A category mismatch is a **scoring downgrade, not a hard reject**. A mismatched agent can still be selected when it is the best or only match, so an explicit user intent overrides the default category preference. Agnostic agents (which serve both categories) take no penalty, and when no tenant category is resolved the router is category-blind.
+
 ### Three Execution Paths
 
 Approved actions execute through one of three paths.

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "travel_finance_auto",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "travel_finance" },
+      "execute": "auto"
+    }
+  ]
+}

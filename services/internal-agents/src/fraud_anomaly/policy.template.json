@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "fraud_anomaly_confirm",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "fraud_anomaly" },
+      "require": "account_holder_approval",
+      "execute": "confirm"
+    }
+  ]
+}

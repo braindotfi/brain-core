@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "subscription_review_consumer_confirm",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "subscription" },
+      "require": "account_holder_approval",
+      "execute": "confirm"
+    }
+  ]
+}

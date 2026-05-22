@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "personal_budget_auto",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "personal_budget" },
+      "execute": "auto"
+    }
+  ]
+}

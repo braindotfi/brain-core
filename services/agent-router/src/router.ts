@@ -11,7 +11,7 @@
  * /v1/agents/{id}/propose path, which runs Policy and the §6 gate.
  */
 
-import type { AuditEmitter, ServiceCallContext } from "@brain/shared";
+import type { AuditEmitter, ServiceCallContext, TenantCategory } from "@brain/shared";
 import { resolveExecutionMode } from "@brain/shared";
 import type { InternalAgentDefinition } from "@brain/schemas";
 import type { IntentClassifier } from "./intent-classifier.js";
@@ -21,6 +21,14 @@ import type { CandidateSignals, RoutingDecision, RoutingInput } from "./types.js
 const INTENT_MATCH_THRESHOLD = 0.5;
 const COST_PENALTY = 0.1;
 const HIGH_CONFIDENCE = 0.85;
+/**
+ * Penalty applied to a candidate whose category does not match the tenant's
+ * (and is not `agnostic`). It is a downgrade, not a reject: it flips the
+ * choice between two trigger-only matches of different categories, but a
+ * strong explicit intent (which feeds `matchQuality`, weight 0.6) still
+ * outweighs it, so user intent can override the default category preference.
+ */
+const CATEGORY_MISMATCH_PENALTY = 0.2;
 
 const DEFAULT_SIGNALS: CandidateSignals = { reputation: 0.5, cost: 0 };
 
@@ -38,6 +46,15 @@ export interface AgentRouterDeps {
   readonly audit: AuditEmitter;
   /** Per-candidate reputation + cost. Defaults to neutral signals. */
   readonly signals?: (agentKey: string) => CandidateSignals;
+  /**
+   * Resolve the tenant's category (business | consumer). When provided, a
+   * candidate whose category mismatches is downgraded (not rejected), so a
+   * trigger shared across categories prefers the matching agent. When absent
+   * or undefined, routing is category-blind (Phase 1/2 behavior preserved).
+   */
+  readonly getTenantCategory?: (
+    tenantId: string,
+  ) => TenantCategory | undefined | Promise<TenantCategory | undefined>;
 }
 
 interface Scored {
@@ -83,7 +100,8 @@ export class AgentRouter {
       );
     }
 
-    const scored = await Promise.all(eligible.map((def) => this.score(def, input)));
+    const tenantCategory = (await this.deps.getTenantCategory?.(input.tenant_id)) ?? undefined;
+    const scored = await Promise.all(eligible.map((def) => this.score(def, input, tenantCategory)));
     scored.sort((a, b) => b.selectionScore - a.selectionScore);
 
     const winner = scored[0]!;
@@ -138,7 +156,11 @@ export class AgentRouter {
     return false;
   }
 
-  private async score(def: InternalAgentDefinition, input: RoutingInput): Promise<Scored> {
+  private async score(
+    def: InternalAgentDefinition,
+    input: RoutingInput,
+    tenantCategory: TenantCategory | undefined,
+  ): Promise<Scored> {
     const triggerMatch = input.event !== undefined && def.triggers.includes(input.event) ? 1 : 0;
     const intentScore =
       input.intent !== undefined
@@ -153,7 +175,14 @@ export class AgentRouter {
 
     const matchQuality = Math.max(triggerMatch, intentScore);
     const confidence = clamp01(0.6 * matchQuality + 0.25 * bundle.completeness + 0.15 * reputation);
-    const selectionScore = confidence - COST_PENALTY * cost;
+    // Category alignment: downgrade (never reject) a candidate whose category
+    // mismatches the tenant. `agnostic` agents serve both, so no penalty.
+    const categoryMismatch =
+      tenantCategory !== undefined &&
+      def.category !== "agnostic" &&
+      def.category !== tenantCategory;
+    const selectionScore =
+      confidence - COST_PENALTY * cost - (categoryMismatch ? CATEGORY_MISMATCH_PENALTY : 0);
     return { def, confidence, selectionScore, completeness: bundle.completeness };
   }
 

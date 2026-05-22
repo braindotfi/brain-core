@@ -54,7 +54,30 @@ Brain ships a library of business-category internal agents. Every one follows th
 | **Compliance**          | `compliance_monitor`   | high   | notify_only / confirm     |
 | **Revenue Intelligence**| `revenue_intel`        | low    | notify_only               |
 
-Two further internal agents are **agnostic** rather than business-specific, so they serve business and consumer tenants alike: **Subscription** (`subscription_review`) and **Reconciliation** (`reconciliation_review`). A high-risk agent never auto-executes: even at high confidence its actions resolve to `confirm` (or `reject`), because `execution_mode` only reaches `execute` for low-risk actions.
+A high-risk agent never auto-executes: even at high confidence its actions resolve to `confirm` (or `reject`), because `execution_mode` only reaches `execute` for low-risk actions.
+
+## The Consumer Agent Library
+
+Brain also ships consumer-category agents for individuals. They follow the same pattern, but their `policy.template.json` defaults are more conservative than the business templates: smaller per-action caps and `notify_only` as the default authority for any medium- or high-risk agent.
+
+| Agent                  | Capability          | Risk   | Typical mode          |
+| ---------------------- | ------------------- | ------ | --------------------- |
+| **Personal Budget**    | `personal_budget`   | low    | propose               |
+| **Bill Management**    | `bill_management`   | medium | confirm (financial)   |
+| **Savings**            | `savings_sweep`     | low    | confirm (financial)   |
+| **Debt Optimization**  | `debt_optimization` | medium | confirm (financial)   |
+| **Tax Prep**           | `tax_prep`          | low    | propose               |
+| **Travel Finance**     | `travel_finance`    | low    | propose               |
+| **Financial Health**   | `financial_health`  | low    | notify_only           |
+| **Purchase Advisor**   | `purchase_advisor`  | medium | notify_only (intent-driven) |
+
+Three internal agents are **agnostic** and serve business and consumer tenants alike: **Subscription** (`subscription_review`), **Reconciliation** (`reconciliation_review`), and **Fraud & Anomaly** (`fraud_anomaly`). The Subscription agent is shared, not duplicated: it ships a stricter `policy.consumer.template.json` for consumer tenants rather than a separate consumer agent.
+
+## Category-Aware Routing
+
+Some triggers are shared across categories: `cash.balance_high` matches both **Treasury** (business) and **Savings** (consumer); `bill.due_soon` matches both **Payment** (business) and **Bill Management** (consumer). The router resolves the tenant's category (business or consumer) and prefers the category-matching agent, so a business tenant routes `cash.balance_high` to Treasury and a consumer tenant routes it to Savings.
+
+Category mismatch is a **scoring downgrade, not a hard reject**: a mismatched agent is penalized but can still win when it is the best (or only) match — so an explicit user intent ("help me save") can override the default category preference. Agnostic agents carry no penalty. When no tenant category is resolved, routing is category-blind and behaves exactly as in the earlier phases.
 
 ## Related
 

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "bill_management_within_cap",
+      "applies_to": ["outbound_payment", "onchain_tx"],
+      "when": {
+        "agent.role": "bill_management",
+        "amount.lte": { "currency": "USD", "value": "5000" }
+      },
+      "require": "single_signer",
+      "execute": "confirm"
+    },
+    {
+      "id": "bill_management_over_cap",
+      "applies_to": ["outbound_payment", "onchain_tx"],
+      "when": {
+        "agent.role": "bill_management",
+        "amount.gt": { "currency": "USD", "value": "5000" }
+      },
+      "execute": "reject"
+    },
+    {
+      "id": "bill_management_advisory_confirm",
+      "applies_to": ["any"],
+      "when": { "agent.role": "bill_management" },
+      "execute": "confirm"
+    }
+  ]
+}
