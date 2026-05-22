@@ -547,6 +547,9 @@ async function main(): Promise<void> {
     ...(anchorBroadcaster !== undefined ? { broadcaster: anchorBroadcaster } : {}),
   };
 
+  // Exposed for POST /v1/demo/anchor/trigger — set when anchorBroadcaster is configured.
+  let triggerAnchor: (() => Promise<void>) | undefined;
+
   // -- MCP server -----------------------------------------------------
   const mcpAuthVerifier =
     cfg.BRAIN_MCP_DEV_AUTH_BYPASS && cfg.NODE_ENV !== "production"
@@ -829,6 +832,24 @@ async function main(): Promise<void> {
           reply.status(200);
           return { policy_id: id, state: "active", version: content.version, rules: content.rules };
         });
+
+        // POST /v1/demo/anchor/trigger — immediately publishes a Merkle anchor
+        // to BrainAuditAnchor on Base Sepolia without waiting for the hourly timer.
+        // Requires AUDIT_PUBLISHER_KEY to be set. Demo mode only.
+        v1.post("/demo/anchor/trigger", { config: { skipAuth: false } }, async (req, reply) => {
+          if (req.principal === undefined) {
+            throw brainError("auth_token_missing", "principal required");
+          }
+          if (triggerAnchor === undefined) {
+            throw brainError(
+              "internal_server_error",
+              "anchor publisher not configured — set AUDIT_PUBLISHER_KEY in .env and restart",
+            );
+          }
+          await triggerAnchor();
+          reply.status(200);
+          return { triggered: true, message: "anchor published — check GET /v1/audit/anchor/latest" };
+        });
       }
     },
     { prefix: "/v1" },
@@ -875,8 +896,14 @@ async function main(): Promise<void> {
       }
     };
 
-    anchorTimer = setTimeout(() => void runAnchor(), intervalMs);
-    log.info({ intervalMs }, "anchor publisher started");
+    // Expose for the demo trigger endpoint.
+    triggerAnchor = runAnchor;
+
+    // In demo mode, fire the first anchor after 10s so it's immediate for
+    // demo operators; production uses the full intervalMs delay.
+    const firstRunMs = cfg.BRAIN_DEMO_MODE ? 10_000 : intervalMs;
+    anchorTimer = setTimeout(() => void runAnchor(), firstRunMs);
+    log.info({ intervalMs, firstRunMs }, "anchor publisher started");
   }
 
   // -- listen ---------------------------------------------------------
