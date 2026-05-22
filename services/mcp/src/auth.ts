@@ -144,17 +144,15 @@ export class McpAuthVerifier implements AuthVerifier {
 }
 
 /**
- * Test seam: a verifier that always returns the supplied agent record.
- * Useful for unit tests that don't want to model the agents table.
+ * Test seam / dev-bypass verifier that always returns the supplied agent record.
+ * Skips the principal_type check so demo user tokens can call MCP tools in
+ * BRAIN_MCP_DEV_AUTH_BYPASS=true mode. Production uses McpAuthVerifier.
  */
 export class FakeAuthVerifier implements AuthVerifier {
   public constructor(private readonly agent: AgentRecord) {}
   public async verify(
     principal: Principal,
   ): Promise<{ agent: AgentRecord; ctx: ServiceCallContext }> {
-    if (principal.type !== "agent") {
-      throw brainError("auth_scope_insufficient", "MCP requires principal_type=agent");
-    }
     return {
       agent: this.agent,
       ctx: {

@@ -219,7 +219,11 @@ describe("BrainMcpServer.handle — protocol surface", () => {
     expect("error" in res && res.error.code).toBe(-32602);
   });
 
-  it("rejects non-agent principals up front", async () => {
+  it("accepts user principals via FakeAuthVerifier (dev-bypass mode)", async () => {
+    // The principal_type=agent check lives in registerMcpRoute (HTTP transport),
+    // not in BrainMcpServer.handle. FakeAuthVerifier is a dev/test seam that
+    // skips the agents-table lookup and accepts any principal type, matching the
+    // BRAIN_MCP_DEV_AUTH_BYPASS=true runtime behaviour.
     const { server } = makeServer();
     const userPrincipal: Principal = {
       id: "user_X",
@@ -229,9 +233,8 @@ describe("BrainMcpServer.handle — protocol surface", () => {
       tokenId: "t",
       expiresAt: Math.floor(Date.now() / 1000) + 60,
     };
-    await expect(
-      server.handle({ jsonrpc: "2.0", id: 1, method: "ping" }, userPrincipal),
-    ).rejects.toMatchObject({ code: "auth_scope_insufficient" });
+    const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "ping" }, userPrincipal);
+    expect("result" in res).toBe(true);
   });
 });
 

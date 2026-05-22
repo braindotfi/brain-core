@@ -13,6 +13,8 @@ import type { BrainMcpServer } from "../server.js";
 export interface McpRouteOptions {
   /** Path the MCP server is mounted at. Default `/agents/mcp`. */
   path?: string;
+  /** Skip principal_type=agent enforcement. Set to true only in dev-bypass mode. */
+  skipPrincipalTypeCheck?: boolean;
 }
 
 /**
@@ -32,7 +34,7 @@ export async function registerMcpRoute(
     if (request.principal === undefined) {
       throw brainError("auth_token_missing", "principal required");
     }
-    if (request.principal.type !== "agent") {
+    if (!opts.skipPrincipalTypeCheck && request.principal.type !== "agent") {
       throw brainError("auth_scope_insufficient", "MCP requires principal_type=agent");
     }
     const response = await server.handle(request.body, request.principal);
