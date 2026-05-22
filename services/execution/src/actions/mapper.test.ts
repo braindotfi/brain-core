@@ -100,4 +100,17 @@ describe("paymentIntentToAction", () => {
     expect(Object.keys(action)).not.toContain("owner_id");
     expect(action.tenantId).toBe("tnt_acme");
   });
+
+  it("includes the additive decision fields confidence/evidence_score/execution_mode", () => {
+    const action = paymentIntentToAction(fakeIntent("approved"));
+    expect(action.confidence).toBe(1);
+    expect(action.evidence_score).toBe(1);
+    // ALLOW with conservative legacy defaults (risk medium) → propose, never auto-execute.
+    expect(action.execution_mode).toBe("propose");
+  });
+
+  it("maps execution_mode=confirm for ESCALATE and reject for DENY", () => {
+    expect(paymentIntentToAction(fakeIntent("pending_approval")).execution_mode).toBe("confirm");
+    expect(paymentIntentToAction(fakeIntent("rejected")).execution_mode).toBe("reject");
+  });
 });

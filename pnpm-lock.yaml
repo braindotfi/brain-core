@@ -501,6 +501,9 @@ importers:
       '@azure/storage-blob':
         specifier: ^12.25.0
         version: 12.31.0
+      '@noble/hashes':
+        specifier: ^1.5.0
+        version: 1.8.0
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1

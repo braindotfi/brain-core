@@ -47,3 +47,6 @@ export type Provenance = (typeof PROVENANCE_VALUES)[number];
  * Enforced in services/ledger/src/service/writes.ts.
  */
 export const AGENT_CONTRIBUTED_CONFIDENCE_CEILING = 0.5;
+
+// Internal Agent Definition descriptor (router + registration consume this).
+export * from "./agent-definition.js";

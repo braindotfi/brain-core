@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/agent-definition/v1",
+  "title": "InternalAgentDefinition",
+  "description": "Design-time descriptor for a Brain-shipped (internal) or external agent. Additive on top of the agent registration shape — it declares the capabilities, triggers, intent patterns, readable data, risk, and default authority the router and the registration script need. The canonical runtime record is the AgentRecord in services/execution; `provenance` maps 1:1 to AgentRecord.kind (\"internal\" | \"external\"). Internal agents are NOT a parallel abstraction: they register in the same BrainMCPAgentRegistry and pass the same ScopeAttestation + BrainSmartAccount validation as external agents.",
+  "type": "object",
+  "required": [
+    "agent_key",
+    "provenance",
+    "category",
+    "capabilities",
+    "triggers",
+    "intent_patterns",
+    "readable_data",
+    "risk_level",
+    "minimum_confidence",
+    "required_evidence",
+    "default_authority",
+    "enabled_by_default"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "agent_key": {
+      "type": "string",
+      "description": "Stable identifier for the agent, e.g. \"collections\".",
+      "pattern": "^[a-z][a-z0-9_]{1,63}$"
+    },
+    "display_name": { "type": "string", "maxLength": 200 },
+    "provenance": {
+      "type": "string",
+      "description": "\"internal\" = Brain-shipped; \"external\" = third-party. Maps to AgentRecord.kind.",
+      "enum": ["internal", "external"]
+    },
+    "category": { "type": "string", "enum": ["business", "consumer", "agnostic"] },
+    "capabilities": {
+      "type": "array",
+      "description": "Capability identifiers; keccak256(name) is the on-chain capability hash.",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "mcp_endpoint": { "type": "string", "format": "uri" },
+    "metadata_uri": { "type": "string" },
+    "triggers": {
+      "type": "array",
+      "description": "Domain-event names that activate this agent, e.g. \"invoice.overdue\".",
+      "items": { "type": "string" }
+    },
+    "intent_patterns": {
+      "type": "array",
+      "description": "Natural-language intent patterns the rules-based classifier matches against.",
+      "items": { "type": "string" }
+    },
+    "readable_data": {
+      "type": "array",
+      "description": "Ledger/Wiki data classes the agent is allowed to read.",
+      "items": { "type": "string" }
+    },
+    "risk_level": { "type": "string", "enum": ["low", "medium", "high"] },
+    "minimum_confidence": {
+      "type": "number",
+      "description": "Below this confidence the router/agent returns notify_only.",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "required_evidence": {
+      "type": "array",
+      "description": "Evidence kinds that must be present; missing evidence forces notify_only.",
+      "items": { "type": "string" }
+    },
+    "default_authority": { "type": "string", "enum": ["execute", "propose", "notify_only"] },
+    "enabled_by_default": { "type": "boolean" }
+  }
+}

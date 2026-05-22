@@ -111,3 +111,6 @@ export * from "./contracts/index.js";
 // §6 pre-execution gate (v0.3 / Phase 4). Deterministic 13-step gate
 // every PaymentIntent execution must pass.
 export * from "./gate/index.js";
+
+// Agent primitives (capability hashing, execution-mode resolution).
+export * from "./agents/index.js";

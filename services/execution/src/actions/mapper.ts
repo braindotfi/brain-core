@@ -19,7 +19,8 @@
  *     "ready to run"). `executed` stays distinct (it has run).
  */
 
-import type { PaymentIntent, PaymentIntentStatus } from "@brain/shared";
+import type { ExecutionMode, PaymentIntent, PaymentIntentStatus } from "@brain/shared";
+import { resolveExecutionMode } from "@brain/shared";
 
 export type ActionStatus =
   | "auto"
@@ -51,6 +52,13 @@ export interface Action {
   readonly matched_rule: string | null;
   readonly reason: Readonly<Record<string, unknown>> | null;
   readonly signed_verdict: string | null;
+  // Additive decision refinement (Phase 1). `decision` above stays the
+  // authoritative ALLOW | ESCALATE | DENY verdict; these fold in the
+  // proposing agent's confidence + evidence + risk. Backward compatible —
+  // existing callers reading `decision` are unaffected.
+  readonly confidence: number;
+  readonly evidence_score: number;
+  readonly execution_mode: ExecutionMode;
   readonly audit_events: readonly string[];
   readonly created_at: string;
   readonly updated_at: string;
@@ -110,12 +118,24 @@ function defaultExpiresAt(updatedAt: string): string {
 }
 
 export function paymentIntentToAction(pi: PaymentIntent): Action {
+  const decision = piStatusToDecision(pi.status);
+  // Legacy PaymentIntent rows carry no agent confidence/evidence signal, so
+  // we use conservative defaults: full confidence + complete evidence, but
+  // risk "medium" so a bare ALLOW never auto-"execute"s here — it maps to
+  // "propose". Agent-proposed actions (router/handlers) pass real values.
+  const execution_mode = resolveExecutionMode({
+    decision,
+    confidence: 1,
+    evidenceComplete: true,
+    minimumConfidence: 0,
+    riskLevel: "medium",
+  });
   return {
     id: pi.id,
     tenantId: pi.owner_id,
     agent_id: pi.created_by_agent_id,
     type: pi.action_type,
-    decision: piStatusToDecision(pi.status),
+    decision,
     status: piStatusToActionStatus(pi.status),
     approvers: [],
     approvals: [],
@@ -129,6 +149,9 @@ export function paymentIntentToAction(pi: PaymentIntent): Action {
     matched_rule: null,
     reason: null,
     signed_verdict: null,
+    confidence: 1,
+    evidence_score: 1,
+    execution_mode,
     audit_events: [],
     created_at: pi.created_at,
     updated_at: pi.updated_at,
