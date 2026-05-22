@@ -20,11 +20,23 @@ describe("buildInternalAgentRegistration", () => {
 describe("buildInternalAgentRegistrations", () => {
   it("produces a registration for every catalog agent with valid bytes32 hashes", () => {
     const regs = buildInternalAgentRegistrations(internalAgentCatalog);
-    expect(regs.map((r) => r.agent_key).sort()).toEqual([
-      "collections",
-      "reconciliation",
-      "treasury",
-    ]);
+    // One registration per catalog agent (Phase 1 + Phase 2 business library).
+    expect(regs.map((r) => r.agent_key).sort()).toEqual(
+      internalAgentCatalog.map((d) => d.agent_key).sort(),
+    );
+    // The Phase 2 business agents are present.
+    const keys = new Set(regs.map((r) => r.agent_key));
+    for (const key of [
+      "payment",
+      "subscription",
+      "vendor_risk",
+      "cash_forecast",
+      "dispute",
+      "compliance",
+      "revenue_intel",
+    ]) {
+      expect(keys.has(key)).toBe(true);
+    }
     for (const r of regs) {
       expect(r.agent_id_hash).toMatch(/^0x[0-9a-f]{64}$/);
       expect(r.scope_hash).toMatch(/^0x[0-9a-f]{64}$/);

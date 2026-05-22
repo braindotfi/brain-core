@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "cash_forecast_auto",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "cash_forecast" },
+      "execute": "auto"
+    }
+  ]
+}

@@ -14,6 +14,7 @@ import { createQueue, type QueueFactoryOptions } from "../queue/factory.js";
 import { QUEUE_NAMES, type BrainJobEnvelope } from "../queue/types.js";
 
 export const DOMAIN_EVENTS = [
+  // Phase 1 triggers (collections, treasury, reconciliation).
   "invoice.overdue",
   "payment.failed",
   "receivable.aging_threshold_crossed",
@@ -24,6 +25,28 @@ export const DOMAIN_EVENTS = [
   "transaction.unreconciled",
   "statement.imported",
   "reconciliation.candidate_found",
+  // Phase 2 triggers (business agent library).
+  "bill.due_soon", // payment
+  "invoice.approved", // payment
+  "payment.scheduled", // payment
+  "recurring_charge.detected", // subscription
+  "vendor.duplicate_detected", // subscription
+  "subscription.price_changed", // subscription
+  "vendor.created", // vendor_risk
+  "vendor.bank_details_changed", // vendor_risk
+  "payment.destination_changed", // vendor_risk
+  "forecast.requested", // cash_forecast
+  "cashflow.material_change", // cash_forecast
+  "large_payable.created", // cash_forecast
+  "dispute.created", // dispute
+  "chargeback.received", // dispute
+  "payment.mismatch", // dispute
+  "policy.violation", // compliance
+  "approval.missing", // compliance
+  "audit.gap_detected", // compliance
+  "revenue.changed", // revenue_intel
+  "customer.payment_behavior_changed", // revenue_intel
+  "contract.renewal_upcoming", // revenue_intel
 ] as const;
 
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number];

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "payment_blocked_counterparty",
+      "applies_to": ["outbound_payment", "onchain_tx"],
+      "when": { "agent.role": "payment", "counterparty.in": "vendors.blocked" },
+      "execute": "reject"
+    },
+    {
+      "id": "payment_within_cap",
+      "applies_to": ["outbound_payment", "onchain_tx"],
+      "when": { "agent.role": "payment", "amount.lte": { "currency": "USD", "value": "25000" } },
+      "require": "single_signer",
+      "execute": "confirm"
+    },
+    {
+      "id": "payment_over_cap",
+      "applies_to": ["outbound_payment", "onchain_tx"],
+      "when": { "agent.role": "payment", "amount.gt": { "currency": "USD", "value": "25000" } },
+      "require": "cfo_approval",
+      "execute": "confirm"
+    },
+    {
+      "id": "payment_advisory_auto",
+      "applies_to": ["any"],
+      "when": { "agent.role": "payment" },
+      "execute": "auto"
+    }
+  ],
+  "lists": {
+    "vendors.blocked": []
+  }
+}

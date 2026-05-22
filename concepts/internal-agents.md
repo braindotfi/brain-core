@@ -39,6 +39,23 @@ A multi-agent router selects an agent for an incoming event or intent. It filter
 
 The proposal decision stays `ALLOW`, `ESCALATE`, or `DENY`. Internal agents add three fields to that response without changing it: `confidence`, `evidence_score`, and an `execution_mode` of `execute`, `propose`, `confirm`, `notify_only`, or `reject`. Low confidence or missing required evidence yields `notify_only`: surface to a human, take no action. Existing callers that read `decision` are unaffected.
 
+## The Business Agent Library
+
+Brain ships a library of business-category internal agents. Every one follows the shared pattern above: a `keccak256` capability, a definition, a handler that only proposes, and a `policy.template.json` a tenant can adopt. None of them moves money outside `POST /v1/agents/{id}/propose` and the pre-execution gate.
+
+| Agent                   | Capability             | Risk   | Typical mode              |
+| ----------------------- | ---------------------- | ------ | ------------------------- |
+| **Collections**         | `collections_followup` | medium | propose                   |
+| **Treasury**            | `treasury_sweep`       | medium | propose / confirm         |
+| **Payment**             | `payment_propose`      | medium | confirm (financial)       |
+| **Vendor Risk**         | `vendor_risk`          | high   | confirm / reject (block)  |
+| **Cash Forecasting**    | `cash_forecast`        | low    | notify_only / propose     |
+| **Dispute**             | `dispute_evidence`     | medium | propose                   |
+| **Compliance**          | `compliance_monitor`   | high   | notify_only / confirm     |
+| **Revenue Intelligence**| `revenue_intel`        | low    | notify_only               |
+
+Two further internal agents are **agnostic** rather than business-specific, so they serve business and consumer tenants alike: **Subscription** (`subscription_review`) and **Reconciliation** (`reconciliation_review`). A high-risk agent never auto-executes: even at high confidence its actions resolve to `confirm` (or `reject`), because `execution_mode` only reaches `execute` for low-risk actions.
+
 ## Related
 
 | Topic                          | Page                                                                 |

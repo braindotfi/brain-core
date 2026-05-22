@@ -27,12 +27,22 @@ function routerOverCatalog(): AgentRouter {
 }
 
 describe("internal agent catalog", () => {
-  it("ships collections, treasury, and reconciliation", () => {
-    expect(internalAgentCatalog.map((d) => d.agent_key).sort()).toEqual([
+  it("ships the Phase 1 + Phase 2 internal agents", () => {
+    const keys = new Set(internalAgentCatalog.map((d) => d.agent_key));
+    for (const key of [
       "collections",
-      "reconciliation",
       "treasury",
-    ]);
+      "reconciliation",
+      "payment",
+      "subscription",
+      "vendor_risk",
+      "cash_forecast",
+      "dispute",
+      "compliance",
+      "revenue_intel",
+    ]) {
+      expect(keys.has(key)).toBe(true);
+    }
   });
 
   it("has a handler for every definition", () => {

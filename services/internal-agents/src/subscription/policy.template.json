@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "subscription_review_auto",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "subscription" },
+      "execute": "auto"
+    }
+  ]
+}

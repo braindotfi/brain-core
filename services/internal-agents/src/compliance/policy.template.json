@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "compliance_confirm",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "compliance" },
+      "require": "compliance_officer_approval",
+      "execute": "confirm"
+    }
+  ]
+}

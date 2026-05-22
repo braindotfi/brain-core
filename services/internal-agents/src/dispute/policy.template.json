@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "dispute_evidence_auto",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "dispute" },
+      "execute": "auto"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "revenue_intel_auto",
+      "applies_to": ["any", "ledger_write"],
+      "when": { "agent.role": "revenue_intel" },
+      "execute": "auto"
+    }
+  ]
+}

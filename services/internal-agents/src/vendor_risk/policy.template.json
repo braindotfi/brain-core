@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "vendor_risk_blocked_destination",
+      "applies_to": ["any", "outbound_payment", "onchain_tx"],
+      "when": { "agent.role": "vendor_risk", "counterparty.in": "vendors.blocked" },
+      "execute": "reject"
+    },
+    {
+      "id": "vendor_risk_confirm",
+      "applies_to": ["any", "ledger_write", "outbound_payment", "onchain_tx"],
+      "when": { "agent.role": "vendor_risk" },
+      "require": "risk_officer_approval",
+      "execute": "confirm"
+    }
+  ],
+  "lists": {
+    "vendors.blocked": []
+  }
+}
