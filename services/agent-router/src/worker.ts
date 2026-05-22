@@ -13,6 +13,7 @@ import {
   createWorker,
   QUEUE_NAMES,
   type BrainJobEnvelope,
+  type IAgentService,
   type RoutingJobPayload,
   type ServiceCallContext,
 } from "@brain/shared";
@@ -26,6 +27,19 @@ export interface RouteAndProposeDeps {
   readonly handlers: Readonly<Record<string, InternalAgentHandler>>;
   readonly evidence: EvidenceGatherer;
   readonly propose: ProposeDeps;
+  /**
+   * Per-agent IAgentService overrides. A non-financial proposal for an agent
+   * listed here is routed to that IAgentService instead of `propose.agents`,
+   * letting an agent delegate to an external reasoning service.
+   *
+   * The reconciliation agent uses this to delegate to the Python reconciliation
+   * agent: bind `{ reconciliation: new ReconciliationAgentClient(url) }` at the
+   * composition root (ReconciliationAgentClient is itself an IAgentService whose
+   * propose() POSTs to the Python agent, which reasons then proposes back).
+   * Financial (payment_intent) proposals are unaffected — they always go through
+   * `propose.paymentIntents`.
+   */
+  readonly agentOverrides?: Readonly<Record<string, IAgentService>>;
 }
 
 export interface RouteAndProposeResult {
@@ -66,7 +80,15 @@ export async function routeAndPropose(
     context: input.context ?? {},
     evidence: bundle,
   });
-  const result = await proposeAction(proposed, ctx, decision.selected_agent_id, deps.propose);
+  // Delegate to a per-agent IAgentService when one is bound (e.g. reconciliation
+  // → Python agent). Only affects the agent (non-financial) channel; financial
+  // proposals always use propose.paymentIntents.
+  const override = deps.agentOverrides?.[decision.selected_agent_id];
+  const proposeDeps: ProposeDeps =
+    override !== undefined
+      ? { agents: override, paymentIntents: deps.propose.paymentIntents }
+      : deps.propose;
+  const result = await proposeAction(proposed, ctx, decision.selected_agent_id, proposeDeps);
   return {
     selected_agent_id: decision.selected_agent_id,
     proposed: result,

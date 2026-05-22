@@ -78,4 +78,33 @@ describe("routeAndPropose", () => {
     expect(result.proposed).toBeUndefined();
     expect(proposeCalls).toBe(0);
   });
+
+  it("delegates reconciliation to its IAgentService override (the Python agent client)", async () => {
+    const deps = makeDeps();
+    let delegated = 0;
+    const reconClient = {
+      propose: async () => {
+        delegated += 1;
+        return {
+          id: "prop_recon",
+          proposing_agent_id: "reconciliation",
+          action: {},
+          policy_decision_id: "pd_recon",
+          status: "pending",
+          approvers_signed: [],
+          created_at: "2026-05-22T12:00:00Z",
+        };
+      },
+    } as unknown as IAgentService;
+    const result = await routeAndPropose(
+      CTX,
+      { tenant_id: "tnt_acme", event: "transaction.unreconciled" },
+      { ...deps, agentOverrides: { reconciliation: reconClient } },
+    );
+    expect(result.selected_agent_id).toBe("reconciliation");
+    expect(result.proposed?.id).toBe("prop_recon");
+    expect(delegated).toBe(1);
+    // The default agents.propose must NOT have been used for reconciliation.
+    expect(proposeCalls).toBe(0);
+  });
 });
