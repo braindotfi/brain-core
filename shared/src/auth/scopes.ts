@@ -6,9 +6,13 @@
  * policies and registering agents.
  *
  * External agents (principal_type=agent, registered in BrainMCPAgentRegistry)
- * can hold at most three scopes:
- *   wiki:read, raw:write, execution:propose
- * Tenant grants these at registration via EIP-712 signature.
+ * may hold the five §3.2 scopes:
+ *   ledger:read, wiki:read, raw:write, payment_intent:propose, execution:propose
+ * Tenant grants a subset at registration via EIP-712 signature. §3.2 names the
+ * non-financial-proposal scope `agent:propose`; the codebase implements it under
+ * the legacy name `execution:propose` (the MCP agent.action.propose tool and the
+ * SIWX grant both use execution:propose). Renaming it would change the on-chain
+ * scope_hash, so the rename is tracked separately, not done here.
  */
 
 import type { BrainErrorCode } from "../errors.js";
@@ -64,12 +68,17 @@ export function isValidScope(s: string): s is Scope {
 }
 
 /**
- * Scopes that only external agents can hold (§3.2). An external agent JWT
- * carrying a scope outside this set is rejected at the auth boundary.
+ * The reference allowlist of scopes an external agent may hold (§3.2). This is
+ * the canonical set the SIWX grant and per-tool MCP scope checks draw from; it
+ * intentionally excludes admin/sign verbs. `ledger:read` is required by the five
+ * MCP ledger-read tools and `payment_intent:propose` by the payment-intent
+ * propose tool — both were previously missing.
  */
 export const AGENT_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
+  "ledger:read",
   "wiki:read",
   "raw:write",
+  "payment_intent:propose",
   "execution:propose",
 ]);
 

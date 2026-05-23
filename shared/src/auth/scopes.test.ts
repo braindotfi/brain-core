@@ -36,11 +36,22 @@ describe("isValidScope", () => {
 });
 
 describe("AGENT_PERMITTED_SCOPES", () => {
-  it("is exactly the three scopes specified in §3.2", () => {
-    expect(AGENT_PERMITTED_SCOPES.size).toBe(3);
-    expect(AGENT_PERMITTED_SCOPES.has("wiki:read")).toBe(true);
-    expect(AGENT_PERMITTED_SCOPES.has("raw:write")).toBe(true);
-    expect(AGENT_PERMITTED_SCOPES.has("execution:propose")).toBe(true);
+  it("is the functional five-scope set an external agent may hold (§3.2)", () => {
+    // §3.2 lists five: ledger:read, wiki:read, raw:write, payment_intent:propose,
+    // and the non-financial-proposal scope the doc calls agent:propose — which the
+    // codebase implements under the legacy name execution:propose (the MCP
+    // agent.action.propose tool and SIWX grant both use execution:propose).
+    expect(AGENT_PERMITTED_SCOPES.size).toBe(5);
+    for (const s of [
+      "ledger:read",
+      "wiki:read",
+      "raw:write",
+      "payment_intent:propose",
+      "execution:propose",
+    ] as const) {
+      expect(AGENT_PERMITTED_SCOPES.has(s)).toBe(true);
+    }
+    // Admin/sign scopes are never agent-holdable.
     expect(AGENT_PERMITTED_SCOPES.has("policy:sign")).toBe(false);
     expect(AGENT_PERMITTED_SCOPES.has("audit:read")).toBe(false);
   });
