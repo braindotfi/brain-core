@@ -76,6 +76,9 @@ export { createQueue, createWorker, redisConnectionFromUrl } from "./queue/facto
 // Content addressing
 export { hashStream, teeSha256 } from "./hashing.js";
 
+// Network safety (SSRF guard for operator-influenced fetches)
+export { isPublicUrl, type PublicUrlOptions } from "./net/ssrf.js";
+
 // Webhook verification (inbound Plaid) + outbound dispatcher
 export { verifyPlaidWebhook, type PlaidVerifyOptions } from "./webhooks/plaid.js";
 export {
