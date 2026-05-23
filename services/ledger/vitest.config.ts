@@ -28,7 +28,6 @@ export default defineConfig({
         "src/reconciliation/payroll-bank-debit.ts",
         "src/reconciliation/persist.ts",
         "src/reconciliation/statement-balance.ts",
-        "src/reconciliation/stubs.ts",
         "src/reconciliation/subscription-charge.ts",
         "src/reconciliation/transaction-receipt.ts",
         "src/reconciliation/wallet-transfer.ts",
