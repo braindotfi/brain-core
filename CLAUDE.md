@@ -34,6 +34,8 @@ PRs produced with AI assistance must be labeled `ai-assisted` (§13.4).
 
 Python agents (Plaid extractors, reasoners, three MVP agents) live in `services/agents/` (Python 3.12, uv-managed), outside the TS workspace.
 
+Two TypeScript agent-infrastructure services sit alongside the layers (not in the table above): `services/agent-router` (`@brain/agent-router`, routes domain events/intents to internal agents via `POST /agents/route`) and `services/internal-agents` (`@brain/internal-agents`, the first-party agent catalog — capability definitions + handlers).
+
 ### Data-Flow Rules
 
 - Writes flow upward only. Two controlled exceptions: (a) human/agent contributions write into Raw; (b) the Agent layer creates PaymentIntent rows in Ledger.
@@ -44,9 +46,9 @@ Python agents (Plaid extractors, reasoners, three MVP agents) live in `services/
 
 ## The §6 Deterministic Pre-Execution Gate
 
-Lives in `services/api/src/shared/gate/`. Called by `POST /payment-intents/{id}/execute`, `POST /agents/{id}/actions` (money-movement actions), and the payment-agent worker.
+Lives in `shared/src/gate/` (the top-level `@brain/shared` package). Called by `POST /payment-intents/{id}/execute` and `POST /actions/{id}/execute` (both via `PaymentIntentService.execute`).
 
-The gate runs 13 sequential checks (identity, scope, policy DSL, source account, counterparty, sanctions, amount limit, balance, evidence, approval determination, approval grant, `policy_decision_id` creation, then audit before + after execution). It must not: read Wiki, defer to LLM judgment, mutate Ledger, or catch-and-continue on check failure. CI grep enforces no bypass path. Both the before and after audit events are mandatory and non-skippable.
+The gate runs 13 sequential checks (identity, scope, policy DSL, source account, counterparty, sanctions, amount limit, balance, evidence, approval determination, approval grant, `policy_decision_id` creation, then audit before + after execution). It must not: read Wiki, defer to LLM judgment, mutate Ledger, or catch-and-continue on check failure. Both the before and after audit events are mandatory and non-skippable. **There is no automated CI check yet that enforces "no bypass path"** — it is a planned follow-up; until then, do not add money-movement dispatch outside `PaymentIntentService.execute`.
 
 ## Commands
 
@@ -135,7 +137,7 @@ Prettier: double quotes, semicolons, trailing commas everywhere, 100-col width, 
 
 ```
 services/
-  api/            @brain/api, HTTP gateway + all shared primitives (auth, errors, gate, …)
+  api/            @brain/api, HTTP gateway (auth/webhook/MCP wiring + boot)
   raw/            @brain/raw, Layer 1 ingestion workers
   ledger/         @brain/ledger, Layer 2 (11 entities + typed JSON schemas)
   wiki/           @brain/wiki, Layer 3 memory + pgvector
@@ -143,7 +145,10 @@ services/
   execution/      @brain/execution, Layer 5 (also retains v0.2 legacy /execution/* routes)
   mcp/            @brain/mcp, Layer 5′ JSON-RPC MCP server
   audit/          @brain/audit, Layer 6 Merkle log + on-chain anchor publisher
+  agent-router/   @brain/agent-router, event/intent → internal-agent routing (POST /agents/route)
+  internal-agents/ @brain/internal-agents, first-party agent catalog (definitions + handlers)
   agents/         Python agents (excluded from all TS commands and ESLint)
+shared/           @brain/shared, all cross-cutting primitives (auth, errors, gate, db, …)
 contracts/src/    BrainAuditAnchor, BrainPolicyRegistry, BrainSmartAccount, BrainMCPAgentRegistry
 infra/            Terraform, Azure
 schemas/entity/   JSON Schemas per ledger entity (account, agent, counterparty, …)
@@ -158,7 +163,7 @@ scripts/          dev-up.sh, install-hooks.sh, pre-commit.sh
 docs/             mcp-architecture.md, v0.3-deliverables.md, boot-binary-spec.md, rollback.md
 ```
 
-Shared primitives all live in `services/api/src/shared/`, auth, errors, gate, idempotency, audit, db, blob, queue, http, llm, logger, metrics, tracing, webhooks, hashing, ids, contracts, config.
+Shared primitives all live in the top-level `shared/` package (`@brain/shared`): auth, errors, gate, idempotency, audit, db, blob, queue, http, llm, logger, metrics, tracing, webhooks, hashing, ids, contracts, config. (`services/api` is a thin gateway that consumes them, not their host.)
 
 New v0.3 routes live under `/agents/*`, `/payment-intents/*`, `/agents/mcp`. The `services/execution/` dir retains v0.2 `/execution/*` routes for back-compat.
 
@@ -193,7 +198,7 @@ New v0.3 routes live under `/agents/*`, `/payment-intents/*`, `/agents/mcp`. The
 - Bearer JWT on every endpoint except `/raw/webhooks/{provider}` (HMAC), `/audit/verify` (pure function), root health.
 - 15-min access tokens, rotating refresh tokens. Scopes: `{layer}:{verb}`.
 - External agents register on-chain in `BrainMCPAgentRegistry` with an EIP-712 scope attestation.
-- Error envelope: `{ error: { code, message, details, request_id, docs_url } }`. `code` format: `{domain}_{condition}`, stable forever once shipped. **Never return HTTP 200 with an error in the body.** Registry: `services/api/src/shared/errors.ts`.
+- Error envelope: `{ error: { code, message, details, request_id, docs_url } }`. `code` format: `{domain}_{condition}`, stable forever once shipped. **Never return HTTP 200 with an error in the body.** Registry: `shared/src/errors.ts` (`@brain/shared`).
 
 ## Testing
 
@@ -209,10 +214,11 @@ Run `./scripts/install-hooks.sh` once, it installs a pre-commit hook that scans 
 
 ## Known in-Progress Work
 
-- **Stubs**: 5 reconciliation matchers are stubbed, see `docs/v0.3-deliverables.md` for the complete list.
+- **Payment rails are stubs**: the three rails in `services/execution/src/rails/stubs.ts` (`bank_ach`, `erp_writeback`, `onchain_base`) return fabricated `stub: true` receipts and move no real money. They are the only rails wired (`defaultRails()`); real Plaid/NetSuite/Base rails are a post-stage-6 deliverable. **Do not run these in production** (they would record fake settlements as completed executions).
+- **Reconciliation matchers**: implemented (`services/ledger/src/reconciliation/{statement-balance,card-charge,invoice-payment,transaction-receipt,wallet-transfer,payroll-bank-debit,subscription-charge}.ts`) and registered in `ReconciliationService`. `reconciliation/stubs.ts` is leftover dead code (imported by nothing) pending cleanup.
 - **Python agents**: `services/agents/` is scaffolded but the Plaid extractor, reconciliation agent, payment agent, and anomaly agent are not yet implemented.
 - **Outbound webhook retries**: `WebhookAuditEmitter` dispatches fire-and-forget (no retry queue). A BullMQ `brain.audit.webhookDispatch` worker is the planned follow-up.
-- **`@brain/sdk`**: no npm SDK package yet, quickstart consumers use the raw HTTP API or the generated OpenAPI client in `clients/`.
+- **`@brain/sdk`**: the typed client exists at `clients/sdk` (`@brain/sdk`, generated from the OpenAPI spec, version `0.1.0-rc.0`) but is not yet published to npm.
 
 ## When in Doubt
 
