@@ -48,7 +48,7 @@ const plugin: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.setNotFoundHandler(async (request, reply) => {
-    const err = brainError("wiki_entity_not_found", "route not found", {
+    const err = brainError("route_not_found", "route not found", {
       statusOverride: 404,
       details: { path: request.url },
     });
@@ -75,7 +75,7 @@ export function mapError(err: unknown): BrainError {
       });
     }
     if (maybeFastify.statusCode === 404) {
-      return new BrainError("wiki_entity_not_found", maybeFastify.message ?? "not found", {
+      return new BrainError("route_not_found", maybeFastify.message ?? "not found", {
         statusOverride: 404,
       });
     }

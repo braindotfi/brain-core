@@ -40,6 +40,9 @@ export const BRAIN_ERROR_CODES = [
   "request_body_invalid",
   "request_params_invalid",
   "request_too_large",
+  // Generic unmatched-route 404 — domain-neutral so a missing policy/audit/etc.
+  // route does not surface as a wiki_* code.
+  "route_not_found",
 
   // Raw
   "raw_artifact_not_found",
@@ -205,6 +208,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   raw_artifact_not_found: 404,
   raw_artifact_tombstoned: 404,
   ledger_row_not_found: 404,
+  route_not_found: 404,
   wiki_entity_not_found: 404,
   wiki_page_not_found: 404,
   policy_not_found: 404,

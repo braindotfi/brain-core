@@ -42,9 +42,9 @@ describe("mapError", () => {
     expect(mapped.statusCode).toBe(429);
   });
 
-  it("maps 404 to wiki_entity_not_found (generic not-found bucket)", () => {
+  it("maps a generic 404 (unmatched route) to route_not_found, not a domain code", () => {
     const mapped = mapError({ statusCode: 404, message: "not found" });
-    expect(mapped.code).toBe("wiki_entity_not_found");
+    expect(mapped.code).toBe("route_not_found");
     expect(mapped.statusCode).toBe(404);
   });
 
