@@ -1050,11 +1050,29 @@ paths:
   /agents:
     get:
       tags: [Agent]
-      summary: List agents configured for the tenant
+      summary: List agents available to the tenant (internal-agent catalog)
       operationId: listAgents
+      description: |
+        Returns the first-party agent catalog (capability definitions). Internal
+        and external agents share these routes — kind/provenance is a metadata
+        field, not a separate path.
+      parameters:
+        - name: kind
+          in: query
+          description: Filter by provenance (e.g. internal/external).
+          schema: { type: string }
+        - name: capability
+          in: query
+          schema: { type: string }
+        - name: category
+          in: query
+          schema: { type: string, enum: [business, consumer, agnostic] }
+        - name: state
+          in: query
+          schema: { type: string, enum: [enabled, disabled] }
       responses:
         '200':
-          description: Agent list
+          description: Agent catalog
           content:
             application/json:
               schema:
@@ -1062,12 +1080,19 @@ paths:
                 properties:
                   agents:
                     type: array
-                    items: { $ref: '#/components/schemas/Agent' }
+                    items:
+                      type: object
+                      properties:
+                        agent_key: { type: string }
+                        provenance: { type: string }
+                        category: { type: string }
+                        capabilities: { type: array, items: { type: string } }
+                        enabled_by_default: { type: boolean }
 
   /agents/{agent_id}:
     get:
       tags: [Agent]
-      summary: Agent detail
+      summary: Agent detail (catalog definition + on-chain registration)
       operationId: getAgent
       parameters:
         - name: agent_id
@@ -1076,16 +1101,26 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Agent
+          description: Agent definition and registration record
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Agent' }
+              schema:
+                type: object
+                properties:
+                  definition: { type: object }
+                  registration: { type: [object, "null"] }
 
   /agents/{agent_id}/propose:
     post:
       tags: [Agent]
-      summary: Agent proposes a non-financial action
+      summary: (Deprecated) Agent proposes a non-financial action
       operationId: proposeAgentAction
+      deprecated: true
+      description: |
+        Not implemented. The proposal path is POST /agents/run (route → resolve →
+        persist run → propose safely behind the §6 gate); financial actions go
+        through POST /actions. This operation is retained only for back-compat
+        documentation and returns 404.
       parameters:
         - name: agent_id
           in: path
@@ -1148,10 +1183,13 @@ paths:
       tags: [Agent]
       summary: Register an external agent
       operationId: registerAgent
+      deprecated: true
       description: |
-        Replaces the legacy POST /execution/agents/register. Persists the
-        agent in `pending_onchain` until the BrainMCPAgentRegistry tx
-        confirms.
+        Not yet implemented under /agents/*. Registration currently goes through
+        the still-live legacy POST /execution/agents/register, which persists the
+        agent in `pending_onchain` until the BrainMCPAgentRegistry tx confirms.
+        This path is reserved for the v0.3 migration and is documented here for
+        forward reference only.
       requestBody:
         required: true
         content:
