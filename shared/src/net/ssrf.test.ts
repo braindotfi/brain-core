@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { LookupAddress } from "node:dns";
 import { isPublicUrl, publicOnlyLookup } from "./ssrf.js";
 
 describe("isPublicUrl — SSRF guard", () => {
@@ -47,7 +48,9 @@ describe("isPublicUrl — SSRF guard", () => {
 });
 
 describe("publicOnlyLookup — DNS-rebinding socket pin", () => {
-  function resolve(host: string): Promise<{ err: NodeJS.ErrnoException | null; address: string }> {
+  function resolve(
+    host: string,
+  ): Promise<{ err: NodeJS.ErrnoException | null; address: string | LookupAddress[] }> {
     return new Promise((done) => {
       publicOnlyLookup(host, {}, (err, address) => done({ err, address }));
     });
