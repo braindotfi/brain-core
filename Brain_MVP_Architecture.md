@@ -289,7 +289,7 @@ What Ledger must not do. Ledger must not contain freeform Wiki summaries as auth
 
 MVP scope. The eleven entities above. Other ledger entities (positions, securities, FX rates, cost-basis lots) are post-MVP.
 
-Reconciliation coverage at v0.4 ship. The reconciliation engine is wired end-to-end and runs all 7 registered matchers, all now concrete implementations (`invoice_payment`, `transaction_receipt`, `statement_balance`, `wallet_transfer`, `payroll_bank_debit`, `subscription_charge`, `card_charge`). They still lack dedicated unit/property tests (a backfill is outstanding).
+Reconciliation coverage at v0.4 ship. The reconciliation engine is wired end-to-end and runs all 7 registered matchers, all now concrete implementations (`invoice_payment`, `transaction_receipt`, `statement_balance`, `wallet_transfer`, `payroll_bank_debit`, `subscription_charge`, `card_charge`) with unit + property test coverage.
 
 ### Layer 3: Wiki (Memory)
 
