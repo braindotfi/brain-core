@@ -72,8 +72,14 @@ import { LedgerService, registerLedgerPlugin, startNormalizeWorker } from "@brai
 
 import { WikiPageService, registerWikiPlugin, loadRegistry, askWiki } from "@brain/wiki";
 
-import { registerPolicyRoutes, PolicyService, contentHash } from "@brain/policy";
-import type { PolicyDeps, PolicyDocument } from "@brain/policy";
+import {
+  registerPolicyRoutes,
+  PolicyService,
+  contentHash,
+  getActive as policyGetActive,
+  getById as policyGetById,
+} from "@brain/policy";
+import type { PolicyDeps, PolicyDocument, PolicyRow } from "@brain/policy";
 
 import {
   registerExecutionRoutes,
@@ -134,7 +140,7 @@ import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
 
 import type { LedgerDeps } from "@brain/ledger";
-import type { WikiDeps } from "@brain/wiki";
+import type { WikiDeps, PolicyReader, AgentReader, PolicyView } from "@brain/wiki";
 import type { RawDeps } from "@brain/raw";
 import type {
   GateAccount,
@@ -490,6 +496,52 @@ async function main(): Promise<void> {
       ? new OpenAIEmbeddingAdapter({ apiKey: cfg.OPENAI_API_KEY })
       : new DeterministicEmbeddingAdapter();
 
+  // Cross-service read ports for the Wiki policy/agent page generators. Wiki
+  // must not query the Policy/Execution tables directly, so the composition
+  // root (which already imports both services) supplies adapters backed by the
+  // owning service's read API over the shared pool.
+  const toPolicyView = (row: PolicyRow): PolicyView => ({
+    id: row.id,
+    version: row.version,
+    state: row.state,
+    quorum_required: row.quorum_required,
+    signers: (row.signers ?? []).map((s) => ({ address: s.address })),
+    activated_at: row.activated_at,
+    deactivated_at: row.deactivated_at,
+    created_by: row.created_by,
+    created_at: row.created_at,
+  });
+  const policyReader: PolicyReader = {
+    byId: (rctx, id) =>
+      withTenantScope(pool, rctx.tenantId, async (c) => {
+        const row = await policyGetById(c, id);
+        return row === null ? null : toPolicyView(row);
+      }),
+    active: (rctx) =>
+      withTenantScope(pool, rctx.tenantId, async (c) => {
+        const row = await policyGetActive(c);
+        return row === null ? null : toPolicyView(row);
+      }),
+  };
+  const agentReader: AgentReader = {
+    byId: (rctx, id) =>
+      withTenantScope(pool, rctx.tenantId, async (c) => {
+        const row = await findAgent(c, id);
+        return row === null
+          ? null
+          : {
+              id: row.id,
+              kind: row.kind,
+              role: row.role,
+              display_name: row.display_name,
+              onchain_address: row.onchain_address,
+              state: row.state,
+              registered_at: row.registered_at,
+              created_at: row.created_at,
+            };
+      }),
+  };
+
   const wikiDeps: WikiDeps = {
     pool,
     redis,
@@ -499,9 +551,11 @@ async function main(): Promise<void> {
     schemas: schemaRegistry,
     metrics,
     questionModel: cfg.WIKI_LLM_MODEL,
+    policyReader,
+    agentReader,
   };
 
-  const wikiPageService = new WikiPageService({ pool, audit, embed });
+  const wikiPageService = new WikiPageService({ pool, audit, embed, policyReader, agentReader });
   const wikiService = buildWikiMemoryService(wikiPageService, wikiDeps);
 
   const policyDeps: PolicyDeps = {

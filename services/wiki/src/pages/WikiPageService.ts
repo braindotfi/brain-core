@@ -31,12 +31,16 @@ import { InvoicePageGenerator } from "./invoice.js";
 import { AgentPageGenerator } from "./agent.js";
 import { PolicyPageGenerator } from "./policy.js";
 import { CashFlowPageGenerator } from "./cash-flow.js";
-import type { PageGenerator } from "./types.js";
+import type { AgentReader, PageGenerator, PolicyReader } from "./types.js";
 
 export interface WikiPageServiceDeps {
   pool: Pool;
   audit: AuditEmitter;
   embed: EmbeddingAdapter;
+  /** Read ports for cross-service state (Policy/Execution). Required to render
+   *  the policy/agent page types; absent in deployments that don't co-host them. */
+  policyReader?: PolicyReader;
+  agentReader?: AgentReader;
 }
 
 interface PageRow {
@@ -145,7 +149,15 @@ export class WikiPageService {
     const { generator, resolved } = target;
 
     const output = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) =>
-      generator.render({ ctx, client: c }, resolved),
+      generator.render(
+        {
+          ctx,
+          client: c,
+          ...(this.deps.policyReader !== undefined ? { policyReader: this.deps.policyReader } : {}),
+          ...(this.deps.agentReader !== undefined ? { agentReader: this.deps.agentReader } : {}),
+        },
+        resolved,
+      ),
     );
 
     const embResult = await this.deps.embed.embed(output.body_md);

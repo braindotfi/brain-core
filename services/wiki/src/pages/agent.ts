@@ -1,14 +1,13 @@
 /**
  * /agents/{agent_id} — page generator.
  *
- * Cross-service read: services/wiki reads from the `agents` table owned by
- * services/execution. This is the same exception pattern used by
- * LedgerService.normalizeFromRaw reading raw_parsed — read-only access to
- * a derived index used by the memory layer. Writes never cross the layer.
- * Surfaced here for review: the correct long-term fix is to expose an
- * IAgentService.findById read method and call it via the service contract.
+ * Reads agent state through the injected AgentReader (a port backed by the
+ * owning Execution service), never by querying the `agents` table directly. The
+ * recent-payment-intents read below stays on the tenant-scoped client: that is
+ * the sanctioned Wiki→Ledger read-projection (ledger_payment_intents).
  */
 
+import { brainError } from "@brain/shared";
 import type { PageGenerationContext, PageGenerationOutput, PageGenerator } from "./types.js";
 import { bullet, renderPage, revisionFromTouches } from "./sections.js";
 
@@ -32,8 +31,11 @@ export class AgentPageGenerator implements PageGenerator {
   ): Promise<PageGenerationOutput> {
     const id = subject.subjectId;
     if (id === null) throw new Error("AgentPageGenerator requires a subject id");
+    if (deps.agentReader === undefined) {
+      throw brainError("dependency_unavailable", "agent reader not configured for this deployment");
+    }
 
-    const agent = await fetchAgent(deps, id);
+    const agent = await deps.agentReader.byId(deps.ctx, id);
     if (agent === null) throw new Error(`agent ${id} not found`);
     const recentIntents = await fetchRecentPaymentIntents(deps, id);
 
@@ -95,26 +97,6 @@ export class AgentPageGenerator implements PageGenerator {
       source_revision: revision,
     };
   }
-}
-
-interface AgentRow {
-  id: string;
-  kind: string;
-  role: string;
-  display_name: string;
-  onchain_address: string | null;
-  state: string;
-  registered_at: Date | null;
-  created_at: Date;
-}
-
-async function fetchAgent(deps: PageGenerationContext, id: string): Promise<AgentRow | null> {
-  const { rows } = await deps.client.query<AgentRow>(
-    `SELECT id, kind, role, display_name, onchain_address, state, registered_at, created_at
-       FROM agents WHERE id = $1 LIMIT 1`,
-    [id],
-  );
-  return rows[0] ?? null;
 }
 
 interface PaymentIntentRow {

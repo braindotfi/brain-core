@@ -51,6 +51,8 @@ export async function buildWikiApp(opts: BuildWikiAppOptions): Promise<FastifyIn
     pool: opts.deps.pool,
     audit: opts.deps.audit,
     embed: opts.deps.embed,
+    ...(opts.deps.policyReader !== undefined ? { policyReader: opts.deps.policyReader } : {}),
+    ...(opts.deps.agentReader !== undefined ? { agentReader: opts.deps.agentReader } : {}),
   });
   await registerMemoryRoutes(app, pageService);
 
@@ -73,6 +75,8 @@ export async function registerWikiPlugin(app: FastifyInstance, deps: WikiDeps): 
     pool: deps.pool,
     audit: deps.audit,
     embed: deps.embed,
+    ...(deps.policyReader !== undefined ? { policyReader: deps.policyReader } : {}),
+    ...(deps.agentReader !== undefined ? { agentReader: deps.agentReader } : {}),
   });
   await registerMemoryRoutes(app, pageService);
 }

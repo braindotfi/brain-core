@@ -80,6 +80,13 @@ export async function getActive(client: TenantScopedClient): Promise<PolicyRow |
   return rows[0] ?? null;
 }
 
+export async function getById(client: TenantScopedClient, id: string): Promise<PolicyRow | null> {
+  const { rows } = await client.query<PolicyRow>(`SELECT * FROM policies WHERE id = $1 LIMIT 1`, [
+    id,
+  ]);
+  return rows[0] ?? null;
+}
+
 export async function getByVersion(
   client: TenantScopedClient,
   version: number,

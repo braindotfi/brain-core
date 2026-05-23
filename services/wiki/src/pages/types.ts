@@ -16,9 +16,53 @@
 
 import type { TenantScopedClient, WikiPage, ServiceCallContext } from "@brain/shared";
 
+/**
+ * Read-only projections the memory layer needs from services it does NOT own.
+ * Wiki must not query the Policy/Execution tables directly (the sanctioned Wiki
+ * read-projection covers Ledger only), so it reads policy/agent state through
+ * these ports. The composition root (services/api) supplies adapters backed by
+ * the owning service's read API; Wiki never imports @brain/policy or
+ * @brain/execution.
+ */
+export interface PolicyView {
+  id: string;
+  version: number;
+  state: string;
+  quorum_required: number;
+  signers: Array<{ address: string }>;
+  activated_at: Date | null;
+  deactivated_at: Date | null;
+  created_by: string;
+  created_at: Date;
+}
+
+export interface AgentView {
+  id: string;
+  kind: string;
+  role: string;
+  display_name: string;
+  onchain_address: string | null;
+  state: string;
+  registered_at: Date | null;
+  created_at: Date;
+}
+
+export interface PolicyReader {
+  byId(ctx: ServiceCallContext, id: string): Promise<PolicyView | null>;
+  active(ctx: ServiceCallContext): Promise<PolicyView | null>;
+}
+
+export interface AgentReader {
+  byId(ctx: ServiceCallContext, id: string): Promise<AgentView | null>;
+}
+
 export interface PageGenerationContext {
   ctx: ServiceCallContext;
   client: TenantScopedClient;
+  /** Cross-service read ports (Policy/Execution). Absent in deployments that
+   *  do not co-host those services; the policy/agent generators require them. */
+  policyReader?: PolicyReader;
+  agentReader?: AgentReader;
 }
 
 export interface PageGenerationOutput {

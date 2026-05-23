@@ -1,12 +1,12 @@
 /**
  * /policies/{policy_id} — page generator.
  *
- * Cross-service read: services/wiki reads from the `policies` table owned by
- * services/policy. Read-only; the memory layer needs policy context to answer
- * governance questions. Surfaced here for review — the long-term fix is an
- * IPolicyService.findById read method called via the service contract.
+ * Reads policy state through the injected PolicyReader (a port backed by the
+ * owning Policy service), never by querying the `policies` table directly —
+ * the sanctioned Wiki read-projection covers Ledger tables only.
  */
 
+import { brainError } from "@brain/shared";
 import type { PageGenerationContext, PageGenerationOutput, PageGenerator } from "./types.js";
 import { bullet, renderPage, revisionFromTouches } from "./sections.js";
 
@@ -31,10 +31,16 @@ export class PolicyPageGenerator implements PageGenerator {
     deps: PageGenerationContext,
     subject: { subjectId: string | null; slug: string },
   ): Promise<PageGenerationOutput> {
+    if (deps.policyReader === undefined) {
+      throw brainError(
+        "dependency_unavailable",
+        "policy reader not configured for this deployment",
+      );
+    }
     const policy =
       subject.subjectId !== null
-        ? await fetchPolicyById(deps, subject.subjectId)
-        : await fetchActivePolicy(deps);
+        ? await deps.policyReader.byId(deps.ctx, subject.subjectId)
+        : await deps.policyReader.active(deps.ctx);
 
     if (policy === null) {
       const body = renderPage("Policy", {
@@ -51,9 +57,7 @@ export class PolicyPageGenerator implements PageGenerator {
       };
     }
 
-    const signers: Array<{ address: string }> = Array.isArray(policy.signers)
-      ? (policy.signers as Array<{ address: string }>)
-      : [];
+    const signers: Array<{ address: string }> = policy.signers;
 
     const currentTruth =
       `**Policy v${policy.version}**\n` +
@@ -113,35 +117,4 @@ export class PolicyPageGenerator implements PageGenerator {
       source_revision: revision,
     };
   }
-}
-
-interface PolicyRow {
-  id: string;
-  version: number;
-  state: string;
-  quorum_required: number;
-  signers: unknown;
-  activated_at: Date | null;
-  deactivated_at: Date | null;
-  created_by: string;
-  created_at: Date;
-}
-
-async function fetchPolicyById(deps: PageGenerationContext, id: string): Promise<PolicyRow | null> {
-  const { rows } = await deps.client.query<PolicyRow>(
-    `SELECT id, version, state, quorum_required, signers,
-            activated_at, deactivated_at, created_by, created_at
-       FROM policies WHERE id = $1 LIMIT 1`,
-    [id],
-  );
-  return rows[0] ?? null;
-}
-
-async function fetchActivePolicy(deps: PageGenerationContext): Promise<PolicyRow | null> {
-  const { rows } = await deps.client.query<PolicyRow>(
-    `SELECT id, version, state, quorum_required, signers,
-            activated_at, deactivated_at, created_by, created_at
-       FROM policies WHERE state = 'active' LIMIT 1`,
-  );
-  return rows[0] ?? null;
 }

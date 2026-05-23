@@ -36,7 +36,13 @@ export type {
   SpendWindowConstraint,
   TxCountWindowConstraint,
 } from "./dsl.js";
-export { isValidTransition, type PolicyState, type PolicyRow } from "./repository.js";
+export {
+  isValidTransition,
+  getActive,
+  getById,
+  type PolicyState,
+  type PolicyRow,
+} from "./repository.js";
 export { registerPolicyRoutes } from "./routes.js";
 export { PolicyService, type PolicyServiceDeps } from "./service.js";
 export {

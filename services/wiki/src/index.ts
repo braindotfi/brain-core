@@ -27,4 +27,12 @@ export {
 // Phase 5 — page rendering.
 export { WikiPageService } from "./pages/WikiPageService.js";
 export type { WikiPageServiceDeps } from "./pages/WikiPageService.js";
-export type { PageGenerator, PageGenerationContext, PageGenerationOutput } from "./pages/types.js";
+export type {
+  PageGenerator,
+  PageGenerationContext,
+  PageGenerationOutput,
+  PolicyReader,
+  AgentReader,
+  PolicyView,
+  AgentView,
+} from "./pages/types.js";
