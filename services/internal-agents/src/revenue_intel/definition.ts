@@ -10,12 +10,7 @@ export const revenueIntelDefinition: InternalAgentDefinition = {
   capabilities: ["revenue_intel"],
   triggers: ["revenue.changed", "customer.payment_behavior_changed", "contract.renewal_upcoming"],
   intent_patterns: ["analyze revenue", "flag churn risk", "find expansion opportunities"],
-  readable_data: [
-    "ledger:invoices",
-    "ledger:transactions",
-    "ledger:counterparties",
-    "wiki:counterparty",
-  ],
+  readable_data: ["ledger:read", "wiki:read"],
   risk_level: "low",
   minimum_confidence: 0.65,
   required_evidence: ["invoice", "transaction"],

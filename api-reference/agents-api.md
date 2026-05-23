@@ -113,8 +113,8 @@ DELETE /v1/agents/{agent_id}
 | State       | What It Means                                         | Reversible |
 | ----------- | ----------------------------------------------------- | ---------- |
 | **Active**  | Agent can propose actions                             | n/a        |
-| **Paused**  | Proposals rejected; identity and reputation preserved | ✅ Yes      |
-| **Revoked** | Permanent termination; record preserved for audit     | ❌ No       |
+| **Paused**  | Proposals rejected; identity and reputation preserved | ✅ Yes     |
+| **Revoked** | Permanent termination; record preserved for audit     | ❌ No      |
 
 ### Reputation
 
@@ -196,13 +196,13 @@ Response:
 
 ```json
 {
-  "selected_agent_id":  "collections",
+  "selected_agent_id": "collections",
   "fallback_agent_ids": [],
-  "confidence":         0.92,
-  "evidence_score":     1,
-  "policy_status":      "routed",
-  "execution_mode":     "propose",
-  "reason":             "selected collections (confidence 0.92)"
+  "confidence": 0.92,
+  "evidence_score": 1,
+  "policy_status": "routed",
+  "execution_mode": "propose",
+  "reason": "selected collections (confidence 0.92)"
 }
 ```
 

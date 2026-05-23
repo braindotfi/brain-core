@@ -12,3 +12,9 @@ infra/**
 *.tfstate.*
 Brain_API_Specification.yaml
 clients/sdk/src/generated/**
+
+# Local tooling / non-repo working trees — not brain-core sources
+.claude
+.agents
+hyper
+skills-lock.json

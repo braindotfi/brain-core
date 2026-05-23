@@ -15,7 +15,7 @@ export const savingsDefinition: InternalAgentDefinition = {
     "sweep to savings",
     "how is my savings goal",
   ],
-  readable_data: ["ledger:accounts", "ledger:balances", "wiki:cash_flow"],
+  readable_data: ["ledger:read", "wiki:read"],
   risk_level: "low",
   minimum_confidence: 0.75,
   required_evidence: ["balance"],

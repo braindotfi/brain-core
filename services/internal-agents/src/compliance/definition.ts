@@ -10,7 +10,7 @@ export const complianceDefinition: InternalAgentDefinition = {
   capabilities: ["compliance_monitor"],
   triggers: ["policy.violation", "approval.missing", "audit.gap_detected"],
   intent_patterns: ["check compliance", "flag a policy violation", "review an audit gap"],
-  readable_data: ["policy:decisions", "audit:events", "ledger:payment_intents"],
+  readable_data: ["policy:read", "audit:read", "ledger:read"],
   risk_level: "high",
   minimum_confidence: 0.8,
   required_evidence: ["policy_decision", "audit_event"],

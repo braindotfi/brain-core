@@ -21,7 +21,7 @@ export const reconciliationDefinition: InternalAgentDefinition = {
     "match statement to ledger",
     "resolve unreconciled transaction",
   ],
-  readable_data: ["ledger:transactions", "ledger:reconciliation_matches"],
+  readable_data: ["ledger:read"],
   risk_level: "low",
   minimum_confidence: 0.7,
   required_evidence: ["transaction"],

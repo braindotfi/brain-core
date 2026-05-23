@@ -13,12 +13,7 @@ export const collectionsDefinition: InternalAgentDefinition = {
     "chase late payment",
     "remind customer about unpaid invoice",
   ],
-  readable_data: [
-    "ledger:invoices",
-    "ledger:counterparties",
-    "ledger:transactions",
-    "wiki:counterparty",
-  ],
+  readable_data: ["ledger:read", "wiki:read"],
   risk_level: "medium",
   minimum_confidence: 0.75,
   required_evidence: ["invoice", "counterparty"],

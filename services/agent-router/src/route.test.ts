@@ -19,7 +19,7 @@ const COLLECTIONS: InternalAgentDefinition = {
   capabilities: ["collections_followup"],
   triggers: ["invoice.overdue"],
   intent_patterns: ["follow up overdue invoice"],
-  readable_data: ["ledger:invoices"],
+  readable_data: ["ledger:read"],
   risk_level: "medium",
   minimum_confidence: 0.75,
   required_evidence: [],

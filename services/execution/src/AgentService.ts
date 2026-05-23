@@ -101,7 +101,12 @@ export class AgentService implements IAgentService {
         proposingAgent: agentId,
         action,
         policyVersion: policyResult.policy_version,
-        policyDecision: policyResult.outcome === "confirm" ? "confirm" : policyResult.outcome === "reject" ? "reject" : "allow",
+        policyDecision:
+          policyResult.outcome === "confirm"
+            ? "confirm"
+            : policyResult.outcome === "reject"
+              ? "reject"
+              : "allow",
         policyTrace: policyResult.trace as never,
         requiredApprovers: policyResult.required_approvers,
         status,

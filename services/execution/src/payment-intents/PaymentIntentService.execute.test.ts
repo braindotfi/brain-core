@@ -58,6 +58,7 @@ const APPROVED_INTENT_ROW: PaymentIntentRow = {
   currency: "USD",
   obligation_id: null,
   invoice_id: null,
+  proposal_dedup_key: null,
   status: "approved",
   policy_decision_id: PD_ID,
   approval_ids: [],

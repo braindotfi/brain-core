@@ -9,12 +9,7 @@ export const paymentDefinition: InternalAgentDefinition = {
   capabilities: ["payment_propose"],
   triggers: ["bill.due_soon", "invoice.approved", "payment.scheduled"],
   intent_patterns: ["pay this bill", "schedule a payment", "approve and pay invoice"],
-  readable_data: [
-    "ledger:invoices",
-    "ledger:counterparties",
-    "ledger:accounts",
-    "ledger:obligations",
-  ],
+  readable_data: ["ledger:read"],
   risk_level: "medium",
   minimum_confidence: 0.85,
   required_evidence: ["invoice", "counterparty", "payment_destination"],

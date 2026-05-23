@@ -22,7 +22,7 @@ export const subscriptionDefinition: InternalAgentDefinition = {
     "cancel duplicate subscription",
     "flag a price increase",
   ],
-  readable_data: ["ledger:transactions", "ledger:counterparties", "wiki:counterparty"],
+  readable_data: ["ledger:read", "wiki:read"],
   risk_level: "low",
   minimum_confidence: 0.7,
   required_evidence: ["transaction"],

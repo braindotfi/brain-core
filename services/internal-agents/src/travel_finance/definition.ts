@@ -9,7 +9,7 @@ export const travelFinanceDefinition: InternalAgentDefinition = {
   capabilities: ["travel_finance"],
   triggers: ["foreign_transaction.created", "travel.detected", "fx_fee.detected"],
   intent_patterns: ["which card for travel", "flag foreign fees", "summarize my trip spending"],
-  readable_data: ["ledger:transactions", "ledger:accounts"],
+  readable_data: ["ledger:read"],
   risk_level: "low",
   minimum_confidence: 0.65,
   required_evidence: ["transaction"],

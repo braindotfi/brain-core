@@ -9,7 +9,7 @@ export const personalBudgetDefinition: InternalAgentDefinition = {
   capabilities: ["personal_budget"],
   triggers: ["transaction.created", "budget.threshold_crossed", "spending.spike_detected"],
   intent_patterns: ["categorize my spending", "am i over budget", "how much did i spend"],
-  readable_data: ["ledger:transactions", "ledger:categories", "wiki:cash_flow"],
+  readable_data: ["ledger:read", "wiki:read"],
   risk_level: "low",
   minimum_confidence: 0.7,
   required_evidence: ["transaction"],
