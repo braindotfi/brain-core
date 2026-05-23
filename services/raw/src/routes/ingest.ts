@@ -14,7 +14,7 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { brainError, isBrainId, requireScope, type Scope } from "@brain/shared";
+import { brainError, isBrainId, isPublicUrl, requireScope, type Scope } from "@brain/shared";
 import { adapterForSourceType } from "../adapters/registry.js";
 import { ingestOne } from "../services/ingest.js";
 import type { RawDeps } from "../deps.js";
@@ -132,8 +132,14 @@ async function handleJson(request: FastifyRequest, reply: FastifyReply, deps: Ra
   if (body.source_type === undefined || body.url === undefined) {
     throw brainError("request_body_invalid", "source_type and url are required");
   }
-  if (!body.url.startsWith("https://")) {
-    throw brainError("request_body_invalid", "url must be HTTPS");
+  // SSRF guard: HTTPS only, and the host must resolve to a public address —
+  // blocks fetches against cloud metadata (169.254.169.254), loopback, and
+  // internal services.
+  if (!(await isPublicUrl(body.url, { allowedProtocols: ["https:"] }))) {
+    throw brainError(
+      "request_body_invalid",
+      "url must be HTTPS and resolve to a public (non-internal) address",
+    );
   }
   adapterForSourceType(body.source_type);
 

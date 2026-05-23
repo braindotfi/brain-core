@@ -26,6 +26,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import type { Pool } from "pg";
 import type { AuditEmitter } from "../audit/emitter.js";
 import type { AuditEvent, AuditEventInput } from "../audit/types.js";
+import { isPublicUrl } from "../net/ssrf.js";
 
 /** The nine audit action types forwarded to registered endpoints. */
 export const FORWARDED_EVENTS = new Set<string>([
@@ -90,6 +91,12 @@ export class WebhookDispatcher {
       endpoints
         .filter((ep) => ep.enabled_events === null || ep.enabled_events.includes(event.action))
         .map(async (ep) => {
+          // SSRF guard: never POST to a private/internal/metadata address even
+          // if a tenant registered one as a webhook endpoint.
+          if (!(await isPublicUrl(ep.url, { allowedProtocols: ["http:", "https:"] }))) {
+            console.warn(`[webhooks] skipping endpoint ${ep.id}: url is not a public address`);
+            return;
+          }
           const sig = sign(ep.secret, payload);
           try {
             const res = await fetch(ep.url, {
