@@ -27,5 +27,3 @@ export const LedgerPaymentIntents = {
   appendApprovalId,
   appendExecutionReceiptId,
 } as const;
-
-export type LedgerPaymentIntents = typeof LedgerPaymentIntents;
