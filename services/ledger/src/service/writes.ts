@@ -42,13 +42,13 @@ const PROVENANCE_VALUES = new Set([
 ]);
 
 function cappedConfidence(provenance: string, raw: number): number {
-  if (provenance === "agent_contributed") {
-    return Math.min(raw, AGENT_CONTRIBUTED_CONFIDENCE_CEILING);
-  }
   if (raw < 0 || raw > 1) {
     throw brainError("ledger_row_invalid", "confidence must be in [0, 1]", {
       details: { confidence: raw },
     });
+  }
+  if (provenance === "agent_contributed") {
+    return Math.min(raw, AGENT_CONTRIBUTED_CONFIDENCE_CEILING);
   }
   return raw;
 }

@@ -189,6 +189,21 @@ describe("LedgerService.upsertCounterparty", () => {
     });
     expect(cp.confidence).toBe(0.5);
   });
+
+  it("rejects an out-of-range confidence even for agent_contributed provenance", async () => {
+    const { pool } = fakePool();
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    await expect(
+      service.upsertCounterparty(ctx, {
+        name: "Whoever",
+        type: "merchant",
+        source_ids: [],
+        evidence_ids: [],
+        provenance: "agent_contributed",
+        confidence: -0.5, // a negative confidence must not slip past the 0.5 cap
+      }),
+    ).rejects.toSatisfy((err) => isBrainError(err) && err.code === "ledger_row_invalid");
+  });
 });
 
 describe("LedgerService.upsertAccount", () => {
