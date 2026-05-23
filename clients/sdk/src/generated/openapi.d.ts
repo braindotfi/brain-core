@@ -734,6 +734,177 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/route": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Routing decision only (no run)
+         * @description Returns the selected agent + scoring reason. Advisory; the selected agent still proposes through the gated path.
+         */
+        post: operations["routeAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Route, resolve action, persist a run, and propose (shadow-aware)
+         * @description Routes an event/intent to an agent, resolves the action within it,
+         *     evaluates the §6 gate in dry-run, persists an `agent_runs` row, and
+         *     proposes through the existing path. A financial proposal from a shadowed
+         *     (un-promoted) agent terminates as `shadow_completed` and moves no money.
+         */
+        post: operations["runAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enqueue an event-driven route/run job */
+        post: operations["enqueueAgentEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List agent runs */
+        get: operations["listAgentRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Agent run detail */
+        get: operations["getAgentRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/runs/{run_id}/why": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Structured reason + trace bundle for a run
+         * @description The artifact CFOs / auditors / support live in — the structured router reason plus (redacted) reasoning trace, gate trace, and rail receipt.
+         */
+        get: operations["getAgentRunWhy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/routing-decisions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Routing decision detail */
+        get: operations["getRoutingDecision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{agent_id}/halt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Halt an agent — pause its in-flight intents and quarantine it
+         * @description Tenant-root kill-switch (1b.3). Pauses all in-flight PaymentIntents from the agent and flips its state to `quarantined`.
+         */
+        post: operations["haltAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/halt-category": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Emergency-stop every agent in a category
+         * @description Break-glass + tenant-root. Halts all agents of the given category.
+         */
+        post: operations["haltCategory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payment-intents": {
         parameters: {
             query?: never;
@@ -819,6 +990,69 @@ export interface paths {
          *     the failing check index.
          */
         post: operations["executePaymentIntent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payment-intents/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause an approved PaymentIntent (kill-switch)
+         * @description Holds an `approved` intent without a terminal transition (1b.3). approved → paused.
+         */
+        post: operations["pausePaymentIntent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payment-intents/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a paused PaymentIntent
+         * @description Re-runs the live §6 gate before re-entering `approved` (defends against Ledger state drift while paused). paused → approved.
+         */
+        post: operations["resumePaymentIntent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payment-intents/{id}/replay-investigation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Typed forensic record for a PaymentIntent
+         * @description Returns the intent, its executions (each with its typed rail receipt),
+         *     and the linking ids (policy_decision_id, evidence_ids). The policy
+         *     decision, reservation, and audit chain are referenced by id and joined
+         *     via their owning service APIs (2.4).
+         */
+        get: operations["replayInvestigation"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1562,10 +1796,72 @@ export interface components {
             scope_hash?: string | null;
             onchain_address?: string | null;
             /** @enum {string} */
-            state: "pending_onchain" | "active" | "revoked" | "failed";
+            state: "pending_onchain" | "active" | "revoked" | "failed" | "quarantined";
             registered_tx?: string | null;
             /** Format: date-time */
             registered_at?: string | null;
+        };
+        /** @enum {string} */
+        AgentRunStatus: "routing" | "routed" | "no_match" | "unscoped" | "missing_handler" | "missing_action" | "missing_evidence" | "proposal_created" | "confirmation_required" | "executed" | "notify_only" | "rejected" | "failed" | "duplicate_skipped" | "paused" | "shadow_completed";
+        /** @description One of `event` or `intent` is required. */
+        AgentRouteRequest: {
+            event?: string;
+            intent?: string;
+            context?: Record<string, never>;
+        };
+        RoutingDecision: {
+            selected_agent_id?: string | null;
+            fallback_agent_ids?: string[];
+            confidence?: number;
+            evidence_score?: number;
+            /** @enum {string} */
+            policy_status?: "routed" | "unscoped" | "no_match";
+            /** @enum {string|null} */
+            execution_mode?: "execute" | "propose" | "confirm" | "notify_only" | "reject" | null;
+            reason?: string;
+        };
+        AgentRunResult: {
+            status?: components["schemas"]["AgentRunStatus"];
+            routing_decision_id?: string;
+            run_id?: string | null;
+            selected_agent_id?: string | null;
+            action?: string | null;
+            shadow_mode?: boolean;
+            proposed?: {
+                id?: string;
+                status?: string;
+                policy_decision_id?: string | null;
+            };
+            reason?: Record<string, never>;
+        };
+        AgentRun: {
+            id?: string;
+            tenant_id?: string;
+            /** @enum {string} */
+            tenant_category?: "business" | "consumer";
+            agent_id?: string;
+            /** @enum {string} */
+            agent_kind?: "internal" | "external";
+            event_type?: string | null;
+            intent?: string | null;
+            action?: string | null;
+            /** @enum {string} */
+            execution_mode?: "execute" | "propose" | "confirm" | "notify_only" | "reject";
+            status?: components["schemas"]["AgentRunStatus"];
+            confidence?: number | null;
+            evidence_score?: number | null;
+            /** @enum {string|null} */
+            policy_status?: "allow" | "confirm" | "reject" | "unknown" | null;
+            proposal_id?: string | null;
+            payment_intent_id?: string | null;
+            policy_decision_id?: string | null;
+            routing_decision_id?: string | null;
+            reason?: Record<string, never>;
+            shadow_mode?: boolean;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            completed_at?: string | null;
         };
         JsonRpcRequest: {
             /** @enum {string} */
@@ -2915,6 +3211,256 @@ export interface operations {
             };
         };
     };
+    routeAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentRouteRequest"];
+            };
+        };
+        responses: {
+            /** @description Routing decision */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutingDecision"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    runAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentRouteRequest"];
+            };
+        };
+        responses: {
+            /** @description Run result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Proposal-layer idempotency collision (`agent_proposal_duplicate`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    enqueueAgentEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentRouteRequest"];
+            };
+        };
+        responses: {
+            /** @description Job enqueued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        job_id?: string;
+                        /** @enum {string} */
+                        status?: "queued";
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    listAgentRuns: {
+        parameters: {
+            query?: {
+                agent_id?: string;
+                status?: components["schemas"]["AgentRunStatus"];
+                category?: "business" | "consumer";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Run list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        runs?: components["schemas"]["AgentRun"][];
+                    };
+                };
+            };
+        };
+    };
+    getAgentRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRun"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAgentRunWhy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reason bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        run?: components["schemas"]["AgentRun"];
+                        reason?: Record<string, never>;
+                        gate_trace?: Record<string, never> | null;
+                        rail_receipt?: Record<string, never> | null;
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRoutingDecision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Routing decision record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    haltAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Halt result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agent_id?: string;
+                        paused?: string[];
+                        quarantined?: boolean;
+                    };
+                };
+            };
+        };
+    };
+    haltCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    category: "business" | "consumer" | "agnostic";
+                };
+            };
+        };
+        responses: {
+            /** @description Per-agent halt results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        category?: string;
+                        halted?: {
+                            agent_id?: string;
+                            paused?: string[];
+                            quarantined?: boolean;
+                        }[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
     createPaymentIntent: {
         parameters: {
             query?: never;
@@ -3060,6 +3606,96 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    pausePaymentIntent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paused PaymentIntent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentIntent"];
+                };
+            };
+            /** @description Not in a pausable state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    resumePaymentIntent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resumed PaymentIntent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentIntent"];
+                };
+            };
+            /** @description Resume gate failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replayInvestigation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Forensic bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        payment_intent?: components["schemas"]["PaymentIntent"];
+                        executions?: Record<string, never>[];
+                        policy_decision_id?: string | null;
+                        evidence_ids?: string[];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     proposeAction: {

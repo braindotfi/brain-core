@@ -90,6 +90,19 @@ A request that carries a free-form intent (rather than a domain event) is scored
 
 The embedding strategy keeps the **rules classifier as a live fallback**: when an intent scores below the similarity threshold, or the embedding service is unavailable, the router falls back to token overlap. The two strategies are interchangeable behind the same interface, so routing and selection scoring are unchanged — only the source of the intent-match score differs. With the flag off (the default), behavior is identical to the earlier phases.
 
+## Autonomous execution (Agent Autonomy v3)
+
+The library is hardened for production autonomous execution, with money-movement **off by default**:
+
+- **Shadow mode + graduated promotion.** Every agent is shadowed by default — a financial proposal terminates as `shadow_completed` and moves no money. Going live is a deliberate, per-agent promotion gated by strict caps (signed spend envelopes + `approval_required_above`) and an allowlisted rail. The five money-movers (Treasury, Payment, Bill Management, Savings, Debt Optimization) are promoted one at a time.
+- **Action resolution.** Within a selected agent the action is resolved explicit → event-map → intent-map → opt-in default; unresolved actions persist as `missing_action`, never a silent default. Money-movers/high-risk agents have no default action.
+- **Behavior pinning.** Each agent registers a `behaviorHash`; the gate (check 1.5) rejects a runtime model/prompt/tool drift. Promotion to a new behavior needs tenant re-attestation.
+- **High-risk agents** (Vendor Risk, Compliance) emit auditable **findings** before any block/confirm, with a tenant-root override-and-document path.
+- **Counterparty-facing agents** (Collections, Dispute, Subscription) send only **tenant-approved message templates** from the signed policy doc — no free-form prose to customers/vendors.
+- **Observability.** Every run persists a structured reason and trace; `GET /v1/agents/runs/{id}/why` returns the full reason + gate trace + rail receipt.
+
+See the API reference for the `/v1/agents/run`, `/why`, and kill-switch endpoints.
+
 ## Related
 
 | Topic                          | Page                                                                 |

@@ -80,4 +80,31 @@ export class PaymentsResource {
       status: body.status,
     };
   }
+
+  // --- Kill-switch + forensics (Agent Autonomy v3, 1b.3 / 2.4) ---
+
+  /** Pause an approved PaymentIntent (approved → paused). */
+  async pause(id: string): Promise<PaymentIntent> {
+    const { data, error, response } = await this.http.POST("/payment-intents/{id}/pause", {
+      params: { path: { id } },
+    });
+    return unwrap(data, error, response.status);
+  }
+
+  /** Resume a paused PaymentIntent — re-runs the live §6 gate first. */
+  async resume(id: string): Promise<PaymentIntent> {
+    const { data, error, response } = await this.http.POST("/payment-intents/{id}/resume", {
+      params: { path: { id } },
+    });
+    return unwrap(data, error, response.status);
+  }
+
+  /** Typed forensic record: the intent, its executions + rail receipts, linking ids. */
+  async replayInvestigation(id: string): Promise<Record<string, unknown>> {
+    const { data, error, response } = await this.http.GET(
+      "/payment-intents/{id}/replay-investigation",
+      { params: { path: { id } } },
+    );
+    return unwrap(data, error, response.status) as Record<string, unknown>;
+  }
 }

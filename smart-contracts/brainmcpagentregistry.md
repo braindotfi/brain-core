@@ -166,6 +166,13 @@ Discovery is itself audited. Brain logs every selection event so a tenant can la
 
 The contract is a thin layer over ERC-8004 with Brain-specific fields for MCP endpoint and explicit per-tenant scoping.
 
+## behaviorHash pinning (Agent Autonomy v3)
+
+`registerAgent` now also takes a `behaviorHash = keccak256(model_id, model_version, prompt_template_hash, tool_manifest_hash)`, emitted on `AgentRegistered` and stored on the registration. This freezes the agent's behavior at a known version — enterprise security teams get a "the agent cannot silently change its model/prompt/tools" guarantee.
+
+- The §6 gate adds **check 1.5**: the runtime `behaviorHash` must equal the registered value, or the action is rejected regardless of every other signal.
+- Promotion to a new behavior requires fresh tenant re-attestation via `updateBehaviorHash(agentId, behaviorHash, tenantSignature)` (EIP-712 signed by a tenant signer) — the on-chain analogue of re-signing the ScopeAttestation.
+
 ### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🤖 Agents</strong></td><td>The conceptual model.</td><td><a href="../concepts/agents.md">agents.md</a></td><td></td></tr><tr><td><strong>🔐 BrainSmartAccount</strong></td><td>How `isScoped()` is checked during UserOp validation.</td><td><a href="brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr><tr><td><strong>🌐 Agents API</strong></td><td>Register and scope agents over HTTP.</td><td><a href="../api-reference/agents-api.md">agents-api.md</a></td><td></td></tr></tbody></table>

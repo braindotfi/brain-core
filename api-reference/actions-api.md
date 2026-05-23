@@ -152,6 +152,25 @@ Authorization: Bearer <tenant token>
 
 The action is marked `cancelled`. An audit event records the cancellation.
 
+### Kill-switch: Pause / Resume
+
+An `approved` action can be held without a terminal transition, then released:
+
+```http
+POST /v1/actions/{action_id}/pause     # approved → paused
+POST /v1/actions/{action_id}/resume    # paused → approved (re-runs the live §6 gate)
+```
+
+`pause`/`resume` also accept the deprecated `/v1/payment-intents/{id}/...` aliases. A halted agent (`POST /v1/agents/{agent_id}/halt`) pauses all of its in-flight actions at once.
+
+### Replay Investigation
+
+```http
+GET /v1/actions/{action_id}/replay-investigation
+```
+
+Returns a typed forensic record — the action, its executions (each with its typed rail receipt), and the linking ids (`policy_decision_id`, `evidence_ids`). The policy decision, reservation, and audit chain are referenced by id and joined via their owning service APIs.
+
 ### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📜 Audit API</strong></td><td>Pull proofs for executed actions.</td><td><a href="audit-api.md">audit-api.md</a></td><td></td></tr><tr><td><strong>🤖 Agents API</strong></td><td>Register agents and grant scope.</td><td><a href="agents-api.md">agents-api.md</a></td><td></td></tr></tbody></table>

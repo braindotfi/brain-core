@@ -77,11 +77,13 @@ try {
 | `INSUFFICIENT_BALANCE`    | Source account balance < amount                                | Top up or pick a different account |
 | `LIMITS_EXCEEDED`         | Account-level per-tx or per-day limit exceeded                 | Adjust limits in the Console       |
 | `IDEMPOTENCY_KEY_REUSED`  | The same idempotency key was used for a different request body | Generate a new key                 |
+| `AGENT_PROPOSAL_DUPLICATE` | Proposal-layer idempotency collision — this run already produced an equivalent proposal | Reuse the existing proposal; don't retry |
 
 ### Pre-Execution Gate Failures
 
 | Code                           | Meaning                                                           |
 | ------------------------------ | ----------------------------------------------------------------- |
+| `GATE_BEHAVIOR_HASH_MISMATCH`  | Runtime agent `behaviorHash` ≠ the value registered on-chain (check 1.5) — hard reject |
 | `GATE_NO_POLICY_DECISION`      | No PolicyDecision linked to this action                           |
 | `GATE_POLICY_VERSION_STALE`    | Active policy superseded the one Policy evaluated                 |
 | `GATE_COUNTERPARTY_UNVERIFIED` | Counterparty's `verified_status` doesn't match policy requirement |

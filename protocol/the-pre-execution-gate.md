@@ -96,6 +96,18 @@ A bypass path defeats the purpose. If anyone (tenant, operator, agent) can overr
 
 This is the same logic as airline pre-flight checklists: not because the captain doesn't know what they're doing, but because removing the checklist removes the proof that it was done.
 
+### Dry-run mode (Agent Autonomy v3)
+
+The gate accepts a `dryRun` flag. In dry-run it runs the **same** 13 checks against the **same** Ledger state and returns the same envelope, but does **not** insert a `policy_decisions` row, write a reservation, or emit audit events. Agents call dry-run before building a full proposal — to short-circuit obvious rejects and to decide `confirm` vs `execute`. There is **one** evaluator: the same gate code runs live and dry-run, so the two can never drift. The live gate still runs at execute time.
+
+### Check 1.5 — behavior pinning
+
+A new check sits between identity and authorization: the runtime agent `behaviorHash` must equal the value registered on-chain in `BrainMCPAgentRegistry`. A mismatch — a silent model/prompt/tool swap — is a hard reject regardless of every other signal. It is verified only when a runtime hash is supplied, so the canonical happy path remains the 13 checks.
+
+### Net of reservations
+
+Check #8 (balance) now subtracts active balance reservations: `available_balance − Σ(active reservations) ≥ amount`. With several money-movers live, parallel proposers can't double-spend the same balance.
+
 ### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>💸 Payment Intents</strong></td><td>The Ledger entity the gate evaluates.</td><td><a href="payment-intents.md">payment-intents.md</a></td><td></td></tr><tr><td><strong>📋 Policy and Permissioning</strong></td><td>The standing rule that runs alongside the flight check.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr><tr><td><strong>🛡️ Audit and Proof</strong></td><td>Where the per-step audit events land.</td><td><a href="audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr></tbody></table>

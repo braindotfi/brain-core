@@ -6,6 +6,43 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.4 (Agent Autonomy v3)
+
+Hardens the 19-agent internal library for production autonomous execution. **Money-movers stay shadowed by default** — going live is a deliberate, per-agent promotion (strict caps + allowlisted rails); no agent moves money until promoted.
+
+#### Added — HTTP API
+
+- `POST /v1/agents/route` — routing decision only (no run).
+- `POST /v1/agents/run` — route → resolve action → dry-run gate → persist run → propose (shadow-aware; a shadowed agent's financial proposal terminates as `shadow_completed`).
+- `POST /v1/agents/events` — enqueue an event-driven route/run job.
+- `GET /v1/agents/runs`, `GET /v1/agents/runs/{run_id}`, `GET /v1/agents/runs/{run_id}/why` — run history + the structured-reason / trace / gate / receipt bundle.
+- `GET /v1/agents/routing-decisions/{id}` — routing decision detail.
+- `POST /v1/agents/{agent_id}/halt`, `POST /v1/agents/halt-category` — kill-switch: pause an agent's in-flight intents + quarantine it, or emergency-stop a whole category.
+- `POST /v1/payment-intents/{id}/pause`, `POST /v1/payment-intents/{id}/resume` — pause/resume an approved intent (resume re-runs the live §6 gate).
+- `GET /v1/payment-intents/{id}/replay-investigation` — typed forensic record (intent + executions + rail receipts + linking ids).
+
+#### Added — Policy DSL (signed)
+
+- `agent.id`, `tenant.category`, `action.in` / `action.not_in`, `agent.behaviorHash`, `agent.spend_in_window`, `agent.tx_count_in_window`, and rule-level `approval_required_above`. All covered by the policy content hash, so they're signed.
+
+#### Added — Smart contracts
+
+- `BrainSmartAccount.pauseSessionKey(holder)` / `unpauseSessionKey(holder)` — disable execution while preserving the key record, window spend, limits, and metadata (distinct from `revokeSessionKey`, which is permanent removal).
+- `BrainMCPAgentRegistry.registerAgent` now takes a `behaviorHash`; `updateBehaviorHash(...)` re-attests on a model/prompt/tool change. The §6 gate adds check 1.5 (runtime `behaviorHash` must match the registered value).
+
+#### Changed
+
+- `Agent.state` adds `quarantined` (additive enum widening).
+- Typed rail receipts (`ach` / `wire` / `erp` / `onchain`): the audit-after step refuses to commit unless the receipt validates against the rail's schema.
+
+#### Errors
+
+- `agent_proposal_duplicate` (409) — proposal-layer idempotency collision.
+
+#### SDK (`@brain/sdk`)
+
+- New `agents.route/run/enqueueEvent/listRuns/getRun/why/getRoutingDecision/halt/haltCategory` and `payments.pause/resume/replayInvestigation`. Generated types regenerated from the OpenAPI spec.
+
 ### v0.3.1 (poc-investor-demo)
 
 #### Breaking changes

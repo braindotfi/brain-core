@@ -132,6 +132,20 @@ Even if the off-chain backend is compromised, on-chain validation rejects UserOp
 | Backend replays an old verdict against a new UserOp | Reverts: verdict bound to wrong `userOpHash` |
 | Compromised key tries to submit beyond limits       | Reverts: "limits exceeded"                   |
 
+## Kill-switch: pause vs revoke (Agent Autonomy v3)
+
+| Function | Effect |
+| --- | --- |
+| `pauseSessionKey(holder)` | Immediately disables execution by this session key **without** deleting its record, window spend, limits, or metadata — so `unpauseSessionKey(holder)` resumes with no fresh attestation. Idempotent, owner-only. |
+| `unpauseSessionKey(holder)` | Re-enables execution under the key's existing scope and accumulated window spend. |
+| `revokeSessionKey(holder)` | **Permanent** removal — deletes the key record entirely (and clears any pause flag). |
+
+`executeViaSessionKey` reverts with `KeyPaused` while a key is paused. This backs the off-chain `/v1/agents/{id}/halt` and `/v1/payment-intents/{id}/pause` flows.
+
+### Per-task minimum-privilege keys
+
+A one-time child key is granted per approved PaymentIntent, bounded to the **exact** counterparty (`allowedTargets`), **exact** amount (`maxPerTx == maxPerPeriod`), and a ~10-minute `validUntil`. A compromised worker can spend at most one in-flight intent's authority.
+
 ### What's Next
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🪪 BrainMCPAgentRegistry</strong></td><td>Where agent identity is checked.</td><td><a href="brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr><tr><td><strong>📋 BrainPolicyRegistry</strong></td><td>Where the active policy hash is anchored.</td><td><a href="brainpolicyregistry.md">brainpolicyregistry.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>The conceptual model.</td><td><a href="../concepts/agents.md">agents.md</a></td><td></td></tr></tbody></table>

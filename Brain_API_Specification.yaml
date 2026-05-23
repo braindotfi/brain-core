@@ -1222,6 +1222,223 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/JsonRpcResponse' }
 
+  /agents/route:
+    post:
+      tags: [Agent]
+      summary: Routing decision only (no run)
+      description: Returns the selected agent + scoring reason. Advisory; the selected agent still proposes through the gated path.
+      operationId: routeAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentRouteRequest' }
+      responses:
+        '200':
+          description: Routing decision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutingDecision' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /agents/run:
+    post:
+      tags: [Agent]
+      summary: Route, resolve action, persist a run, and propose (shadow-aware)
+      description: |
+        Routes an event/intent to an agent, resolves the action within it,
+        evaluates the §6 gate in dry-run, persists an `agent_runs` row, and
+        proposes through the existing path. A financial proposal from a shadowed
+        (un-promoted) agent terminates as `shadow_completed` and moves no money.
+      operationId: runAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentRouteRequest' }
+      responses:
+        '200':
+          description: Run result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentRunResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: Proposal-layer idempotency collision (`agent_proposal_duplicate`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /agents/events:
+    post:
+      tags: [Agent]
+      summary: Enqueue an event-driven route/run job
+      operationId: enqueueAgentEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentRouteRequest' }
+      responses:
+        '200':
+          description: Job enqueued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id: { type: string }
+                  status: { type: string, enum: [queued] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /agents/runs:
+    get:
+      tags: [Agent]
+      summary: List agent runs
+      operationId: listAgentRuns
+      parameters:
+        - name: agent_id
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/AgentRunStatus' }
+        - name: category
+          in: query
+          schema: { type: string, enum: [business, consumer] }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 500 }
+      responses:
+        '200':
+          description: Run list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items: { $ref: '#/components/schemas/AgentRun' }
+
+  /agents/runs/{run_id}:
+    get:
+      tags: [Agent]
+      summary: Agent run detail
+      operationId: getAgentRun
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentRun' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /agents/runs/{run_id}/why:
+    get:
+      tags: [Agent]
+      summary: Structured reason + trace bundle for a run
+      description: The artifact CFOs / auditors / support live in — the structured router reason plus (redacted) reasoning trace, gate trace, and rail receipt.
+      operationId: getAgentRunWhy
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Reason bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run: { $ref: '#/components/schemas/AgentRun' }
+                  reason: { type: object }
+                  gate_trace: { type: [object, "null"] }
+                  rail_receipt: { type: [object, "null"] }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /agents/routing-decisions/{id}:
+    get:
+      tags: [Agent]
+      summary: Routing decision detail
+      operationId: getRoutingDecision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Routing decision record
+          content:
+            application/json:
+              schema: { type: object }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /agents/{agent_id}/halt:
+    post:
+      tags: [Agent]
+      summary: Halt an agent — pause its in-flight intents and quarantine it
+      description: Tenant-root kill-switch (1b.3). Pauses all in-flight PaymentIntents from the agent and flips its state to `quarantined`.
+      operationId: haltAgent
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Halt result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent_id: { type: string }
+                  paused: { type: array, items: { type: string } }
+                  quarantined: { type: boolean }
+
+  /agents/halt-category:
+    post:
+      tags: [Agent]
+      summary: Emergency-stop every agent in a category
+      description: Break-glass + tenant-root. Halts all agents of the given category.
+      operationId: haltCategory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category]
+              properties:
+                category: { type: string, enum: [business, consumer, agnostic] }
+      responses:
+        '200':
+          description: Per-agent halt results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  category: { type: string }
+                  halted:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        agent_id: { type: string }
+                        paused: { type: array, items: { type: string } }
+                        quarantined: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
   /payment-intents:
     post:
       tags: [PaymentIntent]
@@ -1349,6 +1566,83 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /payment-intents/{id}/pause:
+    post:
+      tags: [PaymentIntent]
+      summary: Pause an approved PaymentIntent (kill-switch)
+      description: Holds an `approved` intent without a terminal transition (1b.3). approved → paused.
+      operationId: pausePaymentIntent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paused PaymentIntent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentIntent' }
+        '409':
+          description: Not in a pausable state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /payment-intents/{id}/resume:
+    post:
+      tags: [PaymentIntent]
+      summary: Resume a paused PaymentIntent
+      description: Re-runs the live §6 gate before re-entering `approved` (defends against Ledger state drift while paused). paused → approved.
+      operationId: resumePaymentIntent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Resumed PaymentIntent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentIntent' }
+        '409':
+          description: Resume gate failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /payment-intents/{id}/replay-investigation:
+    get:
+      tags: [PaymentIntent]
+      summary: Typed forensic record for a PaymentIntent
+      description: |
+        Returns the intent, its executions (each with its typed rail receipt),
+        and the linking ids (policy_decision_id, evidence_ids). The policy
+        decision, reservation, and audit chain are referenced by id and joined
+        via their owning service APIs (2.4).
+      operationId: replayInvestigation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Forensic bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payment_intent: { $ref: '#/components/schemas/PaymentIntent' }
+                  executions:
+                    type: array
+                    items: { type: object }
+                  policy_decision_id: { type: [string, "null"] }
+                  evidence_ids: { type: array, items: { type: string } }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   #############################################################################
   # LAYER 5 (legacy): EXECUTION — deprecated, retained for v0.3 transition
@@ -2561,9 +2855,93 @@ components:
           pattern: '^0x[a-fA-F0-9]{40}$'
         state:
           type: string
-          enum: [pending_onchain, active, revoked, failed]
+          enum: [pending_onchain, active, revoked, failed, quarantined]
         registered_tx: { type: [string, "null"] }
         registered_at: { type: [string, "null"], format: date-time }
+
+    # Agent Autonomy v3 — routing + run records
+    AgentRunStatus:
+      type: string
+      enum:
+        - routing
+        - routed
+        - no_match
+        - unscoped
+        - missing_handler
+        - missing_action
+        - missing_evidence
+        - proposal_created
+        - confirmation_required
+        - executed
+        - notify_only
+        - rejected
+        - failed
+        - duplicate_skipped
+        - paused
+        - shadow_completed
+
+    AgentRouteRequest:
+      type: object
+      description: One of `event` or `intent` is required.
+      properties:
+        event: { type: string }
+        intent: { type: string }
+        context: { type: object }
+
+    RoutingDecision:
+      type: object
+      properties:
+        selected_agent_id: { type: [string, "null"] }
+        fallback_agent_ids: { type: array, items: { type: string } }
+        confidence: { type: number }
+        evidence_score: { type: number }
+        policy_status: { type: string, enum: [routed, unscoped, no_match] }
+        execution_mode:
+          type: [string, "null"]
+          enum: [execute, propose, confirm, notify_only, reject, null]
+        reason: { type: string }
+
+    AgentRunResult:
+      type: object
+      properties:
+        status: { $ref: '#/components/schemas/AgentRunStatus' }
+        routing_decision_id: { type: string }
+        run_id: { type: [string, "null"] }
+        selected_agent_id: { type: [string, "null"] }
+        action: { type: [string, "null"] }
+        shadow_mode: { type: boolean }
+        proposed:
+          type: object
+          properties:
+            id: { type: string }
+            status: { type: string }
+            policy_decision_id: { type: [string, "null"] }
+        reason: { type: object }
+
+    AgentRun:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        tenant_category: { type: string, enum: [business, consumer] }
+        agent_id: { type: string }
+        agent_kind: { type: string, enum: [internal, external] }
+        event_type: { type: [string, "null"] }
+        intent: { type: [string, "null"] }
+        action: { type: [string, "null"] }
+        execution_mode: { type: string, enum: [execute, propose, confirm, notify_only, reject] }
+        status: { $ref: '#/components/schemas/AgentRunStatus' }
+        confidence: { type: [number, "null"] }
+        evidence_score: { type: [number, "null"] }
+        policy_status: { type: [string, "null"], enum: [allow, confirm, reject, unknown, null] }
+        proposal_id: { type: [string, "null"] }
+        payment_intent_id: { type: [string, "null"] }
+        policy_decision_id: { type: [string, "null"] }
+        routing_decision_id: { type: [string, "null"] }
+        reason: { type: object }
+        shadow_mode: { type: boolean }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
 
     #
     # MCP — JSON-RPC 2.0 envelopes for the /agents/mcp surface
