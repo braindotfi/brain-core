@@ -109,6 +109,25 @@ describe("dispatch", () => {
     }
   });
 
+  it("maps granular gate_* codes to the gate-failed JSON-RPC code, not internal error", async () => {
+    const res = await dispatch(
+      { jsonrpc: "2.0", id: 1, method: "tools/call" },
+      {
+        handlers: {
+          "tools/call": async () => {
+            throw { code: "gate_counterparty_sanctioned", message: "counterparty sanctioned" };
+          },
+        },
+      },
+      ctx,
+    );
+    expect("error" in res && res.error.code).toBe(-32004);
+    if ("error" in res) {
+      expect(res.error.code).not.toBe(JSON_RPC_INTERNAL_ERROR);
+      expect(res.error.data?.brain_code).toBe("gate_counterparty_sanctioned");
+    }
+  });
+
   it("falls back to internal error for unknown errors", async () => {
     const res = await dispatch(
       { jsonrpc: "2.0", id: 1, method: "ping" },

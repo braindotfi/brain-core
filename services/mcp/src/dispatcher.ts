@@ -122,6 +122,16 @@ function shapeError(id: number | string | null, err: unknown): JsonRpcResponse {
     auth_tenant_mismatch: -32002,
     agent_not_registered: -32003,
     payment_intent_gate_failed: -32004,
+    // Granular gate codes that replaced the payment_intent_gate_failed umbrella
+    // map to the same gate-failed JSON-RPC code.
+    gate_no_policy_decision: -32004,
+    gate_policy_version_stale: -32004,
+    gate_counterparty_unverified: -32004,
+    gate_counterparty_sanctioned: -32004,
+    gate_balance_insufficient: -32004,
+    gate_approval_incomplete: -32004,
+    gate_session_key_invalid: -32004,
+    gate_audit_chain_stale: -32004,
     agent_scope_hash_mismatch: -32005,
     request_body_invalid: -32602,
     request_params_invalid: -32602,
