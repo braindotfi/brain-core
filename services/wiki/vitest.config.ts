@@ -31,7 +31,6 @@ export default defineConfig({
         "src/pages/monthly-summary.ts",
         "src/pages/obligation.ts",
         "src/pages/policy.ts",
-        "src/pages/stubs.ts",
         "src/pages/WikiPageService.ts",
       ],
       thresholds: {
