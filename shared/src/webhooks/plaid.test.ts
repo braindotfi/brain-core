@@ -6,7 +6,7 @@ import { verifyPlaidWebhook } from "./plaid.js";
 
 async function makeSignedWebhook(
   rawBody: Buffer,
-  overrides: { iat?: number } = {},
+  overrides: { iat?: number; iss?: string } = {},
 ): Promise<{
   header: string;
   jwk: JWK;
@@ -17,10 +17,11 @@ async function makeSignedWebhook(
   const kid = "plaid-kid-test";
   const iat = overrides.iat ?? Math.floor(Date.now() / 1000);
 
-  const header = await new SignJWT({ request_body_sha256: bodyHash })
+  let builder = new SignJWT({ request_body_sha256: bodyHash })
     .setProtectedHeader({ alg: "ES256", kid })
-    .setIssuedAt(iat)
-    .sign(privateKey);
+    .setIssuedAt(iat);
+  if (overrides.iss !== undefined) builder = builder.setIssuer(overrides.iss);
+  const header = await builder.sign(privateKey);
 
   const jwk = await exportJWK(publicKey);
   return { header, jwk: { ...jwk, kid }, kid };
@@ -73,6 +74,30 @@ describe("verifyPlaidWebhook", () => {
     } catch (err) {
       expect(isBrainError(err)).toBe(true);
     }
+  });
+
+  it("rejects a token whose issuer differs from expectedIssuer", async () => {
+    const body = Buffer.from(`{"webhook_code":"TRANSACTIONS:DEFAULT_UPDATE"}`);
+    const { header, jwk } = await makeSignedWebhook(body); // no iss claim
+    await expect(
+      verifyPlaidWebhook(body, header, {
+        keyResolver: async () => jwk,
+        expectedIssuer: "https://production.plaid.com",
+      }),
+    ).rejects.toSatisfy((err) => isBrainError(err) && err.code === "raw_webhook_signature_invalid");
+  });
+
+  it("accepts a token whose issuer matches expectedIssuer", async () => {
+    const body = Buffer.from(`{"webhook_code":"X"}`);
+    const { header, jwk } = await makeSignedWebhook(body, {
+      iss: "https://production.plaid.com",
+    });
+    await expect(
+      verifyPlaidWebhook(body, header, {
+        keyResolver: async () => jwk,
+        expectedIssuer: "https://production.plaid.com",
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("rejects when request_body_sha256 claim is missing", async () => {

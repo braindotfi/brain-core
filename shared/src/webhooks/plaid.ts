@@ -29,6 +29,12 @@ export interface PlaidVerifyOptions {
   keyResolver: (kid: string) => Promise<JWK>;
   /** Max skew between JWT iat and now, in seconds. Default 5 minutes. */
   clockToleranceSeconds?: number;
+  /**
+   * When set, the JWT `iss` claim must equal this value (defense-in-depth on
+   * top of the JWKS-by-kid + ES256 pinning). Left unset, no issuer is asserted
+   * (Plaid does not mandate a fixed issuer in the base verification flow).
+   */
+  expectedIssuer?: string;
 }
 
 /**
@@ -69,6 +75,7 @@ export async function verifyPlaidWebhook(
     const { payload: p } = await jwtVerify(signatureHeader, getKey, {
       algorithms: ["ES256"],
       clockTolerance: tolerance,
+      ...(opts.expectedIssuer !== undefined ? { issuer: opts.expectedIssuer } : {}),
     });
     payload = p as { request_body_sha256?: string; iat?: number };
   } catch (err) {
