@@ -1,47 +1,53 @@
 /**
  * Merkle tree builder + inclusion proof generator.
  *
- * Pair-sort hashing (leaf/sibling lexicographically ordered before keccak)
- * so leaf ordering doesn't affect the root. Matches BrainAuditAnchor.sol
- * verifyInclusion exactly — proofs generated here verify on-chain without
- * translation.
+ * The hashing scheme matches BrainAuditAnchor.sol::verifyInclusion EXACTLY so a
+ * proof generated here verifies on-chain without translation:
+ *   - leaf node     = keccak256(0x00 || leaf_data)
+ *   - internal node = keccak256(0x01 || sort(left, right))   (lexicographic sort)
  *
- * Property tested in merkle.test.ts: every leaf has a valid proof against
- * the constructed root, for random sets up to N=64.
+ * keccak256 is the only hash used — there is no pluggable/defaulted hash
+ * function, by design: a sha256 default previously made off-chain roots
+ * unverifiable on-chain. keccak256 comes from viem (already an audit dep, used
+ * by the anchor broadcaster); it is byte-identical to the contract's keccak256.
+ *
+ * Property tested in merkle.test.ts (every leaf verifies) and cross-checked
+ * against the contract scheme there and in contracts/test/BrainAuditAnchor.t.sol.
  */
 
-import { createHash } from "node:crypto";
+import { keccak256 } from "viem";
 
-function keccakLike(input: Uint8Array): Buffer {
-  // We use sha256 here as a self-contained fallback. The on-chain contract
-  // uses keccak256; for MVP we standardize the off-chain publisher on
-  // keccak (imported from @noble/hashes in policy service) — this module
-  // accepts the hash function as a parameter so callers can plug either.
-  return createHash("sha256").update(input).digest();
+/** Leaf node hash: keccak256(0x00 || leaf). */
+export function hashLeafKeccak(leaf: Buffer): Buffer {
+  return Buffer.from(keccak256(Buffer.concat([Buffer.from([0x00]), leaf]), "bytes"));
 }
 
-export type HashFn = (input: Uint8Array) => Uint8Array;
+/** Internal node hash: keccak256(0x01 || min(a,b) || max(a,b)). */
+export function hashInternalKeccak(a: Buffer, b: Buffer): Buffer {
+  const [lo, hi] = Buffer.compare(a, b) <= 0 ? [a, b] : [b, a];
+  return Buffer.from(keccak256(Buffer.concat([Buffer.from([0x01]), lo, hi]), "bytes"));
+}
 
 export interface MerkleTree {
   root: Buffer;
   leafCount: number;
+  /** layers[0] is the leaf-node layer (already keccak-leaf-hashed). */
   layers: Buffer[][];
-  hashFn: HashFn;
 }
 
-export function buildTree(leaves: ReadonlyArray<Buffer>, hashFn: HashFn = keccakLike): MerkleTree {
+export function buildTree(leaves: ReadonlyArray<Buffer>): MerkleTree {
   if (leaves.length === 0) {
     // Canonical empty-tree root — a 32-byte zero.
-    return { root: Buffer.alloc(32), leafCount: 0, layers: [], hashFn };
+    return { root: Buffer.alloc(32), leafCount: 0, layers: [] };
   }
-  const layers: Buffer[][] = [leaves.map((l) => Buffer.from(l))];
+  const layers: Buffer[][] = [leaves.map((l) => hashLeafKeccak(l))];
   while (layers[layers.length - 1]!.length > 1) {
     const prev = layers[layers.length - 1]!;
     const next: Buffer[] = [];
     for (let i = 0; i < prev.length; i += 2) {
       const a = prev[i]!;
-      const b = i + 1 < prev.length ? prev[i + 1]! : a; // duplicate odd leaf up
-      next.push(hashPair(hashFn, a, b));
+      const b = i + 1 < prev.length ? prev[i + 1]! : a; // duplicate odd node up
+      next.push(hashInternalKeccak(a, b));
     }
     layers.push(next);
   }
@@ -49,13 +55,7 @@ export function buildTree(leaves: ReadonlyArray<Buffer>, hashFn: HashFn = keccak
     root: layers[layers.length - 1]![0]!,
     leafCount: leaves.length,
     layers,
-    hashFn,
   };
-}
-
-export function hashPair(hashFn: HashFn, a: Buffer, b: Buffer): Buffer {
-  const ordered = Buffer.compare(a, b) < 0 ? Buffer.concat([a, b]) : Buffer.concat([b, a]);
-  return Buffer.from(hashFn(ordered));
 }
 
 export function makeProof(tree: MerkleTree, leafIndex: number): Buffer[] {
@@ -72,15 +72,10 @@ export function makeProof(tree: MerkleTree, leafIndex: number): Buffer[] {
   return proof;
 }
 
-export function verifyProof(
-  root: Buffer,
-  leaf: Buffer,
-  proof: ReadonlyArray<Buffer>,
-  hashFn: HashFn = keccakLike,
-): boolean {
-  let computed: Buffer = Buffer.from(leaf);
+export function verifyProof(root: Buffer, leaf: Buffer, proof: ReadonlyArray<Buffer>): boolean {
+  let computed: Buffer = hashLeafKeccak(leaf);
   for (const sibling of proof) {
-    computed = hashPair(hashFn, computed, sibling);
+    computed = hashInternalKeccak(computed, sibling);
   }
   return Buffer.compare(computed, root) === 0;
 }

@@ -148,4 +148,22 @@ contract BrainAuditAnchorTest is Test {
         proof[0] = hs; // sibling leaf hash
         assertTrue(anchor.verifyInclusion(root, leaf, proof));
     }
+
+    // Cross-check: a proof generated OFF-CHAIN by services/audit/src/merkle.ts
+    // (4 leaves 0x01..×32 .. 0x04..×32, proof for leaf index 1) must verify here.
+    // If this fails, the off-chain hashing scheme has drifted from the contract
+    // (the original sha256-vs-keccak bug). Regenerate via the node snippet in
+    // merkle.test.ts's PR description if the vector format ever changes.
+    function test_verifyInclusion_offChainGeneratedVector() public view {
+        bytes32 root = 0x5f50aa8c52d3544957d1d056e67bdf0fddcfa860f877a77fbe73efb6431a1c32;
+        bytes32 leaf = 0x0202020202020202020202020202020202020202020202020202020202020202;
+        bytes32[] memory proof = new bytes32[](2);
+        proof[0] = 0xb11a95f7ddcfbdc542f175f12554edd00d11d2bdc67124e3e3f39f1a1e54bc4a;
+        proof[1] = 0x29d5f518fb46bab34823a97ca296fa960582d3960d6fe7d012d3c92f34eccc78;
+        assertTrue(anchor.verifyInclusion(root, leaf, proof));
+
+        // Tamper one byte of the leaf → must not verify.
+        bytes32 bad = 0x0302020202020202020202020202020202020202020202020202020202020202;
+        assertFalse(anchor.verifyInclusion(root, bad, proof));
+    }
 }
