@@ -14,9 +14,31 @@
  */
 
 import type { Pool } from "pg";
-import type { AuditEmitter } from "@brain/shared";
+import { withTenantScope, type AuditEmitter } from "@brain/shared";
 import { LedgerService } from "../service/LedgerService.js";
 import type { LedgerDeps } from "../deps.js";
+
+/**
+ * Record the per-row normalization outcome. The cross-tenant poll uses the
+ * privileged pool, but this write is tenant-specific, so route it through
+ * withTenantScope: it sets app.tenant_id so the RLS WITH CHECK constraint
+ * engages (a no-op under a BYPASSRLS role, but a real safety net if the worker
+ * ever runs under the non-bypass brain_app role).
+ */
+export async function recordNormalizationResult(
+  pool: Pool,
+  row: { id: string; tenant_id: string },
+  errorMessage: string | null,
+): Promise<void> {
+  await withTenantScope(pool, row.tenant_id, async (c) => {
+    await c.query(
+      `INSERT INTO normalization_log (raw_parsed_id, tenant_id, parser, normalized_at, error)
+       VALUES ($1, $2, 'plaid_tx_v1', now(), $3)
+       ON CONFLICT (raw_parsed_id) DO NOTHING`,
+      [row.id, row.tenant_id, errorMessage],
+    );
+  });
+}
 
 export interface NormalizeWorkerOptions {
   /** Polling interval in milliseconds. Default: 15 000 (15 s). */
@@ -82,12 +104,7 @@ export function startNormalizeWorker(
       }
 
       try {
-        await deps.pool.query(
-          `INSERT INTO normalization_log (raw_parsed_id, tenant_id, parser, normalized_at, error)
-           VALUES ($1, $2, 'plaid_tx_v1', now(), $3)
-           ON CONFLICT (raw_parsed_id) DO NOTHING`,
-          [row.id, row.tenant_id, errorMessage],
-        );
+        await recordNormalizationResult(deps.pool, row, errorMessage);
       } catch (err) {
         console.error(`[normalizeWorker] failed to write normalization_log for ${row.id}:`, err);
       }
