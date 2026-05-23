@@ -15,7 +15,8 @@
  */
 
 import { lookup } from "node:dns/promises";
-import { BlockList, isIP } from "node:net";
+import { lookup as dnsLookup } from "node:dns";
+import { BlockList, isIP, type LookupFunction } from "node:net";
 
 export interface PublicUrlOptions {
   /** Allowed URL protocols, including the trailing colon. Default: ["https:"]. */
@@ -94,3 +95,30 @@ export async function isPublicUrl(rawUrl: string, opts: PublicUrlOptions = {}): 
 
   return addresses.every((addr) => !isBlockedAddress(addr));
 }
+
+/**
+ * A `dns.lookup`-compatible function that only ever resolves to a public
+ * address. Use it as the `lookup` option on an outbound `https.request` so the
+ * socket is pinned to a validated IP — this closes the DNS-rebinding TOCTOU
+ * between `isPublicUrl()`'s resolution and the connection actually being made.
+ * On a host that resolves only to private/internal addresses it errors with
+ * `code: "ESSRFBLOCKED"`.
+ */
+export const publicOnlyLookup: LookupFunction = (hostname, _options, callback) => {
+  dnsLookup(hostname, { all: true }, (err, addresses) => {
+    if (err !== null) {
+      callback(err, "", 0);
+      return;
+    }
+    const valid = addresses.find((a) => !isBlockedAddress(a.address));
+    if (valid === undefined) {
+      const blocked: NodeJS.ErrnoException = Object.assign(
+        new Error(`host ${hostname} resolves only to non-public addresses`),
+        { code: "ESSRFBLOCKED" },
+      );
+      callback(blocked, "", 0);
+      return;
+    }
+    callback(null, valid.address, valid.family);
+  });
+};

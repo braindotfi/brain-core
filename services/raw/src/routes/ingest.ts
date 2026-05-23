@@ -14,7 +14,7 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { brainError, isBrainId, isPublicUrl, requireScope, type Scope } from "@brain/shared";
+import { brainError, fetchPublicHttps, isBrainId, requireScope, type Scope } from "@brain/shared";
 import { adapterForSourceType } from "../adapters/registry.js";
 import { ingestOne } from "../services/ingest.js";
 import type { RawDeps } from "../deps.js";
@@ -132,38 +132,23 @@ async function handleJson(request: FastifyRequest, reply: FastifyReply, deps: Ra
   if (body.source_type === undefined || body.url === undefined) {
     throw brainError("request_body_invalid", "source_type and url are required");
   }
-  // SSRF guard: HTTPS only, and the host must resolve to a public address —
-  // blocks fetches against cloud metadata (169.254.169.254), loopback, and
-  // internal services.
-  if (!(await isPublicUrl(body.url, { allowedProtocols: ["https:"] }))) {
-    throw brainError(
-      "request_body_invalid",
-      "url must be HTTPS and resolve to a public (non-internal) address",
-    );
-  }
   adapterForSourceType(body.source_type);
 
   const headers: Record<string, string> = {};
   if (body.auth_header !== undefined) headers["authorization"] = body.auth_header;
 
-  const res = await fetch(body.url, { headers });
-  if (!res.ok) {
-    throw brainError("dependency_unavailable", `fetch failed: HTTP ${res.status}`, {
-      details: { status: res.status },
-    });
-  }
-  const arrayBuf = await res.arrayBuffer();
-  if (arrayBuf.byteLength > MAX_BYTES) {
-    throw brainError("request_too_large", "fetched artifact exceeds 50MB cap");
-  }
+  // SSRF-safe fetch: HTTPS only, validated public at every redirect hop, socket
+  // pinned to a validated IP (DNS-rebinding), credentials dropped on cross-origin
+  // redirects, and streamed with a hard 50MB cap (no full-body buffering).
+  const fetched = await fetchPublicHttps(body.url, { headers, maxBytes: MAX_BYTES });
 
   const result = await ingestOne(deps, {
     tenantId: request.principal!.tenantId,
     actor: request.principal!.id,
     sourceType: body.source_type,
     sourceRef: body.source_ref ?? { url: body.url },
-    body: Buffer.from(arrayBuf),
-    mimeType: res.headers.get("content-type") ?? undefined,
+    body: fetched.body,
+    mimeType: fetched.contentType,
   });
 
   reply.status(result.deduplicated ? 200 : 201);

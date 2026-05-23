@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPublicUrl } from "./ssrf.js";
+import { isPublicUrl, publicOnlyLookup } from "./ssrf.js";
 
 describe("isPublicUrl — SSRF guard", () => {
   it("blocks the cloud metadata / link-local address", async () => {
@@ -43,5 +43,25 @@ describe("isPublicUrl — SSRF guard", () => {
     expect(await isPublicUrl("http://10.0.0.1/", { allowedProtocols: ["http:", "https:"] })).toBe(
       false,
     );
+  });
+});
+
+describe("publicOnlyLookup — DNS-rebinding socket pin", () => {
+  function resolve(host: string): Promise<{ err: NodeJS.ErrnoException | null; address: string }> {
+    return new Promise((done) => {
+      publicOnlyLookup(host, {}, (err, address) => done({ err, address }));
+    });
+  }
+
+  it("errors (ESSRFBLOCKED) when the host resolves only to a blocked address", async () => {
+    const { err } = await resolve("localhost"); // → 127.0.0.1 / ::1
+    expect(err).not.toBeNull();
+    expect(err?.code).toBe("ESSRFBLOCKED");
+  });
+
+  it("resolves a public IP literal unchanged", async () => {
+    const { err, address } = await resolve("8.8.8.8");
+    expect(err).toBeNull();
+    expect(address).toBe("8.8.8.8");
   });
 });
