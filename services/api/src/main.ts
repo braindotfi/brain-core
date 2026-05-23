@@ -38,7 +38,10 @@ import {
   RecordedLlmAdapter,
   loadConfig,
   brainError,
+  brainId,
   withTenantScope,
+  createRoutingEnqueue,
+  isDomainEvent,
   newTokenId,
   newPolicyId,
   type IRawEvidenceService,
@@ -81,6 +84,12 @@ import {
   defaultRails,
   findAgent,
   findUser,
+  insertAgentRun,
+  insertRoutingDecision,
+  findAgentRun,
+  listAgentRuns,
+  findRoutingDecision,
+  transitionAgent,
 } from "@brain/execution";
 import type { ExecutionDeps } from "@brain/execution";
 
@@ -98,17 +107,26 @@ import {
 
 import { BrainMcpServer, FakeAuthVerifier, McpAuthVerifier, registerMcpRoute } from "@brain/mcp";
 import {
+  ActionResolver,
   AgentRouter,
+  AgentRunService,
   EmbeddingIntentClassifier,
   FallbackIntentClassifier,
   RulesIntentClassifier,
   StaticEvidenceGatherer,
   createAgentRouteWorker,
   reindexIntentClassifier,
-  registerAgentRouterRoutes,
+  registerAgentApiRoutes,
+  StaticPromotionPolicy,
+  type AgentRunStore,
+  type AgentApiReadStore,
   type IntentClassifier,
 } from "@brain/agent-router";
-import { internalAgentCatalog, internalAgentHandlers } from "@brain/internal-agents";
+import {
+  internalAgentCatalog,
+  internalAgentDefinitions,
+  internalAgentHandlers,
+} from "@brain/internal-agents";
 import { createViemScopeChecker } from "./mcp/viemScopeChecker.js";
 import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
@@ -637,6 +655,10 @@ async function main(): Promise<void> {
     audit,
   });
 
+  // Picks the action within the selected agent (replaces handler.actions[0]),
+  // using the same classifier the router uses for intent_action_map scoring.
+  const actionResolver = new ActionResolver({ classifier: agentClassifier });
+
   // Delegate the reconciliation agent to the Python reconciliation service when
   // RECONCILIATION_AGENT_URL is set; otherwise reconciliation uses the default
   // AgentService. ReconciliationAgentClient is itself an IAgentService.
@@ -645,6 +667,98 @@ async function main(): Promise<void> {
     reconciliationAgentUrl !== undefined
       ? { reconciliation: new ReconciliationAgentClient(reconciliationAgentUrl) }
       : {};
+
+  // -- Agent run persistence + run service (Agent Autonomy v3, 1a.3/1a.6) ---
+  // Runs persist through the execution-owned agent_runs tables (tenant-scoped,
+  // RLS). The store boundary keeps @brain/agent-router free of an execution dep.
+  const agentRunStore: AgentRunStore = {
+    recordRoutingDecision: (rdCtx, input) =>
+      withTenantScope(pool, rdCtx.tenantId, async (c) => {
+        const row = await insertRoutingDecision(c, {
+          id: brainId("agrd"),
+          tenantId: rdCtx.tenantId,
+          tenantCategory: input.tenantCategory,
+          policyStatus: input.policyStatus,
+          reason: input.reason,
+          selectedAgentId: input.selectedAgentId,
+          fallbackAgentIds: [...input.fallbackAgentIds],
+          confidence: input.confidence,
+          evidenceScore: input.evidenceScore,
+          eventType: input.eventType ?? null,
+          intent: input.intent ?? null,
+        });
+        return { id: row.id };
+      }),
+    recordRun: (runCtx, input) =>
+      withTenantScope(pool, runCtx.tenantId, async (c) => {
+        const row = await insertAgentRun(c, {
+          id: brainId("agnr"),
+          tenantId: runCtx.tenantId,
+          tenantCategory: input.tenantCategory,
+          agentId: input.agentId,
+          agentKind: input.agentKind,
+          executionMode: input.executionMode,
+          status: input.status,
+          reason: input.reason,
+          shadowMode: input.shadowMode,
+          routingDecisionId: input.routingDecisionId,
+          eventType: input.eventType ?? null,
+          intent: input.intent ?? null,
+          action: input.action ?? null,
+          confidence: input.confidence ?? null,
+          evidenceScore: input.evidenceScore ?? null,
+          policyStatus: input.policyStatus ?? null,
+          proposalId: input.proposalId ?? null,
+          paymentIntentId: input.paymentIntentId ?? null,
+          failureReason: input.failureReason ?? null,
+        });
+        return { id: row.id };
+      }),
+  };
+
+  const agentApiReads: AgentApiReadStore = {
+    listRuns: (readCtx, filter) =>
+      withTenantScope(pool, readCtx.tenantId, (c) =>
+        // status is a free string at the HTTP boundary; the CHECK constraint and
+        // the AgentRunStatus type are the source of truth for valid values.
+        listAgentRuns(c, filter as Parameters<typeof listAgentRuns>[1]),
+      ),
+    findRun: (readCtx, id) => withTenantScope(pool, readCtx.tenantId, (c) => findAgentRun(c, id)),
+    findRoutingDecision: (readCtx, id) =>
+      withTenantScope(pool, readCtx.tenantId, (c) => findRoutingDecision(c, id)),
+  };
+
+  const routingEnqueue = createRoutingEnqueue({ redisUrl: cfg.REDIS_URL });
+
+  // Graduated money-movement promotion (Phase 1b). Default config = all agents
+  // shadowed; promote one at a time with its allowed rails, e.g.
+  // `new StaticPromotionPolicy({ liveAgents: { savings: ["ach"] } })`. Until then
+  // every financial proposal terminates as shadow_completed (the §6 gate + the
+  // money-mover policy templates enforce caps again once promoted).
+  const promotionPolicy = new StaticPromotionPolicy();
+  const railKindForAction = (actionType: string): string => {
+    if (actionType.startsWith("ach")) return "ach";
+    if (actionType === "wire") return "wire";
+    if (actionType === "onchain_transfer") return "onchain";
+    if (actionType === "erp_writeback") return "erp";
+    if (actionType === "card_payment") return "card";
+    return actionType;
+  };
+  const agentRunService = new AgentRunService({
+    router: agentRouter,
+    actionResolver,
+    handlers: internalAgentHandlers,
+    definitions: internalAgentDefinitions,
+    evidence: agentEvidence,
+    propose: { agents: agentService, paymentIntents: paymentIntentService },
+    store: agentRunStore,
+    getTenantCategory: () => "business",
+    isShadowed: (agentId) => !promotionPolicy.isLive(agentId),
+    checkRail: (agentId, actionType) =>
+      promotionPolicy.isRailAllowed(agentId, railKindForAction(actionType)),
+    intentClassifierStrategy: cfg.AGENT_INTENT_CLASSIFIER === "embedding" ? "embedding" : "rules",
+    agentOverrides,
+  });
 
   // -- Fastify root app -----------------------------------------------
   const app = Fastify({
@@ -755,8 +869,46 @@ async function main(): Promise<void> {
           skipPrincipalTypeCheck: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,
         }),
       );
-      // POST /v1/agents/route — multi-agent router (Phase 1).
-      await v1.register(async (child) => registerAgentRouterRoutes(child, { router: agentRouter }));
+      // /v1/agents/* — unified agent API surface (Agent Autonomy v3, 1a.6):
+      // list/get, route, run (shadow-aware), events, runs, why, routing-decisions.
+      await v1.register(async (child) =>
+        registerAgentApiRoutes(child, {
+          catalog: () => internalAgentCatalog,
+          router: agentRouter,
+          runService: agentRunService,
+          reads: agentApiReads,
+          enqueueRouteJob: async (jobCtx, payload) => {
+            if (payload.event === undefined || !isDomainEvent(payload.event)) {
+              throw brainError(
+                "request_body_invalid",
+                "`event` must be a known domain event for the events queue",
+              );
+            }
+            await routingEnqueue({
+              tenantId: jobCtx.tenantId,
+              ...(jobCtx.requestId !== undefined ? { requestId: jobCtx.requestId } : {}),
+              payload: {
+                event: payload.event,
+                ...(payload.context !== undefined ? { context: payload.context } : {}),
+              },
+            });
+            return { jobId: jobCtx.requestId ?? brainId("req") };
+          },
+          haltAgent: async (haltCtx, agentId) => {
+            // Pause all in-flight intents from the agent, then quarantine it.
+            const { paused } = await paymentIntentService.pauseByAgent(haltCtx, agentId);
+            let quarantined = false;
+            await withTenantScope(pool, haltCtx.tenantId, async (c) => {
+              const agent = await findAgent(c, agentId);
+              if (agent !== null && agent.state === "active") {
+                await transitionAgent(c, agentId, "active", "quarantined");
+                quarantined = true;
+              }
+            });
+            return { paused, quarantined };
+          },
+        }),
+      );
       // SIWX (agent auth) — always wired. Production requires AUTH_SIGN_KEY
       // (a JWK JSON string) backed by Azure Key Vault.
       if (cfg.NODE_ENV === "production" && cfg.AUTH_SIGN_KEY === undefined) {
@@ -1001,6 +1153,8 @@ async function main(): Promise<void> {
   const agentRouteWorker = createAgentRouteWorker({
     router: agentRouter,
     handlers: internalAgentHandlers,
+    definitions: internalAgentDefinitions,
+    actionResolver,
     evidence: agentEvidence,
     propose: { agents: agentService, paymentIntents: paymentIntentService },
     agentOverrides,

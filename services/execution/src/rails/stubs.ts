@@ -18,14 +18,19 @@ export class BankAchRail implements Rail {
   public async dispatch(input: RailDispatchInput): Promise<RailDispatchResult> {
     // TODO: wire Plaid Transfer via @brain/raw's Plaid SDK dep. The sandbox
     // integration tests exercise this path when PLAID_SANDBOX_KEY is set.
+    // Returns a typed receipt (2.4) — wire vs ACH per the action.
+    if (input.action.kind === "wire") {
+      return {
+        receipt: {
+          rail: "wire",
+          omad: `stub-omad-${input.executionId}`,
+          imad: `stub-imad-${input.executionId}`,
+          stub: true,
+        },
+      };
+    }
     return {
-      receipt: {
-        rail: "bank_ach",
-        stub: true,
-        acknowledged_at: new Date().toISOString(),
-        proposal_id: input.proposalId,
-        execution_id: input.executionId,
-      },
+      receipt: { rail: "ach", ach_trace: `stub-trace-${input.executionId}`, stub: true },
     };
   }
 }
@@ -34,12 +39,7 @@ export class ErpWritebackRail implements Rail {
   public readonly kind = "erp_writeback" as const;
   public async dispatch(input: RailDispatchInput): Promise<RailDispatchResult> {
     return {
-      receipt: {
-        rail: "erp_writeback",
-        stub: true,
-        acknowledged_at: new Date().toISOString(),
-        execution_id: input.executionId,
-      },
+      receipt: { rail: "erp", erp_record_id: `stub-erp-${input.executionId}`, stub: true },
     };
   }
 }
@@ -49,14 +49,12 @@ export class OnchainBaseRail implements Rail {
   public async dispatch(input: RailDispatchInput): Promise<RailDispatchResult> {
     // Expected wire to BrainSmartAccount.executeViaSessionKey via viem.
     // Requires tenant's smart-account address + active session key.
-    // The payment-agent orchestrator is responsible for calling this rail
-    // only when the on-chain path is appropriate — we don't validate here.
     return {
       receipt: {
-        rail: "onchain_base",
+        rail: "onchain",
+        tx_hash: `0xstub${input.executionId}`,
+        block_number: 0,
         stub: true,
-        acknowledged_at: new Date().toISOString(),
-        proposal_id: input.proposalId,
       },
     };
   }

@@ -28,4 +28,12 @@ export const subscriptionDefinition: InternalAgentDefinition = {
   required_evidence: ["transaction"],
   default_authority: "propose",
   enabled_by_default: true,
+  // Counterparty-facing: draft_vendor_email is reachable only via explicit request,
+  // never a trigger default (template-approval flow lands in Phase 2.7).
+  event_action_map: {
+    "recurring_charge.detected": "flag_subscription",
+    "vendor.duplicate_detected": "recommend_cancel",
+    "subscription.price_changed": "flag_subscription",
+  },
+  default_action: "flag_subscription",
 };

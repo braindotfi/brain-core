@@ -17,14 +17,20 @@ import {
   type RoutingJobPayload,
   type ServiceCallContext,
 } from "@brain/shared";
+import type { InternalAgentDefinition } from "@brain/schemas";
 import type { AgentRouter } from "./router.js";
 import type { EvidenceGatherer } from "./evidence-gatherer.js";
+import type { ActionResolver } from "./action-resolver.js";
 import { proposeAction, type InternalAgentHandler, type ProposeDeps } from "@brain/internal-agents";
 import type { RoutingInput } from "./types.js";
 
 export interface RouteAndProposeDeps {
   readonly router: AgentRouter;
   readonly handlers: Readonly<Record<string, InternalAgentHandler>>;
+  /** Selected-agent definitions keyed by agent_key (for action resolution). */
+  readonly definitions: Readonly<Record<string, InternalAgentDefinition>>;
+  /** Picks the action within the selected agent (replaces handler.actions[0]). */
+  readonly actionResolver: ActionResolver;
   readonly evidence: EvidenceGatherer;
   readonly propose: ProposeDeps;
   /**
@@ -44,6 +50,10 @@ export interface RouteAndProposeDeps {
 
 export interface RouteAndProposeResult {
   readonly selected_agent_id: string | null;
+  /** Resolved action within the selected agent, when one was resolved. */
+  readonly action?: string;
+  /** Run status: no_match/unscoped (routing) or missing_action (resolution) or proposed. */
+  readonly status?: string;
   readonly proposed?: { id: string; status: string; policy_decision_id: string | null };
   readonly reason: string;
 }
@@ -55,21 +65,45 @@ export async function routeAndPropose(
 ): Promise<RouteAndProposeResult> {
   const decision = await deps.router.route(ctx, input);
   if (decision.selected_agent_id === null) {
-    return { selected_agent_id: null, reason: decision.reason };
+    return {
+      selected_agent_id: null,
+      status: decision.policy_status,
+      reason: decision.reason,
+    };
   }
   const handler = deps.handlers[decision.selected_agent_id];
   if (handler === undefined) {
     return {
       selected_agent_id: decision.selected_agent_id,
+      status: "missing_handler",
       reason: "no handler for selected agent",
     };
   }
-  // Phase 1: default to the agent's first action. A finer event→action map
-  // lands with the embedding classifier in Phase 4.
-  const action = handler.actions[0];
-  if (action === undefined) {
-    return { selected_agent_id: decision.selected_agent_id, reason: "agent declares no actions" };
+  const definition = deps.definitions[decision.selected_agent_id];
+  if (definition === undefined) {
+    return {
+      selected_agent_id: decision.selected_agent_id,
+      status: "missing_handler",
+      reason: "no definition for selected agent",
+    };
   }
+  // Resolve the action WITHIN the selected agent. Never silently fall back to
+  // handler.actions[0]: an unresolved action persists as missing_action.
+  const resolution = await deps.actionResolver.resolve({
+    definition,
+    actions: handler.actions,
+    ...(input.event !== undefined ? { event: input.event } : {}),
+    ...(input.intent !== undefined ? { intent: input.intent } : {}),
+    ...(input.context !== undefined ? { context: input.context } : {}),
+  });
+  if (resolution.status === "missing_action") {
+    return {
+      selected_agent_id: decision.selected_agent_id,
+      status: "missing_action",
+      reason: resolution.reason,
+    };
+  }
+  const action = resolution.action;
   const bundle = await deps.evidence.gather({
     tenantId: ctx.tenantId,
     ...(input.context !== undefined ? { context: input.context } : {}),
@@ -91,6 +125,8 @@ export async function routeAndPropose(
   const result = await proposeAction(proposed, ctx, decision.selected_agent_id, proposeDeps);
   return {
     selected_agent_id: decision.selected_agent_id,
+    action,
+    status: "proposal_created",
     proposed: result,
     reason: decision.reason,
   };

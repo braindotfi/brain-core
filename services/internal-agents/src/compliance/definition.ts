@@ -16,4 +16,10 @@ export const complianceDefinition: InternalAgentDefinition = {
   required_evidence: ["policy_decision", "audit_event"],
   default_authority: "notify_only",
   enabled_by_default: true,
+  // High-risk: no default_action — max execution_mode is confirm/reject (INV-4).
+  event_action_map: {
+    "policy.violation": "notify",
+    "approval.missing": "escalate",
+    "audit.gap_detected": "create_compliance_report",
+  },
 };

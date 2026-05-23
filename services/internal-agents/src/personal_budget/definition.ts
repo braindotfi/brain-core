@@ -15,4 +15,10 @@ export const personalBudgetDefinition: InternalAgentDefinition = {
   required_evidence: ["transaction"],
   default_authority: "propose",
   enabled_by_default: true,
+  event_action_map: {
+    "transaction.created": "categorize_spending",
+    "budget.threshold_crossed": "recommend_budget_adjustment",
+    "spending.spike_detected": "notify",
+  },
+  default_action: "notify",
 };

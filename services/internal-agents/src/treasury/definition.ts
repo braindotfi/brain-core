@@ -25,4 +25,11 @@ export const treasuryDefinition: InternalAgentDefinition = {
   required_evidence: ["balance"],
   default_authority: "propose",
   enabled_by_default: true,
+  // Money-mover: no default_action — an unmatched event surfaces as missing_action.
+  event_action_map: {
+    "cash.balance_high": "recommend_cash_sweep",
+    "cash.balance_low": "alert_low_balance",
+    "runway.changed": "create_liquidity_plan",
+    "yield_opportunity.detected": "recommend_cash_sweep",
+  },
 };

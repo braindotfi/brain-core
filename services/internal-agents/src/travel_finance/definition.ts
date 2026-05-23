@@ -15,4 +15,10 @@ export const travelFinanceDefinition: InternalAgentDefinition = {
   required_evidence: ["transaction"],
   default_authority: "propose",
   enabled_by_default: true,
+  event_action_map: {
+    "foreign_transaction.created": "flag_fee",
+    "travel.detected": "recommend_card",
+    "fx_fee.detected": "flag_fee",
+  },
+  default_action: "notify",
 };

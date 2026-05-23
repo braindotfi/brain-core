@@ -2,28 +2,31 @@
   "version": 1,
   "rules": [
     {
-      "id": "debt_optimization_within_cap",
+      "id": "debt_optimization_envelope",
       "applies_to": ["outbound_payment", "onchain_tx"],
       "when": {
-        "agent.role": "debt_optimization",
-        "amount.lte": { "currency": "USD", "value": "5000" }
+        "agent.id": "debt_optimization",
+        "tenant.category": "consumer",
+        "amount.lte": { "currency": "USD", "value": "5000" },
+        "agent.spend_in_window": {
+          "window": "30d",
+          "lte": { "currency": "USD", "value": "20000" }
+        },
+        "agent.tx_count_in_window": { "window": "7d", "lte": 10 }
       },
-      "require": "single_signer",
-      "execute": "confirm"
+      "approval_required_above": { "currency": "USD", "value": "1000" },
+      "execute": "auto"
     },
     {
-      "id": "debt_optimization_over_cap",
+      "id": "debt_optimization_financial_outside_envelope_denied",
       "applies_to": ["outbound_payment", "onchain_tx"],
-      "when": {
-        "agent.role": "debt_optimization",
-        "amount.gt": { "currency": "USD", "value": "5000" }
-      },
+      "when": { "agent.id": "debt_optimization" },
       "execute": "reject"
     },
     {
       "id": "debt_optimization_advisory_auto",
-      "applies_to": ["any"],
-      "when": { "agent.role": "debt_optimization" },
+      "applies_to": ["ledger_write", "agent_action"],
+      "when": { "agent.id": "debt_optimization" },
       "execute": "auto"
     }
   ]

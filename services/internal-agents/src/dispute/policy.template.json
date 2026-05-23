@@ -7,5 +7,14 @@
       "when": { "agent.role": "dispute" },
       "execute": "auto"
     }
+  ],
+  "message_templates": [
+    {
+      "id": "dispute_response",
+      "subject": "Response to dispute on transaction {{transaction_id}}",
+      "body": "Hello {{counterparty_name}},\n\nRegarding the dispute on transaction {{transaction_id}}, we have reviewed the matter and are providing the supporting evidence on file. Please see the attached summary.\n\nRegards.",
+      "allowed_variables": ["counterparty_name", "transaction_id"],
+      "approver_signatures": []
+    }
   ]
 }

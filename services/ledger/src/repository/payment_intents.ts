@@ -19,6 +19,7 @@ export interface PaymentIntentRow {
   evidence_ids: string[];
   provenance: string;
   confidence: number;
+  proposal_dedup_key: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -81,6 +82,8 @@ export interface InsertPaymentIntentInput {
   status: string;
   policyDecisionId: string | null;
   evidenceIds: string[];
+  /** Proposal-layer idempotency key (1a.5); null means no dedup is enforced. */
+  proposalDedupKey?: string | null;
 }
 
 export async function insertPaymentIntent(
@@ -93,9 +96,9 @@ export async function insertPaymentIntent(
        source_account_id, destination_counterparty_id,
        amount, currency, obligation_id, invoice_id,
        status, policy_decision_id, evidence_ids,
-       provenance, confidence
+       provenance, confidence, proposal_dedup_key
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',1.0)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',1.0,$14)
      RETURNING *`,
     [
       input.id,
@@ -111,11 +114,24 @@ export async function insertPaymentIntent(
       input.status,
       input.policyDecisionId,
       input.evidenceIds,
+      input.proposalDedupKey ?? null,
     ],
   );
   const row = rows[0];
   if (row === undefined) throw new Error("payment_intents insert returned no row");
   return row;
+}
+
+/** Look up an existing payment intent by its proposal-layer dedup key (1a.5). */
+export async function findPaymentIntentByDedupKey(
+  client: TenantScopedClient,
+  dedupKey: string,
+): Promise<PaymentIntentRow | null> {
+  const { rows } = await client.query<PaymentIntentRow>(
+    `SELECT * FROM ledger_payment_intents WHERE proposal_dedup_key = $1 LIMIT 1`,
+    [dedupKey],
+  );
+  return rows[0] ?? null;
 }
 
 /**

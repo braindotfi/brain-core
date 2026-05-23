@@ -17,6 +17,9 @@ const EVIDENCE: EvidenceBundle = {
     { kind: "transaction", ref: "tx_1" },
   ],
   completeness: 1,
+  evidence_score: 1,
+  missing_required_evidence: [],
+  critical_missing: false,
 };
 
 function loadPolicy(rel: string): PolicyDocument {
@@ -24,21 +27,27 @@ function loadPolicy(rel: string): PolicyDocument {
 }
 
 function toPolicyAction(proposed: ProposedAction, agentRole: string): Action {
+  // 1b.5 templates key on agent.id; populate both id and role. Window aggregates
+  // are absent (prior spend/count = 0) so the envelope is satisfied on amount.
+  const common = {
+    agent_role: agentRole,
+    agent_id: agentRole,
+    tenant_category: "business" as const,
+    timestamp: new Date("2026-05-22T12:00:00Z"),
+  };
   if (proposed.channel === "agent") {
     return {
       kind: "ledger_write",
       counterparty_id: (proposed.action.counterparty_id as string | null) ?? null,
       amount: null,
-      agent_role: agentRole,
-      timestamp: new Date("2026-05-22T12:00:00Z"),
+      ...common,
     };
   }
   return {
     kind: "outbound_payment",
     counterparty_id: proposed.intent.destination_counterparty_id,
     amount: { currency: proposed.intent.currency, value: proposed.intent.amount },
-    agent_role: agentRole,
-    timestamp: new Date("2026-05-22T12:00:00Z"),
+    ...common,
   };
 }
 
@@ -59,13 +68,13 @@ describe("Collections handler", () => {
 });
 
 describe("Treasury handler", () => {
-  it("produces a financial transfer proposal that passes its policy under the limit", () => {
+  it("auto-approves a transfer within the envelope and below the approval threshold", () => {
     const proposed = treasuryHandler.build({
       action: "propose_transfer",
       context: {
         source_account_id: "acct_1",
         destination_counterparty_id: "cp_2",
-        amount: "50000",
+        amount: "5000",
         currency: "USD",
       },
       evidence: EVIDENCE,
@@ -78,7 +87,20 @@ describe("Treasury handler", () => {
     expect(decision.outcome).toBe("allow");
   });
 
-  it("escalates a transfer above the limit to confirm", () => {
+  it("escalates a transfer above the approval threshold to confirm", () => {
+    const proposed = treasuryHandler.build({
+      action: "propose_transfer",
+      context: { destination_counterparty_id: "cp_2", amount: "50000", currency: "USD" },
+      evidence: EVIDENCE,
+    });
+    const decision = evaluate(
+      loadPolicy("./treasury/policy.template.json"),
+      toPolicyAction(proposed, "treasury"),
+    );
+    expect(decision.outcome).toBe("confirm");
+  });
+
+  it("rejects a transfer outside the per-tx envelope cap", () => {
     const proposed = treasuryHandler.build({
       action: "propose_transfer",
       context: { destination_counterparty_id: "cp_2", amount: "250000", currency: "USD" },
@@ -88,7 +110,7 @@ describe("Treasury handler", () => {
       loadPolicy("./treasury/policy.template.json"),
       toPolicyAction(proposed, "treasury"),
     );
-    expect(decision.outcome).toBe("confirm");
+    expect(decision.outcome).toBe("reject");
   });
 
   it("produces an advisory proposal that passes its policy", () => {

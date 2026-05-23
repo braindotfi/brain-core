@@ -10,6 +10,7 @@ const ALL: PaymentIntentState[] = [
   "proposed",
   "pending_approval",
   "approved",
+  "paused",
   "rejected",
   "executed",
   "failed",
@@ -33,11 +34,19 @@ describe("§9.5 PaymentIntent state machine", () => {
     expect(isValidPaymentIntentTransition("pending_approval", "cancelled")).toBe(false);
   });
 
-  it("approved → executed | rejected | failed", () => {
+  it("approved → executed | rejected | failed | paused", () => {
     expect(isValidPaymentIntentTransition("approved", "executed")).toBe(true);
     expect(isValidPaymentIntentTransition("approved", "rejected")).toBe(true);
     expect(isValidPaymentIntentTransition("approved", "failed")).toBe(true);
+    expect(isValidPaymentIntentTransition("approved", "paused")).toBe(true);
     expect(isValidPaymentIntentTransition("approved", "cancelled")).toBe(false);
+  });
+
+  it("paused → approved (resume) | cancelled only (kill-switch, 1b.3)", () => {
+    expect(isValidPaymentIntentTransition("paused", "approved")).toBe(true);
+    expect(isValidPaymentIntentTransition("paused", "cancelled")).toBe(true);
+    expect(isValidPaymentIntentTransition("paused", "executed")).toBe(false);
+    expect(isValidPaymentIntentTransition("paused", "rejected")).toBe(false);
   });
 
   it("executed → failed only (rail reversal)", () => {

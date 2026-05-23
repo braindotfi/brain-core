@@ -66,14 +66,18 @@ export function assertExecutionTransition(from: ExecutionState, to: ExecutionSta
 // §8.4 Agent registration
 // ---------------------------------------------------------------------------
 
-export type AgentState = "pending_onchain" | "active" | "revoked" | "failed";
+export type AgentState = "pending_onchain" | "active" | "revoked" | "failed" | "quarantined";
 
 export function isValidAgentTransition(from: AgentState, to: AgentState): boolean {
   switch (from) {
     case "pending_onchain":
       return to === "active" || to === "failed";
     case "active":
-      return to === "revoked";
+      // Kill-switch (1b.3): /halt quarantines an active agent.
+      return to === "revoked" || to === "quarantined";
+    case "quarantined":
+      // Recoverable: lift the quarantine back to active, or revoke permanently.
+      return to === "active" || to === "revoked";
     case "revoked":
     case "failed":
       return false;

@@ -1,0 +1,25 @@
+{
+  "agent": "vendor_risk",
+  "version": 1,
+  "description": "Versioned finding-rule catalog for the Vendor Risk agent (2.6). Adding or modifying a rule requires re-signing the agent's policy template.",
+  "rules": [
+    {
+      "id": "vr_bank_details_changed",
+      "finding_kind": "vendor_bank_details_changed",
+      "severity": "high",
+      "description": "A vendor's payout bank details changed; payments are blocked pending verification."
+    },
+    {
+      "id": "vr_new_unverified_vendor",
+      "finding_kind": "new_unverified_vendor",
+      "severity": "medium",
+      "description": "A newly created vendor has not completed verification."
+    },
+    {
+      "id": "vr_payment_destination_changed",
+      "finding_kind": "payment_destination_changed",
+      "severity": "high",
+      "description": "A payment destination changed from the verified counterparty record."
+    }
+  ]
+}

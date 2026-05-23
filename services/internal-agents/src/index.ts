@@ -9,5 +9,10 @@
 
 export * from "./evidence.js";
 export * from "./handler.js";
-export { internalAgentCatalog, internalAgentHandlers } from "./registry.js";
+export * from "./payloads.js";
+export {
+  internalAgentCatalog,
+  internalAgentDefinitions,
+  internalAgentHandlers,
+} from "./registry.js";
 export * from "./registration.js";

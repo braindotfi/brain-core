@@ -50,3 +50,5 @@ export const AGENT_CONTRIBUTED_CONFIDENCE_CEILING = 0.5;
 
 // Internal Agent Definition descriptor (router + registration consume this).
 export * from "./agent-definition.js";
+// Agent-run status vocabulary (run persistence + worker statuses).
+export * from "./agent-run.js";

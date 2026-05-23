@@ -1,0 +1,47 @@
+{
+  "id": "agent-trace-v1",
+  "version": 1,
+  "description": "Default field-level redaction policy for agent reasoning traces (INV-9). Applied to raw LLM inputs/outputs and tool-call payloads BEFORE they are stored in the redacted view. The raw blob is encrypted at rest with a per-tenant KMS key and is only readable with the audit:incident_investigation scope.",
+  "rules": [
+    {
+      "name": "account_numbers",
+      "match": ["account_number", "account_no", "acct", "iban", "routing_number"],
+      "transform": "mask_last4"
+    },
+    {
+      "name": "counterparty_names",
+      "match": ["counterparty_name", "payee", "payer", "vendor_name", "merchant_name"],
+      "transform": "hash_recoverable",
+      "key_scope": "tenant"
+    },
+    {
+      "name": "amounts",
+      "match": ["amount", "amount_due", "value", "balance", "currency"],
+      "transform": "preserve"
+    },
+    {
+      "name": "email_bodies",
+      "match": ["email_body", "body", "message_body", "html_body", "text_body"],
+      "transform": "drop",
+      "retain": ["subject", "hash"]
+    },
+    {
+      "name": "bank_credentials",
+      "match": [
+        "password",
+        "secret",
+        "access_token",
+        "plaid_access_token",
+        "api_key",
+        "private_key",
+        "card_number",
+        "cvv",
+        "pin"
+      ],
+      "transform": "forbid"
+    }
+  ],
+  "defaults": {
+    "unmatched": "preserve"
+  }
+}

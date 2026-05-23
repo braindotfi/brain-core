@@ -15,4 +15,10 @@ export const vendorRiskDefinition: InternalAgentDefinition = {
   required_evidence: ["vendor", "payment_destination", "counterparty_history"],
   default_authority: "propose",
   enabled_by_default: true,
+  // High-risk: no default_action — max execution_mode is confirm/reject (INV-4).
+  event_action_map: {
+    "vendor.created": "flag_vendor_risk",
+    "vendor.bank_details_changed": "flag_vendor_risk",
+    "payment.destination_changed": "require_approval",
+  },
 };

@@ -26,7 +26,7 @@ export interface AgentRecord {
   display_name: string;
   scope_hash: string | null;
   onchain_address: string | null;
-  state: "pending_onchain" | "active" | "revoked" | "failed";
+  state: "pending_onchain" | "active" | "revoked" | "failed" | "quarantined";
   registered_tx: string | null;
   registered_at: string | null;
 }

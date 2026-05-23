@@ -70,6 +70,10 @@ export const internalAgentCatalog: readonly InternalAgentDefinition[] = [
   purchaseAdvisorDefinition,
 ];
 
+/** Definitions keyed by agent_key — used by the router/worker for action resolution. */
+export const internalAgentDefinitions: Readonly<Record<string, InternalAgentDefinition>> =
+  Object.fromEntries(internalAgentCatalog.map((d) => [d.agent_key, d]));
+
 export const internalAgentHandlers: Readonly<Record<string, InternalAgentHandler>> = {
   collections: collectionsHandler,
   treasury: treasuryHandler,

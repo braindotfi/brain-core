@@ -80,6 +80,8 @@ export const BRAIN_ERROR_CODES = [
   "payment_intent_invalid_state",
   "payment_intent_gate_failed",
   "agent_rail_unavailable",
+  // Agent Autonomy v3 — proposal-layer idempotency collision (1a.5).
+  "agent_proposal_duplicate",
 
   // Audit
   "audit_event_not_found",
@@ -233,6 +235,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   execution_agent_not_registered: 409,
   payment_intent_invalid_state: 409,
   payment_intent_gate_failed: 409,
+  agent_proposal_duplicate: 409,
   audit_anchor_not_yet_published: 409,
   audit_no_events: 422,
 

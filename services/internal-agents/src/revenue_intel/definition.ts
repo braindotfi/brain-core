@@ -21,4 +21,10 @@ export const revenueIntelDefinition: InternalAgentDefinition = {
   required_evidence: ["invoice", "transaction"],
   default_authority: "notify_only",
   enabled_by_default: true,
+  event_action_map: {
+    "revenue.changed": "create_revenue_summary",
+    "customer.payment_behavior_changed": "flag_churn_risk",
+    "contract.renewal_upcoming": "identify_expansion_opportunity",
+  },
+  default_action: "create_revenue_summary",
 };

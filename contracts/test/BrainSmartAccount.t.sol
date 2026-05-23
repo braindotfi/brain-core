@@ -286,4 +286,112 @@ contract BrainSmartAccountTest is Test {
         vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
         acct.executeViaSessionKey(address(token), 0, data);
     }
+
+    // --- Kill-switch: pauseSessionKey vs revokeSessionKey (1b.3) ---------------
+
+    function test_pause_onlyOwner() public {
+        _grantBasicKey(address(target));
+        vm.expectRevert(BrainSmartAccount.NotOwner.selector);
+        acct.pauseSessionKey(holder);
+    }
+
+    function test_pause_blocksExecution() public {
+        _grantBasicKey(address(target));
+        vm.prank(ownerKey);
+        acct.pauseSessionKey(holder);
+        assertTrue(acct.isSessionKeyPaused(holder));
+
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.KeyPaused.selector);
+        acct.executeViaSessionKey(address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
+    }
+
+    function test_pause_preservesKeyRecordLimitsAndWindowSpend() public {
+        _grantBasicKey(address(target));
+        // Spend 0.5 ether, then pause.
+        vm.prank(holder);
+        acct.executeViaSessionKey(address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
+        assertEq(acct.spentInCurrentWindow(holder), 0.5 ether);
+
+        vm.prank(ownerKey);
+        acct.pauseSessionKey(holder);
+
+        // The key record, its limits, and the accumulated window spend survive.
+        BrainSmartAccount.SessionKey memory key = acct.sessionKey(holder);
+        assertEq(key.holder, holder);
+        assertEq(key.maxPerTx, 1 ether);
+        assertEq(acct.spentInCurrentWindow(holder), 0.5 ether);
+
+        // Resume → execution works again, spend keeps accumulating (no reset).
+        vm.prank(ownerKey);
+        acct.unpauseSessionKey(holder);
+        assertFalse(acct.isSessionKeyPaused(holder));
+
+        vm.prank(holder);
+        acct.executeViaSessionKey(address(target), 0.5 ether, abi.encodeCall(Target.ping, (2)));
+        assertEq(target.counter(), 3);
+        assertEq(acct.spentInCurrentWindow(holder), 1 ether);
+    }
+
+    function test_revoke_isPermanentRemoval() public {
+        _grantBasicKey(address(target));
+        vm.prank(ownerKey);
+        acct.revokeSessionKey(holder);
+        // Record deleted entirely (distinct from pause).
+        assertEq(acct.sessionKey(holder).holder, address(0));
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.NotHolder.selector);
+        acct.executeViaSessionKey(address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
+    }
+
+    // --- Per-task minimum-privilege session key (3.3) -------------------------
+
+    function _grantPerTaskKey(address t, uint256 amount) internal {
+        // exact target, exact amount (per-tx == per-period), ~10m window.
+        address[] memory targets = new address[](1);
+        targets[0] = t;
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: 0,
+            validUntil: block.timestamp + 600,
+            allowedTargets: targets,
+            allowedSelectors: new bytes4[](0),
+            maxPerTx: amount,
+            maxPerPeriod: amount,
+            periodSeconds: 600,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+    }
+
+    function test_perTaskKey_allowsExactlyOneTransferThenExhausts() public {
+        _grantPerTaskKey(address(target), 1 ether);
+        bytes memory data = abi.encodeCall(Target.ping, (1));
+
+        // First transfer of the exact amount succeeds.
+        vm.prank(holder);
+        acct.executeViaSessionKey(address(target), 1 ether, data);
+
+        // A second transfer exhausts the one-time per-period budget.
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ExceedsPerPeriodCap.selector);
+        acct.executeViaSessionKey(address(target), 1 ether, data);
+    }
+
+    function test_perTaskKey_rejectsOverAmountAndExpiry() public {
+        _grantPerTaskKey(address(target), 1 ether);
+        bytes memory data = abi.encodeCall(Target.ping, (1));
+
+        // Over the exact amount → per-tx cap.
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
+        acct.executeViaSessionKey(address(target), 2 ether, data);
+
+        // After the ~10m window → not active.
+        vm.warp(block.timestamp + 601);
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.KeyNotActive.selector);
+        acct.executeViaSessionKey(address(target), 1 ether, data);
+    }
 }

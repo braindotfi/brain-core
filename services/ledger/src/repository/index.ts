@@ -18,3 +18,4 @@ export * from "./transfers.js";
 export * from "./invoices.js";
 export * from "./payment_intents.js";
 export * from "./reconciliation_matches.js";
+export * from "./reservations.js";

@@ -15,4 +15,10 @@ export const taxPrepDefinition: InternalAgentDefinition = {
   required_evidence: ["transaction"],
   default_authority: "propose",
   enabled_by_default: true,
+  event_action_map: {
+    "tax_category.detected": "tag_tax_item",
+    "year_end.approaching": "create_tax_summary",
+    "document.uploaded": "tag_tax_item",
+  },
+  default_action: "tag_tax_item",
 };

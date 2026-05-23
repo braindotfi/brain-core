@@ -16,4 +16,10 @@ export const billManagementDefinition: InternalAgentDefinition = {
   required_evidence: ["invoice", "payment_destination"],
   default_authority: "notify_only",
   enabled_by_default: true,
+  // Money-mover: no default_action — financial actions require an explicit/event match.
+  event_action_map: {
+    "bill.due_soon": "remind",
+    "bill.overdue": "alert_late_fee_risk",
+    "autopay.failed": "alert_late_fee_risk",
+  },
 };

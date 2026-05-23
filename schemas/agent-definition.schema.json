@@ -64,10 +64,47 @@
     },
     "required_evidence": {
       "type": "array",
-      "description": "Evidence kinds that must be present; missing evidence forces notify_only.",
-      "items": { "type": "string" }
+      "description": "Required evidence. Each entry is a bare kind string (weight 1/N, required) or a weighted spec { kind, weight, required, max_age? }. Missing required evidence forces notify_only/reject; weights feed the evidence_score.",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "required": ["kind", "weight", "required"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "type": "string" },
+              "weight": { "type": "number", "minimum": 0, "maximum": 1 },
+              "required": { "type": "boolean" },
+              "max_age": { "type": "string", "pattern": "^[0-9]+[hd]$" }
+            }
+          }
+        ]
+      }
     },
     "default_authority": { "type": "string", "enum": ["execute", "propose", "notify_only"] },
-    "enabled_by_default": { "type": "boolean" }
+    "enabled_by_default": { "type": "boolean" },
+    "event_action_map": {
+      "type": "object",
+      "description": "Domain-event name -> action id, used by the ActionResolver (1a.1).",
+      "additionalProperties": { "type": "string" }
+    },
+    "intent_action_map": {
+      "type": "array",
+      "description": "Intent-pattern groups -> action id, scored via the configured classifier (1a.1).",
+      "items": {
+        "type": "object",
+        "required": ["patterns", "action"],
+        "additionalProperties": false,
+        "properties": {
+          "patterns": { "type": "array", "items": { "type": "string" } },
+          "action": { "type": "string" }
+        }
+      }
+    },
+    "default_action": {
+      "type": "string",
+      "description": "Opt-in last-resort action when nothing else resolves; omit for money-movers/high-risk."
+    }
   }
 }

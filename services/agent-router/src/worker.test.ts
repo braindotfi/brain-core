@@ -8,7 +8,13 @@ import {
 import { AgentRouter } from "./router.js";
 import { RulesIntentClassifier } from "./intent-classifier.js";
 import { StaticEvidenceGatherer } from "./evidence-gatherer.js";
-import { internalAgentCatalog, internalAgentHandlers, type Evidence } from "@brain/internal-agents";
+import { ActionResolver } from "./action-resolver.js";
+import {
+  internalAgentCatalog,
+  internalAgentDefinitions,
+  internalAgentHandlers,
+  type Evidence,
+} from "@brain/internal-agents";
 import { routeAndPropose, type RouteAndProposeDeps } from "./worker.js";
 
 const CTX: ServiceCallContext = { tenantId: "tnt_acme", actor: "agent_system" };
@@ -47,6 +53,8 @@ function makeDeps(): RouteAndProposeDeps {
       audit: new InMemoryAuditEmitter(),
     }),
     handlers: internalAgentHandlers,
+    definitions: internalAgentDefinitions,
+    actionResolver: new ActionResolver({ classifier: new RulesIntentClassifier() }),
     evidence: new StaticEvidenceGatherer(EVIDENCE),
     propose: { agents, paymentIntents },
   };

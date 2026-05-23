@@ -157,6 +157,51 @@ export async function registerPaymentIntentRoutes(
     },
   );
 
+  // Kill-switch (1b.3): pause/resume an approved intent. Approve scope gates both
+  // (an approver can hold/release); tenant-root is the operational owner.
+  app.post(
+    "/payment-intents/:id/pause",
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+      const ctx = assertCtx(request);
+      requireScope(request.principal!.scopes, SCOPE_APPROVE);
+      if (!isBrainId(request.params.id, "pi")) {
+        throw brainError("request_params_invalid", "malformed payment_intent id");
+      }
+      const intent = await service.pause(ctx, request.params.id);
+      reply.status(200);
+      return intent;
+    },
+  );
+
+  app.post(
+    "/payment-intents/:id/resume",
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+      const ctx = assertCtx(request);
+      requireScope(request.principal!.scopes, SCOPE_APPROVE);
+      if (!isBrainId(request.params.id, "pi")) {
+        throw brainError("request_params_invalid", "malformed payment_intent id");
+      }
+      const intent = await service.resume(ctx, request.params.id);
+      reply.status(200);
+      return intent;
+    },
+  );
+
+  // GET /payment-intents/:id/replay-investigation — typed forensic record (2.4).
+  app.get(
+    "/payment-intents/:id/replay-investigation",
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+      const ctx = assertCtx(request);
+      requireScope(request.principal!.scopes, SCOPE_READ);
+      if (!isBrainId(request.params.id, "pi")) {
+        throw brainError("request_params_invalid", "malformed payment_intent id");
+      }
+      const bundle = await service.replayInvestigation(ctx, request.params.id);
+      reply.status(200);
+      return bundle;
+    },
+  );
+
   // GET /agents/:agent_id/actions — spec §Agent listAgentActions
   app.get(
     "/agents/:agent_id/actions",

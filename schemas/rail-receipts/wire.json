@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/rail-receipts/wire/v1",
+  "title": "WireRailReceipt",
+  "type": "object",
+  "required": ["rail", "omad", "imad"],
+  "additionalProperties": true,
+  "properties": {
+    "rail": { "const": "wire" },
+    "omad": { "type": "string", "minLength": 1 },
+    "imad": { "type": "string", "minLength": 1 }
+  }
+}

@@ -10,12 +10,13 @@
  * composition root wires IWikiMemoryService / ILedgerService to them.
  */
 
-import type { Evidence, EvidenceBundle } from "@brain/internal-agents";
+import { scoreEvidence, type Evidence, type EvidenceBundle } from "@brain/internal-agents";
+import type { RequiredEvidence } from "@brain/schemas";
 
 export interface EvidenceQuery {
   readonly tenantId: string;
   readonly context?: Record<string, unknown>;
-  readonly requiredEvidence: readonly string[];
+  readonly requiredEvidence: readonly RequiredEvidence[];
 }
 
 export interface EvidenceGatherer {
@@ -25,19 +26,9 @@ export interface EvidenceGatherer {
 /** Fraction of required evidence kinds present among gathered items. */
 export function evidenceCompleteness(
   items: readonly Evidence[],
-  requiredEvidence: readonly string[],
+  requiredEvidence: readonly RequiredEvidence[],
 ): number {
-  if (requiredEvidence.length === 0) {
-    return 1;
-  }
-  const present = new Set(items.map((i) => i.kind));
-  let found = 0;
-  for (const kind of requiredEvidence) {
-    if (present.has(kind)) {
-      found += 1;
-    }
-  }
-  return found / requiredEvidence.length;
+  return scoreEvidence(items, requiredEvidence).completeness;
 }
 
 /** Deterministic gatherer over a fixed evidence set. Used as a default and in tests. */
@@ -45,10 +36,7 @@ export class StaticEvidenceGatherer implements EvidenceGatherer {
   constructor(private readonly items: readonly Evidence[] = []) {}
 
   async gather(query: EvidenceQuery): Promise<EvidenceBundle> {
-    return {
-      items: this.items,
-      completeness: evidenceCompleteness(this.items, query.requiredEvidence),
-    };
+    return scoreEvidence(this.items, query.requiredEvidence);
   }
 }
 
@@ -69,6 +57,6 @@ export class ServiceEvidenceGatherer implements EvidenceGatherer {
       this.providers.ledger?.(query) ?? Promise.resolve([]),
     ]);
     const items = [...wiki, ...ledger];
-    return { items, completeness: evidenceCompleteness(items, query.requiredEvidence) };
+    return scoreEvidence(items, query.requiredEvidence);
   }
 }

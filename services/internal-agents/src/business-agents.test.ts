@@ -34,6 +34,9 @@ const FULL: EvidenceBundle = {
     { kind: "vendor", ref: "ven_1" },
   ],
   completeness: 1,
+  evidence_score: 1,
+  missing_required_evidence: [],
+  critical_missing: false,
 };
 
 const PAYMENT_CONTEXT = {
@@ -49,21 +52,27 @@ function loadPolicy(rel: string): PolicyDocument {
 }
 
 function toPolicyAction(proposed: ProposedAction, agentRole: string): Action {
+  // 1b.5 templates key on agent.id; populate both id and role. Window aggregates
+  // absent (prior = 0) so the envelope is satisfied on amount alone.
+  const common = {
+    agent_role: agentRole,
+    agent_id: agentRole,
+    tenant_category: "business" as const,
+    timestamp: new Date("2026-05-22T12:00:00Z"),
+  };
   if (proposed.channel === "agent") {
     return {
       kind: "ledger_write",
       counterparty_id: (proposed.action.counterparty_id as string | null) ?? null,
       amount: null,
-      agent_role: agentRole,
-      timestamp: new Date("2026-05-22T12:00:00Z"),
+      ...common,
     };
   }
   return {
     kind: "outbound_payment",
     counterparty_id: proposed.intent.destination_counterparty_id,
     amount: { currency: proposed.intent.currency, value: proposed.intent.amount },
-    agent_role: agentRole,
-    timestamp: new Date("2026-05-22T12:00:00Z"),
+    ...common,
   };
 }
 
@@ -87,7 +96,8 @@ const CASES: readonly Case[] = [
     policy: "./payment/policy.template.json",
     sampleAction: "propose_payment",
     context: PAYMENT_CONTEXT,
-    expectedOutcome: "confirm",
+    // $5k is within the envelope and below approval_required_above ($10k) → auto.
+    expectedOutcome: "allow",
   },
   {
     def: subscriptionDefinition,
@@ -211,7 +221,13 @@ describe("integration", () => {
     const withHistory = vendorRiskHandler.build({
       action: "flag_vendor_risk",
       context: { counterparty_id: "cp_1" },
-      evidence: { items: [{ kind: "counterparty_history", ref: "hist_1" }], completeness: 1 },
+      evidence: {
+        items: [{ kind: "counterparty_history", ref: "hist_1" }],
+        completeness: 1,
+        evidence_score: 1,
+        missing_required_evidence: [],
+        critical_missing: false,
+      },
     });
     expect(withHistory.channel).toBe("agent");
     if (withHistory.channel === "agent") {

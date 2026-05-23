@@ -1,0 +1,25 @@
+{
+  "agent": "compliance",
+  "version": 1,
+  "description": "Versioned finding-rule catalog for the Compliance agent (2.6). Findings are recorded to the audit log even when the resolved execution_mode is notify_only. Adding or modifying a rule requires re-signing the agent's policy template.",
+  "rules": [
+    {
+      "id": "cmp_policy_violation",
+      "finding_kind": "policy_violation",
+      "severity": "high",
+      "description": "An action or state violates a tenant compliance policy."
+    },
+    {
+      "id": "cmp_missing_approval",
+      "finding_kind": "approval_missing",
+      "severity": "medium",
+      "description": "A required approval is missing for a money-movement action."
+    },
+    {
+      "id": "cmp_audit_gap",
+      "finding_kind": "audit_gap_detected",
+      "severity": "critical",
+      "description": "A gap in the append-only audit chain was detected."
+    }
+  ]
+}

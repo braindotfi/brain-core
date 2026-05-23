@@ -14,7 +14,7 @@ import {
 
 const PROP: ProposalState[] = ["pending", "approved", "rejected", "executed", "failed"];
 const EXEC: ExecutionState[] = ["dispatched", "in_flight", "completed", "failed"];
-const AGENT: AgentState[] = ["pending_onchain", "active", "revoked", "failed"];
+const AGENT: AgentState[] = ["pending_onchain", "active", "revoked", "failed", "quarantined"];
 
 describe("§8.1 proposal", () => {
   it("pending → approved | rejected", () => {
@@ -69,9 +69,15 @@ describe("§8.4 agent registration", () => {
     expect(isValidAgentTransition("pending_onchain", "active")).toBe(true);
     expect(isValidAgentTransition("pending_onchain", "failed")).toBe(true);
   });
-  it("active → revoked only", () => {
+  it("active → revoked | quarantined (kill-switch, 1b.3)", () => {
     expect(isValidAgentTransition("active", "revoked")).toBe(true);
+    expect(isValidAgentTransition("active", "quarantined")).toBe(true);
     expect(isValidAgentTransition("active", "failed")).toBe(false);
+  });
+  it("quarantined → active (recover) | revoked; not a sink", () => {
+    expect(isValidAgentTransition("quarantined", "active")).toBe(true);
+    expect(isValidAgentTransition("quarantined", "revoked")).toBe(true);
+    expect(isValidAgentTransition("quarantined", "failed")).toBe(false);
   });
   it("property: terminal states are sinks", () => {
     fc.assert(

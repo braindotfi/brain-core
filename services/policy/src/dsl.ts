@@ -33,6 +33,18 @@ export interface AmountLiteral {
   value: string; // stringified decimal
 }
 
+/** Aggregate spend cap over a rolling window (Agent Autonomy v3, 1b.2). */
+export interface SpendWindowConstraint {
+  window: string; // '1h' | '24h' | '7d' | '30d'
+  lte: AmountLiteral;
+}
+
+/** Aggregate transaction-count cap over a rolling window (1b.2). */
+export interface TxCountWindowConstraint {
+  window: string;
+  lte: number;
+}
+
 export interface RuleWhen {
   "counterparty.in"?: string; // list reference: vendors.trusted
   "counterparty.not_in"?: string; // list reference: vendors.blocked
@@ -40,6 +52,14 @@ export interface RuleWhen {
   "amount.gt"?: AmountLiteral;
   "agent.role"?: string;
   time_window?: string; // cron expression
+  // --- Agent Autonomy v3 (1b.5) signed authority primitives ---
+  "agent.id"?: string; // match by agent id (complements agent.role)
+  "tenant.category"?: "business" | "consumer";
+  "action.in"?: ReadonlyArray<string>; // allowlist of action ids
+  "action.not_in"?: ReadonlyArray<string>; // blocklist of action ids
+  "agent.behaviorHash"?: string; // pin to a registered behaviorHash (0x-hex; Phase 2.3)
+  "agent.spend_in_window"?: SpendWindowConstraint;
+  "agent.tx_count_in_window"?: TxCountWindowConstraint;
 }
 
 export interface PolicyRule {
@@ -48,6 +68,29 @@ export interface PolicyRule {
   when: RuleWhen;
   require?: string; // single_signer | <role>_approval | <role>_and_<role>
   execute: ExecuteMode;
+  /**
+   * Force `confirm` when the action amount exceeds this threshold, even if
+   * `execute` is otherwise `auto` (1b.5). A signed alternative to scattering
+   * amount.gt rules; the threshold is part of the content-hashed (signed) doc.
+   */
+  approval_required_above?: AmountLiteral;
+}
+
+/**
+ * A tenant-approved message template for counterparty-facing agents (2.7).
+ * Lives in the signed policy document so the approver signatures are covered by
+ * the content hash. Free-form text outside an approved template is blocked at the
+ * handler boundary — the LLM never writes counterparty-visible prose without one.
+ */
+export interface MessageTemplate {
+  id: string;
+  subject: string;
+  /** Body with {{variable}} placeholders drawn only from allowed_variables. */
+  body: string;
+  /** The only variable names a renderer may substitute. */
+  allowed_variables: ReadonlyArray<string>;
+  /** Approver signatures over this template (covered by the policy content hash). */
+  approver_signatures?: ReadonlyArray<string>;
 }
 
 export interface PolicyDocument {
@@ -55,6 +98,8 @@ export interface PolicyDocument {
   rules: ReadonlyArray<PolicyRule>;
   /** Optional registry of list references (vendors.trusted etc.). */
   lists?: Readonly<Record<string, ReadonlyArray<string>>>;
+  /** Tenant-approved counterparty message templates (2.7). */
+  message_templates?: ReadonlyArray<MessageTemplate>;
 }
 
 /**

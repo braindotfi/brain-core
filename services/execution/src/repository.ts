@@ -26,6 +26,7 @@ export interface ProposalRow {
   required_approvers: string[];
   status: ProposalState;
   approvers_signed: string[];
+  proposal_dedup_key: string | null;
   created_at: Date;
 }
 
@@ -39,6 +40,8 @@ export interface InsertProposalInput {
   policyTrace: Decision["trace"];
   requiredApprovers: string[];
   status: ProposalState;
+  /** Proposal-layer idempotency key (1a.5); null means no dedup is enforced. */
+  proposalDedupKey?: string | null;
 }
 
 export async function insertProposal(
@@ -47,8 +50,9 @@ export async function insertProposal(
 ): Promise<ProposalRow> {
   const { rows } = await client.query<ProposalRow>(
     `INSERT INTO proposals (id, tenant_id, proposing_agent, action, policy_version,
-                           policy_decision, policy_trace, required_approvers, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+                           policy_decision, policy_trace, required_approvers, status,
+                           proposal_dedup_key)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
     [
       input.id,
       input.tenantId,
@@ -59,11 +63,24 @@ export async function insertProposal(
       JSON.stringify(input.policyTrace),
       input.requiredApprovers,
       input.status,
+      input.proposalDedupKey ?? null,
     ],
   );
   const row = rows[0];
   if (row === undefined) throw new Error("proposals insert returned no row");
   return row;
+}
+
+/** Look up an existing proposal by its proposal-layer dedup key (1a.5). */
+export async function findProposalByDedupKey(
+  client: TenantScopedClient,
+  dedupKey: string,
+): Promise<ProposalRow | null> {
+  const { rows } = await client.query<ProposalRow>(
+    `SELECT * FROM proposals WHERE proposal_dedup_key = $1 LIMIT 1`,
+    [dedupKey],
+  );
+  return rows[0] ?? null;
 }
 
 export async function findProposal(

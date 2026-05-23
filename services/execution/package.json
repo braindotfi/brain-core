@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@brain/shared": "workspace:*",
+    "@brain/schemas": "workspace:*",
     "@brain/policy": "workspace:*",
     "@brain/ledger": "workspace:*",
     "fastify": "^5.0.0",

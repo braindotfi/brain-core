@@ -14,6 +14,17 @@ export interface Action {
   amount: { currency: string; value: string } | null;
   agent_role: string | null;
   timestamp: Date;
+  // --- Agent Autonomy v3 (1b.5) context. The VM stays pure: the caller loads
+  // the agent's window aggregates (from policy_spend_counters) and the runtime
+  // behaviorHash, then passes them in so evaluation is deterministic. ---
+  agent_id?: string | null;
+  tenant_category?: "business" | "consumer" | null;
+  action_id?: string | null;
+  behavior_hash?: string | null;
+  /** Prior spend per window (this action NOT yet counted), e.g. {"24h": {currency,value}}. */
+  spend_in_window?: Readonly<Record<string, { currency: string; value: string }>>;
+  /** Prior tx count per window (this action NOT yet counted). */
+  tx_count_in_window?: Readonly<Record<string, number>>;
 }
 
 export interface Decision {
@@ -35,9 +46,22 @@ export function evaluate(policy: PolicyDocument, action: Action): Decision {
     const { matched, checks } = matchRule(policy, rule, action);
     trace.push({ rule_id: rule.id, matched, checks });
     if (matched) {
-      const approvers = rule.require === undefined ? [] : parseRequire(rule.require);
+      let approvers = rule.require === undefined ? [] : parseRequire(rule.require);
+      let outcome = mapExecute(rule.execute, approvers.length > 0);
+      // approval_required_above: force confirm when the amount exceeds the
+      // threshold, even if the rule would otherwise allow (1b.5).
+      if (
+        rule.approval_required_above !== undefined &&
+        outcome === "allow" &&
+        action.amount !== null &&
+        action.amount.currency === rule.approval_required_above.currency &&
+        compareDecimal(action.amount.value, rule.approval_required_above.value) > 0
+      ) {
+        outcome = "confirm";
+        if (approvers.length === 0) approvers = ["signer"];
+      }
       return {
-        outcome: mapExecute(rule.execute, approvers.length > 0),
+        outcome,
         matched_rule_id: rule.id,
         required_approvers: approvers,
         trace,
@@ -107,6 +131,61 @@ function matchRule(
     if (!passed) return { matched: false, checks };
   }
 
+  // --- Agent Autonomy v3 (1b.5) primitives ---
+  if (w["agent.id"] !== undefined) {
+    const passed = action.agent_id === w["agent.id"];
+    checks.push({ key: "agent.id", passed, detail: w["agent.id"] });
+    if (!passed) return { matched: false, checks };
+  }
+  if (w["tenant.category"] !== undefined) {
+    const passed = action.tenant_category === w["tenant.category"];
+    checks.push({ key: "tenant.category", passed, detail: w["tenant.category"] });
+    if (!passed) return { matched: false, checks };
+  }
+  if (w["action.in"] !== undefined) {
+    const passed = action.action_id !== null && w["action.in"].includes(action.action_id ?? "");
+    checks.push({ key: "action.in", passed, detail: w["action.in"].join(",") });
+    if (!passed) return { matched: false, checks };
+  }
+  if (w["action.not_in"] !== undefined) {
+    const passed =
+      action.action_id === null ||
+      action.action_id === undefined ||
+      !w["action.not_in"].includes(action.action_id);
+    checks.push({ key: "action.not_in", passed, detail: w["action.not_in"].join(",") });
+    if (!passed) return { matched: false, checks };
+  }
+  if (w["agent.behaviorHash"] !== undefined) {
+    const passed = action.behavior_hash === w["agent.behaviorHash"];
+    checks.push({ key: "agent.behaviorHash", passed, detail: w["agent.behaviorHash"] });
+    if (!passed) return { matched: false, checks };
+  }
+  if (w["agent.spend_in_window"] !== undefined) {
+    const c = w["agent.spend_in_window"];
+    const prior = action.spend_in_window?.[c.window];
+    // Within envelope iff prior spend + this action's amount <= lte (same currency).
+    const priorValue = prior !== undefined && prior.currency === c.lte.currency ? prior.value : "0";
+    const addend =
+      action.amount !== null && action.amount.currency === c.lte.currency
+        ? action.amount.value
+        : "0";
+    const projected = addDecimal(priorValue, addend);
+    const passed = compareDecimal(projected, c.lte.value) <= 0;
+    checks.push({
+      key: "agent.spend_in_window",
+      passed,
+      detail: `${c.window}<=${c.lte.currency} ${c.lte.value}`,
+    });
+    if (!passed) return { matched: false, checks };
+  }
+  if (w["agent.tx_count_in_window"] !== undefined) {
+    const c = w["agent.tx_count_in_window"];
+    const prior = action.tx_count_in_window?.[c.window] ?? 0;
+    const passed = prior + 1 <= c.lte;
+    checks.push({ key: "agent.tx_count_in_window", passed, detail: `${c.window}<=${c.lte}` });
+    if (!passed) return { matched: false, checks };
+  }
+
   return { matched: true, checks };
 }
 
@@ -144,6 +223,24 @@ export function compareDecimal(a: string, b: string): number {
   if (intCmp !== 0) return na.negative ? -intCmp : intCmp;
   const fracCmp = compareBigNumeric(na.frac, nb.frac);
   return na.negative ? -fracCmp : fracCmp;
+}
+
+/**
+ * Add two stringified decimals without floating-point error (18 frac digits).
+ * Used for spend-envelope projection (prior window spend + this action).
+ */
+export function addDecimal(a: string, b: string): string {
+  const na = normalizeDecimal(a);
+  const nb = normalizeDecimal(b);
+  const sa = (na.negative ? -1n : 1n) * BigInt(na.int + na.frac);
+  const sb = (nb.negative ? -1n : 1n) * BigInt(nb.int + nb.frac);
+  const sum = sa + sb;
+  const neg = sum < 0n;
+  const abs = (neg ? -sum : sum).toString().padStart(19, "0");
+  const intPart = abs.slice(0, abs.length - 18).replace(/^0+/, "") || "0";
+  const fracPart = abs.slice(abs.length - 18).replace(/0+$/, "");
+  const body = fracPart.length > 0 ? `${intPart}.${fracPart}` : intPart;
+  return neg ? `-${body}` : body;
 }
 
 interface NormalizedDecimal {

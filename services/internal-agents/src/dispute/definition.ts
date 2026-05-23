@@ -15,4 +15,10 @@ export const disputeDefinition: InternalAgentDefinition = {
   required_evidence: ["dispute", "transaction"],
   default_authority: "propose",
   enabled_by_default: true,
+  event_action_map: {
+    "dispute.created": "gather_evidence",
+    "chargeback.received": "draft_response",
+    "payment.mismatch": "create_dispute_packet",
+  },
+  default_action: "gather_evidence",
 };

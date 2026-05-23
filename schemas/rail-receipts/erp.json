@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/rail-receipts/erp/v1",
+  "title": "ErpRailReceipt",
+  "type": "object",
+  "required": ["rail", "erp_record_id"],
+  "additionalProperties": true,
+  "properties": {
+    "rail": { "const": "erp" },
+    "erp_record_id": { "type": "string", "minLength": 1 },
+    "vendor_ref": { "type": "string" }
+  }
+}

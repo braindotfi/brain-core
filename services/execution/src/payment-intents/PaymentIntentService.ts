@@ -30,6 +30,7 @@ import {
   type GateAccount,
   type GateAgent,
   type GateCounterparty,
+  type GateDependencies,
   type GatePaymentIntent,
   type GatePolicyDecision,
   type GatePrincipal,
@@ -47,8 +48,15 @@ import {
 import type { Pool } from "pg";
 import { assertPaymentIntentTransition, type PaymentIntentState } from "./state-machine.js";
 import type { ApprovalService } from "../approvals/ApprovalService.js";
-import { insertExecution, transitionExecution } from "../repository.js";
+import {
+  insertExecution,
+  transitionExecution,
+  setExecutionReceipt,
+  findExecution,
+  type ExecutionRow,
+} from "../repository.js";
 import type { RailRegistry } from "../rails/stubs.js";
+import { railKeyForActionType, validateRailReceipt } from "../rails/receipts.js";
 
 // ---------- Dependency hooks ----------------------------------------------
 
@@ -305,6 +313,135 @@ export class PaymentIntentService implements IPaymentIntentService {
     return toRecord(updated);
   }
 
+  // ---- kill-switch (1b.3) ----------------------------------------------
+
+  /** GateDependencies bound to this ctx — shared by execute() and resume(). */
+  private gateDeps(ctx: ServiceCallContext): GateDependencies {
+    return {
+      audit: this.deps.audit,
+      resolveAgent: (agentId) => this.deps.resolveAgent(ctx, agentId),
+      resolveAccount: (accountId) => this.deps.resolveAccount(ctx, accountId),
+      resolveCounterparty: (cpId) => this.deps.resolveCounterparty(ctx, cpId),
+      evaluatePolicy: (i) => this.deps.evaluatePolicy(ctx, i),
+      resolveApprovals: async (intentId) => ({
+        signedRoles: await this.deps.approvals.signedRoles(ctx, {
+          type: "payment_intent",
+          id: intentId,
+        }),
+      }),
+    };
+  }
+
+  /** Pause an approved intent (kill-switch). approved → paused. */
+  public async pause(ctx: ServiceCallContext, id: string): Promise<PaymentIntent> {
+    const intent = await this.requireIntent(ctx, id);
+    if (intent.status !== "approved") {
+      throw brainError(
+        "payment_intent_invalid_state",
+        `pause only allowed from 'approved', current=${intent.status}`,
+      );
+    }
+    assertPaymentIntentTransition("approved", "paused");
+    const updated = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+      transitionPaymentIntent(c, id, "approved", "paused"),
+    );
+    if (updated === null) {
+      throw brainError("payment_intent_invalid_state", "PaymentIntent moved during pause");
+    }
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "agent",
+      actor: ctx.actor,
+      action: "payment_intent.paused",
+      inputs: { payment_intent_id: id },
+      outputs: { status: "paused" },
+    });
+    return toRecord(updated);
+  }
+
+  /** Resume a paused intent. Re-runs the live §6 gate first. paused → approved. */
+  public async resume(ctx: ServiceCallContext, id: string): Promise<PaymentIntent> {
+    const intent = await this.requireIntent(ctx, id);
+    if (intent.status !== "paused") {
+      throw brainError(
+        "payment_intent_invalid_state",
+        `resume only allowed from 'paused', current=${intent.status}`,
+      );
+    }
+    // Re-run the live gate before re-entering approved — defends against Ledger
+    // state drift (balance, sanctions, approvals) while the intent was paused.
+    const principal = await this.deps.resolvePrincipal(ctx);
+    const gate = await runPreExecutionGate(this.gateDeps(ctx), {
+      ctx,
+      principal,
+      intent: intentToGate(intent),
+    });
+    if (!gate.ok) {
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "agent",
+        actor: ctx.actor,
+        action: "payment_intent.resume.gate_failed",
+        inputs: { payment_intent_id: id },
+        outputs: { ok: false, failed_check: gate.failedCheck },
+      });
+      throw brainError(
+        "payment_intent_gate_failed",
+        `resume gate failed at check ${gate.failedCheck.index} (${gate.failedCheck.name})`,
+        { statusOverride: 409, details: { check_index: gate.failedCheck.index } },
+      );
+    }
+    assertPaymentIntentTransition("paused", "approved");
+    const updated = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+      transitionPaymentIntent(c, id, "paused", "approved"),
+    );
+    if (updated === null) {
+      throw brainError("payment_intent_invalid_state", "PaymentIntent moved during resume");
+    }
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "agent",
+      actor: ctx.actor,
+      action: "payment_intent.resumed",
+      inputs: { payment_intent_id: id },
+      outputs: { status: "approved" },
+    });
+    return toRecord(updated);
+  }
+
+  /**
+   * Pause every in-flight (approved) intent created by an agent (the PI side of
+   * /v1/agents/{id}/halt). Returns the paused intent ids. The caller flips the
+   * agent record to `quarantined` (agents repo) to complete the halt.
+   */
+  public async pauseByAgent(
+    ctx: ServiceCallContext,
+    agentId: string,
+  ): Promise<{ paused: string[] }> {
+    const paused = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      const rows = await listPaymentIntents(c, {
+        status: "approved",
+        created_by_agent_id: agentId,
+        limit: 1000,
+      });
+      const ids: string[] = [];
+      for (const row of rows) {
+        const updated = await transitionPaymentIntent(c, row.id, "approved", "paused");
+        if (updated !== null) ids.push(row.id);
+      }
+      return ids;
+    });
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "agent",
+      actor: ctx.actor,
+      action: "agent.halted",
+      inputs: { agent_id: agentId },
+      outputs: { paused_count: paused.length, paused_intent_ids: paused },
+    });
+    return { paused };
+  }
+
   // ---- execute (the §6 gate path) --------------------------------------
 
   public async execute(ctx: ServiceCallContext, id: string): Promise<ExecuteResult> {
@@ -319,22 +456,11 @@ export class PaymentIntentService implements IPaymentIntentService {
     const principal = await this.deps.resolvePrincipal(ctx);
     const gateInput = intentToGate(intent);
 
-    const gate: GateResult = await runPreExecutionGate(
-      {
-        audit: this.deps.audit,
-        resolveAgent: (agentId) => this.deps.resolveAgent(ctx, agentId),
-        resolveAccount: (accountId) => this.deps.resolveAccount(ctx, accountId),
-        resolveCounterparty: (cpId) => this.deps.resolveCounterparty(ctx, cpId),
-        evaluatePolicy: (i) => this.deps.evaluatePolicy(ctx, i),
-        resolveApprovals: async (intentId) => ({
-          signedRoles: await this.deps.approvals.signedRoles(ctx, {
-            type: "payment_intent",
-            id: intentId,
-          }),
-        }),
-      },
-      { ctx, principal, intent: gateInput },
-    );
+    const gate: GateResult = await runPreExecutionGate(this.gateDeps(ctx), {
+      ctx,
+      principal,
+      intent: gateInput,
+    });
 
     if (!gate.ok) {
       // Audit-before/after pair: even on gate failure we emit an "after"
@@ -362,6 +488,30 @@ export class PaymentIntentService implements IPaymentIntentService {
             ...gate.failedCheck.detail,
           },
         },
+      );
+    }
+
+    // Kill-switch guard (1b.3): re-read the intent immediately before rail
+    // submission and abort cleanly if it was paused/cancelled between the gate
+    // and dispatch. (We re-read the committed row rather than holding a SELECT
+    // FOR UPDATE across the external rail call; the atomic approved→executed
+    // transition below is the final race guard.)
+    const fresh = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+      findPaymentIntentById(c, intent.id),
+    );
+    if (fresh === null || fresh.status !== "approved") {
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "agent",
+        actor: ctx.actor,
+        action: "payment_intent.execute.after",
+        inputs: { payment_intent_id: id },
+        outputs: { ok: false, aborted: true, status: fresh?.status ?? "missing" },
+      });
+      throw brainError(
+        "payment_intent_invalid_state",
+        `execute aborted: intent no longer approved (status=${fresh?.status ?? "missing"})`,
+        { statusOverride: 409 },
       );
     }
 
@@ -411,6 +561,32 @@ export class PaymentIntentService implements IPaymentIntentService {
       });
     }
 
+    // 2.4: the audit-after step refuses to commit unless the receipt validates
+    // against the typed schema for the rail used.
+    const receiptCheck = validateRailReceipt(
+      railKeyForActionType(intent.action_type),
+      dispatchOutcome.receipt,
+    );
+    if (!receiptCheck.ok) {
+      await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+        await transitionPaymentIntent(c, intent.id, "approved", "failed");
+      });
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "agent",
+        actor: ctx.actor,
+        action: "payment_intent.execute.after",
+        inputs: { payment_intent_id: id, rail: railName, execution_id: executionId },
+        outputs: { ok: false, invalid_rail_receipt: true, missing: receiptCheck.missing },
+        policyDecisionId: gate.policyDecisionId,
+      });
+      throw brainError(
+        "agent_rail_unavailable",
+        `rail receipt failed schema validation (missing: ${receiptCheck.missing.join(", ")})`,
+        { cause: new Error("invalid_rail_receipt") },
+      );
+    }
+
     // Persist the execution row, link it to the PaymentIntent, transition.
     // The execute.after audit event is emitted unconditionally so the §6
     // audit pair is always closed, even if the DB write fails.
@@ -425,6 +601,7 @@ export class PaymentIntentService implements IPaymentIntentService {
           status: "dispatched",
           idempotencyKey,
         });
+        await setExecutionReceipt(c, executionId, dispatchOutcome.receipt);
         await transitionExecution(c, executionId, "dispatched", "in_flight");
         await transitionPaymentIntent(c, intent.id, "approved", "executed");
         await appendExecutionReceiptId(c, intent.id, executionId);
@@ -441,7 +618,11 @@ export class PaymentIntentService implements IPaymentIntentService {
       inputs: { payment_intent_id: id, rail: railName, execution_id: executionId },
       outputs: persistError
         ? { ok: false, error: persistError.message }
-        : { ok: true, rail_receipt: dispatchOutcome.receipt, gate_audit_before: gate.auditBeforeEventId },
+        : {
+            ok: true,
+            rail_receipt: dispatchOutcome.receipt,
+            gate_audit_before: gate.auditBeforeEventId,
+          },
       policyDecisionId: gate.policyDecisionId,
     });
 
@@ -456,6 +637,40 @@ export class PaymentIntentService implements IPaymentIntentService {
       execution_id: executionId,
       rail: railName,
       status: "in_flight",
+    };
+  }
+
+  // ---- replay-investigation (2.4) --------------------------------------
+
+  /**
+   * Forensic record for a PaymentIntent: the intent, its executions (each with
+   * its typed rail receipt), and the linking ids. The policy decision, reservation,
+   * and audit chain live in other services and are referenced by id here (joined
+   * by the caller through their owning service APIs — cross-service read rule).
+   */
+  public async replayInvestigation(
+    ctx: ServiceCallContext,
+    id: string,
+  ): Promise<{
+    payment_intent: PaymentIntent;
+    executions: ExecutionRow[];
+    policy_decision_id: string | null;
+    evidence_ids: string[];
+  }> {
+    const row = await this.requireIntent(ctx, id);
+    const executions = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      const out: ExecutionRow[] = [];
+      for (const execId of row.execution_receipt_ids) {
+        const ex = await findExecution(c, execId);
+        if (ex !== null) out.push(ex);
+      }
+      return out;
+    });
+    return {
+      payment_intent: toRecord(row),
+      executions,
+      policy_decision_id: row.policy_decision_id,
+      evidence_ids: row.evidence_ids,
     };
   }
 

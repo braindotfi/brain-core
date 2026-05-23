@@ -8,5 +8,14 @@
       "require": "account_holder_approval",
       "execute": "confirm"
     }
+  ],
+  "message_templates": [
+    {
+      "id": "subscription_cancel_request",
+      "subject": "Cancellation request for {{merchant}}",
+      "body": "Hello,\n\nPlease cancel the recurring subscription with {{merchant}} ({{recurring_amount}} per {{billing_frequency}}) effective at the end of the current billing period. Please confirm the cancellation in writing.\n\nThank you.",
+      "allowed_variables": ["merchant", "recurring_amount", "billing_frequency"],
+      "approver_signatures": []
+    }
   ]
 }

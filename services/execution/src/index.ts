@@ -46,5 +46,27 @@ export { registerExecutionRoutes } from "./routes.js";
 export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
 
 // Repository primitives exposed for boot-binary dependency wiring.
-export { findAgent, findUser } from "./repository.js";
+export { findAgent, findUser, transitionAgent } from "./repository.js";
 export type { AgentRow, UserRow } from "./repository.js";
+
+// Agent-run persistence (Agent Autonomy v3, 1a.3 + 1a.5).
+export * from "./agent-runs.js";
+// High-risk findings + overrides (Agent Autonomy v3, 2.6).
+export * from "./findings.js";
+// Agent-to-agent sagas (Agent Autonomy v3, 3.2).
+export { runSaga, type SagaStep, type SagaResult, type SagaDeps } from "./sagas.js";
+// Per-task minimum-privilege session keys (Agent Autonomy v3, 3.3).
+export {
+  derivePerTaskSessionKey,
+  DEFAULT_TASK_KEY_TTL_SECONDS,
+  type PerTaskSessionKeyParams,
+  type DerivePerTaskKeyInput,
+} from "./rails/session-keys.js";
+export {
+  redact,
+  DEFAULT_AGENT_TRACE_POLICY,
+  type RedactionPolicy,
+  type RedactionRule,
+  type RedactionTransform,
+  type RedactOptions,
+} from "./redaction.js";

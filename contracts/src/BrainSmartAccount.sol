@@ -24,6 +24,9 @@ contract BrainSmartAccount {
 
     event SessionKeyGranted(address indexed holder, bytes32 policyVersion, uint256 validUntil);
     event SessionKeyRevoked(address indexed holder);
+    /// @dev Kill-switch: execution disabled but the key record is preserved.
+    event SessionKeyPaused(address indexed holder);
+    event SessionKeyResumed(address indexed holder);
     event AgentActionExecuted(
         bytes32 indexed tenantId,
         bytes32 indexed agentId,
@@ -45,9 +48,13 @@ contract BrainSmartAccount {
     mapping(address => SessionKey) private _keys;
     /// @dev holder => window_start_timestamp => spent_in_window
     mapping(address => mapping(uint256 => uint256)) private _windowSpent;
+    /// @dev Kill-switch flag. Paused keys cannot execute but keep their record,
+    ///      window spend, limits, and metadata so resume needs no re-grant.
+    mapping(address => bool) private _paused;
 
     error NotOwner();
     error NotHolder();
+    error KeyPaused();
     error KeyNotActive();
     error KeyExpired();
     error ZeroAddress();
@@ -84,9 +91,34 @@ contract BrainSmartAccount {
     }
 
     /// @notice Revoke a session key. Owner-only. Takes effect immediately.
+    /// @dev    Final removal: deletes the key record entirely. Distinct from
+    ///         pauseSessionKey, which preserves it. Also clears any pause flag.
     function revokeSessionKey(address holder) external onlyOwner {
         delete _keys[holder];
+        delete _paused[holder];
         emit SessionKeyRevoked(holder);
+    }
+
+    /// @notice Pause a session key (kill-switch). Owner-only. Immediately
+    ///         disables execution by this holder WITHOUT deleting the key
+    ///         record, its window spend, limits, or metadata — so resume needs
+    ///         no fresh grant/attestation. Idempotent. Distinct from
+    ///         revokeSessionKey (permanent removal).
+    function pauseSessionKey(address holder) external onlyOwner {
+        _paused[holder] = true;
+        emit SessionKeyPaused(holder);
+    }
+
+    /// @notice Resume a paused session key. Owner-only. Re-enables execution
+    ///         under the key's existing scope and accumulated window spend.
+    function unpauseSessionKey(address holder) external onlyOwner {
+        _paused[holder] = false;
+        emit SessionKeyResumed(holder);
+    }
+
+    /// @notice Whether `holder`'s session key is currently paused.
+    function isSessionKeyPaused(address holder) external view returns (bool) {
+        return _paused[holder];
     }
 
     /// @notice Execute a call via a session key. Holder-authenticated.
@@ -97,6 +129,7 @@ contract BrainSmartAccount {
     {
         SessionKey storage key = _keys[msg.sender];
         if (key.holder != msg.sender) revert NotHolder();
+        if (_paused[msg.sender]) revert KeyPaused();
         if (block.timestamp < key.validAfter || block.timestamp >= key.validUntil) revert KeyNotActive();
 
         // Target allowlist (empty = any).

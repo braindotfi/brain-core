@@ -48,6 +48,22 @@ export const ID_PREFIX = {
   policyDecision: "pd",
   approval: "appr",
   webhookEndpoint: "whe",
+  // Agent Autonomy v3 — agent-run persistence (Layer 5).
+  agentRun: "agnr",
+  agentRoutingDecision: "agrd",
+  agentReasoningTrace: "agrt",
+  agentRunStep: "agrs",
+  agentEvidenceRef: "agev",
+  agentIdempotencyKey: "agik",
+  // Agent Autonomy v3 — execution preconditions (Phase 1b).
+  ledgerReservation: "rsv",
+  policySpendCounter: "psc",
+  // Agent Autonomy v3 — high-risk findings + overrides (Phase 2.6).
+  agentFinding: "agfn",
+  agentFindingOverride: "agfo",
+  // Agent Autonomy v3 — agent-to-agent sagas (Phase 3.2).
+  agentSaga: "agsg",
+  agentSagaStep: "agss",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];

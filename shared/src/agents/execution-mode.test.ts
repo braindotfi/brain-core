@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { resolveExecutionMode } from "./execution-mode.js";
+import {
+  resolveExecutionMode,
+  resolveFinalExecutionMode,
+  type FinalExecutionModeInput,
+} from "./execution-mode.js";
+
+function finalBase(overrides: Partial<FinalExecutionModeInput> = {}): FinalExecutionModeInput {
+  return {
+    suggestedMode: "execute",
+    agentDefaultAuthority: "execute",
+    gateDryRunOutcome: "allow",
+    evidenceComplete: true,
+    criticalMissing: false,
+    confidence: 0.95,
+    riskLevel: "low",
+    counterpartyRisk: "low",
+    actionKind: "financial",
+    behaviorHashMatches: true,
+    ...overrides,
+  };
+}
 
 const base = {
   confidence: 0.95,
@@ -60,5 +80,68 @@ describe("resolveExecutionMode", () => {
         highConfidenceThreshold: 0.75,
       }),
     ).toBe("execute");
+  });
+});
+
+describe("resolveFinalExecutionMode (1b.4 hard constraints)", () => {
+  it("reaches execute only when every precondition holds", () => {
+    expect(resolveFinalExecutionMode(finalBase())).toBe("execute");
+  });
+
+  it("behaviorHash mismatch is a hard reject (beats everything)", () => {
+    expect(
+      resolveFinalExecutionMode(
+        finalBase({ behaviorHashMatches: false, gateDryRunOutcome: "allow" }),
+      ),
+    ).toBe("reject");
+  });
+
+  it("gate dry-run reject → reject", () => {
+    expect(resolveFinalExecutionMode(finalBase({ gateDryRunOutcome: "reject" }))).toBe("reject");
+  });
+
+  it("critical missing evidence → notify_only (or reject per agent)", () => {
+    expect(resolveFinalExecutionMode(finalBase({ criticalMissing: true }))).toBe("notify_only");
+    expect(
+      resolveFinalExecutionMode(
+        finalBase({ criticalMissing: true, missingEvidenceBehavior: "reject" }),
+      ),
+    ).toBe("reject");
+  });
+
+  it("high-risk agent never resolves above confirm (INV-4)", () => {
+    expect(resolveFinalExecutionMode(finalBase({ riskLevel: "high" }))).toBe("confirm");
+  });
+
+  it("risky counterparty forces at least confirm", () => {
+    expect(resolveFinalExecutionMode(finalBase({ counterpartyRisk: "sanctioned" }))).toBe(
+      "confirm",
+    );
+    expect(resolveFinalExecutionMode(finalBase({ counterpartyRisk: "high" }))).toBe("confirm");
+  });
+
+  it("gate dry-run confirm caps at confirm", () => {
+    expect(resolveFinalExecutionMode(finalBase({ gateDryRunOutcome: "confirm" }))).toBe("confirm");
+  });
+
+  it("agent default_authority caps the result", () => {
+    expect(resolveFinalExecutionMode(finalBase({ agentDefaultAuthority: "propose" }))).toBe(
+      "propose",
+    );
+    expect(resolveFinalExecutionMode(finalBase({ agentDefaultAuthority: "notify_only" }))).toBe(
+      "notify_only",
+    );
+  });
+
+  it("tenant authority cap applies", () => {
+    expect(resolveFinalExecutionMode(finalBase({ tenantAuthorityCap: "propose" }))).toBe("propose");
+  });
+
+  it("downgrades execute to propose when confidence is below threshold", () => {
+    expect(resolveFinalExecutionMode(finalBase({ confidence: 0.6 }))).toBe("propose");
+  });
+
+  it("downgrades execute to propose when evidence is incomplete", () => {
+    expect(resolveFinalExecutionMode(finalBase({ evidenceComplete: false }))).toBe("propose");
   });
 });

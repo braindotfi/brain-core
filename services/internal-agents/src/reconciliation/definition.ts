@@ -27,4 +27,10 @@ export const reconciliationDefinition: InternalAgentDefinition = {
   required_evidence: ["transaction"],
   default_authority: "propose",
   enabled_by_default: true,
+  event_action_map: {
+    "transaction.unreconciled": "propose_match",
+    "statement.imported": "propose_match",
+    "reconciliation.candidate_found": "propose_match",
+  },
+  default_action: "propose_match",
 };

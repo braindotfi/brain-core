@@ -384,6 +384,154 @@ describe("§6 — check 11: approval granted when required", () => {
   });
 });
 
+describe("§6 — check 8: balance net of active reservations (1b.1)", () => {
+  it("fails when amount + active reservations exceed available balance", async () => {
+    // available 1000, reserved 800, requesting 300 → 800+300 > 1000 → fail
+    const { deps } = makeDeps({ sumActiveReservations: async () => "800.00" });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent({ amount: "300.00" }),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(8);
+      expect(result.failedCheck.detail!.reserved).toBe("800.00");
+    }
+  });
+
+  it("passes when amount + active reservations fit within available balance", async () => {
+    const { deps } = makeDeps({ sumActiveReservations: async () => "500.00" });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent({ amount: "300.00" }),
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("subtracts reservations in dry-run too (read-only)", async () => {
+    const { deps, audit } = makeDeps({ sumActiveReservations: async () => "800.00" });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent({ amount: "300.00" }),
+      dryRun: true,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failedCheck.index).toBe(8);
+    expect(audit.events).toHaveLength(0);
+  });
+});
+
+describe("§6 — dry-run mode (1a.2): same checks, no side effects", () => {
+  it("passes all 13 checks but writes no policy_decisions row and emits no audit", async () => {
+    const { deps, audit } = makeDeps();
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+      dryRun: true,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.dryRun).toBe(true);
+      expect(result.outcome).toBe("allow");
+      expect(result.policyDecisionId).toBe(""); // no row persisted
+      expect(result.auditBeforeEventId).toBe(""); // no audit emitted
+      expect(result.checks).toHaveLength(13);
+    }
+    expect(audit.events).toHaveLength(0); // INV-6 side effect suppressed in dry-run
+  });
+
+  it("returns the same reject outcome as a live call (one evaluator)", async () => {
+    const { deps, audit } = makeDeps({
+      evaluatePolicy: async () => makeDecision({ outcome: "reject" }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+      dryRun: true,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.dryRun).toBe(true);
+      expect(result.failedCheck.index).toBe(3);
+    }
+    expect(audit.events).toHaveLength(0);
+  });
+
+  it("caches the trace when a traceCache is provided", async () => {
+    const writes: Array<{ key: string; ttl: number }> = [];
+    const { deps } = makeDeps({
+      evaluatePolicy: async () => makeDecision({ trace: [{ rule: "ok" }] }),
+      traceCache: {
+        set: async (key, _trace, ttlSeconds) => {
+          writes.push({ key, ttl: ttlSeconds });
+        },
+      },
+    });
+    await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+      dryRun: true,
+    });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.key).toMatch(/^gate:dryrun:[0-9a-f]{64}$/);
+    expect(writes[0]!.ttl).toBe(60);
+  });
+});
+
+describe("§6 — check 1.5: agent behavior pinned (2.3)", () => {
+  it("passes when the runtime behaviorHash matches the registered one", async () => {
+    const { deps } = makeDeps({
+      resolveAgent: async () => ({ ...ACTIVE_AGENT, behaviorHash: "0xabc" }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+      runtimeBehaviorHash: "0xabc",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.checks.some((c) => c.name === "agent_behavior_pinned")).toBe(true);
+    }
+  });
+
+  it("rejects when the runtime behaviorHash differs (hard stop)", async () => {
+    const { deps } = makeDeps({
+      resolveAgent: async () => ({ ...ACTIVE_AGENT, behaviorHash: "0xabc" }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+      runtimeBehaviorHash: "0xdef",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failedCheck.name).toBe("agent_behavior_pinned");
+  });
+
+  it("skips the check (canonical 13) when no runtime hash is supplied", async () => {
+    const { deps } = makeDeps({
+      resolveAgent: async () => ({ ...ACTIVE_AGENT, behaviorHash: "0xabc" }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.checks).toHaveLength(13);
+      expect(result.checks.some((c) => c.name === "agent_behavior_pinned")).toBe(false);
+    }
+  });
+});
+
 describe("§6 — invariant: gate emits exactly one audit-before event", () => {
   it("happy path emits exactly one event", async () => {
     const { deps, audit } = makeDeps();

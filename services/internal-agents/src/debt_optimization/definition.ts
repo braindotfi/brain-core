@@ -15,4 +15,10 @@ export const debtOptimizationDefinition: InternalAgentDefinition = {
   required_evidence: ["obligation"],
   default_authority: "notify_only",
   enabled_by_default: true,
+  // Money-mover: no default_action — payments require an explicit/event match.
+  event_action_map: {
+    "debt.payment_due": "recommend_paydown",
+    "interest_rate.changed": "create_debt_plan",
+    "cash.available_for_debt_paydown": "recommend_paydown",
+  },
 };

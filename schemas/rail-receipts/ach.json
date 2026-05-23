@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/rail-receipts/ach/v1",
+  "title": "AchRailReceipt",
+  "type": "object",
+  "required": ["rail", "ach_trace"],
+  "additionalProperties": true,
+  "properties": {
+    "rail": { "const": "ach" },
+    "ach_trace": { "type": "string", "minLength": 1 },
+    "return_code": { "type": "string" }
+  }
+}

@@ -19,4 +19,11 @@ export const financialHealthDefinition: InternalAgentDefinition = {
   required_evidence: ["balance", "transaction"],
   default_authority: "notify_only",
   enabled_by_default: true,
+  event_action_map: {
+    "monthly.health_check": "generate_health_score",
+    "income.changed": "recommend_action",
+    "spending.changed": "recommend_action",
+    "cash.reserve_changed": "recommend_action",
+  },
+  default_action: "generate_health_score",
 };

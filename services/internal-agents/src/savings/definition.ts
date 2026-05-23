@@ -21,4 +21,10 @@ export const savingsDefinition: InternalAgentDefinition = {
   required_evidence: ["balance"],
   default_authority: "propose",
   enabled_by_default: true,
+  // Money-mover: no default_action — transfers require an explicit/event match.
+  event_action_map: {
+    "income.received": "recommend_savings_transfer",
+    "cash.balance_high": "recommend_savings_transfer",
+    "savings.goal_progress_changed": "update_goal_progress",
+  },
 };

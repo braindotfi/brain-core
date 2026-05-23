@@ -19,6 +19,7 @@ import {
 import type { Pool } from "pg";
 import { getActive } from "./repository.js";
 import { evaluate, type Action } from "./vm.js";
+import { readSpendWindow, readTxCountWindow } from "./spend-counters.js";
 import type { ApplyTo, PolicyDocument, PolicyRule } from "./dsl.js";
 
 export interface PolicyServiceDeps {
@@ -115,12 +116,48 @@ export class PolicyService {
       throw brainError("policy_not_found", "no active policy for tenant");
     }
 
+    // Load the agent's current spend/tx-count windows referenced by the policy
+    // so the VM can evaluate the spend envelopes deterministically (1b.2). The
+    // VM stays pure; this is the only I/O.
+    const agentId = intent.created_by_agent_id;
+    const spendWindows = collectSpendWindows(active.content);
+    const txWindows = collectTxWindows(active.content);
+    let spendInWindow: Record<string, { currency: string; value: string }> | undefined;
+    let txCountInWindow: Record<string, number> | undefined;
+    if (agentId !== null && (spendWindows.length > 0 || txWindows.length > 0)) {
+      await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+        const s: Record<string, { currency: string; value: string }> = {};
+        for (const w of spendWindows) {
+          s[w.window] = {
+            currency: w.currency,
+            value: await readSpendWindow(c, {
+              agentId,
+              window: w.window,
+              currency: w.currency,
+            }),
+          };
+        }
+        const t: Record<string, number> = {};
+        for (const w of txWindows) {
+          t[w] = await readTxCountWindow(c, { agentId, window: w });
+        }
+        spendInWindow = s;
+        txCountInWindow = t;
+      });
+    }
+
     const action: Action = {
       kind: intentToApplyTo(intent.action_type),
       counterparty_id: intent.destination_counterparty_id,
       amount: { currency: intent.currency, value: intent.amount },
       agent_role: null,
+      agent_id: agentId,
+      // TODO(agent-autonomy-v3): resolve real tenant category (router defaults to
+      // "business" today); thread the same source here for tenant.category rules.
+      tenant_category: "business",
       timestamp: new Date(),
+      ...(spendInWindow !== undefined ? { spend_in_window: spendInWindow } : {}),
+      ...(txCountInWindow !== undefined ? { tx_count_in_window: txCountInWindow } : {}),
     };
 
     const decision = evaluate(active.content, action);
@@ -215,4 +252,30 @@ function sha256Intent(intent: GatePaymentIntent): string {
 
 function findRule(policy: PolicyDocument, ruleId: string): PolicyRule | null {
   return policy.rules.find((r) => r.id === ruleId) ?? null;
+}
+
+/** Distinct (window,currency) pairs the policy's spend envelopes reference (1b.2). */
+function collectSpendWindows(doc: PolicyDocument): Array<{ window: string; currency: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ window: string; currency: string }> = [];
+  for (const rule of doc.rules) {
+    const c = rule.when["agent.spend_in_window"];
+    if (c === undefined) continue;
+    const key = `${c.window}:${c.lte.currency}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push({ window: c.window, currency: c.lte.currency });
+    }
+  }
+  return out;
+}
+
+/** Distinct windows the policy's tx-count envelopes reference (1b.2). */
+function collectTxWindows(doc: PolicyDocument): string[] {
+  const seen = new Set<string>();
+  for (const rule of doc.rules) {
+    const c = rule.when["agent.tx_count_in_window"];
+    if (c !== undefined) seen.add(c.window);
+  }
+  return [...seen];
 }

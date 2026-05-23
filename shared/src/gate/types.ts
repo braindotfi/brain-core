@@ -18,6 +18,7 @@
 
 export type GateCheckName =
   | "agent_identity_verified"
+  | "agent_behavior_pinned"
   | "agent_authorized"
   | "action_allowed"
   | "source_account_allowed"
@@ -39,18 +40,32 @@ export interface GateCheck {
   detail?: Record<string, unknown>;
 }
 
+export type GateOutcome = "allow" | "confirm" | "reject";
+
 export interface GateSuccess {
   ok: true;
+  /** True when this was a dry-run (no policy_decisions row, no audit emitted). */
+  dryRun: boolean;
+  outcome: GateOutcome;
+  requiredApprovers: string[];
+  /** Persisted PolicyDecision id; "" in dry-run (no row written). */
   policyDecisionId: string;
+  /** Audit-before event id; "" in dry-run (no audit emitted). */
   auditBeforeEventId: string;
+  trace: Array<Record<string, unknown>>;
   checks: GateCheck[];
 }
 
 export interface GateFailure {
   ok: false;
+  dryRun: boolean;
+  /** Policy outcome when the failure was after policy eval; null if before. */
+  outcome: GateOutcome | null;
+  requiredApprovers: string[];
   failedCheck: GateCheck;
   /** Earlier-passed checks; useful for the audit trail of the failure. */
   checks: GateCheck[];
+  trace: Array<Record<string, unknown>>;
 }
 
 export type GateResult = GateSuccess | GateFailure;

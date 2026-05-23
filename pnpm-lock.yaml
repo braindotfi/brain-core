@@ -295,6 +295,9 @@ importers:
       '@brain/policy':
         specifier: workspace:*
         version: link:../policy
+      '@brain/schemas':
+        specifier: workspace:*
+        version: link:../../schemas
       '@brain/shared':
         specifier: workspace:*
         version: link:../../shared

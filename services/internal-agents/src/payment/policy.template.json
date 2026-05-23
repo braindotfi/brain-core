@@ -4,27 +4,34 @@
     {
       "id": "payment_blocked_counterparty",
       "applies_to": ["outbound_payment", "onchain_tx"],
-      "when": { "agent.role": "payment", "counterparty.in": "vendors.blocked" },
+      "when": { "agent.id": "payment", "counterparty.in": "vendors.blocked" },
       "execute": "reject"
     },
     {
-      "id": "payment_within_cap",
+      "id": "payment_envelope",
       "applies_to": ["outbound_payment", "onchain_tx"],
-      "when": { "agent.role": "payment", "amount.lte": { "currency": "USD", "value": "25000" } },
-      "require": "single_signer",
-      "execute": "confirm"
+      "when": {
+        "agent.id": "payment",
+        "amount.lte": { "currency": "USD", "value": "50000" },
+        "agent.spend_in_window": {
+          "window": "24h",
+          "lte": { "currency": "USD", "value": "100000" }
+        },
+        "agent.tx_count_in_window": { "window": "1h", "lte": 20 }
+      },
+      "approval_required_above": { "currency": "USD", "value": "10000" },
+      "execute": "auto"
     },
     {
-      "id": "payment_over_cap",
+      "id": "payment_financial_outside_envelope_denied",
       "applies_to": ["outbound_payment", "onchain_tx"],
-      "when": { "agent.role": "payment", "amount.gt": { "currency": "USD", "value": "25000" } },
-      "require": "cfo_approval",
-      "execute": "confirm"
+      "when": { "agent.id": "payment" },
+      "execute": "reject"
     },
     {
       "id": "payment_advisory_auto",
-      "applies_to": ["any"],
-      "when": { "agent.role": "payment" },
+      "applies_to": ["ledger_write", "agent_action"],
+      "when": { "agent.id": "payment" },
       "execute": "auto"
     }
   ],

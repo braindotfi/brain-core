@@ -21,4 +21,16 @@ export const purchaseAdvisorDefinition: InternalAgentDefinition = {
   required_evidence: ["balance"],
   default_authority: "notify_only",
   enabled_by_default: true,
+  event_action_map: {
+    "purchase_intent.created": "approve_recommendation",
+    "large_transaction.detected": "warn",
+  },
+  intent_action_map: [
+    {
+      patterns: ["should i buy this", "can i afford this", "is this a good purchase"],
+      action: "approve_recommendation",
+    },
+    { patterns: ["should i wait", "should i delay this purchase"], action: "recommend_delay" },
+  ],
+  default_action: "warn",
 };

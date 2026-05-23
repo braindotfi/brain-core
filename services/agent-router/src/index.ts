@@ -12,7 +12,34 @@ export * from "./embedding-classifier.js";
 export * from "./intent-decomposer.js";
 export * from "./evidence-gatherer.js";
 export { AgentRouter, type AgentRouterDeps } from "./router.js";
+export {
+  ActionResolver,
+  REQUESTED_ACTION_KEY,
+  type ActionResolverDeps,
+  type ActionResolution,
+  type ActionResolutionInput,
+  type ActionSource,
+} from "./action-resolver.js";
 export { registerAgentRouterRoutes, type AgentRouterRouteDeps } from "./route.js";
+export {
+  AgentRunService,
+  type AgentRunServiceDeps,
+  type AgentRunResult,
+  type AgentRunStore,
+  type RecordRunInput,
+  type RecordRoutingDecisionInput,
+} from "./agent-run-service.js";
+export {
+  registerAgentApiRoutes,
+  type AgentApiDeps,
+  type AgentApiReadStore,
+} from "./agent-api.js";
+export {
+  StaticPromotionPolicy,
+  ALL_SHADOWED,
+  type PromotionPolicy,
+  type PromotionConfig,
+} from "./promotion.js";
 export {
   routeAndPropose,
   createAgentRouteWorker,

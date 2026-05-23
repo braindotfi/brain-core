@@ -7,5 +7,20 @@
       "when": { "agent.role": "collections" },
       "execute": "auto"
     }
+  ],
+  "message_templates": [
+    {
+      "id": "collections_payment_reminder",
+      "subject": "Reminder: invoice {{invoice_id}} is past due",
+      "body": "Hello {{counterparty_name}},\n\nOur records show invoice {{invoice_id}} for {{amount_due}} is {{days_overdue}} days past due (due {{due_date}}). Please arrange payment at your earliest convenience.\n\nThank you.",
+      "allowed_variables": [
+        "counterparty_name",
+        "invoice_id",
+        "amount_due",
+        "days_overdue",
+        "due_date"
+      ],
+      "approver_signatures": []
+    }
   ]
 }

@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import type { PolicyDocument } from "./dsl.js";
-import { compareDecimal, evaluate, matchesCron, parseRequire } from "./vm.js";
+import { addDecimal, compareDecimal, evaluate, matchesCron, parseRequire } from "./vm.js";
+
+import type { Action } from "./vm.js";
+
+function baseAction(overrides: Partial<Action> = {}): Action {
+  return {
+    kind: "outbound_payment",
+    counterparty_id: null,
+    amount: null,
+    agent_role: null,
+    timestamp: new Date("2026-05-23T12:00:00Z"),
+    ...overrides,
+  };
+}
 
 describe("compareDecimal", () => {
   it("handles equal values", () => {
@@ -199,5 +212,164 @@ describe("evaluate — property: reject is the default for unmatched actions", (
         },
       ),
     );
+  });
+});
+
+describe("addDecimal (spend-envelope projection)", () => {
+  it("adds without floating-point error", () => {
+    expect(addDecimal("100.40", "0.20")).toBe("100.6");
+    expect(addDecimal("0.1", "0.2")).toBe("0.3");
+    expect(addDecimal("99999", "1")).toBe("100000");
+    expect(addDecimal("0", "0")).toBe("0");
+  });
+});
+
+describe("evaluate — 1b.5 signed authority primitives", () => {
+  it("matches agent.id and tenant.category", () => {
+    const policy: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "treasury-business",
+          applies_to: ["any"],
+          when: { "agent.id": "treasury", "tenant.category": "business" },
+          execute: "auto",
+        },
+      ],
+    };
+    expect(
+      evaluate(policy, baseAction({ agent_id: "treasury", tenant_category: "business" })).outcome,
+    ).toBe("allow");
+    // wrong category → no match → default deny
+    expect(
+      evaluate(policy, baseAction({ agent_id: "treasury", tenant_category: "consumer" })).outcome,
+    ).toBe("reject");
+  });
+
+  it("enforces action.in allowlist and action.not_in blocklist", () => {
+    const allow: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "a",
+          applies_to: ["any"],
+          when: { "action.in": ["propose_payment"] },
+          execute: "auto",
+        },
+      ],
+    };
+    expect(evaluate(allow, baseAction({ action_id: "propose_payment" })).outcome).toBe("allow");
+    expect(evaluate(allow, baseAction({ action_id: "execute_payment" })).outcome).toBe("reject");
+
+    const block: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "b",
+          applies_to: ["any"],
+          when: { "action.not_in": ["execute_payment"] },
+          execute: "auto",
+        },
+      ],
+    };
+    expect(evaluate(block, baseAction({ action_id: "execute_payment" })).outcome).toBe("reject");
+    expect(evaluate(block, baseAction({ action_id: "propose_payment" })).outcome).toBe("allow");
+  });
+
+  it("pins to a behaviorHash", () => {
+    const policy: PolicyDocument = {
+      version: 1,
+      rules: [
+        { id: "p", applies_to: ["any"], when: { "agent.behaviorHash": "0xabc" }, execute: "auto" },
+      ],
+    };
+    expect(evaluate(policy, baseAction({ behavior_hash: "0xabc" })).outcome).toBe("allow");
+    expect(evaluate(policy, baseAction({ behavior_hash: "0xdef" })).outcome).toBe("reject");
+  });
+
+  it("matches a spend envelope while within the window cap and rejects when exceeded", () => {
+    const policy: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "envelope",
+          applies_to: ["outbound_payment"],
+          when: {
+            "agent.id": "treasury",
+            "agent.spend_in_window": { window: "24h", lte: { currency: "USD", value: "100000" } },
+          },
+          execute: "confirm",
+        },
+      ],
+    };
+    // prior 90k + this 5k = 95k <= 100k → match → confirm
+    expect(
+      evaluate(
+        policy,
+        baseAction({
+          agent_id: "treasury",
+          amount: { currency: "USD", value: "5000" },
+          spend_in_window: { "24h": { currency: "USD", value: "90000" } },
+        }),
+      ).outcome,
+    ).toBe("confirm");
+    // prior 98k + this 5k = 103k > 100k → no match → default deny
+    expect(
+      evaluate(
+        policy,
+        baseAction({
+          agent_id: "treasury",
+          amount: { currency: "USD", value: "5000" },
+          spend_in_window: { "24h": { currency: "USD", value: "98000" } },
+        }),
+      ).outcome,
+    ).toBe("reject");
+  });
+
+  it("enforces a tx-count window cap (this action counts)", () => {
+    const policy: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "count",
+          applies_to: ["any"],
+          when: { "agent.tx_count_in_window": { window: "1h", lte: 10 } },
+          execute: "auto",
+        },
+      ],
+    };
+    expect(evaluate(policy, baseAction({ tx_count_in_window: { "1h": 9 } })).outcome).toBe("allow");
+    expect(evaluate(policy, baseAction({ tx_count_in_window: { "1h": 10 } })).outcome).toBe(
+      "reject",
+    );
+  });
+
+  it("approval_required_above forces confirm even when execute=auto", () => {
+    const policy: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "auto-with-threshold",
+          applies_to: ["outbound_payment"],
+          when: { "agent.id": "savings" },
+          execute: "auto",
+          approval_required_above: { currency: "USD", value: "1000" },
+        },
+      ],
+    };
+    // below threshold → allow
+    expect(
+      evaluate(
+        policy,
+        baseAction({ agent_id: "savings", amount: { currency: "USD", value: "500" } }),
+      ).outcome,
+    ).toBe("allow");
+    // above threshold → confirm + a required signer
+    const over = evaluate(
+      policy,
+      baseAction({ agent_id: "savings", amount: { currency: "USD", value: "5000" } }),
+    );
+    expect(over.outcome).toBe("confirm");
+    expect(over.required_approvers).toEqual(["signer"]);
   });
 });

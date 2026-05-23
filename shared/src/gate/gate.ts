@@ -14,9 +14,10 @@
  * call site per execution path.
  */
 
+import { createHash } from "node:crypto";
 import type { AuditEmitter } from "../audit/emitter.js";
 import type { ServiceCallContext } from "../contracts/types.js";
-import type { GateCheck, GateResult } from "./types.js";
+import type { GateCheck, GateOutcome, GateResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -79,6 +80,23 @@ export interface GateAgent {
   id: string;
   state: string;
   scope: { canExecutePayments: boolean };
+  /** behaviorHash registered on-chain for this agent (2.3). */
+  behaviorHash?: string | null;
+}
+
+/** Options passed to the single policy evaluator (1a.2 — one evaluator, two modes). */
+export interface GateEvalOptions {
+  /**
+   * In dry-run the evaluator runs the SAME policy VM but does NOT persist a
+   * policy_decisions row. INV-3: there is exactly one evaluator; dry-run only
+   * suppresses the side effect, never forks the logic.
+   */
+  dryRun: boolean;
+}
+
+/** Optional cache for the dry-run trace so a later live call can avoid rework. */
+export interface GateTraceCache {
+  set: (key: string, trace: Array<Record<string, unknown>>, ttlSeconds: number) => Promise<void>;
 }
 
 /** Hooks the caller provides so the gate stays pure. */
@@ -89,18 +107,61 @@ export interface GateDependencies {
   resolveAccount: (accountId: string) => Promise<GateAccount | null>;
   /** Look up the counterparty by id. */
   resolveCounterparty: (counterpartyId: string) => Promise<GateCounterparty | null>;
-  /** Run policy evaluation against the PaymentIntent's action. Returns a stored PolicyDecision. */
-  evaluatePolicy: (intent: GatePaymentIntent) => Promise<GatePolicyDecision>;
+  /**
+   * Run policy evaluation against the PaymentIntent's action. The SAME evaluator
+   * serves live and dry-run; in dry-run it must NOT persist the policy_decisions
+   * row (opts.dryRun === true). Returns the (possibly unpersisted) PolicyDecision.
+   */
+  evaluatePolicy: (intent: GatePaymentIntent, opts: GateEvalOptions) => Promise<GatePolicyDecision>;
   /** Read approvals for the intent — returns the roles that have signed. */
   resolveApprovals: (intentId: string) => Promise<GateApprovalState>;
-  /** Audit emitter — used for the audit-before event. */
+  /** Audit emitter — used for the audit-before event (live mode only). */
   audit: AuditEmitter;
+  /** Optional dry-run trace cache (60s TTL). Written in dry-run only. */
+  traceCache?: GateTraceCache;
+  /**
+   * Sum of active balance reservations against the source account (1b.1), as a
+   * decimal string. Check #8 subtracts it so parallel money-movers can't
+   * double-spend the same balance. Read-only — evaluated in dry-run too.
+   */
+  sumActiveReservations?: (accountId: string) => Promise<string>;
 }
 
 export interface RunGateInput {
   ctx: ServiceCallContext;
   principal: GatePrincipal;
   intent: GatePaymentIntent;
+  /**
+   * When true, run all 13 checks against the same Ledger state but DO NOT
+   * insert a policy_decisions row, write a reservation, or emit audit
+   * before/after. Used by the agent layer to short-circuit obvious rejects and
+   * to pick confirm vs execute before building a proposal (plan 1a.2).
+   */
+  dryRun?: boolean;
+  /**
+   * The behaviorHash of the model/prompt/tools actually used at runtime (2.3).
+   * When supplied, gate check 1.5 requires it to equal the agent's registered
+   * behaviorHash; a mismatch rejects regardless of all other checks.
+   */
+  runtimeBehaviorHash?: string;
+}
+
+/** TTL for the cached dry-run trace. */
+const DRY_RUN_TRACE_TTL_SECONDS = 60;
+
+/** Canonical cache key for a candidate intent's dry-run trace. */
+export function gateTraceCacheKey(intent: GatePaymentIntent): string {
+  const canonical = JSON.stringify({
+    owner: intent.owner_id,
+    agent: intent.created_by_agent_id,
+    action: intent.action_type,
+    src: intent.source_account_id,
+    dst: intent.destination_counterparty_id,
+    amount: intent.amount,
+    currency: intent.currency,
+    evidence: [...intent.evidence_ids].sort(),
+  });
+  return `gate:dryrun:${createHash("sha256").update(canonical).digest("hex")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,35 +173,76 @@ export async function runPreExecutionGate(
   input: RunGateInput,
 ): Promise<GateResult> {
   const checks: GateCheck[] = [];
+  const dryRun = input.dryRun ?? false;
+  let outcome: GateOutcome | null = null;
+  let requiredApprovers: string[] = [];
+  let trace: Array<Record<string, unknown>> = [];
+
+  // Local failure builder: captures the current outcome/approvers/trace so a
+  // failure before policy eval reports nulls and one after reports the decision.
+  const failGate = (
+    index: number,
+    name: GateCheck["name"],
+    detail: Record<string, unknown>,
+  ): GateResult => {
+    const failed: GateCheck = { index, name, passed: false, detail };
+    return {
+      ok: false,
+      dryRun,
+      outcome,
+      requiredApprovers,
+      failedCheck: failed,
+      checks: [...checks, failed],
+      trace,
+    };
+  };
 
   // 1 — agent identity verified.
   if (input.principal.type !== "agent") {
-    return fail(checks, 1, "agent_identity_verified", { type: input.principal.type });
+    return failGate(1, "agent_identity_verified", { type: input.principal.type });
   }
   if (
     input.intent.created_by_agent_id !== null &&
     input.intent.created_by_agent_id !== input.principal.id
   ) {
-    return fail(checks, 1, "agent_identity_verified", {
+    return failGate(1, "agent_identity_verified", {
       reason: "principal does not own this PaymentIntent",
     });
   }
   const agentId = input.intent.created_by_agent_id ?? input.principal.id;
   const agent = await deps.resolveAgent(agentId);
   if (agent === null || agent.state !== "active") {
-    return fail(checks, 1, "agent_identity_verified", {
+    return failGate(1, "agent_identity_verified", {
       agent_id: agentId,
       state: agent?.state ?? "missing",
     });
   }
   pass(checks, 1, "agent_identity_verified");
 
+  // 1.5 — agent behavior pinned (2.3). Verified only when a runtime behaviorHash
+  // is supplied AND the agent has a registered hash; a mismatch is a hard reject
+  // regardless of every other signal. Skipped (no check row) when unverifiable,
+  // so the happy path remains the canonical 13 checks.
+  if (
+    input.runtimeBehaviorHash !== undefined &&
+    agent.behaviorHash !== undefined &&
+    agent.behaviorHash !== null
+  ) {
+    if (agent.behaviorHash !== input.runtimeBehaviorHash) {
+      return failGate(1.5, "agent_behavior_pinned", {
+        registered: agent.behaviorHash,
+        runtime: input.runtimeBehaviorHash,
+      });
+    }
+    pass(checks, 1.5, "agent_behavior_pinned");
+  }
+
   // 2 — agent authorized: scopes include payment_intent:execute.
   if (
     !input.principal.scopes.includes("payment_intent:execute") &&
     !agent.scope.canExecutePayments
   ) {
-    return fail(checks, 2, "agent_authorized", {
+    return failGate(2, "agent_authorized", {
       missing_scope: "payment_intent:execute",
     });
   }
@@ -150,15 +252,18 @@ export async function runPreExecutionGate(
   // intent may already carry one from creation, but Phase-4 re-evaluates
   // every time execute is called so the snapshot is fresh against the
   // current Ledger state.)
-  const decision = await deps.evaluatePolicy(input.intent);
+  const decision = await deps.evaluatePolicy(input.intent, { dryRun });
+  outcome = decision.outcome;
+  requiredApprovers = decision.required_approvers;
+  trace = decision.trace;
 
   // 3 — action allowed (policy matched a rule with applies_to including
   // this action_type, or `any`; any match is the precondition).
   if (decision.matched_rule_id === null) {
-    return fail(checks, 3, "action_allowed", { reason: "no rule matched" });
+    return failGate(3, "action_allowed", { reason: "no rule matched" });
   }
   if (decision.outcome === "reject") {
-    return fail(checks, 3, "action_allowed", {
+    return failGate(3, "action_allowed", {
       reason: "policy explicitly rejected",
       matched_rule_id: decision.matched_rule_id,
     });
@@ -168,20 +273,20 @@ export async function runPreExecutionGate(
   // 4 — source account allowed.
   const account = await deps.resolveAccount(input.intent.source_account_id);
   if (account === null) {
-    return fail(checks, 4, "source_account_allowed", { reason: "account not found" });
+    return failGate(4, "source_account_allowed", { reason: "account not found" });
   }
   if (account.status !== "active") {
-    return fail(checks, 4, "source_account_allowed", { status: account.status });
+    return failGate(4, "source_account_allowed", { status: account.status });
   }
   pass(checks, 4, "source_account_allowed");
 
   // 5 — counterparty allowed (exists, not sanctioned).
   const counterparty = await deps.resolveCounterparty(input.intent.destination_counterparty_id);
   if (counterparty === null) {
-    return fail(checks, 5, "counterparty_allowed", { reason: "counterparty not found" });
+    return failGate(5, "counterparty_allowed", { reason: "counterparty not found" });
   }
   if (counterparty.risk_level === "sanctioned") {
-    return fail(checks, 5, "counterparty_allowed", { reason: "counterparty sanctioned" });
+    return failGate(5, "counterparty_allowed", { reason: "counterparty sanctioned" });
   }
   pass(checks, 5, "counterparty_allowed");
 
@@ -196,7 +301,7 @@ export async function runPreExecutionGate(
         counterparty.verified_status === "document_verified" ||
         counterparty.verified_status === "sanctions_cleared";
       if (!ok) {
-        return fail(checks, 6, "counterparty_verified", {
+        return failGate(6, "counterparty_verified", {
           required_above: threshold,
           actual_status: counterparty.verified_status ?? "unverified",
         });
@@ -209,14 +314,14 @@ export async function runPreExecutionGate(
   const upper = decision.amount_upper_bound ?? null;
   if (upper !== null) {
     if (input.intent.currency !== upper.currency) {
-      return fail(checks, 7, "amount_within_limit", {
+      return failGate(7, "amount_within_limit", {
         reason: "currency mismatch",
         expected: upper.currency,
         actual: input.intent.currency,
       });
     }
     if (cmpDecimal(input.intent.amount, upper.value) > 0) {
-      return fail(checks, 7, "amount_within_limit", {
+      return failGate(7, "amount_within_limit", {
         amount: input.intent.amount,
         upper: upper.value,
       });
@@ -224,17 +329,23 @@ export async function runPreExecutionGate(
   }
   pass(checks, 7, "amount_within_limit");
 
-  // 8 — available balance sufficient.
+  // 8 — available balance sufficient, net of active reservations (1b.1):
+  //   available_balance - SUM(active reservations) >= amount
+  // i.e. available_balance >= amount + reserved. Reservations are read-only here,
+  // so the same check holds in dry-run.
   if (account.available_balance !== null) {
     if (account.currency !== input.intent.currency) {
-      return fail(checks, 8, "available_balance_sufficient", {
+      return failGate(8, "available_balance_sufficient", {
         reason: "currency mismatch between account and intent",
       });
     }
-    if (cmpDecimal(account.available_balance, input.intent.amount) < 0) {
-      return fail(checks, 8, "available_balance_sufficient", {
+    const reserved = (await deps.sumActiveReservations?.(input.intent.source_account_id)) ?? "0";
+    const required = addDecimalString(input.intent.amount, reserved);
+    if (cmpDecimal(account.available_balance, required) < 0) {
+      return failGate(8, "available_balance_sufficient", {
         available: account.available_balance,
         requested: input.intent.amount,
+        reserved,
       });
     }
   }
@@ -243,7 +354,7 @@ export async function runPreExecutionGate(
   // 9 — required evidence present.
   const requiredEvidence = decision.required_evidence_kinds ?? [];
   if (requiredEvidence.length > 0 && input.intent.evidence_ids.length === 0) {
-    return fail(checks, 9, "required_evidence_present", {
+    return failGate(9, "required_evidence_present", {
       required: requiredEvidence,
       provided: input.intent.evidence_ids,
     });
@@ -259,7 +370,7 @@ export async function runPreExecutionGate(
     const signedSet = new Set(approvals.signedRoles);
     const missing = decision.required_approvers.filter((r) => !signedSet.has(r));
     if (missing.length > 0) {
-      return fail(checks, 11, "approval_granted_when_required", {
+      return failGate(11, "approval_granted_when_required", {
         required: decision.required_approvers,
         signed: approvals.signedRoles,
         missing,
@@ -272,31 +383,45 @@ export async function runPreExecutionGate(
   // decision; surface its id.
   pass(checks, 12, "policy_decision_recorded", { policy_decision_id: decision.id });
 
-  // 13 — audit-before emitted. The matching audit-after event is the
-  // caller's responsibility AFTER the rail dispatches.
-  const auditEvent = await deps.audit.emit({
-    tenantId: input.ctx.tenantId,
-    layer: "agent",
-    actor: input.ctx.actor,
-    action: "payment_intent.execute.before",
-    inputs: {
-      payment_intent_id: input.intent.id,
-      action_type: input.intent.action_type,
-      source_account_id: input.intent.source_account_id,
-      destination_counterparty_id: input.intent.destination_counterparty_id,
-      amount: input.intent.amount,
-      currency: input.intent.currency,
-      policy_decision_id: decision.id,
-    },
-    outputs: { gate_passed: true },
-    policyDecisionId: decision.id,
-  });
-  pass(checks, 13, "audit_before_emitted", { audit_event_id: auditEvent.id });
+  // 13 — audit-before emitted. The matching audit-after event is the caller's
+  // responsibility AFTER the rail dispatches. Dry-run emits NOTHING (it only
+  // computes); instead it may cache the trace for the subsequent live call.
+  let auditBeforeEventId = "";
+  if (dryRun) {
+    pass(checks, 13, "audit_before_emitted", { dry_run: true });
+    if (deps.traceCache !== undefined) {
+      await deps.traceCache.set(gateTraceCacheKey(input.intent), trace, DRY_RUN_TRACE_TTL_SECONDS);
+    }
+  } else {
+    const auditEvent = await deps.audit.emit({
+      tenantId: input.ctx.tenantId,
+      layer: "agent",
+      actor: input.ctx.actor,
+      action: "payment_intent.execute.before",
+      inputs: {
+        payment_intent_id: input.intent.id,
+        action_type: input.intent.action_type,
+        source_account_id: input.intent.source_account_id,
+        destination_counterparty_id: input.intent.destination_counterparty_id,
+        amount: input.intent.amount,
+        currency: input.intent.currency,
+        policy_decision_id: decision.id,
+      },
+      outputs: { gate_passed: true },
+      policyDecisionId: decision.id,
+    });
+    auditBeforeEventId = auditEvent.id;
+    pass(checks, 13, "audit_before_emitted", { audit_event_id: auditEvent.id });
+  }
 
   return {
     ok: true,
-    policyDecisionId: decision.id,
-    auditBeforeEventId: auditEvent.id,
+    dryRun,
+    outcome: decision.outcome,
+    requiredApprovers: decision.required_approvers,
+    policyDecisionId: dryRun ? "" : decision.id,
+    auditBeforeEventId,
+    trace,
     checks,
   };
 }
@@ -314,16 +439,6 @@ function pass(
   checks.push({ index, name, passed: true, ...(detail !== undefined ? { detail } : {}) });
 }
 
-function fail(
-  prior: GateCheck[],
-  index: number,
-  name: GateCheck["name"],
-  detail: Record<string, unknown>,
-): GateResult {
-  const failed: GateCheck = { index, name, passed: false, detail };
-  return { ok: false, failedCheck: failed, checks: [...prior, failed] };
-}
-
 /**
  * Decimal-string compare without f64 loss. Mirrors the policy VM's
  * compareDecimal so gate ordering and policy ordering are guaranteed
@@ -337,6 +452,17 @@ function cmpDecimal(a: string, b: string): number {
   if (intCmp !== 0) return na.negative ? -intCmp : intCmp;
   const fracCmp = compareBig(na.frac, nb.frac);
   return na.negative ? -fracCmp : fracCmp;
+}
+
+/** Add two non-negative decimal strings (18 frac digits) without f64 loss. */
+function addDecimalString(a: string, b: string): string {
+  const na = norm(a);
+  const nb = norm(b);
+  const sum = BigInt(na.int + na.frac) + BigInt(nb.int + nb.frac);
+  const abs = sum.toString().padStart(19, "0");
+  const intPart = abs.slice(0, abs.length - 18).replace(/^0+/, "") || "0";
+  const fracPart = abs.slice(abs.length - 18).replace(/0+$/, "");
+  return fracPart.length > 0 ? `${intPart}.${fracPart}` : intPart;
 }
 
 function norm(s: string): { negative: boolean; int: string; frac: string } {

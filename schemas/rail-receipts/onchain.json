@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/rail-receipts/onchain/v1",
+  "title": "OnchainRailReceipt",
+  "type": "object",
+  "required": ["rail", "tx_hash", "block_number"],
+  "additionalProperties": true,
+  "properties": {
+    "rail": { "const": "onchain" },
+    "tx_hash": { "type": "string", "minLength": 1 },
+    "block_number": { "type": "integer", "minimum": 0 },
+    "revert_reason": { "type": "string" }
+  }
+}

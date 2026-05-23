@@ -66,45 +66,80 @@ export class ReconciliationService implements IReconciliationService {
     const since = req.since !== undefined ? new Date(req.since) : null;
     const max = this.deps.maxMatchesPerMatcher ?? DEFAULT_MAX_MATCHES;
 
-    const summary: Array<MatcherResult> = [];
+    // Validate requested types before taking the lock.
     for (const t of types) {
-      const matcher = this.registry.get(t);
-      if (matcher === undefined) {
+      if (!this.registry.has(t)) {
         throw brainError("request_body_invalid", `unknown match_type: ${t}`);
       }
-      const result = await matcher.run(
-        { pool: this.deps.pool, audit: this.deps.audit },
-        { ctx, since, maxMatches: max },
-      );
-      summary.push(result);
     }
 
-    const totalCreated = summary.reduce((acc, r) => acc + r.matchesProduced.length, 0);
-    // INTEGRATION POINT (agent-router, Phase 1): when matches are produced this
-    // is where a `reconciliation.candidate_found` domain event would be emitted
-    // via @brain/shared `emitDomainEvent`, so the router can route to the
-    // reconciliation agent. Wiring the enqueue dep into this service is a follow-up.
-    await this.deps.audit.emit({
-      tenantId: ctx.tenantId,
-      layer: "ledger",
-      actor: ctx.actor,
-      action: "ledger.reconciliation.run",
-      inputs: { match_types: types, since: since?.toISOString() ?? null },
-      outputs: {
-        matchers_run: summary.length,
-        matches_created: totalCreated,
-        per_matcher: summary.map((s) => ({
-          match_type: s.matchType,
-          created: s.matchesProduced.length,
-          scanned: s.candidatesScanned,
-          ...(s.notes !== undefined ? { notes: s.notes } : {}),
-        })),
-      },
-    });
+    // 2.5: coordinate concurrent reconciliation across replicas with a per-tenant
+    // advisory lock. The matchers run in separate txs, so a session-scoped lock
+    // (held across the batch, then explicitly released) is used rather than an
+    // xact-scoped one. If another replica holds it, skip cleanly — the next
+    // scheduled run catches up; no double-write to ledger_reconciliation_matches.
+    const lockClient = await this.deps.pool.connect();
+    let locked = false;
+    try {
+      const res = await lockClient.query<{ locked: boolean }>(
+        "SELECT pg_try_advisory_lock(hash_text($1)) AS locked",
+        [ctx.tenantId],
+      );
+      locked = res.rows[0]?.locked === true;
+      if (!locked) {
+        await this.deps.audit.emit({
+          tenantId: ctx.tenantId,
+          layer: "ledger",
+          actor: ctx.actor,
+          action: "ledger.reconciliation.skipped_locked",
+          inputs: { match_types: types },
+          outputs: { reason: "another replica holds the tenant reconciliation lock" },
+        });
+        return { job_id: `recon_skipped_${Date.now().toString(36)}` };
+      }
 
-    // Phase 5 returns a synthetic job id; stage-8 wires this through BullMQ
-    // and returns the actual job id from the queue.
-    return { job_id: `recon_${Date.now().toString(36)}` };
+      const summary: Array<MatcherResult> = [];
+      for (const t of types) {
+        const matcher = this.registry.get(t)!;
+        const result = await matcher.run(
+          { pool: this.deps.pool, audit: this.deps.audit },
+          { ctx, since, maxMatches: max },
+        );
+        summary.push(result);
+      }
+
+      const totalCreated = summary.reduce((acc, r) => acc + r.matchesProduced.length, 0);
+      // INTEGRATION POINT (agent-router, Phase 1): when matches are produced this
+      // is where a `reconciliation.candidate_found` domain event would be emitted
+      // via @brain/shared `emitDomainEvent`, so the router can route to the
+      // reconciliation agent. Wiring the enqueue dep into this service is a follow-up.
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "ledger",
+        actor: ctx.actor,
+        action: "ledger.reconciliation.run",
+        inputs: { match_types: types, since: since?.toISOString() ?? null },
+        outputs: {
+          matchers_run: summary.length,
+          matches_created: totalCreated,
+          per_matcher: summary.map((s) => ({
+            match_type: s.matchType,
+            created: s.matchesProduced.length,
+            scanned: s.candidatesScanned,
+            ...(s.notes !== undefined ? { notes: s.notes } : {}),
+          })),
+        },
+      });
+
+      // Phase 5 returns a synthetic job id; stage-8 wires this through BullMQ
+      // and returns the actual job id from the queue.
+      return { job_id: `recon_${Date.now().toString(36)}` };
+    } finally {
+      if (locked) {
+        await lockClient.query("SELECT pg_advisory_unlock(hash_text($1))", [ctx.tenantId]);
+      }
+      lockClient.release();
+    }
   }
 
   public async list(

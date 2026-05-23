@@ -19,6 +19,7 @@ export type PaymentIntentState =
   | "proposed"
   | "pending_approval"
   | "approved"
+  | "paused"
   | "rejected"
   | "executed"
   | "failed"
@@ -36,7 +37,11 @@ export function isValidPaymentIntentTransition(
     case "pending_approval":
       return to === "approved" || to === "rejected";
     case "approved":
-      return to === "executed" || to === "rejected" || to === "failed";
+      // Kill-switch (1b.3): approved ⇄ paused; otherwise execute/reject/fail.
+      return to === "executed" || to === "rejected" || to === "failed" || to === "paused";
+    case "paused":
+      // Resume re-runs the live gate before re-entering approved; cancel is terminal.
+      return to === "approved" || to === "cancelled";
     case "executed":
       return to === "failed"; // post-execution rail reversal still emits a transition
     case "rejected":

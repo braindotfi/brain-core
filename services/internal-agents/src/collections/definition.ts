@@ -24,4 +24,10 @@ export const collectionsDefinition: InternalAgentDefinition = {
   required_evidence: ["invoice", "counterparty"],
   default_authority: "propose",
   enabled_by_default: true,
+  event_action_map: {
+    "invoice.overdue": "draft_followup",
+    "payment.failed": "escalate",
+    "receivable.aging_threshold_crossed": "create_task",
+  },
+  default_action: "draft_followup",
 };

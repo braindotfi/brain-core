@@ -15,6 +15,10 @@ contract BrainMCPAgentRegistry {
         address agentAddress;
         bytes32 tenantId;
         bytes32 scopeHash;
+        /// @dev keccak256(model_id, model_version, prompt_template_hash, tool_manifest_hash).
+        ///      Pins the agent's behavior; the §6 gate (check 1.5) rejects runtime
+        ///      execution whose behaviorHash differs from this registered value.
+        bytes32 behaviorHash;
         uint256 registeredAt;
         uint256 revokedAt;
     }
@@ -23,9 +27,11 @@ contract BrainMCPAgentRegistry {
         bytes32 indexed agentId,
         address indexed agentAddress,
         bytes32 indexed tenantId,
-        bytes32 scopeHash
+        bytes32 scopeHash,
+        bytes32 behaviorHash
     );
     event AgentRevoked(bytes32 indexed agentId, bytes32 indexed tenantId);
+    event AgentBehaviorUpdated(bytes32 indexed agentId, bytes32 indexed tenantId, bytes32 behaviorHash);
     event TenantSignerSet(bytes32 indexed tenantId, address indexed signer, bool allowed);
 
     /// @dev Registered agents keyed by agentId (global namespace).
@@ -43,9 +49,12 @@ contract BrainMCPAgentRegistry {
 
     // EIP-712
     bytes32 private constant _REGISTER_TYPEHASH = keccak256(
-        "AgentRegistration(bytes32 agentId,address agentAddress,bytes32 tenantId,bytes32 scopeHash)"
+        "AgentRegistration(bytes32 agentId,address agentAddress,bytes32 tenantId,bytes32 scopeHash,bytes32 behaviorHash)"
     );
     bytes32 private constant _REVOKE_TYPEHASH = keccak256("AgentRevocation(bytes32 agentId,bytes32 tenantId)");
+    bytes32 private constant _BEHAVIOR_TYPEHASH = keccak256(
+        "AgentBehaviorUpdate(bytes32 agentId,bytes32 tenantId,bytes32 behaviorHash)"
+    );
     bytes32 private constant _SIGNER_TYPEHASH = keccak256("TenantSignerChange(bytes32 tenantId,address signer,bool allowed,uint256 nonce)");
     bytes32 private constant _DOMAIN_TYPEHASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
@@ -120,12 +129,13 @@ contract BrainMCPAgentRegistry {
         address agentAddress,
         bytes32 tenantId,
         bytes32 scopeHash,
+        bytes32 behaviorHash,
         bytes calldata tenantSignature
     ) external {
         if (agentAddress == address(0)) revert ZeroAddress();
         if (_agents[agentId].registeredAt != 0) revert AgentAlreadyRegistered(agentId);
 
-        bytes32 digest = _hashRegistration(agentId, agentAddress, tenantId, scopeHash);
+        bytes32 digest = _hashRegistration(agentId, agentAddress, tenantId, scopeHash, behaviorHash);
         address recovered = _recover(digest, tenantSignature);
         if (recovered == address(0) || !_tenantSigners[tenantId][recovered]) {
             revert NotTenantSigner(recovered);
@@ -136,11 +146,35 @@ contract BrainMCPAgentRegistry {
             agentAddress: agentAddress,
             tenantId: tenantId,
             scopeHash: scopeHash,
+            behaviorHash: behaviorHash,
             registeredAt: block.timestamp,
             revokedAt: 0
         });
 
-        emit AgentRegistered(agentId, agentAddress, tenantId, scopeHash);
+        emit AgentRegistered(agentId, agentAddress, tenantId, scopeHash, behaviorHash);
+    }
+
+    /// @notice Promote an agent to a new behaviorHash. Requires fresh tenant
+    ///         re-attestation (an EIP-712 signature over the new behaviorHash)
+    ///         from a tenant signer — the on-chain analogue of re-signing the
+    ///         ScopeAttestation when the model/prompt/tools change (2.3).
+    function updateBehaviorHash(
+        bytes32 agentId,
+        bytes32 behaviorHash,
+        bytes calldata tenantSignature
+    ) external {
+        AgentRegistration storage r = _agents[agentId];
+        if (r.registeredAt == 0) revert AgentNotRegistered(agentId);
+        if (r.revokedAt != 0) revert AgentRevokedError(agentId);
+
+        bytes32 digest = _hashBehaviorUpdate(agentId, r.tenantId, behaviorHash);
+        address recovered = _recover(digest, tenantSignature);
+        if (recovered == address(0) || !_tenantSigners[r.tenantId][recovered]) {
+            revert NotTenantSigner(recovered);
+        }
+
+        r.behaviorHash = behaviorHash;
+        emit AgentBehaviorUpdated(agentId, r.tenantId, behaviorHash);
     }
 
     function revokeAgent(bytes32 agentId, bytes calldata tenantSignature) external {
@@ -199,9 +233,20 @@ contract BrainMCPAgentRegistry {
         bytes32 agentId,
         address agentAddress,
         bytes32 tenantId,
-        bytes32 scopeHash
+        bytes32 scopeHash,
+        bytes32 behaviorHash
     ) private view returns (bytes32) {
-        bytes32 structHash = keccak256(abi.encode(_REGISTER_TYPEHASH, agentId, agentAddress, tenantId, scopeHash));
+        bytes32 structHash =
+            keccak256(abi.encode(_REGISTER_TYPEHASH, agentId, agentAddress, tenantId, scopeHash, behaviorHash));
+        return keccak256(abi.encodePacked(hex"19_01", domainSeparator(), structHash));
+    }
+
+    function _hashBehaviorUpdate(
+        bytes32 agentId,
+        bytes32 tenantId,
+        bytes32 behaviorHash
+    ) private view returns (bytes32) {
+        bytes32 structHash = keccak256(abi.encode(_BEHAVIOR_TYPEHASH, agentId, tenantId, behaviorHash));
         return keccak256(abi.encodePacked(hex"19_01", domainSeparator(), structHash));
     }
 

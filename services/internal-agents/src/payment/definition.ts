@@ -20,4 +20,10 @@ export const paymentDefinition: InternalAgentDefinition = {
   required_evidence: ["invoice", "counterparty", "payment_destination"],
   default_authority: "propose",
   enabled_by_default: true,
+  // Money-mover: no default_action — financial actions require an explicit/event match.
+  event_action_map: {
+    "bill.due_soon": "propose_payment",
+    "invoice.approved": "propose_payment",
+    "payment.scheduled": "schedule_payment",
+  },
 };

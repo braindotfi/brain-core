@@ -15,4 +15,10 @@ export const cashForecastDefinition: InternalAgentDefinition = {
   required_evidence: ["balance"],
   default_authority: "propose",
   enabled_by_default: true,
+  event_action_map: {
+    "forecast.requested": "generate_forecast",
+    "cashflow.material_change": "recommend_action",
+    "large_payable.created": "alert_shortfall",
+  },
+  default_action: "generate_forecast",
 };
