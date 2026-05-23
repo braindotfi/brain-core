@@ -41,14 +41,18 @@ One monorepo. Language-specific workspaces inside. Workspaces publish typed clie
 ```
 brain/
 ├── services/
-│   ├── api/              # TypeScript. Public HTTP API gateway. Hosts shared primitives.
+│   ├── api/              # TypeScript. Public HTTP API gateway (auth/webhook/MCP wiring + boot).
 │   ├── raw/              # TypeScript. Ingestion workers (Layer 1).
 │   ├── ledger/           # TypeScript. Normalized financial truth (Layer 2). [v0.3]
 │   ├── wiki/             # TypeScript. Memory/Q&A. Pages derived from Ledger (Layer 3).
 │   ├── policy/           # TypeScript. Rule VM and evaluator (Layer 4).
-│   ├── agent/            # TypeScript. Proposal/action orchestration (Layer 5). [renamed from execution]
+│   ├── execution/        # TypeScript. Proposal/PaymentIntent orchestration (Layer 5).
+│   ├── mcp/              # TypeScript. JSON-RPC MCP server (Layer 5′).
 │   ├── audit/            # TypeScript. Append-only log + Merkle anchor publisher (Layer 6).
+│   ├── agent-router/     # TypeScript. Event/intent → internal-agent routing.
+│   ├── internal-agents/  # TypeScript. First-party agent catalog (definitions + handlers).
 │   └── agents/           # Python. Extractors, reasoners, the three MVP agents.
+├── shared/               # TypeScript. @brain/shared — all cross-cutting primitives.
 ├── contracts/            # Solidity + Foundry. The four smart contracts.
 ├── infra/                # Terraform. Azure resource definitions.
 ├── schemas/              # JSON Schemas per Ledger entity, per Wiki page type.
@@ -60,7 +64,7 @@ brain/
 └── tools/                # Dev scripts, migration runners, backfill utilities.
 ```
 
-`services/execution/` is preserved during the v0.3 transition with deprecation headers; it re-exports from `services/agent/`. Migrate your imports during your next normal-cadence PR.
+The Layer-5 service kept its original name `services/execution/` (the planned rename to `services/agent/` did not happen). It retains the v0.2 `/execution/*` routes (deprecated) alongside the v0.3 `/payment-intents/*` and `/actions/*` routes. Cross-cutting shared primitives live in the top-level `shared/` package (`@brain/shared`), not in `services/api`.
 
 Every service owns its database schema. Cross-service reads go through the owning service's API, never direct database access. This is the rule that preserves the option to extract services later.
 
@@ -138,7 +142,7 @@ Never return a 200 with an error in the body. HTTP status and error envelope are
 
 ### 4.3 Error Code Registry
 
-Codes are defined in `services/api/src/errors.ts` and regenerated into the OpenAPI spec. Adding a new code requires a PR that updates both. The registry:
+Codes are defined in `shared/src/errors.ts` (the `@brain/shared` package) and regenerated into the OpenAPI spec. Adding a new code requires a PR that updates both. The registry:
 
 ```
 // Auth
@@ -242,13 +246,12 @@ Steps 12 and 13 are non-skippable even if every other check passes. The audit-be
 
 ### 6.3 Where the Gate Lives
 
-The gate is a shared primitive in `services/api/src/shared/gate/`, called by:
+The gate is a shared primitive in `shared/src/gate/` (the `@brain/shared` package), called by:
 
 - `POST /payment-intents/{id}/execute`
-- `POST /agents/{id}/actions` when the action has a money-movement side effect
-- Internal payment-agent worker dispatch path
+- `POST /actions/{id}/execute`
 
-Calling sites are enumerated in code; CI grep enforces no execution path bypasses it.
+Both routes reach it through `PaymentIntentService.execute`. Calling sites are enumerated in code. A CI check to enforce that no execution path bypasses the gate is a planned follow-up and does not exist yet; until then, do not add money-movement dispatch outside `PaymentIntentService.execute`.
 
 ### 6.4 What the Gate Must Not Do
 

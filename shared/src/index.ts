@@ -1,13 +1,13 @@
 /**
- * @brain/api/shared — Brain shared primitives.
+ * @brain/shared — Brain shared primitives.
  *
  * Every Brain service (raw, wiki, policy, execution, audit, and the api
- * gateway itself) imports these primitives via `@brain/api/shared`. The
+ * gateway itself) imports these primitives via `@brain/shared`. The
  * primitives enforce Brain's non-negotiable principles (§1) and the
  * cross-cutting conventions in §3 through §6 of Engineering Standards.
  *
  * This is the single entry point; consumers should never reach past it
- * (`@brain/api/shared/auth/jwt` and the like) except in tightly-scoped
+ * (`@brain/shared/auth/jwt` and the like) except in tightly-scoped
  * cases where a sub-module is genuinely the right dependency surface.
  */
 
