@@ -790,8 +790,9 @@ async function main(): Promise<void> {
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
   await app.register(authPlugin, { verifier: jwtVerifier });
+  const idempotencyStore = new RedisIdempotencyStore(redis);
   await app.register(idempotencyPlugin, {
-    store: new RedisIdempotencyStore(redis),
+    store: idempotencyStore,
     ttlSeconds: cfg.IDEMPOTENCY_TTL_SECONDS,
   });
 
@@ -804,6 +805,8 @@ async function main(): Promise<void> {
   // Service layer route registrations — all under /v1 to match OpenAPI spec.
   // Raw: also registers content-type parsers + multipart inside registerRawPlugin.
   const rawOpts: RegisterRawPluginOptions = {
+    idempotencyStore,
+    idempotencyTtlSeconds: cfg.IDEMPOTENCY_TTL_SECONDS,
     plaidVerify: {
       keyResolver: cfg.BRAIN_DEMO_MODE
         ? async (_kid: string): Promise<never> => {

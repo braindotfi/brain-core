@@ -99,6 +99,8 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
   await registerWebhook(app, opts.deps, {
     plaidVerify: opts.plaidVerify,
     resolveTenant: opts.resolveWebhookTenant,
+    dedupStore: opts.idempotencyStore,
+    dedupTtlSeconds: opts.idempotencyTtlSeconds ?? 86_400,
   });
   await registerArtifact(app, opts.deps);
   await registerParsed(app, opts.deps);
@@ -113,6 +115,9 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
 export interface RegisterRawPluginOptions {
   plaidVerify: PlaidVerifyOptions;
   resolveWebhookTenant: WebhookTenantResolver;
+  /** Shared idempotency store; when set, webhooks dedup by body hash (§5.2). */
+  idempotencyStore?: IdempotencyStore;
+  idempotencyTtlSeconds?: number;
 }
 
 /**
@@ -152,6 +157,10 @@ export async function registerRawPlugin(
   await registerWebhook(app, deps, {
     plaidVerify: opts.plaidVerify,
     resolveTenant: opts.resolveWebhookTenant,
+    ...(opts.idempotencyStore !== undefined ? { dedupStore: opts.idempotencyStore } : {}),
+    ...(opts.idempotencyTtlSeconds !== undefined
+      ? { dedupTtlSeconds: opts.idempotencyTtlSeconds }
+      : {}),
   });
   await registerArtifact(app, deps);
   await registerParsed(app, deps);

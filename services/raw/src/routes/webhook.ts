@@ -9,11 +9,52 @@
  * adapter, each persisted via the ingest orchestrator.
  */
 
+import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError, verifyPlaidWebhook, type PlaidVerifyOptions } from "@brain/shared";
+import {
+  brainError,
+  verifyPlaidWebhook,
+  type IdempotencyStore,
+  type PlaidVerifyOptions,
+} from "@brain/shared";
 import { adapterForWebhookProvider } from "../adapters/registry.js";
 import { ingestMany } from "../services/ingest.js";
 import type { RawDeps } from "../deps.js";
+
+/**
+ * §5.2 webhook idempotency. Providers retry by re-delivering the identical
+ * signed body, so a content hash is a stable per-event dedup key. Returns true
+ * if this body was already accepted (a replay), else marks it in-flight so a
+ * concurrent/subsequent re-delivery short-circuits. The mark carries a TTL, so
+ * a crashed delivery eventually frees up; releaseWebhook frees it immediately
+ * on a processing failure so the provider's retry can get through.
+ */
+function webhookDedupKey(provider: string, raw: Buffer): { key: string; hash: string } {
+  const hash = createHash("sha256").update(raw).digest("hex");
+  return { key: `webhook:${provider}:${hash}`, hash };
+}
+
+export async function markWebhookSeen(
+  store: IdempotencyStore,
+  tenantId: string,
+  provider: string,
+  raw: Buffer,
+  ttlSeconds: number,
+): Promise<boolean> {
+  const { key, hash } = webhookDedupKey(provider, raw);
+  const probe = await store.probeAndMark({ tenantId, key, bodyHash: hash, ttlSeconds });
+  return probe.state !== "miss";
+}
+
+export async function releaseWebhook(
+  store: IdempotencyStore,
+  tenantId: string,
+  provider: string,
+  raw: Buffer,
+): Promise<void> {
+  const { key } = webhookDedupKey(provider, raw);
+  await store.discard({ tenantId, key });
+}
 
 /**
  * The tenant that a webhook corresponds to is derived from provider-specific
@@ -31,6 +72,10 @@ export type WebhookTenantResolver = (
 export interface WebhookRouteOptions {
   plaidVerify: PlaidVerifyOptions;
   resolveTenant: WebhookTenantResolver;
+  /** When set, dedup re-delivered webhooks by body hash (§5.2). */
+  dedupStore?: IdempotencyStore;
+  /** TTL for the dedup marker in seconds. Default 24h. */
+  dedupTtlSeconds?: number;
 }
 
 export async function registerWebhook(
@@ -73,23 +118,43 @@ export async function registerWebhook(
       }
 
       const tenantId = await opts.resolveTenant(provider, raw, request.headers);
-      const artifacts = await adapter.handleWebhook(
-        tenantId,
-        raw,
-        request.headers as Record<string, unknown>,
-      );
-      const inputs = artifacts.map((a) => ({
-        tenantId,
-        actor: `partner_${provider}`,
-        sourceType: adapter.sourceType,
-        sourceRef: a.sourceRef,
-        body: a.body,
-        mimeType: a.mimeType,
-      }));
-      const results = await ingestMany(deps, inputs);
 
-      reply.status(202);
-      return { accepted: true, trace_id: request.id, artifacts: results.length };
+      // §5.2 — short-circuit a re-delivered (identical) webhook.
+      const ttl = opts.dedupTtlSeconds ?? 86_400;
+      if (opts.dedupStore !== undefined) {
+        const replay = await markWebhookSeen(opts.dedupStore, tenantId, provider, raw, ttl);
+        if (replay) {
+          reply.status(202);
+          reply.header("idempotent-replay", "true");
+          return { accepted: true, trace_id: request.id, artifacts: 0 };
+        }
+      }
+
+      try {
+        const artifacts = await adapter.handleWebhook(
+          tenantId,
+          raw,
+          request.headers as Record<string, unknown>,
+        );
+        const inputs = artifacts.map((a) => ({
+          tenantId,
+          actor: `partner_${provider}`,
+          sourceType: adapter.sourceType,
+          sourceRef: a.sourceRef,
+          body: a.body,
+          mimeType: a.mimeType,
+        }));
+        const results = await ingestMany(deps, inputs);
+
+        reply.status(202);
+        return { accepted: true, trace_id: request.id, artifacts: results.length };
+      } catch (err) {
+        // Free the dedup marker so the provider's retry can be processed.
+        if (opts.dedupStore !== undefined) {
+          await releaseWebhook(opts.dedupStore, tenantId, provider, raw);
+        }
+        throw err;
+      }
     },
   );
 }
