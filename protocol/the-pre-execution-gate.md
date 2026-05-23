@@ -22,21 +22,21 @@ Think of Policy as the **standing rule** and the gate as the **flight check**. B
 
 The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol.
 
-| #   | Step                                                                                           | Reads From                              |
-| --- | ---------------------------------------------------------------------------------------------- | --------------------------------------- |
-| 1   | PaymentIntent exists and is in `approved` status                                               | `ledger_payment_intents`                |
-| 2   | PolicyDecision exists, matches the intent, and was for the active policy version               | `policy_decisions`                      |
-| 3   | Idempotency key has not already produced an execution receipt                                  | `executions`                            |
-| 4   | Source account is active and not frozen                                                        | `ledger_accounts`                       |
-| 5   | Source account current balance ≥ amount (with currency match)                                  | `ledger_accounts.current_balance`       |
-| 6   | Destination counterparty is verified or fits a Policy-allowed pattern                          | `ledger_counterparties.verified_status` |
-| 7   | Destination counterparty is not sanctioned                                                     | `ledger_counterparties.risk_level`      |
-| 8   | Required approver signatures are present, valid, and signed against the same PolicyDecision id | `approvals`                             |
-| 9   | Active policy hash matches the policy hash anchored on-chain (where applicable)                | `BrainPolicyRegistry`                   |
-| 10  | For on-chain rails: session key validity window covers the call moment                         | `BrainSmartAccount.SessionKey`          |
-| 11  | For on-chain rails: rail-specific limits (per-tx, per-period) not exceeded                     | `BrainSmartAccount.SessionKey`          |
-| 12  | No conflicting in-flight execution for the same source account within the configured cooldown  | `executions`                            |
-| 13  | Audit chain is healthy (latest anchor not stale beyond threshold)                              | `audit_anchors`                         |
+| #  | Step                                                                                           | Reads From                              |
+| -- | ---------------------------------------------------------------------------------------------- | --------------------------------------- |
+| 1  | PaymentIntent exists and is in `approved` status                                               | `ledger_payment_intents`                |
+| 2  | PolicyDecision exists, matches the intent, and was for the active policy version               | `policy_decisions`                      |
+| 3  | Idempotency key has not already produced an execution receipt                                  | `executions`                            |
+| 4  | Source account is active and not frozen                                                        | `ledger_accounts`                       |
+| 5  | Source account current balance ≥ amount (with currency match)                                  | `ledger_accounts.current_balance`       |
+| 6  | Destination counterparty is verified or fits a Policy-allowed pattern                          | `ledger_counterparties.verified_status` |
+| 7  | Destination counterparty is not sanctioned                                                     | `ledger_counterparties.risk_level`      |
+| 8  | Required approver signatures are present, valid, and signed against the same PolicyDecision id | `approvals`                             |
+| 9  | Active policy hash matches the policy hash anchored on-chain (where applicable)                | `BrainPolicyRegistry`                   |
+| 10 | For on-chain rails: session key validity window covers the call moment                         | `BrainSmartAccount.SessionKey`          |
+| 11 | For on-chain rails: rail-specific limits (per-tx, per-period) not exceeded                     | `BrainSmartAccount.SessionKey`          |
+| 12 | No conflicting in-flight execution for the same source account within the configured cooldown  | `executions`                            |
+| 13 | Audit chain is healthy (latest anchor not stale beyond threshold)                              | `audit_anchors`                         |
 
 If **any** step fails, the PaymentIntent transitions to `failed` with a structured reason. No rail call is made.
 
@@ -96,15 +96,15 @@ A bypass path defeats the purpose. If anyone (tenant, operator, agent) can overr
 
 This is the same logic as airline pre-flight checklists: not because the captain doesn't know what they're doing, but because removing the checklist removes the proof that it was done.
 
-### Dry-run mode (Agent Autonomy v3)
+### Dry-Run Mode (Agent Autonomy)
 
 The gate accepts a `dryRun` flag. In dry-run it runs the **same** 13 checks against the **same** Ledger state and returns the same envelope, but does **not** insert a `policy_decisions` row, write a reservation, or emit audit events. Agents call dry-run before building a full proposal — to short-circuit obvious rejects and to decide `confirm` vs `execute`. There is **one** evaluator: the same gate code runs live and dry-run, so the two can never drift. The live gate still runs at execute time.
 
-### Check 1.5 — behavior pinning
+### Behavior Pinning Check
 
-A new check sits between identity and authorization: the runtime agent `behaviorHash` must equal the value registered on-chain in `BrainMCPAgentRegistry`. A mismatch — a silent model/prompt/tool swap — is a hard reject regardless of every other signal. It is verified only when a runtime hash is supplied, so the canonical happy path remains the 13 checks.
+A new check sits between identity and authorization: the runtime agent `behaviorHash` must equal the value registered on-chain in `BrainMCPAgentRegistry`. A mismatch (a silent model/prompt/tool swap) is a hard reject regardless of every other signal. It is verified only when a runtime hash is supplied, so the canonical happy path remains the 13 checks.
 
-### Net of reservations
+### Net of Reservations
 
 Check #8 (balance) now subtracts active balance reservations: `available_balance − Σ(active reservations) ≥ amount`. With several money-movers live, parallel proposers can't double-spend the same balance.
 

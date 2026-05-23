@@ -37,7 +37,7 @@ A multi-agent router selects an agent for an incoming event or intent. It filter
 
 ## The Decision
 
-The proposal decision stays `ALLOW`, `ESCALATE`, or `DENY`. Internal agents add three fields to that response without changing it: `confidence`, `evidence_score`, and an `execution_mode` of `execute`, `propose`, `confirm`, `notify_only`, or `reject`. Low confidence or missing required evidence yields `notify_only`: surface to a human, take no action. Existing callers that read `decision` are unaffected.
+The proposal decision stays `ALLOW`, `ESCALATE`, or `DENY`. Internal agents add three fields to that response without changing it: `confidence`, `evidence_score`, and an `execution_mode` of `execute`, `propose`, `confirm`, `notify_only`, or `reject`. Low confidence or missing required evidence yields `notify_only`: surface to a human, take no action. Existing callers who read `decision` are unaffected.
 
 ## The Business Agent Library
 
@@ -49,27 +49,27 @@ Brain ships a library of business-category internal agents. Every one follows th
 | **Treasury**             | `treasury_sweep`       | medium | propose / confirm        |
 | **Payment**              | `payment_propose`      | medium | confirm (financial)      |
 | **Vendor Risk**          | `vendor_risk`          | high   | confirm / reject (block) |
-| **Cash Forecasting**     | `cash_forecast`        | low    | notify_only / propose    |
+| **Cash Forecasting**     | `cash_forecast`        | low    | notify\_only / propose   |
 | **Dispute**              | `dispute_evidence`     | medium | propose                  |
-| **Compliance**           | `compliance_monitor`   | high   | notify_only / confirm    |
-| **Revenue Intelligence** | `revenue_intel`        | low    | notify_only              |
+| **Compliance**           | `compliance_monitor`   | high   | notify\_only / confirm   |
+| **Revenue Intelligence** | `revenue_intel`        | low    | notify\_only             |
 
-A high-risk agent never auto-executes: even at high confidence its actions resolve to `confirm` (or `reject`), because `execution_mode` only reaches `execute` for low-risk actions.
+A high-risk agent never auto-executes: even at high confidence, its actions resolve to `confirm` (or `reject`), because `execution_mode` only reaches `execute` for low-risk actions.
 
 ## The Consumer Agent Library
 
 Brain also ships consumer-category agents for individuals. They follow the same pattern, but their `policy.template.json` defaults are more conservative than the business templates: smaller per-action caps and `notify_only` as the default authority for any medium- or high-risk agent.
 
-| Agent                 | Capability          | Risk   | Typical mode                |
-| --------------------- | ------------------- | ------ | --------------------------- |
-| **Personal Budget**   | `personal_budget`   | low    | propose                     |
-| **Bill Management**   | `bill_management`   | medium | confirm (financial)         |
-| **Savings**           | `savings_sweep`     | low    | confirm (financial)         |
-| **Debt Optimization** | `debt_optimization` | medium | confirm (financial)         |
-| **Tax Prep**          | `tax_prep`          | low    | propose                     |
-| **Travel Finance**    | `travel_finance`    | low    | propose                     |
-| **Financial Health**  | `financial_health`  | low    | notify_only                 |
-| **Purchase Advisor**  | `purchase_advisor`  | medium | notify_only (intent-driven) |
+| Agent                 | Capability          | Risk   | Typical mode                 |
+| --------------------- | ------------------- | ------ | ---------------------------- |
+| **Personal Budget**   | `personal_budget`   | low    | propose                      |
+| **Bill Management**   | `bill_management`   | medium | confirm (financial)          |
+| **Savings**           | `savings_sweep`     | low    | confirm (financial)          |
+| **Debt Optimization** | `debt_optimization` | medium | confirm (financial)          |
+| **Tax Prep**          | `tax_prep`          | low    | propose                      |
+| **Travel Finance**    | `travel_finance`    | low    | propose                      |
+| **Financial Health**  | `financial_health`  | low    | notify\_only                 |
+| **Purchase Advisor**  | `purchase_advisor`  | medium | notify\_only (intent-driven) |
 
 Three internal agents are **agnostic** and serve business and consumer tenants alike: **Subscription** (`subscription_review`), **Reconciliation** (`reconciliation_review`), and **Fraud & Anomaly** (`fraud_anomaly`). The Subscription agent is shared, not duplicated: it ships a stricter `policy.consumer.template.json` for consumer tenants rather than a separate consumer agent.
 
@@ -90,16 +90,16 @@ A request that carries a free-form intent (rather than a domain event) is scored
 
 The embedding strategy keeps the **rules classifier as a live fallback**: when an intent scores below the similarity threshold, or the embedding service is unavailable, the router falls back to token overlap. The two strategies are interchangeable behind the same interface, so routing and selection scoring are unchanged — only the source of the intent-match score differs. With the flag off (the default), behavior is identical to the earlier phases.
 
-## Autonomous execution (Agent Autonomy v3)
+## Autonomous Execution (Agent Autonomy)
 
-The library is hardened for production autonomous execution, with money-movement **off by default**:
+The library is hardened for production autonomous execution, with money-movement off by default:
 
-- **Shadow mode + graduated promotion.** Every agent is shadowed by default — a financial proposal terminates as `shadow_completed` and moves no money. Going live is a deliberate, per-agent promotion gated by strict caps (signed spend envelopes + `approval_required_above`) and an allowlisted rail. The five money-movers (Treasury, Payment, Bill Management, Savings, Debt Optimization) are promoted one at a time.
-- **Action resolution.** Within a selected agent the action is resolved explicit → event-map → intent-map → opt-in default; unresolved actions persist as `missing_action`, never a silent default. Money-movers/high-risk agents have no default action.
-- **Behavior pinning.** Each agent registers a `behaviorHash`; the gate (check 1.5) rejects a runtime model/prompt/tool drift. Promotion to a new behavior needs tenant re-attestation.
-- **High-risk agents** (Vendor Risk, Compliance) emit auditable **findings** before any block/confirm, with a tenant-root override-and-document path.
-- **Counterparty-facing agents** (Collections, Dispute, Subscription) send only **tenant-approved message templates** from the signed policy doc — no free-form prose to customers/vendors.
-- **Observability.** Every run persists a structured reason and trace; `GET /v1/agents/runs/{id}/why` returns the full reason + gate trace + rail receipt.
+* **Shadow mode + graduated promotion.** Every agent is shadowed by default — a financial proposal terminates as `shadow_completed` and moves no money. Going live is a deliberate, per-agent promotion gated by strict caps (signed spend envelopes + `approval_required_above`) and an allowlisted rail. The five money-movers (Treasury, Payment, Bill Management, Savings, Debt Optimization) are promoted one at a time.
+* **Action resolution.** Within a selected agent, the action is resolved explicit → event-map → intent-map → opt-in default; unresolved actions persist as `missing_action`, never a silent default. Money-movers/high-risk agents have no default action.
+* **Behavior pinning.** Each agent registers a `behaviorHash`; the gate (check 1.5) rejects a runtime model/prompt/tool drift. Promotion to a new behavior needs tenant re-attestation.
+* **High-risk agents** (Vendor Risk, Compliance) emit auditable **findings** before any block/confirm, with a tenant-root override-and-document path.
+* **Counterparty-facing agents** (Collections, Dispute, Subscription) send only **tenant-approved message templates** from the signed policy doc — no free-form prose to customers/vendors.
+* **Observability.** Every run persists a structured reason and trace; `GET /v1/agents/runs/{id}/why` returns the full reason + gate trace + rail receipt.
 
 See the API reference for the `/v1/agents/run`, `/why`, and kill-switch endpoints.
 

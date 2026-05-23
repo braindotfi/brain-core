@@ -113,8 +113,8 @@ DELETE /v1/agents/{agent_id}
 | State       | What It Means                                         | Reversible |
 | ----------- | ----------------------------------------------------- | ---------- |
 | **Active**  | Agent can propose actions                             | n/a        |
-| **Paused**  | Proposals rejected; identity and reputation preserved | ✅ Yes     |
-| **Revoked** | Permanent termination; record preserved for audit     | ❌ No      |
+| **Paused**  | Proposals rejected; identity and reputation preserved | ✅ Yes      |
+| **Revoked** | Permanent termination; record preserved for audit     | ❌ No       |
 
 ### Reputation
 
@@ -215,11 +215,11 @@ Response:
 | `policy_status`      | `routed`, `unscoped` (matched but tenant scoped none), or `no_match` |
 | `execution_mode`     | `execute`, `propose`, `confirm`, `notify_only`, `reject`, or `null`  |
 
-## Agent Autonomy v3
+## Agent Autonomy
 
-The full route → resolve → propose pipeline and the kill-switch. **Money-movers are shadowed by default** — a financial proposal from an un-promoted agent terminates as `shadow_completed` and moves no money (going live is a deliberate per-agent promotion with strict caps + allowlisted rails).
+The full route → resolve → propose pipeline and the kill-switch. Money-movers are shadowed by defaul&#x74;**.** A financial proposal from an un-promoted agent terminates as `shadow_completed` and moves no money (going live is a deliberate per-agent promotion with strict caps + allowlisted rails).
 
-### Run an agent
+### Run an Agent
 
 ```http
 POST /v1/agents/run
@@ -230,23 +230,23 @@ Authorization: Bearer <tenant token>
 
 Routes the event/intent, resolves the action within the selected agent, evaluates the §6 gate in dry-run, persists an `agent_runs` row, and proposes through the gated path. Returns `{ status, run_id, routing_decision_id, selected_agent_id, action, shadow_mode, proposed?, reason }`. A proposal-layer idempotency collision returns `409 AGENT_PROPOSAL_DUPLICATE`.
 
-### Routing, events, and run history
+### Routing, Events, and Run History
 
-| Endpoint | Purpose |
-| --- | --- |
-| `POST /v1/agents/route` | Routing decision only (no run) |
-| `POST /v1/agents/events` | Enqueue an event-driven route/run job |
-| `GET /v1/agents/runs` | List runs (filter `agent_id`, `status`, `category`, `limit`) |
-| `GET /v1/agents/runs/{run_id}` | Run detail |
-| `GET /v1/agents/runs/{run_id}/why` | Structured reason + (redacted) reasoning trace + gate trace + rail receipt |
-| `GET /v1/agents/routing-decisions/{id}` | Routing decision detail |
+| Endpoint                                | Purpose                                                                    |
+| --------------------------------------- | -------------------------------------------------------------------------- |
+| `POST /v1/agents/route`                 | Routing decision only (no run)                                             |
+| `POST /v1/agents/events`                | Enqueue an event-driven route/run job                                      |
+| `GET /v1/agents/runs`                   | List runs (filter `agent_id`, `status`, `category`, `limit`)               |
+| `GET /v1/agents/runs/{run_id}`          | Run detail                                                                 |
+| `GET /v1/agents/runs/{run_id}/why`      | Structured reason + (redacted) reasoning trace + gate trace + rail receipt |
+| `GET /v1/agents/routing-decisions/{id}` | Routing decision detail                                                    |
 
-### Kill-switch
+### Kill-Switch
 
-| Endpoint | Purpose |
-| --- | --- |
-| `POST /v1/agents/{agent_id}/halt` | Pause all the agent's in-flight intents and set its state to `quarantined` |
-| `POST /v1/agents/halt-category` | Emergency-stop every agent in a category (`business` / `consumer` / `agnostic`) |
+| Endpoint                          | Purpose                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------------- |
+| `POST /v1/agents/{agent_id}/halt` | Pause all the agent's in-flight intents and set its state to `quarantined`      |
+| `POST /v1/agents/halt-category`   | Emergency-stop every agent in a category (`business` / `consumer` / `agnostic`) |
 
 ### What's Next
 

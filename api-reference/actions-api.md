@@ -152,7 +152,7 @@ Authorization: Bearer <tenant token>
 
 The action is marked `cancelled`. An audit event records the cancellation.
 
-### Kill-switch: Pause / Resume
+### Kill-Switch: Pause / Resume
 
 An `approved` action can be held without a terminal transition, then released:
 

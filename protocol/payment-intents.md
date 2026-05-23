@@ -150,7 +150,7 @@ A Wiki page about a vendor automatically includes their pending PaymentIntents i
 
 Every PaymentIntent creation requires an `idempotencyKey`. Brain stores it in a per-tenant index; retries with the same key return the existing PaymentIntent. This protects against double-proposal under network errors or agent retries. A second, proposal-layer key dedups equivalent proposals from the same agent run (collision → `409 agent_proposal_duplicate`).
 
-### Kill-switch: the `paused` state (Agent Autonomy v3)
+### Kill-Switch: The `paused` State
 
 An `approved` PaymentIntent can be **paused** without a terminal transition: `approved ⇄ paused`, and `paused → cancelled`. `POST /v1/payment-intents/{id}/pause` holds it; `/resume` re-runs the **live** §6 gate before re-entering `approved` (defending against Ledger state drift while paused). `POST /v1/agents/{agent_id}/halt` atomically pauses all of an agent's in-flight intents and quarantines the agent. The rail dispatcher re-reads state immediately before submission and aborts cleanly if the intent was paused.
 
