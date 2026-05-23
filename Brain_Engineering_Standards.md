@@ -251,7 +251,7 @@ The gate is a shared primitive in `shared/src/gate/` (the `@brain/shared` packag
 - `POST /payment-intents/{id}/execute`
 - `POST /actions/{id}/execute`
 
-Both routes reach it through `PaymentIntentService.execute`. Calling sites are enumerated in code. A CI check to enforce that no execution path bypasses the gate is a planned follow-up and does not exist yet; until then, do not add money-movement dispatch outside `PaymentIntentService.execute`.
+Both routes reach it through `PaymentIntentService.execute`. Calling sites are enumerated in code, and `scripts/check-gate-bypass.mjs` (run by `pnpm run lint`) fails CI if any rail dispatch or transition to `executed` appears outside `PaymentIntentService`.
 
 ### 6.4 What the Gate Must Not Do
 

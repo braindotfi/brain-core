@@ -12,8 +12,9 @@
   "scripts": {
     "build": "pnpm -r --filter './shared/**' --filter './services/**' --filter '!./services/agents' --filter './clients/**' run build",
     "check-scope-vocab": "node scripts/check-scope-vocab.mjs",
+    "check-gate-bypass": "node scripts/check-gate-bypass.mjs",
     "lint:openapi": "npx --yes @redocly/cli@latest lint Brain_API_Specification.yaml",
-    "lint": "pnpm -r --filter './services/**' --filter '!./services/agents' --filter './clients/**' run lint && pnpm run prettier:check && pnpm run check-scope-vocab && pnpm run lint:openapi",
+    "lint": "pnpm -r --filter './services/**' --filter '!./services/agents' --filter './clients/**' run lint && pnpm run prettier:check && pnpm run check-scope-vocab && pnpm run check-gate-bypass && pnpm run lint:openapi",
     "lint:fix": "pnpm -r --filter './services/**' --filter '!./services/agents' --filter './clients/**' run lint:fix && pnpm run prettier:write",
     "typecheck": "pnpm -r --filter './services/**' --filter '!./services/agents' --filter './clients/**' run typecheck",
     "test": "pnpm -r --filter './services/**' --filter '!./services/agents' --filter './clients/**' run test",

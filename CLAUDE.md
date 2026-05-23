@@ -48,7 +48,7 @@ Two TypeScript agent-infrastructure services sit alongside the layers (not in th
 
 Lives in `shared/src/gate/` (the top-level `@brain/shared` package). Called by `POST /payment-intents/{id}/execute` and `POST /actions/{id}/execute` (both via `PaymentIntentService.execute`).
 
-The gate runs 13 sequential checks (identity, scope, policy DSL, source account, counterparty, sanctions, amount limit, balance, evidence, approval determination, approval grant, `policy_decision_id` creation, then audit before + after execution). It must not: read Wiki, defer to LLM judgment, mutate Ledger, or catch-and-continue on check failure. Both the before and after audit events are mandatory and non-skippable. **There is no automated CI check yet that enforces "no bypass path"** — it is a planned follow-up; until then, do not add money-movement dispatch outside `PaymentIntentService.execute`.
+The gate runs 13 sequential checks (identity, scope, policy DSL, source account, counterparty, sanctions, amount limit, balance, evidence, approval determination, approval grant, `policy_decision_id` creation, then audit before + after execution). It must not: read Wiki, defer to LLM judgment, mutate Ledger, or catch-and-continue on check failure. Both the before and after audit events are mandatory and non-skippable. `scripts/check-gate-bypass.mjs` (wired into `pnpm run lint`) enforces no bypass path: no rail dispatch or transition to `executed` may occur outside `PaymentIntentService`.
 
 ## Commands
 
