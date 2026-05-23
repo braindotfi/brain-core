@@ -8,7 +8,7 @@ Read the relevant document before implementing or modifying anything in its doma
 
 - **`Brain_API_Specification.yaml`**: OpenAPI 3.1 contract for every HTTP endpoint and the MCP surface. Check this before touching any route.
 - **`Brain_Engineering_Standards.md`**: v0.2.0, CI-enforced conventions: auth, errors, idempotency, observability, testing, deployment, secrets, code style. This overrides "what feels natural."
-- **`Brain_MVP_Architecture.md`**: v0.3 protocol blueprint and the "why" behind the six-layer model.
+- **`Brain_MVP_Architecture.md`**: v0.4 protocol blueprint and the "why" behind the six-layer model.
 
 ## Rules for AI Assistants (from Standards §14)
 
@@ -97,8 +97,9 @@ pnpm run contracts:test     # forge test
 ### Tooling Binaries
 
 ```bash
-node tools/migrate/dist/cli.js up   # discover & apply services/*/migrations/*.sql
-pnpm run seed                        # seed golden-path demo dataset
+pnpm run build                            # build tools first (produces the dist/ below)
+node tools/migrate/dist/cli.js up         # discover & apply services/*/migrations/*.sql
+pnpm -C tools/seed-golden-path run seed   # seed golden-path demo dataset
 ```
 
 ## Toolchain Prerequisites & First-Time Setup
@@ -151,7 +152,7 @@ services/
 shared/           @brain/shared, all cross-cutting primitives (auth, errors, gate, db, …)
 contracts/src/    BrainAuditAnchor, BrainPolicyRegistry, BrainSmartAccount, BrainMCPAgentRegistry
 infra/            Terraform, Azure
-schemas/entity/   JSON Schemas per ledger entity (account, agent, counterparty, …)
+schemas/entity/   JSON Schemas for 6 of the 11 ledger entities (account, agent, counterparty, obligation, policy, transaction)
 clients/          Generated typed clients (from OpenAPI)
 tests/
   e2e/            @brain/e2e, Series A proof-points against staging
@@ -170,7 +171,7 @@ New v0.3 routes live under `/agents/*`, `/payment-intents/*`, `/agents/mcp`. The
 ## MCP Server (`@brain/mcp`)
 
 - Mount: `POST /v1/agents/mcp`, JSON-RPC 2.0, single-shot HTTP, no SSE/streaming, no session state (v0.3).
-- Surface: 10 tools (ledger reads ×5, wiki reads ×2, `raw.contribute` ×1, propose-only payment/agent actions ×2), 6 resource URIs (`brain://…`), 5 prompts.
+- Surface: 10 tools (ledger reads ×5, wiki reads ×2, `raw.contribute` ×1, propose-only payment/agent actions ×2), 5 resource URIs (`brain://…`), 5 prompts.
 - **No `payment_intent.execute` tool, ever.** Execution is Brain-internal behind the §6 gate.
 - Auth chain: Fastify JWT plugin → agent record `active` → JWT `scope_hash` matches on-chain `BrainMCPAgentRegistry` (60s cache, Base RPC fallback) → tool scope → tenant equality.
 - Every successful tool/resource call emits `agent.mcp.tool_called`; mutating tools also emit the same inner audit events as the HTTP API.
@@ -214,9 +215,9 @@ Run `./scripts/install-hooks.sh` once, it installs a pre-commit hook that scans 
 
 ## Known in-Progress Work
 
-- **Payment rails are stubs**: the three rails in `services/execution/src/rails/stubs.ts` (`bank_ach`, `erp_writeback`, `onchain_base`) return fabricated `stub: true` receipts and move no real money. They are the only rails wired (`defaultRails()`); real Plaid/NetSuite/Base rails are a post-stage-6 deliverable. **Do not run these in production** (they would record fake settlements as completed executions).
-- **Reconciliation matchers**: implemented (`services/ledger/src/reconciliation/{statement-balance,card-charge,invoice-payment,transaction-receipt,wallet-transfer,payroll-bank-debit,subscription-charge}.ts`) and registered in `ReconciliationService`. `reconciliation/stubs.ts` is leftover dead code (imported by nothing) pending cleanup.
-- **Python agents**: `services/agents/` is scaffolded but the Plaid extractor, reconciliation agent, payment agent, and anomaly agent are not yet implemented.
+- **Payment rails are stubs**: the three rails in `services/execution/src/rails/stubs.ts` (`bank_ach`, `erp_writeback`, `onchain_base`) return fabricated `stub: true` receipts and move no real money. They are the only rails wired (`defaultRails()`); real Plaid/NetSuite/Base rails are a post-stage-6 deliverable. The stubs **fail closed under `NODE_ENV=production`** (`defaultRails()` and each dispatch throw rather than fake-settle), mirroring the boot fence in `services/api/src/main.ts`.
+- **Reconciliation matchers**: all 7 are concrete implementations (`services/ledger/src/reconciliation/{statement-balance,card-charge,invoice-payment,transaction-receipt,wallet-transfer,payroll-bank-debit,subscription-charge}.ts`) and registered in `ReconciliationService`. They lack unit/property tests and are excluded from the ledger coverage gate (`services/ledger/vitest.config.ts`) — a test backfill is the outstanding item.
+- **Python agents**: `services/agents/` has a working reconciliation agent (`brain_agents/reconciliation/`); the Plaid extractor, payment agent, and anomaly agent are not yet implemented.
 - **Outbound webhook retries**: `WebhookAuditEmitter` dispatches fire-and-forget (no retry queue). A BullMQ `brain.audit.webhookDispatch` worker is the planned follow-up.
 - **`@brain/sdk`**: the typed client exists at `clients/sdk` (`@brain/sdk`, generated from the OpenAPI spec, version `0.1.0-rc.0`) but is not yet published to npm.
 
