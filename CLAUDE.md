@@ -42,7 +42,7 @@ Two TypeScript agent-infrastructure services sit alongside the layers (not in th
 - Every write at every layer emits an audit event.
 - **Policy and Execution never read Wiki.** Wiki is for narrative recall only; all machine-checkable preconditions come from Ledger.
 - Agents never mutate Raw/Ledger/Policy/Audit directly, always go through the owning service's API.
-- Every service owns its own DB schema. **Cross-service reads go through the owning service's API, never direct DB queries.**
+- Every service owns its own DB schema. **Cross-service reads go through the owning service's API, never direct DB queries** — with sanctioned exceptions: the Wiki layer is a read-projection of Ledger and reads Ledger tables read-only (via a `TenantScopedClient`) to generate pages and answer questions, never writing Ledger or reading Wiki text in those paths (enforced by the §8.4 invariants); plus system/admin cross-tenant jobs (e.g. audit anchoring) and demo-mode sandbox resolvers. All cross-service **writes** still go through the owning service's API.
 
 ## The §6 Deterministic Pre-Execution Gate
 
