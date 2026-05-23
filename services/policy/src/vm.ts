@@ -164,13 +164,15 @@ function matchRule(
     const c = w["agent.spend_in_window"];
     const prior = action.spend_in_window?.[c.window];
     // Within envelope iff prior spend + this action's amount <= lte (same currency).
+    // The envelope is denominated in a single currency. An action in a different
+    // currency cannot be proven within-envelope without conversion, so fail closed
+    // rather than treating its spend as zero — a foreign-currency action contributing
+    // "0" would otherwise slip past the limit entirely.
+    const amt = action.amount;
+    const sameCurrency = amt !== null && amt.currency === c.lte.currency;
     const priorValue = prior !== undefined && prior.currency === c.lte.currency ? prior.value : "0";
-    const addend =
-      action.amount !== null && action.amount.currency === c.lte.currency
-        ? action.amount.value
-        : "0";
-    const projected = addDecimal(priorValue, addend);
-    const passed = compareDecimal(projected, c.lte.value) <= 0;
+    const projected = sameCurrency ? addDecimal(priorValue, amt.value) : priorValue;
+    const passed = sameCurrency && compareDecimal(projected, c.lte.value) <= 0;
     checks.push({
       key: "agent.spend_in_window",
       passed,

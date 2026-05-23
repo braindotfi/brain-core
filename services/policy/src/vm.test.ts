@@ -326,6 +326,47 @@ describe("evaluate — 1b.5 signed authority primitives", () => {
     ).toBe("reject");
   });
 
+  it("fails closed when the action currency differs from the spend-envelope currency", () => {
+    const policy: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "usd-envelope",
+          applies_to: ["outbound_payment"],
+          when: {
+            "agent.id": "treasury",
+            "agent.spend_in_window": { window: "24h", lte: { currency: "USD", value: "1000" } },
+          },
+          execute: "auto",
+        },
+      ],
+    };
+    // A 5000 EUR payment must NOT slip past a USD envelope by contributing 0 to
+    // the projected spend. A mismatched currency cannot be proven within-envelope,
+    // so the rule must not match → default deny.
+    expect(
+      evaluate(
+        policy,
+        baseAction({
+          agent_id: "treasury",
+          amount: { currency: "EUR", value: "5000" },
+          spend_in_window: { "24h": { currency: "USD", value: "0" } },
+        }),
+      ).outcome,
+    ).toBe("reject");
+    // Control: a same-currency spend within the envelope still allows.
+    expect(
+      evaluate(
+        policy,
+        baseAction({
+          agent_id: "treasury",
+          amount: { currency: "USD", value: "500" },
+          spend_in_window: { "24h": { currency: "USD", value: "0" } },
+        }),
+      ).outcome,
+    ).toBe("allow");
+  });
+
   it("enforces a tx-count window cap (this action counts)", () => {
     const policy: PolicyDocument = {
       version: 1,
