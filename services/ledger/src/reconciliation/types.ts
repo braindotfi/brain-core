@@ -21,10 +21,8 @@
  *   - ledger_reconciliation_matches row with status, confidence, evidence
  *   - audit event `ledger.reconciliation.matched`
  *
- * Phase 5 ships full implementations of `transaction_receipt` and
- * `invoice_payment`. The other five are stubs that document their criteria
- * but produce zero matches; they're filled in by dedicated PRs that pair
- * with the corresponding source-adapter work.
+ * All seven matchers are concrete implementations, registered in
+ * ReconciliationService and covered by unit + property tests.
  */
 
 import type { AuditEmitter, MatchType, ServiceCallContext } from "@brain/shared";

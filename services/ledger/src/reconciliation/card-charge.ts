@@ -40,7 +40,8 @@ const MATCH_THRESHOLD = 0.7;
 const MAX_OBLIGATIONS = 100;
 const MAX_TX_PER_OBLIGATION = 15;
 const SCAN_WINDOW_DAYS_DEFAULT = 60;
-const DATE_WINDOW_DAYS = 5;
+/** ±days window used by BOTH the SQL pre-filter and the scorer. Keep them in sync. */
+export const DATE_WINDOW_DAYS = 5;
 
 export class CardChargeMatcher implements Matcher {
   public readonly matchType = "card_charge" as const;
@@ -141,17 +142,20 @@ async function loadCandidateTransactions(
   obl: ObligationCandidate,
 ): Promise<TxCandidate[]> {
   return withTenantScope(pool, ctx.tenantId, async (c) => {
+    // DATE_WINDOW_DAYS is a trusted integer constant (not user input). Building
+    // the interval from it keeps the SQL pre-filter in lockstep with the scorer;
+    // hardcoding the literal here silently desyncs the two if the constant moves.
     const { rows } = await c.query<TxCandidate>(
       `SELECT id, counterparty_id, amount::TEXT, currency, transaction_date, posted_date
          FROM ledger_transactions
         WHERE direction = 'outflow'
           AND status IN ('posted','cleared')
           AND (reconciliation_status IS NULL OR reconciliation_status = 'unreconciled')
-          AND transaction_date >= ($1::timestamptz - INTERVAL '5 days')
-          AND transaction_date <= ($1::timestamptz + INTERVAL '5 days')
+          AND transaction_date >= ($1::timestamptz - $3::interval)
+          AND transaction_date <= ($1::timestamptz + $3::interval)
         ORDER BY ABS(EXTRACT(EPOCH FROM (transaction_date - $1::timestamptz))) ASC
         LIMIT $2`,
-      [obl.due_date, MAX_TX_PER_OBLIGATION],
+      [obl.due_date, MAX_TX_PER_OBLIGATION, `${DATE_WINDOW_DAYS} days`],
     );
     return rows;
   });

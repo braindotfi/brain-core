@@ -42,7 +42,8 @@ const MATCH_THRESHOLD = 0.75;
 const MAX_STATEMENTS = 100;
 const MAX_BALANCES_PER_STATEMENT = 10;
 const SCAN_WINDOW_DAYS_DEFAULT = 90;
-const DATE_WINDOW_DAYS = 3;
+/** ±days window used by BOTH the SQL pre-filter and the scorer. Keep them in sync. */
+export const DATE_WINDOW_DAYS = 3;
 
 export class StatementBalanceMatcher implements Matcher {
   public readonly matchType = "statement_balance" as const;
@@ -154,15 +155,18 @@ async function loadNearbyBalances(
   accountIds: ReadonlyArray<string>,
 ): Promise<BalanceCandidate[]> {
   return withTenantScope(pool, ctx.tenantId, async (c) => {
+    // DATE_WINDOW_DAYS is a trusted integer constant (not user input). Building
+    // the interval from it keeps the SQL pre-filter in lockstep with the scorer;
+    // hardcoding the literal here silently desyncs the two if the constant moves.
     const { rows } = await c.query<BalanceCandidate>(
       `SELECT id, account_id, current_balance::TEXT, currency, as_of
          FROM ledger_balances
         WHERE account_id = ANY($1::TEXT[])
-          AND as_of >= ($2::timestamptz - INTERVAL '3 days')
-          AND as_of <= ($2::timestamptz + INTERVAL '3 days')
+          AND as_of >= ($2::timestamptz - $4::interval)
+          AND as_of <= ($2::timestamptz + $4::interval)
         ORDER BY ABS(EXTRACT(EPOCH FROM (as_of - $2::timestamptz))) ASC
         LIMIT $3`,
-      [Array.from(accountIds), near, MAX_BALANCES_PER_STATEMENT],
+      [Array.from(accountIds), near, MAX_BALANCES_PER_STATEMENT, `${DATE_WINDOW_DAYS} days`],
     );
     return rows;
   });
