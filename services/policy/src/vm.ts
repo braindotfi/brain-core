@@ -284,15 +284,18 @@ export function matchesCron(expr: string, at: Date): boolean {
     matchField(hr ?? "*", utc.getUTCHours()) &&
     matchField(dom ?? "*", utc.getUTCDate()) &&
     matchField(mon ?? "*", utc.getUTCMonth() + 1) &&
-    matchField(dow ?? "*", utc.getUTCDay())
+    matchField(dow ?? "*", utc.getUTCDay(), true)
   );
 }
 
-function matchField(field: string, value: number): boolean {
+function matchField(field: string, value: number, isDayOfWeek = false): boolean {
   if (field === "*") return true;
   for (const token of field.split(",")) {
     const n = Number.parseInt(token, 10);
-    if (Number.isFinite(n) && n === value) return true;
+    if (!Number.isFinite(n)) continue;
+    if (n === value) return true;
+    // Cron day-of-week: 0 and 7 both denote Sunday.
+    if (isDayOfWeek && n === 7 && value === 0) return true;
   }
   return false;
 }

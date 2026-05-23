@@ -73,6 +73,16 @@ describe("matchesCron (5-field subset)", () => {
     expect(matchesCron("broken", new Date())).toBe(false);
     expect(matchesCron("* * *", new Date())).toBe(false);
   });
+  it("treats day-of-week 7 as Sunday (cron convention)", () => {
+    // 2026-05-24 is a Sunday (getUTCDay() === 0). Standard cron accepts both
+    // 0 and 7 for Sunday; a policy author writing `7` must still match.
+    const sunday = new Date("2026-05-24T09:00:00Z");
+    expect(matchesCron("0 9 * * 0", sunday)).toBe(true);
+    expect(matchesCron("0 9 * * 7", sunday)).toBe(true);
+    // 7 must not match a non-Sunday.
+    const monday = new Date("2026-05-25T09:00:00Z");
+    expect(matchesCron("0 9 * * 7", monday)).toBe(false);
+  });
 });
 
 describe("evaluate — default deny when no rule matches", () => {
