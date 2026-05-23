@@ -1900,7 +1900,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [raw, wiki, policy, execution]
+            enum: [raw, ledger, wiki, policy, agent, execution, audit]
         - name: actor
           in: query
           schema: { type: string }
@@ -1978,7 +1978,7 @@ paths:
                   type: array
                   items:
                     type: string
-                    enum: [raw, wiki, policy, execution]
+                    enum: [raw, ledger, wiki, policy, agent, execution, audit]
       responses:
         '202':
           description: Export job created

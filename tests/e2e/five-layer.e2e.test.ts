@@ -55,9 +55,15 @@ DESCRIBE("five-layer end-to-end (Series A proof 1)", () => {
     expect(["proposed", "pending_approval", "approved", "rejected"]).toContain(intent.status);
 
     // Step 5 — audit verify endpoint is reachable even without auth (skipAuth).
-    const verify = await fetch(
-      `${process.env.BRAIN_BASE_URL}/v1/audit/verify?root=${"a".repeat(64)}&leaf=${"a".repeat(64)}&proof=`,
-    );
+    const verify = await fetch(`${process.env.BRAIN_BASE_URL}/v1/audit/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event_hash: "a".repeat(64),
+        merkle_root: "a".repeat(64),
+        merkle_proof: [],
+      }),
+    });
     expect([200]).toContain(verify.status);
   });
 });

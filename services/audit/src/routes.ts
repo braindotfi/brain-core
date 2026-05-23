@@ -71,6 +71,8 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
         // Build proof against the anchor's event window.
         let proofHex: string[] = [];
         let rootHex: string | null = null;
+        let anchorTxHash: string | null = null;
+        let anchorBlock: number | null = null;
         if (anchor !== null) {
           const events = await listEventsForAnchor(c, anchor.period_start, anchor.period_end);
           const idx = events.findIndex((e) => e.id === event.id);
@@ -78,19 +80,26 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
             const tree = buildTree(events.map((e) => e.event_hash));
             proofHex = makeProof(tree, idx).map((b) => b.toString("hex"));
             rootHex = tree.root.toString("hex");
+            anchorTxHash = anchor.onchain_tx_hash?.toString("hex") ?? null;
+            anchorBlock =
+              anchor.onchain_block_number !== null ? Number(anchor.onchain_block_number) : null;
           }
         }
-        return { event, proof: proofHex, root: rootHex, anchorId: anchor?.id ?? null };
+        return { event, proof: proofHex, root: rootHex, anchorTxHash, anchorBlock };
       });
       if (result === null) {
         throw brainError("audit_event_not_found", "no such audit event");
       }
       reply.status(200);
+      // §audit/event contract: a single nested inclusion_proof object.
       return {
         event: serializeEvent(result.event),
-        inclusion_proof: result.proof,
-        merkle_root: result.root,
-        anchor_id: result.anchorId,
+        inclusion_proof: {
+          merkle_root: result.root,
+          merkle_proof: result.proof,
+          anchor_tx_hash: result.anchorTxHash,
+          anchor_block: result.anchorBlock,
+        },
       };
     },
   );
@@ -237,38 +246,41 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
     });
   }
 
-  // GET /audit/verify — PUBLIC (skipAuth) — pure inclusion verifier.
-  // Clients supply root + leaf + proof; we return ok:true if it verifies.
-  // No DB access. §3.1 public endpoint.
-  app.get(
+  // POST /audit/verify — PUBLIC (skipAuth) — pure inclusion verifier, matching
+  // the OpenAPI verifyInclusion contract. Caller supplies event_hash + a Merkle
+  // proof + the claimed merkle_root; we return whether the proof verifies. The
+  // on-chain presence half of the contract requires an RPC the §3.1 "pure
+  // function" endpoint does not make, so onchain_block is null here (a future
+  // RPC-backed lookup can populate it). No DB access.
+  app.post(
     "/audit/verify",
     {
       config: { skipAuth: true },
       schema: {
-        querystring: {
+        body: {
           type: "object",
-          required: ["root", "leaf", "proof"],
+          required: ["event_hash", "merkle_proof", "merkle_root"],
           properties: {
-            root: { type: "string", pattern: "^[0-9a-fA-F]{64}$" },
-            leaf: { type: "string", pattern: "^[0-9a-fA-F]{64}$" },
-            proof: { type: "string", description: "comma-separated hex siblings" },
+            event_hash: { type: "string", pattern: "^[0-9a-fA-F]{64}$" },
+            merkle_root: { type: "string", pattern: "^[0-9a-fA-F]{64}$" },
+            merkle_proof: { type: "array", items: { type: "string" } },
           },
         },
       },
     },
     async (
-      request: FastifyRequest<{ Querystring: { root: string; leaf: string; proof: string } }>,
+      request: FastifyRequest<{
+        Body: { event_hash: string; merkle_proof: string[]; merkle_root: string };
+      }>,
       reply,
     ) => {
-      const root = Buffer.from(request.query.root, "hex");
-      const leaf = Buffer.from(request.query.leaf, "hex");
-      const proof = request.query.proof
-        .split(",")
-        .filter((s) => s.length > 0)
-        .map((s) => Buffer.from(s, "hex"));
-      const ok = verifyProof(root, leaf, proof);
+      const body = request.body;
+      const root = Buffer.from(body.merkle_root, "hex");
+      const leaf = Buffer.from(body.event_hash, "hex");
+      const proof = body.merkle_proof.filter((s) => s.length > 0).map((s) => Buffer.from(s, "hex"));
+      const verified = verifyProof(root, leaf, proof);
       reply.status(200);
-      return { ok };
+      return { verified, onchain_block: null };
     },
   );
 
