@@ -53,6 +53,10 @@ export const BRAIN_ERROR_CODES = [
   // Ledger
   "ledger_row_not_found",
   "ledger_row_invalid",
+  "ledger_status_invalid",
+  "ledger_balance_unavailable",
+  "ledger_evidence_required",
+  "ledger_reconciliation_conflict",
 
   // Wiki
   "wiki_entity_not_found",
@@ -67,6 +71,7 @@ export const BRAIN_ERROR_CODES = [
   "policy_quorum_not_met",
   "policy_signature_invalid",
   "policy_version_mismatch",
+  "policy_decision_required",
 
   // MCP / Agent registry
   "agent_not_registered",
@@ -82,7 +87,13 @@ export const BRAIN_ERROR_CODES = [
   "payment_intent_not_found",
   "payment_intent_invalid_state",
   "payment_intent_gate_failed",
+  "payment_intent_approval_required",
+  "payment_intent_approval_invalid",
   "agent_rail_unavailable",
+  // §4.3 agent_* aliases of the legacy execution_* proposal codes (v0.3 transition).
+  "agent_proposal_not_found",
+  "agent_proposal_invalid_state",
+  "agent_idempotency_conflict",
   // Agent Autonomy v3 — proposal-layer idempotency collision (1a.5).
   "agent_proposal_duplicate",
 
@@ -208,6 +219,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   raw_artifact_not_found: 404,
   raw_artifact_tombstoned: 404,
   ledger_row_not_found: 404,
+  agent_proposal_not_found: 404, // alias of execution_proposal_not_found (404)
   route_not_found: 404,
   wiki_entity_not_found: 404,
   wiki_page_not_found: 404,
@@ -240,8 +252,20 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   payment_intent_invalid_state: 409,
   payment_intent_gate_failed: 409,
   agent_proposal_duplicate: 409,
+  ledger_status_invalid: 409,
+  ledger_reconciliation_conflict: 409,
+  agent_proposal_invalid_state: 409, // alias of execution_proposal_invalid_state (409)
+  agent_idempotency_conflict: 409, // alias of execution_idempotency_conflict (409)
   audit_anchor_not_yet_published: 409,
+
+  // 422 — semantic precondition unsatisfiable (ledger evidence/balance, gate
+  // approval/decision preconditions)
   audit_no_events: 422,
+  ledger_balance_unavailable: 422,
+  ledger_evidence_required: 422,
+  policy_decision_required: 422,
+  payment_intent_approval_required: 422,
+  payment_intent_approval_invalid: 422,
 
   // 503 — dependency / rail outage
   execution_rail_unavailable: 503,

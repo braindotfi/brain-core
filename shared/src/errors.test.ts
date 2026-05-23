@@ -64,6 +64,29 @@ describe("BRAIN_ERROR_CODES registry", () => {
     }
   });
 
+  it("includes every §4.3 ledger/policy/payment_intent code with a status", () => {
+    // Typed as string[] so the test compiles before the codes exist (TDD red).
+    const codes: string[] = [
+      "ledger_status_invalid",
+      "ledger_balance_unavailable",
+      "ledger_evidence_required",
+      "ledger_reconciliation_conflict",
+      "policy_decision_required",
+      "agent_proposal_not_found",
+      "agent_proposal_invalid_state",
+      "agent_idempotency_conflict",
+      "payment_intent_approval_required",
+      "payment_intent_approval_invalid",
+    ];
+    for (const code of codes) {
+      expect(BRAIN_ERROR_CODES as readonly string[]).toContain(code);
+      expect(isBrainErrorCode(code)).toBe(true);
+      if (isBrainErrorCode(code)) {
+        expect(typeof httpStatusForCode(code)).toBe("number");
+      }
+    }
+  });
+
   it("has no duplicates", () => {
     expect(new Set(BRAIN_ERROR_CODES).size).toBe(BRAIN_ERROR_CODES.length);
   });
