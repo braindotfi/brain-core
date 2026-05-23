@@ -17,6 +17,7 @@
 import { createHash } from "node:crypto";
 import type { AuditEmitter } from "../audit/emitter.js";
 import type { ServiceCallContext } from "../contracts/types.js";
+import { computeLedgerSnapshot } from "./snapshot.js";
 import type { GateCheck, GateOutcome, GateResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -329,6 +330,14 @@ export async function runPreExecutionGate(
   }
   pass(checks, 7, "amount_within_limit");
 
+  // 7.5 — ledger-state binding. Snapshot the security-relevant state the gate
+  // resolved (source account + counterparty) so the audit-before event and the
+  // GateResult carry a verifiable, tamper-evident record of exactly what money
+  // moved against (consumed by the Proof API). This never fails — the dangerous
+  // deltas are already rejected by checks 5/6/8, which read this same state.
+  const ledgerStateHash = computeLedgerSnapshot({ account, counterparty });
+  pass(checks, 7.5, "ledger_state_bound", { ledger_state_hash: ledgerStateHash });
+
   // 8 — available balance sufficient, net of active reservations (1b.1):
   //   available_balance - SUM(active reservations) >= amount
   // i.e. available_balance >= amount + reserved. Reservations are read-only here,
@@ -406,6 +415,7 @@ export async function runPreExecutionGate(
         amount: input.intent.amount,
         currency: input.intent.currency,
         policy_decision_id: decision.id,
+        ledger_state_hash: ledgerStateHash,
       },
       outputs: { gate_passed: true },
       policyDecisionId: decision.id,
@@ -421,6 +431,7 @@ export async function runPreExecutionGate(
     requiredApprovers: decision.required_approvers,
     policyDecisionId: dryRun ? "" : decision.id,
     auditBeforeEventId,
+    ledgerStateHash,
     trace,
     checks,
   };

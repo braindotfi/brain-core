@@ -104,15 +104,21 @@ describe("§6 pre-execution gate — happy path", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.policyDecisionId).toBe("pd_TEST");
-      expect(result.checks).toHaveLength(13);
+      // The 13 §6 checks plus the 7.5 ledger-state binding.
+      expect(result.checks).toHaveLength(14);
       expect(result.checks.every((c) => c.passed)).toBe(true);
       expect(result.checks.map((c) => c.index)).toEqual([
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+        1, 2, 3, 4, 5, 6, 7, 7.5, 8, 9, 10, 11, 12, 13,
       ]);
+      // check 7.5 binds a verifiable ledger-state hash onto the result.
+      expect(result.ledgerStateHash).toMatch(/^[0-9a-f]{64}$/);
     }
     expect(audit.events).toHaveLength(1);
     expect(audit.events[0]!.action).toBe("payment_intent.execute.before");
     expect(audit.events[0]!.outputs.gate_passed).toBe(true);
+    if (result.ok) {
+      expect(audit.events[0]!.inputs.ledger_state_hash).toBe(result.ledgerStateHash);
+    }
   });
 });
 
@@ -474,7 +480,7 @@ describe("§6 — dry-run mode (1a.2): same checks, no side effects", () => {
       expect(result.outcome).toBe("allow");
       expect(result.policyDecisionId).toBe(""); // no row persisted
       expect(result.auditBeforeEventId).toBe(""); // no audit emitted
-      expect(result.checks).toHaveLength(13);
+      expect(result.checks).toHaveLength(14);
     }
     expect(audit.events).toHaveLength(0); // INV-6 side effect suppressed in dry-run
   });
@@ -561,7 +567,7 @@ describe("§6 — check 1.5: agent behavior pinned (2.3)", () => {
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.checks).toHaveLength(13);
+      expect(result.checks).toHaveLength(14);
       expect(result.checks.some((c) => c.name === "agent_behavior_pinned")).toBe(false);
     }
   });

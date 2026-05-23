@@ -25,6 +25,7 @@ export type GateCheckName =
   | "counterparty_allowed"
   | "counterparty_verified"
   | "amount_within_limit"
+  | "ledger_state_bound"
   | "available_balance_sufficient"
   | "required_evidence_present"
   | "approval_requirement_determined"
@@ -52,6 +53,12 @@ export interface GateSuccess {
   policyDecisionId: string;
   /** Audit-before event id; "" in dry-run (no audit emitted). */
   auditBeforeEventId: string;
+  /**
+   * sha256 of the ledger state (source account + counterparty) the gate
+   * resolved at execute — a verifiable, tamper-evident snapshot of what money
+   * moved against (check 7.5). Also recorded on the audit-before event.
+   */
+  ledgerStateHash: string;
   trace: Array<Record<string, unknown>>;
   checks: GateCheck[];
 }
