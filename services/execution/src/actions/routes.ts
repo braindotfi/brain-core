@@ -89,49 +89,53 @@ export async function registerActionRoutes(
   service: PaymentIntentService,
 ): Promise<void> {
   // POST /actions
-  app.post("/actions", async (request: FastifyRequest<{ Body: CreateActionBody }>, reply) => {
-    const ctx = assertCtx(request);
-    requireScope(request.principal!.scopes, SCOPE_PROPOSE);
-    const b = request.body ?? {};
-    if (b.type === undefined) {
-      throw brainError("request_body_invalid", "`type` is required");
-    }
-    const piType = ACTION_TYPE_TO_PI_TYPE[b.type];
-    if (piType === undefined) {
-      throw brainError("request_body_invalid", `unsupported action type: ${b.type}`);
-    }
-    // For v0.3 the SDK still requires explicit destination + amount +
-    // currency on the body when invoiceId is not the source. The
-    // invoiceId shortcut (server resolves source/dest from the
-    // invoice row) is its own follow-up — see audit §6.
-    if (b.invoiceId === undefined) {
-      if (
-        b.source_account_id === undefined ||
-        b.to?.counterparty_id === undefined ||
-        b.amount === undefined ||
-        b.currency === undefined ||
-        !/^[A-Z]{3}$/.test(b.currency)
-      ) {
-        throw brainError(
-          "request_body_invalid",
-          "non-invoice actions require source_account_id, to.counterparty_id, amount, and currency",
-        );
+  app.post(
+    "/actions",
+    { config: { idempotent: true } },
+    async (request: FastifyRequest<{ Body: CreateActionBody }>, reply) => {
+      const ctx = assertCtx(request);
+      requireScope(request.principal!.scopes, SCOPE_PROPOSE);
+      const b = request.body ?? {};
+      if (b.type === undefined) {
+        throw brainError("request_body_invalid", "`type` is required");
       }
-    }
+      const piType = ACTION_TYPE_TO_PI_TYPE[b.type];
+      if (piType === undefined) {
+        throw brainError("request_body_invalid", `unsupported action type: ${b.type}`);
+      }
+      // For v0.3 the SDK still requires explicit destination + amount +
+      // currency on the body when invoiceId is not the source. The
+      // invoiceId shortcut (server resolves source/dest from the
+      // invoice row) is its own follow-up — see audit §6.
+      if (b.invoiceId === undefined) {
+        if (
+          b.source_account_id === undefined ||
+          b.to?.counterparty_id === undefined ||
+          b.amount === undefined ||
+          b.currency === undefined ||
+          !/^[A-Z]{3}$/.test(b.currency)
+        ) {
+          throw brainError(
+            "request_body_invalid",
+            "non-invoice actions require source_account_id, to.counterparty_id, amount, and currency",
+          );
+        }
+      }
 
-    const intent = await service.create(ctx, {
-      action_type: piType as never,
-      source_account_id: b.source_account_id ?? "acct_PENDING",
-      destination_counterparty_id: b.to?.counterparty_id ?? "cp_PENDING",
-      amount: b.amount ?? "0",
-      currency: b.currency ?? "USD",
-      ...(b.invoiceId !== undefined ? { invoice_id: b.invoiceId } : {}),
-      ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
-      ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
-    });
-    reply.status(201);
-    return paymentIntentToAction(intent);
-  });
+      const intent = await service.create(ctx, {
+        action_type: piType as never,
+        source_account_id: b.source_account_id ?? "acct_PENDING",
+        destination_counterparty_id: b.to?.counterparty_id ?? "cp_PENDING",
+        amount: b.amount ?? "0",
+        currency: b.currency ?? "USD",
+        ...(b.invoiceId !== undefined ? { invoice_id: b.invoiceId } : {}),
+        ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
+        ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
+      });
+      reply.status(201);
+      return paymentIntentToAction(intent);
+    },
+  );
 
   // GET /actions
   app.get(

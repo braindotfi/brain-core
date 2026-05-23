@@ -42,21 +42,25 @@ export async function registerSourceRoutes(
   app: FastifyInstance,
   service: SourceService,
 ): Promise<void> {
-  app.post("/sources", async (request: FastifyRequest<{ Body: ConnectBody }>, reply) => {
-    const ctx = assertCtx(request);
-    requireScope(request.principal!.scopes, SCOPE_WRITE);
-    const b = request.body ?? {};
-    if (b.type === undefined || b.credentials === undefined) {
-      throw brainError("request_body_invalid", "`type` and `credentials` are required");
-    }
-    const created = await service.connect(ctx, {
-      type: b.type as SourceType,
-      credentials: b.credentials,
-      ...(b.metadata !== undefined ? { metadata: b.metadata } : {}),
-    });
-    reply.status(201);
-    return recordToWire(created);
-  });
+  app.post(
+    "/sources",
+    { config: { idempotent: true } },
+    async (request: FastifyRequest<{ Body: ConnectBody }>, reply) => {
+      const ctx = assertCtx(request);
+      requireScope(request.principal!.scopes, SCOPE_WRITE);
+      const b = request.body ?? {};
+      if (b.type === undefined || b.credentials === undefined) {
+        throw brainError("request_body_invalid", "`type` and `credentials` are required");
+      }
+      const created = await service.connect(ctx, {
+        type: b.type as SourceType,
+        credentials: b.credentials,
+        ...(b.metadata !== undefined ? { metadata: b.metadata } : {}),
+      });
+      reply.status(201);
+      return recordToWire(created);
+    },
+  );
 
   app.get(
     "/sources",
