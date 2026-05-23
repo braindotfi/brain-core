@@ -180,6 +180,32 @@ describe("insertAnchor", () => {
       }),
     ).rejects.toThrow("audit_anchors insert returned no row");
   });
+
+  it("returns the existing row when a concurrent insert won the race", async () => {
+    // ON CONFLICT DO NOTHING returns no row when another publish for the same
+    // (tenant, root) already inserted; §5.3 says re-anchoring is a no-op, so we
+    // re-fetch and return the winner's row rather than throwing on the dup.
+    const existing = { id: "anc_winner", tenant_id: "t1" };
+    const calls: string[] = [];
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        calls.push(sql);
+        if (sql.includes("INSERT INTO audit_anchors")) return { rows: [], rowCount: 0 };
+        return { rows: [existing], rowCount: 1 };
+      }),
+    } as unknown as TenantScopedClient;
+    const result = await insertAnchor(client, {
+      id: "anc_loser",
+      tenantId: "t1",
+      merkleRoot: Buffer.from("dup"),
+      eventCount: 3,
+      periodStart: new Date(),
+      periodEnd: new Date(),
+    });
+    expect(result).toBe(existing);
+    expect(calls[0]).toContain("ON CONFLICT");
+    expect(calls.some((s) => s.includes("WHERE merkle_root"))).toBe(true);
+  });
 });
 
 describe("findLatestAnchor", () => {

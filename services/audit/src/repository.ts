@@ -172,6 +172,7 @@ export async function insertAnchor(
   const { rows } = await client.query<AuditAnchorRow>(
     `INSERT INTO audit_anchors (id, tenant_id, merkle_root, event_count, period_start, period_end)
      VALUES ($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (tenant_id, merkle_root) DO NOTHING
      RETURNING *`,
     [
       input.id,
@@ -183,8 +184,13 @@ export async function insertAnchor(
     ],
   );
   const row = rows[0];
-  if (row === undefined) throw new Error("audit_anchors insert returned no row");
-  return row;
+  if (row !== undefined) return row;
+  // No row means a concurrent publish for the same (tenant, merkle_root) won the
+  // race and DO NOTHING suppressed our insert. §5.3 makes re-anchoring a no-op,
+  // so return the winner's row instead of throwing on the duplicate.
+  const existing = await findAnchorByRoot(client, input.merkleRoot);
+  if (existing === null) throw new Error("audit_anchors insert returned no row");
+  return existing;
 }
 
 export async function findLatestAnchor(client: TenantScopedClient): Promise<AuditAnchorRow | null> {
