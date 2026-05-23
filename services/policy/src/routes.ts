@@ -155,6 +155,12 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
           verifyingContract: deps.policyRegistryAddress,
         });
 
+        // A valid signature alone never counts toward quorum. Each signer must
+        // also be DISTINCT and a pre-authorized tenant signer on the on-chain
+        // BrainPolicyRegistry allowlist — mirroring registerPolicy's
+        // DuplicateSigner / NotTenantSigner guards. Without this, quorum is
+        // forgeable with N self-generated keypairs (or one key repeated N times).
+        const seen = new Set<string>();
         for (const sig of body.signatures!) {
           // PolicyTypedData["types"] uses Array<{name;type}> which satisfies the
           // runtime contract but doesn't match viem's strict generic inference.
@@ -171,6 +177,22 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
             throw brainError("policy_signature_invalid", "signature did not verify", {
               details: { address: sig.address },
             });
+          }
+
+          const addr = sig.address.toLowerCase();
+          if (seen.has(addr)) {
+            throw brainError("policy_signature_invalid", "duplicate signer", {
+              details: { address: sig.address },
+            });
+          }
+          seen.add(addr);
+
+          if (!(await deps.isAuthorizedSigner(tenant, sig.address))) {
+            throw brainError(
+              "policy_signature_invalid",
+              "signer is not an authorized tenant signer",
+              { details: { address: sig.address } },
+            );
           }
         }
 

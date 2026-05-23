@@ -128,6 +128,7 @@ import {
   internalAgentHandlers,
 } from "@brain/internal-agents";
 import { createViemScopeChecker } from "./mcp/viemScopeChecker.js";
+import { createViemPolicySignerChecker } from "./policy/viemPolicySignerChecker.js";
 import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
@@ -509,6 +510,15 @@ async function main(): Promise<void> {
     // Base Sepolia chain id.
     chainId: 84532,
     policyRegistryAddress: cfg.POLICY_REGISTRY_ADDRESS as `0x${string}`,
+    // Quorum signers must be on the on-chain BrainPolicyRegistry allowlist. In
+    // demo mode the chain is sandboxed, so any signer is accepted (mirrors the
+    // other sandbox resolvers below).
+    isAuthorizedSigner: cfg.BRAIN_DEMO_MODE
+      ? () => Promise.resolve(true)
+      : createViemPolicySignerChecker({
+          contractAddress: cfg.POLICY_REGISTRY_ADDRESS as `0x${string}`,
+          rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+        }),
   };
 
   const policyService = new PolicyService({ pool, audit });
