@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import fc from "fast-check";
 import { InMemoryAuditEmitter } from "../audit/emitter.js";
 import { runPreExecutionGate } from "./gate.js";
 import type {
@@ -112,6 +113,40 @@ describe("§6 pre-execution gate — happy path", () => {
     expect(audit.events).toHaveLength(1);
     expect(audit.events[0]!.action).toBe("payment_intent.execute.before");
     expect(audit.events[0]!.outputs.gate_passed).toBe(true);
+  });
+});
+
+describe("§6 — property: amount (check 7) and balance (check 8) are monotonic (Standards §8)", () => {
+  it("gate passes iff amount ≤ policy limit AND balance ≥ amount, else fails at the first offending check", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 0, max: 100_000_00 }),
+        fc.integer({ min: 0, max: 100_000_00 }),
+        fc.integer({ min: 0, max: 100_000_00 }),
+        async (amountCents, limitCents, balanceCents) => {
+          const amount = (amountCents / 100).toFixed(2);
+          const limit = (limitCents / 100).toFixed(2);
+          const balance = (balanceCents / 100).toFixed(2);
+          const { deps } = makeDeps({
+            resolveAccount: async () => ({ ...ACTIVE_ACCOUNT, available_balance: balance }),
+            evaluatePolicy: async () =>
+              makeDecision({ amount_upper_bound: { currency: "USD", value: limit } }),
+          });
+          const result = await runPreExecutionGate(deps, {
+            ctx,
+            principal: defaultPrincipal(),
+            intent: defaultIntent({ amount }),
+          });
+          const expectOk = amountCents <= limitCents && balanceCents >= amountCents;
+          expect(result.ok).toBe(expectOk);
+          if (!result.ok) {
+            // Check 7 (amount) short-circuits before check 8 (balance).
+            expect(result.failedCheck.index).toBe(amountCents > limitCents ? 7 : 8);
+          }
+        },
+      ),
+      { numRuns: 250 },
+    );
   });
 });
 
