@@ -9,7 +9,7 @@ export const disputeDefinition: InternalAgentDefinition = {
   capabilities: ["dispute_evidence"],
   triggers: ["dispute.created", "chargeback.received", "payment.mismatch"],
   intent_patterns: ["gather dispute evidence", "respond to a chargeback", "build a dispute packet"],
-  readable_data: ["ledger:transactions", "wiki:counterparty", "wiki:invoice", "raw:evidence"],
+  readable_data: ["ledger:read", "wiki:read", "raw:read"],
   risk_level: "medium",
   minimum_confidence: 0.75,
   required_evidence: ["dispute", "transaction"],

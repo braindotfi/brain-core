@@ -13,7 +13,7 @@ export const financialHealthDefinition: InternalAgentDefinition = {
     "what is my health score",
     "monthly financial summary",
   ],
-  readable_data: ["ledger:accounts", "ledger:transactions", "wiki:cash_flow"],
+  readable_data: ["ledger:read", "wiki:read"],
   risk_level: "low",
   minimum_confidence: 0.65,
   required_evidence: ["balance", "transaction"],

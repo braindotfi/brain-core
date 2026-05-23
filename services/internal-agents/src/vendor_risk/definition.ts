@@ -9,7 +9,7 @@ export const vendorRiskDefinition: InternalAgentDefinition = {
   capabilities: ["vendor_risk"],
   triggers: ["vendor.created", "vendor.bank_details_changed", "payment.destination_changed"],
   intent_patterns: ["check vendor risk", "review a new vendor", "verify a bank detail change"],
-  readable_data: ["ledger:counterparties", "wiki:counterparty", "raw:evidence"],
+  readable_data: ["ledger:read", "wiki:read", "raw:read"],
   risk_level: "high",
   minimum_confidence: 0.8,
   required_evidence: ["vendor", "payment_destination", "counterparty_history"],

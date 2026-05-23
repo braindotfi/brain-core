@@ -10,7 +10,7 @@ export const billManagementDefinition: InternalAgentDefinition = {
   capabilities: ["bill_management"],
   triggers: ["bill.due_soon", "bill.overdue", "autopay.failed"],
   intent_patterns: ["pay my bill", "remind me about bills", "avoid late fees"],
-  readable_data: ["ledger:obligations", "ledger:invoices", "ledger:accounts"],
+  readable_data: ["ledger:read"],
   risk_level: "medium",
   minimum_confidence: 0.8,
   required_evidence: ["invoice", "payment_destination"],

@@ -13,12 +13,12 @@ function step(
     name,
     forward: async () => {
       if (opts.failForward) throw new Error(`${name} forward failed`);
-      log.push(`forward:${name}`);
+      log.push(`forward-${name}`);
       return { name };
     },
     compensate: async () => {
       if (opts.failComp) throw new Error(`${name} compensate failed`);
-      log.push(`compensate:${name}`);
+      log.push(`compensate-${name}`);
     },
   };
 }
@@ -29,7 +29,7 @@ describe("runSaga", () => {
     const audit = new InMemoryAuditEmitter();
     const result = await runSaga({ ctx: CTX, audit }, "agsg_1", [step("a", log), step("b", log)]);
     expect(result.ok).toBe(true);
-    expect(log).toEqual(["forward:a", "forward:b"]);
+    expect(log).toEqual(["forward-a", "forward-b"]);
     expect(audit.events.at(-1)?.action).toBe("agent.saga.completed");
   });
 
@@ -44,7 +44,7 @@ describe("runSaga", () => {
     expect(result.ok).toBe(false);
     expect(result.failedStep).toBe("c");
     expect(result.compensated).toEqual(["b", "a"]); // reverse order
-    expect(log).toEqual(["forward:a", "forward:b", "compensate:b", "compensate:a"]);
+    expect(log).toEqual(["forward-a", "forward-b", "compensate-b", "compensate-a"]);
     const actions = audit.events.map((e) => e.action);
     expect(actions.filter((a) => a === "agent.saga.compensated")).toHaveLength(2);
     expect(actions.at(-1)).toBe("agent.saga.failed");

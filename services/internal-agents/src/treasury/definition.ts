@@ -19,7 +19,7 @@ export const treasuryDefinition: InternalAgentDefinition = {
     "top up low balance account",
     "plan liquidity",
   ],
-  readable_data: ["ledger:accounts", "ledger:balances", "ledger:transactions", "wiki:cash_flow"],
+  readable_data: ["ledger:read", "wiki:read"],
   risk_level: "medium",
   minimum_confidence: 0.8,
   required_evidence: ["balance"],

@@ -9,7 +9,7 @@ export const debtOptimizationDefinition: InternalAgentDefinition = {
   capabilities: ["debt_optimization"],
   triggers: ["debt.payment_due", "interest_rate.changed", "cash.available_for_debt_paydown"],
   intent_patterns: ["pay down debt", "optimize my debt", "should i pay off my loan"],
-  readable_data: ["ledger:obligations", "ledger:accounts", "wiki:cash_flow"],
+  readable_data: ["ledger:read", "wiki:read"],
   risk_level: "medium",
   minimum_confidence: 0.75,
   required_evidence: ["obligation"],

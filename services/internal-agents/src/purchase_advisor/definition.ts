@@ -15,7 +15,7 @@ export const purchaseAdvisorDefinition: InternalAgentDefinition = {
     "is this a good purchase",
     "can i afford",
   ],
-  readable_data: ["ledger:accounts", "ledger:balances", "wiki:cash_flow"],
+  readable_data: ["ledger:read", "wiki:read"],
   risk_level: "medium",
   minimum_confidence: 0.75,
   required_evidence: ["balance"],

@@ -9,7 +9,7 @@ export const cashForecastDefinition: InternalAgentDefinition = {
   capabilities: ["cash_forecast"],
   triggers: ["forecast.requested", "cashflow.material_change", "large_payable.created"],
   intent_patterns: ["forecast our cash", "what is our runway", "project cash flow"],
-  readable_data: ["ledger:accounts", "ledger:balances", "ledger:obligations", "wiki:cash_flow"],
+  readable_data: ["ledger:read", "wiki:read"],
   risk_level: "low",
   minimum_confidence: 0.65,
   required_evidence: ["balance"],

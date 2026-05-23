@@ -10,7 +10,7 @@ export const fraudAnomalyDefinition: InternalAgentDefinition = {
   capabilities: ["fraud_anomaly"],
   triggers: ["transaction.unusual", "merchant.risk_detected", "duplicate_charge.detected"],
   intent_patterns: ["is this transaction fraud", "flag suspicious activity", "freeze my card"],
-  readable_data: ["ledger:transactions", "wiki:counterparty", "raw:evidence"],
+  readable_data: ["ledger:read", "wiki:read", "raw:read"],
   risk_level: "high",
   minimum_confidence: 0.85,
   required_evidence: ["transaction"],
