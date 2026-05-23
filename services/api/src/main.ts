@@ -57,7 +57,7 @@ import {
 } from "@brain/shared";
 
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
-import { createViemAnchorBroadcaster } from "./anchorBroadcaster.js";
+import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 
 import {
   registerRawPlugin,
@@ -99,7 +99,7 @@ import {
 } from "@brain/execution";
 import type { ExecutionDeps } from "@brain/execution";
 
-import { registerAuditRoutes, publishAnchor } from "@brain/audit";
+import { registerAuditRoutes, publishAnchor, startAnchorReconciler } from "@brain/audit";
 import type { AuditDeps } from "@brain/audit";
 
 import {
@@ -641,6 +641,22 @@ async function main(): Promise<void> {
     audit,
     ...(anchorBroadcaster !== undefined ? { broadcaster: anchorBroadcaster } : {}),
   };
+
+  // Anchor orphan-recovery reconciler: heals anchors whose on-chain tx-hash
+  // write was lost after a successful broadcast. Read-only — runs whenever the
+  // anchor contract address and an RPC URL are configured (no publisher key).
+  const anchorRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
+  const anchorReconciler =
+    cfg.AUDIT_ANCHOR_ADDRESS !== undefined && anchorRpcUrl !== undefined
+      ? startAnchorReconciler({
+          pool,
+          audit,
+          reader: createViemAnchorEventReader({
+            contractAddress: cfg.AUDIT_ANCHOR_ADDRESS as `0x${string}`,
+            rpcUrl: anchorRpcUrl,
+          }),
+        })
+      : undefined;
 
   // Exposed for POST /v1/demo/anchor/trigger — set when anchorBroadcaster is configured.
   let triggerAnchor: (() => Promise<void>) | undefined;
@@ -1240,6 +1256,7 @@ async function main(): Promise<void> {
     anchorShutdown = true;
     if (anchorTimer !== undefined) clearTimeout(anchorTimer);
     normalizeWorker.stop();
+    anchorReconciler?.stop();
     try {
       await agentRouteWorker.close();
     } catch (err) {

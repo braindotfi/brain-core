@@ -89,3 +89,63 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
     };
   };
 }
+
+// --- Anchor event reader (read-only; backs the orphan-recovery reconciler) ---
+// Structurally matches @brain/audit's AnchorEventReader; inlined here for the
+// same project-reference reason as the broadcaster above.
+interface AnchorEventReader {
+  findAnchorTx(query: {
+    tenantId: string;
+    merkleRoot: Buffer;
+  }): Promise<{ txHash: Buffer; blockNumber: bigint } | null>;
+}
+
+const BRAIN_AUDIT_ANCHOR_EVENTS_ABI = [
+  {
+    name: "AnchorPublished",
+    type: "event",
+    inputs: [
+      { name: "tenantId", type: "bytes32", indexed: true },
+      { name: "root", type: "bytes32", indexed: false },
+      { name: "eventCount", type: "uint256", indexed: false },
+      { name: "periodStart", type: "uint256", indexed: false },
+      { name: "periodEnd", type: "uint256", indexed: false },
+    ],
+  },
+] as const;
+
+export interface ViemAnchorEventReaderOptions {
+  contractAddress: `0x${string}`;
+  rpcUrl: string;
+  /** Earliest block to scan (the contract deploy block in prod). Default 0. */
+  fromBlock?: bigint;
+}
+
+export function createViemAnchorEventReader(opts: ViemAnchorEventReaderOptions): AnchorEventReader {
+  const publicClient = createPublicClient({ chain: baseSepolia, transport: http(opts.rpcUrl) });
+
+  return {
+    async findAnchorTx({ tenantId, merkleRoot }) {
+      const tenantIdBytes = keccak256(toBytes(tenantId)) as `0x${string}`;
+      const rootHex = toHex(merkleRoot).toLowerCase();
+      const logs = await publicClient.getContractEvents({
+        address: opts.contractAddress,
+        abi: BRAIN_AUDIT_ANCHOR_EVENTS_ABI,
+        eventName: "AnchorPublished",
+        args: { tenantId: tenantIdBytes },
+        fromBlock: opts.fromBlock ?? 0n,
+        toBlock: "latest",
+      });
+      for (const lg of logs) {
+        const root = (lg.args.root ?? "").toString().toLowerCase();
+        if (root === rootHex && lg.transactionHash !== null && lg.blockNumber !== null) {
+          return {
+            txHash: Buffer.from(lg.transactionHash.slice(2), "hex"),
+            blockNumber: lg.blockNumber,
+          };
+        }
+      }
+      return null;
+    },
+  };
+}

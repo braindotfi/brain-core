@@ -18,3 +18,11 @@ export {
   type PublishOptions,
 } from "./publisher.js";
 export { registerAuditRoutes } from "./routes.js";
+export {
+  reconcileOrphanedAnchors,
+  startAnchorReconciler,
+  type AnchorEventReader,
+  type ReconcilerDeps,
+  type ReconcileOptions,
+  type AnchorReconciler,
+} from "./reconciler.js";
