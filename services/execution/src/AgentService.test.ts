@@ -75,7 +75,9 @@ function makeDeps(
   outcome: "allow" | "confirm" | "reject" = "allow",
   poolQueryFn?: (sql: string, values: unknown[]) => { rows: unknown[]; rowCount: number },
 ): AgentServiceDeps {
-  const row = makeProposalRow({ status: outcome === "allow" ? "approved" : outcome === "confirm" ? "pending" : "rejected" });
+  const row = makeProposalRow({
+    status: outcome === "allow" ? "approved" : outcome === "confirm" ? "pending" : "rejected",
+  });
   const defaultQuery = () => ({ rows: [row], rowCount: 1 });
   return {
     pool: makeFakePool(poolQueryFn ?? defaultQuery),

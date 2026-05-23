@@ -29,11 +29,7 @@ export {
   type RecordRunInput,
   type RecordRoutingDecisionInput,
 } from "./agent-run-service.js";
-export {
-  registerAgentApiRoutes,
-  type AgentApiDeps,
-  type AgentApiReadStore,
-} from "./agent-api.js";
+export { registerAgentApiRoutes, type AgentApiDeps, type AgentApiReadStore } from "./agent-api.js";
 export {
   StaticPromotionPolicy,
   ALL_SHADOWED,
