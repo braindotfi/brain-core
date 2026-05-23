@@ -7,11 +7,11 @@
  * emitted around the rail dispatch.
  *
  * Layer note. The PaymentIntent row lives in the Ledger table
- * `ledger_payment_intents`; this service mutates it via the typed
- * helpers exported from `@brain/ledger`. The "every service owns its
- * schema" rule (§2 of standards) is preserved because the SQL stays
- * inside services/ledger; services/execution only calls the typed
- * helpers.
+ * `ledger_payment_intents`; this service mutates it ONLY through the
+ * `LedgerPaymentIntents` facade from `@brain/ledger` (a no-restricted-imports
+ * rule blocks the raw repository helpers). The "every service owns its schema"
+ * rule (§2 of standards) is preserved because the SQL stays inside
+ * services/ledger; services/execution reaches it through one narrow surface.
  */
 
 import {
@@ -36,15 +36,7 @@ import {
   type GatePrincipal,
   type GateResult,
 } from "@brain/shared";
-import {
-  appendApprovalId,
-  appendExecutionReceiptId,
-  findPaymentIntentById,
-  insertPaymentIntent,
-  listPaymentIntents,
-  transitionPaymentIntent,
-  type PaymentIntentRow,
-} from "@brain/ledger";
+import { LedgerPaymentIntents, type PaymentIntentRow } from "@brain/ledger";
 import type { Pool } from "pg";
 import { assertPaymentIntentTransition, type PaymentIntentState } from "./state-machine.js";
 import type { ApprovalService } from "../approvals/ApprovalService.js";
@@ -127,7 +119,7 @@ export class PaymentIntentService implements IPaymentIntentService {
           : "pending_approval";
 
     const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      insertPaymentIntent(c, {
+      LedgerPaymentIntents.insert(c, {
         id: newPaymentIntentId(),
         ownerId: ctx.tenantId,
         createdByAgentId: input.agent_id ?? ctx.actor,
@@ -171,7 +163,7 @@ export class PaymentIntentService implements IPaymentIntentService {
 
   public async get(ctx: ServiceCallContext, id: string): Promise<PaymentIntent | null> {
     const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      findPaymentIntentById(c, id),
+      LedgerPaymentIntents.findById(c, id),
     );
     return row === null ? null : toRecord(row);
   }
@@ -181,7 +173,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     f: { status?: PaymentIntentStatus; agent_id?: string; limit?: number },
   ): Promise<PaymentIntent[]> {
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      listPaymentIntents(c, {
+      LedgerPaymentIntents.list(c, {
         ...(f.status !== undefined ? { status: f.status } : {}),
         ...(f.agent_id !== undefined ? { created_by_agent_id: f.agent_id } : {}),
         limit: Math.min(f.limit ?? 50, 500),
@@ -204,7 +196,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     // Record the approval.
     const approval = await this.deps.approvals.sign(ctx, { type: "payment_intent", id });
     await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      appendApprovalId(c, id, approval.id),
+      LedgerPaymentIntents.appendApprovalId(c, id, approval.id),
     );
 
     // Check whether quorum is met. Required approvers came from the
@@ -221,7 +213,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     if (ready) {
       const updated = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
         assertPaymentIntentTransition("pending_approval", "approved");
-        return transitionPaymentIntent(c, id, "pending_approval", "approved");
+        return LedgerPaymentIntents.transition(c, id, "pending_approval", "approved");
       });
       if (updated === null) {
         throw brainError(
@@ -244,7 +236,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     // Quorum not met yet — return the intent unchanged but with the new
     // approval recorded.
     const refetched = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      findPaymentIntentById(c, id),
+      LedgerPaymentIntents.findById(c, id),
     );
     return toRecord(refetched!);
   }
@@ -267,7 +259,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     }
     assertPaymentIntentTransition(intent.status as PaymentIntentState, "rejected");
     const updated = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      transitionPaymentIntent(c, id, intent.status, "rejected"),
+      LedgerPaymentIntents.transition(c, id, intent.status, "rejected"),
     );
     if (updated === null) {
       throw brainError("payment_intent_invalid_state", "PaymentIntent moved during reject");
@@ -297,7 +289,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     }
     assertPaymentIntentTransition("proposed", "cancelled");
     const updated = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      transitionPaymentIntent(c, id, "proposed", "cancelled"),
+      LedgerPaymentIntents.transition(c, id, "proposed", "cancelled"),
     );
     if (updated === null) {
       throw brainError("payment_intent_invalid_state", "PaymentIntent moved during cancel");
@@ -343,7 +335,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     }
     assertPaymentIntentTransition("approved", "paused");
     const updated = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      transitionPaymentIntent(c, id, "approved", "paused"),
+      LedgerPaymentIntents.transition(c, id, "approved", "paused"),
     );
     if (updated === null) {
       throw brainError("payment_intent_invalid_state", "PaymentIntent moved during pause");
@@ -393,7 +385,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     }
     assertPaymentIntentTransition("paused", "approved");
     const updated = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      transitionPaymentIntent(c, id, "paused", "approved"),
+      LedgerPaymentIntents.transition(c, id, "paused", "approved"),
     );
     if (updated === null) {
       throw brainError("payment_intent_invalid_state", "PaymentIntent moved during resume");
@@ -419,14 +411,14 @@ export class PaymentIntentService implements IPaymentIntentService {
     agentId: string,
   ): Promise<{ paused: string[] }> {
     const paused = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
-      const rows = await listPaymentIntents(c, {
+      const rows = await LedgerPaymentIntents.list(c, {
         status: "approved",
         created_by_agent_id: agentId,
         limit: 1000,
       });
       const ids: string[] = [];
       for (const row of rows) {
-        const updated = await transitionPaymentIntent(c, row.id, "approved", "paused");
+        const updated = await LedgerPaymentIntents.transition(c, row.id, "approved", "paused");
         if (updated !== null) ids.push(row.id);
       }
       return ids;
@@ -497,7 +489,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     // FOR UPDATE across the external rail call; the atomic approved→executed
     // transition below is the final race guard.)
     const fresh = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      findPaymentIntentById(c, intent.id),
+      LedgerPaymentIntents.findById(c, intent.id),
     );
     if (fresh === null || fresh.status !== "approved") {
       await this.deps.audit.emit({
@@ -545,7 +537,7 @@ export class PaymentIntentService implements IPaymentIntentService {
 
     if (!dispatchOutcome.ok) {
       await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
-        await transitionPaymentIntent(c, intent.id, "approved", "failed");
+        await LedgerPaymentIntents.transition(c, intent.id, "approved", "failed");
       });
       await this.deps.audit.emit({
         tenantId: ctx.tenantId,
@@ -569,7 +561,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     );
     if (!receiptCheck.ok) {
       await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
-        await transitionPaymentIntent(c, intent.id, "approved", "failed");
+        await LedgerPaymentIntents.transition(c, intent.id, "approved", "failed");
       });
       await this.deps.audit.emit({
         tenantId: ctx.tenantId,
@@ -603,8 +595,8 @@ export class PaymentIntentService implements IPaymentIntentService {
         });
         await setExecutionReceipt(c, executionId, dispatchOutcome.receipt);
         await transitionExecution(c, executionId, "dispatched", "in_flight");
-        await transitionPaymentIntent(c, intent.id, "approved", "executed");
-        await appendExecutionReceiptId(c, intent.id, executionId);
+        await LedgerPaymentIntents.transition(c, intent.id, "approved", "executed");
+        await LedgerPaymentIntents.appendExecutionReceiptId(c, intent.id, executionId);
       });
     } catch (err) {
       persistError = err instanceof Error ? err : new Error(String(err));
@@ -678,7 +670,7 @@ export class PaymentIntentService implements IPaymentIntentService {
 
   private async requireIntent(ctx: ServiceCallContext, id: string): Promise<PaymentIntentRow> {
     const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      findPaymentIntentById(c, id),
+      LedgerPaymentIntents.findById(c, id),
     );
     if (row === null) {
       throw brainError("payment_intent_not_found", "no such PaymentIntent", {

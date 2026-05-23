@@ -66,5 +66,47 @@ export default [
       eqeqeq: ["error", "always"],
     },
   },
+  {
+    // §2 boundary: services/execution touches PaymentIntent rows ONLY through the
+    // LedgerPaymentIntents facade, never the raw @brain/ledger repository helpers
+    // or deep imports. Keeps "every service owns its schema" enforced, not commented.
+    files: ["services/execution/**/*.ts"],
+    ignores: ["services/execution/**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@brain/ledger",
+              importNames: [
+                "insertPaymentIntent",
+                "transitionPaymentIntent",
+                "appendApprovalId",
+                "appendExecutionReceiptId",
+                "findPaymentIntentById",
+                "listPaymentIntents",
+                "findPaymentIntentByDedupKey",
+              ],
+              message:
+                "Use the LedgerPaymentIntents facade from @brain/ledger, not the raw repository helpers.",
+            },
+          ],
+          patterns: [
+            {
+              group: [
+                "@brain/ledger/repository",
+                "@brain/ledger/repository/*",
+                "@brain/ledger/dist/repository/*",
+                "@brain/ledger/src/repository/*",
+              ],
+              message:
+                "Do not deep-import @brain/ledger internals; use the LedgerPaymentIntents facade.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   prettier,
 ];
