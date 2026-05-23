@@ -1092,7 +1092,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Execute an approved proposal */
+        /**
+         * DISABLED: legacy proposal execution (bypassed the §6 gate)
+         * @deprecated
+         * @description Disabled. This legacy v0.2 route dispatched a proposal through a payment rail with no §6 pre-execution gate — no policy decision, sanctions, balance, or amount-limit checks, and no audit before/after pair — which Engineering Standards §6 ("no execution path may bypass the gate") and §9.5 ("financial actions use PaymentIntent, not Proposal") forbid. It now always returns 422 `gate_no_policy_decision`. Execute money movement via `POST /actions/{action_id}/execute`, which runs the gate.
+         */
         post: operations["executeProposal"];
         delete?: never;
         options?: never;
@@ -3745,22 +3749,8 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Execution started (async) */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** Format: uuid */
-                        execution_id?: string;
-                        /** @enum {string} */
-                        status?: "started";
-                    };
-                };
-            };
-            /** @description Proposal not in executable state */
-            409: {
+            /** @description Route disabled. Money movement must go through the gated POST /actions/{action_id}/execute. Error code `gate_no_policy_decision`. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

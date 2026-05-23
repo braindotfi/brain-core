@@ -8,7 +8,6 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   brainError,
   isBrainId,
-  newExecutionId,
   newProposalId,
   requireScope,
   withTenantScope,
@@ -20,11 +19,8 @@ import {
   findExecution,
   findProposal,
   insertAgent,
-  insertExecution,
   insertProposal,
   listAgents,
-  setExecutionReceipt,
-  transitionExecution,
   transitionProposal,
   type ProposalRow,
 } from "./repository.js";
@@ -95,64 +91,24 @@ export async function registerExecutionRoutes(
   );
 
   // POST /execution/execute
+  //
+  // DECOMMISSIONED money path. This legacy v0.2 route dispatched a proposal
+  // through a payment rail with NO §6 pre-execution gate — no policy decision,
+  // no sanctions / balance / amount-limit checks, and no audit before/after
+  // pair. Standards §6 ("no execution path may bypass the gate") and §9.5
+  // ("financial actions use PaymentIntent, not Proposal") forbid that. Money
+  // movement must go through POST /actions/{id}/execute (or the deprecated
+  // /payment-intents/{id}/execute), both of which run the gate. We refuse here
+  // rather than reproduce the boundary violation in new code (§14 rule 3).
   app.post(
     "/execution/execute",
-    async (request: FastifyRequest<{ Body: { proposal_id?: string; rail?: string } }>, reply) => {
+    async (request: FastifyRequest<{ Body: { proposal_id?: string; rail?: string } }>) => {
       const principal = requirePrincipal(request);
       requireScope(principal.scopes, WRITE);
-      const proposalId = request.body?.proposal_id;
-      const rail = request.body?.rail;
-      if (proposalId === undefined || rail === undefined) {
-        throw brainError("request_body_invalid", "proposal_id and rail required");
-      }
-
-      const railImpl = deps.rails.get(rail);
-      const executionId = newExecutionId();
-
-      const result = await withTenantScope(deps.pool, principal.tenantId, async (c) => {
-        const proposal = await findProposal(c, proposalId);
-        if (proposal === null) throw brainError("execution_proposal_not_found", "no such proposal");
-        if (proposal.status !== "approved") {
-          throw brainError(
-            "execution_proposal_invalid_state",
-            `proposal is in state ${proposal.status}; must be approved to execute`,
-          );
-        }
-
-        const idempKey = request.headers["idempotency-key"];
-        const exec = await insertExecution(c, {
-          id: executionId,
-          tenantId: principal.tenantId,
-          proposalId,
-          rail,
-          status: "dispatched",
-          ...(typeof idempKey === "string" ? { idempotencyKey: idempKey } : {}),
-        });
-
-        const dispatch = await railImpl.dispatch({
-          tenantId: principal.tenantId,
-          proposalId,
-          executionId,
-          action: proposal.action,
-          idempotencyKey: exec.idempotency_key ?? "",
-        });
-        await setExecutionReceipt(c, executionId, dispatch.receipt);
-        const moved = await transitionExecution(c, executionId, "dispatched", "in_flight");
-        await transitionProposal(c, proposalId, "approved", "executed");
-        return { exec: moved };
-      });
-
-      await deps.audit.emit({
-        tenantId: principal.tenantId,
-        layer: "execution",
-        actor: principal.id,
-        action: "execution.execute",
-        inputs: { proposal_id: proposalId, rail, execution_id: executionId },
-        outputs: { status: result.exec.status },
-      });
-
-      reply.status(202);
-      return serializeExecution(result.exec);
+      throw brainError(
+        "gate_no_policy_decision",
+        "the legacy /execution/execute route is disabled because it bypasses the §6 pre-execution gate; execute money movement via POST /actions/{id}/execute, which runs the gate",
+      );
     },
   );
 

@@ -62,18 +62,21 @@ export class ActionsResource {
     return unwrap(data, error, response.status);
   }
 
+  /**
+   * @deprecated The legacy `POST /execution/execute` route is disabled: it
+   * bypassed the §6 pre-execution gate. Execute money movement via the Actions
+   * API — `POST /actions/{action_id}/execute` — which runs the gate. This
+   * method now always rejects with `BrainAPIError` (422
+   * `gate_no_policy_decision`).
+   */
   async execute(params: ExecuteProposalParams): Promise<StartedExecution> {
-    const { data, error, response } = await this.http.POST("/execution/execute", {
+    const { error, response } = await this.http.POST("/execution/execute", {
       body: {
         proposal_id: params.proposalId,
         ...(params.dryRun !== undefined ? { dry_run: params.dryRun } : {}),
       },
     });
-    const body = unwrap(data, error, response.status);
-    return {
-      executionId: body.execution_id,
-      status: body.status,
-    };
+    throw new BrainAPIError(response.status, error);
   }
 
   async approve(params: ApproveProposalParams): Promise<Proposal> {

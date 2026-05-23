@@ -57,31 +57,35 @@ describe("Brain.actions", () => {
     expect(calls[0]?.headers.get("idempotency-key")).toBeNull();
   });
 
-  it("execute returns startedExecution with dryRun forwarded", async () => {
-    const { fetch, calls } = mockFetch(202, {
-      execution_id: "ex_1",
-      status: "started",
+  it("execute is disabled — it rejects with the §6 gate error (dry_run forwarded)", async () => {
+    const { fetch, calls } = mockFetch(422, {
+      code: "gate_no_policy_decision",
+      message: "the legacy /execution/execute route is disabled",
+      trace_id: "trace-1",
     });
     const brain = new Brain({ token: "k", fetch });
 
-    const result = await brain.actions.execute({
-      proposalId: "prop_1",
-      dryRun: true,
+    await expect(
+      brain.actions.execute({ proposalId: "prop_1", dryRun: true }),
+    ).rejects.toMatchObject({
+      name: "BrainAPIError",
+      status: 422,
+      code: "gate_no_policy_decision",
     });
-
-    expect(result).toEqual({ executionId: "ex_1", status: "started" });
     const sent = await calls[0]!.text();
     expect(sent).toContain('"dry_run":true');
   });
 
   it("execute omits dry_run when not provided", async () => {
-    const { fetch, calls } = mockFetch(202, {
-      execution_id: "ex_1",
-      status: "started",
+    const { fetch, calls } = mockFetch(422, {
+      code: "gate_no_policy_decision",
+      message: "the legacy /execution/execute route is disabled",
     });
     const brain = new Brain({ token: "k", fetch });
 
-    await brain.actions.execute({ proposalId: "prop_1" });
+    await expect(brain.actions.execute({ proposalId: "prop_1" })).rejects.toMatchObject({
+      status: 422,
+    });
 
     const sent = await calls[0]!.text();
     expect(sent).not.toContain("dry_run");
