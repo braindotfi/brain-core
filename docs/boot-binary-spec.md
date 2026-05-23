@@ -326,7 +326,7 @@ These don't exist yet and are part of the boot binary work.
 
 `@brain/mcp` and the `/ledger/normalize` route need an
 `IRawEvidenceService` (defined in
-`services/api/src/shared/contracts/IRawEvidenceService.ts`).
+`shared/src/contracts/IRawEvidenceService.ts`).
 `@brain/raw` exports `ingestOne`, `ingestMany`, and adapters but
 not a service-shaped object. Wrap them:
 
