@@ -4,7 +4,7 @@
  * PLAN-FIRST #15 per docs/sdk-audit.md. Source:
  * https://docs.brain.fi/api-reference/authentication.
  *
- * Distinct from the human-user SIWE flow at services/api/src/auth/siwe.ts:
+ * This is the agent sign-in flow:
  *
  *   - The signing address must match a row in `agents` with
  *     `state = 'active'`.
@@ -19,9 +19,10 @@
  *   POST /auth/siwx           → { access_token, token_type, expires_in,
  *                                 principal }
  *
- * Nonces are held in an in-process Map with 5-minute TTL — same pattern
- * as siwe.ts. A follow-up wires Redis when multi-instance deployments
- * land.
+ * Nonces are held in Redis (`siwx:nonce:<session_id>`) with a 5-minute TTL,
+ * so the challenge/verify pair works across replicas, and the signing address
+ * must resolve to an active row in `agents` (PostgresAgentRegistry) — there is
+ * no fallback that mints tokens for unregistered wallets outside demo mode.
  */
 
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
