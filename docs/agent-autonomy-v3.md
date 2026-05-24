@@ -14,7 +14,7 @@ Agents propose; the §6 gate is the only execution path. Policy is signed (EIP-7
 - **Weighted evidence** — `EvidenceRef` + weighted `required_evidence`; `scoreEvidence` yields `evidence_score` (present-but-stale at 0.5×), `missing_required_evidence`, `critical_missing`.
 - **Run persistence + PII redaction** — six RLS tables (`agent_runs`, `agent_reasoning_traces`, `agent_routing_decisions`, `agent_run_steps`, `agent_evidence_refs`, `agent_idempotency_keys`); raw reasoning blobs are field-level redacted per `schemas/redaction-policies/agent-trace-v1.json` and gated behind `audit:incident_investigation`.
 - **Two-layer idempotency** — event layer (`agent_idempotency_keys`, day-bucketed) blocks duplicate runs; proposal layer (unique index on ledger `payment_intents` + execution `proposals`) blocks duplicate proposals → `409 agent_proposal_duplicate`.
-- **§6 gate dry-run** — `runPreExecutionGate({ dryRun })` runs all 13 checks against the same Ledger state but persists nothing and emits no audit; trace cached 60s.
+- **§6 gate dry-run** — `runPreExecutionGate({ dryRun })` runs all 16 checks against the same Ledger state but persists nothing and emits no audit; trace cached 60s.
 - **Unified `/v1/agents/*` API** — list/get, route, run, events, runs, runs/{id}/why, routing-decisions.
 
 ## Phase 1b — Execution preconditions

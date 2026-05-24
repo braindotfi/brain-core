@@ -14,17 +14,18 @@ This package is the source-of-truth client that backs every code example on
 
 ## Status
 
-| Slice | Surface                                                                                                                             | Status                  |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| 1A    | `createBrainHttpClient` over the full OpenAPI surface                                                                               | **shipped**             |
-| 1B.1  | `Brain` class + ledger reads (accounts, transactions, counterparties, obligations, invoices, balances)                              | shipped                 |
-| 1B.2  | Audit surface: `brain.audit.list/get/history/export/verify`, `brain.audit.anchor.latest`, `brain.proof`                             | shipped                 |
-| 1B.3  | Payment intents + actions: `brain.payments.*`, `brain.actions.*`, `brain.pay` / `brain.approve` / `brain.reject` (with idempotency) | shipped                 |
-| 1B.4  | Agents (`brain.agents.list/get/register/listActions/propose`) + raw ingestion (`brain.raw.ingest/get/getParsed`)                    | shipped                 |
-| 1B.5  | Wiki: `brain.wiki.question/search/getEntity/getEvidence/getHistory/annotate/schema`, `brain.ask` compound                           | shipped                 |
-| 1B.6  | Policy: `brain.policy.get/listVersions/compose/sign/activate/evaluate/simulate`                                                     | shipped                 |
-| 1B.7  | Client-side compounds: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`                                                  | **shipping in this PR** |
-| 1C    | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package)                        | not yet implemented     |
+| Slice | Surface                                                                                                                               | Status                  |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| 1A    | `createBrainHttpClient` over the full OpenAPI surface                                                                                 | **shipped**             |
+| 1B.1  | `Brain` class + ledger reads (accounts, transactions, counterparties, obligations, invoices, balances)                                | shipped                 |
+| 1B.2  | Audit surface: `brain.audit.list/get/history/export/verify`, `brain.audit.anchor.latest`, `brain.proof`                               | shipped                 |
+| 1B.3  | Payment intents + actions: `brain.payments.*`, `brain.actions.*`, `brain.pay` / `brain.approve` / `brain.reject` (with idempotency)   | shipped                 |
+| 1B.4  | Agents (`brain.agents.list/get/register/listActions/propose`) + raw ingestion (`brain.raw.ingest/get/getParsed`)                      | shipped                 |
+| 1B.5  | Wiki: `brain.wiki.question/search/getEntity/getEvidence/getHistory/annotate/schema`, `brain.ask` compound                             | shipped                 |
+| 1B.6  | Policy: `brain.policy.get/listVersions/compose/sign/activate/evaluate/simulate`                                                       | shipped                 |
+| 1B.7  | Client-side compounds: `brain.snapshot`, `brain.trace`, `brain.cashFlow.summarize`                                                    | **shipping in this PR** |
+| 1B.8  | Trust surfaces (v0.4): `brain.proof(actionId)` (full Proof artifact, H-07), `brain.agentRuns.get/why/evidence/gateTrace/proof` (H-25) | shipped                 |
+| 1C    | Doc-example smoke test (CI extracts every TypeScript block from `*.md` and type-checks against this package)                          | not yet implemented     |
 
 ## Quickstart against the hosted sandbox
 
@@ -88,7 +89,19 @@ const verification = await brain.audit.verify({
   merkleProof: ["0x...", "0x..."],
   merkleRoot: "0x...",
 });
-const proof = await brain.proof("evt_8231"); // shorthand for audit.get(id).inclusionProof
+// H-07 Proof API: one canonical, verifiable proof for an action (PaymentIntent
+// or agent-action id) — gate trace, evidence, policy decision, audit Merkle
+// proof + anchor, rail receipt, and a human_explanation.
+const proof = await brain.proof("pi_8231");
+// (For the low-level Merkle inclusion proof of a single audit event, use
+//  brain.audit.get(eventId).inclusionProof.)
+
+// H-25 Agent Run History — the reasoning behind an action, step by step.
+const run = await brain.agentRuns.get("agnr_8231");
+const why = await brain.agentRuns.why("agnr_8231"); // candidates + behavior hash
+await brain.agentRuns.evidence("agnr_8231");
+await brain.agentRuns.gateTrace("agnr_8231");
+await brain.agentRuns.proof("agnr_8231"); // proxies the Proof API
 
 // Payments, propose + execute compound
 const result = await brain.pay("acme", {

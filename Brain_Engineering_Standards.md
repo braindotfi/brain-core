@@ -1,10 +1,20 @@
 # Brain Engineering Standards
 
-Brain Finance Inc. | v0.2.0 MVP
+Brain Finance Inc. | v0.4.0 MVP
 
 This document defines the conventions every engineer, contractor, and AI coding assistant follows when building Brain. It is the decision log that keeps the codebase consistent and the production-posture credible.
 
-Read alongside: Brain_API_Specification.yaml (the OpenAPI contract) and Brain_MVP_Architecture.md (the protocol blueprint, v0.3 = six layers).
+Read alongside: Brain_API_Specification.yaml (the OpenAPI contract) and Brain_MVP_Architecture.md (the protocol blueprint, v0.4 = six layers).
+
+### What Changed In v0.4.0
+
+v0.4.0 records the hardening wave on top of the v0.3 six-layer architecture. The model is unchanged; the safety surfaces are sharpened:
+
+- §6 pre-execution gate is now **16 checks** — the four sub-checks `1.5` (agent behavior pinned), `7.5` (ledger-state binding, H-08), `9.5` (evidence semantics, H-21), and `11.5` (duplicate-payment hard reject, H-22) join the original 13. The audit-before event persists the full check trace (H-07).
+- §6.5 documents **shadow-by-default + the promotion-readiness gate** (H-24): an agent cannot go live without `scripts/check-promotion-readiness.mjs` all-green, enforced in CI on `promotion-config.ts` diffs.
+- Execution is now a **durable outbox** (H-04): `execute` enqueues + transitions `approved → dispatching`; an outbox worker dispatches the rail and settles. New `dispatching` PaymentIntent status.
+- New trust surfaces: the **Proof API** (`GET /v1/proof/{action_id}`, H-07) and **Agent Run History** (`/v1/agents/runs/{run_id}/*`, H-25).
+- Outbound webhooks gained a **dead-letter queue + replay** (`/v1/webhooks/{endpoint_id}/{dead-letters,replay}`, H-20) instead of dropping failed deliveries.
 
 ### What Changed In v0.2.0
 
@@ -224,25 +234,33 @@ Any of the following must pass through the gate:
 - Any write to the tenant's BrainSmartAccount
 - Any agent action with a money-movement side effect
 
-### 6.2 The 13 Deterministic Checks
+### 6.2 The 16 Deterministic Checks
 
-The gate runs the following checks in order. Failure short-circuits and produces a `payment_intent_gate_failed` error with the failing check identified.
+The gate runs the following checks in order (13 numbered checks plus the four
+sub-checks `1.5`, `7.5`, `9.5`, `11.5` added across the v0.4 hardening wave).
+Failure short-circuits and produces a `payment_intent_gate_failed` error with the
+failing check identified. The full check index recorded on a passing run is
+`1, 1.5, 2, 3, 4, 5, 6, 7, 7.5, 8, 9, 9.5, 10, 11, 11.5, 12, 13`.
 
 1. **Agent identity verified.** JWT principal_type=agent, agent_id matches an active row in `agents`.
+   1.5. **Agent behavior pinned.** The agent's runtime `behaviorHash` matches the registered hash; a mismatch rejects regardless of all other checks.
 2. **Agent authorization.** Scope set includes the verb required for this action (`payment_intent:propose`, etc.).
 3. **Action allowed.** Policy DSL `applies_to` matches the action kind.
 4. **Source account allowed.** `account_id` belongs to the tenant and is in `active` status.
 5. **Counterparty allowed.** `counterparty_id` exists in `ledger_counterparties`, not on a sanctions list.
 6. **Counterparty verified.** `verified_status` ≠ `unverified` for amounts above the policy-defined threshold.
 7. **Amount within policy limit.** `amount.lte` rule from active policy holds.
+   7.5. **Ledger state bound (H-08).** A `ledger_snapshot_hash` of the source account + counterparty state is computed and pinned onto the decision + audit-before event — a tamper-evident record of what the action moved against.
 8. **Available balance sufficient.** `ledger_accounts.available_balance` ≥ amount + reserved.
-9. **Required evidence exists.** Policy clause `evidence_required` (e.g. invoice attached for B2B AP) holds.
+9. **Required evidence present.** Policy clause `evidence_required` (e.g. invoice attached for B2B AP) holds — the referenced evidence rows exist and are of the right kind.
+   9.5. **Evidence supports the action (H-21).** Semantic validation: the evidence's amount, counterparty, currency, and freshness actually match the PaymentIntent — not just that _some_ evidence is attached. (A $500 invoice on a $50k payment fails here.)
 10. **Approval requirement determined.** Policy decision is one of `allow` (no approval), `confirm` (approval needed), `reject` (refuse).
 11. **Approval granted when required.** If `confirm`, all `required_approvers` have signed.
+    11.5. **No duplicate payment (H-22).** Hard reject — even with a valid approval — if any duplicate-payment rule fires (invoice already paid, obligation already settled, same vendor+amount recently executed, evidence artifact reused, destination instructions changed). "Brain will not pay an invoice twice" as a gate property.
 12. **PolicyDecision row created.** Inserted with `policy_decision_id` returned to caller.
-13. **Audit event before execution attempt** _and_ **audit event after execution result.** Both rows are mandatory; the post-execution audit captures success or failure, with rail receipt where applicable.
+13. **Audit event before execution attempt** _and_ **audit event after execution result.** Both rows are mandatory; the post-execution audit captures success or failure, with rail receipt where applicable. The audit-before event persists the full check trace (H-07) so the Proof API can reproduce it.
 
-Steps 12 and 13 are non-skippable even if every other check passes. The audit-before/audit-after pair is what makes execution forensically reconstructible.
+Steps 12 and 13 are non-skippable even if every other check passes. The audit-before/audit-after pair is what makes execution forensically reconstructible — and is what the Proof API (`GET /v1/proof/{action_id}`) assembles into a verifiable artifact.
 
 ### 6.3 Where the Gate Lives
 
@@ -259,6 +277,28 @@ Both routes reach it through `PaymentIntentService.execute`. Calling sites are e
 - Defer to LLM judgment. Every check is deterministic.
 - Mutate Ledger or execute the action. The gate produces a decision; execution is downstream.
 - Catch and continue. Any failed check is a hard stop.
+
+### 6.5 Shadow-by-default and promotion readiness
+
+Money-moving agents are **shadow-by-default**: until an operator explicitly
+promotes an agent, every financial proposal it makes terminates as
+`shadow_completed` — fully gated, evidenced, and audited, but no rail is
+dispatched. Promotion is the single dangerous moment, so it is gated:
+
+> **An agent cannot be promoted from shadow to live without all
+> promotion-readiness checks green.** The live-agent allowlist lives in one file
+> (`services/agent-router/src/promotion-config.ts`). `scripts/check-promotion-readiness.mjs`
+> is run automatically in CI on diffs to that file, and the PR is blocked on any
+> red row.
+
+The readiness checks (H-24) include: the execution outbox table exists + is
+RLS-armed; gate checks 9.5 (evidence semantics) and 11.5 (duplicate payment) are
+active; a typed rail-receipt schema exists for every rail on the agent's
+allowlist; the replay-investigation endpoint is reachable; halt-category and
+per-agent adversarial test suites exist; and the agent's on-chain behavior hash
+
+- session-key grants are registered (the last two are attested out-of-band since
+  they require a registry / DB read).
 
 ## 7. Observability
 

@@ -31,7 +31,7 @@ The MCP surface is intentionally small. **10 tools, 5 resource templates, 5 cann
 | **Propose agent action** | `agent.action.propose`                                                                                                            | `agent:propose`          |
 
 {% hint style="warning" %}
-There is no `payment_intent.execute` on the MCP surface. External agents may **propose** but never **execute**. Execution always goes through Brain's deterministic 13-step pre-execution gate, behind human approval where policy demands it.
+There is no `payment_intent.execute` on the MCP surface. External agents may **propose** but never **execute**. Execution always goes through Brain's deterministic 16-check pre-execution gate, behind human approval where policy demands it.
 {% endhint %}
 
 [**→ The pre-execution gate**](../protocol/the-pre-execution-gate.md)

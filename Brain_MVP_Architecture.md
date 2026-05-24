@@ -17,7 +17,7 @@ v0.4 hardens the Agent layer for production autonomous execution without changin
 - The internal agent library grows from 3 demo agents to **19** (8 business, 8 consumer, 3 agnostic), each declaring an `execution_mode` and gated by a risk tier.
 - A multi-agent **router** + two-strategy **intent classifier** select which agent handles a request; an **ActionResolver** selects which action that agent runs, never silently defaulting.
 - **Money-movers stay shadowed by default.** Going live is a deliberate, per-agent promotion under strict caps and an allowlisted rail; no agent moves money until promoted.
-- The §6 gate gains a **dry-run** mode (all 13 checks, persists nothing) and **check 1.5** (runtime `behaviorHash` must match the on-chain attestation).
+- The §6 gate gains a **dry-run** mode (all 16 checks, persists nothing) plus the sub-checks **1.5** (runtime `behaviorHash` matches the on-chain attestation), **7.5** (ledger-state binding), **9.5** (evidence semantics), and **11.5** (duplicate-payment hard reject).
 - Internal and external agents share one registry, one ScopeAttestation, one propose path, and one gate — provenance is a metadata field, never a separate code path.
 
 Detailed §6 dry-run / check-1.5 mechanics and the per-agent promotion gates live in `Brain_Engineering_Standards.md`; the per-phase delivery log lives in `docs/agent-autonomy-v3.md`.
@@ -375,9 +375,9 @@ What's NOT in MVP. A graph database. Contradiction detection beyond exact-match.
 
 What it does. Encode what a tenant allows as a versioned, signable artifact. Evaluate proposed actions against the active policy and the **current Ledger state**. Return allow / confirm / reject with a trace and a `PolicyDecision` record that downstream layers consume as proof.
 
-Key change from v0.2. Policy evaluators read Ledger state directly (current balance, counterparty verified status, obligation due, etc.) rather than against an opaque action object. The 13-step pre-execution gate (defined in §6 of Engineering Standards) runs deterministic Ledger checks before any payment can execute.
+Key change from v0.2. Policy evaluators read Ledger state directly (current balance, counterparty verified status, obligation due, etc.) rather than against an opaque action object. The 16-check pre-execution gate (defined in §6 of Engineering Standards) runs deterministic Ledger checks before any payment can execute.
 
-v0.4 gate additions. The gate gains a **dry-run** mode — the same 13 checks against the same Ledger state, but it persists no `policy_decisions` row and emits no audit event (its trace is cached ~60 s for the run path). The agent run pipeline dry-runs before proposing so a doomed proposal never reaches the live path. The gate also adds **check 1.5**: the runtime agent's `behaviorHash` (a hash over its model id/version, prompt template, and tool manifest) must equal the value attested on-chain in `BrainMCPAgentRegistry`, else a hard reject. Both remain a single evaluator — live and dry-run share the same gate code (INV: one evaluator).
+v0.4 gate additions. The gate gains a **dry-run** mode — the same 16 checks against the same Ledger state, but it persists no `policy_decisions` row and emits no audit event (its trace is cached ~60 s for the run path). The agent run pipeline dry-runs before proposing so a doomed proposal never reaches the live path. The gate also adds four sub-checks: **1.5** (the runtime agent's `behaviorHash` — a hash over its model id/version, prompt template, and tool manifest — must equal the value attested on-chain in `BrainMCPAgentRegistry`, else a hard reject), **7.5** (a tamper-evident `ledger_snapshot_hash` of the state moved against), **9.5** (evidence semantically supports the action — amount/counterparty/currency/freshness), and **11.5** (duplicate-payment hard reject, even with approval). Both modes remain a single evaluator — live and dry-run share the same gate code (INV: one evaluator).
 
 Data model.
 
@@ -534,7 +534,7 @@ MCP interface. External agents (tenant-authorized) connect via MCP and get bidir
 
 MCP implementation (v0.3). The `@brain/mcp` workspace ships a JSON-RPC 2.0 dispatcher mounted at `POST /v1/agents/mcp`, single-shot HTTP transport (one request, one response, SSE / streamable transports are post-MVP behind a feature flag). The surface is:
 
-- **10 tools** across four capability groups: Ledger read (`ledger.account.get`, `ledger.accounts.list`, `ledger.transactions.list`, `ledger.obligations.list`, `ledger.counterparties.list`), Wiki read (`wiki.question`, `wiki.page.get`), Raw contribute (`raw.contribute`), Payment-intent propose (`payment_intent.propose`, note: no `.execute`; the §6 13-step gate is the only execution path), and Agent action propose (`agent.action.propose`).
+- **10 tools** across four capability groups: Ledger read (`ledger.account.get`, `ledger.accounts.list`, `ledger.transactions.list`, `ledger.obligations.list`, `ledger.counterparties.list`), Wiki read (`wiki.question`, `wiki.page.get`), Raw contribute (`raw.contribute`), Payment-intent propose (`payment_intent.propose`, note: no `.execute`; the §6 16-check gate is the only execution path), and Agent action propose (`agent.action.propose`).
 - **5 resource templates** addressable by `brain://` URIs: ledger accounts, ledger transactions, ledger payment-intents, wiki pages, raw evidence.
 - **5 canned prompts** for the most common agent loops: cash flow summary, bills due, spending change, invoice status, subscriptions.
 
