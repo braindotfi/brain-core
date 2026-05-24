@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import type { AuditEmitter } from "../audit/emitter.js";
 import type { ServiceCallContext } from "../contracts/types.js";
 import { computeLedgerSnapshot } from "./snapshot.js";
+import { validateEvidence, type ResolvedEvidence, type RiskLevel } from "./evidence-validator.js";
 import type { GateCheck, GateOutcome, GateResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +37,9 @@ export interface GatePaymentIntent {
   status: string;
   policy_decision_id: string | null;
   evidence_ids: string[];
+  /** Optional linkage used by evidence semantic validation (H-21, check 9.5). */
+  invoice_id?: string | null;
+  obligation_id?: string | null;
 }
 
 export interface GatePolicyDecision {
@@ -83,6 +87,8 @@ export interface GateAgent {
   scope: { canExecutePayments: boolean };
   /** behaviorHash registered on-chain for this agent (2.3). */
   behaviorHash?: string | null;
+  /** Manifest max risk level — gates the evidence source-trust rule (H-21). */
+  max_risk_level?: RiskLevel;
 }
 
 /** Options passed to the single policy evaluator (1a.2 — one evaluator, two modes). */
@@ -126,6 +132,13 @@ export interface GateDependencies {
    * double-spend the same balance. Read-only — evaluated in dry-run too.
    */
   sumActiveReservations?: (accountId: string) => Promise<string>;
+  /**
+   * Loads the resolved evidence rows (full `extracted` payloads, DB-enriched)
+   * for check 9.5 (H-21). Injected because the gate (shared) must not query the
+   * DB directly; the loader lives in services/policy. When absent, check 9.5
+   * records as not-applicable. Read-only — runs in dry-run too.
+   */
+  resolveEvidence?: (intent: GatePaymentIntent) => Promise<ResolvedEvidence[]>;
 }
 
 export interface RunGateInput {
@@ -369,6 +382,32 @@ export async function runPreExecutionGate(
     });
   }
   pass(checks, 9, "required_evidence_present");
+
+  // 9.5 — evidence semantic validation (H-21). Check 9 verifies evidence
+  // references exist; this verifies they SUPPORT the action (amount /
+  // counterparty / currency / freshness / source-trust). When no evidence
+  // loader is wired, it records as not-applicable (additive, non-breaking).
+  if (deps.resolveEvidence !== undefined) {
+    const resolvedEvidence = await deps.resolveEvidence(input.intent);
+    const evidenceResult = validateEvidence({
+      actionType: input.intent.action_type,
+      paymentIntent: {
+        counterpartyId: input.intent.destination_counterparty_id,
+        amount: input.intent.amount,
+        currency: input.intent.currency,
+        ...(input.intent.invoice_id != null ? { invoiceId: input.intent.invoice_id } : {}),
+        ...(input.intent.obligation_id != null ? { obligationId: input.intent.obligation_id } : {}),
+      },
+      evidence: resolvedEvidence,
+      ...(agent.max_risk_level !== undefined ? { maxRiskLevel: agent.max_risk_level } : {}),
+    });
+    if (!evidenceResult.passed) {
+      return failGate(9.5, "evidence_supports_action", { failures: evidenceResult.failures });
+    }
+    pass(checks, 9.5, "evidence_supports_action");
+  } else {
+    pass(checks, 9.5, "evidence_supports_action", { not_applicable: true });
+  }
 
   // 10 — approval requirement determined (we have decision.outcome).
   pass(checks, 10, "approval_requirement_determined", { outcome: decision.outcome });

@@ -28,6 +28,7 @@ export type GateCheckName =
   | "ledger_state_bound"
   | "available_balance_sufficient"
   | "required_evidence_present"
+  | "evidence_supports_action"
   | "approval_requirement_determined"
   | "approval_granted_when_required"
   | "policy_decision_recorded"

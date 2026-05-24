@@ -25,6 +25,12 @@ export {
   type PolicyTypedData,
 } from "./signing.js";
 export { canonicalize, contentHash, contentHashHex, allowedActionsFor } from "./dsl.js";
+export {
+  validateEvidence,
+  type EvidenceValidationInput,
+  type EvidenceValidationResult,
+  type ResolvedEvidence,
+} from "./evidence-validator.js";
 export type {
   ApplyTo,
   ExecuteMode,

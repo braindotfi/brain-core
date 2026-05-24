@@ -104,11 +104,11 @@ describe("§6 pre-execution gate — happy path", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.policyDecisionId).toBe("pd_TEST");
-      // The 13 §6 checks plus the 7.5 ledger-state binding.
-      expect(result.checks).toHaveLength(14);
+      // The 13 §6 checks plus the 7.5 ledger-state binding and 9.5 evidence check.
+      expect(result.checks).toHaveLength(15);
       expect(result.checks.every((c) => c.passed)).toBe(true);
       expect(result.checks.map((c) => c.index)).toEqual([
-        1, 2, 3, 4, 5, 6, 7, 7.5, 8, 9, 10, 11, 12, 13,
+        1, 2, 3, 4, 5, 6, 7, 7.5, 8, 9, 9.5, 10, 11, 12, 13,
       ]);
       // check 7.5 binds a verifiable ledger-state hash onto the result.
       expect(result.ledgerStateHash).toMatch(/^[0-9a-f]{64}$/);
@@ -118,6 +118,59 @@ describe("§6 pre-execution gate — happy path", () => {
     expect(audit.events[0]!.outputs.gate_passed).toBe(true);
     if (result.ok) {
       expect(audit.events[0]!.inputs.ledger_state_hash).toBe(result.ledgerStateHash);
+    }
+  });
+});
+
+describe("§6 — check 9.5: evidence semantic validation (H-21)", () => {
+  function invoiceEv(amountDue: string) {
+    return [
+      {
+        id: "prs_inv",
+        kind: "invoice",
+        sourceArtifactId: "raw_1",
+        capturedAt: new Date(),
+        trustLevel: "high" as const,
+        extracted: {
+          invoice_number: "INV-1",
+          counterparty_id: "cp_AWS",
+          amount_due: amountDue,
+          currency: "USD",
+        },
+      },
+    ];
+  }
+  const payInvoiceIntent = () =>
+    defaultIntent({ action_type: "pay_invoice", invoice_id: "INV-1", amount: "50.00" });
+
+  it("passes 9.5 when the loaded evidence supports the action", async () => {
+    const { deps } = makeDeps({ resolveEvidence: async () => invoiceEv("50.00") });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: payInvoiceIntent(),
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.checks.some((c) => c.name === "evidence_supports_action" && c.passed)).toBe(
+        true,
+      );
+    }
+  });
+
+  it("fails 9.5 and short-circuits 10+ when the invoice amount doesn't match", async () => {
+    const { deps } = makeDeps({ resolveEvidence: async () => invoiceEv("500.00") });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: payInvoiceIntent(),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(9.5);
+      expect(result.failedCheck.name).toBe("evidence_supports_action");
+      // 10/11/12/13 never ran.
+      expect(result.checks.some((c) => c.index === 10)).toBe(false);
     }
   });
 });
@@ -480,7 +533,7 @@ describe("§6 — dry-run mode (1a.2): same checks, no side effects", () => {
       expect(result.outcome).toBe("allow");
       expect(result.policyDecisionId).toBe(""); // no row persisted
       expect(result.auditBeforeEventId).toBe(""); // no audit emitted
-      expect(result.checks).toHaveLength(14);
+      expect(result.checks).toHaveLength(15);
     }
     expect(audit.events).toHaveLength(0); // INV-6 side effect suppressed in dry-run
   });
@@ -567,7 +620,7 @@ describe("§6 — check 1.5: agent behavior pinned (2.3)", () => {
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.checks).toHaveLength(14);
+      expect(result.checks).toHaveLength(15);
       expect(result.checks.some((c) => c.name === "agent_behavior_pinned")).toBe(false);
     }
   });
