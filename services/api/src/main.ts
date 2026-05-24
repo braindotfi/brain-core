@@ -58,6 +58,7 @@ import {
 
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
+import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 
 import {
   registerRawPlugin,
@@ -972,6 +973,16 @@ async function main(): Promise<void> {
         await registerPaymentIntentRoutes(child, piService);
       });
       await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
+      // H-07 Proof API — GET /v1/proof/{action_id}. Flagship trust artifact:
+      // one verifiable proof per action, assembled across Ledger/Policy/Audit/Raw.
+      await v1.register(async (child) =>
+        registerProofRoutes(child, {
+          buildProof: poolProofBuilder(pool, {
+            anchorContractAddress: cfg.AUDIT_ANCHOR_ADDRESS ?? null,
+            chain: "base-sepolia",
+          }),
+        }),
+      );
       await v1.register(async (child) =>
         registerMcpRoute(child, mcpServer, {
           skipPrincipalTypeCheck: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,

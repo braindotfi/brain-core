@@ -488,7 +488,12 @@ export async function runPreExecutionGate(
         policy_decision_id: decision.id,
         ledger_state_hash: ledgerStateHash,
       },
-      outputs: { gate_passed: true },
+      // H-07: persist the full §6 check trace (checks 1..12.x; check 13 is this
+      // event's own existence) so the Proof API can reproduce a faithful,
+      // tamper-evident gate trace from history. Snapshot with a copy so the
+      // post-emit `pass(checks, 13, …)` below cannot mutate the stored trace.
+      // Additive — no decision logic changes; the event hash commits to it too.
+      outputs: { gate_passed: true, gate_checks: [...checks] },
       policyDecisionId: decision.id,
     });
     auditBeforeEventId = auditEvent.id;

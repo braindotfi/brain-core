@@ -6,7 +6,8 @@ import {
 import { PolicyApprovalRequiredError, PolicyRejectedError, type PaymentIntent } from "./errors.js";
 import { ActionsResource } from "./resources/actions.js";
 import { AgentsResource } from "./resources/agents.js";
-import { AuditResource, type InclusionProof } from "./resources/audit.js";
+import { AuditResource } from "./resources/audit.js";
+import { ProofResource, type Proof } from "./resources/proof.js";
 import {
   AccountsResource,
   BalancesResource,
@@ -77,6 +78,7 @@ export class Brain {
   readonly invoices: InvoicesResource;
   readonly balances: BalancesResource;
   readonly audit: AuditResource;
+  readonly proofs: ProofResource;
   readonly payments: PaymentsResource;
   readonly actions: ActionsResource;
   readonly agents: AgentsResource;
@@ -108,6 +110,7 @@ export class Brain {
     this.invoices = new InvoicesResource(this.http);
     this.balances = new BalancesResource(this.http);
     this.audit = new AuditResource(this.http);
+    this.proofs = new ProofResource(this.http);
     this.payments = new PaymentsResource(this.http);
     this.actions = new ActionsResource(this.http);
     this.agents = new AgentsResource(this.http);
@@ -225,16 +228,15 @@ export class Brain {
   }
 
   /**
-   * Flat helper documented as `brain.proof(action.id)` on the homepage.
-   * Returns the Merkle inclusion proof for an audit event id.
+   * Flat helper documented as `brain.proof(action.id)` on the homepage (H-07).
+   * Returns the canonical, verifiable Proof for an action (PaymentIntent or
+   * agent-action id) — the §6 gate trace, evidence chain, policy decision, and
+   * on-chain-anchored audit Merkle proof, plus a human-readable explanation.
    *
-   * The homepage example chains it after `brain.pay`. Until the
-   * PaymentIntent shape carries an `audit_event_id` field, callers
-   * resolve the event id via `brain.audit.history("payment_intent", id)`
-   * first.
+   * For the low-level Merkle inclusion proof of a single audit event, use
+   * `brain.audit.get(eventId)` instead.
    */
-  async proof(eventId: string): Promise<InclusionProof> {
-    const { inclusionProof } = await this.audit.get(eventId);
-    return inclusionProof;
+  async proof(actionId: string): Promise<Proof> {
+    return this.proofs.get(actionId);
   }
 }

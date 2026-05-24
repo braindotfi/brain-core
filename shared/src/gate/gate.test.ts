@@ -116,6 +116,13 @@ describe("§6 pre-execution gate — happy path", () => {
     expect(audit.events).toHaveLength(1);
     expect(audit.events[0]!.action).toBe("payment_intent.execute.before");
     expect(audit.events[0]!.outputs.gate_passed).toBe(true);
+    // H-07: the before-event persists the §6 check trace so the Proof API can
+    // reproduce it faithfully from history.
+    const persistedChecks = audit.events[0]!.outputs.gate_checks as Array<{ index: number }>;
+    expect(Array.isArray(persistedChecks)).toBe(true);
+    expect(persistedChecks.map((c) => c.index)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 7.5, 8, 9, 9.5, 10, 11, 11.5, 12,
+    ]);
     if (result.ok) {
       expect(audit.events[0]!.inputs.ledger_state_hash).toBe(result.ledgerStateHash);
     }

@@ -56,6 +56,16 @@ export {
 } from "./resources/audit.js";
 
 export {
+  ProofResource,
+  type Proof,
+  type ProofGateCheck,
+  type ProofEvidence,
+  type ProofAuditEvent,
+  type ProofChainAnchor,
+  type ProofOutcome,
+} from "./resources/proof.js";
+
+export {
   PaymentsResource,
   type CreatePaymentIntentParams,
   type ExecutionReceipt,

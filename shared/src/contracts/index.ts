@@ -25,3 +25,4 @@ export {
 export * from "./IReconciliationService.js";
 export * from "./IPaymentIntentService.js";
 export * from "./IApprovalService.js";
+export * from "./proof.js";

@@ -190,36 +190,45 @@ describe("Brain.audit", () => {
   });
 });
 
-describe("Brain.proof", () => {
-  it("returns the inclusion proof from an event id", async () => {
+describe("Brain.proof (H-07 flagship artifact)", () => {
+  it("returns the full Proof for an action id via /proof/{action_id}", async () => {
     const { fetch, calls } = mockFetch(200, {
-      event: { id: "evt_1" },
-      inclusion_proof: {
-        merkle_root: "0xabc",
-        merkle_proof: ["0xa"],
-        anchor_tx_hash: "0xtx",
-        anchor_block: 42,
-      },
+      action_id: "pi_1",
+      tenant_id: "tnt_x",
+      agent_id: "agent_1",
+      behavior_hash: null,
+      outcome: "executed",
+      policy_version: "3",
+      policy_hash: "deadbeef",
+      matched_rule_id: "allow-small",
+      gate_checks: [{ index: 1, name: "agent_identity_verified", passed: true }],
+      evidence: [],
+      ledger_snapshot_hash: "snap",
+      audit_events: [],
+      merkle_root: "cc",
+      merkle_proof: [],
+      chain_anchor: null,
+      rail_receipt: null,
+      human_explanation: "Agent agent_1's action pi_1 was executed.",
     });
     const brain = new Brain({ token: "k", fetch });
 
-    const proof = await brain.proof("evt_1");
+    const proof = await brain.proof("pi_1");
 
-    expect(proof.merkleRoot).toBe("0xabc");
-    expect(proof.anchorBlock).toBe(42);
-    expect(calls[0]?.url).toContain("/audit/event/evt_1");
+    expect(proof.action_id).toBe("pi_1");
+    expect(proof.outcome).toBe("executed");
+    expect(proof.gate_checks).toHaveLength(1);
+    expect(proof.human_explanation).toContain("agent_1");
+    expect(calls[0]?.url).toContain("/proof/pi_1");
   });
 
-  it("propagates 404 from underlying audit.get", async () => {
-    const { fetch } = mockFetch(404, {
-      code: "not_found",
-      message: "no such event",
-    });
+  it("propagates 404 (no proof / not visible to tenant)", async () => {
+    const { fetch } = mockFetch(404, { code: "proof_not_found", message: "no proof" });
     const brain = new Brain({ token: "k", fetch });
 
     await expect(brain.proof("missing")).rejects.toMatchObject({
       status: 404,
-      code: "not_found",
+      code: "proof_not_found",
     });
   });
 });

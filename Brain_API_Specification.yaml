@@ -1933,6 +1933,54 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/AuditEvent' }
 
+  /proof/{action_id}:
+    get:
+      tags: [Audit]
+      summary: Canonical, verifiable proof for an action (H-07)
+      description: |
+        The flagship trust artifact. Assembles a single, independently
+        verifiable Proof for a PaymentIntent (or agent-action) from the §6 gate
+        trace, the evidence chain, the policy decision, and the append-only,
+        on-chain-anchored audit Merkle chain. Tenant-isolated: an action that
+        does not exist for the caller's tenant returns 404 (existence is never
+        leaked). `chain_anchor` is null until the containing batch is anchored
+        on-chain.
+      operationId: getProof
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The assembled proof
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action_id: { type: string }
+                  tenant_id: { type: string }
+                  agent_id: { type: string }
+                  behavior_hash: { type: [string, "null"] }
+                  outcome:
+                    type: string
+                    enum: [allowed, confirmed, rejected, executed, failed, shadow_completed]
+                  policy_version: { type: string }
+                  policy_hash: { type: string }
+                  matched_rule_id: { type: [string, "null"] }
+                  gate_checks: { type: array, items: { type: object } }
+                  evidence: { type: array, items: { type: object } }
+                  ledger_snapshot_hash: { type: string }
+                  audit_events: { type: array, items: { type: object } }
+                  merkle_root: { type: string }
+                  merkle_proof: { type: array, items: { type: string } }
+                  chain_anchor: { type: [object, "null"] }
+                  rail_receipt: { type: [object, "null"] }
+                  human_explanation: { type: string }
+        '404':
+          description: No proof for that action (or not visible to this tenant)
+
   /audit/events:
     get:
       tags: [Audit]

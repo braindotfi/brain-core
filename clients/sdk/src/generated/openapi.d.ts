@@ -1228,6 +1228,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/proof/{action_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Canonical, verifiable proof for an action (H-07) */
+        get: operations["getProof"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit/events": {
         parameters: {
             query?: never;
@@ -3500,6 +3517,59 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    getProof: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assembled proof */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        action_id?: string;
+                        tenant_id?: string;
+                        agent_id?: string;
+                        behavior_hash?: string | null;
+                        outcome?:
+                            | "allowed"
+                            | "confirmed"
+                            | "rejected"
+                            | "executed"
+                            | "failed"
+                            | "shadow_completed";
+                        policy_version?: string;
+                        policy_hash?: string;
+                        matched_rule_id?: string | null;
+                        gate_checks?: Record<string, unknown>[];
+                        evidence?: Record<string, unknown>[];
+                        ledger_snapshot_hash?: string;
+                        audit_events?: Record<string, unknown>[];
+                        merkle_root?: string;
+                        merkle_proof?: string[];
+                        chain_anchor?: Record<string, unknown> | null;
+                        rail_receipt?: Record<string, unknown> | null;
+                        human_explanation?: string;
+                    };
+                };
+            };
+            /** @description No proof for that action (or not visible to this tenant) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getPaymentIntent: {

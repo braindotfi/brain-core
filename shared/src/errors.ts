@@ -103,6 +103,10 @@ export const BRAIN_ERROR_CODES = [
   "audit_anchor_not_yet_published",
   "audit_no_events",
 
+  // Trust surfaces (H-07 Proof API / H-25 Agent Run History)
+  "proof_not_found",
+  "agent_run_not_found",
+
   // Infrastructure
   "dependency_unavailable",
   "internal_server_error",
@@ -224,6 +228,8 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   wiki_entity_not_found: 404,
   wiki_page_not_found: 404,
   policy_not_found: 404,
+  proof_not_found: 404,
+  agent_run_not_found: 404,
   execution_proposal_not_found: 404,
   payment_intent_not_found: 404,
   audit_event_not_found: 404,

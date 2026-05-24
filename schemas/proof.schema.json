@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/proof/v1",
+  "title": "Proof",
+  "description": "H-07 canonical, auditor-facing proof that a Brain action was gated, evidenced, and recorded on an append-only, on-chain-anchored audit chain. Read-only projection re-derived by GET /v1/proof/{action_id}; never a source of truth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action_id",
+    "tenant_id",
+    "agent_id",
+    "behavior_hash",
+    "outcome",
+    "policy_version",
+    "policy_hash",
+    "matched_rule_id",
+    "gate_checks",
+    "evidence",
+    "ledger_snapshot_hash",
+    "audit_events",
+    "merkle_root",
+    "merkle_proof",
+    "chain_anchor",
+    "rail_receipt",
+    "human_explanation"
+  ],
+  "properties": {
+    "action_id": { "type": "string" },
+    "tenant_id": { "type": "string", "pattern": "^tnt_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "agent_id": { "type": "string" },
+    "behavior_hash": { "type": ["string", "null"] },
+    "outcome": {
+      "type": "string",
+      "enum": ["allowed", "confirmed", "rejected", "executed", "failed", "shadow_completed"]
+    },
+    "policy_version": { "type": "string" },
+    "policy_hash": { "type": "string" },
+    "matched_rule_id": { "type": ["string", "null"] },
+    "gate_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "name", "passed"],
+        "properties": {
+          "index": { "type": "number" },
+          "name": { "type": "string" },
+          "passed": { "type": "boolean" },
+          "detail": { "type": "object" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["raw_parsed_id", "sha256", "source_type", "kind", "trust_level"],
+        "properties": {
+          "raw_parsed_id": { "type": "string" },
+          "sha256": { "type": "string" },
+          "source_type": { "type": "string" },
+          "kind": { "type": "string" },
+          "trust_level": { "type": "string" }
+        }
+      }
+    },
+    "ledger_snapshot_hash": { "type": "string" },
+    "audit_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "action", "layer", "event_hash", "prev_event_hash", "created_at"],
+        "properties": {
+          "id": { "type": "string" },
+          "action": { "type": "string" },
+          "layer": { "type": "string" },
+          "event_hash": { "type": "string" },
+          "prev_event_hash": { "type": ["string", "null"] },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "merkle_root": { "type": "string" },
+    "merkle_proof": { "type": "array", "items": { "type": "string" } },
+    "chain_anchor": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["tx_hash", "block_number", "contract_address", "chain"],
+      "properties": {
+        "tx_hash": { "type": "string" },
+        "block_number": { "type": "number" },
+        "contract_address": { "type": "string" },
+        "chain": { "type": "string", "enum": ["base", "base-sepolia"] }
+      }
+    },
+    "rail_receipt": { "type": ["object", "null"] },
+    "human_explanation": { "type": "string" }
+  }
+}
