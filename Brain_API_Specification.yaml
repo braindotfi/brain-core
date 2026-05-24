@@ -2065,6 +2065,72 @@ paths:
         '404':
           description: No proof for that action (or not visible to this tenant)
 
+  /webhooks/{endpoint_id}/dead-letters:
+    get:
+      tags: [Audit]
+      summary: List undeliverable webhook events for an endpoint (H-20)
+      description: |
+        Outbound webhook deliveries that failed are durably recorded here
+        instead of being lost. Each row tracks attempt_count and the last error;
+        once attempt_count reaches 5 the row is exhausted (replay no longer
+        auto-retries it). Tenant-isolated.
+      operationId: listWebhookDeadLetters
+      parameters:
+        - name: endpoint_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Dead-letter list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  endpoint_id: { type: string }
+                  dead_letters:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        event_id: { type: string }
+                        event_type: { type: string }
+                        last_error: { type: [string, "null"] }
+                        attempt_count: { type: integer }
+                        created_at: { type: string }
+                        last_attempt_at: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /webhooks/{endpoint_id}/replay:
+    post:
+      tags: [Audit]
+      summary: Replay dead-lettered webhook events (H-20)
+      description: |
+        Re-delivers each dead-letter still under the attempt cap. A successful
+        re-delivery clears the row; a failure bumps attempt_count. Idempotent
+        (accepts Idempotency-Key). Tenant-isolated.
+      operationId: replayWebhookDeadLetters
+      parameters:
+        - name: endpoint_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Replay result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  endpoint_id: { type: string }
+                  attempted: { type: integer }
+                  redelivered: { type: integer }
+                  still_failing: { type: integer }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /audit/events:
     get:
       tags: [Audit]

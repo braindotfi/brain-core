@@ -29,6 +29,17 @@ export async function insertWebhookEndpoint(
   return result.rows[0]!;
 }
 
+export async function findWebhookEndpoint(
+  c: TenantScopedClient,
+  id: string,
+): Promise<WebhookEndpointRow | null> {
+  const result = await c.query<WebhookEndpointRow>(
+    `SELECT * FROM webhook_endpoints WHERE id = $1 LIMIT 1`,
+    [id],
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function listWebhookEndpoints(c: TenantScopedClient): Promise<WebhookEndpointRow[]> {
   const result = await c.query<WebhookEndpointRow>(
     `SELECT * FROM webhook_endpoints ORDER BY created_at DESC`,

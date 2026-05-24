@@ -90,8 +90,20 @@ export {
   WebhookDispatcher,
   WebhookAuditEmitter,
   generateWebhookSecret,
+  deliverWebhook,
   FORWARDED_EVENTS,
 } from "./webhooks/outbound.js";
+export {
+  MAX_WEBHOOK_DELIVERY_ATTEMPTS,
+  recordDeliveryFailure,
+  clearDeadLetter,
+  listDeadLetters,
+  getReplayableDeadLetters,
+  deleteDeadLetterById,
+  incrementDeadLetterAttempt,
+  type WebhookDeadLetterRow,
+  type RecordDeliveryFailureInput,
+} from "./webhooks/dead-letters.js";
 
 // LLM + embeddings (§2 stack: Claude + OpenAI)
 export * from "./llm/types.js";

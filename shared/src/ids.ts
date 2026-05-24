@@ -66,6 +66,8 @@ export const ID_PREFIX = {
   agentSagaStep: "agss",
   // H-04 — durable execution outbox (Layer 5). One row per dispatched action.
   executionOutbox: "exo",
+  // H-20 — outbound webhook dead-letter (Layer 6 audit / webhook infra).
+  webhookDeadLetter: "wdl",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];
@@ -111,6 +113,7 @@ export const newPolicyDecisionId = (): string => brainId(ID_PREFIX.policyDecisio
 export const newApprovalId = (): string => brainId(ID_PREFIX.approval);
 export const newWebhookEndpointId = (): string => brainId(ID_PREFIX.webhookEndpoint);
 export const newExecutionOutboxId = (): string => brainId(ID_PREFIX.executionOutbox);
+export const newWebhookDeadLetterId = (): string => brainId(ID_PREFIX.webhookDeadLetter);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.

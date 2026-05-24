@@ -13,6 +13,7 @@
     "build": "pnpm -r --filter './shared/**' --filter './services/**' --filter '!./services/agents' --filter './clients/**' run build",
     "check-scope-vocab": "node scripts/check-scope-vocab.mjs",
     "check-gate-bypass": "node scripts/check-gate-bypass.mjs",
+    "check-promotion-readiness": "node scripts/check-promotion-readiness.mjs",
     "check-wiki-no-ledger-write": "node scripts/check-wiki-no-ledger-write.mjs",
     "check-policy-no-wiki-read": "node scripts/check-policy-no-wiki-read.mjs",
     "test:scripts": "node --test scripts/__tests__/*.test.mjs",

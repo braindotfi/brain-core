@@ -36,6 +36,7 @@ export {
   type PromotionPolicy,
   type PromotionConfig,
 } from "./promotion.js";
+export { LIVE_AGENTS } from "./promotion-config.js";
 export {
   routeAndPropose,
   createAgentRouteWorker,

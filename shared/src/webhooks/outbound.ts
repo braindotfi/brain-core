@@ -27,6 +27,7 @@ import type { Pool } from "pg";
 import type { AuditEmitter } from "../audit/emitter.js";
 import type { AuditEvent, AuditEventInput } from "../audit/types.js";
 import { isPublicUrl } from "../net/ssrf.js";
+import { clearDeadLetter, recordDeliveryFailure } from "./dead-letters.js";
 
 /** The nine audit action types forwarded to registered endpoints. */
 export const FORWARDED_EVENTS = new Set<string>([
@@ -51,6 +52,32 @@ interface EndpointRow {
 /** Signs body with HMAC-SHA256 and returns the hex digest. */
 function sign(secret: string, body: string): string {
   return createHmac("sha256", secret).update(body).digest("hex");
+}
+
+/**
+ * Deliver one signed payload to one endpoint. Returns {ok} or {ok:false, error}
+ * — never throws. Shared by the live dispatch path and the dead-letter replay
+ * route (H-20). Enforces the SSRF guard (no private/internal/metadata targets).
+ */
+export async function deliverWebhook(
+  endpoint: { url: string; secret: string },
+  payload: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!(await isPublicUrl(endpoint.url, { allowedProtocols: ["http:", "https:"] }))) {
+    return { ok: false, error: "url is not a public address" };
+  }
+  const sig = sign(endpoint.secret, payload);
+  try {
+    const res = await fetch(endpoint.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Brain-Signature": `sha256=${sig}` },
+      body: payload,
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.ok ? { ok: true } : { ok: false, error: `HTTP ${res.status}` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "delivery failed" };
+  }
 }
 
 export class WebhookDispatcher {
@@ -79,44 +106,65 @@ export class WebhookDispatcher {
       return;
     }
 
-    const payload = JSON.stringify({
+    const payloadObj = {
       id: event.id,
       type: event.action,
       tenant_id: event.tenantId,
       created_at: event.createdAt,
       data: { inputs: event.inputs, outputs: event.outputs },
-    });
+    };
+    const payload = JSON.stringify(payloadObj);
 
-    await Promise.allSettled(
-      endpoints
-        .filter((ep) => ep.enabled_events === null || ep.enabled_events.includes(event.action))
-        .map(async (ep) => {
-          // SSRF guard: never POST to a private/internal/metadata address even
-          // if a tenant registered one as a webhook endpoint.
-          if (!(await isPublicUrl(ep.url, { allowedProtocols: ["http:", "https:"] }))) {
-            console.warn(`[webhooks] skipping endpoint ${ep.id}: url is not a public address`);
-            return;
-          }
-          const sig = sign(ep.secret, payload);
-          try {
-            const res = await fetch(ep.url, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Brain-Signature": `sha256=${sig}`,
-              },
-              body: payload,
-              signal: AbortSignal.timeout(10_000),
-            });
-            if (!res.ok) {
-              console.warn(`[webhooks] endpoint ${ep.id} returned HTTP ${res.status}`);
-            }
-          } catch {
-            console.warn(`[webhooks] delivery failed to endpoint ${ep.id}`);
-          }
-        }),
+    const targets = endpoints.filter(
+      (ep) => ep.enabled_events === null || ep.enabled_events.includes(event.action),
     );
+
+    // Deliver to every target, collecting per-endpoint outcomes.
+    const outcomes = await Promise.all(
+      targets.map(async (ep) => ({ ep, result: await deliverWebhook(ep, payload) })),
+    );
+
+    // H-20: persist failures to the dead-letter queue (and clear any prior
+    // dead-letter on success) so failed deliveries are durable + replayable
+    // instead of vanishing into a log line. Best-effort: a dead-letter write
+    // failure must not surface to the audit-emit caller.
+    if (outcomes.length > 0) {
+      try {
+        const client = await this.pool.connect();
+        try {
+          await client.query("SELECT set_config('app.tenant_id', $1, true)", [event.tenantId]);
+          const scoped = client as unknown as TenantScopedLike;
+          for (const { ep, result } of outcomes) {
+            if (result.ok) {
+              await clearDeadLetter(scoped, ep.id, event.id);
+            } else {
+              console.warn(`[webhooks] delivery failed to endpoint ${ep.id}: ${result.error}`);
+              await recordDeliveryFailure(scoped, {
+                tenantId: event.tenantId,
+                endpointId: ep.id,
+                eventId: event.id,
+                eventType: event.action,
+                payload: payloadObj,
+                error: result.error ?? "delivery failed",
+              });
+            }
+          }
+        } finally {
+          client.release();
+        }
+      } catch (err) {
+        console.warn("[webhooks] failed to record dead-letters", err);
+      }
+    }
   }
+}
+
+/** Minimal query surface the dead-letter repo needs from a raw pg client. */
+interface TenantScopedLike {
+  query<T = Record<string, unknown>>(
+    text: string,
+    values?: ReadonlyArray<unknown>,
+  ): Promise<{ rows: T[]; rowCount: number | null }>;
 }
 
 /**

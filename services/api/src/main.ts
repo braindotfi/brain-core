@@ -102,7 +102,12 @@ import {
 } from "@brain/execution";
 import type { ExecutionDeps } from "@brain/execution";
 
-import { registerAuditRoutes, publishAnchor, startAnchorReconciler } from "@brain/audit";
+import {
+  registerAuditRoutes,
+  registerWebhookRoutes,
+  publishAnchor,
+  startAnchorReconciler,
+} from "@brain/audit";
 import type { AuditDeps } from "@brain/audit";
 
 import {
@@ -127,6 +132,7 @@ import {
   reindexIntentClassifier,
   registerAgentApiRoutes,
   StaticPromotionPolicy,
+  LIVE_AGENTS,
   type AgentRunStore,
   type AgentApiReadStore,
   type IntentClassifier,
@@ -836,12 +842,12 @@ async function main(): Promise<void> {
 
   const routingEnqueue = createRoutingEnqueue({ redisUrl: cfg.REDIS_URL });
 
-  // Graduated money-movement promotion (Phase 1b). Default config = all agents
-  // shadowed; promote one at a time with its allowed rails, e.g.
-  // `new StaticPromotionPolicy({ liveAgents: { savings: ["ach"] } })`. Until then
-  // every financial proposal terminates as shadow_completed (the §6 gate + the
-  // money-mover policy templates enforce caps again once promoted).
-  const promotionPolicy = new StaticPromotionPolicy();
+  // Graduated money-movement promotion (Phase 1b). The live-agent allowlist
+  // lives in services/agent-router/src/promotion-config.ts (LIVE_AGENTS) — the
+  // single file a change to which CI gates via scripts/check-promotion-readiness
+  // (H-24). Default = empty => every financial proposal terminates as
+  // shadow_completed until an agent is promoted with its allowed rails.
+  const promotionPolicy = new StaticPromotionPolicy(LIVE_AGENTS);
   const railKindForAction = (actionType: string): string => {
     if (actionType.startsWith("ach")) return "ach";
     if (actionType === "wire") return "wire";
@@ -974,6 +980,8 @@ async function main(): Promise<void> {
         await registerPaymentIntentRoutes(child, piService);
       });
       await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
+      // H-20 webhook dead-letter + replay: /v1/webhooks/{endpoint_id}/{dead-letters,replay}.
+      await v1.register(async (child) => registerWebhookRoutes(child, { pool }));
       // H-07 Proof API — GET /v1/proof/{action_id}. Flagship trust artifact:
       // one verifiable proof per action, assembled across Ledger/Policy/Audit/Raw.
       // Shared with the H-25 run-history /proof sub-resource below.

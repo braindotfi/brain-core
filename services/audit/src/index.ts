@@ -18,6 +18,7 @@ export {
   type PublishOptions,
 } from "./publisher.js";
 export { registerAuditRoutes } from "./routes.js";
+export { registerWebhookRoutes, type WebhookRouteDeps } from "./webhook-routes.js";
 export {
   reconcileOrphanedAnchors,
   startAnchorReconciler,
