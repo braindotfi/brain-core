@@ -86,6 +86,7 @@ import {
   registerPaymentIntentRoutes,
   ApprovalService,
   PaymentIntentService,
+  OutboxService,
   AgentService,
   defaultRails,
   findAgent,
@@ -605,7 +606,8 @@ async function main(): Promise<void> {
   const paymentIntentService = new PaymentIntentService({
     pool,
     audit,
-    rails: defaultRails(),
+    // H-04: execute enqueues to the durable outbox; the rail moved to the worker.
+    outbox: new OutboxService(),
     approvals: approvalService,
     resolveAgent,
     resolveAccount,
@@ -626,6 +628,20 @@ async function main(): Promise<void> {
     resolvePrincipal,
     resolveRole,
   };
+
+  // H-04 durable execution outbox. `execute` now enqueues a `pending`
+  // execution_outbox row (atomic with approved → dispatching); the rail is
+  // dispatched + the intent settled asynchronously by the outbox worker
+  // (startOutboxWorker from @brain/execution). The worker is a poll loop over
+  // execution_outbox (FOR UPDATE SKIP LOCKED) — NOT a BullMQ/Redis queue — and
+  // claims rows cross-tenant, so it needs a `brain_privileged` (BYPASSRLS)
+  // connection for claim/mark and re-enters withTenantScope per row to settle.
+  // It is intentionally NOT started inline here: like the anchor publisher /
+  // outbound-webhook retry workers it is a deployable background process, and it
+  // is unverifiable in the sandbox (no Postgres). Wiring (privileged pool +
+  // RailRegistry + PaymentIntentService as the OutboxExecutor) is a follow-up to
+  // land alongside the H-04 pg integration tests. Until the worker runs, intents
+  // remain in `dispatching` — they are durably recorded and never lost.
 
   const anchorBroadcaster =
     cfg.AUDIT_PUBLISHER_KEY !== undefined
@@ -944,7 +960,8 @@ async function main(): Promise<void> {
         const piService = new PaymentIntentService({
           pool,
           audit,
-          rails: defaultRails(),
+          // H-04: execute enqueues to the durable outbox; rail moved to the worker.
+          outbox: new OutboxService(),
           approvals: piApprovals,
           resolveAgent,
           resolveAccount,

@@ -1,0 +1,224 @@
+/**
+ * Outbox worker unit tests.
+ *
+ * Drives the worker control flow over injected fakes (fake OutboxService, fake
+ * RailRegistry, fake executor, in-memory audit). This covers: happy settle,
+ * dispatch-failure retry, retry-budget → reconciling + stuck audit, invalid
+ * receipt → reconcile (intent NOT failed), settle-failure recovery, and stale
+ * claim recovery.
+ *
+ * SANDBOX NOTE. The properties that need real Postgres semantics are written as
+ * an integration test and are BLOCKED here (no Docker/pg):
+ *   - crash-injection with a real worker restart settling exactly once,
+ *   - concurrent workers claiming the same row via FOR UPDATE SKIP LOCKED,
+ *   - the UNIQUE(tenant_id, idempotency_key) enqueue constraint under load,
+ *   - RLS on execution_outbox under the brain_app role.
+ * These run against pg in services/execution test:integration once the
+ * Docker/Postgres environment is available (see the H-04 summary).
+ */
+
+import { describe, expect, it, vi } from "vitest";
+import { InMemoryAuditEmitter, newPaymentIntentId, newTenantId } from "@brain/shared";
+import type { Rail, RailDispatchResult } from "../rails/types.js";
+import type { RailRegistry } from "../rails/stubs.js";
+import type { OutboxRow, OutboxService } from "./OutboxService.js";
+import { processClaimedRow, runOutboxCycle, type OutboxExecutor } from "./worker.js";
+
+const TENANT = newTenantId();
+const PI = newPaymentIntentId();
+
+function makeRow(over: Partial<OutboxRow> = {}): OutboxRow {
+  return {
+    id: "exo_1",
+    tenant_id: TENANT,
+    payment_intent_id: PI,
+    execution_id: null,
+    rail: "bank_ach",
+    idempotency_key: `pi:${PI}:pd_x`,
+    payload: {
+      kind: "ach_outbound",
+      source_account_id: "acct_1",
+      destination_counterparty_id: "cp_1",
+      amount: "100.00",
+      currency: "USD",
+    },
+    payload_hash: Buffer.from("hash"),
+    status: "dispatching",
+    attempt_count: 0,
+    last_error: null,
+    rail_receipt: null,
+    audit_before_id: "evt_before",
+    audit_after_id: null,
+    reservation_id: null,
+    locked_at: new Date(),
+    locked_by: "worker_test",
+    created_at: new Date(),
+    dispatched_at: null,
+    completed_at: null,
+    ...over,
+  };
+}
+
+/** A rail whose dispatch is controlled by the test. */
+function railWith(dispatch: () => Promise<RailDispatchResult>): RailRegistry {
+  const rail: Rail = { kind: "bank_ach", dispatch: vi.fn(dispatch) };
+  return { get: vi.fn(() => rail) } as unknown as RailRegistry;
+}
+
+const validAchReceipt = async (): Promise<RailDispatchResult> => ({
+  receipt: { rail: "ach", ach_trace: "stub-trace-1", stub: true },
+});
+
+interface FakeOutbox {
+  reclaimStale: ReturnType<typeof vi.fn>;
+  claimNext: ReturnType<typeof vi.fn>;
+  markDispatched: ReturnType<typeof vi.fn>;
+  markSettled: ReturnType<typeof vi.fn>;
+  markFailed: ReturnType<typeof vi.fn>;
+  markReconciling: ReturnType<typeof vi.fn>;
+}
+
+function makeDeps(opts: {
+  rows?: OutboxRow[];
+  dispatch?: () => Promise<RailDispatchResult>;
+  markFailedReturns?: number;
+  completeThrows?: boolean;
+}): {
+  deps: Parameters<typeof runOutboxCycle>[0];
+  outbox: FakeOutbox;
+  executor: {
+    completeExecution: ReturnType<typeof vi.fn>;
+    failExecution: ReturnType<typeof vi.fn>;
+  };
+  audit: InMemoryAuditEmitter;
+} {
+  const outbox: FakeOutbox = {
+    reclaimStale: vi.fn(async () => []),
+    claimNext: vi.fn(async () => opts.rows ?? []),
+    markDispatched: vi.fn(async () => undefined),
+    markSettled: vi.fn(async () => undefined),
+    markFailed: vi.fn(async () => opts.markFailedReturns ?? 1),
+    markReconciling: vi.fn(async () => undefined),
+  };
+  const executor: OutboxExecutor & {
+    completeExecution: ReturnType<typeof vi.fn>;
+    failExecution: ReturnType<typeof vi.fn>;
+  } = {
+    completeExecution: vi.fn(async () => {
+      if (opts.completeThrows === true) throw new Error("db down");
+    }),
+    failExecution: vi.fn(async () => undefined),
+  };
+  const audit = new InMemoryAuditEmitter();
+  const deps = {
+    outbox: outbox as unknown as OutboxService,
+    rails: railWith(opts.dispatch ?? validAchReceipt),
+    executor,
+    audit,
+    withPrivileged: <T>(
+      fn: (c: { query: () => Promise<{ rows: never[]; rowCount: number }> }) => Promise<T>,
+    ) => fn({ query: async () => ({ rows: [], rowCount: 0 }) }),
+    workerId: "worker_test",
+  };
+  return { deps, outbox, executor, audit };
+}
+
+describe("processClaimedRow", () => {
+  it("settles a clean dispatch: receipt valid → audit-after + completeExecution + markSettled", async () => {
+    const { deps, outbox, executor, audit } = makeDeps({});
+    const outcome = await processClaimedRow(deps, makeRow());
+
+    expect(outcome).toBe("settled");
+    expect(executor.completeExecution).toHaveBeenCalledTimes(1);
+    expect(outbox.markDispatched).toHaveBeenCalledTimes(1);
+    expect(outbox.markSettled).toHaveBeenCalledTimes(1);
+
+    const after = audit.events.find((e) => e.action === "payment_intent.execute.after");
+    expect(after?.outputs.ok).toBe(true);
+    // Audit pair is linked across the async boundary via the before-event id.
+    expect(after?.outputs.gate_audit_before).toBe("evt_before");
+  });
+
+  it("retries when dispatch throws and the budget is not exhausted", async () => {
+    const { deps, outbox, executor, audit } = makeDeps({
+      dispatch: async () => {
+        throw new Error("rail timeout");
+      },
+      markFailedReturns: 1,
+    });
+    const outcome = await processClaimedRow(deps, makeRow());
+
+    expect(outcome).toBe("retrying");
+    expect(outbox.markFailed).toHaveBeenCalledTimes(1);
+    expect(executor.completeExecution).not.toHaveBeenCalled();
+    expect(audit.events.find((e) => e.action === "execution.outbox.stuck")).toBeUndefined();
+  });
+
+  it("escalates to reconciling + stuck audit after the retry budget is spent", async () => {
+    const { deps, executor, audit } = makeDeps({
+      dispatch: async () => {
+        throw new Error("rail down");
+      },
+      markFailedReturns: 3, // == MAX_DISPATCH_ATTEMPTS
+    });
+    const outcome = await processClaimedRow(deps, makeRow());
+
+    expect(outcome).toBe("reconciling");
+    expect(executor.completeExecution).not.toHaveBeenCalled();
+    const stuck = audit.events.find((e) => e.action === "execution.outbox.stuck");
+    expect(stuck).toBeDefined();
+    expect(stuck?.outputs.attempt_count).toBe(3);
+  });
+
+  it("reconciles (does NOT fail the intent) when a dispatched receipt is malformed", async () => {
+    const { deps, outbox, executor, audit } = makeDeps({
+      // ACH receipt missing required ach_trace → invalid.
+      dispatch: async () => ({ receipt: { rail: "ach", stub: true } }),
+    });
+    const outcome = await processClaimedRow(deps, makeRow());
+
+    expect(outcome).toBe("reconciling");
+    expect(outbox.markReconciling).toHaveBeenCalledTimes(1);
+    // Money may have moved — the intent must NOT be auto-failed.
+    expect(executor.failExecution).not.toHaveBeenCalled();
+    expect(executor.completeExecution).not.toHaveBeenCalled();
+    expect(audit.events.find((e) => e.action === "execution.outbox.stuck")).toBeDefined();
+  });
+
+  it("routes a settle (DB) failure to retry rather than wrongly marking failed", async () => {
+    const { deps, outbox, executor } = makeDeps({ completeThrows: true, markFailedReturns: 1 });
+    const outcome = await processClaimedRow(deps, makeRow());
+
+    expect(outcome).toBe("retrying");
+    expect(executor.completeExecution).toHaveBeenCalledTimes(1);
+    // Receipt was persisted before the settle attempt (recoverable on reclaim).
+    expect(outbox.markDispatched).toHaveBeenCalledTimes(1);
+    expect(outbox.markFailed).toHaveBeenCalledTimes(1);
+    expect(outbox.markSettled).not.toHaveBeenCalled();
+  });
+});
+
+describe("runOutboxCycle", () => {
+  it("reclaims stale rows and processes the claimed batch, tallying outcomes", async () => {
+    const { deps, outbox } = makeDeps({
+      rows: [makeRow({ id: "exo_a" }), makeRow({ id: "exo_b" })],
+    });
+    outbox.reclaimStale.mockResolvedValueOnce([makeRow({ id: "exo_stale" })]);
+
+    const result = await runOutboxCycle(deps, { limit: 5, staleSeconds: 120 });
+
+    expect(outbox.reclaimStale).toHaveBeenCalledTimes(1);
+    expect(outbox.claimNext).toHaveBeenCalledTimes(1);
+    expect(result.reclaimed).toBe(1);
+    expect(result.claimed).toBe(2);
+    expect(result.settled).toBe(2);
+  });
+
+  it("does nothing when the queue is empty", async () => {
+    const { deps, outbox } = makeDeps({ rows: [] });
+    const result = await runOutboxCycle(deps);
+    expect(result.claimed).toBe(0);
+    expect(result.settled).toBe(0);
+    expect(outbox.markSettled).not.toHaveBeenCalled();
+  });
+});

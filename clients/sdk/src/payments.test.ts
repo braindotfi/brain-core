@@ -111,15 +111,16 @@ describe("Brain.payments", () => {
     expect(bodyText).toBe("");
   });
 
-  it("execute returns the receipt", async () => {
+  it("execute returns the durable hand-off receipt (H-04)", async () => {
     const { fetch, calls } = mockSequence([
       {
         status: 202,
         body: {
           payment_intent_id: "pi_1",
-          execution_id: "ex_1",
+          outbox_id: "exo_1",
+          execution_id: null,
           rail: "bank_ach",
-          status: "dispatched",
+          status: "dispatching",
         },
       },
     ]);
@@ -129,9 +130,10 @@ describe("Brain.payments", () => {
 
     expect(receipt).toEqual({
       paymentIntentId: "pi_1",
-      executionId: "ex_1",
+      outboxId: "exo_1",
+      executionId: null,
       rail: "bank_ach",
-      status: "dispatched",
+      status: "dispatching",
     });
     expect(calls[0]?.url).toContain("/payment-intents/pi_1/execute");
   });

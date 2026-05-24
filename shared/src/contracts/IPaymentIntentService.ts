@@ -30,6 +30,8 @@ export type PaymentIntentStatus =
   | "proposed"
   | "pending_approval"
   | "approved"
+  | "paused"
+  | "dispatching"
   | "rejected"
   | "executed"
   | "failed"
@@ -64,9 +66,16 @@ export interface CreatePaymentIntentInput {
 
 export interface ExecuteResult {
   payment_intent_id: string;
-  execution_id: string;
+  /**
+   * H-04: with the durable outbox, execute no longer dispatches the rail
+   * synchronously, so there is no execution row yet at 202 time. The
+   * execution_id is minted by the worker on dispatch. Null until then.
+   */
+  execution_id: string | null;
+  /** H-04: the execution_outbox row id (exo_…) the worker will pick up. */
+  outbox_id: string;
   rail: string;
-  status: "dispatched" | "in_flight";
+  status: "dispatching" | "dispatched" | "in_flight";
 }
 
 export interface IPaymentIntentService {

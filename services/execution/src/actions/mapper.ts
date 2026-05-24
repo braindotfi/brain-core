@@ -26,6 +26,8 @@ export type ActionStatus =
   | "auto"
   | "needs_approval"
   | "approved"
+  | "paused"
+  | "dispatching"
   | "rejected"
   | "executed"
   | "failed"
@@ -73,6 +75,12 @@ export function piStatusToActionStatus(s: PaymentIntentStatus): ActionStatus {
       return "auto";
     case "pending_approval":
       return "needs_approval";
+    case "paused":
+      // Kill-switch hold (1b.3): surfaced 1:1 so the actions view reflects it.
+      return "paused";
+    case "dispatching":
+      // H-04: gate passed, handed to the durable outbox, rail not yet settled.
+      return "dispatching";
     case "rejected":
       return "rejected";
     case "executed":

@@ -55,6 +55,25 @@ export * from "./agent-runs.js";
 export * from "./findings.js";
 // Agent-to-agent sagas (Agent Autonomy v3, 3.2).
 export { runSaga, type SagaStep, type SagaResult, type SagaDeps } from "./sagas.js";
+// Durable execution outbox + saga (H-04).
+export {
+  OutboxService,
+  payloadHash,
+  MAX_DISPATCH_ATTEMPTS,
+  type OutboxRow,
+  type OutboxStatus,
+  type EnqueueInput,
+  type EnqueueResult,
+} from "./outbox/OutboxService.js";
+export {
+  runOutboxCycle,
+  processClaimedRow,
+  startOutboxWorker,
+  type OutboxExecutor,
+  type OutboxWorkerDeps,
+  type CycleResult,
+  type RowOutcome,
+} from "./outbox/worker.js";
 // Per-task minimum-privilege session keys (Agent Autonomy v3, 3.3).
 export {
   derivePerTaskSessionKey,

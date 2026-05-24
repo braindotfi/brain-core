@@ -120,8 +120,15 @@ describe("invariant: every obligation has a valid status", () => {
 // 5. Every PaymentIntent has a policy_decision_id before execution.
 // =============================================================================
 describe("invariant: every executed PaymentIntent has a policy_decision_id", () => {
-  it("§9.5 state machine: approved → executed only path is via the §6 gate", () => {
-    expect(isValidPaymentIntentTransition("approved", "executed")).toBe(true);
+  it("§9.5 state machine: the only path to executed runs through the §6 gate", () => {
+    // H-04: execute hands off to the durable outbox, so the path is now
+    // approved → dispatching → executed. The direct approved → executed edge is
+    // gone; `dispatching` is reachable only from `approved` (post-gate), so the
+    // gate still strictly precedes every settlement.
+    expect(isValidPaymentIntentTransition("approved", "dispatching")).toBe(true);
+    expect(isValidPaymentIntentTransition("dispatching", "executed")).toBe(true);
+    expect(isValidPaymentIntentTransition("approved", "executed")).toBe(false);
+    expect(isValidPaymentIntentTransition("proposed", "dispatching")).toBe(false);
     expect(isValidPaymentIntentTransition("proposed", "executed")).toBe(false);
     expect(isValidPaymentIntentTransition("pending_approval", "executed")).toBe(false);
   });

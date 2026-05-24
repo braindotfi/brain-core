@@ -3594,10 +3594,11 @@ export interface operations {
                 content: {
                     "application/json": {
                         payment_intent_id?: string;
-                        execution_id?: string;
+                        outbox_id?: string;
+                        execution_id?: string | null;
                         rail?: string;
                         /** @enum {string} */
-                        status?: "dispatched" | "in_flight";
+                        status?: "dispatching" | "dispatched" | "in_flight";
                     };
                 };
             };

@@ -12,6 +12,7 @@ import { registerActionRoutes } from "./actions/routes.js";
 import { ApprovalService } from "./approvals/ApprovalService.js";
 import { PaymentIntentService } from "./payment-intents/PaymentIntentService.js";
 import { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
+import { OutboxService } from "./outbox/OutboxService.js";
 import type { ExecutionDeps } from "./deps.js";
 
 export interface BuildExecutionAppOptions {
@@ -81,10 +82,14 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     audit: opts.deps.audit,
     resolveRole: opts.deps.resolveRole,
   });
+  // H-04: the HTTP app needs the outbox so `execute` can enqueue the durable
+  // dispatch row. The RailRegistry is no longer wired into PaymentIntentService —
+  // it lives in the outbox worker process (see startOutboxWorker).
+  const outbox = new OutboxService();
   const paymentIntents = new PaymentIntentService({
     pool: opts.deps.pool,
     audit: opts.deps.audit,
-    rails: opts.deps.rails,
+    outbox,
     approvals,
     resolveAgent: opts.deps.resolveAgent,
     resolveAccount: opts.deps.resolveAccount,

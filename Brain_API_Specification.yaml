@@ -1578,9 +1578,13 @@ paths:
       summary: Execute an approved PaymentIntent through its rail
       description: |
         Runs the deterministic 13-step pre-execution gate (§6 of Engineering
-        Standards) before dispatching. Returns 409 with
-        `payment_intent_gate_failed` if any check fails, with details listing
-        the failing check index.
+        Standards), then durably hands the action to the execution outbox
+        (H-04). On success the intent transitions approved → dispatching and a
+        `pending` outbox row is enqueued atomically; the outbox worker then
+        dispatches the rail and settles the intent asynchronously. Returns 202
+        with `status: dispatching` and the `outbox_id`; `execution_id` is null
+        until the worker dispatches. Returns 409 with `payment_intent_gate_failed`
+        if any gate check fails, with details listing the failing check index.
       operationId: executePaymentIntent
       parameters:
         - name: id
@@ -1589,16 +1593,17 @@ paths:
           schema: { type: string }
       responses:
         '202':
-          description: Dispatched to rail
+          description: Gate passed; action enqueued to the durable outbox
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   payment_intent_id: { type: string }
-                  execution_id: { type: string }
+                  outbox_id: { type: string }
+                  execution_id: { type: [string, "null"] }
                   rail: { type: string }
-                  status: { type: string, enum: [dispatched, in_flight] }
+                  status: { type: string, enum: [dispatching, dispatched, in_flight] }
         '409':
           description: Gate failed
           content:

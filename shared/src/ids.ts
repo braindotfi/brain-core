@@ -64,6 +64,8 @@ export const ID_PREFIX = {
   // Agent Autonomy v3 — agent-to-agent sagas (Phase 3.2).
   agentSaga: "agsg",
   agentSagaStep: "agss",
+  // H-04 — durable execution outbox (Layer 5). One row per dispatched action.
+  executionOutbox: "exo",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];
@@ -108,6 +110,7 @@ export const newReconciliationMatchId = (): string => brainId(ID_PREFIX.ledgerRe
 export const newPolicyDecisionId = (): string => brainId(ID_PREFIX.policyDecision);
 export const newApprovalId = (): string => brainId(ID_PREFIX.approval);
 export const newWebhookEndpointId = (): string => brainId(ID_PREFIX.webhookEndpoint);
+export const newExecutionOutboxId = (): string => brainId(ID_PREFIX.executionOutbox);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.

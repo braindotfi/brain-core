@@ -27,7 +27,7 @@ import type {
 import type { Pool } from "pg";
 import { PaymentIntentService } from "./PaymentIntentService.js";
 import { ApprovalService } from "../approvals/ApprovalService.js";
-import { defaultRails } from "../rails/stubs.js";
+import { OutboxService } from "../outbox/OutboxService.js";
 import type { PaymentIntentRow } from "@brain/ledger";
 
 // ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ function makeService(pool: Pool, audit: InMemoryAuditEmitter): PaymentIntentServ
   return new PaymentIntentService({
     pool,
     audit,
-    rails: defaultRails(),
+    outbox: new OutboxService(),
     approvals,
     resolveAgent: async (_ctx, _id) => GATE_AGENT,
     resolveAccount: async (_ctx, _id) => GATE_ACCOUNT,
@@ -171,40 +171,27 @@ function makeService(pool: Pool, audit: InMemoryAuditEmitter): PaymentIntentServ
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("PaymentIntentService.execute — happy path (approved → executed)", () => {
-  it("runs the §6 gate, dispatches the rail, and emits audit-before + audit-after", async () => {
+describe("PaymentIntentService.execute — durable hand-off (approved → dispatching)", () => {
+  it("runs the §6 gate, enqueues the outbox row, and returns 202 dispatching", async () => {
     const audit = new InMemoryAuditEmitter();
 
-    const executedRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "executed" };
+    const dispatchingRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "dispatching" };
 
     const pool = makeFakePool((sql) => {
-      // findPaymentIntentById
+      // findPaymentIntentById (requireIntent + gate approvals read)
       if (sql.includes("FROM ledger_payment_intents WHERE id")) {
         return { rows: [APPROVED_INTENT_ROW], rowCount: 1 };
       }
-      // insertExecution
-      if (sql.includes("INTO executions")) {
-        return {
-          rows: [
-            {
-              id: "exec_test",
-              tenant_id: TENANT,
-              proposal_id: PI_ID,
-              rail: "bank_ach",
-              status: "dispatched",
-              idempotency_key: `pi:${PI_ID}:${PD_ID}`,
-              created_at: new Date(),
-            },
-          ],
-          rowCount: 1,
-        };
+      // approved → dispatching transition
+      if (sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [dispatchingRow], rowCount: 1 };
       }
-      // transitionExecution, transitionPaymentIntent, appendExecutionReceiptId
-      if (sql.includes("UPDATE executions") || sql.includes("UPDATE ledger_payment_intents")) {
-        return { rows: [executedRow], rowCount: 1 };
+      // outbox enqueue (idempotent insert RETURNING id)
+      if (sql.includes("INSERT INTO execution_outbox")) {
+        return { rows: [{ id: "exo_test" }], rowCount: 1 };
       }
       // approvals.signedRoles (SELECT approval_ids)
-      if (sql.includes("approval_ids") || sql.includes("ledger_payment_intents WHERE id")) {
+      if (sql.includes("approval_ids")) {
         return { rows: [APPROVED_INTENT_ROW], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
@@ -213,19 +200,120 @@ describe("PaymentIntentService.execute — happy path (approved → executed)", 
     const service = makeService(pool, audit);
     const result = await service.execute(ctx, PI_ID);
 
+    // H-04: execute no longer settles synchronously — it hands off to the outbox.
     expect(result.payment_intent_id).toBe(PI_ID);
-    expect(result.status).toBe("in_flight");
+    expect(result.status).toBe("dispatching");
+    expect(result.execution_id).toBeNull();
+    expect(result.outbox_id).toBe("exo_test");
     expect(result.rail).toBe("bank_ach");
 
-    // Audit trail must contain execute.before (from gate) + execute.after (from service)
     const actions = audit.events.map((e) => e.action);
+    // Gate emits audit-before; execute records the dispatching write…
     expect(actions).toContain("payment_intent.execute.before");
-    expect(actions).toContain("payment_intent.execute.after");
+    expect(actions).toContain("payment_intent.execute.enqueued");
+    // …and the §6 audit-after now closes in the worker, NOT here.
+    expect(actions).not.toContain("payment_intent.execute.after");
 
-    // The after event must confirm success
-    const afterEvent = audit.events.find((e) => e.action === "payment_intent.execute.after");
-    expect(afterEvent?.outputs.ok).toBe(true);
-    expect(afterEvent?.policyDecisionId).toBe(PD_ID);
+    const enq = audit.events.find((e) => e.action === "payment_intent.execute.enqueued");
+    expect(enq?.outputs.outbox_id).toBe("exo_test");
+    expect(enq?.outputs.status).toBe("dispatching");
+    expect(enq?.policyDecisionId).toBe(PD_ID);
+  });
+
+  it("aborts without enqueuing when the intent was paused between gate and hand-off", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const pool = makeFakePool((sql) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [APPROVED_INTENT_ROW], rowCount: 1 };
+      }
+      // The conditional approved → dispatching UPDATE matches no row (paused).
+      if (sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("approval_ids")) {
+        return { rows: [APPROVED_INTENT_ROW], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    const service = makeService(pool, audit);
+    await expect(service.execute(ctx, PI_ID)).rejects.toMatchObject({
+      code: "payment_intent_invalid_state",
+    });
+
+    // Aborted hand-off must NOT enqueue and must NOT claim success.
+    const actions = audit.events.map((e) => e.action);
+    expect(actions).not.toContain("payment_intent.execute.enqueued");
+    const after = audit.events.find((e) => e.action === "payment_intent.execute.after");
+    expect(after?.outputs.aborted).toBe(true);
+  });
+});
+
+describe("PaymentIntentService.completeExecution / failExecution (outbox callbacks)", () => {
+  it("completeExecution settles dispatching → executed", async () => {
+    const dispatchingRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "dispatching" };
+    const executedRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "executed" };
+    const pool = makeFakePool((sql) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [dispatchingRow], rowCount: 1 };
+      }
+      if (sql.includes("INTO executions")) {
+        return {
+          rows: [{ id: "exec_1", tenant_id: TENANT, proposal_id: PI_ID, status: "dispatched" }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("UPDATE executions") || sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [executedRow], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const service = makeService(pool, new InMemoryAuditEmitter());
+    await expect(
+      service.completeExecution(ctx, {
+        paymentIntentId: PI_ID,
+        executionId: "exec_1",
+        rail: "bank_ach",
+        railReceipt: { rail: "ach", ach_trace: "t" },
+        idempotencyKey: `pi:${PI_ID}:${PD_ID}`,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("completeExecution is a no-op when the intent is already executed (idempotent replay)", async () => {
+    const executedRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "executed" };
+    const insertSpy = vi.fn();
+    const pool = makeFakePool((sql) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [executedRow], rowCount: 1 };
+      }
+      if (sql.includes("INTO executions")) {
+        insertSpy();
+        return { rows: [{ id: "exec_1" }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const service = makeService(pool, new InMemoryAuditEmitter());
+    await service.completeExecution(ctx, {
+      paymentIntentId: PI_ID,
+      executionId: "exec_dup",
+      rail: "bank_ach",
+      railReceipt: { rail: "ach", ach_trace: "t" },
+      idempotencyKey: `pi:${PI_ID}:${PD_ID}`,
+    });
+    // Must short-circuit before inserting a duplicate execution row.
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it("failExecution moves dispatching → failed", async () => {
+    const failedRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "failed" };
+    const pool = makeFakePool((sql) =>
+      sql.includes("UPDATE ledger_payment_intents")
+        ? { rows: [failedRow], rowCount: 1 }
+        : { rows: [], rowCount: 0 },
+    );
+    const service = makeService(pool, new InMemoryAuditEmitter());
+    await expect(service.failExecution(ctx, { paymentIntentId: PI_ID })).resolves.toBeUndefined();
   });
 });
 
@@ -250,7 +338,7 @@ describe("PaymentIntentService.execute — gate failure path", () => {
     const service = new PaymentIntentService({
       pool,
       audit,
-      rails: defaultRails(),
+      outbox: new OutboxService(),
       approvals,
       resolveAgent: async () => GATE_AGENT,
       resolveAccount: async () => GATE_ACCOUNT,

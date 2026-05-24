@@ -197,7 +197,11 @@ describe("§6 — check 11.5: duplicate-payment guard (H-22)", () => {
       detectDuplicates: async () => ({
         passed: false,
         collisions: [
-          { rule: "invoice_already_paid", detail: "INV-1 already paid", conflicting_payment_intent_id: "pi_OLD" },
+          {
+            rule: "invoice_already_paid",
+            detail: "INV-1 already paid",
+            conflicting_payment_intent_id: "pi_OLD",
+          },
         ],
       }),
     });

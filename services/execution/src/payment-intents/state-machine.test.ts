@@ -11,6 +11,7 @@ const ALL: PaymentIntentState[] = [
   "pending_approval",
   "approved",
   "paused",
+  "dispatching",
   "rejected",
   "executed",
   "failed",
@@ -34,12 +35,23 @@ describe("§9.5 PaymentIntent state machine", () => {
     expect(isValidPaymentIntentTransition("pending_approval", "cancelled")).toBe(false);
   });
 
-  it("approved → executed | rejected | failed | paused", () => {
-    expect(isValidPaymentIntentTransition("approved", "executed")).toBe(true);
+  it("approved → dispatching | rejected | failed | paused (H-04: no direct executed)", () => {
+    expect(isValidPaymentIntentTransition("approved", "dispatching")).toBe(true);
     expect(isValidPaymentIntentTransition("approved", "rejected")).toBe(true);
     expect(isValidPaymentIntentTransition("approved", "failed")).toBe(true);
     expect(isValidPaymentIntentTransition("approved", "paused")).toBe(true);
+    // H-04: execute hands off to the outbox; the direct approved → executed
+    // edge is gone so the only path to executed is via dispatching.
+    expect(isValidPaymentIntentTransition("approved", "executed")).toBe(false);
     expect(isValidPaymentIntentTransition("approved", "cancelled")).toBe(false);
+  });
+
+  it("dispatching → executed | failed only (H-04: outbox worker settles)", () => {
+    expect(isValidPaymentIntentTransition("dispatching", "executed")).toBe(true);
+    expect(isValidPaymentIntentTransition("dispatching", "failed")).toBe(true);
+    expect(isValidPaymentIntentTransition("dispatching", "approved")).toBe(false);
+    expect(isValidPaymentIntentTransition("dispatching", "paused")).toBe(false);
+    expect(isValidPaymentIntentTransition("dispatching", "cancelled")).toBe(false);
   });
 
   it("paused → approved (resume) | cancelled only (kill-switch, 1b.3)", () => {

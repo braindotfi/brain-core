@@ -16,7 +16,6 @@
 
 import {
   brainError,
-  newExecutionId,
   newPaymentIntentId,
   withTenantScope,
   type AuditEmitter,
@@ -47,8 +46,7 @@ import {
   findExecution,
   type ExecutionRow,
 } from "../repository.js";
-import type { RailRegistry } from "../rails/stubs.js";
-import { railKeyForActionType, validateRailReceipt } from "../rails/receipts.js";
+import type { OutboxService } from "../outbox/OutboxService.js";
 
 // ---------- Dependency hooks ----------------------------------------------
 
@@ -69,7 +67,14 @@ export type PaymentIntentPolicyEvaluator = (
 export interface PaymentIntentServiceDeps {
   pool: Pool;
   audit: AuditEmitter;
-  rails: RailRegistry;
+  /**
+   * H-04: execute no longer dispatches the rail synchronously — it enqueues a
+   * durable outbox row (atomic with approved → dispatching) and the outbox
+   * worker dispatches + settles. The RailRegistry now lives in the worker, not
+   * here; the §6 gate-bypass guard enforces that no rail dispatch happens in
+   * this file.
+   */
+  outbox: OutboxService;
   approvals: ApprovalService;
   /** Resolves the agent record by id; returns null if missing/inactive. */
   resolveAgent: (ctx: ServiceCallContext, agentId: string) => Promise<GateAgent | null>;
@@ -434,8 +439,21 @@ export class PaymentIntentService implements IPaymentIntentService {
     return { paused };
   }
 
-  // ---- execute (the §6 gate path) --------------------------------------
+  // ---- execute (the §6 gate path → durable outbox hand-off, H-04) ------
 
+  /**
+   * Run the §6 gate, then durably hand the action to the execution outbox.
+   *
+   * H-04: this method no longer dispatches the rail. After the gate passes
+   * (audit-before emitted inside the gate) it does ONE transaction that both
+   * (a) transitions the intent approved → dispatching and (b) inserts the
+   * `pending` outbox row. Atomicity means a crash can never leave one without
+   * the other; the outbox worker then dispatches the rail and settles the
+   * intent via {@link completeExecution} / {@link failExecution}. The
+   * conditional approved → dispatching transition doubles as the kill-switch
+   * race guard (pause/cancel between gate and hand-off → the UPDATE matches no
+   * row → we abort without enqueuing). Returns 202 with the outbox id.
+   */
   public async execute(ctx: ServiceCallContext, id: string): Promise<ExecuteResult> {
     const intent = await this.requireIntent(ctx, id);
     if (intent.status !== "approved") {
@@ -483,153 +501,158 @@ export class PaymentIntentService implements IPaymentIntentService {
       );
     }
 
-    // Kill-switch guard (1b.3): re-read the intent immediately before rail
-    // submission and abort cleanly if it was paused/cancelled between the gate
-    // and dispatch. (We re-read the committed row rather than holding a SELECT
-    // FOR UPDATE across the external rail call; the atomic approved→executed
-    // transition below is the final race guard.)
-    const fresh = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      LedgerPaymentIntents.findById(c, intent.id),
-    );
-    if (fresh === null || fresh.status !== "approved") {
+    // Gate passed. Build the canonical rail payload the worker will dispatch.
+    const railName = railFor(intent.action_type);
+    const idempotencyKey = `pi:${intent.id}:${gate.policyDecisionId}`;
+    const payload: Record<string, unknown> = {
+      kind: intent.action_type,
+      source_account_id: intent.source_account_id,
+      destination_counterparty_id: intent.destination_counterparty_id,
+      amount: intent.amount,
+      currency: intent.currency,
+    };
+
+    // Atomic hand-off: claim approved → dispatching AND enqueue the outbox row
+    // in the same transaction. If the conditional transition matches no row the
+    // intent was paused/cancelled between gate and hand-off — abort, enqueue
+    // nothing (the whole tx rolls back).
+    const handoff = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      assertPaymentIntentTransition("approved", "dispatching");
+      const moved = await LedgerPaymentIntents.transition(c, intent.id, "approved", "dispatching");
+      if (moved === null) {
+        const cur = await LedgerPaymentIntents.findById(c, intent.id);
+        return { ok: false as const, status: cur?.status ?? "missing" };
+      }
+      const enq = await this.deps.outbox.enqueue(c, ctx.tenantId, {
+        paymentIntentId: intent.id,
+        rail: railName,
+        idempotencyKey,
+        payload,
+        auditBeforeId: gate.auditBeforeEventId,
+      });
+      return { ok: true as const, outboxId: enq.id };
+    });
+
+    if (!handoff.ok) {
       await this.deps.audit.emit({
         tenantId: ctx.tenantId,
         layer: "agent",
         actor: ctx.actor,
         action: "payment_intent.execute.after",
         inputs: { payment_intent_id: id },
-        outputs: { ok: false, aborted: true, status: fresh?.status ?? "missing" },
+        outputs: { ok: false, aborted: true, status: handoff.status },
+        policyDecisionId: gate.policyDecisionId,
       });
       throw brainError(
         "payment_intent_invalid_state",
-        `execute aborted: intent no longer approved (status=${fresh?.status ?? "missing"})`,
+        `execute aborted: intent no longer approved (status=${handoff.status})`,
         { statusOverride: 409 },
       );
     }
 
-    // Gate passed. Dispatch through the rail.
-    const railName = railFor(intent.action_type);
-    const rail = this.deps.rails.get(railName);
-    const executionId = newExecutionId();
-    const idempotencyKey = `pi:${intent.id}:${gate.policyDecisionId}`;
-
-    let dispatchOutcome:
-      | { ok: true; receipt: Record<string, unknown> }
-      | { ok: false; error: Error };
-    try {
-      const dispatch = await rail.dispatch({
-        tenantId: ctx.tenantId,
-        proposalId: intent.id,
-        executionId,
-        action: {
-          kind: intent.action_type,
-          source_account_id: intent.source_account_id,
-          destination_counterparty_id: intent.destination_counterparty_id,
-          amount: intent.amount,
-          currency: intent.currency,
-        },
-        idempotencyKey,
-      });
-      dispatchOutcome = { ok: true, receipt: dispatch.receipt };
-    } catch (err) {
-      dispatchOutcome = { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
-    }
-
-    if (!dispatchOutcome.ok) {
-      await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
-        await LedgerPaymentIntents.transition(c, intent.id, "approved", "failed");
-      });
-      await this.deps.audit.emit({
-        tenantId: ctx.tenantId,
-        layer: "agent",
-        actor: ctx.actor,
-        action: "payment_intent.execute.after",
-        inputs: { payment_intent_id: id, rail: railName, execution_id: executionId },
-        outputs: { ok: false, error: dispatchOutcome.error.message },
-        policyDecisionId: gate.policyDecisionId,
-      });
-      throw brainError("agent_rail_unavailable", "rail dispatch failed", {
-        cause: dispatchOutcome.error,
-      });
-    }
-
-    // 2.4: the audit-after step refuses to commit unless the receipt validates
-    // against the typed schema for the rail used.
-    const receiptCheck = validateRailReceipt(
-      railKeyForActionType(intent.action_type),
-      dispatchOutcome.receipt,
-    );
-    if (!receiptCheck.ok) {
-      await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
-        await LedgerPaymentIntents.transition(c, intent.id, "approved", "failed");
-      });
-      await this.deps.audit.emit({
-        tenantId: ctx.tenantId,
-        layer: "agent",
-        actor: ctx.actor,
-        action: "payment_intent.execute.after",
-        inputs: { payment_intent_id: id, rail: railName, execution_id: executionId },
-        outputs: { ok: false, invalid_rail_receipt: true, missing: receiptCheck.missing },
-        policyDecisionId: gate.policyDecisionId,
-      });
-      throw brainError(
-        "agent_rail_unavailable",
-        `rail receipt failed schema validation (missing: ${receiptCheck.missing.join(", ")})`,
-        { cause: new Error("invalid_rail_receipt") },
-      );
-    }
-
-    // Persist the execution row, link it to the PaymentIntent, transition.
-    // The execute.after audit event is emitted unconditionally so the §6
-    // audit pair is always closed, even if the DB write fails.
-    let persistError: Error | undefined;
-    try {
-      await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
-        await insertExecution(c, {
-          id: executionId,
-          tenantId: ctx.tenantId,
-          proposalId: intent.id,
-          rail: railName,
-          status: "dispatched",
-          idempotencyKey,
-        });
-        await setExecutionReceipt(c, executionId, dispatchOutcome.receipt);
-        await transitionExecution(c, executionId, "dispatched", "in_flight");
-        await LedgerPaymentIntents.transition(c, intent.id, "approved", "executed");
-        await LedgerPaymentIntents.appendExecutionReceiptId(c, intent.id, executionId);
-      });
-    } catch (err) {
-      persistError = err instanceof Error ? err : new Error(String(err));
-    }
-
+    // The dispatching transition is a write — audit it. This is NOT the §6
+    // audit-after (that closes in the worker after rail dispatch); it records
+    // the durable hand-off so the trail shows enqueue → worker settle.
     await this.deps.audit.emit({
       tenantId: ctx.tenantId,
       layer: "agent",
       actor: ctx.actor,
-      action: "payment_intent.execute.after",
-      inputs: { payment_intent_id: id, rail: railName, execution_id: executionId },
-      outputs: persistError
-        ? { ok: false, error: persistError.message }
-        : {
-            ok: true,
-            rail_receipt: dispatchOutcome.receipt,
-            gate_audit_before: gate.auditBeforeEventId,
-          },
+      action: "payment_intent.execute.enqueued",
+      inputs: { payment_intent_id: id, rail: railName },
+      outputs: {
+        ok: true,
+        status: "dispatching",
+        outbox_id: handoff.outboxId,
+        gate_audit_before: gate.auditBeforeEventId,
+      },
       policyDecisionId: gate.policyDecisionId,
     });
 
-    if (persistError !== undefined) {
-      throw brainError("internal_server_error", "execution persist failed", {
-        cause: persistError,
-      });
-    }
-
     return {
       payment_intent_id: intent.id,
-      execution_id: executionId,
+      execution_id: null,
+      outbox_id: handoff.outboxId,
       rail: railName,
-      status: "in_flight",
+      status: "dispatching",
     };
+  }
+
+  // ---- outbox callbacks (worker-only, H-04) ----------------------------
+
+  /**
+   * Settle a dispatched action: persist the execution row + rail receipt and
+   * transition the intent dispatching → executed. Called by the outbox worker
+   * AFTER it has dispatched the rail and emitted the §6 audit-after event. This
+   * is the only method that drives a PaymentIntent to `executed`, which is what
+   * the §6 gate-bypass guard pins to this file.
+   *
+   * Idempotent: if the intent is already `executed` (a reclaimed row being
+   * re-processed after a crash) this is a no-op — checked BEFORE any insert so a
+   * re-run can never duplicate the execution row. The whole body runs in one
+   * transaction, so a settle either commits in full or rolls back in full.
+   */
+  public async completeExecution(
+    ctx: ServiceCallContext,
+    args: {
+      paymentIntentId: string;
+      executionId: string;
+      rail: string;
+      railReceipt: Record<string, unknown>;
+      idempotencyKey: string;
+    },
+  ): Promise<void> {
+    await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      const current = await LedgerPaymentIntents.findById(c, args.paymentIntentId);
+      if (current === null) {
+        throw brainError(
+          "payment_intent_not_found",
+          `completeExecution: intent ${args.paymentIntentId} not found`,
+        );
+      }
+      if (current.status === "executed") {
+        return; // already settled by a prior (crashed) run — idempotent no-op
+      }
+      if (current.status !== "dispatching") {
+        throw brainError(
+          "payment_intent_invalid_state",
+          `completeExecution: intent ${args.paymentIntentId} in '${current.status}', expected 'dispatching'`,
+        );
+      }
+      await insertExecution(c, {
+        id: args.executionId,
+        tenantId: ctx.tenantId,
+        proposalId: args.paymentIntentId,
+        rail: args.rail,
+        status: "dispatched",
+        idempotencyKey: args.idempotencyKey,
+      });
+      await setExecutionReceipt(c, args.executionId, args.railReceipt);
+      await transitionExecution(c, args.executionId, "dispatched", "in_flight");
+      assertPaymentIntentTransition("dispatching", "executed");
+      await LedgerPaymentIntents.transition(c, args.paymentIntentId, "dispatching", "executed");
+      await LedgerPaymentIntents.appendExecutionReceiptId(
+        c,
+        args.paymentIntentId,
+        args.executionId,
+      );
+    });
+  }
+
+  /**
+   * Mark a dispatched action as failed (dispatching → failed). Used by the
+   * outbox worker only for a DEFINITIVE rail rejection (nothing moved). Ambiguous
+   * failures (timeout, post-dispatch receipt mismatch) must NOT call this — the
+   * worker routes those to `reconciling` so ops can confirm whether money moved,
+   * leaving the intent in `dispatching` rather than wrongly marking it failed.
+   */
+  public async failExecution(
+    ctx: ServiceCallContext,
+    args: { paymentIntentId: string },
+  ): Promise<void> {
+    await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      assertPaymentIntentTransition("dispatching", "failed");
+      await LedgerPaymentIntents.transition(c, args.paymentIntentId, "dispatching", "failed");
+    });
   }
 
   // ---- replay-investigation (2.4) --------------------------------------

@@ -17,9 +17,12 @@ export interface CreatePaymentIntentParams extends CreatePaymentIntentBody {
 
 export interface ExecutionReceipt {
   paymentIntentId: string | undefined;
-  executionId: string | undefined;
+  /** H-04: the durable outbox row the worker will settle. */
+  outboxId: string | undefined;
+  /** H-04: null until the outbox worker dispatches the rail. */
+  executionId: string | null | undefined;
   rail: string | undefined;
-  status: "dispatched" | "in_flight" | undefined;
+  status: "dispatching" | "dispatched" | "in_flight" | undefined;
 }
 
 export interface RejectPaymentIntentParams {
@@ -75,6 +78,7 @@ export class PaymentsResource {
     const body = unwrap(data, error, response.status);
     return {
       paymentIntentId: body.payment_intent_id,
+      outboxId: body.outbox_id,
       executionId: body.execution_id,
       rail: body.rail,
       status: body.status,
