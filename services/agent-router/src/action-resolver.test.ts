@@ -114,3 +114,56 @@ describe("ActionResolver", () => {
     expect(r.status).toBe("missing_action");
   });
 });
+
+describe("ActionResolver — H-23 signed-policy allowlist", () => {
+  // The production wiring passes (agentKey, action) => allowedActionsFor(policy,
+  // agentKey).includes(action) as isActionAllowed. This closure mirrors that.
+  const agentActions: Record<string, readonly string[]> = { test_agent: ["draft", "send"] };
+  const fromPolicy = new ActionResolver({
+    classifier: new RulesIntentClassifier(),
+    isActionAllowed: (agent, action) => (agentActions[agent] ?? []).includes(action),
+  });
+
+  it("resolves an explicit action the signed policy lists for the agent", async () => {
+    const r = await fromPolicy.resolve({
+      definition: def({}),
+      actions: ["draft", "send"],
+      context: { [REQUESTED_ACTION_KEY]: "send" },
+    });
+    expect(r).toEqual({ status: "resolved", action: "send", source: "explicit" });
+  });
+
+  it("denies an explicit action the policy does not list, with a policy reason", async () => {
+    const r = await fromPolicy.resolve({
+      definition: def({}),
+      actions: ["draft", "send", "wire"],
+      context: { [REQUESTED_ACTION_KEY]: "wire" },
+    });
+    expect(r.status).toBe("missing_action");
+    if (r.status === "missing_action") expect(r.reason).toMatch(/denied by policy/);
+  });
+
+  it("does NOT consult the allowlist on the event-map fallback path", async () => {
+    // "escalate" is NOT in the agent's policy allowlist, yet the event mapping
+    // still resolves it — the allowlist gates explicit requests only.
+    const r = await fromPolicy.resolve({
+      definition: def({ event_action_map: { "invoice.overdue": "escalate" } }),
+      actions: ["escalate"],
+      event: "invoice.overdue",
+    });
+    expect(r).toEqual({ status: "resolved", action: "escalate", source: "event_map" });
+  });
+
+  it("denies every explicit request when the agent's allowlist is empty", async () => {
+    const empty = new ActionResolver({
+      classifier: new RulesIntentClassifier(),
+      isActionAllowed: () => false,
+    });
+    const r = await empty.resolve({
+      definition: def({}),
+      actions: ["draft"],
+      context: { [REQUESTED_ACTION_KEY]: "draft" },
+    });
+    expect(r.status).toBe("missing_action");
+  });
+});

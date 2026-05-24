@@ -737,6 +737,14 @@ async function main(): Promise<void> {
 
   // Picks the action within the selected agent (replaces handler.actions[0]),
   // using the same classifier the router uses for intent_action_map scoring.
+  // H-23: the resolver enforces the signed policy's per-agent allowlist via the
+  // `isActionAllowed` hook (PolicyDocument.agent_actions + allowedActionsFor in
+  // @brain/policy). Live injection is intentionally NOT a boot-time closure over
+  // a single policy — that would apply one tenant's allowlist to all tenants (a
+  // tenant-isolation bug). It must load the *requesting tenant's* active signed
+  // policy per call (policy service getActive → allowedActionsFor), which is a
+  // DB-backed path verified in a Postgres-capable environment. Until wired, an
+  // explicit action is accepted if the agent offers it (pre-H-23 behavior).
   const actionResolver = new ActionResolver({ classifier: agentClassifier });
 
   // Delegate the reconciliation agent to the Python reconciliation service when

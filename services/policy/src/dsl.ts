@@ -100,6 +100,23 @@ export interface PolicyDocument {
   lists?: Readonly<Record<string, ReadonlyArray<string>>>;
   /** Tenant-approved counterparty message templates (2.7). */
   message_templates?: ReadonlyArray<MessageTemplate>;
+  /**
+   * Per-agent allowlist of action keys (H-23). The ActionResolver resolves an
+   * explicitly-requested action ONLY if it appears here for the agent. Part of
+   * the signed/canonicalized policy (flows into contentHash). Absent agent, or
+   * an empty array, means no action is allowed for that agent.
+   *   e.g. { "payment": ["pay_invoice", "pay_obligation"] }
+   */
+  agent_actions?: Readonly<Record<string, ReadonlyArray<string>>>;
+}
+
+/**
+ * H-23: the signed policy's allowlist of action keys for `agentKey`. Returns []
+ * when the agent has no entry — which denies every explicitly-requested action
+ * for that agent (fail-closed).
+ */
+export function allowedActionsFor(doc: PolicyDocument, agentKey: string): readonly string[] {
+  return doc.agent_actions?.[agentKey] ?? [];
 }
 
 /**

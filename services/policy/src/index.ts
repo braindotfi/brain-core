@@ -24,7 +24,7 @@ export {
   tenantIdToBytes32,
   type PolicyTypedData,
 } from "./signing.js";
-export { canonicalize, contentHash, contentHashHex } from "./dsl.js";
+export { canonicalize, contentHash, contentHashHex, allowedActionsFor } from "./dsl.js";
 export type {
   ApplyTo,
   ExecuteMode,

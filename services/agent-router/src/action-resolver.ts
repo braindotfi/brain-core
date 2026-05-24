@@ -44,11 +44,11 @@ export interface ActionResolverDeps {
   /** Intent-pattern match threshold for intent_action_map. Defaults to 0.5. */
   readonly intentMatchThreshold?: number;
   /**
-   * Authorization hook for an explicitly requested action — the signed policy
-   * template's action.in / action.not_in check (Policy DSL, plan 1b.5). When
-   * absent (Phase 1a), an explicit action is accepted as long as the agent
-   * offers it.
-   * TODO(agent-autonomy-v3, 1b.5): wire the policy template action allowlist here.
+   * Authorization hook for an explicitly requested action — the signed policy's
+   * per-agent allowlist (`PolicyDocument.agent_actions`; see `allowedActionsFor`
+   * in @brain/policy). Wired at the resolver construction site to the tenant's
+   * active signed policy (H-23). When absent (unit tests, or no active policy
+   * loaded), an explicit action is accepted as long as the agent offers it.
    */
   readonly isActionAllowed?: (agentKey: string, action: string) => boolean;
 }
