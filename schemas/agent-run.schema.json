@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/agent-run/v1",
+  "title": "AgentRunSummary",
+  "description": "H-25 customer-facing summary of an agent run. Read-only projection over agent_runs; complements the Proof API.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "tenant_id",
+    "agent_id",
+    "agent_key",
+    "status",
+    "trigger",
+    "resolved_action",
+    "evidence_count",
+    "confidence",
+    "evidence_score",
+    "risk_level",
+    "outcome",
+    "started_at",
+    "completed_at"
+  ],
+  "properties": {
+    "run_id": { "type": "string" },
+    "tenant_id": { "type": "string", "pattern": "^tnt_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "agent_id": { "type": "string" },
+    "agent_key": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "failed", "shadow_completed", "rejected"]
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string" },
+        "source_event_id": { "type": "string" }
+      }
+    },
+    "resolved_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "source"],
+      "properties": {
+        "type": { "type": "string" },
+        "source": { "type": "string", "enum": ["explicit", "event_map"] }
+      }
+    },
+    "evidence_count": { "type": "integer", "minimum": 0 },
+    "confidence": { "type": "number" },
+    "evidence_score": { "type": "number" },
+    "risk_level": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string" },
+        "payment_intent_id": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "completed_at": { "type": "string", "format": "date-time" }
+  }
+}

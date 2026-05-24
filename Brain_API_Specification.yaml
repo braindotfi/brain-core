@@ -1371,17 +1371,36 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Run
+          description: Run summary (H-25)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AgentRun' }
+              schema:
+                type: object
+                description: AgentRunSummary — see schemas/agent-run.schema.json
+                properties:
+                  run_id: { type: string }
+                  tenant_id: { type: string }
+                  agent_id: { type: string }
+                  agent_key: { type: string }
+                  status:
+                    type: string
+                    enum: [completed, failed, shadow_completed, rejected]
+                  trigger: { type: object }
+                  resolved_action: { type: object }
+                  evidence_count: { type: integer }
+                  confidence: { type: number }
+                  evidence_score: { type: number }
+                  risk_level: { type: string, enum: [low, medium, high, critical] }
+                  outcome: { type: object }
+                  started_at: { type: string }
+                  completed_at: { type: string }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /agents/runs/{run_id}/why:
     get:
       tags: [Agent]
-      summary: Structured reason + trace bundle for a run
-      description: The artifact CFOs / auditors / support live in — the structured router reason plus (redacted) reasoning trace, gate trace, and rail receipt.
+      summary: Why this agent was selected for the run (H-25)
+      description: Which agents were candidates, why this one was selected (router multi-factor reason — score, evidence completeness, reputation, cost), and the runtime behavior hash.
       operationId: getAgentRunWhy
       parameters:
         - name: run_id
@@ -1390,16 +1409,81 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Reason bundle
+          description: Routing rationale
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  run: { $ref: '#/components/schemas/AgentRun' }
+                  run_id: { type: string }
+                  selected_agent_id: { type: [string, "null"] }
+                  candidate_agent_ids: { type: array, items: { type: string } }
                   reason: { type: object }
-                  gate_trace: { type: [object, "null"] }
-                  rail_receipt: { type: [object, "null"] }
+                  behavior_hash: { type: [string, "null"] }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /agents/runs/{run_id}/evidence:
+    get:
+      tags: [Agent]
+      summary: Evidence chain the agent consumed for the run (H-25)
+      operationId: getAgentRunEvidence
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Evidence chain
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_id: { type: string }
+                  evidence: { type: array, items: { type: object } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /agents/runs/{run_id}/gate-trace:
+    get:
+      tags: [Agent]
+      summary: The §6 gate check trace if a gate ran during the run (H-25)
+      operationId: getAgentRunGateTrace
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Gate trace
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_id: { type: string }
+                  payment_intent_id: { type: [string, "null"] }
+                  gate_checks: { type: array, items: { type: object } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /agents/runs/{run_id}/proof:
+    get:
+      tags: [Agent]
+      summary: Proof for the action the run produced (H-25 → H-07)
+      description: Proxies the Proof API for the run's PaymentIntent. 404 if the run produced no on-ledger action.
+      operationId: getAgentRunProof
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The assembled proof (see GET /proof/{action_id})
+          content:
+            application/json:
+              schema: { type: object }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /agents/routing-decisions/{id}:

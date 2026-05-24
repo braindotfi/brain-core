@@ -26,3 +26,4 @@ export * from "./IReconciliationService.js";
 export * from "./IPaymentIntentService.js";
 export * from "./IApprovalService.js";
 export * from "./proof.js";
+export * from "./agent-run.js";

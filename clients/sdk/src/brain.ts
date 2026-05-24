@@ -8,6 +8,7 @@ import { ActionsResource } from "./resources/actions.js";
 import { AgentsResource } from "./resources/agents.js";
 import { AuditResource } from "./resources/audit.js";
 import { ProofResource, type Proof } from "./resources/proof.js";
+import { AgentRunsResource } from "./resources/agent-runs.js";
 import {
   AccountsResource,
   BalancesResource,
@@ -79,6 +80,7 @@ export class Brain {
   readonly balances: BalancesResource;
   readonly audit: AuditResource;
   readonly proofs: ProofResource;
+  readonly agentRuns: AgentRunsResource;
   readonly payments: PaymentsResource;
   readonly actions: ActionsResource;
   readonly agents: AgentsResource;
@@ -111,6 +113,7 @@ export class Brain {
     this.balances = new BalancesResource(this.http);
     this.audit = new AuditResource(this.http);
     this.proofs = new ProofResource(this.http);
+    this.agentRuns = new AgentRunsResource(this.http);
     this.payments = new PaymentsResource(this.http);
     this.actions = new ActionsResource(this.http);
     this.agents = new AgentsResource(this.http);

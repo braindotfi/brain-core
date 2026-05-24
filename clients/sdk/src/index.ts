@@ -66,6 +66,14 @@ export {
 } from "./resources/proof.js";
 
 export {
+  AgentRunsResource,
+  type AgentRunSummary,
+  type AgentRunWhy,
+  type AgentRunEvidenceItem,
+  type AgentRunGateTrace,
+} from "./resources/agent-runs.js";
+
+export {
   PaymentsResource,
   type CreatePaymentIntentParams,
   type ExecutionReceipt,

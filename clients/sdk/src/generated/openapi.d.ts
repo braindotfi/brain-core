@@ -848,6 +848,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/runs/{run_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evidence chain the agent consumed for the run (H-25) */
+        get: operations["getAgentRunEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/runs/{run_id}/gate-trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The §6 gate check trace if a gate ran during the run (H-25) */
+        get: operations["getAgentRunGateTrace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/runs/{run_id}/proof": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Proof for the action the run produced (H-25 -> H-07) */
+        get: operations["getAgentRunProof"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/routing-decisions/{id}": {
         parameters: {
             query?: never;
@@ -3381,18 +3432,95 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Reason bundle */
+            /** @description Routing rationale */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        run?: components["schemas"]["AgentRun"];
-                        reason?: Record<string, never>;
-                        gate_trace?: Record<string, never> | null;
-                        rail_receipt?: Record<string, never> | null;
+                        run_id?: string;
+                        selected_agent_id?: string | null;
+                        candidate_agent_ids?: string[];
+                        reason?: Record<string, unknown>;
+                        behavior_hash?: string | null;
                     };
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAgentRunEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evidence chain */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        run_id?: string;
+                        evidence?: Record<string, unknown>[];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAgentRunGateTrace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Gate trace */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        run_id?: string;
+                        payment_intent_id?: string | null;
+                        gate_checks?: Record<string, unknown>[];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAgentRunProof: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assembled proof */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, unknown>;
                 };
             };
             404: components["responses"]["NotFound"];

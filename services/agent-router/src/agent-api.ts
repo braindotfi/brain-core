@@ -7,11 +7,19 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError, requireScope, type Scope, type ServiceCallContext } from "@brain/shared";
+import {
+  brainError,
+  requireScope,
+  type AgentRunEvidenceItem,
+  type AgentRunGateTrace,
+  type Scope,
+  type ServiceCallContext,
+} from "@brain/shared";
 import type { InternalAgentDefinition } from "@brain/schemas";
 import type { AgentRouter } from "./router.js";
 import type { AgentRunService } from "./agent-run-service.js";
 import type { RoutingInput } from "./types.js";
+import { toAgentRunSummary, toAgentRunWhy } from "./agent-run-views.js";
 
 const SCOPE_READ: Scope = "execution:read";
 const SCOPE_PROPOSE: Scope = "payment_intent:propose";
@@ -61,6 +69,21 @@ export interface AgentApiDeps {
     ctx: ServiceCallContext,
     agentId: string,
   ) => Promise<{ paused: string[]; quarantined: boolean }>;
+  /**
+   * H-25 Agent Run History loaders. Cross-cutting reads (evidence chain, the §6
+   * gate trace via the run's action, the H-07 proof, the routing decision +
+   * behavior hash) are injected from the composition root (services/api), since
+   * they span the Audit/Ledger schemas + the Proof builder that @brain/agent-router
+   * must not import directly. When absent the sub-resources report unavailable.
+   */
+  readonly runHistory?: {
+    evidenceCount(ctx: ServiceCallContext, runId: string): Promise<number>;
+    evidence(ctx: ServiceCallContext, runId: string): Promise<AgentRunEvidenceItem[] | null>;
+    gateTrace(ctx: ServiceCallContext, runId: string): Promise<AgentRunGateTrace | null>;
+    proof(ctx: ServiceCallContext, runId: string): Promise<unknown | null>;
+    behaviorHash(ctx: ServiceCallContext, runId: string): Promise<string | null>;
+    routingDecisionForRun(ctx: ServiceCallContext, runId: string): Promise<unknown | null>;
+  };
 }
 
 interface RunBody {
@@ -209,34 +232,87 @@ export async function registerAgentApiRoutes(
     },
   );
 
-  // GET /v1/agents/runs/{run_id} — run detail.
+  // GET /v1/agents/runs/{run_id} — run summary (H-25 flagship trust artifact).
   app.get(
     "/agents/runs/:run_id",
     async (request: FastifyRequest<{ Params: { run_id: string } }>) => {
       const ctx = assertCtx(request);
       requireScope(ctx.scopes ?? [], SCOPE_READ);
-      const run = await deps.reads.findRun(ctx, request.params.run_id);
+      const runId = request.params.run_id;
+      const run = (await deps.reads.findRun(ctx, runId)) as Record<string, unknown> | null;
       if (run === null) {
-        throw brainError("action_not_found", `run ${request.params.run_id} not found`);
+        throw brainError("agent_run_not_found", `run ${runId} not found`);
       }
-      return run;
+      const evidenceCount = deps.runHistory ? await deps.runHistory.evidenceCount(ctx, runId) : 0;
+      return toAgentRunSummary(run, { evidenceCount });
     },
   );
 
-  // GET /v1/agents/runs/{run_id}/why — structured reason + trace bundle.
+  // GET /v1/agents/runs/{run_id}/why — which agents were candidates + why this
+  // one was selected (router multi-factor reason) + the runtime behavior hash.
   app.get(
     "/agents/runs/:run_id/why",
     async (request: FastifyRequest<{ Params: { run_id: string } }>) => {
       const ctx = assertCtx(request);
       requireScope(ctx.scopes ?? [], SCOPE_READ);
-      const run = (await deps.reads.findRun(ctx, request.params.run_id)) as
-        | (Record<string, unknown> & { reason?: unknown })
-        | null;
+      const runId = request.params.run_id;
+      const run = (await deps.reads.findRun(ctx, runId)) as Record<string, unknown> | null;
       if (run === null) {
-        throw brainError("action_not_found", `run ${request.params.run_id} not found`);
+        throw brainError("agent_run_not_found", `run ${runId} not found`);
       }
-      // TODO(agent-autonomy-v3, 2.2): join the full gate trace + rail receipt.
-      return { run, reason: run.reason ?? {}, gate_trace: null, rail_receipt: null };
+      const routingDecision = deps.runHistory
+        ? ((await deps.runHistory.routingDecisionForRun(ctx, runId)) as Record<
+            string,
+            unknown
+          > | null)
+        : null;
+      const behaviorHash = deps.runHistory ? await deps.runHistory.behaviorHash(ctx, runId) : null;
+      return toAgentRunWhy(run, routingDecision, behaviorHash);
+    },
+  );
+
+  // GET /v1/agents/runs/{run_id}/evidence — the evidence chain the agent consumed.
+  app.get(
+    "/agents/runs/:run_id/evidence",
+    async (request: FastifyRequest<{ Params: { run_id: string } }>) => {
+      const ctx = assertCtx(request);
+      requireScope(ctx.scopes ?? [], SCOPE_READ);
+      const runId = request.params.run_id;
+      const evidence = deps.runHistory ? await deps.runHistory.evidence(ctx, runId) : null;
+      if (evidence === null) {
+        throw brainError("agent_run_not_found", `run ${runId} not found`);
+      }
+      return { run_id: runId, evidence };
+    },
+  );
+
+  // GET /v1/agents/runs/{run_id}/gate-trace — the §6 gate_checks if a gate ran.
+  app.get(
+    "/agents/runs/:run_id/gate-trace",
+    async (request: FastifyRequest<{ Params: { run_id: string } }>) => {
+      const ctx = assertCtx(request);
+      requireScope(ctx.scopes ?? [], SCOPE_READ);
+      const runId = request.params.run_id;
+      const trace = deps.runHistory ? await deps.runHistory.gateTrace(ctx, runId) : null;
+      if (trace === null) {
+        throw brainError("agent_run_not_found", `run ${runId} not found`);
+      }
+      return trace;
+    },
+  );
+
+  // GET /v1/agents/runs/{run_id}/proof — proxies H-07 if the run produced an action.
+  app.get(
+    "/agents/runs/:run_id/proof",
+    async (request: FastifyRequest<{ Params: { run_id: string } }>) => {
+      const ctx = assertCtx(request);
+      requireScope(ctx.scopes ?? [], SCOPE_READ);
+      const runId = request.params.run_id;
+      const proof = deps.runHistory ? await deps.runHistory.proof(ctx, runId) : null;
+      if (proof === null) {
+        throw brainError("proof_not_found", `no proof for run ${runId}`, { statusOverride: 404 });
+      }
+      return proof;
     },
   );
 
