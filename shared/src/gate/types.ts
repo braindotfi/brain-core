@@ -31,6 +31,7 @@ export type GateCheckName =
   | "evidence_supports_action"
   | "approval_requirement_determined"
   | "approval_granted_when_required"
+  | "no_duplicate_payment"
   | "policy_decision_recorded"
   | "audit_before_emitted";
 

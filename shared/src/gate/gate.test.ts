@@ -104,11 +104,11 @@ describe("§6 pre-execution gate — happy path", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.policyDecisionId).toBe("pd_TEST");
-      // The 13 §6 checks plus the 7.5 ledger-state binding and 9.5 evidence check.
-      expect(result.checks).toHaveLength(15);
+      // The 13 §6 checks plus 7.5 ledger-state, 9.5 evidence, 11.5 duplicate.
+      expect(result.checks).toHaveLength(16);
       expect(result.checks.every((c) => c.passed)).toBe(true);
       expect(result.checks.map((c) => c.index)).toEqual([
-        1, 2, 3, 4, 5, 6, 7, 7.5, 8, 9, 9.5, 10, 11, 12, 13,
+        1, 2, 3, 4, 5, 6, 7, 7.5, 8, 9, 9.5, 10, 11, 11.5, 12, 13,
       ]);
       // check 7.5 binds a verifiable ledger-state hash onto the result.
       expect(result.ledgerStateHash).toMatch(/^[0-9a-f]{64}$/);
@@ -171,6 +171,46 @@ describe("§6 — check 9.5: evidence semantic validation (H-21)", () => {
       expect(result.failedCheck.name).toBe("evidence_supports_action");
       // 10/11/12/13 never ran.
       expect(result.checks.some((c) => c.index === 10)).toBe(false);
+    }
+  });
+});
+
+describe("§6 — check 11.5: duplicate-payment guard (H-22)", () => {
+  it("passes 11.5 when the detector finds no collision", async () => {
+    const { deps } = makeDeps({ detectDuplicates: async () => ({ passed: true, collisions: [] }) });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.checks.some((c) => c.name === "no_duplicate_payment" && c.passed)).toBe(true);
+    }
+  });
+
+  it("HARD-rejects at 11.5 on a collision even when approval is present", async () => {
+    const { deps } = makeDeps({
+      // Require + grant approval, so the reject is purely the duplicate guard.
+      evaluatePolicy: async () => makeDecision({ outcome: "confirm", required_approvers: ["cfo"] }),
+      resolveApprovals: async () => ({ signedRoles: ["cfo"] }),
+      detectDuplicates: async () => ({
+        passed: false,
+        collisions: [
+          { rule: "invoice_already_paid", detail: "INV-1 already paid", conflicting_payment_intent_id: "pi_OLD" },
+        ],
+      }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent({ invoice_id: "INV-1" }),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(11.5);
+      expect(result.failedCheck.name).toBe("no_duplicate_payment");
+      expect(result.checks.some((c) => c.index === 12)).toBe(false); // 12/13 never ran
     }
   });
 });
@@ -533,7 +573,7 @@ describe("§6 — dry-run mode (1a.2): same checks, no side effects", () => {
       expect(result.outcome).toBe("allow");
       expect(result.policyDecisionId).toBe(""); // no row persisted
       expect(result.auditBeforeEventId).toBe(""); // no audit emitted
-      expect(result.checks).toHaveLength(15);
+      expect(result.checks).toHaveLength(16);
     }
     expect(audit.events).toHaveLength(0); // INV-6 side effect suppressed in dry-run
   });
@@ -620,7 +660,7 @@ describe("§6 — check 1.5: agent behavior pinned (2.3)", () => {
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.checks).toHaveLength(15);
+      expect(result.checks).toHaveLength(16);
       expect(result.checks.some((c) => c.name === "agent_behavior_pinned")).toBe(false);
     }
   });

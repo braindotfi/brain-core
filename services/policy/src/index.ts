@@ -31,6 +31,11 @@ export {
   type EvidenceValidationResult,
   type ResolvedEvidence,
 } from "./evidence-validator.js";
+export {
+  detectDuplicates,
+  type DuplicateCheckInput,
+  type DuplicateCheckResult,
+} from "./duplicate-detector.js";
 export type {
   ApplyTo,
   ExecuteMode,

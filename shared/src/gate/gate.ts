@@ -19,6 +19,7 @@ import type { AuditEmitter } from "../audit/emitter.js";
 import type { ServiceCallContext } from "../contracts/types.js";
 import { computeLedgerSnapshot } from "./snapshot.js";
 import { validateEvidence, type ResolvedEvidence, type RiskLevel } from "./evidence-validator.js";
+import type { DuplicateCheckInput, DuplicateCheckResult } from "./duplicate.js";
 import type { GateCheck, GateOutcome, GateResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -139,6 +140,13 @@ export interface GateDependencies {
    * records as not-applicable. Read-only — runs in dry-run too.
    */
   resolveEvidence?: (intent: GatePaymentIntent) => Promise<ResolvedEvidence[]>;
+  /**
+   * Duplicate-payment detector (H-22, check 11.5). DB-backed; lives in
+   * services/policy and is injected (the gate must not query the DB). When
+   * absent, check 11.5 records not-applicable. A collision is a HARD reject
+   * even with an approval present.
+   */
+  detectDuplicates?: (input: DuplicateCheckInput) => Promise<DuplicateCheckResult>;
 }
 
 export interface RunGateInput {
@@ -426,6 +434,30 @@ export async function runPreExecutionGate(
     }
   }
   pass(checks, 11, "approval_granted_when_required");
+
+  // 11.5 — duplicate-payment guard (H-22). A collision is a HARD reject even
+  // with approval present (the destination-change rule is the strongest single
+  // fraud signal). DB-backed detector is injected; absent ⇒ not-applicable.
+  if (deps.detectDuplicates !== undefined) {
+    const dupResult = await deps.detectDuplicates({
+      tenantId: input.ctx.tenantId,
+      paymentIntent: {
+        id: input.intent.id,
+        counterpartyId: input.intent.destination_counterparty_id,
+        amount: input.intent.amount,
+        currency: input.intent.currency,
+        ...(input.intent.invoice_id != null ? { invoiceId: input.intent.invoice_id } : {}),
+        ...(input.intent.obligation_id != null ? { obligationId: input.intent.obligation_id } : {}),
+        evidenceArtifactIds: input.intent.evidence_ids,
+      },
+    });
+    if (!dupResult.passed) {
+      return failGate(11.5, "no_duplicate_payment", { collisions: dupResult.collisions });
+    }
+    pass(checks, 11.5, "no_duplicate_payment");
+  } else {
+    pass(checks, 11.5, "no_duplicate_payment", { not_applicable: true });
+  }
 
   // 12 — PolicyDecision row recorded. evaluatePolicy returned a stored
   // decision; surface its id.

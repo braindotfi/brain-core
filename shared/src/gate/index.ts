@@ -9,3 +9,4 @@ export {
   type TrustLevel,
   type RiskLevel,
 } from "./evidence-validator.js";
+export type { DuplicateCheckInput, DuplicateCheckResult, DuplicateCollision } from "./duplicate.js";
