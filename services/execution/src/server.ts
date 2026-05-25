@@ -96,6 +96,9 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     resolveCounterparty: opts.deps.resolveCounterparty,
     evaluatePolicy: opts.deps.evaluatePaymentIntent,
     resolvePrincipal: opts.deps.resolvePrincipal,
+    ...(opts.deps.resolveTenantFlags !== undefined
+      ? { resolveTenantFlags: opts.deps.resolveTenantFlags }
+      : {}),
   });
   // Legacy /payment-intents/* routes (deprecated in v0.3) — every reply
   // gets the RFC 8594 `Deprecation: true` header and a `Link` header

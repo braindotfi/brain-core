@@ -21,6 +21,7 @@ import {
   type GatePaymentIntent,
   type GatePolicyDecision,
   type GatePrincipal,
+  type GateTenantFlags,
   type ServiceCallContext,
 } from "@brain/shared";
 
@@ -71,6 +72,17 @@ export async function sandboxResolveAgent(
     state: "active",
     scope: { canExecutePayments: true },
   };
+}
+
+// ---------------------------------------------------------------------------
+// resolveTenantFlags — demo tenants never opt into mandatory pinning (P0.1)
+// ---------------------------------------------------------------------------
+
+export async function sandboxResolveTenantFlags(
+  _ctx: ServiceCallContext,
+  _tenantId: string,
+): Promise<GateTenantFlags> {
+  return { requireBehaviorHash: false };
 }
 
 // ---------------------------------------------------------------------------

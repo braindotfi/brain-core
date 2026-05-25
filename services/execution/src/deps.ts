@@ -6,6 +6,7 @@ import type {
   GatePaymentIntent,
   GatePolicyDecision,
   GatePrincipal,
+  GateTenantFlags,
   ServiceCallContext,
 } from "@brain/shared";
 import type { Pool } from "pg";
@@ -42,6 +43,13 @@ export interface ExecutionDeps {
 
   /** Resolve agent record for §6 check 1. */
   resolveAgent: (ctx: ServiceCallContext, agentId: string) => Promise<GateAgent | null>;
+
+  /**
+   * Resolve per-tenant gate-enforcement flags for §6 check 1.5 (P0.1). Optional:
+   * when absent the gate keeps its pre-P0.1 behavior-hash behavior (verify only
+   * when both hashes are present).
+   */
+  resolveTenantFlags?: (ctx: ServiceCallContext, tenantId: string) => Promise<GateTenantFlags>;
 
   /** Resolve source account for §6 check 4 + 8. */
   resolveAccount: (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null>;

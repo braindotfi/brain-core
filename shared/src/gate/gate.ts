@@ -92,6 +92,16 @@ export interface GateAgent {
   max_risk_level?: RiskLevel;
 }
 
+/** Tenant-level enforcement flags read by the gate (P0.1). */
+export interface GateTenantFlags {
+  /**
+   * When true, gate check 1.5 (agent behavior pinned) is MANDATORY for this
+   * tenant: a missing runtime OR registered behaviorHash is a hard fail
+   * (fail-closed), not a skip. Defaults false for back-compat.
+   */
+  requireBehaviorHash: boolean;
+}
+
 /** Options passed to the single policy evaluator (1a.2 — one evaluator, two modes). */
 export interface GateEvalOptions {
   /**
@@ -147,6 +157,15 @@ export interface GateDependencies {
    * even with an approval present.
    */
   detectDuplicates?: (input: DuplicateCheckInput) => Promise<DuplicateCheckResult>;
+  /**
+   * Loads tenant-level enforcement flags for check 1.5 (P0.1). Injected because
+   * the gate (shared) must not query the DB. When absent, flags default off and
+   * check 1.5 keeps its pre-P0.1 behavior (verify only when both hashes are
+   * present, otherwise no check row) — so the canonical-13 happy path is
+   * unchanged for callers that have not wired this loader. Read-only — safe in
+   * dry-run.
+   */
+  resolveTenantFlags?: (tenantId: string) => Promise<GateTenantFlags>;
 }
 
 export interface RunGateInput {
@@ -241,15 +260,29 @@ export async function runPreExecutionGate(
   }
   pass(checks, 1, "agent_identity_verified");
 
-  // 1.5 — agent behavior pinned (2.3). Verified only when a runtime behaviorHash
-  // is supplied AND the agent has a registered hash; a mismatch is a hard reject
-  // regardless of every other signal. Skipped (no check row) when unverifiable,
-  // so the happy path remains the canonical 13 checks.
-  if (
-    input.runtimeBehaviorHash !== undefined &&
-    agent.behaviorHash !== undefined &&
-    agent.behaviorHash !== null
-  ) {
+  // 1.5 — agent behavior pinned (2.3 / P0.1). When the tenant opts in via
+  // require_behavior_hash, a missing runtime OR registered hash is a HARD fail
+  // (fail-closed) — "skipped when unverifiable" is a back door we close for
+  // production tenants. When the tenant has not opted in, the prior behavior
+  // holds: verify only when both hashes are present; a mismatch is always a hard
+  // reject regardless of every other signal. The happy path (no tenant-flag
+  // loader wired) stays the canonical 13 checks.
+  const haveRuntimeHash = input.runtimeBehaviorHash !== undefined;
+  const haveRegisteredHash = agent.behaviorHash !== undefined && agent.behaviorHash !== null;
+  const tenantFlags = deps.resolveTenantFlags
+    ? await deps.resolveTenantFlags(input.ctx.tenantId)
+    : null;
+  const requireBehaviorHash = tenantFlags?.requireBehaviorHash ?? false;
+
+  if (requireBehaviorHash && (!haveRuntimeHash || !haveRegisteredHash)) {
+    return failGate(1.5, "agent_behavior_pinned", {
+      reason: "tenant requires behavior-hash pinning but it is unverifiable",
+      require_behavior_hash: true,
+      runtime_hash_present: haveRuntimeHash,
+      registered_hash_present: haveRegisteredHash,
+    });
+  }
+  if (haveRuntimeHash && haveRegisteredHash) {
     if (agent.behaviorHash !== input.runtimeBehaviorHash) {
       return failGate(1.5, "agent_behavior_pinned", {
         registered: agent.behaviorHash,
@@ -257,6 +290,11 @@ export async function runPreExecutionGate(
       });
     }
     pass(checks, 1.5, "agent_behavior_pinned");
+  } else if (deps.resolveTenantFlags !== undefined) {
+    // Loader wired + tenant opted out + unverifiable ⇒ explicit not-applicable
+    // row (mirrors checks 9.5 / 11.5). Without the loader we add no row, which
+    // preserves the canonical-13 happy path for every pre-P0.1 caller.
+    pass(checks, 1.5, "agent_behavior_pinned", { not_applicable: true });
   }
 
   // 2 — agent authorized: scopes include payment_intent:execute.

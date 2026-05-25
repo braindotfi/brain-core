@@ -116,6 +116,7 @@ import {
   sandboxResolveAgent,
   sandboxResolvePrincipal,
   sandboxResolveRole,
+  sandboxResolveTenantFlags,
   makeSandboxResolveAccount,
   makeSandboxResolveCounterparty,
 } from "./sandbox/resolvers.js";
@@ -158,6 +159,7 @@ import type {
   GateCounterparty,
   GatePaymentIntent,
   GatePrincipal,
+  GateTenantFlags,
 } from "@brain/shared";
 
 // ---------------------------------------------------------------------------
@@ -349,6 +351,24 @@ function makeResolveAgent(
       state: row.state,
       scope: { canExecutePayments: row.state === "active" && row.role === "payment" },
     };
+  };
+}
+
+function makeResolveTenantFlags(
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext, tenantId: string) => Promise<GateTenantFlags> {
+  return async (ctx, tenantId) => {
+    // No row ⇒ flags default off (back-compat). RLS scopes the read to the
+    // caller's own tenant; we also filter by id so an admin BYPASSRLS connection
+    // would still read the correct tenant.
+    const row = await withTenantScope(pool, ctx.tenantId, async (c) => {
+      const res = await c.query<{ require_behavior_hash: boolean }>(
+        `SELECT require_behavior_hash FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+      return res.rows[0] ?? null;
+    });
+    return { requireBehaviorHash: row?.require_behavior_hash ?? false };
   };
 }
 
@@ -612,6 +632,9 @@ async function main(): Promise<void> {
   // Resolver hooks — sandbox replacements when BRAIN_DEMO_MODE is on.
   const resolveRole = cfg.BRAIN_DEMO_MODE ? sandboxResolveRole : makeResolveRole(pool);
   const resolveAgent = cfg.BRAIN_DEMO_MODE ? sandboxResolveAgent : makeResolveAgent(pool);
+  const resolveTenantFlags = cfg.BRAIN_DEMO_MODE
+    ? sandboxResolveTenantFlags
+    : makeResolveTenantFlags(pool);
   const resolveAccount = cfg.BRAIN_DEMO_MODE
     ? makeSandboxResolveAccount(pool)
     : makeResolveAccount(ledgerService);
@@ -639,6 +662,7 @@ async function main(): Promise<void> {
     outbox: new OutboxService(),
     approvals: approvalService,
     resolveAgent,
+    resolveTenantFlags,
     resolveAccount,
     resolveCounterparty,
     evaluatePolicy: evaluatePaymentIntent,
@@ -652,6 +676,7 @@ async function main(): Promise<void> {
     evaluatePolicy: evaluateLegacyPolicy,
     evaluatePaymentIntent,
     resolveAgent,
+    resolveTenantFlags,
     resolveAccount,
     resolveCounterparty,
     resolvePrincipal,

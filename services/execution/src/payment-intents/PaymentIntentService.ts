@@ -34,6 +34,7 @@ import {
   type GatePolicyDecision,
   type GatePrincipal,
   type GateResult,
+  type GateTenantFlags,
 } from "@brain/shared";
 import { LedgerPaymentIntents, type PaymentIntentRow } from "@brain/ledger";
 import type { Pool } from "pg";
@@ -78,6 +79,11 @@ export interface PaymentIntentServiceDeps {
   approvals: ApprovalService;
   /** Resolves the agent record by id; returns null if missing/inactive. */
   resolveAgent: (ctx: ServiceCallContext, agentId: string) => Promise<GateAgent | null>;
+  /**
+   * Resolves per-tenant gate-enforcement flags for §6 check 1.5 (P0.1).
+   * Optional — absent ⇒ check 1.5 keeps pre-P0.1 behavior.
+   */
+  resolveTenantFlags?: (ctx: ServiceCallContext, tenantId: string) => Promise<GateTenantFlags>;
   /** Resolves the source account by id. */
   resolveAccount: (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null>;
   /** Resolves the destination counterparty by id. */
@@ -314,6 +320,7 @@ export class PaymentIntentService implements IPaymentIntentService {
 
   /** GateDependencies bound to this ctx — shared by execute() and resume(). */
   private gateDeps(ctx: ServiceCallContext): GateDependencies {
+    const resolveTenantFlags = this.deps.resolveTenantFlags;
     return {
       audit: this.deps.audit,
       resolveAgent: (agentId) => this.deps.resolveAgent(ctx, agentId),
@@ -326,6 +333,9 @@ export class PaymentIntentService implements IPaymentIntentService {
           id: intentId,
         }),
       }),
+      ...(resolveTenantFlags !== undefined
+        ? { resolveTenantFlags: (tenantId: string) => resolveTenantFlags(ctx, tenantId) }
+        : {}),
     };
   }
 
