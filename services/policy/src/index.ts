@@ -25,6 +25,14 @@ export {
   type PolicyTypedData,
 } from "./signing.js";
 export { canonicalize, contentHash, contentHashHex, allowedActionsFor } from "./dsl.js";
+export { simulateHistorical, type ReplayAction, type SimulationResult } from "./simulator.js";
+export { lintPolicy, type LintFinding, type LintSeverity, type LintOptions } from "./linter.js";
+export {
+  diffPolicies,
+  type PolicyDiff,
+  type ModifiedRule,
+  type RuleFieldChange,
+} from "./policy-diff.js";
 export {
   validateEvidence,
   type EvidenceValidationInput,

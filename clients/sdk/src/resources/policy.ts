@@ -108,4 +108,68 @@ export class PolicyResource {
     });
     return unwrap(data, error, response.status);
   }
+
+  /** H-18: static-analyze a candidate policy before signing. */
+  async lint(tenantId: string, policyContent: Record<string, unknown>): Promise<PolicyLintResult> {
+    const { data, error, response } = await this.http.POST("/policy/{tenant_id}/lint", {
+      params: { path: { tenant_id: tenantId } },
+      body: { policy_content: policyContent },
+    });
+    return unwrap(data, error, response.status) as unknown as PolicyLintResult;
+  }
+
+  /** H-18: semantic diff between two policy versions. */
+  async diff(tenantId: string, fromVersion: number, toVersion: number): Promise<PolicyDiffResult> {
+    const { data, error, response } = await this.http.POST("/policy/{tenant_id}/diff", {
+      params: { path: { tenant_id: tenantId } },
+      body: { from_version: fromVersion, to_version: toVersion },
+    });
+    return unwrap(data, error, response.status) as unknown as PolicyDiffResult;
+  }
+
+  /** H-18: replay a period's actions against a candidate policy. */
+  async simulateHistorical(
+    tenantId: string,
+    params: { policyContent: Record<string, unknown>; periodStart: string; periodEnd: string },
+  ): Promise<PolicySimulationResult> {
+    const { data, error, response } = await this.http.POST(
+      "/policy/{tenant_id}/simulate-historical",
+      {
+        params: { path: { tenant_id: tenantId } },
+        body: {
+          policy_content: params.policyContent,
+          period_start: params.periodStart,
+          period_end: params.periodEnd,
+        },
+      },
+    );
+    return unwrap(data, error, response.status) as unknown as PolicySimulationResult;
+  }
+}
+
+export interface PolicyLintFinding {
+  code: string;
+  severity: "ERROR" | "WARN";
+  rule_id: string | null;
+  message: string;
+}
+export interface PolicyLintResult {
+  tenant_id: string;
+  errors: number;
+  warnings: number;
+  findings: PolicyLintFinding[];
+}
+export interface PolicyDiffResult {
+  from_version: number;
+  to_version: number;
+  added: unknown[];
+  removed: unknown[];
+  modified: unknown[];
+}
+export interface PolicySimulationResult {
+  total: number;
+  would_allow: number;
+  would_confirm: number;
+  would_reject: number;
+  diff_vs_active: Record<string, unknown>;
 }

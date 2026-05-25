@@ -598,6 +598,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/policy/{tenant_id}/lint": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        get?: never;
+        put?: never;
+        /** Static-analyze a candidate policy before signing (H-18) */
+        post: operations["lintPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy/{tenant_id}/diff": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        get?: never;
+        put?: never;
+        /** Semantic diff between two policy versions (H-18) */
+        post: operations["diffPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy/{tenant_id}/simulate-historical": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        get?: never;
+        put?: never;
+        /** Replay the period's actions against a candidate policy (H-18) */
+        post: operations["simulateHistoricalPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents": {
         parameters: {
             query?: never;
@@ -3112,6 +3148,67 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PolicyDecision"];
                 };
+            };
+        };
+    };
+    lintPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { tenant_id: components["parameters"]["TenantId"] };
+            cookie?: never;
+        };
+        requestBody: {
+            content: { "application/json": { policy_content: Record<string, unknown> } };
+        };
+        responses: {
+            /** @description Lint findings */
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": Record<string, unknown> };
+            };
+        };
+    };
+    diffPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { tenant_id: components["parameters"]["TenantId"] };
+            cookie?: never;
+        };
+        requestBody: {
+            content: { "application/json": { from_version: number; to_version: number } };
+        };
+        responses: {
+            /** @description Rule-level diff */
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": Record<string, unknown> };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    simulateHistoricalPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { tenant_id: components["parameters"]["TenantId"] };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    policy_content: Record<string, unknown>;
+                    period_start: string;
+                    period_end: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Simulation result + diff vs active */
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": Record<string, unknown> };
             };
         };
     };

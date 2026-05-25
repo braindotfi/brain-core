@@ -1038,6 +1038,107 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicyDecision'
 
+  /policy/{tenant_id}/lint:
+    post:
+      tags: [Policy]
+      summary: Static-analyze a candidate policy before signing (H-18)
+      operationId: lintPolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [policy_content]
+              properties:
+                policy_content: { type: object }
+      responses:
+        '200':
+          description: Lint findings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id: { type: string }
+                  errors: { type: integer }
+                  warnings: { type: integer }
+                  findings:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string }
+                        severity: { type: string, enum: [ERROR, WARN] }
+                        rule_id: { type: [string, "null"] }
+                        message: { type: string }
+
+  /policy/{tenant_id}/diff:
+    post:
+      tags: [Policy]
+      summary: Semantic diff between two policy versions (H-18)
+      operationId: diffPolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_version, to_version]
+              properties:
+                from_version: { type: integer }
+                to_version: { type: integer }
+      responses:
+        '200':
+          description: Rule-level diff
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  from_version: { type: integer }
+                  to_version: { type: integer }
+                  added: { type: array, items: { type: object } }
+                  removed: { type: array, items: { type: object } }
+                  modified: { type: array, items: { type: object } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /policy/{tenant_id}/simulate-historical:
+    post:
+      tags: [Policy]
+      summary: Replay the period's actions against a candidate policy (H-18)
+      operationId: simulateHistoricalPolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [policy_content, period_start, period_end]
+              properties:
+                policy_content: { type: object }
+                period_start: { type: string }
+                period_end: { type: string }
+      responses:
+        '200':
+          description: Simulation result + diff vs active
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  would_allow: { type: integer }
+                  would_confirm: { type: integer }
+                  would_reject: { type: integer }
+                  diff_vs_active: { type: object }
+
   #############################################################################
   # LAYER 5: AGENT (action orchestration; legacy /execution/* paths retained)
   #
