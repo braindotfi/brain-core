@@ -51,6 +51,11 @@ contract BrainSmartAccount {
     /// @dev Kill-switch flag. Paused keys cannot execute but keep their record,
     ///      window spend, limits, and metadata so resume needs no re-grant.
     mapping(address => bool) private _paused;
+    /// @dev H-03: per-holder replay nonce. Each execute must supply the current
+    ///      value; it increments by 1 on every accepted execute.
+    mapping(address => uint256) private _nonces;
+    /// @dev H-03: per-holder re-entrancy guard for the external call.
+    mapping(address => bool) private _locked;
 
     error NotOwner();
     error NotHolder();
@@ -64,6 +69,11 @@ contract BrainSmartAccount {
     error ExceedsPerPeriodCap();
     error PolicyVersionMismatch();
     error CallFailed(bytes reason);
+    // H-03 hardening.
+    error TargetsRequired();
+    error SelectorsRequired();
+    error ReentrantCall();
+    error BadNonce(uint256 expected, uint256 supplied);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -83,11 +93,22 @@ contract BrainSmartAccount {
     }
 
     /// @notice Grant a session key. Overwrites any existing key for the holder.
+    /// @dev H-03: an empty target/selector allowlist is a footgun ("any" was
+    ///      previously allowed), so require both non-empty, and require a real
+    ///      policyVersion at grant time (moved here from executeViaSessionKey).
     function grantSessionKey(SessionKey calldata key) external onlyOwner {
         if (key.holder == address(0)) revert ZeroAddress();
         if (key.validUntil <= block.timestamp) revert KeyExpired();
+        if (key.allowedTargets.length == 0) revert TargetsRequired();
+        if (key.allowedSelectors.length == 0) revert SelectorsRequired();
+        if (key.policyVersion == bytes32(0)) revert PolicyVersionMismatch();
         _keys[key.holder] = key;
         emit SessionKeyGranted(key.holder, key.policyVersion, key.validUntil);
+    }
+
+    /// @notice H-03: the next expected execute nonce for `holder`.
+    function nonce(address holder) external view returns (uint256) {
+        return _nonces[holder];
     }
 
     /// @notice Revoke a session key. Owner-only. Takes effect immediately.
@@ -123,16 +144,26 @@ contract BrainSmartAccount {
 
     /// @notice Execute a call via a session key. Holder-authenticated.
     ///         Reverts if anything falls outside the key's scope.
-    function executeViaSessionKey(address target, uint256 value, bytes calldata data)
+    function executeViaSessionKey(uint256 nonceSupplied, address target, uint256 value, bytes calldata data)
         external
         returns (bytes memory result)
     {
+        // H-03: re-entrancy guard — a malicious target cannot call back in.
+        if (_locked[msg.sender]) revert ReentrantCall();
+
         SessionKey storage key = _keys[msg.sender];
         if (key.holder != msg.sender) revert NotHolder();
         if (_paused[msg.sender]) revert KeyPaused();
         if (block.timestamp < key.validAfter || block.timestamp >= key.validUntil) revert KeyNotActive();
 
-        // Target allowlist (empty = any).
+        // H-03: replay nonce — each execute must supply the current value.
+        if (nonceSupplied != _nonces[msg.sender]) revert BadNonce(_nonces[msg.sender], nonceSupplied);
+        _nonces[msg.sender]++;
+
+        _locked[msg.sender] = true;
+
+        // Target allowlist. H-03 guarantees a granted key always has a
+        // non-empty list, so the length guard is defense-in-depth only.
         if (key.allowedTargets.length != 0) {
             bool ok;
             for (uint256 i = 0; i < key.allowedTargets.length; ++i) {
@@ -143,7 +174,8 @@ contract BrainSmartAccount {
 
         bytes4 selector = data.length >= 4 ? bytes4(data[:4]) : bytes4(0);
 
-        // Selector allowlist (empty = any).
+        // Selector allowlist. As with targets, H-03 guarantees non-empty at
+        // grant, so the length guard is defense-in-depth only.
         if (key.allowedSelectors.length != 0) {
             bool ok;
             for (uint256 i = 0; i < key.allowedSelectors.length; ++i) {
@@ -179,17 +211,19 @@ contract BrainSmartAccount {
             _windowSpent[msg.sender][window] = spent;
         }
 
-        // Policy version gate — caller is responsible for passing the
-        // version that matches what BrainPolicyRegistry returned for the
-        // relevant (tenantId, version). The account does not re-verify
-        // the on-chain registry state during execution (gas); the
-        // off-chain decision already did. If this mismatches, revert.
-        // The key's policyVersion is set at grant time; a no-op guard
-        // here confirms the guard is active (prevents accidental
-        // zero-policy keys).
-        if (key.policyVersion == bytes32(0)) revert PolicyVersionMismatch();
+        // H-03: the policyVersion zero-check now lives in grantSessionKey
+        // (a key can never be stored with a zero policyVersion), so it is
+        // not re-checked here. The caller is still responsible for granting
+        // a key whose policyVersion matches what BrainPolicyRegistry returned
+        // for the relevant (tenantId, version); the account does not re-verify
+        // the on-chain registry state during execution (gas) — the off-chain
+        // decision already did.
 
+        // Interaction. The nonce was already incremented and _locked set
+        // above (checks-effects-interactions), so a malicious target cannot
+        // replay or re-enter. Release the lock immediately after the call.
         (bool success, bytes memory ret) = target.call{value: value}(data);
+        _locked[msg.sender] = false;
         if (!success) revert CallFailed(ret);
 
         emit AgentActionExecuted(

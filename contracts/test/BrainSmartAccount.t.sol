@@ -41,6 +41,32 @@ contract MockERC20 {
     }
 }
 
+/// @dev H-03 re-entrancy probe. Acts as both holder AND target: when the account
+///      calls back into `reenter()`, this contract tries to re-enter
+///      executeViaSessionKey as itself (msg.sender == holder), which must be
+///      blocked by the per-holder _locked guard (ReentrantCall).
+contract ReentrantHolder {
+    BrainSmartAccount public acct;
+    bool public didReenter;
+    bytes4 public caughtSelector;
+
+    function setAcct(BrainSmartAccount a) external {
+        acct = a;
+    }
+
+    function reenter() external payable {
+        // The account is mid-execution for this holder, so _locked[this] is set.
+        // Re-entering as ourselves must revert with ReentrantCall.
+        try acct.executeViaSessionKey(0, address(this), 0, abi.encodeWithSelector(this.reenter.selector)) {
+            didReenter = true;
+        } catch (bytes memory err) {
+            if (err.length >= 4) {
+                caughtSelector = bytes4(err);
+            }
+        }
+    }
+}
+
 contract BrainSmartAccountTest is Test {
     BrainSmartAccount internal acct;
     Target internal target;
@@ -76,21 +102,89 @@ contract BrainSmartAccountTest is Test {
         acct.grantSessionKey(key);
     }
 
+    // --- grant authorization + validation (H-03) -------------------------
+
     function test_grant_onlyOwner() public {
-        BrainSmartAccount.SessionKey memory key;
-        key.holder = holder;
-        key.validUntil = block.timestamp + 1;
-        key.policyVersion = POLICY_VER;
+        address[] memory targets = new address[](1);
+        targets[0] = address(target);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = Target.ping.selector;
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: 0,
+            validUntil: block.timestamp + 1,
+            allowedTargets: targets,
+            allowedSelectors: selectors,
+            maxPerTx: 1 ether,
+            maxPerPeriod: 1 ether,
+            periodSeconds: 0,
+            policyVersion: POLICY_VER
+        });
 
         vm.expectRevert(BrainSmartAccount.NotOwner.selector);
         acct.grantSessionKey(key);
     }
 
+    /// H-03: an empty target allowlist was a "permit anything" footgun.
+    function test_grant_rejectsEmptyTargets() public {
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = Target.ping.selector;
+        BrainSmartAccount.SessionKey memory key;
+        key.holder = holder;
+        key.validUntil = block.timestamp + 3600;
+        key.allowedSelectors = selectors;
+        key.policyVersion = POLICY_VER;
+
+        vm.prank(ownerKey);
+        vm.expectRevert(BrainSmartAccount.TargetsRequired.selector);
+        acct.grantSessionKey(key);
+    }
+
+    /// H-03: an empty selector allowlist was a "permit anything" footgun.
+    function test_grant_rejectsEmptySelectors() public {
+        address[] memory targets = new address[](1);
+        targets[0] = address(target);
+        BrainSmartAccount.SessionKey memory key;
+        key.holder = holder;
+        key.validUntil = block.timestamp + 3600;
+        key.allowedTargets = targets;
+        key.policyVersion = POLICY_VER;
+
+        vm.prank(ownerKey);
+        vm.expectRevert(BrainSmartAccount.SelectorsRequired.selector);
+        acct.grantSessionKey(key);
+    }
+
+    /// H-03: zero policyVersion is now rejected at GRANT (moved out of execute).
+    function test_grant_rejectsZeroPolicyVersion() public {
+        address[] memory targets = new address[](1);
+        targets[0] = address(target);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = Target.ping.selector;
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: 0,
+            validUntil: block.timestamp + 3600,
+            allowedTargets: targets,
+            allowedSelectors: selectors,
+            maxPerTx: 1 ether,
+            maxPerPeriod: 1 ether,
+            periodSeconds: 0,
+            policyVersion: bytes32(0)
+        });
+
+        vm.prank(ownerKey);
+        vm.expectRevert(BrainSmartAccount.PolicyVersionMismatch.selector);
+        acct.grantSessionKey(key);
+    }
+
+    // --- execute happy path + scope enforcement --------------------------
+
     function test_execute_happyPath() public {
         _grantBasicKey(address(target));
         bytes memory data = abi.encodeCall(Target.ping, (1));
         vm.prank(holder);
-        acct.executeViaSessionKey(address(target), 0.5 ether, data);
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, data);
         assertEq(target.counter(), 1);
         assertEq(acct.spentInCurrentWindow(holder), 0.5 ether);
     }
@@ -99,7 +193,7 @@ contract BrainSmartAccountTest is Test {
         _grantBasicKey(address(target));
         bytes memory data = abi.encodeCall(Target.ping, (1));
         vm.expectRevert(BrainSmartAccount.NotHolder.selector);
-        acct.executeViaSessionKey(address(target), 0, data);
+        acct.executeViaSessionKey(0, address(target), 0, data);
     }
 
     function test_execute_rejectsTargetNotAllowed() public {
@@ -108,7 +202,7 @@ contract BrainSmartAccountTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(BrainSmartAccount.TargetNotAllowed.selector, address(0xDEAD))
         );
-        acct.executeViaSessionKey(address(0xDEAD), 0, abi.encodeCall(Target.ping, (1)));
+        acct.executeViaSessionKey(0, address(0xDEAD), 0, abi.encodeCall(Target.ping, (1)));
     }
 
     function test_execute_rejectsSelectorNotAllowed() public {
@@ -117,14 +211,14 @@ contract BrainSmartAccountTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(BrainSmartAccount.SelectorNotAllowed.selector, bytes4(0xdeadbeef))
         );
-        acct.executeViaSessionKey(address(target), 0, hex"deadbeef");
+        acct.executeViaSessionKey(0, address(target), 0, hex"deadbeef");
     }
 
     function test_execute_rejectsPerTxOverCap() public {
         _grantBasicKey(address(target));
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
-        acct.executeViaSessionKey(address(target), 2 ether, abi.encodeCall(Target.ping, (1)));
+        acct.executeViaSessionKey(0, address(target), 2 ether, abi.encodeCall(Target.ping, (1)));
     }
 
     function test_execute_rejectsPerPeriodOverCap() public {
@@ -132,10 +226,10 @@ contract BrainSmartAccountTest is Test {
         bytes memory data = abi.encodeCall(Target.ping, (1));
         vm.startPrank(holder);
         for (uint256 i = 0; i < 5; ++i) {
-            acct.executeViaSessionKey(address(target), 1 ether, data);
+            acct.executeViaSessionKey(i, address(target), 1 ether, data);
         }
         vm.expectRevert(BrainSmartAccount.ExceedsPerPeriodCap.selector);
-        acct.executeViaSessionKey(address(target), 1 ether, data);
+        acct.executeViaSessionKey(5, address(target), 1 ether, data);
         vm.stopPrank();
     }
 
@@ -145,24 +239,94 @@ contract BrainSmartAccountTest is Test {
         acct.revokeSessionKey(holder);
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.NotHolder.selector);
-        acct.executeViaSessionKey(address(target), 0, abi.encodeCall(Target.ping, (1)));
+        acct.executeViaSessionKey(0, address(target), 0, abi.encodeCall(Target.ping, (1)));
     }
 
-    function test_execute_rejectsZeroPolicyVersion() public {
-        BrainSmartAccount.SessionKey memory key;
-        key.holder = holder;
-        key.validAfter = 0;
-        key.validUntil = block.timestamp + 3600;
-        key.maxPerTx = 1 ether;
-        key.maxPerPeriod = 1 ether;
-        key.policyVersion = bytes32(0);
-        key.periodSeconds = 0;
+    // --- H-03 replay nonce -----------------------------------------------
 
+    function test_nonce_startsAtZero() public {
+        _grantBasicKey(address(target));
+        assertEq(acct.nonce(holder), 0);
+    }
+
+    function test_nonce_incrementsOnAcceptedExecute() public {
+        _grantBasicKey(address(target));
+        bytes memory data = abi.encodeCall(Target.ping, (1));
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, data);
+        assertEq(acct.nonce(holder), 1);
+        vm.prank(holder);
+        acct.executeViaSessionKey(1, address(target), 0.5 ether, data);
+        assertEq(acct.nonce(holder), 2);
+    }
+
+    /// Replaying an already-consumed nonce must revert (anti-replay).
+    function test_execute_replayRevertsWithStaleNonce() public {
+        _grantBasicKey(address(target));
+        bytes memory data = abi.encodeCall(Target.ping, (1));
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, data);
+        // Nonce is now 1; replaying 0 must fail.
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.BadNonce.selector, uint256(1), uint256(0)));
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, data);
+    }
+
+    /// A future / skipped nonce must also revert — only the exact current value.
+    function test_execute_rejectsFutureNonce() public {
+        _grantBasicKey(address(target));
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.BadNonce.selector, uint256(0), uint256(7)));
+        acct.executeViaSessionKey(7, address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
+    }
+
+    /// A reverted execute must NOT consume the nonce (state is rolled back).
+    function test_execute_revertDoesNotConsumeNonce() public {
+        _grantBasicKey(address(target));
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
+        acct.executeViaSessionKey(0, address(target), 2 ether, abi.encodeCall(Target.ping, (1)));
+        // Nonce unchanged; the same nonce now works for a valid call.
+        assertEq(acct.nonce(holder), 0);
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
+        assertEq(acct.nonce(holder), 1);
+    }
+
+    // --- H-03 re-entrancy guard ------------------------------------------
+
+    function test_execute_blocksReentrancy() public {
+        ReentrantHolder rh = new ReentrantHolder();
+        rh.setAcct(acct);
+        address rhAddr = address(rh);
+        vm.deal(address(acct), 100 ether);
+
+        address[] memory targets = new address[](1);
+        targets[0] = rhAddr;
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = ReentrantHolder.reenter.selector;
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: rhAddr,
+            validAfter: 0,
+            validUntil: block.timestamp + 3600,
+            allowedTargets: targets,
+            allowedSelectors: selectors,
+            maxPerTx: 1 ether,
+            maxPerPeriod: 5 ether,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
         vm.prank(ownerKey);
         acct.grantSessionKey(key);
-        vm.prank(holder);
-        vm.expectRevert(BrainSmartAccount.PolicyVersionMismatch.selector);
-        acct.executeViaSessionKey(address(target), 0, abi.encodeCall(Target.ping, (1)));
+
+        // Outer call succeeds; the inner re-entry is caught and rejected.
+        vm.prank(rhAddr);
+        acct.executeViaSessionKey(0, rhAddr, 0, abi.encodeWithSelector(ReentrantHolder.reenter.selector));
+
+        assertFalse(rh.didReenter());
+        assertEq(rh.caughtSelector(), BrainSmartAccount.ReentrantCall.selector);
+        // Outer call still consumed exactly one nonce.
+        assertEq(acct.nonce(rhAddr), 1);
     }
 
     // --- Invariant-ish property: revoked key never executes -------------
@@ -176,7 +340,7 @@ contract BrainSmartAccountTest is Test {
         for (uint256 i = 0; i < 5; ++i) {
             vm.prank(holder);
             vm.expectRevert(BrainSmartAccount.NotHolder.selector);
-            acct.executeViaSessionKey(address(target), 0, data);
+            acct.executeViaSessionKey(0, address(target), 0, data);
         }
     }
 
@@ -188,7 +352,22 @@ contract BrainSmartAccountTest is Test {
         bytes memory data = abi.encodeCall(Target.ping, (1));
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
-        acct.executeViaSessionKey(address(target), value, data);
+        acct.executeViaSessionKey(0, address(target), value, data);
+    }
+
+    // --- Fuzz: nonce is monotonic and gap-free across accepted executes ---
+
+    function testFuzz_nonceMonotonic(uint8 raw) public {
+        _grantBasicKey(address(target));
+        uint256 calls = uint256(raw) % 6; // ≤5 × 0.5 ether stays within the 5-ether period cap
+        bytes memory data = abi.encodeCall(Target.ping, (1));
+        vm.startPrank(holder);
+        for (uint256 i = 0; i < calls; ++i) {
+            assertEq(acct.nonce(holder), i);
+            acct.executeViaSessionKey(i, address(target), 0.5 ether, data);
+            assertEq(acct.nonce(holder), i + 1);
+        }
+        vm.stopPrank();
     }
 
     // --- ERC20 cap-bypass fix tests --------------------------------------
@@ -224,13 +403,13 @@ contract BrainSmartAccountTest is Test {
         // amount exactly at cap — should succeed.
         bytes memory data = abi.encodeCall(MockERC20.transfer, (address(0xBEEF), 100e18));
         vm.prank(holder);
-        acct.executeViaSessionKey(address(token), 0, data);
+        acct.executeViaSessionKey(0, address(token), 0, data);
 
         // amount one unit over cap — must revert.
         data = abi.encodeCall(MockERC20.transfer, (address(0xBEEF), 100e18 + 1));
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
-        acct.executeViaSessionKey(address(token), 0, data);
+        acct.executeViaSessionKey(1, address(token), 0, data);
     }
 
     function test_erc20_transferFrom_respectsPerTxCap() public {
@@ -245,7 +424,7 @@ contract BrainSmartAccountTest is Test {
         bytes memory data = abi.encodeCall(MockERC20.transferFrom, (alice, address(0xBEEF), 101e18));
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
-        acct.executeViaSessionKey(address(token), 0, data);
+        acct.executeViaSessionKey(0, address(token), 0, data);
     }
 
     function test_erc20_approve_respectsPerTxCap() public {
@@ -255,7 +434,7 @@ contract BrainSmartAccountTest is Test {
         bytes memory data = abi.encodeCall(MockERC20.approve, (address(0xBEEF), 1e30));
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
-        acct.executeViaSessionKey(address(token), 0, data);
+        acct.executeViaSessionKey(0, address(token), 0, data);
     }
 
     function test_erc20_transfer_respectsPerPeriodCap() public {
@@ -267,11 +446,11 @@ contract BrainSmartAccountTest is Test {
         bytes memory data = abi.encodeCall(MockERC20.transfer, (address(0xBEEF), 100e18));
         vm.startPrank(holder);
         for (uint256 i = 0; i < 5; ++i) {
-            acct.executeViaSessionKey(address(token), 0, data);
+            acct.executeViaSessionKey(i, address(token), 0, data);
         }
         // 6th call breaches period cap.
         vm.expectRevert(BrainSmartAccount.ExceedsPerPeriodCap.selector);
-        acct.executeViaSessionKey(address(token), 0, data);
+        acct.executeViaSessionKey(5, address(token), 0, data);
         vm.stopPrank();
     }
 
@@ -284,7 +463,7 @@ contract BrainSmartAccountTest is Test {
         bytes memory data = abi.encodeCall(MockERC20.transfer, (address(0xBEEF), tokenAmt));
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
-        acct.executeViaSessionKey(address(token), 0, data);
+        acct.executeViaSessionKey(0, address(token), 0, data);
     }
 
     // --- Kill-switch: pauseSessionKey vs revokeSessionKey (1b.3) ---------------
@@ -303,14 +482,14 @@ contract BrainSmartAccountTest is Test {
 
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.KeyPaused.selector);
-        acct.executeViaSessionKey(address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
     }
 
     function test_pause_preservesKeyRecordLimitsAndWindowSpend() public {
         _grantBasicKey(address(target));
         // Spend 0.5 ether, then pause.
         vm.prank(holder);
-        acct.executeViaSessionKey(address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
         assertEq(acct.spentInCurrentWindow(holder), 0.5 ether);
 
         vm.prank(ownerKey);
@@ -327,8 +506,9 @@ contract BrainSmartAccountTest is Test {
         acct.unpauseSessionKey(holder);
         assertFalse(acct.isSessionKeyPaused(holder));
 
+        // Nonce also survived the pause/resume (it is part of the key record's lifecycle).
         vm.prank(holder);
-        acct.executeViaSessionKey(address(target), 0.5 ether, abi.encodeCall(Target.ping, (2)));
+        acct.executeViaSessionKey(1, address(target), 0.5 ether, abi.encodeCall(Target.ping, (2)));
         assertEq(target.counter(), 3);
         assertEq(acct.spentInCurrentWindow(holder), 1 ether);
     }
@@ -341,21 +521,23 @@ contract BrainSmartAccountTest is Test {
         assertEq(acct.sessionKey(holder).holder, address(0));
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.NotHolder.selector);
-        acct.executeViaSessionKey(address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, abi.encodeCall(Target.ping, (1)));
     }
 
     // --- Per-task minimum-privilege session key (3.3) -------------------------
 
     function _grantPerTaskKey(address t, uint256 amount) internal {
-        // exact target, exact amount (per-tx == per-period), ~10m window.
+        // exact target, exact selector, exact amount (per-tx == per-period), ~10m window.
         address[] memory targets = new address[](1);
         targets[0] = t;
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = Target.ping.selector;
         BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
             holder: holder,
             validAfter: 0,
             validUntil: block.timestamp + 600,
             allowedTargets: targets,
-            allowedSelectors: new bytes4[](0),
+            allowedSelectors: selectors,
             maxPerTx: amount,
             maxPerPeriod: amount,
             periodSeconds: 600,
@@ -371,12 +553,12 @@ contract BrainSmartAccountTest is Test {
 
         // First transfer of the exact amount succeeds.
         vm.prank(holder);
-        acct.executeViaSessionKey(address(target), 1 ether, data);
+        acct.executeViaSessionKey(0, address(target), 1 ether, data);
 
         // A second transfer exhausts the one-time per-period budget.
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.ExceedsPerPeriodCap.selector);
-        acct.executeViaSessionKey(address(target), 1 ether, data);
+        acct.executeViaSessionKey(1, address(target), 1 ether, data);
     }
 
     function test_perTaskKey_rejectsOverAmountAndExpiry() public {
@@ -386,12 +568,12 @@ contract BrainSmartAccountTest is Test {
         // Over the exact amount → per-tx cap.
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
-        acct.executeViaSessionKey(address(target), 2 ether, data);
+        acct.executeViaSessionKey(0, address(target), 2 ether, data);
 
         // After the ~10m window → not active.
         vm.warp(block.timestamp + 601);
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.KeyNotActive.selector);
-        acct.executeViaSessionKey(address(target), 1 ether, data);
+        acct.executeViaSessionKey(0, address(target), 1 ether, data);
     }
 }
