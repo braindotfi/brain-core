@@ -14,5 +14,7 @@ export {
   internalAgentCatalog,
   internalAgentDefinitions,
   internalAgentHandlers,
+  manifestFor,
+  allManifests,
 } from "./registry.js";
 export * from "./registration.js";

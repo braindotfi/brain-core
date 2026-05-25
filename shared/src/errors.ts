@@ -107,6 +107,9 @@ export const BRAIN_ERROR_CODES = [
   "proof_not_found",
   "agent_run_not_found",
 
+  // Agent capability manifest (H-15)
+  "agent_manifest_invalid",
+
   // Infrastructure
   "dependency_unavailable",
   "internal_server_error",
@@ -210,6 +213,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   // 400 — validation
   request_body_invalid: 400,
   request_params_invalid: 400,
+  agent_manifest_invalid: 400,
 
   // 413 — too large
   request_too_large: 413,

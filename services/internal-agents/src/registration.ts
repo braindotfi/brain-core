@@ -14,7 +14,8 @@
  */
 
 import { capabilityHash } from "@brain/shared";
-import type { AgentProvenance, InternalAgentDefinition } from "@brain/schemas";
+import type { AgentManifest, AgentProvenance, InternalAgentDefinition } from "@brain/schemas";
+import { canonicalManifest, validateManifest } from "@brain/schemas";
 
 export interface CapabilityRegistration {
   readonly name: string;
@@ -49,4 +50,51 @@ export function buildInternalAgentRegistrations(
   catalog: readonly InternalAgentDefinition[],
 ): InternalAgentRegistration[] {
   return catalog.map(buildInternalAgentRegistration);
+}
+
+// ---------------------------------------------------------------------------
+// H-15 manifest scope hash + external-agent registration validation.
+// ---------------------------------------------------------------------------
+
+/** keccak256(canonical_json(manifest)) — the on-chain scope hash for an agent. */
+export function computeManifestScopeHash(manifest: AgentManifest): `0x${string}` {
+  return capabilityHash(canonicalManifest(manifest));
+}
+
+export interface ManifestRegistrationCheck {
+  readonly ok: boolean;
+  /** Structural problems with the submitted manifest (empty when ok). */
+  readonly problems: readonly string[];
+  /** keccak256(canonical_json(manifest)) computed from the submitted manifest. */
+  readonly computedScopeHash: `0x${string}` | null;
+  /** True iff the computed scope hash equals the on-chain scope hash. */
+  readonly scopeHashMatches: boolean;
+}
+
+/**
+ * Validate a manifest submitted at external-agent registration and cross-check
+ * its canonical scope hash against the value attested on-chain in
+ * BrainMCPAgentRegistry. A malformed manifest or a scope-hash mismatch must
+ * reject (the route maps a failed check to `agent_manifest_invalid`).
+ *
+ * The on-chain scope hash is read by the caller (a BrainMCPAgentRegistry read —
+ * blocked in the sandbox); pass it in so this check stays pure + testable.
+ */
+export function checkManifestForRegistration(
+  manifest: unknown,
+  onchainScopeHash: `0x${string}` | null,
+): ManifestRegistrationCheck {
+  const problems = validateManifest(manifest);
+  if (problems.length > 0) {
+    return { ok: false, problems, computedScopeHash: null, scopeHashMatches: false };
+  }
+  const computed = computeManifestScopeHash(manifest as AgentManifest);
+  const matches =
+    onchainScopeHash !== null && computed.toLowerCase() === onchainScopeHash.toLowerCase();
+  return {
+    ok: matches,
+    problems: matches ? [] : ["manifest scope hash does not match the on-chain attestation"],
+    computedScopeHash: computed,
+    scopeHashMatches: matches,
+  };
 }

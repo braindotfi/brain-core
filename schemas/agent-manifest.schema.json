@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brain.fi/schemas/agent-manifest/v1",
+  "title": "AgentManifest",
+  "description": "H-15 canonical agent capability manifest. keccak256(canonical_json(manifest)) is the on-chain scope hash committed in BrainMCPAgentRegistry.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent_key",
+    "category",
+    "capabilities",
+    "can_read",
+    "can_write",
+    "can_propose",
+    "can_execute",
+    "allowed_rails",
+    "required_evidence",
+    "max_risk_level",
+    "policy_primitives_required",
+    "audit_events_emitted",
+    "failure_modes",
+    "fallback_agent_ids",
+    "confidence_output"
+  ],
+  "properties": {
+    "agent_key": { "type": "string" },
+    "category": { "type": "string" },
+    "capabilities": { "type": "array", "items": { "type": "string" } },
+    "can_read": { "type": "array", "items": { "type": "string" } },
+    "can_write": { "type": "array", "items": { "type": "string" } },
+    "can_propose": { "type": "array", "items": { "type": "string" } },
+    "can_execute": { "type": "boolean", "const": false },
+    "allowed_rails": { "type": "array", "items": { "type": "string" } },
+    "required_evidence": { "type": "array", "items": { "type": "string" } },
+    "max_risk_level": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+    "policy_primitives_required": { "type": "array", "items": { "type": "string" } },
+    "audit_events_emitted": { "type": "array", "items": { "type": "string" } },
+    "failure_modes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "description", "fallback_action"],
+        "properties": {
+          "code": { "type": "string" },
+          "description": { "type": "string" },
+          "fallback_action": { "type": "string" }
+        }
+      }
+    },
+    "fallback_agent_ids": { "type": "array", "items": { "type": "string" } },
+    "confidence_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["returns_confidence", "returns_evidence_score", "returns_missing_evidence"],
+      "properties": {
+        "returns_confidence": { "type": "boolean", "const": true },
+        "returns_evidence_score": { "type": "boolean" },
+        "returns_missing_evidence": { "type": "boolean" }
+      }
+    }
+  }
+}

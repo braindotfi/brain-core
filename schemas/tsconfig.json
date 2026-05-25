@@ -5,6 +5,6 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["index.ts", "agent-definition.ts", "agent-run.ts"],
+  "include": ["index.ts", "agent-definition.ts", "agent-manifest.ts", "agent-run.ts"],
   "exclude": ["node_modules", "dist"]
 }

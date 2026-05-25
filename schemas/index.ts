@@ -50,5 +50,7 @@ export const AGENT_CONTRIBUTED_CONFIDENCE_CEILING = 0.5;
 
 // Internal Agent Definition descriptor (router + registration consume this).
 export * from "./agent-definition.js";
+// Agent Capability Manifest (H-15) — canonical formal artifact per agent.
+export * from "./agent-manifest.js";
 // Agent-run status vocabulary (run persistence + worker statuses).
 export * from "./agent-run.js";

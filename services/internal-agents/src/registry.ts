@@ -6,7 +6,8 @@
  * a later phase means adding its definition + handler here — no router change.
  */
 
-import type { InternalAgentDefinition } from "@brain/schemas";
+import type { AgentManifest, InternalAgentDefinition } from "@brain/schemas";
+import { buildManifest } from "@brain/schemas";
 import { collectionsDefinition } from "./collections/definition.js";
 import { collectionsHandler } from "./collections/handler.js";
 import { treasuryDefinition } from "./treasury/definition.js";
@@ -73,6 +74,21 @@ export const internalAgentCatalog: readonly InternalAgentDefinition[] = [
 /** Definitions keyed by agent_key — used by the router/worker for action resolution. */
 export const internalAgentDefinitions: Readonly<Record<string, InternalAgentDefinition>> =
   Object.fromEntries(internalAgentCatalog.map((d) => [d.agent_key, d]));
+
+/**
+ * H-15: the canonical capability manifest for an internal agent, derived from
+ * its definition. Returns null for an unknown agent. The router/MCP consume
+ * this rather than the raw definition shape.
+ */
+export function manifestFor(agentKey: string): AgentManifest | null {
+  const def = internalAgentDefinitions[agentKey];
+  return def === undefined ? null : buildManifest(def);
+}
+
+/** All internal-agent manifests (one per catalog entry). */
+export function allManifests(): AgentManifest[] {
+  return internalAgentCatalog.map(buildManifest);
+}
 
 export const internalAgentHandlers: Readonly<Record<string, InternalAgentHandler>> = {
   collections: collectionsHandler,
