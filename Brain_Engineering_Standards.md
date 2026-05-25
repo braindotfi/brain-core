@@ -15,6 +15,10 @@ v0.4.0 records the hardening wave on top of the v0.3 six-layer architecture. The
 - Execution is now a **durable outbox** (H-04): `execute` enqueues + transitions `approved → dispatching`; an outbox worker dispatches the rail and settles. New `dispatching` PaymentIntent status.
 - New trust surfaces: the **Proof API** (`GET /v1/proof/{action_id}`, H-07) and **Agent Run History** (`/v1/agents/runs/{run_id}/*`, H-25).
 - Outbound webhooks gained a **dead-letter queue + replay** (`/v1/webhooks/{endpoint_id}/{dead-letters,replay}`, H-20) instead of dropping failed deliveries.
+- **Policy governance tooling** (H-18): `POST /v1/policy/{tenant_id}/{lint,diff,simulate-historical}` — static lint (amount cap / counterparty / approval-path / currency / role / risk rules), version diff, and historical replay before signing.
+- **Policy DSL agent-output primitives** (H-16): `agent.confidence.gte`, `agent.evidence_score.gte`, `agent.risk_level.lte` — policy can now gate on an agent's canonical `AgentOutput` (confidence / evidence_score / risk_level). These are `when` keys in the DSL, not `{layer}:{verb}` scopes.
+- **Agent capability manifests** (H-15): a canonical `AgentManifest` (schemas/agent-manifest.schema.json) derived per internal agent; MCP external-agent registration requires + scope-hash-validates a manifest.
+- **Domain event bus** (H-17): a Postgres LISTEN/NOTIFY `domain_events` substrate for runtime fan-out (durability still comes from the audit log).
 
 ### What Changed In v0.2.0
 

@@ -137,3 +137,5 @@ export * from "./agents/index.js";
 
 // Domain-event vocabulary + routing enqueue (event-driven agent routing).
 export * from "./events/triggers.js";
+export * from "./events/types.js";
+export * from "./events/bus.js";
