@@ -128,6 +128,35 @@ contract BrainAuditAnchorTest is Test {
         assertFalse(anchor.verifyInclusion(root, a, proof));
     }
 
+    /// P1.3 invariant: for a valid (root, leaf, proof), mutating any byte of any
+    /// input flips verifyInclusion to false (a collision is cryptographically
+    /// infeasible). Mirrors the off-chain property test in
+    /// services/audit/src/merkle.inclusion.property.test.ts.
+    function testFuzz_verifyInclusion_tamperFails(uint8 which, bytes32 delta) public view {
+        vm.assume(delta != bytes32(0));
+        bytes32 a = keccak256("a");
+        bytes32 b = keccak256("b");
+        bytes32 ha = _leafHash(a);
+        bytes32 hb = _leafHash(b);
+        bytes32 root = _nodeHash(ha, hb);
+        bytes32[] memory proof = new bytes32[](1);
+        proof[0] = hb;
+
+        // The untampered proof verifies.
+        assertTrue(anchor.verifyInclusion(root, a, proof));
+
+        // Mutating exactly one of {root, leaf, proof element} breaks it.
+        uint8 sel = which % 3;
+        if (sel == 0) {
+            assertFalse(anchor.verifyInclusion(root ^ delta, a, proof));
+        } else if (sel == 1) {
+            assertFalse(anchor.verifyInclusion(root, a ^ delta, proof));
+        } else {
+            proof[0] = hb ^ delta;
+            assertFalse(anchor.verifyInclusion(root, a, proof));
+        }
+    }
+
     // --- Fuzz ---
 
     function testFuzz_anchor_idempotentRejection(bytes32 root, uint256 count, uint256 start) public {
