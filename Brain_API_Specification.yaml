@@ -2190,6 +2190,31 @@ paths:
         '404':
           description: No proof for that action (or not visible to this tenant)
 
+  /proof/{action_id}/view:
+    get:
+      tags: [Audit]
+      summary: Human-readable proof viewer (P0.7)
+      description: |
+        Server-rendered HTML view of the same canonical Proof as
+        GET /proof/{action_id} — the compliance-/investor-facing screen. No auth
+        bypass: requires the same authenticated principal + audit:read scope and
+        is tenant-isolated (unknown/cross-tenant id → 404, no existence leak).
+      operationId: getProofView
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Rendered proof page
+          content:
+            text/html:
+              schema: { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No proof for that action (or not visible to this tenant)
+
   /webhooks/{endpoint_id}/dead-letters:
     get:
       tags: [Audit]

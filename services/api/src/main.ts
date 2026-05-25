@@ -60,6 +60,7 @@ import {
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
+import { registerProofViewRoute } from "./proof/view.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
 
 import {
@@ -1167,6 +1168,10 @@ async function main(): Promise<void> {
         chain: "base-sepolia",
       });
       await v1.register(async (child) => registerProofRoutes(child, { buildProof: proofBuilder }));
+      // P0.7 human-readable proof viewer — GET /v1/proof/{id}/view → text/html.
+      await v1.register(async (child) =>
+        registerProofViewRoute(child, { buildProof: proofBuilder }),
+      );
       await v1.register(async (child) =>
         registerMcpRoute(child, mcpServer, {
           skipPrincipalTypeCheck: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,
