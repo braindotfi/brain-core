@@ -10,7 +10,7 @@ Read alongside: Brain_API_Specification.yaml (the OpenAPI contract) and Brain_MV
 
 v0.4.0 records the hardening wave on top of the v0.3 six-layer architecture. The model is unchanged; the safety surfaces are sharpened:
 
-- §6 pre-execution gate is now **16 checks** — the four sub-checks `1.5` (agent behavior pinned), `7.5` (ledger-state binding, H-08), `9.5` (evidence semantics, H-21), and `11.5` (duplicate-payment hard reject, H-22) join the original 13. The audit-before event persists the full check trace (H-07).
+- §6 pre-execution gate is now **13 numbered checks + 4 hardening additions** (17 entries) — the four sub-checks `1.5` (agent behavior pinned), `7.5` (ledger-state binding, H-08), `9.5` (evidence semantics, H-21), and `11.5` (duplicate-payment hard reject, H-22) join the original 13. The audit-before event persists the full check trace (H-07). See §6.2.1.
 - §6.5 documents **shadow-by-default + the promotion-readiness gate** (H-24): an agent cannot go live without `scripts/check-promotion-readiness.mjs` all-green, enforced in CI on `promotion-config.ts` diffs.
 - Execution is now a **durable outbox** (H-04): `execute` enqueues + transitions `approved → dispatching`; an outbox worker dispatches the rail and settles. New `dispatching` PaymentIntent status.
 - New trust surfaces: the **Proof API** (`GET /v1/proof/{action_id}`, H-07) and **Agent Run History** (`/v1/agents/runs/{run_id}/*`, H-25).
