@@ -32,6 +32,8 @@ PRs produced with AI assistance must be labeled `ai-assisted` (§13.4).
 | 5′  | MCP    | `services/mcp` (`@brain/mcp`)             | JSON-RPC 2.0 server, external agent surface          |
 | 6   | Audit  | `services/audit` (`@brain/audit`)         | Append-only Merkle-chained log + on-chain anchor     |
 
+Workspace `services/execution` implements layer 5 (Agent). The directory rename is deferred; the layer name in docs is "Agent".
+
 Python agents (Plaid extractors, reasoners, three MVP agents) live in `services/agents/` (Python 3.12, uv-managed), outside the TS workspace.
 
 Two TypeScript agent-infrastructure services sit alongside the layers (not in the table above): `services/agent-router` (`@brain/agent-router`, routes domain events/intents to internal agents via `POST /agents/route`) and `services/internal-agents` (`@brain/internal-agents`, the first-party agent catalog — capability definitions + handlers).

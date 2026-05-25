@@ -29,7 +29,7 @@ v0.3 introduces a Normalized Ledger layer between Raw and Wiki. v0.2 conflated n
 - Raw remains source evidence.
 - Ledger owns machine-readable financial truth, the source from which Policy evaluates and Agents act.
 - Wiki becomes derived human-readable memory, regenerable from Ledger and Raw at any time.
-- Execution is renamed Agent to better describe its responsibility (proposing and orchestrating actions, not directly executing them).
+- The layer-5 role is named **Agent** to better describe its responsibility (proposing and orchestrating actions, not directly executing them). The rename is conceptual only — the workspace directory stays `services/execution/` (the directory rename is on hold), and back-compat `/execution/*` routes remain alongside `/agents/*`.
 
 The smart contracts, the §1 principles, the audit chain, and the public API contract for Raw / Policy / Audit are unchanged. The Wiki API is preserved but its role in MVP shifts to memory rendering rather than authoritative storage.
 
@@ -444,7 +444,7 @@ What's NOT in MVP. Multi-jurisdictional rules. Complex delegation chains. Policy
 
 ### Layer 5: Agent (Action Orchestration)
 
-What it does. Run specialized agents that read the Ledger, propose actions, pass them through Policy, orchestrate execution of approved actions through external rails, and log everything. The Agent layer **proposes and orchestrates**: it does not execute financial actions directly. Execution happens through provider rails (Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain) under a deterministic gate.
+What it does. Run specialized agents that read the Ledger, propose actions, pass them through Policy, orchestrate execution of approved actions through external rails, and log everything. The Agent layer **proposes and orchestrates**: it does not execute financial actions directly. (Implemented by the `services/execution/` workspace — the directory rename to an Agent-named folder is on hold; back-compat `/execution/*` routes remain alongside `/agents/*`.) Execution happens through provider rails (Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain) under a deterministic gate.
 
 Agents in MVP. Nineteen, in one shared library: 8 business, 8 consumer, 3 agnostic. The original demo agents (reconciliation, payment, fraud-anomaly) are still here; the library extends them rather than replacing them.
 

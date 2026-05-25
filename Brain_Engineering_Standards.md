@@ -25,7 +25,7 @@ v0.4.0 records the hardening wave on top of the v0.3 six-layer architecture. The
 v0.2.0 of this document realigns to the v0.3 architecture (six layers). Specifically:
 
 - §1 adds a fifth principle: deterministic pre-execution gate.
-- §2 repo layout adds `services/ledger/` and renames `services/execution/` → `services/agent/`.
+- §2 repo layout adds `services/ledger/`; a planned `services/execution/` directory rename to the Agent-layer name was **not** carried out — the workspace stays `services/execution/` (the Agent layer, layer 5).
 - §3.2 scope list updated: `ledger:*`, `payment_intent:*`, `agent:*`.
 - §4.3 error code registry adds ledger and payment*intent codes; `execution*\_`codes alias to`agent\_\_` for back-compat.
 - §6 Pre-execution gate is a NEW SECTION (renumbers Observability → §7, Testing → §8, etc.).
@@ -78,7 +78,7 @@ brain/
 └── tools/                # Dev scripts, migration runners, backfill utilities.
 ```
 
-The Layer-5 service kept its original name `services/execution/` (the planned rename to `services/agent/` did not happen). It retains the v0.2 `/execution/*` routes (deprecated) alongside the v0.3 `/payment-intents/*` and `/actions/*` routes. Cross-cutting shared primitives live in the top-level `shared/` package (`@brain/shared`), not in `services/api`.
+The Layer-5 service kept its original name `services/execution/` (the Agent layer, layer 5; the planned directory rename did not happen). It retains the v0.2 `/execution/*` routes (deprecated) alongside the v0.3 `/payment-intents/*` and `/actions/*` routes. Cross-cutting shared primitives live in the top-level `shared/` package (`@brain/shared`), not in `services/api`.
 
 Every service owns its database schema. Cross-service reads go through the owning service's API, never direct database access. This is the rule that preserves the option to extract services later.
 
@@ -462,7 +462,7 @@ For financial actions, use **PaymentIntent** (§9.5) instead of Proposal. The tw
                       └──────────> [failed]
 ```
 
-Transitions are driven by rail-specific callbacks (ACH return file, ERP write confirmation, on-chain tx receipt). Timeouts are per-rail and documented in `services/agent/rails/*.ts`.
+Transitions are driven by rail-specific callbacks (ACH return file, ERP write confirmation, on-chain tx receipt). Timeouts are per-rail and documented in `services/execution/src/rails/*.ts`.
 
 ### 9.3 Policy
 

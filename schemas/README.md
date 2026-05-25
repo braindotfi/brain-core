@@ -31,8 +31,9 @@ The `relation/` directory will be deprecated after refactor-3 lands.
 
 The `policy` and `agent` schemas in `entity/` are pointer types, they
 reference the canonical records in `services/policy/` and
-`services/agent/` respectively. They remain in Wiki for backwards
-compatibility and are queryable as Ledger entities post-refactor.
+`services/execution/` (the Agent layer, layer 5) respectively. They remain in
+Wiki for backwards compatibility and are queryable as Ledger entities
+post-refactor.
 
 ## Wiki Page Types (Layer 3)
 
