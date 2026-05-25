@@ -139,3 +139,6 @@ export * from "./agents/index.js";
 export * from "./events/triggers.js";
 export * from "./events/types.js";
 export * from "./events/bus.js";
+
+// Credential encryption helpers (source secrets at rest).
+export { encryptCredentials, decryptCredentials } from "./crypto/aes-gcm.js";

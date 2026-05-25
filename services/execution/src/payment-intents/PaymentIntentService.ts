@@ -89,6 +89,38 @@ export interface PaymentIntentServiceDeps {
   evaluatePolicy: PaymentIntentPolicyEvaluator;
   /** Resolve the principal making the execute call. Pulled from the JWT. */
   resolvePrincipal: (ctx: ServiceCallContext) => Promise<GatePrincipal>;
+  /**
+   * Optional: resolve on-chain dispatch params for `onchain_transfer` intents.
+   * When present, the resolved params are merged into the outbox payload before
+   * enqueue. When absent, on-chain intents are enqueued with human-readable
+   * fields only (the rail will reject them at dispatch time).
+   */
+  resolveOnchainParams?: (
+    ctx: ServiceCallContext,
+    intent: { source_account_id: string; destination_counterparty_id: string; amount: string; currency: string },
+  ) => Promise<OnchainDispatchParams | null>;
+  /**
+   * Optional: resolve per-source encrypted credentials for ACH intents.
+   * Credentials are merged into the outbox payload (after the gate; never in
+   * the gate trace or audit-before/after). Only injected for rails that need
+   * provider secrets (e.g. Plaid access_token). Never logs or emits credentials.
+   */
+  sourceCredentialResolver?: {
+    resolve(
+      ctx: ServiceCallContext,
+      sourceAccountId: string,
+    ): Promise<{ credentials: object; source_type: string } | null>;
+  };
+}
+
+/** On-chain dispatch params merged into the outbox payload by PaymentIntentService.execute. */
+export interface OnchainDispatchParams {
+  smart_account: string;
+  holder: string;
+  target: string;
+  data: string;
+  value: string;
+  policy_version: string;
 }
 
 // ---------- Service ------------------------------------------------------
@@ -511,6 +543,39 @@ export class PaymentIntentService implements IPaymentIntentService {
       amount: intent.amount,
       currency: intent.currency,
     };
+
+    // For on-chain transfers, merge the protocol-specific params into the payload
+    // so the outbox worker can dispatch to OnchainBaseRail without further lookups.
+    // Credentials never appear in the gate trace or audit-before; the merged payload
+    // only exists in the outbox row (tenant-scoped, RLS-protected).
+    if (intent.action_type === "onchain_transfer" && this.deps.resolveOnchainParams !== undefined) {
+      const onchain = await this.deps.resolveOnchainParams(ctx, {
+        source_account_id: intent.source_account_id,
+        destination_counterparty_id: intent.destination_counterparty_id,
+        amount: intent.amount,
+        currency: intent.currency,
+      });
+      if (onchain !== null) {
+        payload["smart_account"] = onchain.smart_account;
+        payload["holder"] = onchain.holder;
+        payload["target"] = onchain.target;
+        payload["data"] = onchain.data;
+        payload["value"] = onchain.value;
+        payload["policy_version"] = onchain.policy_version;
+      }
+    }
+
+    // For ACH intents, merge the provider credentials (e.g. Plaid access_token)
+    // into the outbox payload so the worker can dispatch without a second lookup.
+    // Credentials are never included in the gate trace, audit-before, or audit-after.
+    if (intent.action_type === "ach_outbound" && this.deps.sourceCredentialResolver !== undefined) {
+      const creds = await this.deps.sourceCredentialResolver.resolve(ctx, intent.source_account_id);
+      if (creds !== null) {
+        const c = creds.credentials as Record<string, unknown>;
+        if (typeof c["access_token"] === "string") payload["access_token"] = c["access_token"];
+        if (typeof c["account_id"] === "string") payload["account_id"] = c["account_id"];
+      }
+    }
 
     // Atomic hand-off: claim approved → dispatching AND enqueue the outbox row
     // in the same transaction. If the conditional transition matches no row the

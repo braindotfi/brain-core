@@ -67,6 +67,8 @@ import {
   findArtifactById,
   tombstoneArtifact,
   listParsedByArtifact,
+  SourceService,
+  PostgresSourceRepository,
   type RegisterRawPluginOptions,
 } from "@brain/raw";
 
@@ -90,7 +92,11 @@ import {
   PaymentIntentService,
   OutboxService,
   AgentService,
+  AchPlaidRail,
+  OnchainBaseRail,
+  RailRegistry,
   defaultRails,
+  startOutboxWorker,
   findAgent,
   findUser,
   insertAgentRun,
@@ -101,7 +107,10 @@ import {
   transitionAgent,
   releaseAgentQuarantine,
 } from "@brain/execution";
-import type { ExecutionDeps } from "@brain/execution";
+import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
+import { parseEther } from "viem";
+import { buildPlaidTransferClient } from "./rails/plaidClient.js";
+import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
 
 import {
   registerAuditRoutes,
@@ -158,6 +167,7 @@ import type {
   GateCounterparty,
   GatePaymentIntent,
   GatePrincipal,
+  TenantScopedClient,
 } from "@brain/shared";
 
 // ---------------------------------------------------------------------------
@@ -504,6 +514,24 @@ async function main(): Promise<void> {
   const ledgerDeps: LedgerDeps = { pool, audit };
   const ledgerService = new LedgerService(ledgerDeps);
 
+  // -- source credential store ----------------------------------------
+  // Always use PostgresSourceRepository for persistence. Credential
+  // encryption is enabled only when BRAIN_SOURCE_CREDENTIAL_KEY is set.
+  const sourceCredentialKey =
+    cfg.BRAIN_SOURCE_CREDENTIAL_KEY !== undefined
+      ? Buffer.from(cfg.BRAIN_SOURCE_CREDENTIAL_KEY, "base64")
+      : undefined;
+  const postgresSourceRepo = new PostgresSourceRepository({
+    pool,
+    ...(sourceCredentialKey !== undefined
+      ? {
+          credentialKey: sourceCredentialKey,
+          credentialKeyId: cfg.BRAIN_SOURCE_CREDENTIAL_KEY_ID,
+        }
+      : {}),
+  });
+  const sourceService = new SourceService(postgresSourceRepo, postgresSourceRepo);
+
   const schemaRegistry = await loadRegistry();
   const metrics = new MockMetrics();
 
@@ -632,6 +660,65 @@ async function main(): Promise<void> {
     resolveRole,
   });
 
+  // Resolve on-chain dispatch params at execute time. Only wired when both the
+  // session key and the BrainSmartAccount address are configured. The closure
+  // looks up the destination counterparty's aliases for the target address.
+  const sessionKey = cfg.BRAIN_SESSION_KEY;
+  const smartAccount = cfg.BRAIN_ONCHAIN_SMART_ACCOUNT;
+  const resolveOnchainParams:
+    | ((
+        ctx: ServiceCallContext,
+        intent: {
+          source_account_id: string;
+          destination_counterparty_id: string;
+          amount: string;
+          currency: string;
+        },
+      ) => Promise<OnchainDispatchParams | null>)
+    | undefined =
+    sessionKey !== undefined && smartAccount !== undefined
+      ? async (ctx, intent) => {
+          const cp = await ledgerService.findCounterpartyById(
+            ctx,
+            intent.destination_counterparty_id,
+          );
+          if (cp === null) return null;
+          const ETH_ADDR = /^0x[0-9a-fA-F]{40}$/;
+          const target = cp.aliases.find((a) => ETH_ADDR.test(a));
+          if (target === undefined) return null;
+          const valueWei =
+            intent.currency.toUpperCase() === "ETH"
+              ? parseEther(intent.amount).toString()
+              : "0";
+          return {
+            smart_account: smartAccount,
+            holder: getHolderAddress(sessionKey as `0x${string}`),
+            target,
+            data: "0x",
+            value: valueWei,
+            policy_version: cfg.BRAIN_ONCHAIN_POLICY_VERSION,
+          };
+        }
+      : undefined;
+
+  // Resolve Plaid credentials at execute time: look up the ledger account's
+  // external_account_id, then call the source service to decrypt credentials.
+  const sourceCredentialResolver = {
+    async resolve(
+      ctx: ServiceCallContext,
+      sourceAccountId: string,
+    ): Promise<{ credentials: object; source_type: string } | null> {
+      const result = await ledgerService.getAccount(ctx, sourceAccountId);
+      if (result === null || result.account.external_account_id === null) return null;
+      const resolved = await sourceService.resolveCredentialsForAccount(
+        ctx,
+        result.account.external_account_id,
+      );
+      if (resolved === null) return null;
+      return { credentials: resolved.credentials, source_type: resolved.type };
+    },
+  };
+
   const paymentIntentService = new PaymentIntentService({
     pool,
     audit,
@@ -643,12 +730,43 @@ async function main(): Promise<void> {
     resolveCounterparty,
     evaluatePolicy: evaluatePaymentIntent,
     resolvePrincipal,
+    ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
+    sourceCredentialResolver,
   });
+
+  // Build the live rail registry. When credentials are present the real rails
+  // are used; otherwise fall back to dev stubs (which fail closed in production).
+  const rails: RailRegistry = (() => {
+    const configured: Rail[] = [];
+    if (cfg.PLAID_CLIENT_ID !== undefined && cfg.PLAID_SECRET !== undefined) {
+      const plaidClient = buildPlaidTransferClient({
+        clientId: cfg.PLAID_CLIENT_ID,
+        secret: cfg.PLAID_SECRET,
+        env: cfg.PLAID_ENV,
+      });
+      configured.push(new AchPlaidRail({ client: plaidClient }));
+      log.info({ env: cfg.PLAID_ENV }, "ACH Plaid rail registered");
+    }
+    if (cfg.BRAIN_SESSION_KEY !== undefined && cfg.BASE_RPC_URL !== undefined) {
+      const executor = buildOnchainExecutor({
+        privateKey: cfg.BRAIN_SESSION_KEY as `0x${string}`,
+        rpcUrl: cfg.BASE_RPC_URL,
+        chainId: cfg.BRAIN_BASE_CHAIN_ID,
+      });
+      configured.push(new OnchainBaseRail({ executor }));
+      log.info({ chainId: cfg.BRAIN_BASE_CHAIN_ID }, "on-chain Base rail registered");
+    }
+    if (configured.length === 0) {
+      log.warn("no real payment rails configured — falling back to dev stubs");
+      return defaultRails();
+    }
+    return new RailRegistry(configured);
+  })();
 
   const executionDeps: ExecutionDeps = {
     pool,
     audit,
-    rails: defaultRails(),
+    rails,
     evaluatePolicy: evaluateLegacyPolicy,
     evaluatePaymentIntent,
     resolveAgent,
@@ -658,19 +776,46 @@ async function main(): Promise<void> {
     resolveRole,
   };
 
-  // H-04 durable execution outbox. `execute` now enqueues a `pending`
-  // execution_outbox row (atomic with approved → dispatching); the rail is
-  // dispatched + the intent settled asynchronously by the outbox worker
-  // (startOutboxWorker from @brain/execution). The worker is a poll loop over
-  // execution_outbox (FOR UPDATE SKIP LOCKED) — NOT a BullMQ/Redis queue — and
-  // claims rows cross-tenant, so it needs a `brain_privileged` (BYPASSRLS)
-  // connection for claim/mark and re-enters withTenantScope per row to settle.
-  // It is intentionally NOT started inline here: like the anchor publisher /
-  // outbound-webhook retry workers it is a deployable background process, and it
-  // is unverifiable in the sandbox (no Postgres). Wiring (privileged pool +
-  // RailRegistry + PaymentIntentService as the OutboxExecutor) is a follow-up to
-  // land alongside the H-04 pg integration tests. Until the worker runs, intents
-  // remain in `dispatching` — they are durably recorded and never lost.
+  // Outbox worker: privileged (BYPASSRLS) pool for cross-tenant claim/mark.
+  // Production: set DATABASE_PRIVILEGED_URL to the brain_privileged role.
+  // Dev/testnet: falls back to DATABASE_URL with a warning.
+  let privilegedPool = pool;
+  if (cfg.DATABASE_PRIVILEGED_URL !== undefined) {
+    privilegedPool = createPool({
+      connectionString: cfg.DATABASE_PRIVILEGED_URL,
+      max: 3,
+      statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
+      applicationName: `${cfg.SERVICE_NAME}-privileged`,
+    });
+  } else {
+    console.warn(
+      "[boot] DATABASE_PRIVILEGED_URL unset — outbox worker uses DATABASE_URL (dev/testnet only).",
+    );
+  }
+
+  const withPrivileged = async <T>(
+    fn: (client: Pick<TenantScopedClient, "query">) => Promise<T>,
+  ): Promise<T> => {
+    const pgClient = await privilegedPool.connect();
+    try {
+      return await fn(pgClient as unknown as Pick<TenantScopedClient, "query">);
+    } finally {
+      pgClient.release();
+    }
+  };
+
+  const outboxWorker = startOutboxWorker(
+    {
+      outbox: new OutboxService(),
+      rails,
+      executor: paymentIntentService,
+      audit,
+      withPrivileged,
+      workerId: `outbox-worker-${process.pid}`,
+    },
+    { intervalMs: 1_000 },
+  );
+  log.info("outbox worker started");
 
   const anchorBroadcaster =
     cfg.AUDIT_PUBLISHER_KEY !== undefined
@@ -930,6 +1075,8 @@ async function main(): Promise<void> {
   const rawOpts: RegisterRawPluginOptions = {
     idempotencyStore,
     idempotencyTtlSeconds: cfg.IDEMPOTENCY_TTL_SECONDS,
+    sourceRepository: postgresSourceRepo,
+    sourceCredentialStore: postgresSourceRepo,
     plaidVerify: {
       keyResolver: cfg.BRAIN_DEMO_MODE
         ? async (_kid: string): Promise<never> => {
@@ -997,6 +1144,8 @@ async function main(): Promise<void> {
           resolveCounterparty,
           evaluatePolicy: evaluatePaymentIntent,
           resolvePrincipal,
+          ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
+          sourceCredentialResolver,
         });
         await registerPaymentIntentRoutes(child, piService);
       });
@@ -1325,6 +1474,7 @@ async function main(): Promise<void> {
     anchorShutdown = true;
     if (anchorTimer !== undefined) clearTimeout(anchorTimer);
     normalizeWorker.stop();
+    outboxWorker.stop();
     anchorReconciler?.stop();
     try {
       await agentRouteWorker.close();

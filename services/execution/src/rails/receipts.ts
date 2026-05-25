@@ -11,7 +11,15 @@ export type RailReceipt =
   | { rail: "ach"; ach_trace: string; return_code?: string }
   | { rail: "wire"; omad: string; imad: string }
   | { rail: "erp"; erp_record_id: string; vendor_ref?: string }
-  | { rail: "onchain"; tx_hash: string; block_number: number; revert_reason?: string };
+  | {
+      rail: "onchain";
+      tx_hash: string;
+      block_number: number;
+      revert_reason?: string;
+      gas_used?: string;
+      nonce?: string;
+      policy_version?: string;
+    };
 
 export type RailReceiptKey = RailReceipt["rail"];
 

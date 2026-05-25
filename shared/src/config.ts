@@ -27,6 +27,11 @@ const envSchema = z.object({
   // `brain_wiki_reader` role (SELECT anywhere; write only wiki_* tables). When
   // unset the Wiki falls back to DATABASE_URL (dev/test) with a boot warning.
   BRAIN_WIKI_DB_URL: z.string().url().optional(),
+  // Outbox worker: cross-tenant claim/mark operations run as brain_privileged
+  // (BYPASSRLS). In production, set this to a connection string for that role.
+  // When unset, the worker falls back to DATABASE_URL with a boot warning —
+  // safe in dev/testnet where RLS is not strictly enforced.
+  DATABASE_PRIVILEGED_URL: z.string().url().optional(),
 
   // ---- Redis ----
   REDIS_URL: z.string().url(),
@@ -106,6 +111,16 @@ const envSchema = z.object({
     .regex(/^0x[0-9a-fA-F]{64}$/)
     .optional(),
   BASE_RPC_URL: z.string().url().optional(),
+  /** Per-deployment BrainSmartAccount address for on-chain PaymentIntent dispatch. */
+  BRAIN_ONCHAIN_SMART_ACCOUNT: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .optional(),
+  /** 0x 32-byte policy version digest the session key was granted for. Defaults to zero bytes32. */
+  BRAIN_ONCHAIN_POLICY_VERSION: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/)
+    .default("0x" + "00".repeat(32)),
   /** Base chain id for the on-chain rail. 8453 mainnet / 84532 sepolia (default). */
   BRAIN_BASE_CHAIN_ID: z.coerce.number().int().positive().default(84_532),
   /**
@@ -140,6 +155,20 @@ const envSchema = z.object({
   AZURE_BLOB_ACCOUNT_NAME: z.string().optional(),
   /** Azure storage account key (required when BLOB_BACKEND=azure). */
   AZURE_BLOB_ACCOUNT_KEY: z.string().optional(),
+
+  // ---- Source credential encryption ----
+  /**
+   * Base64-encoded 32-byte AES-256-GCM key used to encrypt Plaid access_tokens
+   * and other per-source secrets at rest. Staging/dev: set this env var.
+   * Production: key must come from Azure Key Vault (env-var path is a TODO).
+   * Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+   */
+  BRAIN_SOURCE_CREDENTIAL_KEY: z
+    .string()
+    .regex(/^[A-Za-z0-9+/]{43}=$/)
+    .optional(),
+  /** Label for the current credential key — used for key-rotation tracking. */
+  BRAIN_SOURCE_CREDENTIAL_KEY_ID: z.string().min(1).default("local-dev-v1"),
 
   // ---- Agent service ----
   /** Base URL of the brain-agents FastAPI service. Required when running the agent layer. */
