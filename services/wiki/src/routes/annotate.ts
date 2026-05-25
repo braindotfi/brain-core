@@ -15,7 +15,9 @@ import {
   newWikiRelationId,
   requireScope,
   withTenantScope,
+  RedisSlidingWindowRateLimiter,
   type Scope,
+  type SlidingWindowRateLimiter,
 } from "@brain/shared";
 import { RELATION_KINDS, WIKI_KINDS, type RelationKind, type WikiKind } from "@brain/schemas";
 import { findEntityAsOf, insertEntity } from "../repository/entities.js";
@@ -23,6 +25,13 @@ import { insertRelation } from "../repository/relations.js";
 import type { WikiDeps } from "../deps.js";
 
 const WRITE_SCOPE: Scope = "wiki:write";
+
+/** Default per-(tenant, principal) annotation rate, env-overridable. */
+function annotationRatePerHour(): number {
+  const raw = process.env.WIKI_ANNOTATION_RATE_PER_HOUR;
+  const n = raw === undefined ? NaN : Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : 60;
+}
 
 interface EntityAnnotation {
   target: "entity";
@@ -44,6 +53,16 @@ interface RelationAnnotation {
 type Annotation = EntityAnnotation | RelationAnnotation;
 
 export async function registerAnnotate(app: FastifyInstance, deps: WikiDeps): Promise<void> {
+  // Built once at registration. A compromised Wiki principal could otherwise
+  // spam annotations to steer Ledger state (annotation is the promotion path
+  // for agent-contributed facts), so we cap attempts per principal per hour.
+  const limiter: SlidingWindowRateLimiter =
+    deps.annotationRateLimiter ??
+    new RedisSlidingWindowRateLimiter(deps.redis, {
+      windowSeconds: 3600,
+      limit: annotationRatePerHour(),
+    });
+
   app.post("/wiki/annotate", async (request: FastifyRequest, reply) => {
     if (request.principal === undefined) {
       throw brainError("auth_token_missing", "principal required");
@@ -52,6 +71,24 @@ export async function registerAnnotate(app: FastifyInstance, deps: WikiDeps): Pr
     const body = (request.body ?? {}) as Annotation;
     const actor = request.principal.id;
     const tenant = request.principal.tenantId;
+
+    // P0.3: rate-limit BEFORE any Ledger/Wiki write. On limit, audit + 429.
+    const decision = await limiter.hit(`wiki:annotate:${tenant}:${actor}`);
+    if (!decision.allowed) {
+      await deps.audit.emit({
+        tenantId: tenant,
+        layer: "wiki",
+        actor,
+        action: "wiki.annotation.rate_limited",
+        inputs: { principal_id: actor },
+        outputs: { count: decision.count, limit: decision.limit },
+      });
+      throw brainError(
+        "rate_limit_exceeded",
+        `annotation rate limit exceeded (${decision.limit}/hour)`,
+        { details: { count: decision.count, limit: decision.limit } },
+      );
+    }
 
     if (body.target === "entity") {
       return handleEntity(body, reply, deps, tenant, actor);

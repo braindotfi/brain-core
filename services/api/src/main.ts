@@ -28,6 +28,7 @@ import {
   WebhookAuditEmitter,
   RedisIdempotencyStore,
   RedisRevocationStore,
+  RedisSlidingWindowRateLimiter,
   createLogger,
   createPool,
   createBlobAdapter,
@@ -601,6 +602,10 @@ async function main(): Promise<void> {
     schemas: schemaRegistry,
     metrics,
     questionModel: cfg.WIKI_LLM_MODEL,
+    annotationRateLimiter: new RedisSlidingWindowRateLimiter(redis, {
+      windowSeconds: 3600,
+      limit: cfg.WIKI_ANNOTATION_RATE_PER_HOUR,
+    }),
     policyReader,
     agentReader,
   };

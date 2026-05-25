@@ -69,6 +69,8 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().min(1).optional(),
   WIKI_LLM_MODEL: z.string().default("gpt-4o-mini"),
   WIKI_EMBED_MODEL: z.string().default("text-embedding-3-small"),
+  // P0.3: per-(tenant, principal) wiki annotation rate limit, events/hour.
+  WIKI_ANNOTATION_RATE_PER_HOUR: z.coerce.number().int().positive().default(60),
 
   // ---- LLM (Anthropic — legacy / tests only) ----
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
