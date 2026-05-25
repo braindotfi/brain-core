@@ -118,16 +118,30 @@ jobs:
     name: build + push container images
     runs-on: ubuntu-latest
     needs: unit_and_integration
-    # POC: single root Dockerfile builds the api boot binary (all six layers).
-    # Per-service Dockerfiles (raw, wiki, policy, execution, audit, agents) are
-    # planned for the full multi-process deployment; add them to the matrix as
-    # each service gets its own Dockerfile.
+    # The root Dockerfile builds the all-in-one api boot binary (the current
+    # deploy target). The per-service Dockerfiles (P1.5) validate each service's
+    # build graph for the multi-process rollout; the api image stays the deploy
+    # target until standalone per-service entrypoints land.
     strategy:
       fail-fast: false
       matrix:
         include:
           - service: api
             dockerfile: Dockerfile
+          - service: raw
+            dockerfile: services/raw/Dockerfile
+          - service: ledger
+            dockerfile: services/ledger/Dockerfile
+          - service: wiki
+            dockerfile: services/wiki/Dockerfile
+          - service: policy
+            dockerfile: services/policy/Dockerfile
+          - service: execution
+            dockerfile: services/execution/Dockerfile
+          - service: audit
+            dockerfile: services/audit/Dockerfile
+          - service: mcp
+            dockerfile: services/mcp/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - name: Azure login (OIDC)
@@ -162,8 +176,9 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Deploy new revision per service
         run: |
-          # POC: only the api image exists. Expand this list as per-service
-          # Dockerfiles are added to the build matrix above.
+          # All 8 images (api + 7 services) are built & pushed above. The api
+          # boot binary remains the deployed target; expand this list to the
+          # per-service apps once their standalone entrypoints land (P1.5).
           for svc in api; do
             az containerapp update \
               --name "brain-staging-$svc" \
