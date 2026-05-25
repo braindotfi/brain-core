@@ -62,6 +62,8 @@ jobs:
         run: pnpm -r --filter='./services/**' --filter='!./services/agents' run test:integration --if-present
       - name: Invariants DB-integration tests (P0.2)
         run: pnpm -C tests/invariants run test:integration
+      - name: Adversarial safety tests (P1.1)
+        run: pnpm -C tests/adversarial run test && pnpm -C tests/adversarial run test:integration
 
   golden_path_smoke:
     name: golden-path smoke
