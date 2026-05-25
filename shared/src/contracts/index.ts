@@ -27,3 +27,4 @@ export * from "./IPaymentIntentService.js";
 export * from "./IApprovalService.js";
 export * from "./proof.js";
 export * from "./agent-run.js";
+export * from "./agent-output.js";

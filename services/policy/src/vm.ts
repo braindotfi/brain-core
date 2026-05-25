@@ -25,7 +25,14 @@ export interface Action {
   spend_in_window?: Readonly<Record<string, { currency: string; value: string }>>;
   /** Prior tx count per window (this action NOT yet counted). */
   tx_count_in_window?: Readonly<Record<string, number>>;
+  // --- H-16 agent-output signals (from the canonical AgentOutput) ---
+  confidence?: number | null;
+  evidence_score?: number | null;
+  risk_level?: "low" | "medium" | "high" | "critical" | null;
 }
+
+/** Total order over risk levels for the agent.risk_level.lte primitive. */
+const RISK_RANK: Readonly<Record<string, number>> = { low: 0, medium: 1, high: 2, critical: 3 };
 
 export interface Decision {
   outcome: "allow" | "confirm" | "reject";
@@ -185,6 +192,30 @@ function matchRule(
     const prior = action.tx_count_in_window?.[c.window] ?? 0;
     const passed = prior + 1 <= c.lte;
     checks.push({ key: "agent.tx_count_in_window", passed, detail: `${c.window}<=${c.lte}` });
+    if (!passed) return { matched: false, checks };
+  }
+
+  // --- H-16 agent-output gating primitives ---
+  if (w["agent.confidence.gte"] !== undefined) {
+    const bound = w["agent.confidence.gte"];
+    // Fail closed: a missing confidence signal cannot satisfy a threshold.
+    const passed = typeof action.confidence === "number" && action.confidence >= bound;
+    checks.push({ key: "agent.confidence.gte", passed, detail: String(bound) });
+    if (!passed) return { matched: false, checks };
+  }
+  if (w["agent.evidence_score.gte"] !== undefined) {
+    const bound = w["agent.evidence_score.gte"];
+    const passed = typeof action.evidence_score === "number" && action.evidence_score >= bound;
+    checks.push({ key: "agent.evidence_score.gte", passed, detail: String(bound) });
+    if (!passed) return { matched: false, checks };
+  }
+  if (w["agent.risk_level.lte"] !== undefined) {
+    const bound = w["agent.risk_level.lte"];
+    const actual = action.risk_level;
+    // Fail closed: an unknown risk level cannot prove it is within the cap.
+    const passed =
+      typeof actual === "string" && (RISK_RANK[actual] ?? 99) <= (RISK_RANK[bound] ?? 0);
+    checks.push({ key: "agent.risk_level.lte", passed, detail: bound });
     if (!passed) return { matched: false, checks };
   }
 

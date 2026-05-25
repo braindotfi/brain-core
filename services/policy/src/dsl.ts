@@ -60,6 +60,10 @@ export interface RuleWhen {
   "agent.behaviorHash"?: string; // pin to a registered behaviorHash (0x-hex; Phase 2.3)
   "agent.spend_in_window"?: SpendWindowConstraint;
   "agent.tx_count_in_window"?: TxCountWindowConstraint;
+  // --- H-16 agent-output gating primitives ---
+  "agent.confidence.gte"?: number; // require the agent's confidence ≥ this (0..1)
+  "agent.evidence_score.gte"?: number; // require evidence_score ≥ this (0..1)
+  "agent.risk_level.lte"?: "low" | "medium" | "high" | "critical"; // cap the action's risk
 }
 
 export interface PolicyRule {

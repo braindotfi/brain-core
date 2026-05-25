@@ -18,6 +18,8 @@
  * passive notification.
  */
 
+import type { AgentOutput } from "../contracts/agent-output.js";
+
 export type DecisionVerdict = "ALLOW" | "ESCALATE" | "DENY";
 
 export type ExecutionMode = "execute" | "propose" | "confirm" | "notify_only" | "reject";
@@ -30,6 +32,38 @@ export interface ExecutionModeInput {
   readonly riskLevel: "low" | "medium" | "high";
   /** Confidence at/above this counts as "high". Default 0.85. */
   readonly highConfidenceThreshold?: number;
+}
+
+/**
+ * H-16: resolve an execution mode directly from a canonical AgentOutput. The
+ * agent's `suggested_execution_mode` is the ceiling; it is downgraded when
+ * confidence is below the floor, evidence is missing, or risk is elevated.
+ * `critical`/`high` risk never resolves above `confirm`; any missing evidence
+ * forces `notify_only`. This is the AgentOutput-shaped entry point the spec asks
+ * the resolver to consume.
+ */
+export function resolveExecutionModeFromOutput(
+  output: AgentOutput,
+  opts: { minimumConfidence: number; highConfidenceThreshold?: number } = {
+    minimumConfidence: 0.7,
+  },
+): ExecutionMode {
+  const high = opts.highConfidenceThreshold ?? 0.85;
+
+  if (output.missing_evidence.length > 0 || output.confidence < opts.minimumConfidence) {
+    return "notify_only";
+  }
+  // The agent's own suggestion is the starting ceiling.
+  let mode: ExecutionMode = output.suggested_execution_mode;
+  // Elevated risk caps at confirm.
+  if (output.risk_level === "high" || output.risk_level === "critical") {
+    mode = capAutonomy(mode, "confirm");
+  }
+  // `execute` requires high confidence + low risk; otherwise downgrade to propose.
+  if (mode === "execute" && !(output.confidence >= high && output.risk_level === "low")) {
+    mode = "propose";
+  }
+  return mode;
 }
 
 export function resolveExecutionMode(input: ExecutionModeInput): ExecutionMode {
