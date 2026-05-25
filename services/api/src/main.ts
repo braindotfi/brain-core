@@ -426,6 +426,57 @@ function makeResolveRole(
 }
 
 // ---------------------------------------------------------------------------
+// P0.4 approver/quorum hardening hooks
+// ---------------------------------------------------------------------------
+
+function makeIsApproverActive(
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext, principalId: string) => Promise<boolean> {
+  return async (ctx, principalId) =>
+    withTenantScope(pool, ctx.tenantId, async (c) => {
+      const agent = await findAgent(c, principalId);
+      if (agent !== null) return agent.state === "active";
+      // MVP user model has no revocation column; existence ⇒ active approver.
+      // TODO(brain-hardening): honor a user.status/disabled flag once it exists.
+      const user = await findUser(c, principalId);
+      return user !== null;
+    });
+}
+
+function makeResolveSubjectOwnerTenant(
+  pool: ReturnType<typeof createPool>,
+): (
+  ctx: ServiceCallContext,
+  subject: { type: "payment_intent" | "proposal"; id: string },
+) => Promise<string | null> {
+  return async (ctx, subject) =>
+    withTenantScope(pool, ctx.tenantId, async (c) => {
+      if (subject.type === "payment_intent") {
+        const { rows } = await c.query<{ owner_id: string }>(
+          `SELECT owner_id FROM ledger_payment_intents WHERE id = $1`,
+          [subject.id],
+        );
+        return rows[0]?.owner_id ?? null;
+      }
+      const { rows } = await c.query<{ tenant_id: string }>(
+        `SELECT tenant_id FROM proposals WHERE id = $1`,
+        [subject.id],
+      );
+      return rows[0]?.tenant_id ?? null;
+    });
+}
+
+function makeResolveActivePolicyVersion(
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext) => Promise<number | null> {
+  return async (ctx) =>
+    withTenantScope(pool, ctx.tenantId, async (c) => {
+      const active = await policyGetActive(c);
+      return active?.version ?? null;
+    });
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -654,10 +705,25 @@ async function main(): Promise<void> {
     : async (tenantId: string, action: Record<string, unknown>) =>
         policyService.evaluateLegacy({ tenantId, actor: "system" }, action);
 
+  // P0.4 hardening hooks. Demo mode uses permissive variants so the golden-path
+  // auto-signing flow is not blocked by revocation/cross-tenant/staleness checks.
+  const isApproverActive = cfg.BRAIN_DEMO_MODE
+    ? async (): Promise<boolean> => true
+    : makeIsApproverActive(pool);
+  const resolveSubjectOwnerTenant = cfg.BRAIN_DEMO_MODE
+    ? async (ctx: ServiceCallContext): Promise<string | null> => ctx.tenantId
+    : makeResolveSubjectOwnerTenant(pool);
+  const resolveActivePolicyVersion = cfg.BRAIN_DEMO_MODE
+    ? async (): Promise<number | null> => null
+    : makeResolveActivePolicyVersion(pool);
+
   const approvalService = new ApprovalService({
     pool,
     audit,
     resolveRole,
+    isApproverActive,
+    resolveSubjectOwnerTenant,
+    resolveActivePolicyVersion,
   });
 
   const paymentIntentService = new PaymentIntentService({
@@ -686,6 +752,9 @@ async function main(): Promise<void> {
     resolveCounterparty,
     resolvePrincipal,
     resolveRole,
+    isApproverActive,
+    resolveSubjectOwnerTenant,
+    resolveActivePolicyVersion,
   };
 
   // H-04 durable execution outbox. `execute` now enqueues a `pending`
@@ -1015,6 +1084,9 @@ async function main(): Promise<void> {
           pool,
           audit,
           resolveRole,
+          isApproverActive,
+          resolveSubjectOwnerTenant,
+          resolveActivePolicyVersion,
         });
         const piService = new PaymentIntentService({
           pool,

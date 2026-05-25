@@ -197,7 +197,13 @@ payment_intent_not_found,
 payment_intent_invalid_state,
 payment_intent_gate_failed,               // pre-execution gate failed; details list the failing checks
 payment_intent_approval_required,
-payment_intent_approval_invalid
+payment_intent_approval_invalid,
+
+// Approver / quorum hardening (P0.4)
+approval_signer_revoked,                   // 403 — signer is no longer an active approver
+approval_cross_tenant,                     // 403 — signer tenant does not own the subject
+approval_duplicate_signer,                 // 409 — principal already signed this subject
+approval_policy_stale                      // 409 — signature was against a superseded policy version
 
 // Audit
 audit_event_not_found, audit_proof_invalid, audit_anchor_not_yet_published

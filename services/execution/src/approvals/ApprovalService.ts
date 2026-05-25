@@ -10,6 +10,7 @@
  */
 
 import {
+  brainError,
   newApprovalId,
   withTenantScope,
   type ApprovalRecord,
@@ -18,7 +19,16 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import type { Pool } from "pg";
-import { insertApproval, listApprovals, type ApprovalSubjectType } from "./repository.js";
+import {
+  findApprovalForSigner,
+  insertApproval,
+  listApprovals,
+  listValidApprovals,
+  markStaleForSupersededVersion,
+  type ApprovalSubjectType,
+} from "./repository.js";
+
+export type ApprovalSubject = { type: ApprovalSubjectType; id: string };
 
 export interface ApprovalServiceDeps {
   pool: Pool;
@@ -26,6 +36,27 @@ export interface ApprovalServiceDeps {
   /** Resolves a principal id to a role (e.g. cfo, ceo). Caller-supplied so
    *  the auth/role model lives at the API boundary, not in this service. */
   resolveRole: (ctx: ServiceCallContext, principalId: string) => Promise<string | null>;
+  /**
+   * P0.4: true iff the signer principal is still an active approver (not
+   * revoked). Resolved against the users/agents table at the API boundary.
+   * Absent ⇒ the revocation guard is skipped (back-compat / tests).
+   */
+  isApproverActive?: (ctx: ServiceCallContext, principalId: string) => Promise<boolean>;
+  /**
+   * P0.4: owning tenant of the approval subject (the intent/proposal). The gate
+   * rejects a signature whose signer tenant (ctx.tenantId) differs. Absent ⇒
+   * the cross-tenant guard is skipped (RLS remains the backstop).
+   */
+  resolveSubjectOwnerTenant?: (
+    ctx: ServiceCallContext,
+    subject: ApprovalSubject,
+  ) => Promise<string | null>;
+  /**
+   * P0.4: the tenant policy version active *now*. Recorded on each signature so
+   * the gate can invalidate signatures made against a superseded version.
+   * Absent ⇒ null is recorded (no staleness tracking).
+   */
+  resolveActivePolicyVersion?: (ctx: ServiceCallContext) => Promise<number | null>;
 }
 
 export class ApprovalService implements IApprovalService {
@@ -37,9 +68,42 @@ export class ApprovalService implements IApprovalService {
     role?: string,
     signature?: string,
   ): Promise<ApprovalRecord> {
+    // P0.4 — guard the signer BEFORE writing anything.
+    // (1) Revoked signer: a principal who has lost approver standing cannot sign.
+    if (this.deps.isApproverActive !== undefined) {
+      const active = await this.deps.isApproverActive(ctx, ctx.actor);
+      if (!active) {
+        throw brainError("approval_signer_revoked", "signer is not an active approver", {
+          details: { signer_id: ctx.actor },
+        });
+      }
+    }
+    // (2) Cross-tenant signer: signer's tenant must own the subject.
+    if (this.deps.resolveSubjectOwnerTenant !== undefined) {
+      const ownerTenant = await this.deps.resolveSubjectOwnerTenant(ctx, subject);
+      if (ownerTenant !== null && ownerTenant !== ctx.tenantId) {
+        throw brainError("approval_cross_tenant", "signer tenant does not own this subject", {
+          details: { signer_tenant: ctx.tenantId, owner_tenant: ownerTenant },
+        });
+      }
+    }
+    // (3) Policy version active at signing — recorded so the gate can stale it.
+    const policyVersion =
+      this.deps.resolveActivePolicyVersion !== undefined
+        ? await this.deps.resolveActivePolicyVersion(ctx)
+        : null;
+
     const resolvedRole = role ?? (await this.deps.resolveRole(ctx, ctx.actor)) ?? null;
-    const result = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      insertApproval(c, {
+    const row = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      // (4) Duplicate signer: one signature per (subject, signer) — hard reject
+      // (previously a silent no-op; changed for P0.4 hardening).
+      const existing = await findApprovalForSigner(c, subject.type, subject.id, ctx.actor);
+      if (existing !== null) {
+        throw brainError("approval_duplicate_signer", "principal has already signed this subject", {
+          details: { signer_id: ctx.actor, existing_approval_id: existing.id },
+        });
+      }
+      return insertApproval(c, {
         id: newApprovalId(),
         tenantId: ctx.tenantId,
         subjectType: subject.type,
@@ -47,25 +111,26 @@ export class ApprovalService implements IApprovalService {
         approverPrincipalId: ctx.actor,
         approverRole: resolvedRole,
         signature: signature ?? null,
-      }),
-    );
-
-    if (result.created) {
-      await this.deps.audit.emit({
-        tenantId: ctx.tenantId,
-        layer: "agent",
-        actor: ctx.actor,
-        action: `approval.${subject.type}.signed`,
-        inputs: {
-          subject_type: subject.type,
-          subject_id: subject.id,
-          approver_role: resolvedRole,
-        },
-        outputs: { approval_id: result.row.id },
+        policyVersion,
+        signerTenantId: ctx.tenantId,
       });
-    }
+    });
 
-    return toRecord(result.row);
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "agent",
+      actor: ctx.actor,
+      action: `approval.${subject.type}.signed`,
+      inputs: {
+        subject_type: subject.type,
+        subject_id: subject.id,
+        approver_role: resolvedRole,
+        policy_version: policyVersion,
+      },
+      outputs: { approval_id: row.id },
+    });
+
+    return toRecord(row);
   }
 
   public async list(
@@ -84,22 +149,47 @@ export class ApprovalService implements IApprovalService {
     requiredRoles: string[],
   ): Promise<boolean> {
     if (requiredRoles.length === 0) return true;
-    const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      listApprovals(c, subject.type as ApprovalSubjectType, subject.id),
-    );
-    const signed = new Set(rows.map((r) => r.approver_role).filter((r): r is string => r !== null));
+    // P0.4: only currently-valid (not stale / not revoked) signatures count.
+    const roles = await this.signedValidRoles(ctx, subject, null);
+    const signed = new Set(roles);
     return requiredRoles.every((r) => signed.has(r));
   }
 
-  /** Convenience for the §6 gate. Returns just the signed roles. */
+  /**
+   * Convenience for the §6 gate (check 11). Returns the roles whose signature is
+   * currently valid. When `activePolicyVersion` is supplied, signatures made
+   * against a superseded version are first marked stale (P0.4) and excluded.
+   */
+  public async signedValidRoles(
+    ctx: ServiceCallContext,
+    subject: { type: "payment_intent" | "proposal"; id: string },
+    activePolicyVersion: number | null,
+  ): Promise<string[]> {
+    return withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      if (activePolicyVersion !== null) {
+        await markStaleForSupersededVersion(
+          c,
+          subject.type as ApprovalSubjectType,
+          subject.id,
+          activePolicyVersion,
+        );
+      }
+      const rows = await listValidApprovals(
+        c,
+        subject.type as ApprovalSubjectType,
+        subject.id,
+        activePolicyVersion,
+      );
+      return rows.map((r) => r.approver_role).filter((r): r is string => r !== null);
+    });
+  }
+
+  /** Back-compat shim: valid roles ignoring policy version. */
   public async signedRoles(
     ctx: ServiceCallContext,
     subject: { type: "payment_intent" | "proposal"; id: string },
   ): Promise<string[]> {
-    const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      listApprovals(c, subject.type as ApprovalSubjectType, subject.id),
-    );
-    return rows.map((r) => r.approver_role).filter((r): r is string => r !== null);
+    return this.signedValidRoles(ctx, subject, null);
   }
 }
 

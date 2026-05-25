@@ -56,6 +56,12 @@ export interface GatePolicyDecision {
   counterparty_verification_threshold?: { currency: string; value: string } | null;
   /** Inclusive upper bound for the action. */
   amount_upper_bound?: { currency: string; value: string } | null;
+  /**
+   * Tenant policy version this decision was evaluated against (P0.4). Threaded
+   * into approval resolution so signatures made against a superseded version are
+   * invalidated (stale) and excluded from quorum.
+   */
+  policy_version?: number;
 }
 
 export interface GatePrincipal {
@@ -131,8 +137,13 @@ export interface GateDependencies {
    * row (opts.dryRun === true). Returns the (possibly unpersisted) PolicyDecision.
    */
   evaluatePolicy: (intent: GatePaymentIntent, opts: GateEvalOptions) => Promise<GatePolicyDecision>;
-  /** Read approvals for the intent — returns the roles that have signed. */
-  resolveApprovals: (intentId: string) => Promise<GateApprovalState>;
+  /**
+   * Read approvals for the intent — returns the roles that have a currently
+   * VALID signature. When `activePolicyVersion` is supplied (P0.4), signatures
+   * made against a superseded policy version are marked stale and excluded, and
+   * revoked signatures never count.
+   */
+  resolveApprovals: (intentId: string, activePolicyVersion?: number) => Promise<GateApprovalState>;
   /** Audit emitter — used for the audit-before event (live mode only). */
   audit: AuditEmitter;
   /** Optional dry-run trace cache (60s TTL). Written in dry-run only. */
@@ -458,9 +469,10 @@ export async function runPreExecutionGate(
   // 10 — approval requirement determined (we have decision.outcome).
   pass(checks, 10, "approval_requirement_determined", { outcome: decision.outcome });
 
-  // 11 — approval granted when required.
+  // 11 — approval granted when required. Pass the active policy version so
+  // signatures against a superseded version are staled and excluded (P0.4).
   if (decision.outcome === "confirm") {
-    const approvals = await deps.resolveApprovals(input.intent.id);
+    const approvals = await deps.resolveApprovals(input.intent.id, decision.policy_version);
     const signedSet = new Set(approvals.signedRoles);
     const missing = decision.required_approvers.filter((r) => !signedSet.has(r));
     if (missing.length > 0) {

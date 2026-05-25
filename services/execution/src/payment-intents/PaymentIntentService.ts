@@ -327,11 +327,14 @@ export class PaymentIntentService implements IPaymentIntentService {
       resolveAccount: (accountId) => this.deps.resolveAccount(ctx, accountId),
       resolveCounterparty: (cpId) => this.deps.resolveCounterparty(ctx, cpId),
       evaluatePolicy: (i) => this.deps.evaluatePolicy(ctx, i),
-      resolveApprovals: async (intentId) => ({
-        signedRoles: await this.deps.approvals.signedRoles(ctx, {
-          type: "payment_intent",
-          id: intentId,
-        }),
+      resolveApprovals: async (intentId, activePolicyVersion) => ({
+        // P0.4: count only currently-valid signatures; stale (superseded policy
+        // version) and revoked signatures are excluded from quorum.
+        signedRoles: await this.deps.approvals.signedValidRoles(
+          ctx,
+          { type: "payment_intent", id: intentId },
+          activePolicyVersion ?? null,
+        ),
       }),
       ...(resolveTenantFlags !== undefined
         ? { resolveTenantFlags: (tenantId: string) => resolveTenantFlags(ctx, tenantId) }

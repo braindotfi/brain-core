@@ -218,6 +218,8 @@ export class PolicyService {
       required_evidence_kinds: [],
       counterparty_verification_threshold: null,
       amount_upper_bound: matchedRule?.when["amount.lte"] ?? null,
+      // P0.4: the active policy version, threaded to approval staleness checks.
+      policy_version: active.version,
     };
   }
 }

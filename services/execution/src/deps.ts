@@ -65,4 +65,16 @@ export interface ExecutionDeps {
 
   /** Maps a principal id to a role name (for ApprovalService). Caller-supplied. */
   resolveRole: (ctx: ServiceCallContext, principalId: string) => Promise<string | null>;
+
+  // -- P0.4 approver/quorum hardening hooks (optional; wired in main.ts) -----
+
+  /** True iff the signer principal is an active (non-revoked) approver. */
+  isApproverActive?: (ctx: ServiceCallContext, principalId: string) => Promise<boolean>;
+  /** Owning tenant of an approval subject (intent/proposal) — cross-tenant guard. */
+  resolveSubjectOwnerTenant?: (
+    ctx: ServiceCallContext,
+    subject: { type: "payment_intent" | "proposal"; id: string },
+  ) => Promise<string | null>;
+  /** Tenant's currently-active policy version — recorded on each signature. */
+  resolveActivePolicyVersion?: (ctx: ServiceCallContext) => Promise<number | null>;
 }

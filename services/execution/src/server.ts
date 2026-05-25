@@ -81,6 +81,15 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     pool: opts.deps.pool,
     audit: opts.deps.audit,
     resolveRole: opts.deps.resolveRole,
+    ...(opts.deps.isApproverActive !== undefined
+      ? { isApproverActive: opts.deps.isApproverActive }
+      : {}),
+    ...(opts.deps.resolveSubjectOwnerTenant !== undefined
+      ? { resolveSubjectOwnerTenant: opts.deps.resolveSubjectOwnerTenant }
+      : {}),
+    ...(opts.deps.resolveActivePolicyVersion !== undefined
+      ? { resolveActivePolicyVersion: opts.deps.resolveActivePolicyVersion }
+      : {}),
   });
   // H-04: the HTTP app needs the outbox so `execute` can enqueue the durable
   // dispatch row. The RailRegistry is no longer wired into PaymentIntentService —

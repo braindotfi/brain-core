@@ -529,6 +529,43 @@ describe("§6 — check 11: approval granted when required", () => {
   });
 });
 
+describe("§6 — check 11: policy-version-aware approvals (P0.4)", () => {
+  it("threads the decision's policy_version into resolveApprovals", async () => {
+    let seenVersion: number | undefined;
+    const { deps } = makeDeps({
+      evaluatePolicy: async () =>
+        makeDecision({ outcome: "confirm", required_approvers: ["cfo"], policy_version: 7 }),
+      resolveApprovals: async (_id, v) => {
+        seenVersion = v;
+        return { signedRoles: ["cfo"] };
+      },
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(true);
+    expect(seenVersion).toBe(7);
+  });
+
+  it("fails check 11 when stale signatures are excluded by version", async () => {
+    const { deps } = makeDeps({
+      evaluatePolicy: async () =>
+        makeDecision({ outcome: "confirm", required_approvers: ["cfo"], policy_version: 8 }),
+      // Resolver excludes the (stale) signature when asked for the active version.
+      resolveApprovals: async (_id, v) => ({ signedRoles: v === 8 ? [] : ["cfo"] }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failedCheck.index).toBe(11);
+  });
+});
+
 describe("§6 — check 8: balance net of active reservations (1b.1)", () => {
   it("fails when amount + active reservations exceed available balance", async () => {
     // available 1000, reserved 800, requesting 300 → 800+300 > 1000 → fail
