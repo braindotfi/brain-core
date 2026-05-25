@@ -290,12 +290,12 @@ is not wired by the caller, it records `not_applicable` (a passing row) rather
 than failing — so the happy path stays the canonical 13. The exception is `7.5`,
 which has no loader and always runs.
 
-| Index  | Name (in `gate.ts`)        | Guards against                                                                   | When its loader is not wired                                                                 |
-| ------ | -------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Index  | Name (in `gate.ts`)        | Guards against                                                                   | When its loader is not wired                                                                                                                                                           |
+| ------ | -------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `1.5`  | `agent_behavior_pinned`    | A swapped model/prompt/tools behind a registered agent identity.                 | No `resolveTenantFlags` ⇒ no check row (legacy). With it + tenant opted out ⇒ `not_applicable`. With `require_behavior_hash=true` (P0.1) a missing/mismatched hash is a **hard fail**. |
-| `7.5`  | `ledger_state_bound`       | A silent change to source-account / counterparty state between decide & execute. | Always runs (no loader); pins a `ledger_snapshot_hash` onto the decision + audit-before.      |
-| `9.5`  | `evidence_supports_action` | Evidence that exists but doesn't support the action (wrong amount/CP/currency).  | No `resolveEvidence` ⇒ `not_applicable`.                                                      |
-| `11.5` | `no_duplicate_payment`     | Paying an invoice/obligation twice, reused evidence, changed destination.        | No `detectDuplicates` ⇒ `not_applicable`. A collision is a **hard reject even with approval**.|
+| `7.5`  | `ledger_state_bound`       | A silent change to source-account / counterparty state between decide & execute. | Always runs (no loader); pins a `ledger_snapshot_hash` onto the decision + audit-before.                                                                                               |
+| `9.5`  | `evidence_supports_action` | Evidence that exists but doesn't support the action (wrong amount/CP/currency).  | No `resolveEvidence` ⇒ `not_applicable`.                                                                                                                                               |
+| `11.5` | `no_duplicate_payment`     | Paying an invoice/obligation twice, reused evidence, changed destination.        | No `detectDuplicates` ⇒ `not_applicable`. A collision is a **hard reject even with approval**.                                                                                         |
 
 ### 6.3 Where the Gate Lives
 
