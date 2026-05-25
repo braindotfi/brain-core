@@ -101,8 +101,13 @@ import {
   findRoutingDecision,
   transitionAgent,
   releaseAgentQuarantine,
+  resolveInvoiceShortcut as resolveInvoiceShortcutFn,
 } from "@brain/execution";
-import type { ExecutionDeps } from "@brain/execution";
+import type {
+  ExecutionDeps,
+  InvoiceShortcutInvoice,
+  ResolvedInvoiceShortcut,
+} from "@brain/execution";
 
 import {
   registerAuditRoutes,
@@ -477,6 +482,51 @@ function makeResolveActivePolicyVersion(
 }
 
 // ---------------------------------------------------------------------------
+// P0.5 invoice shortcut resolver (LedgerService-backed lookups)
+// ---------------------------------------------------------------------------
+
+function makeInvoiceShortcutResolver(
+  ledger: LedgerService,
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext, invoiceId: string) => Promise<ResolvedInvoiceShortcut> {
+  return (ctx, invoiceId) =>
+    resolveInvoiceShortcutFn(
+      {
+        resolveInvoice: async (c, id): Promise<InvoiceShortcutInvoice | null> => {
+          const inv = await ledger.findInvoiceById(c, id);
+          if (inv === null) return null;
+          return {
+            id: inv.id,
+            counterparty_id: inv.counterparty_id,
+            amount_due: String(inv.amount_due),
+            amount_paid: String(inv.amount_paid),
+            currency: inv.currency,
+            status: inv.status,
+            linked_document_ids: inv.linked_document_ids,
+            linked_transaction_ids: inv.linked_transaction_ids,
+          };
+        },
+        listApAccounts: async (c): Promise<string[]> => {
+          const res = await ledger.listAccounts(c, { status: "active", limit: 500 });
+          return res.items
+            .filter((a) => a.account_type === "bank_checking" || a.account_type === "bank_savings")
+            .map((a) => a.id);
+        },
+        resolveDefaultApAccount: (c): Promise<string | null> =>
+          withTenantScope(pool, c.tenantId, async (cl) => {
+            const r = await cl.query<{ default_ap_account_id: string | null }>(
+              `SELECT default_ap_account_id FROM tenants WHERE id = $1`,
+              [c.tenantId],
+            );
+            return r.rows[0]?.default_ap_account_id ?? null;
+          }),
+      },
+      ctx,
+      invoiceId,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -726,6 +776,9 @@ async function main(): Promise<void> {
     resolveActivePolicyVersion,
   });
 
+  // P0.5: invoice shortcut resolver (LedgerService-backed; works in demo too).
+  const invoiceShortcut = makeInvoiceShortcutResolver(ledgerService, pool);
+
   const paymentIntentService = new PaymentIntentService({
     pool,
     audit,
@@ -755,6 +808,7 @@ async function main(): Promise<void> {
     isApproverActive,
     resolveSubjectOwnerTenant,
     resolveActivePolicyVersion,
+    resolveInvoiceShortcut: invoiceShortcut,
   };
 
   // H-04 durable execution outbox. `execute` now enqueues a `pending`
@@ -1100,7 +1154,7 @@ async function main(): Promise<void> {
           evaluatePolicy: evaluatePaymentIntent,
           resolvePrincipal,
         });
-        await registerPaymentIntentRoutes(child, piService);
+        await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
       });
       await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
       // H-20 webhook dead-letter + replay: /v1/webhooks/{endpoint_id}/{dead-letters,replay}.

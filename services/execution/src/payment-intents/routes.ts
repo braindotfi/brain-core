@@ -19,6 +19,13 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import type { PaymentIntentService } from "./PaymentIntentService.js";
+import type { ResolvedInvoiceShortcut } from "./invoice-shortcut.js";
+
+/** P0.5: resolves the `pay_invoice` shortcut into a full create payload. */
+export type InvoiceShortcutResolver = (
+  ctx: ServiceCallContext,
+  invoiceId: string,
+) => Promise<ResolvedInvoiceShortcut>;
 
 const SCOPE_PROPOSE: Scope = "payment_intent:propose";
 const SCOPE_APPROVE: Scope = "payment_intent:approve";
@@ -39,6 +46,8 @@ function assertCtx(request: FastifyRequest): ServiceCallContext {
 }
 
 interface CreateBody {
+  /** P0.5: "pay_invoice" selects the invoice shortcut form. */
+  type?: string;
   action_type?: string;
   source_account_id?: string;
   destination_counterparty_id?: string;
@@ -62,6 +71,7 @@ const ACTION_TYPES = new Set([
 export async function registerPaymentIntentRoutes(
   app: FastifyInstance,
   service: PaymentIntentService,
+  resolveShortcut?: InvoiceShortcutResolver,
 ): Promise<void> {
   app.post(
     "/payment-intents",
@@ -70,6 +80,35 @@ export async function registerPaymentIntentRoutes(
       const ctx = assertCtx(request);
       requireScope(request.principal!.scopes, SCOPE_PROPOSE);
       const b = request.body ?? {};
+
+      // P0.5 invoice shortcut: { type: "pay_invoice", invoice_id } resolves the
+      // full body from the invoice. The resolver fails closed with a specific
+      // invoice_shortcut_* code for each unresolved input.
+      if (b.type === "pay_invoice") {
+        if (resolveShortcut === undefined) {
+          throw brainError("invoice_shortcut_invalid", "invoice shortcut is not enabled");
+        }
+        if (b.invoice_id === undefined) {
+          throw brainError("invoice_shortcut_invalid", "invoice_id is required for pay_invoice");
+        }
+        const resolved = await resolveShortcut(ctx, b.invoice_id);
+        const intent = await service.create(ctx, {
+          action_type: resolved.action_type as never,
+          source_account_id: resolved.source_account_id,
+          destination_counterparty_id: resolved.destination_counterparty_id,
+          amount: resolved.amount,
+          currency: resolved.currency,
+          invoice_id: b.invoice_id,
+          evidence_ids: resolved.evidence_ids,
+          ...(resolved.obligation_id !== undefined
+            ? { obligation_id: resolved.obligation_id }
+            : {}),
+          ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
+        });
+        reply.status(201);
+        return intent;
+      }
+
       if (
         b.action_type === undefined ||
         !ACTION_TYPES.has(b.action_type) ||

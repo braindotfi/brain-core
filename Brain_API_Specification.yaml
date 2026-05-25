@@ -1672,22 +1672,35 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [action_type, source_account_id, destination_counterparty_id, amount, currency]
-              properties:
-                action_type:
-                  type: string
-                  enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment]
-                source_account_id: { type: string }
-                destination_counterparty_id: { type: string }
-                amount: { type: string, pattern: '^\d+(\.\d+)?$' }
-                currency: { type: string, pattern: '^[A-Z]{3}$' }
-                obligation_id: { type: string }
-                invoice_id: { type: string }
-                agent_id: { type: string }
-                evidence_ids:
-                  type: array
-                  items: { type: string }
+              oneOf:
+                - title: FullPaymentIntent
+                  type: object
+                  required: [action_type, source_account_id, destination_counterparty_id, amount, currency]
+                  properties:
+                    action_type:
+                      type: string
+                      enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment]
+                    source_account_id: { type: string }
+                    destination_counterparty_id: { type: string }
+                    amount: { type: string, pattern: '^\d+(\.\d+)?$' }
+                    currency: { type: string, pattern: '^[A-Z]{3}$' }
+                    obligation_id: { type: string }
+                    invoice_id: { type: string }
+                    agent_id: { type: string }
+                    evidence_ids:
+                      type: array
+                      items: { type: string }
+                - title: PayInvoiceShortcut
+                  type: object
+                  description: >
+                    Invoice shortcut (P0.5). Resolves amount, currency, counterparty,
+                    source account, and evidence from the invoice. Fails closed with an
+                    invoice_shortcut_* error if any input is unresolved.
+                  required: [type, invoice_id]
+                  properties:
+                    type: { type: string, enum: [pay_invoice] }
+                    invoice_id: { type: string }
+                    agent_id: { type: string }
       responses:
         '201':
           description: PaymentIntent created with PolicyDecision attached
@@ -1696,6 +1709,17 @@ paths:
               schema: { $ref: '#/components/schemas/PaymentIntent' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Invoice not found / not accessible (invoice shortcut, fails closed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Invoice already paid or duplicate (invoice shortcut, fails closed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
 
   /payment-intents/{id}:
     get:

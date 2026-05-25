@@ -67,6 +67,15 @@ export {
 // Boot-binary route registration hooks.
 export { registerExecutionRoutes } from "./routes.js";
 export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
+export type { InvoiceShortcutResolver } from "./payment-intents/routes.js";
+
+// P0.5 invoice shortcut resolver + injected lookups.
+export { resolveInvoiceShortcut } from "./payment-intents/invoice-shortcut.js";
+export type {
+  InvoiceShortcutDeps,
+  InvoiceShortcutInvoice,
+  ResolvedInvoiceShortcut,
+} from "./payment-intents/invoice-shortcut.js";
 
 // Repository primitives exposed for boot-binary dependency wiring.
 export { findAgent, findUser, transitionAgent } from "./repository.js";

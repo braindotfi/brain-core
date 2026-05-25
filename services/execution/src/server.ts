@@ -120,7 +120,7 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
       reply.header("Link", `<${successor}>; rel="successor-version"`);
     }
   });
-  await registerPaymentIntentRoutes(app, paymentIntents);
+  await registerPaymentIntentRoutes(app, paymentIntents, opts.deps.resolveInvoiceShortcut);
 
   // v0.3 canonical /actions/* routes — share the same PaymentIntentService.
   await registerActionRoutes(app, paymentIntents);

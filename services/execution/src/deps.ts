@@ -11,6 +11,7 @@ import type {
 } from "@brain/shared";
 import type { Pool } from "pg";
 import type { RailRegistry } from "./rails/stubs.js";
+import type { ResolvedInvoiceShortcut } from "./payment-intents/invoice-shortcut.js";
 
 export interface ExecutionDeps {
   pool: Pool;
@@ -77,4 +78,10 @@ export interface ExecutionDeps {
   ) => Promise<string | null>;
   /** Tenant's currently-active policy version — recorded on each signature. */
   resolveActivePolicyVersion?: (ctx: ServiceCallContext) => Promise<number | null>;
+
+  /** P0.5: resolves the `pay_invoice` create shortcut into a full payload. */
+  resolveInvoiceShortcut?: (
+    ctx: ServiceCallContext,
+    invoiceId: string,
+  ) => Promise<ResolvedInvoiceShortcut>;
 }
