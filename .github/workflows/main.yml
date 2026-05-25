@@ -60,6 +60,8 @@ jobs:
         run: node tools/migrate/dist/cli.js up
       - name: Integration tests
         run: pnpm -r --filter='./services/**' --filter='!./services/agents' run test:integration --if-present
+      - name: Invariants DB-integration tests (P0.2)
+        run: pnpm -C tests/invariants run test:integration
 
   build_and_push_images:
     name: build + push container images

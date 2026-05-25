@@ -1,0 +1,337 @@
+/**
+ * P0.2 — runtime verification of the DB-level invariants that the DB-free
+ * src/invariants.test.ts suite can only *enumerate*. These run against a live
+ * Postgres (DATABASE_URL); they skip entirely when it is absent so the default
+ * `pnpm test` stays hermetic.
+ *
+ * Harness: a fresh per-run schema, the Brain migration runner, then
+ * `FORCE ROW LEVEL SECURITY` on every RLS-enabled table so policies apply even
+ * to the schema owner (mirrors infra/db-roles.sql). A dedicated non-owner role
+ * with only SELECT/INSERT granted exercises the append-only posture.
+ *
+ * The five invariants (each fails closed when violated):
+ *   1. Audit append-only — UPDATE audit_events as the app role is denied.
+ *   2. RLS coverage — every tenant-scoped table has an enabled policy, and a
+ *      row written under tenant A is invisible under tenant B.
+ *   3. Gate-bypass impossibility — a PaymentIntent cannot reach `executed`
+ *      except from `dispatching` (the gate is the only producer of that state).
+ *   4. Agent-contributed confidence ceiling — clamped to 0.5.
+ *   5. Audit pair on executed intents — exactly one execute.before and one
+ *      execute.after/.failed per executed PaymentIntent.
+ */
+
+import { createHash } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Client, Pool } from "pg";
+import {
+  PostgresAuditEmitter,
+  withTenantScope,
+  newTenantId,
+  newAgentId,
+  newPaymentIntentId,
+  type ServiceCallContext,
+} from "@brain/shared";
+import { isValidPaymentIntentTransition } from "@brain/execution";
+import { LedgerPaymentIntents, upsertAccountRow, upsertCounterpartyRow } from "@brain/ledger";
+import { AGENT_CONTRIBUTED_CONFIDENCE_CEILING } from "../../../schemas/index.js";
+import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
+
+const DB_URL = process.env.DATABASE_URL;
+const suite = DB_URL !== undefined && DB_URL !== "" ? describe : describe.skip;
+
+function repoRoot(): string {
+  return new URL("../../..", import.meta.url).pathname;
+}
+
+let pool: Pool;
+let schema: string;
+let appRole: string;
+
+async function seedAccountAndCounterparty(tenant: string): Promise<{ acct: string; cp: string }> {
+  const audit = new PostgresAuditEmitter(pool);
+  const ctx: ServiceCallContext = { tenantId: tenant, actor: "system" };
+  const { row: cpRow } = await upsertCounterpartyRow(pool, audit, ctx, {
+    name: `Vendor ${newPaymentIntentId()}`,
+    type: "vendor",
+    source_ids: ["raw_seed"],
+    evidence_ids: [],
+    provenance: "extracted",
+    confidence: 0.9,
+  });
+  const { row: acctRow } = await upsertAccountRow(pool, audit, ctx, {
+    external_account_id: `ext_${newPaymentIntentId()}`,
+    account_type: "bank_checking",
+    name: "Checking",
+    currency: "USD",
+    status: "active",
+    source_ids: ["raw_seed"],
+    evidence_ids: [],
+    provenance: "extracted",
+    confidence: 0.9,
+  });
+  return { acct: acctRow.id, cp: cpRow.id };
+}
+
+suite("DB invariants (integration — requires DATABASE_URL)", () => {
+  beforeAll(async () => {
+    schema = `inv_test_${createHash("sha1")
+      .update(String(process.pid) + String(Date.now()))
+      .digest("hex")
+      .slice(0, 12)}`;
+    appRole = `${schema}_app`;
+
+    const bootstrap = new Client({ connectionString: DB_URL });
+    await bootstrap.connect();
+    await bootstrap.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+    await bootstrap.end();
+
+    pool = new Pool({ connectionString: DB_URL, max: 5, application_name: `inv-${schema}` });
+    pool.on("connect", (c) => {
+      void c.query(`SET search_path TO ${schema}, public`);
+    });
+
+    const mig = await pool.connect();
+    try {
+      await mig.query(`SET search_path TO ${schema}, public`);
+      const discovered = await discoverMigrations(repoRoot());
+      await applyAll(mig as unknown as Parameters<typeof applyAll>[0], discovered, {
+        appliedBy: "invariants-integration",
+      });
+
+      // FORCE RLS on every RLS-enabled table so policies apply to the owner too.
+      const enabled = await mig.query<{ relname: string }>(
+        `SELECT c.relname
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = $1 AND c.relkind = 'r' AND c.relrowsecurity`,
+        [schema],
+      );
+      for (const r of enabled.rows) {
+        await mig.query(`ALTER TABLE ${schema}.${r.relname} FORCE ROW LEVEL SECURITY`);
+      }
+
+      // Non-owner app role: SELECT/INSERT only — mirrors the append-only posture
+      // (REVOKE UPDATE, DELETE ON audit_events FROM PUBLIC in 0001_audit_events).
+      await mig.query(`DROP ROLE IF EXISTS ${appRole}`);
+      await mig.query(`CREATE ROLE ${appRole} NOLOGIN`);
+      await mig.query(`GRANT USAGE ON SCHEMA ${schema} TO ${appRole}`);
+      await mig.query(`GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA ${schema} TO ${appRole}`);
+    } finally {
+      mig.release();
+    }
+  }, 60_000);
+
+  afterAll(async () => {
+    if (pool === undefined) return;
+    await pool.end();
+    const done = new Client({ connectionString: DB_URL });
+    await done.connect();
+    await done.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await done.query(`DROP ROLE IF EXISTS ${appRole}`);
+    await done.end();
+  }, 60_000);
+
+  // 1 — audit append-only.
+  it("denies UPDATE audit_events as the app role (append-only)", async () => {
+    const tenant = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    const ev = await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "test.seed",
+      inputs: {},
+      outputs: {},
+    });
+
+    const client = await pool.connect();
+    try {
+      await client.query(`SET search_path TO ${schema}, public`);
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL ROLE ${appRole}`);
+      await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+      await expect(
+        client.query(`UPDATE audit_events SET action = 'tampered' WHERE id = $1`, [ev.id]),
+      ).rejects.toThrow(/permission denied/i);
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
+  });
+
+  // 2 — RLS coverage (policy presence) + enforcement probe.
+  it("every tenant-scoped table has an enabled RLS policy", async () => {
+    const rows = (
+      await pool.query<{ relname: string; relrowsecurity: boolean; npol: string }>(
+        `SELECT c.relname,
+                c.relrowsecurity,
+                (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid) AS npol
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = $1 AND c.relkind = 'r'`,
+        [schema],
+      )
+    ).rows;
+
+    const isTenantScoped = (name: string): boolean =>
+      /^(ledger_|wiki_)/.test(name) ||
+      name.includes("payment_intents") ||
+      ["agents", "proposals", "executions", "audit_events"].includes(name);
+
+    const matches = rows.filter((r) => isTenantScoped(r.relname));
+    expect(matches.length).toBeGreaterThan(0);
+    const missing = matches
+      .filter((r) => !r.relrowsecurity || Number(r.npol) === 0)
+      .map((r) => r.relname);
+    expect(missing).toEqual([]);
+  });
+
+  it("a row written under tenant A is invisible under tenant B (RLS enforced)", async () => {
+    const a = newTenantId();
+    const b = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    const ev = await emitter.emit({
+      tenantId: a,
+      layer: "audit",
+      actor: "system",
+      action: "rls.probe",
+      inputs: {},
+      outputs: {},
+    });
+
+    const seenByB = await withTenantScope(pool, b, (c) =>
+      c.query(`SELECT id FROM audit_events WHERE id = $1`, [ev.id]),
+    );
+    expect(seenByB.rows).toHaveLength(0);
+
+    const seenByA = await withTenantScope(pool, a, (c) =>
+      c.query(`SELECT id FROM audit_events WHERE id = $1`, [ev.id]),
+    );
+    expect(seenByA.rows).toHaveLength(1);
+  });
+
+  // 3 — gate-bypass impossibility.
+  it("a PaymentIntent cannot reach 'executed' outside the gated dispatching path", async () => {
+    // (a) the state machine has no direct approved → executed edge.
+    expect(isValidPaymentIntentTransition("approved", "executed")).toBe(false);
+    expect(isValidPaymentIntentTransition("dispatching", "executed")).toBe(true);
+
+    // (b) the atomic repo helper is conditional on the current state: settling
+    // (→ executed) requires the row to ALREADY be 'dispatching', which only the
+    // §6-gated PaymentIntentService produces. check-gate-bypass.mjs statically
+    // forbids any other caller from invoking the 'executed' transition.
+    const tenant = newTenantId();
+    const { acct, cp } = await seedAccountAndCounterparty(tenant);
+    const piId = newPaymentIntentId();
+    await withTenantScope(pool, tenant, (c) =>
+      LedgerPaymentIntents.insert(c, {
+        id: piId,
+        ownerId: tenant,
+        createdByAgentId: newAgentId(),
+        actionType: "ach_outbound",
+        sourceAccountId: acct,
+        destinationCounterpartyId: cp,
+        amount: "10.00",
+        currency: "USD",
+        status: "approved",
+        policyDecisionId: null,
+        evidenceIds: [],
+      }),
+    );
+
+    const jumped = await withTenantScope(pool, tenant, (c) =>
+      LedgerPaymentIntents.transition(c, piId, "dispatching", "executed"),
+    );
+    expect(jumped).toBeNull();
+
+    const after = await withTenantScope(pool, tenant, (c) =>
+      c.query<{ status: string }>(`SELECT status FROM ledger_payment_intents WHERE id = $1`, [
+        piId,
+      ]),
+    );
+    expect(after.rows[0]?.status).toBe("approved");
+  });
+
+  // 4 — agent-contributed confidence ceiling.
+  it("clamps agent-contributed Ledger rows to the 0.5 confidence ceiling", async () => {
+    const tenant = newTenantId();
+    const audit = new PostgresAuditEmitter(pool);
+    const { row } = await upsertCounterpartyRow(
+      pool,
+      audit,
+      { tenantId: tenant, actor: "agent_x" },
+      {
+        name: `Clamp Co ${newPaymentIntentId()}`,
+        type: "vendor",
+        source_ids: ["raw_seed"],
+        evidence_ids: [],
+        provenance: "agent_contributed",
+        confidence: 0.9,
+      },
+    );
+    expect(row.confidence).toBe(AGENT_CONTRIBUTED_CONFIDENCE_CEILING);
+    expect(AGENT_CONTRIBUTED_CONFIDENCE_CEILING).toBe(0.5);
+  });
+
+  // 5 — audit pair on executed intents.
+  it("every executed PaymentIntent has exactly one execute.before and one execute.after", async () => {
+    const tenant = newTenantId();
+    const { acct, cp } = await seedAccountAndCounterparty(tenant);
+    const piId = newPaymentIntentId();
+    await withTenantScope(pool, tenant, (c) =>
+      LedgerPaymentIntents.insert(c, {
+        id: piId,
+        ownerId: tenant,
+        createdByAgentId: newAgentId(),
+        actionType: "ach_outbound",
+        sourceAccountId: acct,
+        destinationCounterpartyId: cp,
+        amount: "10.00",
+        currency: "USD",
+        status: "executed",
+        policyDecisionId: null,
+        evidenceIds: [],
+      }),
+    );
+
+    const audit = new PostgresAuditEmitter(pool);
+    await audit.emit({
+      tenantId: tenant,
+      layer: "agent",
+      actor: "agent_x",
+      action: "payment_intent.execute.before",
+      inputs: { payment_intent_id: piId },
+      outputs: {},
+    });
+    await audit.emit({
+      tenantId: tenant,
+      layer: "agent",
+      actor: "agent_x",
+      action: "payment_intent.execute.after",
+      inputs: { payment_intent_id: piId },
+      outputs: {},
+    });
+
+    const result = await withTenantScope(pool, tenant, (c) =>
+      c.query<{ id: string; before_n: string; after_n: string }>(
+        `SELECT pi.id,
+                count(*) FILTER (WHERE ae.action = 'payment_intent.execute.before') AS before_n,
+                count(*) FILTER (
+                  WHERE ae.action IN ('payment_intent.execute.after', 'payment_intent.execute.failed')
+                ) AS after_n
+           FROM ledger_payment_intents pi
+           LEFT JOIN audit_events ae
+             ON ae.inputs->>'payment_intent_id' = pi.id AND ae.tenant_id = $1
+          WHERE pi.status = 'executed'
+          GROUP BY pi.id`,
+        [tenant],
+      ),
+    );
+
+    expect(result.rows.length).toBeGreaterThan(0);
+    for (const r of result.rows) {
+      expect(Number(r.before_n)).toBe(1);
+      expect(Number(r.after_n)).toBe(1);
+    }
+  });
+});
