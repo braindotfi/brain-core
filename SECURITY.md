@@ -21,13 +21,13 @@ Brain-internal and only reachable through `PaymentIntentService`.
 
 The architecture's safety rests on boundaries that CI fails the build on:
 
-| Invariant                                              | Enforced by                                |
-| ------------------------------------------------------ | ------------------------------------------ |
-| No money moves outside the §6 gate / `PaymentIntentService` | `scripts/check-gate-bypass.mjs`            |
-| Policy never reads Wiki text (reads Ledger only)       | `scripts/check-policy-no-wiki-read.mjs`    |
-| Wiki never writes Ledger                               | `scripts/check-wiki-no-ledger-write.mjs`   |
-| Scopes stay within the sanctioned vocabulary           | `scripts/check-scope-vocab.mjs`            |
-| Shadow→live agent promotion is gated                   | `scripts/check-promotion-readiness.mjs`    |
+| Invariant                                                   | Enforced by                              |
+| ----------------------------------------------------------- | ---------------------------------------- |
+| No money moves outside the §6 gate / `PaymentIntentService` | `scripts/check-gate-bypass.mjs`          |
+| Policy never reads Wiki text (reads Ledger only)            | `scripts/check-policy-no-wiki-read.mjs`  |
+| Wiki never writes Ledger                                    | `scripts/check-wiki-no-ledger-write.mjs` |
+| Scopes stay within the sanctioned vocabulary                | `scripts/check-scope-vocab.mjs`          |
+| Shadow→live agent promotion is gated                        | `scripts/check-promotion-readiness.mjs`  |
 
 Tenant isolation is enforced at the **storage layer** (Postgres RLS on every
 tenant table + `FORCE ROW LEVEL SECURITY` under the `brain_app` non-owner role;
@@ -49,12 +49,12 @@ A third party verifies **without trusting Brain**:
 
 ## Deployed contract addresses
 
-| Contract                | Base Sepolia (staging)              | Base mainnet            |
-| ----------------------- | ----------------------------------- | ----------------------- |
-| `BrainAuditAnchor`      | TODO(brain-hardening): fill address | pending external audit  |
-| `BrainPolicyRegistry`   | TODO(brain-hardening): fill address | pending external audit  |
-| `BrainSmartAccount`     | TODO(brain-hardening): fill address | pending external audit  |
-| `BrainMCPAgentRegistry` | TODO(brain-hardening): fill address | pending external audit  |
+| Contract                | Base Sepolia (staging)              | Base mainnet           |
+| ----------------------- | ----------------------------------- | ---------------------- |
+| `BrainAuditAnchor`      | TODO(brain-hardening): fill address | pending external audit |
+| `BrainPolicyRegistry`   | TODO(brain-hardening): fill address | pending external audit |
+| `BrainSmartAccount`     | TODO(brain-hardening): fill address | pending external audit |
+| `BrainMCPAgentRegistry` | TODO(brain-hardening): fill address | pending external audit |
 
 Mainnet deployment is blocked on the external smart-contract audit.
 
