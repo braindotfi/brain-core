@@ -74,11 +74,13 @@ Brain does not auto-extract from agent contributions on the first N artifacts. B
 
 | Phase                                       | Behavior                                        |
 | ------------------------------------------- | ----------------------------------------------- |
-| **Quarantine (default: first N artifacts)** | Stored and visible to the tenant; not extracted |
+| **Quarantine (default: first 5 artifacts)** | Stored and visible to the tenant; not extracted |
 | **Tenant approves agent**                   | Future contributions auto-flow to extraction    |
 | **Tenant revokes**                          | Future contributions rejected at the MCP layer  |
 
 This is the safety valve that keeps malicious or buggy agents from polluting the Ledger before the tenant has had a chance to look at what they're contributing.
+
+The threshold is per-agent (`quarantine_threshold`, default 5): the first N contributions are held and the counter increments on each; once over the threshold, or once a human releases the agent via `POST /v1/agents/{agent_id}/quarantine/release`, contributions extract automatically. Release is owner-scoped and idempotent.
 
 ### Confidence Ceiling
 

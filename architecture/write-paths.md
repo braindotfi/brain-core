@@ -59,7 +59,7 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 | **Writes to**       | Ledger (`ledger_payment_intents`)                        |
 | **Required scope**  | `payment_intent:propose` (for external agents)           |
 | **Service method**  | `PaymentIntentService.create()` (shared by HTTP and MCP) |
-| **Lifecycle gates** | Policy → Approval → 13-step pre-execution gate           |
+| **Lifecycle gates** | Policy → Approval → 16-step pre-execution gate           |
 
 [**→ Payment Intents**](../protocol/payment-intents.md)
 
@@ -116,13 +116,14 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 
 ### What Is Not Allowed
 
-| Forbidden                                                                        | Why                                                             |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Direct Ledger write that does not originate from Raw extraction or PaymentIntent | Breaks replayability                                            |
-| Wiki text used as a source of truth for balances, transactions, obligations      | Wiki is human-readable memory; Ledger is machine-readable truth |
-| Policy reading Wiki for evaluation                                               | Policy reads Ledger only; Wiki is for narrative                 |
-| Audit row UPDATE or DELETE                                                       | Audit is append-only; no exceptions                             |
-| Anchor re-publication of the same Merkle root                                    | Idempotency at the on-chain layer                               |
+| Forbidden                                                                        | Why                                                                              |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Direct Ledger write that does not originate from Raw extraction or PaymentIntent | Breaks replayability                                                             |
+| Wiki text used as a source of truth for balances, transactions, obligations      | Wiki is human-readable memory; Ledger is machine-readable truth                  |
+| Policy reading Wiki for evaluation                                               | Policy reads Ledger only; Wiki is for narrative                                  |
+| Wiki code writing to `ledger_*`                                                  | Enforced physically: the Wiki connects as the read-only `brain_wiki_reader` role |
+| Audit row UPDATE or DELETE                                                       | Audit is append-only; no exceptions                                              |
+| Anchor re-publication of the same Merkle root                                    | Idempotency at the on-chain layer                                                |
 
 ### Implications
 

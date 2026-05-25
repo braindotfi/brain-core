@@ -124,13 +124,16 @@ Even if the off-chain backend is compromised, on-chain validation rejects UserOp
 
 ### Threat Scenarios
 
-| Scenario                                            | Outcome                                      |
-| --------------------------------------------------- | -------------------------------------------- |
-| Agent submits UserOp with no scope attestation      | Reverts: "scope invalid"                     |
-| Agent uses an expired scope                         | Reverts: `notAfter` check fails              |
-| Backend submits UserOp with no policy verdict       | Reverts: "policy denied"                     |
-| Backend replays an old verdict against a new UserOp | Reverts: verdict bound to wrong `userOpHash` |
-| Compromised key tries to submit beyond limits       | Reverts: "limits exceeded"                   |
+| Scenario                                            | Outcome                                          |
+| --------------------------------------------------- | ------------------------------------------------ |
+| Agent submits UserOp with no scope attestation      | Reverts: "scope invalid"                         |
+| Agent uses an expired scope                         | Reverts: `notAfter` check fails                  |
+| Backend submits UserOp with no policy verdict       | Reverts: "policy denied"                         |
+| Backend replays an old verdict against a new UserOp | Reverts: verdict bound to wrong `userOpHash`     |
+| Compromised key tries to submit beyond limits       | Reverts: "limits exceeded"                       |
+| Replays a session-key call with a consumed nonce    | Reverts: `BadNonce`                              |
+| Malicious target re-enters `executeViaSessionKey`   | Reverts: `ReentrantCall`                         |
+| Owner grants a key with an empty allowlist          | Reverts: `TargetsRequired` / `SelectorsRequired` |
 
 ## Kill-Switch: Pause vs Revoke
 
@@ -145,6 +148,19 @@ Even if the off-chain backend is compromised, on-chain validation rejects UserOp
 ### Per-Task Minimum-Privilege Keys
 
 A one-time child key is granted per approved PaymentIntent, bounded to the **exact** counterparty (`allowedTargets`), **exact** amount (`maxPerTx == maxPerPeriod`), and a \~10-minute `validUntil`. A compromised worker can spend at most one in-flight intent's authority.
+
+### Session-Key Hardening (pre-audit)
+
+`executeViaSessionKey` carries three defenses closing pre-audit weaknesses:
+
+| Defense                   | Mechanism                                                                                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Non-empty scope**       | `grantSessionKey` reverts (`TargetsRequired` / `SelectorsRequired`) on an empty target or selector allowlist — an empty list no longer means "any"                                    |
+| **Policy bound at grant** | A zero `policyVersion` is rejected at grant (`PolicyVersionMismatch`), so a stored key can never have a missing policy binding                                                        |
+| **Replay nonce**          | `executeViaSessionKey(nonceSupplied, target, value, data)` reverts `BadNonce(expected, supplied)` unless `nonceSupplied == nonce(holder)`, then increments — every call is single-use |
+| **Re-entrancy guard**     | A per-holder `_locked` flag is set before the external call and cleared after; a target that calls back in reverts `ReentrantCall`                                                    |
+
+The off-chain rail reads the current `nonce(holder)` and threads it into the call (see the on-chain Base rail). Caps and allowlists are still enforced on every call as before.
 
 ### What's Next
 

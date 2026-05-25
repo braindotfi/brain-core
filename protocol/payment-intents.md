@@ -2,12 +2,12 @@
 
 A **PaymentIntent** is an agent-proposed financial action that lives as a row in the Ledger. It is the only path to financial execution in Brain. There is no shortcut.
 
-| Property             | Value                                                                |
-| -------------------- | -------------------------------------------------------------------- |
-| **Layer**            | Ledger row, lifecycle owned by Agent layer                           |
-| **Created by**       | Internal or external agents                                          |
-| **Executes through** | Provider rails (ACH, NetSuite SuiteTalk, BrainSmartAccount on-chain) |
-| **Gates**            | Policy decision plus the 13-step pre-execution gate                  |
+| Property             | Value                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| **Layer**            | Ledger row, lifecycle owned by Agent layer                                              |
+| **Created by**       | Internal or external agents                                                             |
+| **Executes through** | Provider rails (ACH via Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain) |
+| **Gates**            | Policy decision plus the 16-step pre-execution gate                                     |
 
 {% hint style="info" %}
 PaymentIntents are the **second of two controlled write paths** into the Ledger. The first is Raw extraction. PaymentIntents are the only Ledger write that doesn't originate from a Raw artifact, by design.
@@ -78,6 +78,17 @@ approved
 ```
 
 [**→ The Pre-Execution Gate**](the-pre-execution-gate.md)
+
+### Rails
+
+A gate-passed intent is dispatched through a durable outbox to the rail named by its `action_type`. Two rails are real:
+
+| Rail           | Implementation                           | Settlement                                                                                                         |
+| -------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `bank_ach`     | Plaid Transfer (authorization → create)  | **Async** — `dispatch` returns `pending`; a Plaid `TRANSFER_EVENTS_UPDATE` webhook settles or fails the outbox row |
+| `onchain_base` | `BrainSmartAccount.executeViaSessionKey` | On-chain receipt; the rail threads the per-holder session-key nonce and signs via Azure Key Vault                  |
+
+Both are idempotency-keyed by the outbox row so a crash-retry never moves money twice. `erp_writeback` (NetSuite) remains a fail-closed stub. The live SDK wiring (Plaid / viem+KMS) and the sandbox/anvil round-trips are a follow-up; see `services/execution/README.md`.
 
 ### State Transitions
 
@@ -156,4 +167,4 @@ An `approved` PaymentIntent can be **paused** without a terminal transition: `ap
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🚪 Pre-execution Gate</strong></td><td>The 13-step deterministic gate every payment must pass.</td><td><a href="the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>How internal and external agents propose actions.</td><td><a href="agents.md">agents.md</a></td><td></td></tr><tr><td><strong>📋 Policy and Permissioning</strong></td><td>How Policy evaluates PaymentIntents.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🚪 Pre-execution Gate</strong></td><td>The 16-step deterministic gate every payment must pass.</td><td><a href="the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>How internal and external agents propose actions.</td><td><a href="agents.md">agents.md</a></td><td></td></tr><tr><td><strong>📋 Policy and Permissioning</strong></td><td>How Policy evaluates PaymentIntents.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr></tbody></table>
