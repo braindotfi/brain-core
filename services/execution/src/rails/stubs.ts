@@ -29,12 +29,12 @@ function assertStubRailsAllowed(): void {
   }
 }
 
-export class BankAchRail implements Rail {
+export class BankAchStubRail implements Rail {
   public readonly kind = "bank_ach" as const;
   public async dispatch(input: RailDispatchInput): Promise<RailDispatchResult> {
     assertStubRailsAllowed();
-    // TODO: wire Plaid Transfer via @brain/raw's Plaid SDK dep. The sandbox
-    // integration tests exercise this path when PLAID_SANDBOX_KEY is set.
+    // The real ACH rail is AchPlaidRail (rails/ach-plaid.ts, H-05). This stub is
+    // retained for tests/dev only and fails closed in production.
     // Returns a typed receipt (2.4) — wire vs ACH per the action.
     if (input.action.kind === "wire") {
       return {
@@ -52,7 +52,7 @@ export class BankAchRail implements Rail {
   }
 }
 
-export class ErpWritebackRail implements Rail {
+export class ErpWritebackStubRail implements Rail {
   public readonly kind = "erp_writeback" as const;
   public async dispatch(input: RailDispatchInput): Promise<RailDispatchResult> {
     assertStubRailsAllowed();
@@ -62,12 +62,14 @@ export class ErpWritebackRail implements Rail {
   }
 }
 
-export class OnchainBaseRail implements Rail {
+export class OnchainBaseStubRail implements Rail {
   public readonly kind = "onchain_base" as const;
   public async dispatch(input: RailDispatchInput): Promise<RailDispatchResult> {
     assertStubRailsAllowed();
-    // Expected wire to BrainSmartAccount.executeViaSessionKey via viem.
-    // Requires tenant's smart-account address + active session key.
+    // The real on-chain rail is OnchainBaseRail (rails/onchain-base.ts, H-06),
+    // which calls BrainSmartAccount.executeViaSessionKey via an injected
+    // viem+KMS executor. This stub is retained for tests/dev only and fails
+    // closed in production.
     return {
       receipt: {
         rail: "onchain",
@@ -96,5 +98,9 @@ export class RailRegistry {
 
 export function defaultRails(): RailRegistry {
   assertStubRailsAllowed();
-  return new RailRegistry([new BankAchRail(), new ErpWritebackRail(), new OnchainBaseRail()]);
+  return new RailRegistry([
+    new BankAchStubRail(),
+    new ErpWritebackStubRail(),
+    new OnchainBaseStubRail(),
+  ]);
 }

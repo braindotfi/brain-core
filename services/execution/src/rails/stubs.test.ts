@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { BankAchRail, ErpWritebackRail, OnchainBaseRail, defaultRails } from "./stubs.js";
+import {
+  BankAchStubRail,
+  ErpWritebackStubRail,
+  OnchainBaseStubRail,
+  defaultRails,
+} from "./stubs.js";
 import type { RailDispatchInput } from "./types.js";
 
 const INPUT: RailDispatchInput = {
@@ -18,9 +23,9 @@ afterEach(() => {
 describe("stub rails — production fail-closed guard", () => {
   it("every stub rail refuses to dispatch (fake-settle) under NODE_ENV=production", async () => {
     process.env.NODE_ENV = "production";
-    await expect(new BankAchRail().dispatch(INPUT)).rejects.toThrow(/production/i);
-    await expect(new ErpWritebackRail().dispatch(INPUT)).rejects.toThrow(/production/i);
-    await expect(new OnchainBaseRail().dispatch(INPUT)).rejects.toThrow(/production/i);
+    await expect(new BankAchStubRail().dispatch(INPUT)).rejects.toThrow(/production/i);
+    await expect(new ErpWritebackStubRail().dispatch(INPUT)).rejects.toThrow(/production/i);
+    await expect(new OnchainBaseStubRail().dispatch(INPUT)).rejects.toThrow(/production/i);
   });
 
   it("defaultRails() refuses to construct stub rails under NODE_ENV=production", () => {
@@ -30,7 +35,7 @@ describe("stub rails — production fail-closed guard", () => {
 
   it("still dispatches a stub receipt outside production", async () => {
     process.env.NODE_ENV = "test";
-    const result = await new BankAchRail().dispatch(INPUT);
+    const result = await new BankAchStubRail().dispatch(INPUT);
     expect(result.receipt.stub).toBe(true);
     expect(() => defaultRails()).not.toThrow();
   });
