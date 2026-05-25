@@ -70,6 +70,12 @@ export interface AgentApiDeps {
     agentId: string,
   ) => Promise<{ paused: string[]; quarantined: boolean }>;
   /**
+   * H-09: release an agent's contribution quarantine (operator action). Returns
+   * false when the agent is not visible to the tenant (→ 404). Injected from the
+   * composition root (the agents table lives in @brain/execution).
+   */
+  readonly releaseAgentQuarantine?: (ctx: ServiceCallContext, agentId: string) => Promise<boolean>;
+  /**
    * H-25 Agent Run History loaders. Cross-cutting reads (evidence chain, the §6
    * gate trace via the run's action, the H-07 proof, the routing decision +
    * behavior hash) are injected from the composition root (services/api), since
@@ -185,6 +191,27 @@ export async function registerAgentApiRoutes(
       requireScope(ctx.scopes ?? [], SCOPE_HALT);
       const result = await deps.haltAgent(ctx, request.params.agent_id);
       return { agent_id: request.params.agent_id, ...result };
+    },
+  );
+
+  // POST /v1/agents/{agent_id}/quarantine/release — clear the contribution
+  // quarantine so subsequent agent contributions extract normally (H-09).
+  app.post(
+    "/agents/:agent_id/quarantine/release",
+    { config: { idempotent: true } },
+    async (request: FastifyRequest<{ Params: { agent_id: string } }>) => {
+      const ctx = assertCtx(request);
+      requireScope(ctx.scopes ?? [], SCOPE_HALT);
+      const agentId = request.params.agent_id;
+      const released = deps.releaseAgentQuarantine
+        ? await deps.releaseAgentQuarantine(ctx, agentId)
+        : false;
+      if (!released) {
+        throw brainError("execution_agent_not_registered", `no such agent ${agentId}`, {
+          statusOverride: 404,
+        });
+      }
+      return { agent_id: agentId, quarantine_released: true };
     },
   );
 
