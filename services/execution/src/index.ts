@@ -34,12 +34,35 @@ export type { ApprovalServiceDeps } from "./approvals/ApprovalService.js";
 // Stage 6 — rails.
 export {
   RailRegistry,
-  BankAchRail,
-  ErpWritebackRail,
-  OnchainBaseRail,
+  BankAchStubRail,
+  ErpWritebackStubRail,
+  OnchainBaseStubRail,
   defaultRails,
 } from "./rails/stubs.js";
 export type { Rail, RailDispatchInput, RailDispatchResult, RailKind } from "./rails/types.js";
+// H-05 — real Plaid Transfer ACH rail + webhook settlement mapper.
+export {
+  AchPlaidRail,
+  applyPlaidTransferEvent,
+  classifyPlaidTransferStatus,
+  type AchPlaidRailDeps,
+  type AchTransferAction,
+  type PlaidAuthorizationResponse,
+  type PlaidTransferClient,
+  type PlaidTransferEvent,
+  type PlaidTransferResponse,
+} from "./rails/ach-plaid.js";
+// H-06 — real on-chain Base rail (BrainSmartAccount.executeViaSessionKey).
+export {
+  OnchainBaseRail,
+  getSessionKeyNonce,
+  type OnchainBaseAction,
+  type OnchainBaseRailDeps,
+  type OnchainExecuteArgs,
+  type OnchainExecuteResult,
+  type OnchainExecutor,
+  type SessionKeyNonceReader,
+} from "./rails/onchain-base.js";
 
 // Boot-binary route registration hooks.
 export { registerExecutionRoutes } from "./routes.js";
@@ -48,6 +71,14 @@ export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
 // Repository primitives exposed for boot-binary dependency wiring.
 export { findAgent, findUser, transitionAgent } from "./repository.js";
 export type { AgentRow, UserRow } from "./repository.js";
+// H-09 agent-contribution quarantine.
+export {
+  shouldQuarantineContribution,
+  recordContributionAndDecide,
+  releaseAgentQuarantine,
+  requireReleaseAgentQuarantine,
+  type AgentQuarantineState,
+} from "./agents/quarantine.js";
 
 // Agent-run persistence (Agent Autonomy v3, 1a.3 + 1a.5).
 export * from "./agent-runs.js";

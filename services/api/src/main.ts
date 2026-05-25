@@ -99,6 +99,7 @@ import {
   listAgentRuns,
   findRoutingDecision,
   transitionAgent,
+  releaseAgentQuarantine,
 } from "@brain/execution";
 import type { ExecutionDeps } from "@brain/execution";
 
@@ -431,6 +432,25 @@ async function main(): Promise<void> {
     applicationName: cfg.SERVICE_NAME,
   });
 
+  // H-14: the Wiki layer uses a separate pool connecting as the read-only
+  // `brain_wiki_reader` role (SELECT anywhere; write only wiki_* tables) so an
+  // accidental ledger_* write from a Wiki path raises a Postgres permission
+  // error. Falls back to the main pool in dev/test with a warning.
+  let wikiPool = pool;
+  if (cfg.BRAIN_WIKI_DB_URL !== undefined) {
+    wikiPool = createPool({
+      connectionString: cfg.BRAIN_WIKI_DB_URL,
+      max: cfg.DATABASE_POOL_MAX,
+      statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
+      applicationName: `${cfg.SERVICE_NAME}-wiki`,
+    });
+  } else {
+    console.warn(
+      "[boot] BRAIN_WIKI_DB_URL unset — Wiki shares the main DATABASE_URL (full privileges). " +
+        "Set it to the brain_wiki_reader role in production (H-14).",
+    );
+  }
+
   const redis = new Redis(cfg.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
   await redis.connect();
 
@@ -552,7 +572,8 @@ async function main(): Promise<void> {
   };
 
   const wikiDeps: WikiDeps = {
-    pool,
+    // H-14: read-only (brain_wiki_reader) pool when BRAIN_WIKI_DB_URL is set.
+    pool: wikiPool,
     redis,
     audit,
     llm,
@@ -1005,6 +1026,9 @@ async function main(): Promise<void> {
           reads: agentApiReads,
           // H-25: run-history sub-resources (evidence / gate-trace / proof / why).
           runHistory: makeRunLoaders(pool, proofBuilder),
+          // H-09: release an agent's contribution quarantine.
+          releaseAgentQuarantine: (ctx, agentId) =>
+            withTenantScope(pool, ctx.tenantId, (c) => releaseAgentQuarantine(c, agentId)),
           enqueueRouteJob: async (jobCtx, payload) => {
             if (payload.event === undefined || !isDomainEvent(payload.event)) {
               throw brainError(

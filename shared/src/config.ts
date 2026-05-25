@@ -23,6 +23,10 @@ const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  // H-14: the Wiki layer connects with this URL as the read-only
+  // `brain_wiki_reader` role (SELECT anywhere; write only wiki_* tables). When
+  // unset the Wiki falls back to DATABASE_URL (dev/test) with a boot warning.
+  BRAIN_WIKI_DB_URL: z.string().url().optional(),
 
   // ---- Redis ----
   REDIS_URL: z.string().url(),
@@ -93,12 +97,24 @@ const envSchema = z.object({
     .default("0x683893ccd84d9a3487095d09fed324b6b8ea2501"),
   BRAIN_MCP_DEV_AUTH_BYPASS: z.coerce.boolean().default(false),
 
-  // ---- On-chain rails (Base Sepolia) ----
+  // ---- On-chain rails (Base) ----
+  // NOTE: `BASE_RPC_URL` is the rail RPC (spec called it BRAIN_BASE_RPC_URL;
+  // the repo already had BASE_RPC_URL for the audit-anchor broadcaster, so the
+  // H-06 rail reuses it rather than adding a parallel var).
   BRAIN_SESSION_KEY: z
     .string()
     .regex(/^0x[0-9a-fA-F]{64}$/)
     .optional(),
   BASE_RPC_URL: z.string().url().optional(),
+  /** Base chain id for the on-chain rail. 8453 mainnet / 84532 sepolia (default). */
+  BRAIN_BASE_CHAIN_ID: z.coerce.number().int().positive().default(84_532),
+  /**
+   * H-06: Azure Key Vault URL holding the on-chain rail's signing key. The
+   * viem Account proxies signing to Key Vault via managed identity — the raw
+   * private key is never read into process memory. Unset disables the live
+   * on-chain rail (dev/test fall back to the fail-closed stub).
+   */
+  BRAIN_AZURE_KEY_VAULT_URL: z.string().url().optional(),
 
   // ---- Audit anchor (Base Sepolia) ----
   AUDIT_PUBLISHER_KEY: z

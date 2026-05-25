@@ -82,6 +82,11 @@ export const BRAIN_ERROR_CODES = [
   "execution_proposal_not_found",
   "execution_proposal_invalid_state",
   "execution_rail_unavailable",
+  // H-05/H-06: the rail accepted the request but the provider refused it
+  // (e.g. Plaid declined an ACH authorization, on-chain revert), and the
+  // rail was reached but is not configured with live credentials.
+  "execution_rail_declined",
+  "execution_rail_misconfigured",
   "execution_idempotency_conflict",
   "execution_agent_not_registered",
   "payment_intent_not_found",
@@ -276,9 +281,13 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   policy_decision_required: 422,
   payment_intent_approval_required: 422,
   payment_intent_approval_invalid: 422,
+  // The rail reached the provider but it refused the request (e.g. Plaid
+  // declined an ACH authorization, an on-chain call reverted).
+  execution_rail_declined: 422,
 
   // 503 — dependency / rail outage
   execution_rail_unavailable: 503,
+  execution_rail_misconfigured: 503,
   agent_rail_unavailable: 503,
   dependency_unavailable: 503,
 
