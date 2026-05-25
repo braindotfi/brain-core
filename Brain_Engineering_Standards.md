@@ -335,6 +335,27 @@ per-agent adversarial test suites exist; and the agent's on-chain behavior hash
 - session-key grants are registered (the last two are attested out-of-band since
   they require a registry / DB read).
 
+### 6.6 Planned compliance gates (not yet implemented)
+
+KYC/KYB/sanctions/velocity/rail-allowlist belong in the §6 sequence so the shape
+is correct from day one, even while the providers are mocked. They are
+**planned gate additions** — documented here with the check index they will
+occupy so the gate trace shape is stable. Like the other additions, each records
+`not_applicable` until its provider loader is wired (mirrors §6.2.1).
+
+| Planned index | Name                       | What it checks                                                                            | Status                                                                 |
+| ------------- | -------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `2.7`         | `tenant_kyb_verified`      | The tenant's KYB status is `verified` (business onboarding complete).                     | Planned. Provider mocked.                                              |
+| `4.5`         | `source_account_kyc`       | The source account's owner KYC status is cleared.                                         | Planned. Provider mocked.                                              |
+| `5`           | `counterparty_allowed`     | Counterparty not sanctioned — **already live** via Chainalysis at check 5.                | **Implemented** (documented here explicitly).                          |
+| `4.6`         | `rail_allowlisted`         | The action's rail is on the tenant's allowlist (e.g. ACH-only tenants can't go on-chain). | Planned. Tenant rail-allowlist config TBD.                             |
+| `11.6`        | `velocity_within_envelope` | Cumulative spend/count to this counterparty within a rolling window is under the cap.     | Planned. Builds on the existing spend/tx-count window reads (§Policy). |
+
+These slot in without renumbering the canonical 13: KYB after agent auth (2.7),
+KYC + rail-allowlist after source-account (4.5 / 4.6), velocity after the
+duplicate guard (11.6). Sanctions is check 5 today. No implementation in this
+pass — this section fixes the contract so the loaders can land additively.
+
 ## 7. Observability
 
 ### 7.1 Logs
