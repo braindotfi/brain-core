@@ -10,7 +10,7 @@ Read alongside: Brain_API_Specification.yaml (the OpenAPI contract) and Brain_MV
 
 v0.4.0 records the hardening wave on top of the v0.3 six-layer architecture. The model is unchanged; the safety surfaces are sharpened:
 
-- §6 pre-execution gate is now **16 checks** — the four sub-checks `1.5` (agent behavior pinned), `7.5` (ledger-state binding, H-08), `9.5` (evidence semantics, H-21), and `11.5` (duplicate-payment hard reject, H-22) join the original 13. The audit-before event persists the full check trace (H-07).
+- §6 pre-execution gate is now **13 numbered checks + 4 hardening additions** (17 entries) — the four sub-checks `1.5` (agent behavior pinned), `7.5` (ledger-state binding, H-08), `9.5` (evidence semantics, H-21), and `11.5` (duplicate-payment hard reject, H-22) join the original 13. The audit-before event persists the full check trace (H-07). See §6.2.1.
 - §6.5 documents **shadow-by-default + the promotion-readiness gate** (H-24): an agent cannot go live without `scripts/check-promotion-readiness.mjs` all-green, enforced in CI on `promotion-config.ts` diffs.
 - Execution is now a **durable outbox** (H-04): `execute` enqueues + transitions `approved → dispatching`; an outbox worker dispatches the rail and settles. New `dispatching` PaymentIntent status.
 - New trust surfaces: the **Proof API** (`GET /v1/proof/{action_id}`, H-07) and **Agent Run History** (`/v1/agents/runs/{run_id}/*`, H-25).
@@ -25,7 +25,7 @@ v0.4.0 records the hardening wave on top of the v0.3 six-layer architecture. The
 v0.2.0 of this document realigns to the v0.3 architecture (six layers). Specifically:
 
 - §1 adds a fifth principle: deterministic pre-execution gate.
-- §2 repo layout adds `services/ledger/` and renames `services/execution/` → `services/agent/`.
+- §2 repo layout adds `services/ledger/`; a planned `services/execution/` directory rename to the Agent-layer name was **not** carried out — the workspace stays `services/execution/` (the Agent layer, layer 5).
 - §3.2 scope list updated: `ledger:*`, `payment_intent:*`, `agent:*`.
 - §4.3 error code registry adds ledger and payment*intent codes; `execution*\_`codes alias to`agent\_\_` for back-compat.
 - §6 Pre-execution gate is a NEW SECTION (renumbers Observability → §7, Testing → §8, etc.).
@@ -78,7 +78,7 @@ brain/
 └── tools/                # Dev scripts, migration runners, backfill utilities.
 ```
 
-The Layer-5 service kept its original name `services/execution/` (the planned rename to `services/agent/` did not happen). It retains the v0.2 `/execution/*` routes (deprecated) alongside the v0.3 `/payment-intents/*` and `/actions/*` routes. Cross-cutting shared primitives live in the top-level `shared/` package (`@brain/shared`), not in `services/api`.
+The Layer-5 service kept its original name `services/execution/` (the Agent layer, layer 5; the planned directory rename did not happen). It retains the v0.2 `/execution/*` routes (deprecated) alongside the v0.3 `/payment-intents/*` and `/actions/*` routes. Cross-cutting shared primitives live in the top-level `shared/` package (`@brain/shared`), not in `services/api`.
 
 Every service owns its database schema. Cross-service reads go through the owning service's API, never direct database access. This is the rule that preserves the option to extract services later.
 
@@ -252,12 +252,15 @@ Any of the following must pass through the gate:
 - Any write to the tenant's BrainSmartAccount
 - Any agent action with a money-movement side effect
 
-### 6.2 The 16 Deterministic Checks
+### 6.2 The 13 Deterministic Checks + 4 Hardening Additions
 
-The gate runs the following checks in order (13 numbered checks plus the four
-sub-checks `1.5`, `7.5`, `9.5`, `11.5` added across the v0.4 hardening wave).
-Failure short-circuits and produces a `payment_intent_gate_failed` error with the
-failing check identified. The full check index recorded on a passing run is
+The gate runs **13 numbered checks** in order, interleaved with **4 hardening
+sub-checks** (`1.5`, `7.5`, `9.5`, `11.5`) added across the v0.4 hardening wave —
+17 entries total. The canonical happy path is the 13 numbered checks; the four
+additions are additive and several record `not_applicable` when their loader is
+not wired (see §6.2.1), so a minimal caller still sees the canonical 13. Failure
+short-circuits and produces a `payment_intent_gate_failed` error with the failing
+check identified. The full check index recorded on a fully-wired passing run is
 `1, 1.5, 2, 3, 4, 5, 6, 7, 7.5, 8, 9, 9.5, 10, 11, 11.5, 12, 13`.
 
 1. **Agent identity verified.** JWT principal_type=agent, agent_id matches an active row in `agents`.
@@ -279,6 +282,20 @@ failing check identified. The full check index recorded on a passing run is
 13. **Audit event before execution attempt** _and_ **audit event after execution result.** Both rows are mandatory; the post-execution audit captures success or failure, with rail receipt where applicable. The audit-before event persists the full check trace (H-07) so the Proof API can reproduce it.
 
 Steps 12 and 13 are non-skippable even if every other check passes. The audit-before/audit-after pair is what makes execution forensically reconstructible — and is what the Proof API (`GET /v1/proof/{action_id}`) assembles into a verifiable artifact.
+
+#### 6.2.1 The four hardening additions
+
+Each maps 1:1 to a check in `shared/src/gate/gate.ts`. When the addition's loader
+is not wired by the caller, it records `not_applicable` (a passing row) rather
+than failing — so the happy path stays the canonical 13. The exception is `7.5`,
+which has no loader and always runs.
+
+| Index  | Name (in `gate.ts`)        | Guards against                                                                   | When its loader is not wired                                                                                                                                                           |
+| ------ | -------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `1.5`  | `agent_behavior_pinned`    | A swapped model/prompt/tools behind a registered agent identity.                 | No `resolveTenantFlags` ⇒ no check row (legacy). With it + tenant opted out ⇒ `not_applicable`. With `require_behavior_hash=true` (P0.1) a missing/mismatched hash is a **hard fail**. |
+| `7.5`  | `ledger_state_bound`       | A silent change to source-account / counterparty state between decide & execute. | Always runs (no loader); pins a `ledger_snapshot_hash` onto the decision + audit-before.                                                                                               |
+| `9.5`  | `evidence_supports_action` | Evidence that exists but doesn't support the action (wrong amount/CP/currency).  | No `resolveEvidence` ⇒ `not_applicable`.                                                                                                                                               |
+| `11.5` | `no_duplicate_payment`     | Paying an invoice/obligation twice, reused evidence, changed destination.        | No `detectDuplicates` ⇒ `not_applicable`. A collision is a **hard reject even with approval**.                                                                                         |
 
 ### 6.3 Where the Gate Lives
 
@@ -445,7 +462,7 @@ For financial actions, use **PaymentIntent** (§9.5) instead of Proposal. The tw
                       └──────────> [failed]
 ```
 
-Transitions are driven by rail-specific callbacks (ACH return file, ERP write confirmation, on-chain tx receipt). Timeouts are per-rail and documented in `services/agent/rails/*.ts`.
+Transitions are driven by rail-specific callbacks (ACH return file, ERP write confirmation, on-chain tx receipt). Timeouts are per-rail and documented in `services/execution/src/rails/*.ts`.
 
 ### 9.3 Policy
 

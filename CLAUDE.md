@@ -32,6 +32,8 @@ PRs produced with AI assistance must be labeled `ai-assisted` (§13.4).
 | 5′  | MCP    | `services/mcp` (`@brain/mcp`)             | JSON-RPC 2.0 server, external agent surface          |
 | 6   | Audit  | `services/audit` (`@brain/audit`)         | Append-only Merkle-chained log + on-chain anchor     |
 
+Workspace `services/execution` implements layer 5 (Agent). The directory rename is deferred; the layer name in docs is "Agent".
+
 Python agents (Plaid extractors, reasoners, three MVP agents) live in `services/agents/` (Python 3.12, uv-managed), outside the TS workspace.
 
 Two TypeScript agent-infrastructure services sit alongside the layers (not in the table above): `services/agent-router` (`@brain/agent-router`, routes domain events/intents to internal agents via `POST /agents/route`) and `services/internal-agents` (`@brain/internal-agents`, the first-party agent catalog — capability definitions + handlers).
@@ -48,7 +50,7 @@ Two TypeScript agent-infrastructure services sit alongside the layers (not in th
 
 Lives in `shared/src/gate/` (the top-level `@brain/shared` package). Called by `POST /payment-intents/{id}/execute` and `POST /actions/{id}/execute` (both via `PaymentIntentService.execute`).
 
-The gate runs 16 sequential checks (identity, scope, policy DSL, source account, counterparty, sanctions, amount limit, balance, evidence, approval determination, approval grant, `policy_decision_id` creation, then audit before + after execution — plus the v0.4 additions: ledger-state snapshot binding, evidence-semantic validation, and duplicate-payment protection, all persisted into the `gate_checks` snapshot). It must not: read Wiki, defer to LLM judgment, mutate Ledger, or catch-and-continue on check failure. Both the before and after audit events are mandatory and non-skippable. `scripts/check-gate-bypass.mjs` (wired into `pnpm run lint`) enforces no bypass path: no rail dispatch or transition to `executed` may occur outside `PaymentIntentService`.
+The gate runs **13 numbered checks plus 4 hardening additions** (`1.5`, `7.5`, `9.5`, `11.5`), 17 entries total (identity, agent behavior pinned, scope, policy DSL, source account, counterparty, sanctions, amount limit, ledger-state binding, balance, evidence present, evidence-semantic validation, approval determination, approval grant, duplicate-payment protection, `policy_decision_id` creation, then audit before + after execution — all persisted into the `gate_checks` snapshot). The 4 additions are additive: several record `not_applicable` when their loader is unwired, so the canonical happy path is the 13 numbered checks (see Engineering Standards §6.2 / §6.2.1). It must not: read Wiki, defer to LLM judgment, mutate Ledger, or catch-and-continue on check failure. Both the before and after audit events are mandatory and non-skippable. `scripts/check-gate-bypass.mjs` (wired into `pnpm run lint`) enforces no bypass path: no rail dispatch or transition to `executed` may occur outside `PaymentIntentService`.
 
 ## Commands
 

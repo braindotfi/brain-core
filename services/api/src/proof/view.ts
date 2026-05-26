@@ -35,8 +35,15 @@ function row(label: string, value: string): string {
   return `<tr><th>${esc(label)}</th><td>${value}</td></tr>`;
 }
 
+/** Options for the renderer (P1.4: CSP nonce for the inline stylesheet). */
+export interface RenderProofOptions {
+  /** Per-request CSP nonce (reply.cspNonce.style); omit ⇒ no nonce attribute. */
+  styleNonce?: string;
+}
+
 /** Render a Proof as a standalone HTML document. Pure — no I/O. */
-export function renderProofHtml(proof: Proof): string {
+export function renderProofHtml(proof: Proof, opts: RenderProofOptions = {}): string {
+  const styleNonce = opts.styleNonce !== undefined ? ` nonce="${esc(opts.styleNonce)}"` : "";
   const anchored = proof.chain_anchor !== null;
   const verifiable = proof.merkle_root.length > 0 && proof.audit_events.length > 0;
   const badge = anchored
@@ -107,7 +114,7 @@ export function renderProofHtml(proof: Proof): string {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Brain Proof — ${esc(proof.action_id)}</title>
-<style>
+<style${styleNonce}>
   :root { color-scheme: light dark; }
   body { font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
          margin: 0; padding: 1.5rem; max-width: 860px; margin-inline: auto; color: #1a1a2e; }
@@ -203,7 +210,9 @@ export async function registerProofViewRoute(
         throw brainError("proof_not_found", "no proof for that action", { statusOverride: 404 });
       }
       reply.header("content-type", "text/html; charset=utf-8");
-      return renderProofHtml(proof);
+      // P1.4: stamp the inline stylesheet with the per-request CSP nonce.
+      const styleNonce = (reply as { cspNonce?: { style?: string } }).cspNonce?.style;
+      return renderProofHtml(proof, styleNonce !== undefined ? { styleNonce } : {});
     },
   );
 }

@@ -10,6 +10,7 @@ export const SERVICE_NAME = "brain-audit" as const;
 export { buildAuditApp, type BuildAuditAppOptions } from "./server.js";
 export type { AuditDeps } from "./deps.js";
 export * from "./merkle.js";
+export { verifyInclusion } from "./verify.js";
 export {
   publishAnchor,
   type AnchorBroadcaster,

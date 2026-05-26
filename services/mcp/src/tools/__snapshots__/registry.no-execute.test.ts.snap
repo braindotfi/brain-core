@@ -1,0 +1,16 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MCP tool registry — no execution surface (P1.2) > snapshots the exposed tool list (additions require explicit review) 1`] = `
+[
+  "agent.action.propose",
+  "ledger.account.get",
+  "ledger.accounts.list",
+  "ledger.counterparties.list",
+  "ledger.obligations.list",
+  "ledger.transactions.list",
+  "payment_intent.propose",
+  "raw.contribute",
+  "wiki.page.get",
+  "wiki.question",
+]
+`;

@@ -13,7 +13,6 @@
 import { initTracing, shutdownTracing } from "./instrumentation.js";
 import Fastify from "fastify";
 import fastifyCors from "@fastify/cors";
-import fastifyHelmet from "@fastify/helmet";
 import fastifyRateLimit from "@fastify/rate-limit";
 import { Redis } from "ioredis";
 import {
@@ -61,6 +60,7 @@ import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { registerProofViewRoute } from "./proof/view.js";
+import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
 
 import {
@@ -1205,7 +1205,8 @@ async function main(): Promise<void> {
     .map((o) => o.trim())
     .filter(Boolean);
   await app.register(fastifyCors, { origin: corsOrigins, credentials: true });
-  await app.register(fastifyHelmet, { contentSecurityPolicy: false });
+  // P1.4: strict CSP + security headers (was contentSecurityPolicy:false).
+  await registerSecurityHeaders(app, { connectSrc: corsOrigins });
   await app.register(fastifyRateLimit, { max: 300, timeWindow: "1 minute" });
 
   // Shared plugins registered ONCE.
