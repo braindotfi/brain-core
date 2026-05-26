@@ -2,12 +2,12 @@
 
 A **PaymentIntent** is an agent-proposed financial action that lives as a row in the Ledger. It is the only path to financial execution in Brain. There is no shortcut.
 
-| Property             | Value                                                                                   |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| **Layer**            | Ledger row, lifecycle owned by Agent layer                                              |
-| **Created by**       | Internal or external agents                                                             |
-| **Executes through** | Provider rails (ACH via Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain) |
-| **Gates**            | Policy decision plus the 16-step pre-execution gate                                     |
+| Property             | Value                                                                                                 |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| **Layer**            | Ledger row, lifecycle owned by Agent layer                                                            |
+| **Created by**       | Internal or external agents                                                                           |
+| **Executes through** | Provider rails (ACH via Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain)               |
+| **Gates**            | Policy decision plus the pre-execution gate (13 numbered checks + 4 hardening additions = 17 entries) |
 
 {% hint style="info" %}
 PaymentIntents are the **second of two controlled write paths** into the Ledger. The first is Raw extraction. PaymentIntents are the only Ledger write that doesn't originate from a Raw artifact, by design.
@@ -66,7 +66,7 @@ proposed
 
 approved
   │
-  │ 13-step pre-execution gate
+  │ 13 numbered checks (+4 hardening additions)
   │
   ├──► gate passes ────► dispatched to rail
   │                       │
@@ -167,4 +167,4 @@ An `approved` PaymentIntent can be **paused** without a terminal transition: `ap
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🚪 Pre-execution Gate</strong></td><td>The 16-step deterministic gate every payment must pass.</td><td><a href="the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>How internal and external agents propose actions.</td><td><a href="agents.md">agents.md</a></td><td></td></tr><tr><td><strong>📋 Policy and Permissioning</strong></td><td>How Policy evaluates PaymentIntents.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🚪 Pre-execution Gate</strong></td><td>The deterministic gate every payment must pass (13 numbered checks + 4 hardening additions).</td><td><a href="the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>How internal and external agents propose actions.</td><td><a href="agents.md">agents.md</a></td><td></td></tr><tr><td><strong>📋 Policy and Permissioning</strong></td><td>How Policy evaluates PaymentIntents.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr></tbody></table>

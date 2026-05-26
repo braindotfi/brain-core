@@ -46,7 +46,7 @@ Every policy has five elements.
 
 Every policy evaluation produces exactly one of three outcomes.
 
-<table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>✅ ALLOW</strong></td><td>The action proceeds. A signed policy verdict is attached to the resulting UserOperation or rail call.</td></tr><tr><td><strong>⚠️ ESCALATE</strong></td><td>Human approval is required before the action can execute. The verdict names the required approvers (e.g. <code>role:cfo</code>).</td></tr><tr><td><strong>❌ DENY</strong></td><td>The action is blocked. The verdict carries a structured reason (e.g. <code>new_counterparty_review_required</code>).</td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>✅ ALLOW</strong></td><td>The action proceeds. A signed policy verdict is attached to the resulting session-key call via `executeViaSessionKey` or rail call.</td></tr><tr><td><strong>⚠️ ESCALATE</strong></td><td>Human approval is required before the action can execute. The verdict names the required approvers (e.g. <code>role:cfo</code>).</td></tr><tr><td><strong>❌ DENY</strong></td><td>The action is blocked. The verdict carries a structured reason (e.g. <code>new_counterparty_review_required</code>).</td></tr></tbody></table>
 
 {% hint style="info" %}
 **ESCALATE is the default for unmatched conditions.** If the policy compiler cannot determine a clear ALLOW or DENY for a proposed action, the safe default is to require human review. Failure modes are explicit, not silent.
@@ -56,17 +56,17 @@ Every policy evaluation produces exactly one of three outcomes.
 
 A walkthrough of the policy from the top of this page, applied to a real proposal:
 
-| Step | What Happens                                                                                                                      |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | Agent proposes: pay $7,800 invoice to Vendor X                                                                                    |
-| 2    | Policy Layer evaluates against version `v3` of the tenant policy                                                                  |
-| 3    | Counterparty Vendor X: known, status = approved                                                                                   |
-| 4    | Amount $7,800: above $5,000 threshold                                                                                             |
-| 5    | Outcome: `ESCALATE_FOR_APPROVAL`, approvers = `[role:cfo]`                                                                        |
-| 6    | CFO receives the request with Wiki context (vendor history, prior payments) and Ledger references (invoice, PO)                   |
-| 7    | CFO approves. EIP-712 approval signature recorded                                                                                 |
-| 8    | Action moves to executable. `BrainSmartAccount` signs UserOperation OR bank API call dispatched                                   |
-| 9    | Audit Layer records: proposal, policy decision, approver identity, execution receipt, settlement confirmation, all linked by hash |
+| Step | What Happens                                                                                                                       |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | Agent proposes: pay $7,800 invoice to Vendor X                                                                                     |
+| 2    | Policy Layer evaluates against version `v3` of the tenant policy                                                                   |
+| 3    | Counterparty Vendor X: known, status = approved                                                                                    |
+| 4    | Amount $7,800: above $5,000 threshold                                                                                              |
+| 5    | Outcome: `ESCALATE_FOR_APPROVAL`, approvers = `[role:cfo]`                                                                         |
+| 6    | CFO receives the request with Wiki context (vendor history, prior payments) and Ledger references (invoice, PO)                    |
+| 7    | CFO approves. EIP-712 approval signature recorded                                                                                  |
+| 8    | Action moves to executable. `BrainSmartAccount.executeViaSessionKey` dispatches the on-chain call OR a bank API call is dispatched |
+| 9    | Audit Layer records: proposal, policy decision, approver identity, execution receipt, settlement confirmation, all linked by hash  |
 
 ### Versioning, Signing, and Anchoring
 
@@ -104,16 +104,16 @@ PolicyRegistration(
 
 Policy is enforced **twice** by design.
 
-| Level                             | What It Catches                                                                                                                                                                   |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Off-chain** Brain Policy Engine | Most evaluations, fast feedback, dynamic conditions, rich error messages                                                                                                          |
-| **On-chain** `BrainSmartAccount`  | The signed Policy verdict is verified inside `validateUserOp`. Any action without a valid verdict is rejected at the account level, regardless of what the off-chain engine said. |
+| Level                             | What It Catches                                                                                                                                                                                                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Off-chain** Brain Policy Engine | Most evaluations, fast feedback, dynamic conditions, rich error messages                                                                                                                                                                                                |
+| **On-chain** `BrainSmartAccount`  | The session key is bound to the active `policyVersion` at grant time and its scope + spend caps are enforced inside `executeViaSessionKey`. Any action outside the granted key's bounds is rejected at the account level, regardless of what the off-chain engine said. |
 
 {% hint style="success" %}
-Belt and braces. Even if the off-chain engine were compromised, the on-chain account would still reject UserOperations that lack a valid, non-expired, scope-bound policy verdict.
+Belt and braces. Even if the off-chain engine were compromised, the on-chain account would still reject any call outside the granted session key's policyVersion-bound scope and spend caps.
 {% endhint %}
 
-Policy verdicts are short-lived (default TTL 60 seconds) and bound to the `userOpHash`, so a verdict cannot be replayed against a different action.
+Each session key is bound to the active `policyVersion` at grant time, and every `executeViaSessionKey` call carries a single-use replay nonce, so a call cannot be replayed against a different action.
 
 ### What's Next
 

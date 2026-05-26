@@ -139,7 +139,7 @@ const trail = await brain.audit.list("acme", {
 
 | Concern               | Why Brain handles it                                                            |
 | --------------------- | ------------------------------------------------------------------------------- |
-| **Tamper resistance** | Every event is hashed and chained; Merkle roots anchor on Base every 10 minutes |
+| **Tamper resistance** | Every event is hashed and chained; Merkle roots anchor on Base hourly |
 | **Per-event signing** | Anchorer keys live in HSMs; rotation is governed                                |
 | **Reorg safety**      | Reads wait for finality; cross-batch references catch dropped anchors           |
 | **Privacy**           | Only Merkle roots and hashed tenant IDs are on-chain; no payload data leaks     |

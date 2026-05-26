@@ -103,7 +103,7 @@ The canonical scope document enumerates which of these the tenant has granted to
 | `wiki:read`              | All `wiki.*` read tools and `brain://wiki/...` resources     |
 | `raw:write`              | The `raw.contribute` tool                                    |
 | `payment_intent:propose` | The `payment_intent.propose` tool                            |
-| `agent:propose`          | The `agent.action.propose` tool                              |
+| `execution:propose`      | The `agent.action.propose` tool                              |
 
 A tenant can grant any subset. Unused scopes do not appear in the canonical document. The `scopeHash` is the SHA-256 of the canonical, lexicographically-sorted scope document.
 

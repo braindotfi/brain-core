@@ -44,7 +44,7 @@ To rewrite history, you'd have to regenerate every subsequent hash. And you'd st
 
 ### On-Chain Anchors
 
-Brain batches audit events into a Merkle tree per tenant and anchors the root on Base every 10 minutes (or sooner for high-severity events). Once anchored, the root is immutable.
+Brain batches audit events into a Merkle tree per tenant and anchors the root on Base hourly (or sooner for high-severity events). Once anchored, the root is immutable.
 
 ```typescript
 const proof = await brain.proof(actionId);

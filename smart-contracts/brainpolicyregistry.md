@@ -2,12 +2,12 @@
 
 `BrainPolicyRegistry` registers policy version hashes per tenant. The policy text and compiled rules live off-chain. Only the canonical hash is on-chain, signed by the tenant.
 
-| Property           | Value                                           |
-| ------------------ | ----------------------------------------------- |
-| **Network**        | Base L2                                         |
-| **Solidity**       | 0.8.x                                           |
-| **Pattern**        | Transparent proxy with 48-hour upgrade timelock |
-| **Tenant signing** | EIP-712 `PolicyRegistration`                    |
+| Property           | Value                                                                 |
+| ------------------ | --------------------------------------------------------------------- |
+| **Network**        | Base L2                                                               |
+| **Solidity**       | 0.8.x                                                                 |
+| **Pattern**        | Immutable — no upgrade path in MVP; changes ship as audited redeploys |
+| **Tenant signing** | EIP-712 `PolicyRegistration`                                          |
 
 ### Interface
 

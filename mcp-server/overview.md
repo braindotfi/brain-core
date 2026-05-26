@@ -28,10 +28,10 @@ The MCP surface is intentionally small. **10 tools, 5 resource templates, 5 cann
 | **Read Wiki**            | `wiki.question`, `wiki.page.get`                                                                                                  | `wiki:read`              |
 | **Contribute to Raw**    | `raw.contribute`                                                                                                                  | `raw:write`              |
 | **Propose payment**      | `payment_intent.propose`                                                                                                          | `payment_intent:propose` |
-| **Propose agent action** | `agent.action.propose`                                                                                                            | `agent:propose`          |
+| **Propose agent action** | `agent.action.propose`                                                                                                            | `execution:propose`      |
 
 {% hint style="warning" %}
-There is no `payment_intent.execute` on the MCP surface. External agents may **propose** but never **execute**. Execution always goes through Brain's deterministic 16-check pre-execution gate, behind human approval where policy demands it.
+There is no `payment_intent.execute` on the MCP surface. External agents may **propose** but never **execute**. Execution always goes through Brain's deterministic pre-execution gate (13 numbered checks + 4 hardening additions), behind human approval where policy demands it.
 {% endhint %}
 
 [**→ The pre-execution gate**](../protocol/the-pre-execution-gate.md)

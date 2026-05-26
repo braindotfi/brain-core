@@ -40,7 +40,7 @@ Events are batched into a per-tenant Merkle tree. Roots are anchored to Base L2 
 
 | Property                | Value                                                                                                      |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Anchor cadence**      | Every 10 minutes (default)                                                                                 |
+| **Anchor cadence**      | Hourly (default)                                                                                           |
 | **Immediate anchoring** | On high-severity events (large transfers, new counterparties, policy changes)                              |
 | **Anchor target**       | `BrainAuditAnchor` on Base L2                                                                              |
 | **Anchor authority**    | Brain anchorer key, EIP-712 signed                                                                         |

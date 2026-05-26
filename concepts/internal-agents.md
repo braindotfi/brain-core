@@ -18,14 +18,14 @@ Brain ships a small set of its own agents (for example, collections, treasury, a
 
 ## Same Registry, Same Validation
 
-An internal agent is registered in `BrainMCPAgentRegistry` exactly like an external one: an `agentId`, an execution address, a per-tenant `scopeHash`, and a tenant-signed authorization. When an internal agent settles on-chain, its UserOperation passes the same four `BrainSmartAccount` checks as any agent:
+An internal agent is registered in `BrainMCPAgentRegistry` exactly like an external one: an `agentId`, an execution address, a per-tenant `scopeHash`, and a tenant-signed authorization. When an internal agent settles on-chain, it executes under the same `BrainSmartAccount` session-key model as any agent. The owner first `grantSessionKey`s the agent's execution address with a `policyVersion` bound at grant time and on-chain spend caps (per-tx and per-period). Each settlement then calls `executeViaSessionKey`, which enforces:
 
-1. the agent is registered for the tenant,
-2. a valid, non-expired tenant-signed `ScopeAttestation` is present,
-3. a Brain-signed policy verdict is bound to the exact `userOpHash`, and
-4. the action is within account-level limits.
+1. the session key is granted, not paused, and within its validity window,
+2. the supplied nonce matches the per-holder replay nonce,
+3. the call stays within the per-tx and per-period spend caps, and
+4. the key's `policyVersion` matches what `BrainPolicyRegistry` returns.
 
-There is no `BrainNativeAgent` and no bypass. Capabilities are identified by `keccak256(name)` and fold into the agent's `scopeHash`, the same as for external agents.
+The owner can `pauseSessionKey`/`unpauseSessionKey` or `revokeSessionKey` at any time. There is no `BrainNativeAgent` and no bypass. Capabilities are identified by `keccak256(name)` and fold into the agent's `scopeHash`, the same as for external agents.
 
 ## The Shared Pattern
 

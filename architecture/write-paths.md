@@ -53,13 +53,13 @@ External agents with `raw:write` scope can push artifacts into the Raw layer. St
 
 Agents create PaymentIntent rows in the Ledger as proposals for financial actions. PaymentIntents are the only Ledger-write path that does not originate from a Raw extraction.
 
-| Property            | Value                                                    |
-| ------------------- | -------------------------------------------------------- |
-| **Originates from** | Internal or external agents                              |
-| **Writes to**       | Ledger (`ledger_payment_intents`)                        |
-| **Required scope**  | `payment_intent:propose` (for external agents)           |
-| **Service method**  | `PaymentIntentService.create()` (shared by HTTP and MCP) |
-| **Lifecycle gates** | Policy → Approval → 16-step pre-execution gate           |
+| Property            | Value                                                     |
+| ------------------- | --------------------------------------------------------- |
+| **Originates from** | Internal or external agents                               |
+| **Writes to**       | Ledger (`ledger_payment_intents`)                         |
+| **Required scope**  | `payment_intent:propose` (for external agents)            |
+| **Service method**  | `PaymentIntentService.create()` (shared by HTTP and MCP)  |
+| **Lifecycle gates** | Policy → Approval → pre-execution gate (13 + 4 hardening) |
 
 [**→ Payment Intents**](../protocol/payment-intents.md)
 

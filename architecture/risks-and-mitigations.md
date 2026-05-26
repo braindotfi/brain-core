@@ -20,13 +20,13 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 
 **Mitigation.**
 
-| Mechanism                                | How It Helps                                                                                    |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| EIP-712 ScopeAttestation                 | Every action requires a tenant-signed scope; outside-scope calls fail at the on-chain validator |
-| Signed policy verdict                    | Every action requires a Brain-signed verdict bound to the userOpHash                            |
-| `BrainSmartAccount` enforcement on-chain | Both checks happen inside `validateUserOp`, not just in the backend                             |
-| Account-level limits (per-tx, per-day)   | Hard cap on blast radius regardless of policy                                                   |
-| ERC-8004 reputation                      | Misbehaving agents accumulate negative attestations and lose access                             |
+| Mechanism                                | How It Helps                                                                                                                      |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| EIP-712 ScopeAttestation                 | Every action requires a tenant-signed scope; outside-scope calls revert inside `executeViaSessionKey`                             |
+| Policy bound at grant                    | The session key carries the `policyVersion` digest it was authorized under; a stored key can never have a missing binding         |
+| `BrainSmartAccount` enforcement on-chain | Scope + spend caps are enforced inside `executeViaSessionKey` (bound to the policyVersion at grant time), not just in the backend |
+| Account-level limits (per-tx, per-day)   | Hard cap on blast radius regardless of policy                                                                                     |
+| On-chain reputation (planned — RFC 0001) | Misbehaving agents accumulate negative attestations and lose access; not stored on-chain in the MVP                               |
 
 ### Policy Ambiguity
 
@@ -59,13 +59,13 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 
 **Mitigation.**
 
-| Mechanism                    | How It Helps                                                 |
-| ---------------------------- | ------------------------------------------------------------ |
-| Minimal on-chain surface     | Less code = smaller attack surface                           |
-| Two independent audits       | Performed before mainnet deployment                          |
-| Public bug bounty            | Continuous post-deployment coverage                          |
-| 48-hour timelock on upgrades | Upgrades visible and delayed; tenants have time to respond   |
-| Anchorer keys on HSMs        | Compromise of the operational machine does not yield the key |
+| Mechanism                | How It Helps                                                 |
+| ------------------------ | ------------------------------------------------------------ |
+| Minimal on-chain surface | Less code = smaller attack surface                           |
+| Two independent audits   | Performed before mainnet deployment                          |
+| Public bug bounty        | Continuous post-deployment coverage                          |
+| Immutable contracts      | No upgrade path in MVP; changes ship as audited redeploys    |
+| Anchorer keys on HSMs    | Compromise of the operational machine does not yield the key |
 
 ### L2 Finality and Reorgs
 
@@ -107,16 +107,16 @@ A counterparty verifying a proof receives only the specific event(s) the tenant 
 
 ### Risk Summary
 
-| Risk                | Severity Without Mitigation | Severity With Mitigation                  |
-| ------------------- | --------------------------- | ----------------------------------------- |
-| Source data quality | High                        | Medium (always some noise)                |
-| Agent misbehaviour  | Critical                    | Low (multiple gates)                      |
-| Policy ambiguity    | High                        | Low (compiler + signing model)            |
-| Source API failures | Medium                      | Low (idempotent + replay)                 |
-| Smart contract bugs | Critical                    | Low (minimal surface + audits + timelock) |
-| L2 reorgs           | Medium                      | Low (confirmations + tolerant anchors)    |
-| Audit privacy leaks | High                        | Negligible (only roots on-chain)          |
-| Regulatory variance | High                        | Medium (handled per-region)               |
+| Risk                | Severity Without Mitigation | Severity With Mitigation                   |
+| ------------------- | --------------------------- | ------------------------------------------ |
+| Source data quality | High                        | Medium (always some noise)                 |
+| Agent misbehaviour  | Critical                    | Low (multiple gates)                       |
+| Policy ambiguity    | High                        | Low (compiler + signing model)             |
+| Source API failures | Medium                      | Low (idempotent + replay)                  |
+| Smart contract bugs | Critical                    | Low (minimal surface + immutable + audits) |
+| L2 reorgs           | Medium                      | Low (confirmations + tolerant anchors)     |
+| Audit privacy leaks | High                        | Negligible (only roots on-chain)           |
+| Regulatory variance | High                        | Medium (handled per-region)                |
 
 {% hint style="info" %}
 This covers only the technical risks of the threat model. Operational, governance, and business risks are addressed separately in compliance and operational documentation.

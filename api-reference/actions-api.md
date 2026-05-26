@@ -117,11 +117,11 @@ Response:
 }
 ```
 
-| Rail            | Description                                    |
-| --------------- | ---------------------------------------------- |
-| `bank_api`      | Off-chain rail (bank API or processor)         |
-| `smart_account` | On-chain via `BrainSmartAccount` UserOperation |
-| `x402`          | HTTP-native machine settlement                 |
+| Rail            | Description                                           |
+| --------------- | ----------------------------------------------------- |
+| `bank_api`      | Off-chain rail (bank API or processor)                |
+| `smart_account` | On-chain via `BrainSmartAccount.executeViaSessionKey` |
+| `x402`          | HTTP-native machine settlement                        |
 
 ### Subscribe to Action Events
 

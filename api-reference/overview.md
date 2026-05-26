@@ -103,24 +103,25 @@ All errors share a common shape.
 ```json
 {
   "error": {
-    "code": "policy.denied",
+    "code": "policy_denied",
     "message": "Counterparty not approved",
     "details": { "counterparty_id": "cp_x", "policy_version": 3 },
-    "trace_id": "trc_8f3a92..."
+    "request_id": "req_8f3a92...",
+    "docs_url": "https://docs.brain.fi/errors/policy_denied"
   }
 }
 ```
 
-| Status | Meaning                                   |
-| ------ | ----------------------------------------- |
-| `400`  | Validation error                          |
-| `401`  | Authentication failed                     |
-| `403`  | Authenticated, but lacks scope            |
-| `404`  | Not found                                 |
-| `409`  | Conflict (e.g. duplicate registration)    |
-| `422`  | Policy denied or escalation required      |
-| `429`  | Rate limit exceeded                       |
-| `500`  | Internal error (always logs a `trace_id`) |
+| Status | Meaning                                     |
+| ------ | ------------------------------------------- |
+| `400`  | Validation error                            |
+| `401`  | Authentication failed                       |
+| `403`  | Authenticated, but lacks scope              |
+| `404`  | Not found                                   |
+| `409`  | Conflict (e.g. duplicate registration)      |
+| `422`  | Policy denied or escalation required        |
+| `429`  | Rate limit exceeded                         |
+| `500`  | Internal error (always logs a `request_id`) |
 
 ### What's Next
 
