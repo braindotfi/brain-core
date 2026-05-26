@@ -8,7 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { newTenantId } from "@brain/shared";
+import { newRawArtifactId, newTenantId } from "@brain/shared";
 import { buildHarness, type Harness } from "./harness.js";
 
 const DESCRIBE = process.env.DATABASE_URL !== undefined ? describe : describe.skip;
@@ -139,9 +139,11 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
   it("GET /raw/{raw_id} returns 404 for unknown id", async () => {
     if (h === null) return;
     const token = await writeToken();
+    // A well-formed but non-existent raw_id, so the route passes id validation
+    // and reaches the not-found path (404). A malformed id would 400 first.
     const res = await h.app.inject({
       method: "GET",
-      url: `/raw/raw_01HQ7K3MISSINGMISSINGMISSI`,
+      url: `/raw/${newRawArtifactId()}`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(404);
