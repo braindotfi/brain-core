@@ -24,6 +24,7 @@ import {
   InMemorySourceRepository,
   SourceService,
   type SourceRepository,
+  type SourceCredentialStore,
 } from "./sources/SourceService.js";
 import { registerSourceRoutes } from "./sources/routes.js";
 import type { RawDeps } from "./deps.js";
@@ -124,7 +125,7 @@ export interface RegisterRawPluginOptions {
    */
   sourceRepository?: SourceRepository;
   /** Optional credential store (typically the same `PostgresSourceRepository` instance). */
-  sourceCredentialStore?: import("./sources/SourceService.js").SourceCredentialStore;
+  sourceCredentialStore?: SourceCredentialStore;
 }
 
 /**

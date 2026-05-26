@@ -9,10 +9,7 @@
  */
 
 import { Configuration, PlaidApi, PlaidEnvironments } from "plaid";
-import type {
-  TransferAuthorizationCreateRequest,
-  TransferCreateRequest,
-} from "plaid";
+import type { TransferAuthorizationCreateRequest, TransferCreateRequest } from "plaid";
 import type {
   PlaidTransferClient,
   PlaidAuthorizationResponse,

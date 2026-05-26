@@ -687,9 +687,7 @@ async function main(): Promise<void> {
           const target = cp.aliases.find((a) => ETH_ADDR.test(a));
           if (target === undefined) return null;
           const valueWei =
-            intent.currency.toUpperCase() === "ETH"
-              ? parseEther(intent.amount).toString()
-              : "0";
+            intent.currency.toUpperCase() === "ETH" ? parseEther(intent.amount).toString() : "0";
           return {
             smart_account: smartAccount,
             holder: getHolderAddress(sessionKey as `0x${string}`),

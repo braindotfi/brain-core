@@ -255,6 +255,10 @@ export function compareDecimal(a: string, b: string): number {
   const intCmp = compareBigNumeric(na.int, nb.int);
   if (intCmp !== 0) return na.negative ? -intCmp : intCmp;
   const fracCmp = compareBigNumeric(na.frac, nb.frac);
+  // Equal magnitude ⇒ clean +0, never -0. `na.negative ? -fracCmp` yields -0 for
+  // two equal negatives (e.g. -6, -6), and Object.is(-0, 0) is false — which
+  // breaks the total-order property test (and any strict === 0 check).
+  if (fracCmp === 0) return 0;
   return na.negative ? -fracCmp : fracCmp;
 }
 
