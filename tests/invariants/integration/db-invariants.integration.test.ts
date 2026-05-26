@@ -199,15 +199,26 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       outputs: {},
     });
 
-    const seenByB = await withTenantScope(pool, b, (c) =>
-      c.query(`SELECT id FROM audit_events WHERE id = $1`, [ev.id]),
-    );
-    expect(seenByB.rows).toHaveLength(0);
+    // Read as the NON-OWNER app role so RLS actually applies. The pooled
+    // connection runs as the (super)owner, for whom Postgres bypasses RLS
+    // regardless of FORCE — withTenantScope alone would see across tenants.
+    async function countSeenAs(tenant: string): Promise<number> {
+      const c = await pool.connect();
+      try {
+        await c.query(`SET search_path TO ${schema}, public`);
+        await c.query("BEGIN");
+        await c.query(`SET LOCAL ROLE ${appRole}`);
+        await c.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+        const res = await c.query(`SELECT id FROM audit_events WHERE id = $1`, [ev.id]);
+        await c.query("ROLLBACK");
+        return res.rows.length;
+      } finally {
+        c.release();
+      }
+    }
 
-    const seenByA = await withTenantScope(pool, a, (c) =>
-      c.query(`SELECT id FROM audit_events WHERE id = $1`, [ev.id]),
-    );
-    expect(seenByA.rows).toHaveLength(1);
+    expect(await countSeenAs(b)).toBe(0);
+    expect(await countSeenAs(a)).toBe(1);
   });
 
   // 3 — gate-bypass impossibility.
