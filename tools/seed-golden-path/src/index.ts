@@ -111,6 +111,15 @@ export async function seedGoldenPath(
   // ---------- Accounts ----------
   const accounts = await seedAccounts(pool, audit, ctx, sourceIds, evidenceIds);
 
+  // The tenant has two AP-eligible bank accounts (checking + savings), so the
+  // P0.5 invoice-shortcut resolver needs a configured default to fund a
+  // payment. Point it at checking (idempotent for repeat seeds).
+  await pool.query(
+    `INSERT INTO tenants (id, default_ap_account_id) VALUES ($1, $2)
+       ON CONFLICT (id) DO UPDATE SET default_ap_account_id = EXCLUDED.default_ap_account_id`,
+    [ctx.tenantId, accounts.checking.id],
+  );
+
   // ---------- Documents (receipts) ----------
   const documents = await seedDocuments(pool, ctx, sourceIds, evidenceIds, accounts.checking.id);
 
@@ -118,7 +127,14 @@ export async function seedGoldenPath(
   const obligations = await seedObligations(pool, ctx, sourceIds, evidenceIds, counterparties);
 
   // ---------- Invoices ----------
-  const invoices = await seedInvoices(pool, ctx, sourceIds, evidenceIds, counterparties);
+  const invoices = await seedInvoices(
+    pool,
+    ctx,
+    sourceIds,
+    evidenceIds,
+    counterparties,
+    documents.receipt1,
+  );
 
   // ---------- Transactions ----------
   const transactions = await seedTransactions(pool, audit, ctx, sourceIds, evidenceIds, {
@@ -430,6 +446,7 @@ async function seedInvoices(
   sourceIds: string[],
   evidenceIds: string[],
   cps: GoldenPathSeed["counterparties"],
+  documentId: string,
 ): Promise<GoldenPathSeed["invoices"]> {
   return withTenantScope(pool, ctx.tenantId, async (c) => {
     async function inv(
@@ -440,12 +457,14 @@ async function seedInvoices(
       status: string,
     ) {
       const id = newInvoiceId();
+      // linked_document_ids carries the source document evidence the P0.5
+      // invoice-shortcut resolver requires before it will fund a payment.
       await c.query(
         `INSERT INTO ledger_invoices (
            id, owner_id, invoice_number, counterparty_id,
            amount_due, amount_paid, currency, issue_date, due_date, status,
-           source_ids, evidence_ids, provenance, confidence
-         ) VALUES ($1,$2,$3,$4,$5,$6,'USD',$7,$8,$9,$10,$11,'extracted',0.9)`,
+           source_ids, evidence_ids, linked_document_ids, provenance, confidence
+         ) VALUES ($1,$2,$3,$4,$5,$6,'USD',$7,$8,$9,$10,$11,$12,'extracted',0.9)`,
         [
           id,
           ctx.tenantId,
@@ -458,6 +477,7 @@ async function seedInvoices(
           status,
           sourceIds,
           evidenceIds,
+          [documentId],
         ],
       );
       return id;
