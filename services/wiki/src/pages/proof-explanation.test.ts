@@ -69,4 +69,40 @@ describe("renderProofExplanation", () => {
     const text = renderProofExplanation(core({ outcome: "rejected" }));
     expect(text).toContain("rejected by the pre-execution gate");
   });
+
+  it.each([
+    ["failed", "rail reported a failure"],
+    ["confirmed", "awaiting the required human confirmation"],
+    ["allowed", "allowed by policy and gated"],
+  ] as const)("frames a %s action", (outcome, phrase) => {
+    const text = renderProofExplanation(core({ outcome }));
+    expect(text).toContain(phrase);
+  });
+
+  it("uses a generic subject + omits the rule clause when agent_id and rule are empty/null", () => {
+    const text = renderProofExplanation(core({ agent_id: "", matched_rule_id: null }));
+    expect(text).toContain("An agent's action");
+    expect(text).not.toContain(" under rule ");
+  });
+
+  it("falls back to 'unknown' policy version and pluralizes evidence", () => {
+    const text = renderProofExplanation(
+      core({
+        policy_version: "",
+        evidence: [
+          { raw_parsed_id: "p1", sha256: "a", source_type: "plaid", kind: "invoice", trust_level: "high" },
+          { raw_parsed_id: "p2", sha256: "b", source_type: "plaid", kind: "receipt", trust_level: "high" },
+        ],
+      }),
+    );
+    expect(text).toContain("policy version unknown");
+    expect(text).toContain("2 evidence artifacts");
+  });
+
+  it("singular evidence + no settlement sentence when executed without a rail receipt", () => {
+    const text = renderProofExplanation(core({ rail_receipt: null }));
+    expect(text).toContain("1 evidence artifact."); // singular (no trailing 's')
+    expect(text).not.toContain("1 evidence artifacts");
+    expect(text).not.toContain("settlement receipt");
+  });
 });

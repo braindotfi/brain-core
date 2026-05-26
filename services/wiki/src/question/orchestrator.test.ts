@@ -296,6 +296,60 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(result.evidence[0]!.entityId).toBe("cp_RISK");
   });
 
+  it("grounds in obligation rows (covers the obligation candidate path)", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [
+        {
+          id: "obl_DUE1",
+          type: "subscription",
+          amount_due: "29.00",
+          currency: "USD",
+          due_date: new Date("2026-05-01T00:00:00Z"),
+          status: "upcoming",
+        },
+      ],
+      counterparties: [],
+    };
+    const evidenceContext = buildEvidenceContext(rows);
+    const prompt = {
+      model: "m4",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        {
+          role: "user" as const,
+          content: `QUESTION:\nwhat bills are due\n\nEVIDENCE:\n${evidenceContext}`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: `{"answer":"A $29 subscription is due May 1.","evidence_ids":["obl_DUE1"]}`,
+          usage: { inputTokens: 8, outputTokens: 6 },
+          model: "m4",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      { question: "what bills are due", asOf: null, maxEvidenceDepth: 3, tenantId: "tnt_test", model: "m4" },
+    );
+    expect(result.evidence[0]!.entityId).toBe("obl_DUE1");
+    expect(result.evidence[0]!.entityType).toBe("obligation");
+  });
+
   it("falls back to raw text when LLM returns non-JSON", async () => {
     const rows: FakeRows = { transactions: [], obligations: [], counterparties: [] };
     const evidenceContext = buildEvidenceContext(rows);
