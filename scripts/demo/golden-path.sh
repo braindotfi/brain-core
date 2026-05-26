@@ -126,10 +126,14 @@ else note "reconcile route may differ — non-blocking"; record "reconcile" warn
 # ── 7. Propose a PaymentIntent via the invoice shortcut (P0.5) ───────────────
 header "7. Invoice-shortcut propose"
 start_step
-PI=$(req POST "/payment-intents" "$(jq -n --arg id "$INVOICE_ID" '{type:"pay_invoice", invoice_id:$id}')")
-PI_ID=$(echo "$PI" | jq -r '.id')
+# Use curl -s (not -sf) so a 4xx error envelope is captured and shown, rather
+# than failing the script under `set -e` with no diagnostic.
+PI=$(curl -s -X POST "$V1/payment-intents" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "$(jq -n --arg id "$INVOICE_ID" '{type:"pay_invoice", invoice_id:$id}')")
+PI_ID=$(echo "$PI" | jq -r '.id // empty')
 OUTCOME=$(echo "$PI" | jq -r '.policy_decision.outcome // .outcome // "unknown"')
-[[ -n "$PI_ID" && "$PI_ID" != "null" ]] || { fail "propose failed"; record "propose" fail ""; exit 1; }
+[[ -n "$PI_ID" && "$PI_ID" != "null" ]] || { fail "propose failed: $PI"; record "propose" fail ""; exit 1; }
 ok "PaymentIntent $PI_ID (policy: $OUTCOME)"; record "propose" ok "$PI_ID"
 
 # ── 8. Approve if the policy required confirmation ───────────────────────────
