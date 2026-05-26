@@ -15,6 +15,8 @@ export interface TransactionRow extends LedgerRowCommon {
   description_raw: string | null;
   description_normalized: string | null;
   reconciliation_status: string | null;
+  /** On-chain settlement tx hash (0x…64 hex); null for off-chain txs (RFC 0001). */
+  chain_tx_hash: string | null;
 }
 
 export interface TransactionListFilters {

@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryAuditEmitter, newTenantId, newUserId } from "@brain/shared";
-import { upsertCounterpartyRow } from "./writes.js";
+import { recordTransactionRow, upsertCounterpartyRow } from "./writes.js";
 
 /** Fake pool that captures each query's text + values; routes by substring. */
 function capturingPool(routes: Record<string, Array<Record<string, unknown>>> = {}): {
@@ -71,5 +71,56 @@ describe("upsertCounterpartyRow — agent counterparties (RFC 0001)", () => {
     });
     const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_counterparties"))!;
     expect(insert.values[12]).toBeNull();
+  });
+});
+
+describe("recordTransactionRow — on-chain settlement hash (RFC 0001)", () => {
+  const CHAIN_TX = "0x" + "ab".repeat(32);
+
+  it("persists chain_tx_hash on an on-chain settlement transaction", async () => {
+    const { pool, calls } = capturingPool({
+      "INSERT INTO ledger_transactions": [{ id: "txn_1", chain_tx_hash: CHAIN_TX }],
+    });
+    const audit = new InMemoryAuditEmitter();
+    const { created } = await recordTransactionRow(pool, audit, ctx, {
+      account_id: "acct_1",
+      external_transaction_id: null,
+      amount: "100.00",
+      currency: "USD",
+      direction: "outflow",
+      transaction_date: "2026-03-10T12:00:00Z",
+      status: "posted",
+      source_ids: ["raw_1"],
+      evidence_ids: [],
+      provenance: "extracted",
+      confidence: 0.9,
+      chain_tx_hash: CHAIN_TX,
+    });
+    expect(created).toBe(true);
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_transactions"))!;
+    // chain_tx_hash is the 19th positional param ($19).
+    expect(insert.values[18]).toBe(CHAIN_TX);
+  });
+
+  it("defaults chain_tx_hash to null for an off-chain transaction", async () => {
+    const { pool, calls } = capturingPool({
+      "INSERT INTO ledger_transactions": [{ id: "txn_2", chain_tx_hash: null }],
+    });
+    const audit = new InMemoryAuditEmitter();
+    await recordTransactionRow(pool, audit, ctx, {
+      account_id: "acct_1",
+      external_transaction_id: null,
+      amount: "50.00",
+      currency: "USD",
+      direction: "outflow",
+      transaction_date: "2026-03-10T12:00:00Z",
+      status: "posted",
+      source_ids: ["raw_1"],
+      evidence_ids: [],
+      provenance: "extracted",
+      confidence: 0.9,
+    });
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_transactions"))!;
+    expect(insert.values[18]).toBeNull();
   });
 });

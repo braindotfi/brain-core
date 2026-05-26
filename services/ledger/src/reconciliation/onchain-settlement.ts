@@ -5,7 +5,8 @@
  * on-chain account (e.g. a USDC transfer on Base) — against the obligation it
  * settles:
  *   - left side:  outflow tx from an account with account_type = 'onchain',
- *                 status posted/cleared, still unreconciled
+ *                 carrying an on-chain tx hash (chain_tx_hash), status
+ *                 posted/cleared, still unreconciled
  *   - right side: an open/due/overdue obligation for the SAME counterparty
  *   - amount near-exact (on-chain amounts are deterministic) + counterparty
  *     agreement + due-date proximity
@@ -121,6 +122,7 @@ async function loadOnchainSettlements(
           AND t.status IN ('posted','cleared')
           AND (t.reconciliation_status IS NULL OR t.reconciliation_status = 'unreconciled')
           AND a.account_type = 'onchain'
+          AND t.chain_tx_hash IS NOT NULL
           AND t.transaction_date >= $1
         ORDER BY t.transaction_date DESC
         LIMIT $2`,
