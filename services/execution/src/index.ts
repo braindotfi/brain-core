@@ -64,6 +64,13 @@ export {
   type OnchainExecutor,
   type SessionKeyNonceReader,
 } from "./rails/onchain-base.js";
+export {
+  X402BaseRail,
+  type X402BaseRailDeps,
+  type X402Client,
+  type X402SettleArgs,
+  type X402SettleResult,
+} from "./rails/x402-base.js";
 
 // Boot-binary route registration hooks.
 export { registerExecutionRoutes } from "./routes.js";

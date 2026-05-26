@@ -798,6 +798,8 @@ function railFor(actionType: string): string {
       return "bank_ach";
     case "onchain_transfer":
       return "onchain_base";
+    case "x402_settle":
+      return "x402_base";
     case "erp_writeback":
       return "erp_writeback";
     default:
