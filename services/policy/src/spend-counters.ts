@@ -37,7 +37,7 @@ export async function readSpendWindow(
 ): Promise<string> {
   const { rows } = await client.query<{ amount: string }>(
     `SELECT amount::text AS amount FROM policy_spend_counters
-      WHERE agent_id = $1 AND window = $2 AND currency = $3 AND bucket_start = $4
+      WHERE agent_id = $1 AND period_window = $2 AND currency = $3 AND bucket_start = $4
       LIMIT 1`,
     [input.agentId, input.window, input.currency, bucketStart(input.window, input.now)],
   );
@@ -51,7 +51,7 @@ export async function readTxCountWindow(
 ): Promise<number> {
   const { rows } = await client.query<{ total: string }>(
     `SELECT COALESCE(SUM(tx_count), 0)::text AS total FROM policy_spend_counters
-      WHERE agent_id = $1 AND window = $2 AND bucket_start = $3`,
+      WHERE agent_id = $1 AND period_window = $2 AND bucket_start = $3`,
     [input.agentId, input.window, bucketStart(input.window, input.now)],
   );
   return Number(rows[0]?.total ?? "0");
@@ -76,9 +76,9 @@ export async function incrementSpendCounter(
 ): Promise<void> {
   await client.query(
     `INSERT INTO policy_spend_counters
-       (id, tenant_id, agent_id, window, bucket_start, amount, tx_count, currency)
+       (id, tenant_id, agent_id, period_window, bucket_start, amount, tx_count, currency)
      VALUES ($1,$2,$3,$4,$5,$6,1,$7)
-     ON CONFLICT (tenant_id, agent_id, window, bucket_start, currency)
+     ON CONFLICT (tenant_id, agent_id, period_window, bucket_start, currency)
      DO UPDATE SET amount = policy_spend_counters.amount + EXCLUDED.amount,
                    tx_count = policy_spend_counters.tx_count + 1`,
     [

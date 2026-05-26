@@ -31,3 +31,14 @@ export {
   type RawParsedRow,
   type ListParsedFilters,
 } from "./repository/parsed.js";
+
+export {
+  SourceService,
+  InMemorySourceRepository,
+  type SourceRepository,
+  type SourceCredentialStore,
+} from "./sources/SourceService.js";
+export {
+  PostgresSourceRepository,
+  type PostgresSourceRepositoryDeps,
+} from "./sources/PostgresSourceRepository.js";

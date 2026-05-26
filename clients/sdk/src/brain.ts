@@ -37,7 +37,7 @@ import type { components } from "./generated/openapi.js";
 
 export interface BrainOptions extends Omit<BrainHttpClientOptions, "baseUrl"> {
   /** Named environment shorthand. Ignored when `baseUrl` is set explicitly. */
-  environment?: "production" | "sandbox";
+  environment?: "production" | "sandbox" | "local";
   /** Explicit base URL override. Takes precedence over `environment`. */
   baseUrl?: string;
   /** Tenant ID attached to compound helpers (`brain.pay`, `brain.ask`). */
@@ -49,9 +49,10 @@ export interface PayResult {
   execution: ExecutionReceipt | undefined;
 }
 
-export const BRAIN_BASE_URLS: Record<"production" | "sandbox", string> = {
+export const BRAIN_BASE_URLS: Record<"production" | "sandbox" | "local", string> = {
   production: "https://api.brain.fi/v1",
   sandbox: "https://api.brain.dev/v1",
+  local: "http://localhost:3000/v1",
 };
 
 export function resolveBaseUrl(options: Pick<BrainOptions, "environment" | "baseUrl">): string {
@@ -122,6 +123,39 @@ export class Brain {
     this.policy = new PolicyResource(this.http);
     this.compounds = new CompoundsResource(this);
     this.cashFlow = new CashFlowResource(this);
+  }
+
+  /**
+   * Convenience factory for local development. Points at `localhost:3000/v1`
+   * using the provided token — useful when running `pnpm -C services/api run dev`.
+   */
+  static local(
+    token: string,
+    options?: Omit<BrainOptions, "token" | "environment" | "baseUrl">,
+  ): Brain {
+    return new Brain({ ...options, token, environment: "local" });
+  }
+
+  /**
+   * Factory for zero-config local testing. Calls `GET /demo/token` on the
+   * local Brain server to obtain a short-lived demo JWT, then constructs a
+   * `Brain` instance pointed at that server. Requires a running local server
+   * (`pnpm -C services/api run dev`).
+   */
+  static async fromDemoServer(
+    baseUrl = "http://localhost:3000/v1",
+    options?: Omit<BrainOptions, "token" | "baseUrl">,
+  ): Promise<Brain> {
+    const fetchFn = options?.fetch ?? globalThis.fetch;
+    const res = await fetchFn(`${baseUrl}/demo/token`);
+    if (!res.ok) {
+      throw new Error(
+        `Brain.fromDemoServer: demo token request failed with status ${res.status}. ` +
+          `Is the local server running? (pnpm -C services/api run dev)`,
+      );
+    }
+    const { token } = (await res.json()) as { token: string };
+    return new Brain({ ...options, token, baseUrl });
   }
 
   getMaskedToken(): string {

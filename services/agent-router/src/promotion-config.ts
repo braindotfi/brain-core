@@ -20,5 +20,7 @@
 import type { PromotionConfig } from "./promotion.js";
 
 export const LIVE_AGENTS: PromotionConfig = {
-  liveAgents: {},
+  liveAgents: {
+    payment: ["ach", "onchain"],
+  },
 };

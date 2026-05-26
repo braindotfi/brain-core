@@ -84,9 +84,9 @@ describe("OnchainBaseRail.dispatch", () => {
     expect(executeCalls[0]?.data).toBe(CALLDATA);
     expect(executeCalls[0]?.value).toBe(0n);
     expect(receipt).toEqual({
-      rail: "onchain_base",
+      rail: "onchain",
       tx_hash: "0xdeadbeef",
-      block_number: "123",
+      block_number: 123,
       gas_used: "45000",
       nonce: "5",
       policy_version: POLICY_VERSION,

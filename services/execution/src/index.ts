@@ -22,6 +22,7 @@ export type { AgentServiceDeps } from "./AgentService.js";
 export type {
   PaymentIntentServiceDeps,
   PaymentIntentPolicyEvaluator,
+  OnchainDispatchParams,
 } from "./payment-intents/PaymentIntentService.js";
 export {
   isValidPaymentIntentTransition,

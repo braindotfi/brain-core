@@ -21,10 +21,11 @@ export const paymentHandler: InternalAgentHandler = {
   build(input: HandlerInput): ProposedAction {
     if (FINANCIAL_ACTIONS.has(input.action)) {
       const c = input.context;
+      const isOnchain = readString(c.rail) === "onchain";
       return {
         channel: "payment_intent",
         intent: {
-          action_type: "ach_outbound",
+          action_type: isOnchain ? "onchain_transfer" : "ach_outbound",
           source_account_id: readString(c.source_account_id),
           destination_counterparty_id: readString(c.destination_counterparty_id),
           amount: readString(c.amount, "0"),

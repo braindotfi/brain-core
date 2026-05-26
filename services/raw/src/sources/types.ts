@@ -41,6 +41,8 @@ export interface SourceRecord {
   readonly type: SourceType;
   readonly status: SourceStatus;
   readonly metadata: Readonly<Record<string, unknown>>;
+  /** Ledger external_account_id values reachable via this source (populated at connect time). */
+  readonly external_account_ids?: readonly string[];
   readonly last_synced_at: string | null;
   readonly error_message: string | null;
   readonly is_stub: boolean;
