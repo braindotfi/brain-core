@@ -99,6 +99,11 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
+        # The toolchain resolves the release via the GitHub API; anonymous calls
+        # are rate-limited to 60/hr and intermittently 403 in CI. Authenticating
+        # with the workflow token raises that to 1000/hr and stops the flake.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install forge dependencies
         run: forge install foundry-rs/forge-std
