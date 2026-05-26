@@ -47,7 +47,13 @@ export interface BuildRawAppOptions {
 
 export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: opts.logger ?? { level: process.env.LOG_LEVEL ?? "info" },
+    // Fastify v5 split logger *config* (`logger`: boolean | PinoLoggerOptions)
+    // from a pre-built logger *instance* (`loggerInstance`). Passing an instance
+    // to `logger` throws FST_ERR_LOG_INVALID_LOGGER_CONFIG, so route a provided
+    // instance through `loggerInstance` and fall back to a config otherwise.
+    ...(opts.logger !== undefined
+      ? { loggerInstance: opts.logger }
+      : { logger: { level: process.env.LOG_LEVEL ?? "info" } }),
     bodyLimit: 55 * 1024 * 1024, // a little headroom above the 50 MiB artifact cap
     disableRequestLogging: false,
   });

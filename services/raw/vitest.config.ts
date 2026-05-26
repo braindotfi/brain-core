@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 // Per-service vitest config. Keeps each service self-contained so `vitest run`
 // from the service dir or via `pnpm -r run test` produces consistent output.
@@ -8,6 +8,11 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: ["src/**/*.test.ts"],
+    // Integration tests (*.integration.test.ts) run only via the dedicated
+    // integration config, AFTER migrations are applied. They must not run in
+    // the unit/coverage pass: when DATABASE_URL is set (CI main.yml) they would
+    // otherwise execute against an unmigrated DB.
+    exclude: [...configDefaults.exclude, "src/**/*.integration.test.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov", "html"],
