@@ -8,7 +8,7 @@
  * registered separately.
  */
 
-export type RailKind = "bank_ach" | "erp_writeback" | "onchain_base" | "notification";
+export type RailKind = "bank_ach" | "erp_writeback" | "onchain_base" | "notification" | "x402_base";
 
 export interface RailDispatchInput {
   tenantId: string;
