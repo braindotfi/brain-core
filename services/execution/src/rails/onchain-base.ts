@@ -180,9 +180,9 @@ export class OnchainBaseRail implements Rail {
 
     return {
       receipt: {
-        rail: "onchain_base",
+        rail: "onchain",
         tx_hash: result.txHash,
-        block_number: result.blockNumber.toString(),
+        block_number: Number(result.blockNumber),
         gas_used: result.gasUsed.toString(),
         nonce: nonce.toString(),
         policy_version: action.policy_version,

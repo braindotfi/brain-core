@@ -6,10 +6,5 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts"],
-  "references": [
-    {
-      "path": "../api"
-    }
-  ]
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
 }
