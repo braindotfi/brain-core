@@ -94,10 +94,12 @@ else note "ingest endpoint shape may differ — adjust if needed"; record "inges
 # ── 4. Normalize → assert ledger rows ────────────────────────────────────────
 header "4. Normalize → Ledger invoices + counterparties"
 start_step
+# GET /ledger/invoices returns { invoices: [...] }; /ledger/counterparties
+# returns { counterparties: [...] } — not { items: [...] }.
 INVOICES=$(req GET "/ledger/invoices?status=sent&limit=5" || true)
-INVOICE_ID=$(echo "${INVOICES:-}" | jq -r '.items[0].id // empty')
+INVOICE_ID=$(echo "${INVOICES:-}" | jq -r '.invoices[0].id // empty')
 CPS=$(req GET "/ledger/counterparties?limit=5" || true)
-CP_ID=$(echo "${CPS:-}" | jq -r '.items[0].id // empty')
+CP_ID=$(echo "${CPS:-}" | jq -r '.counterparties[0].id // empty')
 if [[ -n "$INVOICE_ID" && -n "$CP_ID" ]]; then
   ok "invoice $INVOICE_ID, counterparty $CP_ID"; record "normalize" ok "$INVOICE_ID"
 else
