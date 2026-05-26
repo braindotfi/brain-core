@@ -25,6 +25,13 @@ BASE="${BRAIN_BASE_URL:-${1:-http://localhost:3000}}"
 RAIL="${BRAIN_DEMO_RAIL:-plaid_sandbox}"
 V1="$BASE/v1"
 
+# The seed CLI requires BRAIN_TENANT_ID + BRAIN_ACTOR. Default to the demo
+# golden tenant that GET /v1/demo/token mints for (DEMO_GOLDEN_TENANT in
+# services/api/src/main.ts), so the seeded rows are visible to the demo token.
+: "${BRAIN_TENANT_ID:=tnt_00000000010000000000000000}"
+: "${BRAIN_ACTOR:=golden-path-seed}"
+export BRAIN_TENANT_ID BRAIN_ACTOR
+
 BOLD='\033[1m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
 header() { echo -e "\n${BOLD}${CYAN}══ $1 ══${RESET}"; }
 ok()     { echo -e "${GREEN}✓${RESET} $1"; }
@@ -61,7 +68,7 @@ start_step
 if pnpm -C tools/seed-golden-path run seed >/tmp/gp_seed.log 2>&1; then
   ok "seeded demo tenant (2 banks / 1 card / 5 subs)"; record "seed" ok ""
 else
-  fail "seed failed (see /tmp/gp_seed.log)"; record "seed" fail ""; exit 1
+  fail "seed failed:"; cat /tmp/gp_seed.log >&2; record "seed" fail ""; exit 1
 fi
 
 # ── 2. Mint a demo token ─────────────────────────────────────────────────────
