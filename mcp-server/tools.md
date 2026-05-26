@@ -15,10 +15,10 @@ Brain's MCP surface exposes **10 tools** across four capability groups. Each too
 | `wiki.page.get`              | Wiki read      | `wiki:read`              | No                                   |
 | `raw.contribute`             | Raw contribute | `raw:write`              | Yes (writes Raw artifact)            |
 | `payment_intent.propose`     | PaymentIntent  | `payment_intent:propose` | Yes (writes PaymentIntent in Ledger) |
-| `agent.action.propose`       | Agent action   | `agent:propose`          | Yes (writes Proposal)                |
+| `agent.action.propose`       | Agent action   | `execution:propose`      | Yes (writes Proposal)                |
 
 {% hint style="warning" %}
-**There is no `payment_intent.execute` tool.** External agents propose; humans (or internal Brain workers under an `auto` policy decision) execute. The 16-check pre-execution gate is the only path to settlement.
+**There is no `payment_intent.execute` tool.** External agents propose; humans (or internal Brain workers under an `auto` policy decision) execute. The pre-execution gate (13 numbered checks + 4 hardening additions) is the only path to settlement.
 {% endhint %}
 
 ### Ledger Reads

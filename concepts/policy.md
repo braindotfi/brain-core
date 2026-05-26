@@ -57,7 +57,7 @@ The on-chain layer is the belt and braces. Even if Brain's backend were fully co
 
 ### The Pre-Execution Gate
 
-After Policy says `auto` (or after a human approves a `needs_approval`), one more check runs before money leaves: a deterministic 16-check gate that reads the **current** Ledger state. Account balance, counterparty status, idempotency, on-chain limits, audit-chain health.
+After Policy says `auto` (or after a human approves a `needs_approval`), one more check runs before money leaves: a deterministic gate (13 numbered checks + 4 hardening additions) that reads the **current** Ledger state. Account balance, counterparty status, idempotency, on-chain limits, audit-chain health.
 
 Policy is the standing rule. The gate is the flight check. Both must pass.
 

@@ -1,50 +1,59 @@
 # BrainSmartAccount
 
-`BrainSmartAccount` is a per-tenant ERC-4337 smart account that validates UserOperations against the tenant's active policy and the proposing agent's scope attestation.
+`BrainSmartAccount` is a per-tenant **session-key smart account**. The tenant's root key owns the account; Brain receives a scoped, spend-capped, revocable **session key**. The owner calls `grantSessionKey` to issue a key, and the session-key holder calls `executeViaSessionKey(nonce, target, value, data)` to dispatch a call — the account enforces every bound on-chain and reverts on anything out of scope.
 
-A UserOp is valid if and only if **all four** of the following are true:
+A session-key call succeeds if and only if **all** of the following hold, checked inside `executeViaSessionKey`:
 
-| Check                                                                       | Source                                |
-| --------------------------------------------------------------------------- | ------------------------------------- |
-| 1. Agent address is registered for the tenant                               | `BrainMCPAgentRegistry`               |
-| 2. Agent presents a valid, non-expired EIP-712 ScopeAttestation             | Signed by the tenant                  |
-| 3. The off-chain Policy verdict attached to the UserOp evaluates to `ALLOW` | Signed by Brain's policy verifier key |
-| 4. The action falls within global account-level limits                      | On-chain `AccountLimits`              |
+| Check                                                                                | Mechanism                   |
+| ------------------------------------------------------------------------------------ | --------------------------- |
+| 1. Caller is the granted holder, and the key is not paused                           | `holder` match + pause flag |
+| 2. The call is within the key's validity window (`validAfter`/`validUntil`)          | Per-key timestamps          |
+| 3. The supplied nonce equals the holder's current replay nonce                       | Per-holder `nonce(holder)`  |
+| 4. `target` is on the key's `allowedTargets` allowlist                               | Per-key target allowlist    |
+| 5. The calldata selector is on the key's `allowedSelectors` allowlist                | Per-key selector allowlist  |
+| 6. The amount is within the per-tx (`maxPerTx`) and per-window (`maxPerPeriod`) caps | On-chain spend caps         |
+
+The key's `policyVersion` is bound at grant time (a zero value is rejected by `grantSessionKey`), so a stored key always carries the policy digest it was authorized under.
 
 ### Implementation
 
 ```solidity
-contract BrainSmartAccount is BaseAccount {
-    bytes32 public tenantId;
-    address public policyVerifier;   // off-chain Brain key
-    IBrainMCPAgentRegistry public registry;
-
-    struct AccountLimits {
-        uint128 perTx;
-        uint128 perDay;
-        uint64  dayStart;
-        uint128 spentToday;
-    }
-    AccountLimits public limits;
-
-    function _validateSignature(
-        UserOperation calldata userOp,
-        bytes32 userOpHash
-    ) internal override returns (uint256 validationData) {
-        (bytes memory scopeAtt, bytes memory policyVerdict)
-            = abi.decode(userOp.signature, (bytes, bytes));
-
-        require(_isRegisteredAgent(userOp.sender), "agent not registered");
-        require(_verifyScope(userOp, scopeAtt), "scope invalid");
-        require(_verifyPolicy(userOpHash, policyVerdict), "policy denied");
-        require(_withinLimits(userOp), "limits exceeded");
-        return 0;
+contract BrainSmartAccount {
+    struct SessionKey {
+        address holder;
+        uint256 validAfter;
+        uint256 validUntil;
+        address[] allowedTargets;
+        bytes4[] allowedSelectors;
+        uint256 maxPerTx;       // per-call value cap (wei)
+        uint256 maxPerPeriod;   // cumulative cap per periodSeconds window (wei)
+        uint256 periodSeconds;  // e.g. 86400 for daily; 0 disables period accounting
+        bytes32 policyVersion;  // bound at grant; must be non-zero
     }
 
-    // EIP-7702 path: existing EOA can delegate to this implementation
-    // for a single-session lifetime, with the same checks above.
+    address public owner;             // tenant root key (hardware/custody)
+    bytes32 public immutable tenantId;
+    address public immutable policyRegistry;
+
+    // Owner-only: issue a scoped, spend-capped, policyVersion-bound key.
+    function grantSessionKey(SessionKey calldata key) external onlyOwner;
+
+    // Holder-authenticated: execute within the key's bounds, or revert.
+    function executeViaSessionKey(
+        uint256 nonceSupplied,
+        address target,
+        uint256 value,
+        bytes calldata data
+    ) external returns (bytes memory result);
+
+    // Kill-switch / lifecycle, all owner-only.
+    function pauseSessionKey(address holder) external;
+    function unpauseSessionKey(address holder) external;
+    function revokeSessionKey(address holder) external;
 }
 ```
+
+`executeViaSessionKey` walks the target and selector allowlists, derives the cap-relevant amount (decoding ERC20 `transfer`/`approve`/`transferFrom` quantities so a `value == 0` token transfer cannot bypass the caps), enforces the per-tx and per-window caps, checks-effects-interactions the external call, increments the replay nonce, and emits `AgentActionExecuted`. There is no off-chain verdict signature on the call path; the policy decision is made off-chain and reflected in the key's `policyVersion` binding and scope.
 
 ### EIP-712 ScopeAttestation
 
@@ -71,69 +80,57 @@ ScopeAttestation(
 | `notBefore`, `notAfter` | Validity window                                 |
 | `nonce`                 | Per-tenant, per-agent replay protection         |
 
-### Policy Verdicts
+### Policy Binding
 
-The Policy verdict is signed off-chain by the Brain policy verifier key registered in the smart account.
+The off-chain Policy decision is reflected on-chain by the key's `policyVersion`, fixed when the owner grants the key.
 
-| Property        | Value                                   |
-| --------------- | --------------------------------------- |
-| **Default TTL** | 60 seconds                              |
-| **Bound to**    | The specific `userOpHash`               |
-| **Signed by**   | `policyVerifier`                        |
-| **Replayable?** | No, single-use against this UserOp only |
+| Property          | Value                                                                 |
+| ----------------- | --------------------------------------------------------------------- |
+| **Bound at**      | Grant time, in `grantSessionKey`                                      |
+| **Bound to**      | The key holder, via the stored `policyVersion` digest                 |
+| **Zero allowed?** | No, `grantSessionKey` reverts `PolicyVersionMismatch` on `bytes32(0)` |
+| **Anchored in**   | `BrainPolicyRegistry` (the digest the off-chain decision used)        |
 
 {% hint style="warning" %}
-A policy verdict for one UserOp cannot be used to validate any other UserOp. Even if a verdict is intercepted, it expires within 60 seconds and can only be used against the exact `userOpHash` it was bound to.
+A session key carries exactly the `policyVersion` it was granted under. Rotating the active policy means granting a fresh key; the old key keeps its original binding until revoked or expired.
 {% endhint %}
 
-### Account-Level Limits
+### Spend Caps
 
-Global limits cap blast radius even when policy and scope are valid.
+Per-key caps bound blast radius even within the key's allowlists.
 
-| Field                    | Purpose                               |
-| ------------------------ | ------------------------------------- |
-| `perTx`                  | Maximum value of a single transaction |
-| `perDay`                 | Maximum cumulative value per UTC day  |
-| `dayStart`, `spentToday` | Rolling daily counter, reset per day  |
+| Field           | Purpose                                                                 |
+| --------------- | ----------------------------------------------------------------------- |
+| `maxPerTx`      | Maximum value of a single call                                          |
+| `maxPerPeriod`  | Maximum cumulative value per `periodSeconds` window                     |
+| `periodSeconds` | Window length for the cumulative cap (e.g. `86400` daily; `0` disables) |
 
-`_withinLimits()` rejects UserOps that would exceed either ceiling.
-
-### EIP-7702 Path
-
-For tenants who own an EOA and want smart-account semantics for a single session:
-
-| Step | What Happens                                                                                        |
-| ---- | --------------------------------------------------------------------------------------------------- |
-| 1    | Tenant signs an EIP-7702 authorization delegating execution to `BrainSmartAccount`'s implementation |
-| 2    | The authorization is included in a UserOp                                                           |
-| 3    | During validation, the same scope, policy, and limits checks run                                    |
-| 4    | The session expires when the authorization's validity window ends                                   |
-
-This lets existing EOAs use Brain without redeploying as a new account.
+`executeViaSessionKey` reverts `ExceedsPerTxCap` or `ExceedsPerPeriodCap` on a call that would breach either ceiling, tracking spend per holder per window.
 
 ### Belt-and-Braces Enforcement
 
 Policy is enforced **twice** by design.
 
-| Layer                       | When                 | Catches                                                                   |
-| --------------------------- | -------------------- | ------------------------------------------------------------------------- |
-| **Off-chain Policy Engine** | At proposal time     | Most violations, fast feedback, dynamic conditions                        |
-| **`BrainSmartAccount`**     | At UserOp validation | Anything the off-chain engine missed; protects against backend compromise |
+| Layer                       | When                      | Catches                                                                   |
+| --------------------------- | ------------------------- | ------------------------------------------------------------------------- |
+| **Off-chain Policy Engine** | At proposal time          | Most violations, fast feedback, dynamic conditions                        |
+| **`BrainSmartAccount`**     | At `executeViaSessionKey` | Anything the off-chain engine missed; protects against backend compromise |
 
-Even if the off-chain backend is compromised, on-chain validation rejects UserOps without a valid, non-expired, scope-bound policy verdict.
+Even if the off-chain backend is compromised, on-chain enforcement rejects any call outside the granted session key's policyVersion-bound scope, allowlists, and spend caps.
 
 ### Threat Scenarios
 
-| Scenario                                            | Outcome                                          |
-| --------------------------------------------------- | ------------------------------------------------ |
-| Agent submits UserOp with no scope attestation      | Reverts: "scope invalid"                         |
-| Agent uses an expired scope                         | Reverts: `notAfter` check fails                  |
-| Backend submits UserOp with no policy verdict       | Reverts: "policy denied"                         |
-| Backend replays an old verdict against a new UserOp | Reverts: verdict bound to wrong `userOpHash`     |
-| Compromised key tries to submit beyond limits       | Reverts: "limits exceeded"                       |
-| Replays a session-key call with a consumed nonce    | Reverts: `BadNonce`                              |
-| Malicious target re-enters `executeViaSessionKey`   | Reverts: `ReentrantCall`                         |
-| Owner grants a key with an empty allowlist          | Reverts: `TargetsRequired` / `SelectorsRequired` |
+| Scenario                                          | Outcome                                            |
+| ------------------------------------------------- | -------------------------------------------------- |
+| Holder calls a target outside the allowlist       | Reverts: `TargetNotAllowed`                        |
+| Holder calls a selector outside the allowlist     | Reverts: `SelectorNotAllowed`                      |
+| Call exceeds the per-tx or per-window cap         | Reverts: `ExceedsPerTxCap` / `ExceedsPerPeriodCap` |
+| Call made before/after the key's validity window  | Reverts: `KeyNotActive`                            |
+| Call made while the key is paused                 | Reverts: `KeyPaused`                               |
+| Replays a session-key call with a consumed nonce  | Reverts: `BadNonce`                                |
+| Malicious target re-enters `executeViaSessionKey` | Reverts: `ReentrantCall`                           |
+| Owner grants a key with an empty allowlist        | Reverts: `TargetsRequired` / `SelectorsRequired`   |
+| Owner grants a key with a zero `policyVersion`    | Reverts: `PolicyVersionMismatch`                   |
 
 ## Kill-Switch: Pause vs Revoke
 

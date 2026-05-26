@@ -13,7 +13,7 @@ Source → Raw → Ledger → Wiki → Policy → Agent → Rail → Audit
 | 1    | A webhook or scheduled pull lands in **Raw**                                                                            |
 | 2    | Extractors normalise it into **Ledger** records                                                                         |
 | 3    | **Wiki** updates incrementally (entity resolution, narrative summarisation, embedding refresh)                          |
-| 4    | An agent proposes an action referencing **Wiki** and **Ledger** context                                                 |
+| 4    | An agent proposes an action referencing **Ledger** context                                                              |
 | 5    | **Policy** evaluates the proposal: ALLOW, DENY, or ESCALATE                                                             |
 | 6    | If approved, the **Agent** Layer executes through an external rail (bank API, payment processor, smart account on Base) |
 | 7    | Every step writes an **Audit** event with cryptographic links back to preceding ones                                    |
@@ -87,7 +87,7 @@ Brain action:
 
 ```
 Policy input:
-  Proposal + active policy version (v3) + Wiki context.
+  Proposal + active policy version (v3) + Ledger state.
 
 Policy evaluation:
   - Counterparty status: approved
@@ -104,8 +104,8 @@ Brain action:
 
 ```
 Approver input:
-  Proposal with Wiki context (vendor history, prior payments)
-  and Ledger references (invoice, PO).
+  Proposal with Ledger references (invoice, PO,
+  vendor history, prior payments).
 
 Approver action:
   Approves with EIP-712 signature.
@@ -135,17 +135,15 @@ Brain action:
 
 ```
 Brain action:
-  - Assemble UserOperation with:
-      sender:    BrainSmartAccount address
-      callData:  transfer(...)
-      signature: abi.encode(scopeAttestation, policyVerdict)
-  - Submit to ERC-4337 EntryPoint via bundler.
-  - On-chain validateUserOp performs:
-      ✓ agent registered in BrainMCPAgentRegistry
-      ✓ scope attestation valid (EIP-712, not expired)
-      ✓ policy verdict valid (signed by policy verifier, bound to userOpHash)
-      ✓ within account-level limits (per-tx, per-day)
-  - UserOp executes.
+  - Build the call: BrainSmartAccount.executeViaSessionKey(nonce, target, value, data)
+      target:    recipient (e.g. USDC transfer)
+      signed by: the granted session key (KMS-held)
+  - On-chain executeViaSessionKey enforces:
+      ✓ session key granted, not paused or revoked
+      ✓ within the key's spend caps (per-tx, per-window)
+      ✓ bound to the policyVersion set at grant time
+      ✓ nonce not replayed
+  - Tx executes on Base.
   - Emit audit event: action.executed
 ```
 
@@ -157,7 +155,7 @@ Audit Layer:
   - Continue building Merkle tree for the current batch.
 
 Anchorer:
-  - Every 10 minutes (or immediately for high-severity events):
+  - Hourly (or immediately for high-severity events):
       Compute Merkle root.
       EIP-712 sign with anchorer key.
       Submit to BrainAuditAnchor on Base L2.

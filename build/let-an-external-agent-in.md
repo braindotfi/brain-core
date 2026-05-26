@@ -25,7 +25,7 @@ Agent owners register once. Tenants do not see this step.
 ```typescript
 const agent = await brain.agents.register({
   address:        "0xAgentAddress",
-  identityRoot:   "0x...",         // ERC-8004 identity root
+  identityRoot:   "0x...",         // ERC-8004 identity root (planned — RFC 0001)
   mcpEndpoint:    "https://my-agent.example.com/mcp",
   capabilities:   ["read", "propose_payment", "propose_action"],
 });
@@ -58,7 +58,7 @@ The tenant signs an EIP-712 message under the hood; the SDK handles it. The gran
 | `wiki:read`              | Ask natural-language questions; get cited answers                        |
 | `raw:write`              | Push artifacts (transcripts, documents) into the tenant's evidence layer |
 | `payment_intent:propose` | Propose payments (cannot execute)                                        |
-| `agent:propose`          | Propose non-financial actions (reconciliation matches, anomaly flags)    |
+| `execution:propose`      | Propose non-financial actions (reconciliation matches, anomaly flags)    |
 
 {% hint style="warning" %}
 External agents can **propose** but cannot **execute**. Execution is reserved for internal Brain workers running under tenant policy. This is the safety guarantee that makes external agents safe to authorize.

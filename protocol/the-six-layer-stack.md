@@ -57,14 +57,14 @@ Control flows **down**. Higher layers gate lower ones.
 | ----------- | ------------------------ | ------------------------------ |
 | **Audit**   | requires hash links from | every other layer              |
 | **Agent**   | requires verdict from    | Policy                         |
-| **Policy**  | reads from               | Wiki and Ledger                |
+| **Policy**  | reads from               | Ledger only (never Wiki)       |
 | **Wiki**    | rebuilds from            | Ledger                         |
 | **Ledger**  | replays from             | Raw                            |
 | **Raw**     | sources from             | the tenant's connected systems |
 
 ### Off-Chain and on-Chain Split
 
-Most logic is off-chain by design. On-chain contracts exist to anchor state, register identity, validate ERC-4337 UserOps, and route agent execution.
+Most logic is off-chain by design. On-chain contracts exist to anchor state, register identity, enforce session-key scope/limits, and route agent execution.
 
 | Tier                   | What Lives Here                                                                                                         |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |

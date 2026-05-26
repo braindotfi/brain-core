@@ -53,7 +53,7 @@ Tenant-granted scopes determine what an external agent sees and can do.
 | `wiki:read`              | Ask natural-language questions; get cited answers                        |
 | `raw:write`              | Push artifacts (transcripts, contracts) into the tenant's evidence layer |
 | `payment_intent:propose` | Propose payments (cannot execute)                                        |
-| `agent:propose`          | Propose non-financial actions                                            |
+| `execution:propose`      | Propose non-financial actions (the conceptual "agent:propose")           |
 
 A tenant can grant any subset. Unused scopes don't appear in the agent's available tools.
 

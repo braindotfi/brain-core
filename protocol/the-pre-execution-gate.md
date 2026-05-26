@@ -1,6 +1,6 @@
 # The Pre-Execution Gate
 
-Before any PaymentIntent can execute, it must pass a **deterministic 16-step pre-execution gate**. The gate is the only path to financial execution. The gate is non-overridable.
+Before any PaymentIntent can execute, it must pass a **deterministic pre-execution gate**: **13 numbered checks plus 4 hardening additions (checks 1.5, 7.5, 9.5, 11.5) = 17 entries total**; the canonical happy path is the 13 numbered checks. The gate is the only path to financial execution. The gate is non-overridable.
 
 | Property       | Value                                                        |
 | -------------- | ------------------------------------------------------------ |
@@ -20,7 +20,7 @@ Think of Policy as the **standing rule** and the gate as the **flight check**. B
 
 ### The Core Steps
 
-The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol. (v0.4 inserts three further checks at their correct positions — see **v0.4 Additions** below — for a total of 16.)
+The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol. These are the 13 numbered checks of the canonical happy path; 4 hardening additions are inserted at their correct positions (checks 1.5, 7.5, 9.5, 11.5 — see **Hardening Additions** below) for 17 entries total.
 
 | #   | Step                                                                                           | Reads From                              |
 | --- | ---------------------------------------------------------------------------------------------- | --------------------------------------- |
@@ -40,17 +40,18 @@ The gate runs the following classes of check, every payment, every time. Steps a
 
 If **any** step fails, the PaymentIntent transitions to `failed` with a structured reason. No rail call is made.
 
-### v0.4 Additions
+### Hardening Additions
 
-Three further deterministic checks were added in v0.4, each inserted at its correct position in the sequence, bringing the total to **16**:
+Four further deterministic checks were added as hardening, each inserted at its correct position in the sequence (checks 1.5, 7.5, 9.5, 11.5), bringing the total to **17 entries**:
 
-| Check                             | What It Enforces                                                                                                            | Reads From                          |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| **Ledger-state snapshot binding** | The Ledger snapshot Policy decided against is captured and re-validated immediately before dispatch; drift is a hard reject | `computeLedgerSnapshot` over Ledger |
-| **Evidence semantic validation**  | The supporting evidence actually substantiates _this_ action (amount, counterparty, obligation), not just that it exists    | `raw_parsed`, `evidence_ids`        |
-| **Duplicate-payment protection**  | No prior execution with the same counterparty + amount inside the configured window                                         | `executions`                        |
+| Check                                   | What It Enforces                                                                                                            | Reads From                          |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| **Agent behavior pinned** (1.5)         | The runtime agent `behaviorHash` equals the value registered on-chain; a silent model/prompt/tool swap is a hard reject     | `BrainMCPAgentRegistry`             |
+| **Ledger-state snapshot binding** (7.5) | The Ledger snapshot Policy decided against is captured and re-validated immediately before dispatch; drift is a hard reject | `computeLedgerSnapshot` over Ledger |
+| **Evidence semantic validation** (9.5)  | The supporting evidence actually substantiates _this_ action (amount, counterparty, obligation), not just that it exists    | `raw_parsed`, `evidence_ids`        |
+| **Duplicate-payment protection** (11.5) | No prior execution with the same counterparty + amount inside the configured window                                         | `executions`                        |
 
-These persist into the `gate_checks` snapshot on the audit-before event, so the full 16-check trace is part of the verifiable Proof artifact.
+These persist into the `gate_checks` snapshot on the audit-before event, so the full 17-entry trace is part of the verifiable Proof artifact.
 
 ### Audit Emission
 
@@ -110,11 +111,11 @@ This is the same logic as airline pre-flight checklists: not because the captain
 
 ### Dry-Run Mode (Agent Autonomy)
 
-The gate accepts a `dryRun` flag. In dry-run it runs the **same** 16 checks against the **same** Ledger state and returns the same envelope, but does **not** insert a `policy_decisions` row, write a reservation, or emit audit events. Agents call dry-run before building a full proposal — to short-circuit obvious rejects and to decide `confirm` vs `execute`. There is **one** evaluator: the same gate code runs live and dry-run, so the two can never drift. The live gate still runs at execute time.
+The gate accepts a `dryRun` flag. In dry-run it runs the **same** checks against the **same** Ledger state and returns the same envelope, but does **not** insert a `policy_decisions` row, write a reservation, or emit audit events. Agents call dry-run before building a full proposal — to short-circuit obvious rejects and to decide `confirm` vs `execute`. There is **one** evaluator: the same gate code runs live and dry-run, so the two can never drift. The live gate still runs at execute time.
 
 ### Behavior Pinning Check
 
-A new check sits between identity and authorization: the runtime agent `behaviorHash` must equal the value registered on-chain in `BrainMCPAgentRegistry`. A mismatch (a silent model/prompt/tool swap) is a hard reject regardless of every other signal. It is verified only when a runtime hash is supplied, so the canonical happy path remains the 16 checks.
+Check 1.5 sits between identity and authorization: the runtime agent `behaviorHash` must equal the value registered on-chain in `BrainMCPAgentRegistry`. A mismatch (a silent model/prompt/tool swap) is a hard reject regardless of every other signal. It is verified only when a runtime hash is supplied (or when a tenant opts into mandatory pinning), so the canonical happy path remains the 13 numbered checks.
 
 ### Net of Reservations
 

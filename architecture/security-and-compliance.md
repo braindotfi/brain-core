@@ -20,11 +20,11 @@ Brain's security posture rests on a small set of non-negotiable principles. Each
 
 Every proposed action passes through three independent gates. **All three must pass.**
 
-| Layer                        | Where It Runs       | What It Catches                                                                         |
-| ---------------------------- | ------------------- | --------------------------------------------------------------------------------------- |
-| **1. Backend Policy Engine** | Off-chain           | Most violations, fast feedback, dynamic risk conditions                                 |
-| **2. Compliance enrichment** | Off-chain           | Sanctions screening (Chainalysis), address risk, anomaly detection                      |
-| **3. On-chain validator**    | `BrainSmartAccount` | Final gate. Verifies signed policy verdict, scope attestation, and account-level limits |
+| Layer                                   | Where It Runs       | What It Catches                                                                                                                 |
+| --------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **1. Backend Policy Engine**            | Off-chain           | Most violations, fast feedback, dynamic risk conditions                                                                         |
+| **2. Compliance enrichment**            | Off-chain           | Sanctions screening (Chainalysis), address risk, anomaly detection                                                              |
+| **3. On-chain session-key enforcement** | `BrainSmartAccount` | Final gate. `executeViaSessionKey` enforces the key's scope (target/selector allowlists), spend caps, and bound `policyVersion` |
 
 ```
 Agent proposes
@@ -33,13 +33,13 @@ Agent proposes
    ↓
 [ Gate 2: Compliance ]       ← sanctions / risk / anomaly checks
    ↓
-[ Gate 3: BrainSmartAccount.validateUserOp ]  ← on-chain
+[ Gate 3: BrainSmartAccount.executeViaSessionKey ]  ← on-chain
    ↓
 Executes
 ```
 
 {% hint style="warning" %}
-**Defence in depth.** Even if the off-chain Policy Engine were fully compromised, the on-chain `BrainSmartAccount` would still reject UserOperations that lack a valid, non-expired, scope-bound policy verdict.
+**Defence in depth.** Even if the off-chain Policy Engine were fully compromised, the on-chain `BrainSmartAccount` would still reject any call outside the granted session key's policyVersion-bound scope and spend caps.
 {% endhint %}
 
 ### Compliance Enrichment
@@ -56,14 +56,14 @@ The output of these checks feeds directly into Policy. A tenant policy can refer
 
 ### Smart Contract Security
 
-| Mitigation                       | Detail                                                         |
-| -------------------------------- | -------------------------------------------------------------- |
-| **Minimal on-chain surface**     | Most logic off-chain. Less code = smaller attack surface       |
-| **Two independent audits**       | Performed before mainnet deployment                            |
-| **Public bug bounty**            | Continuous coverage post-deployment                            |
-| **48-hour timelock on upgrades** | Transparent proxy pattern, upgrades are visible and delayed    |
-| **Anchorer keys on HSMs**        | Hardware-backed signing for `BrainAuditAnchor`                 |
-| **EntryPoint isolation**         | Uses standard ERC-4337 EntryPoint; no custom verification path |
+| Mitigation                   | Detail                                                                                                   |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Minimal on-chain surface** | Most logic off-chain. Less code = smaller attack surface                                                 |
+| **Two independent audits**   | Performed before mainnet deployment                                                                      |
+| **Public bug bounty**        | Continuous coverage post-deployment                                                                      |
+| **Immutable contracts**      | No upgrade path in MVP; changes ship as audited redeploys                                                |
+| **Anchorer keys on HSMs**    | Hardware-backed signing for `BrainAuditAnchor`                                                           |
+| **Session-key enforcement**  | On-chain scope, spend caps, `policyVersion` binding, and replay nonce enforced in `executeViaSessionKey` |
 
 ### Privacy of Audit Anchors
 

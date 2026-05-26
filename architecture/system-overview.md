@@ -28,36 +28,37 @@ Brain is a layered protocol where information flows up and control flows down. E
                               ┌────────────────────────────────┐
                               │ Execution rails                │
                               │  Bank APIs · Processors ·      │
-                              │  ERC-4337 UserOps · x402       │
+                              │  Session-key smart account     │
+                              │  (x402 planned — RFC 0001)     │
                               └────────────────────────────────┘
 ```
 
 ### What Lives Where
 
-| Component                     | Location                                 | Notes                                            |
-| ----------------------------- | ---------------------------------------- | ------------------------------------------------ |
-| **Raw Artifacts**             | Azure Blob                               | Content-addressed, encrypted, tenant-scoped DEKs |
-| **Ledger Records**            | Postgres                                 | Immutable, append-only with supersedence         |
-| **Wiki Graph and Embeddings** | Postgres + pgvector                      | Updated incrementally                            |
-| **Policy Compiled Form**      | Postgres                                 | Hash-anchored on-chain                           |
-| **Audit Hash Chain**          | Postgres                                 | Merkle roots batched on-chain                    |
-| **Agent Identity**            | `BrainMCPAgentRegistry` (Base L2)        | ERC-8004 compatible                              |
-| **Smart Account State**       | `BrainSmartAccount` per tenant (Base L2) | ERC-4337                                         |
-| **Policy Hashes**             | `BrainPolicyRegistry` (Base L2)          | EIP-712 signed by tenant                         |
-| **Audit Anchors**             | `BrainAuditAnchor` (Base L2)             | EIP-712 signed by Brain anchorer                 |
+| Component                     | Location                                 | Notes                                                                                           |
+| ----------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Raw Artifacts**             | Azure Blob                               | Content-addressed, encrypted, tenant-scoped DEKs                                                |
+| **Ledger Records**            | Postgres                                 | Immutable, append-only with supersedence                                                        |
+| **Wiki Graph and Embeddings** | Postgres + pgvector                      | Updated incrementally                                                                           |
+| **Policy Compiled Form**      | Postgres                                 | Hash-anchored on-chain                                                                          |
+| **Audit Hash Chain**          | Postgres                                 | Merkle roots batched on-chain                                                                   |
+| **Agent Identity**            | `BrainMCPAgentRegistry` (Base L2)        | Stores `agentId`/`tenantId`/`scopeHash`/`behaviorHash` (ERC-8004 reputation planned — RFC 0001) |
+| **Smart Account State**       | `BrainSmartAccount` per tenant (Base L2) | Session-key account (scope, spend caps, bound `policyVersion`)                                  |
+| **Policy Hashes**             | `BrainPolicyRegistry` (Base L2)          | EIP-712 signed by tenant                                                                        |
+| **Audit Anchors**             | `BrainAuditAnchor` (Base L2)             | EIP-712 signed by Brain anchorer                                                                |
 
 ### On-Chain Surface Is Intentionally Small
 
 Brain's on-chain surface is intentionally minimal. **Most logic lives off-chain.** On-chain contracts exist for four narrow purposes:
 
-| On-Chain Purpose                                    | Contract                |
-| --------------------------------------------------- | ----------------------- |
-| **Anchor State**                                    | `BrainAuditAnchor`      |
-| **Register Policy Hashes**                          | `BrainPolicyRegistry`   |
-| **Register Agent Identity**                         | `BrainMCPAgentRegistry` |
-| **Enforce ERC-4337 Validation and Route Execution** | `BrainSmartAccount`     |
+| On-Chain Purpose                                         | Contract                |
+| -------------------------------------------------------- | ----------------------- |
+| **Anchor State**                                         | `BrainAuditAnchor`      |
+| **Register Policy Hashes**                               | `BrainPolicyRegistry`   |
+| **Register Agent Identity**                              | `BrainMCPAgentRegistry` |
+| **Enforce Session-Key Scope/Limits and Route Execution** | `BrainSmartAccount`     |
 
-All contracts are deployed on Base L2 and written in Solidity 0.8.x, built and tested with Foundry. Upgrades use a transparent proxy pattern with a 48-hour timelock.
+All contracts are deployed on Base L2 and written in Solidity 0.8.x, built and tested with Foundry. The contracts are immutable: there is no upgrade path in the MVP, and any change ships as a separately audited redeploy.
 
 [**→ Smart contract overview**](../smart-contracts/overview.md)
 
