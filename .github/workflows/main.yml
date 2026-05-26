@@ -113,11 +113,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      # The root build excludes tools/*; build them so the migrate CLI
+      # (tools/migrate) and the seed CLI (tools/seed-golden-path, used by
+      # golden-path.sh) exist before they are invoked below.
+      - name: Build tools
+        run: pnpm -r --filter './tools/**' run build
       - name: Migrate
-        # The root build excludes tools/*, so build the migrate CLI before use.
-        run: |
-          pnpm -C tools/migrate run build
-          node tools/migrate/dist/cli.js up
+        run: node tools/migrate/dist/cli.js up
       - name: Boot API (demo mode)
         run: |
           pnpm -C services/api start &
