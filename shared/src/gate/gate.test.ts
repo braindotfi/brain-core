@@ -529,6 +529,43 @@ describe("§6 — check 11: approval granted when required", () => {
   });
 });
 
+describe("§6 — check 11: policy-version-aware approvals (P0.4)", () => {
+  it("threads the decision's policy_version into resolveApprovals", async () => {
+    let seenVersion: number | undefined;
+    const { deps } = makeDeps({
+      evaluatePolicy: async () =>
+        makeDecision({ outcome: "confirm", required_approvers: ["cfo"], policy_version: 7 }),
+      resolveApprovals: async (_id, v) => {
+        seenVersion = v;
+        return { signedRoles: ["cfo"] };
+      },
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(true);
+    expect(seenVersion).toBe(7);
+  });
+
+  it("fails check 11 when stale signatures are excluded by version", async () => {
+    const { deps } = makeDeps({
+      evaluatePolicy: async () =>
+        makeDecision({ outcome: "confirm", required_approvers: ["cfo"], policy_version: 8 }),
+      // Resolver excludes the (stale) signature when asked for the active version.
+      resolveApprovals: async (_id, v) => ({ signedRoles: v === 8 ? [] : ["cfo"] }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failedCheck.index).toBe(11);
+  });
+});
+
 describe("§6 — check 8: balance net of active reservations (1b.1)", () => {
   it("fails when amount + active reservations exceed available balance", async () => {
     // available 1000, reserved 800, requesting 300 → 800+300 > 1000 → fail
@@ -673,6 +710,98 @@ describe("§6 — check 1.5: agent behavior pinned (2.3)", () => {
     if (result.ok) {
       expect(result.checks).toHaveLength(16);
       expect(result.checks.some((c) => c.name === "agent_behavior_pinned")).toBe(false);
+    }
+  });
+});
+
+describe("§6 — check 1.5: mandatory behavior-hash pinning for opt-in tenants (P0.1)", () => {
+  const optIn = { resolveTenantFlags: async () => ({ requireBehaviorHash: true }) };
+  const optOut = { resolveTenantFlags: async () => ({ requireBehaviorHash: false }) };
+
+  it("(a) opt-in tenant + missing runtime hash → fails closed at 1.5", async () => {
+    const { deps } = makeDeps({
+      ...optIn,
+      resolveAgent: async () => ({ ...ACTIVE_AGENT, behaviorHash: "0xabc" }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+      // no runtimeBehaviorHash supplied
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(1.5);
+      expect(result.failedCheck.name).toBe("agent_behavior_pinned");
+      expect(result.failedCheck.detail!.require_behavior_hash).toBe(true);
+    }
+  });
+
+  it("(a') opt-in tenant + missing registered hash → fails closed at 1.5", async () => {
+    const { deps } = makeDeps({ ...optIn }); // ACTIVE_AGENT has no behaviorHash
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+      runtimeBehaviorHash: "0xabc",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failedCheck.index).toBe(1.5);
+  });
+
+  it("(b) opt-in tenant + matching hashes → passes 1.5", async () => {
+    const { deps } = makeDeps({
+      ...optIn,
+      resolveAgent: async () => ({ ...ACTIVE_AGENT, behaviorHash: "0xabc" }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+      runtimeBehaviorHash: "0xabc",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const pinned = result.checks.find((c) => c.name === "agent_behavior_pinned");
+      expect(pinned?.passed).toBe(true);
+      expect(pinned?.detail?.not_applicable).toBeUndefined();
+    }
+  });
+
+  it("(c) opt-in tenant + mismatched hashes → fails at 1.5", async () => {
+    const { deps } = makeDeps({
+      ...optIn,
+      resolveAgent: async () => ({ ...ACTIVE_AGENT, behaviorHash: "0xabc" }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+      runtimeBehaviorHash: "0xdef",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(1.5);
+      expect(result.failedCheck.detail!.registered).toBe("0xabc");
+    }
+  });
+
+  it("(d) opt-out tenant + missing hash → skips with not_applicable, gate passes", async () => {
+    const { deps } = makeDeps({
+      ...optOut,
+      resolveAgent: async () => ({ ...ACTIVE_AGENT, behaviorHash: "0xabc" }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+      // no runtimeBehaviorHash
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const pinned = result.checks.find((c) => c.name === "agent_behavior_pinned");
+      expect(pinned?.passed).toBe(true);
+      expect(pinned?.detail?.not_applicable).toBe(true);
     }
   });
 });

@@ -94,6 +94,18 @@ export const BRAIN_ERROR_CODES = [
   "payment_intent_gate_failed",
   "payment_intent_approval_required",
   "payment_intent_approval_invalid",
+  // P0.4 approver/quorum hardening.
+  "approval_signer_revoked",
+  "approval_cross_tenant",
+  "approval_duplicate_signer",
+  "approval_policy_stale",
+  // P0.5 invoice shortcut resolution.
+  "invoice_shortcut_invalid",
+  "invoice_shortcut_not_found",
+  "invoice_shortcut_already_paid",
+  "invoice_shortcut_not_payable",
+  "invoice_shortcut_no_evidence",
+  "invoice_shortcut_source_account_unresolved",
   "agent_rail_unavailable",
   // §4.3 agent_* aliases of the legacy execution_* proposal codes (v0.3 transition).
   "agent_proposal_not_found",
@@ -281,6 +293,18 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   policy_decision_required: 422,
   payment_intent_approval_required: 422,
   payment_intent_approval_invalid: 422,
+  // P0.4 approver/quorum hardening.
+  approval_signer_revoked: 403,
+  approval_cross_tenant: 403,
+  approval_duplicate_signer: 409,
+  approval_policy_stale: 409,
+  // P0.5 invoice shortcut resolution.
+  invoice_shortcut_invalid: 400,
+  invoice_shortcut_not_found: 404,
+  invoice_shortcut_already_paid: 409,
+  invoice_shortcut_not_payable: 422,
+  invoice_shortcut_no_evidence: 422,
+  invoice_shortcut_source_account_unresolved: 422,
   // The rail reached the provider but it refused the request (e.g. Plaid
   // declined an ACH authorization, an on-chain call reverted).
   execution_rail_declined: 422,

@@ -6,10 +6,12 @@ import type {
   GatePaymentIntent,
   GatePolicyDecision,
   GatePrincipal,
+  GateTenantFlags,
   ServiceCallContext,
 } from "@brain/shared";
 import type { Pool } from "pg";
 import type { RailRegistry } from "./rails/stubs.js";
+import type { ResolvedInvoiceShortcut } from "./payment-intents/invoice-shortcut.js";
 
 export interface ExecutionDeps {
   pool: Pool;
@@ -43,6 +45,13 @@ export interface ExecutionDeps {
   /** Resolve agent record for §6 check 1. */
   resolveAgent: (ctx: ServiceCallContext, agentId: string) => Promise<GateAgent | null>;
 
+  /**
+   * Resolve per-tenant gate-enforcement flags for §6 check 1.5 (P0.1). Optional:
+   * when absent the gate keeps its pre-P0.1 behavior-hash behavior (verify only
+   * when both hashes are present).
+   */
+  resolveTenantFlags?: (ctx: ServiceCallContext, tenantId: string) => Promise<GateTenantFlags>;
+
   /** Resolve source account for §6 check 4 + 8. */
   resolveAccount: (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null>;
 
@@ -57,4 +66,22 @@ export interface ExecutionDeps {
 
   /** Maps a principal id to a role name (for ApprovalService). Caller-supplied. */
   resolveRole: (ctx: ServiceCallContext, principalId: string) => Promise<string | null>;
+
+  // -- P0.4 approver/quorum hardening hooks (optional; wired in main.ts) -----
+
+  /** True iff the signer principal is an active (non-revoked) approver. */
+  isApproverActive?: (ctx: ServiceCallContext, principalId: string) => Promise<boolean>;
+  /** Owning tenant of an approval subject (intent/proposal) — cross-tenant guard. */
+  resolveSubjectOwnerTenant?: (
+    ctx: ServiceCallContext,
+    subject: { type: "payment_intent" | "proposal"; id: string },
+  ) => Promise<string | null>;
+  /** Tenant's currently-active policy version — recorded on each signature. */
+  resolveActivePolicyVersion?: (ctx: ServiceCallContext) => Promise<number | null>;
+
+  /** P0.5: resolves the `pay_invoice` create shortcut into a full payload. */
+  resolveInvoiceShortcut?: (
+    ctx: ServiceCallContext,
+    invoiceId: string,
+  ) => Promise<ResolvedInvoiceShortcut>;
 }

@@ -133,9 +133,10 @@ describe("invariant: every executed PaymentIntent has a policy_decision_id", () 
     expect(isValidPaymentIntentTransition("pending_approval", "executed")).toBe(false);
   });
   it("§6 gate creates a PolicyDecision before emitting audit-before", () => {
-    // Asserted in services/api/src/shared/gate/gate.test.ts: a successful
-    // gate returns { ok: true, policyDecisionId } and emits exactly one
-    // audit-before event with policyDecisionId set.
+    // Enumeration only; runtime verification in tests/invariants/integration
+    // (db-invariants.integration.test.ts — "gate-bypass impossibility": a
+    // PaymentIntent cannot reach `executed` except from the gated `dispatching`
+    // state). Unit proof: shared/src/gate/gate.test.ts.
     expect(true).toBe(true);
   });
 });
@@ -145,10 +146,10 @@ describe("invariant: every executed PaymentIntent has a policy_decision_id", () 
 // =============================================================================
 describe("invariant: every executed PaymentIntent has an audit trail", () => {
   it("PaymentIntentService.execute emits audit-before via gate AND audit-after", () => {
-    // Asserted in services/api/src/shared/gate/gate.test.ts (audit-before) +
-    // services/execution PaymentIntentService.execute call sites (audit-after).
-    // The pair is symmetric: every code path emits both halves regardless
-    // of success or failure.
+    // Enumeration only; runtime verification in tests/invariants/integration
+    // (db-invariants.integration.test.ts — "audit pair on executed intents":
+    // every executed PaymentIntent has exactly one execute.before and one
+    // execute.after/.failed). Unit proof: shared/src/gate/gate.test.ts.
     expect(true).toBe(true);
   });
 });
@@ -333,9 +334,10 @@ describe("invariant: audit events cannot be edited after creation", () => {
     expect(m).toBe("emit");
   });
   it("audit_events migration REVOKEs UPDATE, DELETE from PUBLIC", () => {
-    // Migration 0001_audit_events.sql — explicit revoke. App roles
-    // (non-BYPASSRLS) cannot mutate. Verified at the integration-test
-    // layer.
+    // Migration 0001_audit_events.sql — explicit revoke. Enumeration only;
+    // runtime verification in tests/invariants/integration
+    // (db-invariants.integration.test.ts — "denies UPDATE audit_events as the
+    // app role": a non-owner SELECT/INSERT-only role is denied UPDATE).
     expect(true).toBe(true);
   });
 });

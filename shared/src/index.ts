@@ -52,6 +52,15 @@ export {
 } from "./idempotency/store.js";
 export { default as idempotencyPlugin } from "./idempotency/middleware.js";
 
+// Rate limiting (P0.3) — Redis sorted-set sliding window.
+export {
+  RedisSlidingWindowRateLimiter,
+  InMemorySlidingWindowRateLimiter,
+  type SlidingWindowRateLimiter,
+  type SlidingWindowOptions,
+  type RateLimitDecision,
+} from "./ratelimit/sliding-window.js";
+
 // Audit (§1 principle 4)
 export * from "./audit/types.js";
 export * from "./audit/hash.js";

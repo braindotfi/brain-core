@@ -68,6 +68,62 @@ jobs:
         # `--if-present` must precede the script name; after it, pnpm forwards it
         # to vitest, which dies with `CACError: Unknown option --ifPresent`.
         run: pnpm -r --filter='./services/**' --filter='!./services/agents' run --if-present test:integration
+      - name: Invariants DB-integration tests (P0.2)
+        run: pnpm -C tests/invariants run test:integration
+
+  golden_path_smoke:
+    name: golden-path smoke
+    runs-on: ubuntu-latest
+    needs: unit_and_integration
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: brain
+          POSTGRES_PASSWORD: brain
+          POSTGRES_DB: brain
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://brain:brain@localhost:5432/brain
+      REDIS_URL: redis://localhost:6379
+      AUTH_JWKS_URL: https://auth.brain.fi/.well-known/jwks.json
+      BRAIN_DEMO_MODE: "true"
+      BRAIN_BASE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: Migrate
+        # The root build excludes tools/*, so build the migrate CLI before use.
+        run: |
+          pnpm -C tools/migrate run build
+          node tools/migrate/dist/cli.js up
+      - name: Boot API (demo mode)
+        run: |
+          pnpm -C services/api start &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/health && break || sleep 2
+          done
+      - name: Golden path
+        run: ./scripts/demo/golden-path.sh
 
   build_and_push_images:
     name: build + push container images

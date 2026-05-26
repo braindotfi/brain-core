@@ -197,7 +197,21 @@ payment_intent_not_found,
 payment_intent_invalid_state,
 payment_intent_gate_failed,               // pre-execution gate failed; details list the failing checks
 payment_intent_approval_required,
-payment_intent_approval_invalid
+payment_intent_approval_invalid,
+
+// Approver / quorum hardening (P0.4)
+approval_signer_revoked,                   // 403 — signer is no longer an active approver
+approval_cross_tenant,                     // 403 — signer tenant does not own the subject
+approval_duplicate_signer,                 // 409 — principal already signed this subject
+approval_policy_stale,                     // 409 — signature was against a superseded policy version
+
+// Invoice shortcut (P0.5) — POST /payment-intents { type: pay_invoice }
+invoice_shortcut_invalid,                  // 400 — malformed invoice_id / shortcut not enabled
+invoice_shortcut_not_found,                // 404 — invoice missing or cross-tenant (no existence leak)
+invoice_shortcut_already_paid,             // 409 — invoice fully paid / no balance due
+invoice_shortcut_not_payable,              // 422 — invoice status is not payable
+invoice_shortcut_no_evidence,              // 422 — invoice has no linked document evidence
+invoice_shortcut_source_account_unresolved // 422 — no AP account / multiple without a default
 
 // Audit
 audit_event_not_found, audit_proof_invalid, audit_anchor_not_yet_published

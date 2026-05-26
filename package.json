@@ -33,7 +33,8 @@
     "dev:up": "./scripts/dev-up.sh",
     "dev:down": "docker compose down",
     "plaid:sandbox": "pnpm -C tools/plaid-sandbox run start",
-    "demo:reset": "pnpm -C tools/demo-reset run reset"
+    "demo:reset": "pnpm -C tools/demo-reset run reset",
+    "demo:golden-path": "./scripts/demo/golden-path.sh"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",

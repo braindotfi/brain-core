@@ -1,0 +1,77 @@
+# Golden-path smoke test (P0.6).
+#
+# Brings up a fresh stack, applies migrations, boots the API in demo mode, then
+# runs scripts/demo/golden-path.sh against it. The `smoke` service's exit code is
+# the test result — `docker compose -f docker-compose.smoke.yml up --exit-code-from smoke`
+# returns non-zero on any required-step failure.
+#
+# This mirrors the `golden_path_smoke` CI job (which uses the runner's pg+redis
+# services directly). NOTE: authored without a live stack (see BLOCKERS.md B-1);
+# validate end-to-end on first real run.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: brain
+      POSTGRES_PASSWORD: brain
+      POSTGRES_DB: brain
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "brain"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      BRAIN_DEMO_MODE: "true"
+      DATABASE_URL: postgres://brain:brain@db:5432/brain
+      REDIS_URL: redis://redis:6379
+      AUTH_JWKS_URL: https://auth.brain.fi/.well-known/jwks.json
+      PORT: "3000"
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # One-shot runner: apply migrations, then drive the golden path.
+  smoke:
+    image: node:22-bookworm
+    working_dir: /repo
+    volumes:
+      - .:/repo
+    environment:
+      BRAIN_BASE_URL: http://api:3000
+      DATABASE_URL: postgres://brain:brain@db:5432/brain
+      BRAIN_DEMO_RAIL: plaid_sandbox
+    depends_on:
+      api: { condition: service_healthy }
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - |
+        set -euo pipefail
+        apt-get update -qq && apt-get install -y -qq jq >/dev/null
+        corepack enable
+        node tools/migrate/dist/cli.js up
+        ./scripts/demo/golden-path.sh

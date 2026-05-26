@@ -28,6 +28,7 @@ import {
   WebhookAuditEmitter,
   RedisIdempotencyStore,
   RedisRevocationStore,
+  RedisSlidingWindowRateLimiter,
   createLogger,
   createPool,
   createBlobAdapter,
@@ -59,6 +60,7 @@ import {
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
+import { registerProofViewRoute } from "./proof/view.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
 
 import {
@@ -106,8 +108,15 @@ import {
   findRoutingDecision,
   transitionAgent,
   releaseAgentQuarantine,
+  resolveInvoiceShortcut as resolveInvoiceShortcutFn,
 } from "@brain/execution";
-import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
+import type {
+  ExecutionDeps,
+  InvoiceShortcutInvoice,
+  ResolvedInvoiceShortcut,
+  OnchainDispatchParams,
+  Rail,
+} from "@brain/execution";
 import { parseEther } from "viem";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
@@ -125,6 +134,7 @@ import {
   sandboxResolveAgent,
   sandboxResolvePrincipal,
   sandboxResolveRole,
+  sandboxResolveTenantFlags,
   makeSandboxResolveAccount,
   makeSandboxResolveCounterparty,
 } from "./sandbox/resolvers.js";
@@ -167,6 +177,7 @@ import type {
   GateCounterparty,
   GatePaymentIntent,
   GatePrincipal,
+  GateTenantFlags,
   TenantScopedClient,
 } from "@brain/shared";
 
@@ -362,6 +373,24 @@ function makeResolveAgent(
   };
 }
 
+function makeResolveTenantFlags(
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext, tenantId: string) => Promise<GateTenantFlags> {
+  return async (ctx, tenantId) => {
+    // No row ⇒ flags default off (back-compat). RLS scopes the read to the
+    // caller's own tenant; we also filter by id so an admin BYPASSRLS connection
+    // would still read the correct tenant.
+    const row = await withTenantScope(pool, ctx.tenantId, async (c) => {
+      const res = await c.query<{ require_behavior_hash: boolean }>(
+        `SELECT require_behavior_hash FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+      return res.rows[0] ?? null;
+    });
+    return { requireBehaviorHash: row?.require_behavior_hash ?? false };
+  };
+}
+
 function makeResolveAccount(
   ledger: LedgerService,
 ): (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null> {
@@ -412,6 +441,102 @@ function makeResolveRole(
     const userRow = await withTenantScope(pool, ctx.tenantId, (c) => findUser(c, principalId));
     return userRow?.role ?? null;
   };
+}
+
+// ---------------------------------------------------------------------------
+// P0.4 approver/quorum hardening hooks
+// ---------------------------------------------------------------------------
+
+function makeIsApproverActive(
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext, principalId: string) => Promise<boolean> {
+  return async (ctx, principalId) =>
+    withTenantScope(pool, ctx.tenantId, async (c) => {
+      const agent = await findAgent(c, principalId);
+      if (agent !== null) return agent.state === "active";
+      // MVP user model has no revocation column; existence ⇒ active approver.
+      // TODO(brain-hardening): honor a user.status/disabled flag once it exists.
+      const user = await findUser(c, principalId);
+      return user !== null;
+    });
+}
+
+function makeResolveSubjectOwnerTenant(
+  pool: ReturnType<typeof createPool>,
+): (
+  ctx: ServiceCallContext,
+  subject: { type: "payment_intent" | "proposal"; id: string },
+) => Promise<string | null> {
+  return async (ctx, subject) =>
+    withTenantScope(pool, ctx.tenantId, async (c) => {
+      if (subject.type === "payment_intent") {
+        const { rows } = await c.query<{ owner_id: string }>(
+          `SELECT owner_id FROM ledger_payment_intents WHERE id = $1`,
+          [subject.id],
+        );
+        return rows[0]?.owner_id ?? null;
+      }
+      const { rows } = await c.query<{ tenant_id: string }>(
+        `SELECT tenant_id FROM proposals WHERE id = $1`,
+        [subject.id],
+      );
+      return rows[0]?.tenant_id ?? null;
+    });
+}
+
+function makeResolveActivePolicyVersion(
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext) => Promise<number | null> {
+  return async (ctx) =>
+    withTenantScope(pool, ctx.tenantId, async (c) => {
+      const active = await policyGetActive(c);
+      return active?.version ?? null;
+    });
+}
+
+// ---------------------------------------------------------------------------
+// P0.5 invoice shortcut resolver (LedgerService-backed lookups)
+// ---------------------------------------------------------------------------
+
+function makeInvoiceShortcutResolver(
+  ledger: LedgerService,
+  pool: ReturnType<typeof createPool>,
+): (ctx: ServiceCallContext, invoiceId: string) => Promise<ResolvedInvoiceShortcut> {
+  return (ctx, invoiceId) =>
+    resolveInvoiceShortcutFn(
+      {
+        resolveInvoice: async (c, id): Promise<InvoiceShortcutInvoice | null> => {
+          const inv = await ledger.findInvoiceById(c, id);
+          if (inv === null) return null;
+          return {
+            id: inv.id,
+            counterparty_id: inv.counterparty_id,
+            amount_due: String(inv.amount_due),
+            amount_paid: String(inv.amount_paid),
+            currency: inv.currency,
+            status: inv.status,
+            linked_document_ids: inv.linked_document_ids,
+            linked_transaction_ids: inv.linked_transaction_ids,
+          };
+        },
+        listApAccounts: async (c): Promise<string[]> => {
+          const res = await ledger.listAccounts(c, { status: "active", limit: 500 });
+          return res.items
+            .filter((a) => a.account_type === "bank_checking" || a.account_type === "bank_savings")
+            .map((a) => a.id);
+        },
+        resolveDefaultApAccount: (c): Promise<string | null> =>
+          withTenantScope(pool, c.tenantId, async (cl) => {
+            const r = await cl.query<{ default_ap_account_id: string | null }>(
+              `SELECT default_ap_account_id FROM tenants WHERE id = $1`,
+              [c.tenantId],
+            );
+            return r.rows[0]?.default_ap_account_id ?? null;
+          }),
+      },
+      ctx,
+      invoiceId,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +734,10 @@ async function main(): Promise<void> {
     schemas: schemaRegistry,
     metrics,
     questionModel: cfg.WIKI_LLM_MODEL,
+    annotationRateLimiter: new RedisSlidingWindowRateLimiter(redis, {
+      windowSeconds: 3600,
+      limit: cfg.WIKI_ANNOTATION_RATE_PER_HOUR,
+    }),
     policyReader,
     agentReader,
   };
@@ -640,6 +769,9 @@ async function main(): Promise<void> {
   // Resolver hooks — sandbox replacements when BRAIN_DEMO_MODE is on.
   const resolveRole = cfg.BRAIN_DEMO_MODE ? sandboxResolveRole : makeResolveRole(pool);
   const resolveAgent = cfg.BRAIN_DEMO_MODE ? sandboxResolveAgent : makeResolveAgent(pool);
+  const resolveTenantFlags = cfg.BRAIN_DEMO_MODE
+    ? sandboxResolveTenantFlags
+    : makeResolveTenantFlags(pool);
   const resolveAccount = cfg.BRAIN_DEMO_MODE
     ? makeSandboxResolveAccount(pool)
     : makeResolveAccount(ledgerService);
@@ -654,11 +786,29 @@ async function main(): Promise<void> {
     : async (tenantId: string, action: Record<string, unknown>) =>
         policyService.evaluateLegacy({ tenantId, actor: "system" }, action);
 
+  // P0.4 hardening hooks. Demo mode uses permissive variants so the golden-path
+  // auto-signing flow is not blocked by revocation/cross-tenant/staleness checks.
+  const isApproverActive = cfg.BRAIN_DEMO_MODE
+    ? async (): Promise<boolean> => true
+    : makeIsApproverActive(pool);
+  const resolveSubjectOwnerTenant = cfg.BRAIN_DEMO_MODE
+    ? async (ctx: ServiceCallContext): Promise<string | null> => ctx.tenantId
+    : makeResolveSubjectOwnerTenant(pool);
+  const resolveActivePolicyVersion = cfg.BRAIN_DEMO_MODE
+    ? async (): Promise<number | null> => null
+    : makeResolveActivePolicyVersion(pool);
+
   const approvalService = new ApprovalService({
     pool,
     audit,
     resolveRole,
+    isApproverActive,
+    resolveSubjectOwnerTenant,
+    resolveActivePolicyVersion,
   });
+
+  // P0.5: invoice shortcut resolver (LedgerService-backed; works in demo too).
+  const invoiceShortcut = makeInvoiceShortcutResolver(ledgerService, pool);
 
   // Resolve on-chain dispatch params at execute time. Only wired when both the
   // session key and the BrainSmartAccount address are configured. The closure
@@ -724,6 +874,7 @@ async function main(): Promise<void> {
     outbox: new OutboxService(),
     approvals: approvalService,
     resolveAgent,
+    resolveTenantFlags,
     resolveAccount,
     resolveCounterparty,
     evaluatePolicy: evaluatePaymentIntent,
@@ -768,10 +919,15 @@ async function main(): Promise<void> {
     evaluatePolicy: evaluateLegacyPolicy,
     evaluatePaymentIntent,
     resolveAgent,
+    resolveTenantFlags,
     resolveAccount,
     resolveCounterparty,
     resolvePrincipal,
     resolveRole,
+    isApproverActive,
+    resolveSubjectOwnerTenant,
+    resolveActivePolicyVersion,
+    resolveInvoiceShortcut: invoiceShortcut,
   };
 
   // Outbox worker: privileged (BYPASSRLS) pool for cross-tenant claim/mark.
@@ -1130,6 +1286,9 @@ async function main(): Promise<void> {
           pool,
           audit,
           resolveRole,
+          isApproverActive,
+          resolveSubjectOwnerTenant,
+          resolveActivePolicyVersion,
         });
         const piService = new PaymentIntentService({
           pool,
@@ -1145,7 +1304,7 @@ async function main(): Promise<void> {
           ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
           sourceCredentialResolver,
         });
-        await registerPaymentIntentRoutes(child, piService);
+        await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
       });
       await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
       // H-20 webhook dead-letter + replay: /v1/webhooks/{endpoint_id}/{dead-letters,replay}.
@@ -1158,6 +1317,10 @@ async function main(): Promise<void> {
         chain: "base-sepolia",
       });
       await v1.register(async (child) => registerProofRoutes(child, { buildProof: proofBuilder }));
+      // P0.7 human-readable proof viewer — GET /v1/proof/{id}/view → text/html.
+      await v1.register(async (child) =>
+        registerProofViewRoute(child, { buildProof: proofBuilder }),
+      );
       await v1.register(async (child) =>
         registerMcpRoute(child, mcpServer, {
           skipPrincipalTypeCheck: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,

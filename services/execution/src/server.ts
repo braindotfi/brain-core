@@ -81,6 +81,15 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     pool: opts.deps.pool,
     audit: opts.deps.audit,
     resolveRole: opts.deps.resolveRole,
+    ...(opts.deps.isApproverActive !== undefined
+      ? { isApproverActive: opts.deps.isApproverActive }
+      : {}),
+    ...(opts.deps.resolveSubjectOwnerTenant !== undefined
+      ? { resolveSubjectOwnerTenant: opts.deps.resolveSubjectOwnerTenant }
+      : {}),
+    ...(opts.deps.resolveActivePolicyVersion !== undefined
+      ? { resolveActivePolicyVersion: opts.deps.resolveActivePolicyVersion }
+      : {}),
   });
   // H-04: the HTTP app needs the outbox so `execute` can enqueue the durable
   // dispatch row. The RailRegistry is no longer wired into PaymentIntentService —
@@ -96,6 +105,9 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     resolveCounterparty: opts.deps.resolveCounterparty,
     evaluatePolicy: opts.deps.evaluatePaymentIntent,
     resolvePrincipal: opts.deps.resolvePrincipal,
+    ...(opts.deps.resolveTenantFlags !== undefined
+      ? { resolveTenantFlags: opts.deps.resolveTenantFlags }
+      : {}),
   });
   // Legacy /payment-intents/* routes (deprecated in v0.3) — every reply
   // gets the RFC 8594 `Deprecation: true` header and a `Link` header
@@ -108,7 +120,7 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
       reply.header("Link", `<${successor}>; rel="successor-version"`);
     }
   });
-  await registerPaymentIntentRoutes(app, paymentIntents);
+  await registerPaymentIntentRoutes(app, paymentIntents, opts.deps.resolveInvoiceShortcut);
 
   // v0.3 canonical /actions/* routes — share the same PaymentIntentService.
   await registerActionRoutes(app, paymentIntents);
