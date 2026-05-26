@@ -7,7 +7,8 @@
  * threshold. Matchers are deterministic — no LLM, no Wiki text — and
  * idempotent (same inputs produce the same matches).
  *
- * Per Brain_MVP_Architecture.md §3 Layer 2, MVP ships seven match types:
+ * Per Brain_MVP_Architecture.md §3 Layer 2, MVP ships seven match types; v0.4
+ * adds an eighth for on-chain settlement (RFC 0001):
  *
  *   transaction_receipt     bank tx ↔ ledger_documents(receipt)
  *   invoice_payment         ledger_invoices ↔ ledger_transactions
@@ -16,12 +17,13 @@
  *   payroll_bank_debit      payroll obligation ↔ outflow tx
  *   subscription_charge     subscription obligation ↔ recurring tx
  *   card_charge             card_statement obligation ↔ tx
+ *   onchain_settlement      on-chain settlement tx ↔ obligation (v0.4)
  *
  * Output (per match):
  *   - ledger_reconciliation_matches row with status, confidence, evidence
  *   - audit event `ledger.reconciliation.matched`
  *
- * All seven matchers are concrete implementations, registered in
+ * All eight matchers are concrete implementations, registered in
  * ReconciliationService and covered by unit + property tests.
  */
 

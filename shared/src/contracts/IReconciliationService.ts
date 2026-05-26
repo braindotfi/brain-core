@@ -28,7 +28,8 @@ export type MatchType =
   | "wallet_transfer"
   | "payroll_bank_debit"
   | "subscription_charge"
-  | "card_charge";
+  | "card_charge"
+  | "onchain_settlement";
 
 export type MatchEntityType =
   | "transaction"
