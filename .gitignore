@@ -91,3 +91,8 @@ logs/
 # Tool output
 .claude/
 docs/audits/
+
+# Local agent/skill tooling (Claude Code) — never part of the Brain repo
+.agents/
+hyper/
+skills-lock.json
