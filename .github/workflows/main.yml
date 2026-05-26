@@ -54,12 +54,20 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
+      # Build workspace dist/ before typecheck: the per-package `tsc --noEmit`
+      # resolves cross-package types from the built .d.ts files. Mirrors pr.yml.
+      - run: pnpm run build
       - run: pnpm run typecheck
       - run: pnpm run test:coverage
       - name: Migrate
-        run: node tools/migrate/dist/cli.js up
+        # The root build excludes tools/*, so build the migrate CLI before use.
+        run: |
+          pnpm -C tools/migrate run build
+          node tools/migrate/dist/cli.js up
       - name: Integration tests
-        run: pnpm -r --filter='./services/**' --filter='!./services/agents' run test:integration --if-present
+        # `--if-present` must precede the script name; after it, pnpm forwards it
+        # to vitest, which dies with `CACError: Unknown option --ifPresent`.
+        run: pnpm -r --filter='./services/**' --filter='!./services/agents' run --if-present test:integration
 
   build_and_push_images:
     name: build + push container images
