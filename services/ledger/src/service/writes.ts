@@ -305,6 +305,8 @@ export interface RecordTransactionArgs {
   evidence_ids: string[];
   provenance: string;
   confidence: number;
+  /** On-chain settlement tx hash (0x…64 hex); set for on-chain txs (RFC 0001). */
+  chain_tx_hash?: string;
 }
 
 /**
@@ -345,8 +347,8 @@ export async function recordTransactionRow(
           direction, transaction_date, posted_date, counterparty_id, category_id,
           status, description_raw, description_normalized,
           source_ids, evidence_ids, reconciliation_status,
-          provenance, confidence)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'unreconciled',$17,$18)
+          provenance, confidence, chain_tx_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'unreconciled',$17,$18,$19)
        RETURNING *`,
       [
         id,
@@ -367,6 +369,7 @@ export async function recordTransactionRow(
         args.evidence_ids,
         args.provenance,
         conf,
+        args.chain_tx_hash ?? null,
       ],
     );
     return { row: rows[0]!, created: true };
