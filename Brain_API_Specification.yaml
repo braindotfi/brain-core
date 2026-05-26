@@ -1679,7 +1679,11 @@ paths:
                   properties:
                     action_type:
                       type: string
-                      enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment]
+                      description: >-
+                        Settlement rail for the intent. `x402_settle` (USDC on
+                        Base via the x402 rail) is planned for Phase 2 (RFC 0001)
+                        and is not yet executable.
+                      enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment, x402_settle]
                     source_account_id: { type: string }
                     destination_counterparty_id: { type: string }
                     amount: { type: string, pattern: '^\d+(\.\d+)?$' }
@@ -3150,7 +3154,10 @@ components:
             created_by_agent_id: { type: string }
             action_type:
               type: string
-              enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment, other]
+              description: >-
+                `x402_settle` (USDC on Base via the x402 rail) is planned for
+                Phase 2 (RFC 0001) and is not yet executable.
+              enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment, x402_settle, other]
             source_account_id: { type: string }
             destination_counterparty_id: { type: string }
             amount: { type: string }
