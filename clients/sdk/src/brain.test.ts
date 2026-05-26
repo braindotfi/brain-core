@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { Brain } from "./brain.js";
+import { Brain, BRAIN_BASE_URLS } from "./brain.js";
 import { BrainAPIError } from "./errors.js";
 
 function mockFetch(
@@ -28,6 +28,65 @@ describe("Brain", () => {
     expect(brain.invoices).toBeDefined();
     expect(brain.balances).toBeDefined();
     expect(brain.http).toBeDefined();
+  });
+
+  describe("local()", () => {
+    it("points baseUrl at localhost:3000/v1", () => {
+      const brain = Brain.local("tok");
+      expect(brain.baseUrl).toBe(BRAIN_BASE_URLS.local);
+    });
+
+    it("passes through extra options", () => {
+      const fetchFn = vi.fn() as unknown as typeof globalThis.fetch;
+      const brain = Brain.local("tok", { fetch: fetchFn });
+      expect(brain.getFetch()).toBe(fetchFn);
+    });
+  });
+
+  describe("fromDemoServer()", () => {
+    it("fetches a demo token and constructs a Brain pointed at baseUrl", async () => {
+      const calls: string[] = [];
+      const fetchFn = vi.fn(async (input: Request | URL | string) => {
+        const url = typeof input === "string" ? input : (input as Request).url;
+        calls.push(url);
+        if (url.endsWith("/demo/token")) {
+          return new Response(JSON.stringify({ token: "demo_token_abcdef" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response("{}", { status: 200 });
+      }) as unknown as typeof globalThis.fetch;
+
+      const brain = await Brain.fromDemoServer("http://localhost:3000/v1", { fetch: fetchFn });
+
+      expect(calls[0]).toContain("/demo/token");
+      expect(brain.baseUrl).toBe("http://localhost:3000/v1");
+      expect(brain.getMaskedToken()).toContain("demo_token_");
+    });
+
+    it("throws a descriptive error when the demo token request fails", async () => {
+      const fetchFn = vi.fn(
+        async () => new Response("", { status: 503 }),
+      ) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        Brain.fromDemoServer("http://localhost:3000/v1", { fetch: fetchFn }),
+      ).rejects.toThrow("status 503");
+    });
+
+    it("uses default baseUrl when none supplied", async () => {
+      const fetchFn = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ token: "t" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ) as unknown as typeof globalThis.fetch;
+
+      const brain = await Brain.fromDemoServer(undefined, { fetch: fetchFn });
+      expect(brain.baseUrl).toBe("http://localhost:3000/v1");
+    });
   });
 
   describe("accounts", () => {

@@ -24,6 +24,7 @@ import {
   InMemorySourceRepository,
   SourceService,
   type SourceRepository,
+  type SourceCredentialStore,
 } from "./sources/SourceService.js";
 import { registerSourceRoutes } from "./sources/routes.js";
 import type { RawDeps } from "./deps.js";
@@ -118,6 +119,13 @@ export interface RegisterRawPluginOptions {
   /** Shared idempotency store; when set, webhooks dedup by body hash (§5.2). */
   idempotencyStore?: IdempotencyStore;
   idempotencyTtlSeconds?: number;
+  /**
+   * Backing store for /v1/sources/*. Defaults to in-memory — override with
+   * `PostgresSourceRepository` in production for persistent, encrypted storage.
+   */
+  sourceRepository?: SourceRepository;
+  /** Optional credential store (typically the same `PostgresSourceRepository` instance). */
+  sourceCredentialStore?: SourceCredentialStore;
 }
 
 /**
@@ -164,4 +172,11 @@ export async function registerRawPlugin(
   });
   await registerArtifact(app, deps);
   await registerParsed(app, deps);
+
+  // PLAN-FIRST #12: /v1/sources/* — source-connector lifecycle.
+  const sourceService = new SourceService(
+    opts.sourceRepository ?? new InMemorySourceRepository(),
+    opts.sourceCredentialStore,
+  );
+  await registerSourceRoutes(app, sourceService);
 }

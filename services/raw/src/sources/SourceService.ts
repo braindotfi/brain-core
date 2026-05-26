@@ -35,6 +35,24 @@ export interface SourceRepository {
   ): Promise<SourceRecord | null>;
 }
 
+/**
+ * Extended interface implemented by repositories that support encrypted
+ * credential storage. Not part of the core `SourceRepository` contract so
+ * that `InMemorySourceRepository` can stay secret-free in tests.
+ */
+export interface SourceCredentialStore {
+  insertWithCredentials(
+    record: SourceRecord,
+    credentials: object,
+    externalAccountIds?: string[],
+  ): Promise<SourceRecord>;
+  findByExternalAccountId(
+    tenantId: string,
+    externalAccountId: string,
+  ): Promise<SourceRecord | null>;
+  resolveCredentials(tenantId: string, id: string): Promise<object | null>;
+}
+
 export interface ListFilter {
   readonly type?: SourceType;
   readonly status?: SourceStatus;
@@ -102,7 +120,10 @@ export class InMemorySourceRepository implements SourceRepository {
 // ---------------------------------------------------------------------------
 
 export class SourceService {
-  public constructor(private readonly repo: SourceRepository) {}
+  public constructor(
+    private readonly repo: SourceRepository,
+    private readonly credentialStore?: SourceCredentialStore,
+  ) {}
 
   public async connect(
     ctx: ServiceCallContext,
@@ -117,7 +138,7 @@ export class SourceService {
       credentials: input.credentials,
     });
     const now = new Date().toISOString();
-    return this.repo.insert({
+    const record: SourceRecord = {
       id: newSourceId(),
       tenant_id: ctx.tenantId,
       type: input.type,
@@ -128,7 +149,42 @@ export class SourceService {
       is_stub: isStub(input.type),
       created_at: now,
       updated_at: now,
-    });
+    };
+
+    if (this.credentialStore !== undefined) {
+      // Derive external_account_ids from the credentials when possible
+      // (Plaid: account_id maps to ledger external_account_id).
+      const externalIds: string[] = [];
+      const creds = input.credentials;
+      if (typeof creds["account_id"] === "string" && creds["account_id"].length > 0) {
+        externalIds.push(creds["account_id"]);
+      }
+      return this.credentialStore.insertWithCredentials(record, creds, externalIds);
+    }
+    return this.repo.insert(record);
+  }
+
+  /**
+   * Resolve encrypted credentials for a source connected to the given
+   * external_account_id (e.g. Plaid account_id). Returns null when no
+   * active source is found or credential encryption is not configured.
+   *
+   * Callers outside the raw service must go through this method — never
+   * query raw_sources directly (§1 principle: cross-service reads via API).
+   */
+  public async resolveCredentialsForAccount(
+    ctx: ServiceCallContext,
+    externalAccountId: string,
+  ): Promise<{ source_id: string; type: SourceType; credentials: object } | null> {
+    if (this.credentialStore === undefined) return null;
+    const record = await this.credentialStore.findByExternalAccountId(
+      ctx.tenantId,
+      externalAccountId,
+    );
+    if (record === null || record.status === "disconnected") return null;
+    const credentials = await this.credentialStore.resolveCredentials(ctx.tenantId, record.id);
+    if (credentials === null) return null;
+    return { source_id: record.id, type: record.type, credentials };
   }
 
   public async get(ctx: ServiceCallContext, id: string): Promise<SourceRecord | null> {

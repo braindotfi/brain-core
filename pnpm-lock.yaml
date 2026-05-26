@@ -215,6 +215,9 @@ importers:
       pino-pretty:
         specifier: ^11.2.2
         version: 11.3.0
+      plaid:
+        specifier: ^42.2.0
+        version: 42.2.0
       siwe:
         specifier: ^2.3.2
         version: 2.3.2(ethers@6.16.0)
@@ -2951,6 +2954,10 @@ packages:
 
   plaid@27.0.0:
     resolution: {integrity: sha512-aEwXrKT5DSlJFj0IITaKFGCdaAf8xcvdwqZzIjTqyR//xsCtscC5P9lAExnllaAts7ELqQBJn8JzYnLO5TUMTg==}
+    engines: {node: '>=10.0.0'}
+
+  plaid@42.2.0:
+    resolution: {integrity: sha512-5SI9gobmmN1UYCpk80yOGB6Kb391bKvssKa4TuIP4G9z/+nBKH7z+j32gK8TH/rr41RGMVvC3ISauKe7uK2Jyg==}
     engines: {node: '>=10.0.0'}
 
   pluralize@8.0.0:
@@ -5808,6 +5815,13 @@ snapshots:
       - supports-color
 
   plaid@27.0.0:
+    dependencies:
+      axios: 1.16.1
+    transitivePeerDependencies:
+      - debug
+      - supports-color
+
+  plaid@42.2.0:
     dependencies:
       axios: 1.16.1
     transitivePeerDependencies:
