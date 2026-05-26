@@ -46,7 +46,10 @@ export interface SourceCredentialStore {
     credentials: object,
     externalAccountIds?: string[],
   ): Promise<SourceRecord>;
-  findByExternalAccountId(tenantId: string, externalAccountId: string): Promise<SourceRecord | null>;
+  findByExternalAccountId(
+    tenantId: string,
+    externalAccountId: string,
+  ): Promise<SourceRecord | null>;
   resolveCredentials(tenantId: string, id: string): Promise<object | null>;
 }
 

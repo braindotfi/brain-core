@@ -97,7 +97,12 @@ export interface PaymentIntentServiceDeps {
    */
   resolveOnchainParams?: (
     ctx: ServiceCallContext,
-    intent: { source_account_id: string; destination_counterparty_id: string; amount: string; currency: string },
+    intent: {
+      source_account_id: string;
+      destination_counterparty_id: string;
+      amount: string;
+      currency: string;
+    },
   ) => Promise<OnchainDispatchParams | null>;
   /**
    * Optional: resolve per-source encrypted credentials for ACH intents.

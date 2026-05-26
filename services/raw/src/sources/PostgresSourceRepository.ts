@@ -22,10 +22,7 @@ export interface PostgresSourceRepositoryDeps {
 }
 
 /** Source types whose credentials should be encrypted at rest. */
-const CREDENTIAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<SourceType>([
-  "plaid",
-  "stripe",
-]);
+const CREDENTIAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<SourceType>(["plaid", "stripe"]);
 
 function rowToRecord(row: Record<string, unknown>): SourceRecord {
   return {
@@ -72,7 +69,11 @@ export class PostgresSourceRepository implements SourceRepository, SourceCredent
       this.deps.credentialKeyId !== undefined &&
       CREDENTIAL_SOURCE_TYPES.has(record.type)
     ) {
-      const result = encryptCredentials(credentials, this.deps.credentialKey, this.deps.credentialKeyId);
+      const result = encryptCredentials(
+        credentials,
+        this.deps.credentialKey,
+        this.deps.credentialKeyId,
+      );
       encCreds = result.ciphertext;
       keyId = result.keyId;
     }
@@ -106,10 +107,7 @@ export class PostgresSourceRepository implements SourceRepository, SourceCredent
 
   public async findById(tenantId: string, id: string): Promise<SourceRecord | null> {
     const { rows } = await withTenantScope(this.deps.pool, tenantId, (c) =>
-      c.query<Record<string, unknown>>(
-        `SELECT * FROM raw_sources WHERE id = $1 LIMIT 1`,
-        [id],
-      ),
+      c.query<Record<string, unknown>>(`SELECT * FROM raw_sources WHERE id = $1 LIMIT 1`, [id]),
     );
     return rows[0] !== undefined ? rowToRecord(rows[0]) : null;
   }
