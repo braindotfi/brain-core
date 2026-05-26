@@ -34,3 +34,33 @@ tests, docs, CI wiring, Dockerfiles) was fully verified locally.
 so the CI job is the canonical verifier.
 
 **Who can unblock:** Anyone running CI, or a local run with Docker available.
+
+---
+
+## B-2 — `main` is currently red; its coverage debt blocks `test:coverage`
+
+**Status:** open (external; owned by the team, not this run)
+
+**What was found:** After merging `origin/main` into the hardening branches (to
+clear the PR conflict), CI surfaced that **`main`'s own CI is failing**
+(`origin/main` @ `dce216f8a` → `completed/failure`). Two causes, both pre-existing
+on `main` and inherited via the merge:
+
+1. **`test:coverage`** — `main` shipped files with no tests, dragging packages
+   under the 80% gate: `services/raw/src/sources/PostgresSourceRepository.ts`
+   (9% lines / 0% funcs), `services/api/src/rails/onchainExecutor.ts` and
+   `rails/plaidClient.ts` (0%). Confirmed: these have **no `*.test.ts` on
+   `origin/main`** and the coverage configs do not exclude them.
+2. **`contracts`** — transient `foundryup` GitHub-API `403` (toolchain install
+   rate-limit); `forge` never installed. Infra flake, clears on re-run.
+
+**Not caused by this run.** The one coverage shortfall attributable to the
+hardening work — `proof/view.ts` (78.86%) — was fixed (route tests → 95% lines /
+100% funcs, commit `19c6bea`). No remaining `test:coverage` red is from P0/P1/P2.
+
+**What's needed to unblock:** the team adds tests (or coverage `exclude`s) on
+`main` for `PostgresSourceRepository` + `rails/{onchainExecutor,plaidClient}`.
+Once `main` is green, re-merging it into these branches (same merge-based flow)
+makes all three PRs pass. (Chosen path: option **(a)** — fix on `main`.)
+
+**Who can unblock:** the team that owns `main`'s rails/sources work.
