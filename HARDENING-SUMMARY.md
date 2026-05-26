@@ -112,3 +112,40 @@ each lands). **Gate status:** `lint`/`typecheck`/`build` pass; `test:coverage` i
 red **only** on `main`'s inherited coverage debt (B-2), and `contracts` hit a
 transient `foundryup` flake. Per decision (a), `main` is fixed first; re-merging
 it here then turns all three green.
+
+## Post-merge status (update — 2026-05-26)
+
+All three hardening PRs are **merged to `main`**:
+
+| Phase | PR                                                                                                                                        | Merge commit |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| P0    | [#14](https://github.com/braindotfi/brain-core/pull/14)                                                                                   | `7a81907`    |
+| P1    | [#21](https://github.com/braindotfi/brain-core/pull/21) (replaced #15, which GitHub auto-closed when its stacked base branch was deleted) | `f27e405`    |
+| P2    | [#16](https://github.com/braindotfi/brain-core/pull/16)                                                                                   | `d4e4321`    |
+
+**B-2 (the old "`main` is red") is resolved.** `main`'s pre-existing CI debt was
+fixed in a follow-up `fix/main-green` effort (PRs #17–#26) using **real unit
+tests — no coverage `exclude`s** — plus a `compareDecimal` `-0` bug fix and a
+series of CI repairs that `main.yml` had hidden behind its lint failure:
+
+- **Coverage backfill:** raw `PostgresSourceRepository`; api rails
+  (`onchainExecutor` / `plaidClient` / `viemPolicySignerChecker`); execution
+  `agent-runs` + `findings`; internal-agent handlers; agent-router barrel/config.
+- **`main.yml` repair:** build-before-typecheck; just-in-time `tools/*` build
+  (the migrate + golden-path seed CLIs the root build excludes); restored wiki's
+  missing integration vitest config + `passWithNoTests` for ledger/wiki; moved
+  `--if-present` before the script name; added the missing `pg` runtime dep to
+  the invariants/adversarial integration suites; made the RLS-isolation probes
+  connect as a **non-owner role** (Postgres bypasses RLS for the superuser owner);
+  authenticated `foundry-toolchain` to stop the 403 flake.
+- **Golden-path smoke:** seed `BRAIN_TENANT_ID`/`BRAIN_ACTOR` env (the demo
+  golden tenant); read the real ledger JSON keys (`invoices` / `counterparties`);
+  satisfy the P0.5 invoice-shortcut preconditions in the seed (linked document
+  evidence + a default AP account).
+
+**CI status on `main`:** the **quality gates are green** — `pr.yml`
+(lint/build/typecheck/test:coverage/contracts/secret-scan) and `main.yml`'s
+`unit + integration` job (incl. P0.2 invariants + P1.1 adversarial DB-integration).
+The **only** remaining red is the Azure deploy chain (`build + push` →
+`deploy` → `E2E` → `promote`), which fails on missing Azure OIDC secrets — see
+`BLOCKERS.md` **B-2**. No fix PR reaches it; it needs repo secrets (or gating).
