@@ -1,10 +1,17 @@
 /**
- * P0.7 — proof viewer render test. Pure function, no DB.
+ * P0.7 — proof viewer tests: pure renderer + the auth'd HTML route (no DB).
  */
 
-import { describe, expect, it } from "vitest";
-import type { Proof } from "@brain/shared";
-import { renderProofHtml } from "./view.js";
+import Fastify, { type FastifyInstance } from "fastify";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  errorHandlerPlugin,
+  newTenantId,
+  newUserId,
+  type Principal,
+  type Proof,
+} from "@brain/shared";
+import { renderProofHtml, registerProofViewRoute } from "./view.js";
 
 function fixture(over: Partial<Proof> = {}): Proof {
   return {
@@ -109,5 +116,68 @@ describe("renderProofHtml (P0.7)", () => {
     const html = renderProofHtml(fixture());
     expect(html.startsWith("<!doctype html>")).toBe(true);
     expect(html).toContain("</html>");
+  });
+});
+
+describe("GET /proof/:id/view route (P0.7)", () => {
+  const TENANT = newTenantId();
+  const ACTOR = newUserId();
+
+  function principal(scopes: string[]): Principal {
+    return {
+      id: ACTOR,
+      type: "user",
+      tenantId: TENANT,
+      scopes: scopes as unknown as Principal["scopes"],
+      tokenId: "tok_test",
+      expiresAt: Math.floor(Date.now() / 1000) + 300,
+    };
+  }
+
+  async function buildApp(opts: {
+    scopes: string[];
+    buildProof: (tenantId: string, actionId: string) => Promise<Proof | null>;
+  }): Promise<FastifyInstance> {
+    const app = Fastify({ logger: false });
+    await app.register(errorHandlerPlugin);
+    app.addHook("onRequest", async (req) => {
+      req.principal = principal(opts.scopes);
+    });
+    await registerProofViewRoute(app, { buildProof: opts.buildProof });
+    return app;
+  }
+
+  let app: FastifyInstance | undefined;
+  afterEach(async () => {
+    if (app !== undefined) await app.close();
+    app = undefined;
+  });
+
+  it("renders HTML for a known intent (200, text/html, tenant-scoped)", async () => {
+    let seenTenant = "";
+    app = await buildApp({
+      scopes: ["audit:read"],
+      buildProof: async (tenantId) => {
+        seenTenant = tenantId;
+        return fixture();
+      },
+    });
+    const res = await app.inject({ method: "GET", url: "/proof/pi_123/view" });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/html");
+    expect(res.body).toContain("Brain Action Proof");
+    expect(seenTenant).toBe(TENANT); // tenant comes from the JWT, not the path
+  });
+
+  it("returns 404 when no proof exists (no existence leak)", async () => {
+    app = await buildApp({ scopes: ["audit:read"], buildProof: async () => null });
+    const res = await app.inject({ method: "GET", url: "/proof/pi_missing/view" });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("rejects a principal without audit:read scope (403)", async () => {
+    app = await buildApp({ scopes: ["wiki:read"], buildProof: async () => fixture() });
+    const res = await app.inject({ method: "GET", url: "/proof/pi_123/view" });
+    expect(res.statusCode).toBe(403);
   });
 });
