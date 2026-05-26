@@ -10,7 +10,12 @@
     "display_name": { "type": "string", "minLength": 1, "maxLength": 200 },
     "kind": {
       "type": "string",
-      "enum": ["vendor", "customer", "employee", "contractor", "onchain", "unknown"]
+      "enum": ["vendor", "customer", "employee", "contractor", "onchain", "agent", "unknown"]
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "For kind=agent: the execution-layer agent id this counterparty represents (RFC 0001).",
+      "pattern": "^agent_[0-9A-HJKMNP-TV-Z]{26}$"
     },
     "tax_id": { "type": "string", "maxLength": 64 },
     "country": { "type": "string", "pattern": "^[A-Z]{2}$" },

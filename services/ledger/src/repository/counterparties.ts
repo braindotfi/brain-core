@@ -9,6 +9,8 @@ export interface CounterpartyRow extends LedgerRowCommon {
   verified_status: string | null;
   aliases: string[];
   linked_accounts: string[];
+  /** For type="agent": the execution-layer agent id (RFC 0001); null otherwise. */
+  agent_id: string | null;
 }
 
 export interface CounterpartyListFilters {
