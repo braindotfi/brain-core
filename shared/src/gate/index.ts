@@ -10,3 +10,4 @@ export {
   type RiskLevel,
 } from "./evidence-validator.js";
 export type { DuplicateCheckInput, DuplicateCheckResult, DuplicateCollision } from "./duplicate.js";
+export type { AgentAttestationInput, AgentAttestationResult } from "./agent-attestation.js";

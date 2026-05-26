@@ -21,12 +21,20 @@ export type GateCheckName =
   | "agent_behavior_pinned"
   | "agent_authorized"
   | "action_allowed"
+  // 3.5 — on-chain settlement permitted for this tenant/payment-class (RFC 0001 §6.5).
+  | "onchain_settlement_permitted"
   | "source_account_allowed"
   | "counterparty_allowed"
+  // 5.5 — agent payee registered + attested in BrainMCPAgentRegistry, not paused (RFC 0001 §6.3).
+  | "agent_counterparty_attested"
   | "counterparty_verified"
+  // 6.5 — x402 settlement context (USDC/Base/amount/recipient) matches the intent (RFC 0001 §6.1).
+  | "x402_payment_context_valid"
   | "amount_within_limit"
   | "ledger_state_bound"
   | "available_balance_sufficient"
+  // 8.5 — per-agent rolling-window spend stays within the policy envelope (RFC 0001 §6.4).
+  | "micropayment_cap_within_window"
   | "required_evidence_present"
   | "evidence_supports_action"
   | "approval_requirement_determined"
