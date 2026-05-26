@@ -20,7 +20,16 @@ import type { ServiceCallContext } from "../contracts/types.js";
 import { computeLedgerSnapshot } from "./snapshot.js";
 import { validateEvidence, type ResolvedEvidence, type RiskLevel } from "./evidence-validator.js";
 import type { DuplicateCheckInput, DuplicateCheckResult } from "./duplicate.js";
+import type { AgentAttestationInput, AgentAttestationResult } from "./agent-attestation.js";
 import type { GateCheck, GateOutcome, GateResult } from "./types.js";
+
+// x402 settlement invariants (RFC 0001 §6.1 / D-4): USDC on Base only. Defined
+// locally because the gate lives in `shared` and must not import a service (the
+// rail in services/execution carries the same constants for its own validation).
+const X402_ASSET = "USDC";
+const X402_NETWORK = "base";
+const X402_DECIMAL = /^\d+(\.\d+)?$/;
+const ONCHAIN_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -41,6 +50,29 @@ export interface GatePaymentIntent {
   /** Optional linkage used by evidence semantic validation (H-21, check 9.5). */
   invoice_id?: string | null;
   obligation_id?: string | null;
+  /**
+   * On-chain settlement context for x402 / on-chain payments (RFC 0001 §6.1,
+   * §6.5). Populated by the resolver only for settlement actions (e.g.
+   * `x402_settle`); absent for ACH/wire/card. Its presence is what makes checks
+   * 3.5 (on-chain-settlement-permitted) and 6.5 (x402-payment-context) applicable
+   * — when absent, those checks add no row and the canonical path is unchanged.
+   *
+   * TODO(brain-hardening): PaymentIntentService does not yet populate this from
+   * the stored action payload (deferred to the Phase 2C live-wiring step,
+   * alongside the counterparty `onchain_address` loader). Until then the x402
+   * path is live-in-shadow and these checks stay dormant — mirroring how the
+   * 9.5 / 11.5 loaders shipped dormant.
+   */
+  settlement?: {
+    /** Settled asset (must be USDC). */
+    asset: string;
+    /** Settlement network (must be base). */
+    network: string;
+    /** On-chain settlement amount as a decimal string. */
+    amount: string;
+    /** Recipient (payee) on-chain address. */
+    pay_to: string;
+  };
 }
 
 export interface GatePolicyDecision {
@@ -62,6 +94,24 @@ export interface GatePolicyDecision {
    * invalidated (stale) and excluded from quorum.
    */
   policy_version?: number;
+  /**
+   * Whether this payment class may settle on-chain for this tenant (RFC 0001
+   * §3.4 / §6.5 — the privacy / rail-sensitivity dimension). Drives check 3.5:
+   *   - `false` ⇒ HARD fail-closed for a settlement action (route off-chain).
+   *   - `true`  ⇒ pass.
+   *   - `undefined` ⇒ the policy VM has not expressed the dimension yet ⇒ check
+   *     3.5 records not_applicable (additive; never opens a back door).
+   * Only consulted when the intent carries on-chain `settlement` context.
+   */
+  onchain_settlement_permitted?: boolean;
+  /**
+   * Per-agent rolling-window micropayment cap (RFC 0001 §6.4). Mirrors the
+   * on-chain session-key window cap so the off-chain gate and the on-chain
+   * contract agree. Check 8.5 enforces `windowSpend + amount <= value` over the
+   * window. Active only when BOTH this envelope and the `sumAgentWindowSpend`
+   * reader are wired; otherwise check 8.5 adds no row.
+   */
+  micropayment_window_cap?: { currency: string; value: string; window_seconds: number };
 }
 
 export interface GatePrincipal {
@@ -82,6 +132,18 @@ export interface GateCounterparty {
   type: string;
   risk_level: string | null;
   verified_status: string | null;
+  /**
+   * The counterparty's `agent_id` when `type === "agent"` (Phase 1B). Threaded to
+   * the attestation read (check 5.5). Absent/null for non-agent counterparties.
+   */
+  agent_id?: string | null;
+  /**
+   * The counterparty's on-chain payee address. Used by check 6.5 to confirm the
+   * x402 settlement recipient matches the resolved counterparty. Absent/null for
+   * off-chain counterparties (then an on-chain settlement to them fails closed —
+   * the recipient is unverifiable on-chain).
+   */
+  onchain_address?: string | null;
 }
 
 export interface GateApprovalState {
@@ -177,6 +239,23 @@ export interface GateDependencies {
    * dry-run.
    */
   resolveTenantFlags?: (tenantId: string) => Promise<GateTenantFlags>;
+  /**
+   * Attestation read for an agent payee (RFC 0001 §6.3, check 5.5). On-chain
+   * (`BrainMCPAgentRegistry`) / DB-backed; lives in services/policy and is
+   * injected (the gate must not query the chain/DB). When absent, check 5.5 adds
+   * no row — preserving the canonical happy path. When wired and the payee is an
+   * agent, a non-attested or paused payee is a HARD reject. Read-only — runs in
+   * dry-run too. This is a membership + pause read, not reputation (Principle #5).
+   */
+  attestCounterpartyAgent?: (input: AgentAttestationInput) => Promise<AgentAttestationResult>;
+  /**
+   * Sum of an agent's settled spend over the trailing `windowSeconds` (decimal
+   * string), for the micropayment cumulative cap (RFC 0001 §6.4, check 8.5).
+   * DB-backed; injected. Active only when the policy envelope also carries a
+   * `micropayment_window_cap`; otherwise check 8.5 adds no row. Read-only — safe
+   * in dry-run.
+   */
+  sumAgentWindowSpend?: (agentId: string, windowSeconds: number) => Promise<string>;
 }
 
 export interface RunGateInput {
@@ -341,6 +420,26 @@ export async function runPreExecutionGate(
   }
   pass(checks, 3, "action_allowed", { matched_rule_id: decision.matched_rule_id });
 
+  // 3.5 — on-chain settlement permitted (RFC 0001 §3.4 / §6.5). Applies ONLY to
+  // settlement actions (the intent carries on-chain `settlement` context); ACH /
+  // wire / card add no row, so the canonical path is unchanged. When the policy
+  // VM has expressed the dimension, `false` is a HARD fail-closed (the payment
+  // must route over an off-chain rail) and `true` passes. When the dimension is
+  // unexpressed (undefined), record not_applicable — additive, never a back door.
+  if (input.intent.settlement !== undefined) {
+    const permitted = decision.onchain_settlement_permitted;
+    if (permitted === false) {
+      return failGate(3.5, "onchain_settlement_permitted", {
+        reason: "tenant policy does not permit on-chain settlement for this payment class",
+      });
+    }
+    if (permitted === true) {
+      pass(checks, 3.5, "onchain_settlement_permitted");
+    } else {
+      pass(checks, 3.5, "onchain_settlement_permitted", { not_applicable: true });
+    }
+  }
+
   // 4 — source account allowed.
   const account = await deps.resolveAccount(input.intent.source_account_id);
   if (account === null) {
@@ -361,6 +460,35 @@ export async function runPreExecutionGate(
   }
   pass(checks, 5, "counterparty_allowed");
 
+  // 5.5 — agent-counterparty attestation (RFC 0001 §6.3). When the attestation
+  // reader is wired AND the payee is an agent counterparty (Phase 1B), it must be
+  // a registered, attested, non-paused agent in BrainMCPAgentRegistry before
+  // money moves to it — the M2M-commerce analogue of counterparty verification. A
+  // non-attested / paused payee is a HARD reject. Reader wired but payee not an
+  // agent ⇒ not_applicable; reader unwired ⇒ no row (canonical path preserved).
+  // Membership + pause read, never reputation (Standards §6, Principle #5).
+  if (deps.attestCounterpartyAgent !== undefined) {
+    if (counterparty.type === "agent") {
+      const attestation = await deps.attestCounterpartyAgent({
+        tenantId: input.ctx.tenantId,
+        counterpartyId: counterparty.id,
+        agentId: counterparty.agent_id ?? null,
+      });
+      if (!attestation.attested) {
+        return failGate(5.5, "agent_counterparty_attested", {
+          counterparty_id: counterparty.id,
+          agent_id: counterparty.agent_id ?? null,
+          registered: attestation.registered ?? false,
+          paused: attestation.paused ?? false,
+          reason: attestation.reason ?? "agent payee is not attested",
+        });
+      }
+      pass(checks, 5.5, "agent_counterparty_attested");
+    } else {
+      pass(checks, 5.5, "agent_counterparty_attested", { not_applicable: true });
+    }
+  }
+
   // 6 — counterparty verified (when required by policy threshold).
   const threshold = decision.counterparty_verification_threshold ?? null;
   if (threshold !== null) {
@@ -380,6 +508,39 @@ export async function runPreExecutionGate(
     }
   }
   pass(checks, 6, "counterparty_verified");
+
+  // 6.5 — x402 payment-context validation (RFC 0001 §6.1). For on-chain
+  // settlement actions, the resolved settlement context must be internally
+  // consistent and match the intent + payee: USDC on Base, a decimal amount equal
+  // to the intent amount, the intent currency IS the settled asset, and the
+  // recipient address matches the counterparty's on-chain address. Deterministic
+  // field comparison — no discretion. Non-settlement actions add no row.
+  if (input.intent.settlement !== undefined) {
+    const s = input.intent.settlement;
+    const failures: string[] = [];
+    if (s.asset !== X402_ASSET) failures.push(`asset must be ${X402_ASSET}`);
+    if (s.network !== X402_NETWORK) failures.push(`network must be ${X402_NETWORK}`);
+    if (input.intent.currency !== s.asset) {
+      failures.push("intent currency does not match settled asset");
+    }
+    if (!X402_DECIMAL.test(s.amount)) {
+      failures.push("settlement amount is not a decimal string");
+    } else if (cmpDecimal(s.amount, input.intent.amount) !== 0) {
+      failures.push("settlement amount does not match intent amount");
+    }
+    if (!ONCHAIN_ADDRESS.test(s.pay_to)) {
+      failures.push("settlement pay_to is not a 0x address");
+    } else if (
+      counterparty.onchain_address == null ||
+      counterparty.onchain_address.toLowerCase() !== s.pay_to.toLowerCase()
+    ) {
+      failures.push("settlement recipient does not match counterparty on-chain address");
+    }
+    if (failures.length > 0) {
+      return failGate(6.5, "x402_payment_context_valid", { failures });
+    }
+    pass(checks, 6.5, "x402_payment_context_valid");
+  }
 
   // 7 — amount within policy limit.
   const upper = decision.amount_upper_bound ?? null;
@@ -429,6 +590,35 @@ export async function runPreExecutionGate(
     }
   }
   pass(checks, 8, "available_balance_sufficient");
+
+  // 8.5 — micropayment cumulative cap (RFC 0001 §6.4). Active ONLY when BOTH the
+  // policy envelope (`micropayment_window_cap`) and the window-spend reader are
+  // wired; otherwise add no row (canonical path preserved). Enforces
+  // `windowSpend + amount <= cap.value` over the rolling window, mirroring the
+  // on-chain session-key window cap so the off-chain gate and the on-chain
+  // contract agree. Currency mismatch or over-cap is a HARD reject. Read-only —
+  // the same check holds in dry-run.
+  const windowCap = decision.micropayment_window_cap ?? null;
+  if (windowCap !== null && deps.sumAgentWindowSpend !== undefined) {
+    if (input.intent.currency !== windowCap.currency) {
+      return failGate(8.5, "micropayment_cap_within_window", {
+        reason: "currency mismatch between intent and window cap",
+        expected: windowCap.currency,
+        actual: input.intent.currency,
+      });
+    }
+    const windowSpend = await deps.sumAgentWindowSpend(agentId, windowCap.window_seconds);
+    const projected = addDecimalString(input.intent.amount, windowSpend);
+    if (cmpDecimal(projected, windowCap.value) > 0) {
+      return failGate(8.5, "micropayment_cap_within_window", {
+        window_seconds: windowCap.window_seconds,
+        window_spend: windowSpend,
+        amount: input.intent.amount,
+        cap: windowCap.value,
+      });
+    }
+    pass(checks, 8.5, "micropayment_cap_within_window");
+  }
 
   // 9 — required evidence present.
   const requiredEvidence = decision.required_evidence_kinds ?? [];
