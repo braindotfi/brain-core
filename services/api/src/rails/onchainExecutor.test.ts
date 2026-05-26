@@ -71,6 +71,8 @@ describe("onchainExecutor", () => {
   });
 
   it("selects Base mainnet when chainId=8453", () => {
-    expect(buildOnchainExecutor({ privateKey: PK, rpcUrl: "http://rpc", chainId: 8453 })).toBeDefined();
+    expect(
+      buildOnchainExecutor({ privateKey: PK, rpcUrl: "http://rpc", chainId: 8453 }),
+    ).toBeDefined();
   });
 });

@@ -344,7 +344,13 @@ describe("askWiki — Ledger-grounded retrieval", () => {
         redis: fakeRedis() as unknown as Redis,
         metrics: new MockMetrics(),
       },
-      { question: "what bills are due", asOf: null, maxEvidenceDepth: 3, tenantId: "tnt_test", model: "m4" },
+      {
+        question: "what bills are due",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m4",
+      },
     );
     expect(result.evidence[0]!.entityId).toBe("obl_DUE1");
     expect(result.evidence[0]!.entityType).toBe("obligation");

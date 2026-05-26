@@ -63,7 +63,11 @@ function fakePool(handler: (sql: string, params: unknown[]) => { rows: unknown[]
   const calls: Call[] = [];
   const client = {
     query: async (sql: string, params: unknown[] = []) => {
-      if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql) || sql.includes("set_config") || sql.startsWith("SET ")) {
+      if (
+        /^(BEGIN|COMMIT|ROLLBACK)/.test(sql) ||
+        sql.includes("set_config") ||
+        sql.startsWith("SET ")
+      ) {
         return { rows: [], rowCount: 0 };
       }
       calls.push({ sql, params });
@@ -103,7 +107,11 @@ function insertReturning(): (sql: string, params: unknown[]) => { rows: unknown[
 describe("PostgresSourceRepository — insert / encryption", () => {
   it("insert() stores NULL credentials", async () => {
     const { pool, calls } = fakePool(insertReturning());
-    const repo = new PostgresSourceRepository({ pool, credentialKey: KEY, credentialKeyId: KEY_ID });
+    const repo = new PostgresSourceRepository({
+      pool,
+      credentialKey: KEY,
+      credentialKeyId: KEY_ID,
+    });
     const out = await repo.insert(record());
     expect(out.id).toBe("src_1");
     const insert = calls.find((c) => c.sql.includes("INSERT INTO raw_sources"))!;
@@ -113,8 +121,14 @@ describe("PostgresSourceRepository — insert / encryption", () => {
 
   it("insertWithCredentials() encrypts for a credential source type (plaid)", async () => {
     const { pool, calls } = fakePool(insertReturning());
-    const repo = new PostgresSourceRepository({ pool, credentialKey: KEY, credentialKeyId: KEY_ID });
-    await repo.insertWithCredentials(record({ type: "plaid" }), { access_token: "secret" }, ["ext_9"]);
+    const repo = new PostgresSourceRepository({
+      pool,
+      credentialKey: KEY,
+      credentialKeyId: KEY_ID,
+    });
+    await repo.insertWithCredentials(record({ type: "plaid" }), { access_token: "secret" }, [
+      "ext_9",
+    ]);
     const insert = calls.find((c) => c.sql.includes("INSERT INTO raw_sources"))!;
     expect(Buffer.isBuffer(insert.params[4])).toBe(true); // encrypted ciphertext
     expect(insert.params[5]).toBe(KEY_ID);
@@ -123,7 +137,11 @@ describe("PostgresSourceRepository — insert / encryption", () => {
 
   it("does NOT encrypt for a non-credential source type (eth_address)", async () => {
     const { pool, calls } = fakePool(insertReturning());
-    const repo = new PostgresSourceRepository({ pool, credentialKey: KEY, credentialKeyId: KEY_ID });
+    const repo = new PostgresSourceRepository({
+      pool,
+      credentialKey: KEY,
+      credentialKeyId: KEY_ID,
+    });
     await repo.insertWithCredentials(record({ type: "eth_address" }), { secret: "x" });
     const insert = calls.find((c) => c.sql.includes("INSERT INTO raw_sources"))!;
     expect(insert.params[4]).toBeNull();

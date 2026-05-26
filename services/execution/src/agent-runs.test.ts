@@ -161,7 +161,12 @@ describe("agent_runs repository", () => {
 
   it("listAgentRuns applies filters and clamps the limit", async () => {
     const { c, calls } = client(() => ({ rows: [{ id: "run_1" }] }));
-    await listAgentRuns(c, { agentId: "agent_1", status: "executed", category: "business", limit: 9999 });
+    await listAgentRuns(c, {
+      agentId: "agent_1",
+      status: "executed",
+      category: "business",
+      limit: 9999,
+    });
     expect(calls[0]!.sql).toContain("WHERE");
     expect(calls[0]!.sql).toContain("LIMIT 500");
     expect(calls[0]!.params).toEqual(["agent_1", "executed", "business"]);
@@ -257,9 +262,13 @@ describe("agent_runs repository", () => {
 
   it("claimEventIdempotencyKey: claimed on first insert", async () => {
     const { c } = client((sql) =>
-      sql.includes("INSERT INTO agent_idempotency_keys") ? { rows: [{ run_id: "run_1" }] } : { rows: [] },
+      sql.includes("INSERT INTO agent_idempotency_keys")
+        ? { rows: [{ run_id: "run_1" }] }
+        : { rows: [] },
     );
-    expect(await claimEventIdempotencyKey(c, { id: "k1", tenantId: "tnt_x", key: "K", runId: "run_1" })).toEqual({
+    expect(
+      await claimEventIdempotencyKey(c, { id: "k1", tenantId: "tnt_x", key: "K", runId: "run_1" }),
+    ).toEqual({
       claimed: true,
       runId: "run_1",
     });
@@ -271,7 +280,14 @@ describe("agent_runs repository", () => {
         ? { rows: [] } // ON CONFLICT DO NOTHING
         : { rows: [{ run_id: "run_existing" }] },
     );
-    expect(await claimEventIdempotencyKey(c, { id: "k1", tenantId: "tnt_x", key: "K", runId: "run_new" })).toEqual({
+    expect(
+      await claimEventIdempotencyKey(c, {
+        id: "k1",
+        tenantId: "tnt_x",
+        key: "K",
+        runId: "run_new",
+      }),
+    ).toEqual({
       claimed: false,
       runId: "run_existing",
     });
@@ -279,7 +295,14 @@ describe("agent_runs repository", () => {
 
   it("claimEventIdempotencyKey: null run_id when conflict row is gone", async () => {
     const { c } = client(() => ({ rows: [] }));
-    expect(await claimEventIdempotencyKey(c, { id: "k1", tenantId: "tnt_x", key: "K", runId: "run_new" })).toEqual({
+    expect(
+      await claimEventIdempotencyKey(c, {
+        id: "k1",
+        tenantId: "tnt_x",
+        key: "K",
+        runId: "run_new",
+      }),
+    ).toEqual({
       claimed: false,
       runId: null,
     });

@@ -90,8 +90,20 @@ describe("renderProofExplanation", () => {
       core({
         policy_version: "",
         evidence: [
-          { raw_parsed_id: "p1", sha256: "a", source_type: "plaid", kind: "invoice", trust_level: "high" },
-          { raw_parsed_id: "p2", sha256: "b", source_type: "plaid", kind: "receipt", trust_level: "high" },
+          {
+            raw_parsed_id: "p1",
+            sha256: "a",
+            source_type: "plaid",
+            kind: "invoice",
+            trust_level: "high",
+          },
+          {
+            raw_parsed_id: "p2",
+            sha256: "b",
+            source_type: "plaid",
+            kind: "receipt",
+            trust_level: "high",
+          },
         ],
       }),
     );

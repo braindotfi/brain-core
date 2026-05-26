@@ -117,7 +117,9 @@ describe("findings repository", () => {
       reason: "documented",
     });
     expect(out.id).toBe("afov_1");
-    const update = calls.find((q) => q.sql.includes("UPDATE agent_findings SET status = 'overridden'"))!;
+    const update = calls.find((q) =>
+      q.sql.includes("UPDATE agent_findings SET status = 'overridden'"),
+    )!;
     expect(update.params).toEqual(["afnd_1"]);
   });
 

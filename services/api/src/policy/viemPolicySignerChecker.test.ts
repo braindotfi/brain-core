@@ -13,7 +13,9 @@ vi.mock("viem", () => ({
   http: vi.fn(() => ({})),
 }));
 vi.mock("viem/chains", () => ({ baseSepolia: { id: 84_532 } }));
-vi.mock("@brain/policy", () => ({ tenantIdToBytes32: vi.fn(() => ("0x" + "00".repeat(32)) as string) }));
+vi.mock("@brain/policy", () => ({
+  tenantIdToBytes32: vi.fn(() => ("0x" + "00".repeat(32)) as string),
+}));
 
 import { createViemPolicySignerChecker } from "./viemPolicySignerChecker.js";
 
