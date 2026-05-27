@@ -21,10 +21,24 @@ import { getActive } from "./repository.js";
 import { evaluate, type Action } from "./vm.js";
 import { readSpendWindow, readTxCountWindow } from "./spend-counters.js";
 import type { ApplyTo, PolicyDocument, PolicyRule } from "./dsl.js";
+import {
+  applyReputationAdjustment,
+  readReputationEnvelope,
+  type ReputationResolver,
+} from "./reputation.js";
 
 export interface PolicyServiceDeps {
   pool: Pool;
   audit: AuditEmitter;
+  /**
+   * Optional ERC-8004 reputation source (RFC 0001 §7.7). When wired AND the
+   * matched rule declares a reputation envelope, a low-reputation counterparty
+   * TIGHTENS the decision (more approvers / lower caps) before the
+   * policy_decisions proof row is written. Absent ⇒ no adjustment (status quo).
+   * Reputation lives entirely in the policy layer; the §6 gate enforces the
+   * resulting thresholds deterministically and never sees a reputation value.
+   */
+  resolveReputation?: ReputationResolver;
 }
 
 export class PolicyService {
@@ -164,6 +178,38 @@ export class PolicyService {
 
     const snapshotHash = sha256Intent(intent);
     const id = newPolicyDecisionId();
+    const matchedRule =
+      decision.matched_rule_id !== null ? findRule(active.content, decision.matched_rule_id) : null;
+
+    // Base proof artifact from the deterministic VM.
+    const base: GatePolicyDecision = {
+      id,
+      outcome: decision.outcome,
+      matched_rule_id: decision.matched_rule_id,
+      required_approvers: decision.required_approvers,
+      ledger_snapshot_hash: snapshotHash,
+      trace: decision.trace as unknown as Array<Record<string, unknown>>,
+      required_evidence_kinds: [],
+      counterparty_verification_threshold: null,
+      amount_upper_bound: matchedRule?.when["amount.lte"] ?? null,
+      // P0.4: the active policy version, threaded to approval staleness checks.
+      policy_version: active.version,
+    };
+
+    // Reputation (RFC 0001 §7.7): tighten the decision for a low-reputation
+    // counterparty BEFORE persisting, so the policy_decisions proof row + audit
+    // reflect the final thresholds the §6 gate will enforce. Tighten-only and
+    // dormant when no source is wired or the rule declares no envelope. The §6
+    // gate never sees a reputation value (Standards §6, Principle #5).
+    const envelope = readReputationEnvelope(matchedRule);
+    const final =
+      this.deps.resolveReputation !== undefined && envelope !== undefined
+        ? applyReputationAdjustment(
+            base,
+            await this.deps.resolveReputation(ctx, intent.destination_counterparty_id),
+            envelope,
+          )
+        : base;
 
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
       await c.query(
@@ -178,11 +224,11 @@ export class PolicyService {
           active.version,
           "payment_intent",
           intent.id,
-          decision.outcome,
-          decision.matched_rule_id,
-          decision.required_approvers,
+          final.outcome,
+          final.matched_rule_id,
+          final.required_approvers,
           snapshotHash,
-          JSON.stringify(decision.trace),
+          JSON.stringify(final.trace),
         ],
       );
     });
@@ -200,27 +246,13 @@ export class PolicyService {
       },
       outputs: {
         decision_id: id,
-        outcome: decision.outcome,
-        matched_rule_id: decision.matched_rule_id,
+        outcome: final.outcome,
+        matched_rule_id: final.matched_rule_id,
+        reputation_adjusted: final !== base,
       },
     });
 
-    const matchedRule =
-      decision.matched_rule_id !== null ? findRule(active.content, decision.matched_rule_id) : null;
-
-    return {
-      id,
-      outcome: decision.outcome,
-      matched_rule_id: decision.matched_rule_id,
-      required_approvers: decision.required_approvers,
-      ledger_snapshot_hash: snapshotHash,
-      trace: decision.trace as unknown as Array<Record<string, unknown>>,
-      required_evidence_kinds: [],
-      counterparty_verification_threshold: null,
-      amount_upper_bound: matchedRule?.when["amount.lte"] ?? null,
-      // P0.4: the active policy version, threaded to approval staleness checks.
-      policy_version: active.version,
-    };
+    return final;
   }
 }
 
