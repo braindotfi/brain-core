@@ -1687,7 +1687,8 @@ paths:
                     source_account_id: { type: string }
                     destination_counterparty_id: { type: string }
                     amount: { type: string, pattern: '^\d+(\.\d+)?$' }
-                    currency: { type: string, pattern: '^[A-Z]{3}$' }
+                    # ISO-4217 (3-letter) for fiat rails; USDC for x402_settle (D-4, RFC 0001 §7.1).
+                    currency: { type: string, pattern: '^[A-Z]{3}$|^USDC$' }
                     obligation_id: { type: string }
                     invoice_id: { type: string }
                     agent_id: { type: string }
@@ -3161,7 +3162,8 @@ components:
             source_account_id: { type: string }
             destination_counterparty_id: { type: string }
             amount: { type: string }
-            currency: { type: string, pattern: '^[A-Z]{3}$' }
+            # ISO-4217 (3-letter) for fiat rails; USDC for x402_settle (D-4, RFC 0001 §7.1).
+            currency: { type: string, pattern: '^[A-Z]{3}$|^USDC$' }
             obligation_id: { type: [string, "null"] }
             invoice_id: { type: [string, "null"] }
             status:

@@ -66,7 +66,29 @@ const ACTION_TYPES = new Set([
   "onchain_transfer",
   "erp_writeback",
   "card_payment",
+  // x402 USDC-on-Base settlement (RFC 0001 §7.1). Shadow-first: accepting the
+  // action type only makes the intent creatable + §6-gated; it cannot settle
+  // until the commerce agent is in LIVE_AGENTS and an x402_base rail is
+  // registered at boot (RailRegistry fails closed until then).
+  "x402_settle",
 ]);
+
+/** Whether `t` is an action type the create route accepts (exported for tests). */
+export function isAcceptedActionType(t: string | undefined): boolean {
+  return t !== undefined && ACTION_TYPES.has(t);
+}
+
+/**
+ * Currency is ISO-4217-style (3 upper-case letters) for fiat rails. x402
+ * settlements are denominated in USDC (D-4) — the lone 4-letter exception,
+ * matched to the action type so fiat validation is not broadly loosened. The
+ * gate re-checks `currency === settlement.asset === "USDC"` for x402 (§6.1).
+ * Exported for unit tests (routes.ts itself is integration-tested).
+ */
+export function isValidCurrency(actionType: string | undefined, currency: string): boolean {
+  if (actionType === "x402_settle") return currency === "USDC";
+  return /^[A-Z]{3}$/.test(currency);
+}
 
 export async function registerPaymentIntentRoutes(
   app: FastifyInstance,
@@ -110,15 +132,14 @@ export async function registerPaymentIntentRoutes(
       }
 
       if (
-        b.action_type === undefined ||
-        !ACTION_TYPES.has(b.action_type) ||
+        !isAcceptedActionType(b.action_type) ||
         b.source_account_id === undefined ||
         !isBrainId(b.source_account_id, "acct") ||
         b.destination_counterparty_id === undefined ||
         !isBrainId(b.destination_counterparty_id, "cp") ||
         b.amount === undefined ||
         b.currency === undefined ||
-        !/^[A-Z]{3}$/.test(b.currency)
+        !isValidCurrency(b.action_type, b.currency)
       ) {
         throw brainError("request_body_invalid", "missing or malformed PaymentIntent fields");
       }
