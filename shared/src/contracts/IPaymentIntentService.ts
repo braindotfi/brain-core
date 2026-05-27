@@ -24,6 +24,8 @@ export type PaymentIntentActionType =
   | "onchain_transfer"
   | "erp_writeback"
   | "card_payment"
+  // x402 USDC-on-Base settlement (RFC 0001 §7.1). Shadow-gated end-to-end.
+  | "x402_settle"
   | "other";
 
 export type PaymentIntentStatus =
@@ -62,6 +64,12 @@ export interface CreatePaymentIntentInput {
   invoice_id?: string;
   agent_id?: string;
   evidence_ids?: string[];
+  /**
+   * x402 settlement recipient on-chain address (RFC 0001 §6.1). Required by the
+   * route for action_type=x402_settle; ignored for other action types. The §6
+   * gate (check 6.5) re-validates it against the counterparty's onchain_address.
+   */
+  pay_to?: string;
 }
 
 export interface ExecuteResult {

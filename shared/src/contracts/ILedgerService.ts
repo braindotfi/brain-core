@@ -76,6 +76,8 @@ export interface Counterparty extends LedgerCommonFields {
     | "wallet"
     | "exchange"
     | "tax_authority"
+    // A payee that is itself a registered Brain agent (M2M / x402, RFC 0001 §6.3).
+    | "agent"
     | "other";
   risk_level: "low" | "medium" | "high" | "sanctioned" | null;
   verified_status:
@@ -86,6 +88,10 @@ export interface Counterparty extends LedgerCommonFields {
     | null;
   aliases: string[];
   linked_accounts: string[];
+  /** For type="agent": the execution-layer agent id (RFC 0001 §6.3); null otherwise. */
+  agent_id: string | null;
+  /** Payee on-chain (EVM) address for x402/on-chain settlement (RFC 0001 §6.1); null off-chain. */
+  onchain_address: string | null;
 }
 
 export interface Obligation extends LedgerCommonFields {

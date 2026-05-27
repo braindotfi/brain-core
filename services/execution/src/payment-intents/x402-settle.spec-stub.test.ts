@@ -6,18 +6,25 @@
  * lands — every item flows through the SAME PaymentIntent → §6 gate → audit
  * path; there is no separate un-gated commerce path.
  *
- * Phase 2C-A made `x402_settle` a creatable, §6-gated action type (it is now in
- * `ACTION_TYPES`, with USDC accepted as its currency). It remains shadow-first:
- * nothing settles until the commerce agent is in LIVE_AGENTS and an `x402_base`
- * rail is registered at boot (`RailRegistry` fails closed until then). The
- * remaining `todo`s land in Phase 2C-B (settlement-context / gate activation)
- * and 2C-C (the gate loaders).
+ *   2C-A — `x402_settle` is a creatable, §6-gated action type (USDC accepted).
+ *   2C-B — the settlement context (asset/network/amount/recipient) is carried
+ *          onto the gate intent, activating the deterministic §6 payment-context
+ *          check (gate check 6.5, RFC §6.1). The check logic itself is proven in
+ *          shared/src/gate/gate.x402.test.ts.
+ *   2C-C — the gate loaders (attestation, window-spend, policy dimensions)
+ *          activate checks 3.5 / 5.5 / 8.5.
+ *
+ * Still shadow-first: nothing settles until the commerce agent is in LIVE_AGENTS
+ * and an `x402_base` rail is registered at boot (`RailRegistry` fails closed).
  */
 
 import { describe, expect, it } from "vitest";
 import { isAcceptedActionType, isValidCurrency } from "./routes.js";
+import { gateSettlement } from "./PaymentIntentService.js";
 
-describe("x402_settle (RFC 0001) — Phase 2C-A: action type + currency", () => {
+const PAY_TO = "0x" + "ab".repeat(20);
+
+describe("x402_settle (RFC 0001) — 2C-A: action type + currency", () => {
   it("accepts `x402_settle` as a create action type", () => {
     expect(isAcceptedActionType("x402_settle")).toBe(true);
     // canonical rails still accepted; an unknown type still rejected.
@@ -35,12 +42,31 @@ describe("x402_settle (RFC 0001) — Phase 2C-A: action type + currency", () => 
     expect(isValidCurrency("ach_outbound", "USDC")).toBe(false);
     expect(isValidCurrency("wire", "eur")).toBe(false);
   });
+});
 
-  // Phase 2C-B — settlement-context carriage activates these deterministic checks.
+describe("x402_settle (RFC 0001) — 2C-B: settlement-context carriage (activates gate 6.5)", () => {
+  it("builds the on-chain settlement context for an x402_settle intent", () => {
+    // The settled asset IS the intent currency (USDC) on Base; the gate (6.5)
+    // re-validates these fields against the resolved counterparty.
+    expect(gateSettlement("x402_settle", "USDC", "12.50", PAY_TO)).toEqual({
+      settlement: { asset: "USDC", network: "base", amount: "12.50", pay_to: PAY_TO },
+    });
+  });
+
+  it("carries no settlement context for non-x402 actions (canonical path preserved)", () => {
+    expect(gateSettlement("ach_outbound", "USD", "12.50", PAY_TO)).toEqual({});
+  });
+
+  it("carries no settlement context when the x402 recipient is absent (gate stays dormant)", () => {
+    expect(gateSettlement("x402_settle", "USDC", "12.50", null)).toEqual({});
+    expect(gateSettlement("x402_settle", "USDC", "12.50", undefined)).toEqual({});
+  });
+
+  // The gate check that consumes this context (6.5 — USDC/Base/amount/recipient)
+  // is proven in shared/src/gate/gate.x402.test.ts.
   it.todo("resolves an x402 payment request to { source, agent counterparty, amount, USDC }");
-  it.todo("gate check: x402 payment-context matches the PaymentIntent (RFC §6.1)");
+  // 2C-C — the gate loaders activate these.
   it.todo("gate check: on-chain settlement is permitted for this payment class (RFC §6.5)");
-  // Phase 2C-C — the gate loaders activate these.
   it.todo("gate check: agent-counterparty is registered + attested + not paused (RFC §6.3)");
   it.todo("gate check: micropayment cumulative cap within the policy envelope (RFC §6.4)");
   // Phase 3+ — live rail wiring.
