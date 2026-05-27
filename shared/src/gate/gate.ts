@@ -21,6 +21,7 @@ import { computeLedgerSnapshot } from "./snapshot.js";
 import { validateEvidence, type ResolvedEvidence, type RiskLevel } from "./evidence-validator.js";
 import type { DuplicateCheckInput, DuplicateCheckResult } from "./duplicate.js";
 import type { AgentAttestationInput, AgentAttestationResult } from "./agent-attestation.js";
+import type { EscrowStateInput, ResolvedEscrowState } from "./escrow-binding.js";
 import type { GateCheck, GateOutcome, GateResult } from "./types.js";
 
 // x402 settlement invariants (RFC 0001 §6.1 / D-4): USDC on Base only. Defined
@@ -72,6 +73,22 @@ export interface GatePaymentIntent {
     amount: string;
     /** Recipient (payee) on-chain address. */
     pay_to: string;
+  };
+  /**
+   * On-chain escrow context for a conditional settlement (RFC 0001 §6.2 / §7.6).
+   * Populated by the resolver only for escrow release actions. Its presence is
+   * what makes check 6.6 (escrow-state binding) applicable; absent ⇒ no row and
+   * the canonical path is unchanged.
+   *
+   * TODO(brain-hardening): wire the resolver (carry escrowId + jobTermsHash onto
+   * the intent) and the `resolveEscrowState` loader — deferred live-wiring,
+   * mirroring how the x402 settlement context + loaders shipped dormant.
+   */
+  escrow?: {
+    /** On-chain escrow id (bytes32 hex) the release settles. */
+    escrowId: string;
+    /** keccak256 commitment of the off-chain job terms (must match on-chain). */
+    jobTermsHash: string;
   };
 }
 
@@ -256,6 +273,14 @@ export interface GateDependencies {
    * in dry-run.
    */
   sumAgentWindowSpend?: (agentId: string, windowSeconds: number) => Promise<string>;
+  /**
+   * Reads the on-chain escrow lock for check 6.6 (escrow-state binding, RFC 0001
+   * §6.2 / §7.6). Reads `BrainEscrow.getEscrow`; lives in services/policy and is
+   * injected (the gate must not touch the chain). Active only when the intent
+   * carries an `escrow` context; absent ⇒ check 6.6 adds no row. Read-only —
+   * runs in dry-run too. Returns null when the escrow id is unknown on-chain.
+   */
+  resolveEscrowState?: (input: EscrowStateInput) => Promise<ResolvedEscrowState | null>;
 }
 
 export interface RunGateInput {
@@ -540,6 +565,44 @@ export async function runPreExecutionGate(
       return failGate(6.5, "x402_payment_context_valid", { failures });
     }
     pass(checks, 6.5, "x402_payment_context_valid");
+  }
+
+  // 6.6 — escrow-state binding (RFC 0001 §6.2 / §7.6). For a conditional
+  // (escrow) settlement, the on-chain escrow lock must match the intent before a
+  // release is gated: still Locked, same amount, same payee (== the counterparty
+  // on-chain address), same job-terms commitment. The chain read is injected
+  // (the gate must not touch the chain). Active only when the intent carries an
+  // `escrow` context AND the loader is wired; otherwise add no row (canonical
+  // path preserved). Deterministic state + field comparison — never a judgment.
+  if (input.intent.escrow !== undefined && deps.resolveEscrowState !== undefined) {
+    const onchain = await deps.resolveEscrowState({
+      tenantId: input.ctx.tenantId,
+      escrowId: input.intent.escrow.escrowId,
+    });
+    const failures: string[] = [];
+    if (onchain === null) {
+      failures.push("on-chain escrow not found");
+    } else {
+      if (onchain.state !== "Locked") {
+        failures.push(`escrow is not Locked (state=${onchain.state})`);
+      }
+      if (cmpDecimal(onchain.amount, input.intent.amount) !== 0) {
+        failures.push("escrow amount does not match intent amount");
+      }
+      if (onchain.jobTermsHash !== input.intent.escrow.jobTermsHash) {
+        failures.push("job-terms commitment does not match the on-chain escrow");
+      }
+      if (
+        counterparty.onchain_address == null ||
+        counterparty.onchain_address.toLowerCase() !== onchain.payee.toLowerCase()
+      ) {
+        failures.push("escrow payee does not match the counterparty on-chain address");
+      }
+    }
+    if (failures.length > 0) {
+      return failGate(6.6, "escrow_state_bound", { failures });
+    }
+    pass(checks, 6.6, "escrow_state_bound");
   }
 
   // 7 — amount within policy limit.
