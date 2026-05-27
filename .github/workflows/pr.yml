@@ -129,7 +129,13 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install gitleaks
+        # Pinned version + direct versioned download — no unauthenticated
+        # api.github.com "latest" lookup (that call is rate-limited to 60/hr and
+        # intermittently 403/404'd in CI, flaking this job). Bump deliberately.
+        env:
+          GITLEAKS_VERSION: "8.30.1"
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep tag_name | cut -d'"' -f4 | tr -d v)_linux_x64.tar.gz | tar -xz -C /usr/local/bin gitleaks
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
       - name: gitleaks
         run: gitleaks detect --source . --log-opts="origin/main..HEAD" --redact --exit-code 1
