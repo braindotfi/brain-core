@@ -35,6 +35,8 @@ import {
   type GatePrincipal,
   type GateResult,
   type GateTenantFlags,
+  type AgentAttestationInput,
+  type AgentAttestationResult,
 } from "@brain/shared";
 import { LedgerPaymentIntents, type PaymentIntentRow } from "@brain/ledger";
 import type { Pool } from "pg";
@@ -84,6 +86,31 @@ export interface PaymentIntentServiceDeps {
    * Optional — absent ⇒ check 1.5 keeps pre-P0.1 behavior.
    */
   resolveTenantFlags?: (ctx: ServiceCallContext, tenantId: string) => Promise<GateTenantFlags>;
+  /**
+   * Optional: attestation read for an agent payee — §6 gate check 5.5 (RFC 0001
+   * §6.3). When wired, the gate hard-rejects a settlement to a non-attested /
+   * paused agent counterparty. Absent ⇒ check 5.5 is dormant (no row), so the
+   * canonical path is unchanged. The concrete reader (on-chain
+   * BrainMCPAgentRegistry membership + pause) is the deferred live-wiring step,
+   * injected at boot — mirroring how the real rails' SDK construction is wired.
+   * Membership + pause read, never reputation (Standards §6, Principle #5).
+   */
+  attestCounterpartyAgent?: (
+    ctx: ServiceCallContext,
+    input: AgentAttestationInput,
+  ) => Promise<AgentAttestationResult>;
+  /**
+   * Optional: an agent's settled spend over a trailing window (decimal string) —
+   * §6 gate check 8.5 micropayment cumulative cap (RFC 0001 §6.4). Active only
+   * when the policy envelope also carries a `micropayment_window_cap`; absent ⇒
+   * check 8.5 is dormant. The concrete windowed-spend query is deferred
+   * live-wiring, injected at boot.
+   */
+  sumAgentWindowSpend?: (
+    ctx: ServiceCallContext,
+    agentId: string,
+    windowSeconds: number,
+  ) => Promise<string>;
   /** Resolves the source account by id. */
   resolveAccount: (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null>;
   /** Resolves the destination counterparty by id. */
@@ -363,6 +390,8 @@ export class PaymentIntentService implements IPaymentIntentService {
   /** GateDependencies bound to this ctx — shared by execute() and resume(). */
   private gateDeps(ctx: ServiceCallContext): GateDependencies {
     const resolveTenantFlags = this.deps.resolveTenantFlags;
+    const attestCounterpartyAgent = this.deps.attestCounterpartyAgent;
+    const sumAgentWindowSpend = this.deps.sumAgentWindowSpend;
     return {
       audit: this.deps.audit,
       resolveAgent: (agentId) => this.deps.resolveAgent(ctx, agentId),
@@ -380,6 +409,17 @@ export class PaymentIntentService implements IPaymentIntentService {
       }),
       ...(resolveTenantFlags !== undefined
         ? { resolveTenantFlags: (tenantId: string) => resolveTenantFlags(ctx, tenantId) }
+        : {}),
+      // x402 gate loaders (RFC 0001 §6.3/§6.4) — passed through only when wired;
+      // absent ⇒ gate checks 5.5/8.5 stay dormant (canonical path unchanged).
+      ...(attestCounterpartyAgent !== undefined
+        ? { attestCounterpartyAgent: (input) => attestCounterpartyAgent(ctx, input) }
+        : {}),
+      ...(sumAgentWindowSpend !== undefined
+        ? {
+            sumAgentWindowSpend: (agentId, windowSeconds) =>
+              sumAgentWindowSpend(ctx, agentId, windowSeconds),
+          }
         : {}),
     };
   }
