@@ -37,6 +37,8 @@ import {
   type GateTenantFlags,
   type AgentAttestationInput,
   type AgentAttestationResult,
+  type EscrowStateInput,
+  type ResolvedEscrowState,
 } from "@brain/shared";
 import { LedgerPaymentIntents, type PaymentIntentRow } from "@brain/ledger";
 import type { Pool } from "pg";
@@ -111,6 +113,18 @@ export interface PaymentIntentServiceDeps {
     agentId: string,
     windowSeconds: number,
   ) => Promise<string>;
+  /**
+   * Optional: reads the on-chain BrainEscrow lock — §6 gate check 6.6
+   * (escrow-state binding, RFC 0001 §7.6). When wired, the gate hard-rejects an
+   * escrow_release whose on-chain lock does not match the intent (state / amount
+   * / payee / job-terms). Absent ⇒ check 6.6 is dormant (no row). The concrete
+   * on-chain reader (BrainEscrow.getEscrow via viem) is the deferred live-wiring
+   * step, injected at boot — mirroring the real rails' SDK construction.
+   */
+  resolveEscrowState?: (
+    ctx: ServiceCallContext,
+    input: EscrowStateInput,
+  ) => Promise<ResolvedEscrowState | null>;
   /** Resolves the source account by id. */
   resolveAccount: (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null>;
   /** Resolves the destination counterparty by id. */
@@ -212,6 +226,13 @@ export class PaymentIntentService implements IPaymentIntentService {
         // otherwise). The §6 gate re-validates it against the counterparty (6.5).
         ...(input.action_type === "x402_settle" && input.pay_to !== undefined
           ? { settlementPayTo: input.pay_to }
+          : {}),
+        // Escrow context — persisted only for escrow_release (DB CHECK enforces
+        // null otherwise). The §6 gate binds it to the on-chain lock (6.6).
+        ...(input.action_type === "escrow_release" &&
+        input.escrow_id !== undefined &&
+        input.job_terms_hash !== undefined
+          ? { escrowId: input.escrow_id, jobTermsHash: input.job_terms_hash }
           : {}),
       }),
     );
@@ -392,6 +413,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     const resolveTenantFlags = this.deps.resolveTenantFlags;
     const attestCounterpartyAgent = this.deps.attestCounterpartyAgent;
     const sumAgentWindowSpend = this.deps.sumAgentWindowSpend;
+    const resolveEscrowState = this.deps.resolveEscrowState;
     return {
       audit: this.deps.audit,
       resolveAgent: (agentId) => this.deps.resolveAgent(ctx, agentId),
@@ -420,6 +442,9 @@ export class PaymentIntentService implements IPaymentIntentService {
             sumAgentWindowSpend: (agentId, windowSeconds) =>
               sumAgentWindowSpend(ctx, agentId, windowSeconds),
           }
+        : {}),
+      ...(resolveEscrowState !== undefined
+        ? { resolveEscrowState: (input) => resolveEscrowState(ctx, input) }
         : {}),
     };
   }
@@ -845,6 +870,10 @@ function railFor(actionType: string): string {
       return "onchain_base";
     case "x402_settle":
       return "x402_base";
+    case "escrow_release":
+      // On-chain BrainEscrow.release via the (deferred) escrow rail. No rail is
+      // registered at boot, so RailRegistry fails closed — shadow-first.
+      return "escrow_base";
     case "erp_writeback":
       return "erp_writeback";
     default:
@@ -869,6 +898,30 @@ export function gateSettlement(
   return { settlement: { asset: currency, network: "base", amount, pay_to: payTo } };
 }
 
+/**
+ * Build the gate's on-chain `escrow` context (RFC 0001 §6.2 / §7.6) for an
+ * escrow_release intent. Absent for non-escrow actions or when the escrow id /
+ * job-terms commitment is not yet carried — then gate check 6.6 stays dormant
+ * (no row), preserving the canonical path. The gate (check 6.6) reads the
+ * on-chain lock and re-validates state / amount / payee / job-terms.
+ */
+export function gateEscrow(
+  actionType: string,
+  escrowId: string | null | undefined,
+  jobTermsHash: string | null | undefined,
+): Pick<GatePaymentIntent, "escrow"> {
+  if (
+    actionType !== "escrow_release" ||
+    escrowId === null ||
+    escrowId === undefined ||
+    jobTermsHash === null ||
+    jobTermsHash === undefined
+  ) {
+    return {};
+  }
+  return { escrow: { escrowId, jobTermsHash } };
+}
+
 function intentToGate(row: PaymentIntentRow): GatePaymentIntent {
   return {
     id: row.id,
@@ -883,6 +936,7 @@ function intentToGate(row: PaymentIntentRow): GatePaymentIntent {
     policy_decision_id: row.policy_decision_id,
     evidence_ids: row.evidence_ids,
     ...gateSettlement(row.action_type, row.currency, row.amount, row.settlement_pay_to),
+    ...gateEscrow(row.action_type, row.escrow_id, row.job_terms_hash),
   };
 }
 
@@ -909,6 +963,7 @@ function stubGateIntent(args: {
       args.input.amount,
       args.input.pay_to,
     ),
+    ...gateEscrow(args.input.action_type, args.input.escrow_id, args.input.job_terms_hash),
   };
 }
 
