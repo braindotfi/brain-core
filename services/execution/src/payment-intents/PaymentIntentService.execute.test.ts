@@ -23,6 +23,7 @@ import type {
   GatePolicyDecision,
   GatePrincipal,
   ServiceCallContext,
+  AgentAttestationInput,
 } from "@brain/shared";
 import type { Pool } from "pg";
 import { PaymentIntentService } from "./PaymentIntentService.js";
@@ -385,5 +386,98 @@ describe("PaymentIntentService.execute — gate failure path", () => {
 
     // No audit events — gate was never reached
     expect(audit.events).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2C-C — gate-loader pass-through (RFC 0001 §6.3 / §6.4). Proves that
+// attestCounterpartyAgent + sumAgentWindowSpend, when supplied to the service,
+// reach the §6 gate (checks 5.5 / 8.5). The check logic itself is proven in
+// shared/src/gate/gate.x402.test.ts; here we verify the wiring.
+// ---------------------------------------------------------------------------
+
+describe("PaymentIntentService.execute — x402 gate-loader pass-through (2C-C)", () => {
+  const PAY_TO = "0x" + "ab".repeat(20);
+  const X402_ROW: PaymentIntentRow = {
+    ...APPROVED_INTENT_ROW,
+    action_type: "x402_settle",
+    currency: "USDC",
+    amount: "1.00",
+    settlement_pay_to: PAY_TO,
+  };
+  const AGENT_CP: GateCounterparty = {
+    ...GATE_CP,
+    type: "agent",
+    agent_id: AGENT_ID,
+    onchain_address: PAY_TO,
+  };
+  const USDC_ACCOUNT: GateAccount = { ...GATE_ACCOUNT, currency: "USDC" };
+
+  function x402Pool(): Pool {
+    return makeFakePool((sql) =>
+      sql.includes("FROM ledger_payment_intents WHERE id")
+        ? { rows: [X402_ROW], rowCount: 1 }
+        : { rows: [], rowCount: 0 },
+    );
+  }
+
+  it("forwards attestCounterpartyAgent → a non-attested agent payee hard-rejects at 5.5", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const pool = x402Pool();
+    const calls: AgentAttestationInput[] = [];
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals: new ApprovalService({ pool, audit, resolveRole: async () => null }),
+      resolveAgent: async () => GATE_AGENT,
+      resolveAccount: async () => USDC_ACCOUNT,
+      resolveCounterparty: async () => AGENT_CP,
+      evaluatePolicy: async () => POLICY_DECISION,
+      resolvePrincipal: async () => GATE_PRINCIPAL,
+      attestCounterpartyAgent: async (_ctx, input) => {
+        calls.push(input);
+        return { attested: false, registered: true, paused: true };
+      },
+    });
+
+    await expect(service.execute(ctx, PI_ID)).rejects.toMatchObject({
+      code: "payment_intent_gate_failed",
+    });
+    // The loader was invoked with the agent payee's id (pass-through works).
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.counterpartyId).toBe(CP_ID);
+    expect(calls[0]!.agentId).toBe(AGENT_ID);
+  });
+
+  it("forwards sumAgentWindowSpend → over the rolling-window cap hard-rejects at 8.5", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const pool = x402Pool();
+    const spendCalls: Array<{ agentId: string; windowSeconds: number }> = [];
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals: new ApprovalService({ pool, audit, resolveRole: async () => null }),
+      resolveAgent: async () => GATE_AGENT,
+      resolveAccount: async () => USDC_ACCOUNT,
+      resolveCounterparty: async () => AGENT_CP,
+      evaluatePolicy: async () => ({
+        ...POLICY_DECISION,
+        micropayment_window_cap: { currency: "USDC", value: "10.00", window_seconds: 3600 },
+      }),
+      resolvePrincipal: async () => GATE_PRINCIPAL,
+      // Attestation passes so the gate advances to the cap check.
+      attestCounterpartyAgent: async () => ({ attested: true, registered: true, paused: false }),
+      sumAgentWindowSpend: async (_ctx, agentId, windowSeconds) => {
+        spendCalls.push({ agentId, windowSeconds });
+        return "9.50"; // 9.50 + 1.00 = 10.50 > 10.00 cap
+      },
+    });
+
+    await expect(service.execute(ctx, PI_ID)).rejects.toMatchObject({
+      code: "payment_intent_gate_failed",
+    });
+    expect(spendCalls).toEqual([{ agentId: AGENT_ID, windowSeconds: 3600 }]);
   });
 });
