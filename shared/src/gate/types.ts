@@ -30,6 +30,8 @@ export type GateCheckName =
   | "counterparty_verified"
   // 6.5 — x402 settlement context (USDC/Base/amount/recipient) matches the intent (RFC 0001 §6.1).
   | "x402_payment_context_valid"
+  // 6.6 — escrow lock state binds to the intent before release (RFC 0001 §6.2 / §7.6).
+  | "escrow_state_bound"
   | "amount_within_limit"
   | "ledger_state_bound"
   | "available_balance_sufficient"

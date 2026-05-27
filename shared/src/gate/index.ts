@@ -11,3 +11,8 @@ export {
 } from "./evidence-validator.js";
 export type { DuplicateCheckInput, DuplicateCheckResult, DuplicateCollision } from "./duplicate.js";
 export type { AgentAttestationInput, AgentAttestationResult } from "./agent-attestation.js";
+export type {
+  EscrowStateInput,
+  ResolvedEscrowState,
+  EscrowOnchainState,
+} from "./escrow-binding.js";
