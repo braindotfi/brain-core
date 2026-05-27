@@ -61,8 +61,141 @@ tags:
     description: Model Context Protocol surface for external agents
   - name: Admin
     description: Platform administration (tenant-level operations)
+  - name: Auth
+    description: Self-serve onboarding & human (owner) authentication (RFC 0002). Public, rate-limited; available only when BRAIN_SELF_SERVE_SIGNUP is enabled.
 
 paths:
+  /signup:
+    post:
+      tags: [Auth]
+      summary: Self-serve tenant signup (sandbox)
+      description: |
+        Public, rate-limited. Provisions a new **sandbox** tenant and its owner
+        user (email + password) and issues a single-use email-verification token.
+        Registered only when self-serve signup is enabled
+        (`BRAIN_SELF_SERVE_SIGNUP`); otherwise the route does not exist (404).
+        New tenants are sandbox-only and grant **no** execution capability — real
+        money stays behind the promotion + external-audit gates (RFC 0002).
+      operationId: signup
+      security: [] # public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, maxLength: 320 }
+                password:
+                  type: string
+                  minLength: 12
+                  maxLength: 4096
+                  description: Stored as a scrypt hash; never logged or returned.
+      responses:
+        '201':
+          description: Tenant + owner provisioned (owner `pending` until email verified)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id: { type: string }
+                  user_id: { type: string }
+                  status: { type: string, enum: [pending] }
+                  verification_token:
+                    type: string
+                    description: Returned only OUTSIDE production (no email provider wired yet); pass to POST /auth/verify-email.
+                  verification_sent:
+                    type: boolean
+                    description: True in production (token emailed, not returned).
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: An account with this email already exists (signup_email_taken)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/verify-email:
+    post:
+      tags: [Auth]
+      summary: Verify an owner's email
+      description: |
+        Public, rate-limited. Consumes a single-use, short-TTL verification token
+        (scoped by `tenant_id`) and activates the owner. An invalid, expired, or
+        already-used token returns 400 (`signup_token_invalid`).
+      operationId: verifyEmail
+      security: [] # public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_id, token]
+              properties:
+                tenant_id: { type: string }
+                token: { type: string }
+      responses:
+        '200':
+          description: Email verified; owner activated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified: { type: boolean }
+                  user_id: { type: string }
+                  status: { type: string, enum: [active] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Owner password login
+      description: |
+        Public, rate-limited. Email + password → a short-lived owner JWT carrying
+        **management / read / approve scopes only** — never `payment_intent:propose`,
+        `payment_intent:execute`, or `execution:propose` (money movement is an agent
+        + §6-gate concern, never a human-login capability). An unknown email and a
+        wrong password return the SAME 401 (no user enumeration); an unverified
+        account returns 403.
+      operationId: ownerLogin
+      security: [] # public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Authenticated; owner JWT issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string, enum: [Bearer] }
+                  expires_in: { type: integer, description: Token lifetime in seconds. }
+                  principal:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      type: { type: string, enum: [user] }
+                      tenantId: { type: string }
+                      scopes: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
   #############################################################################
   # LAYER 1: RAW
