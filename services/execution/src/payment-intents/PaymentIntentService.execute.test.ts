@@ -61,6 +61,8 @@ const APPROVED_INTENT_ROW: PaymentIntentRow = {
   invoice_id: null,
   proposal_dedup_key: null,
   settlement_pay_to: null,
+  escrow_id: null,
+  job_terms_hash: null,
   status: "approved",
   policy_decision_id: PD_ID,
   approval_ids: [],

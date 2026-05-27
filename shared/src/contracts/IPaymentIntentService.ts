@@ -26,6 +26,8 @@ export type PaymentIntentActionType =
   | "card_payment"
   // x402 USDC-on-Base settlement (RFC 0001 §7.1). Shadow-gated end-to-end.
   | "x402_settle"
+  // Release of an on-chain BrainEscrow lock (RFC 0001 §7.6). Shadow-gated.
+  | "escrow_release"
   | "other";
 
 export type PaymentIntentStatus =
@@ -70,6 +72,18 @@ export interface CreatePaymentIntentInput {
    * gate (check 6.5) re-validates it against the counterparty's onchain_address.
    */
   pay_to?: string;
+  /**
+   * On-chain BrainEscrow id (RFC 0001 §7.6). Required by the route for
+   * action_type=escrow_release; ignored otherwise. The §6 gate (check 6.6) reads
+   * the on-chain escrow and binds it to the intent before release.
+   */
+  escrow_id?: string;
+  /**
+   * keccak256 commitment of the escrow job terms (hash-only). Required by the
+   * route for action_type=escrow_release; re-checked against the on-chain escrow
+   * by gate check 6.6.
+   */
+  job_terms_hash?: string;
 }
 
 export interface ExecuteResult {
