@@ -64,7 +64,7 @@ export class RedisSlidingWindowRateLimiter implements SlidingWindowRateLimiter {
 
     // exec() → [err, result][] | null. ZCARD is the third command (index 2).
     const raw = res?.[2];
-    const count = raw != null && raw[0] === null && typeof raw[1] === "number" ? raw[1] : 0;
+    const count = raw !== undefined && raw[0] === null && typeof raw[1] === "number" ? raw[1] : 0;
 
     // Fail-open: if the count is unreadable (Redis blip / aborted txn) we allow
     // rather than block all annotations on a soft limiter. count=0 signals this.

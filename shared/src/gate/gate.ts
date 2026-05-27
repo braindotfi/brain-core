@@ -556,7 +556,8 @@ export async function runPreExecutionGate(
     if (!ONCHAIN_ADDRESS.test(s.pay_to)) {
       failures.push("settlement pay_to is not a 0x address");
     } else if (
-      counterparty.onchain_address == null ||
+      counterparty.onchain_address === null ||
+      counterparty.onchain_address === undefined ||
       counterparty.onchain_address.toLowerCase() !== s.pay_to.toLowerCase()
     ) {
       failures.push("settlement recipient does not match counterparty on-chain address");
@@ -593,7 +594,8 @@ export async function runPreExecutionGate(
         failures.push("job-terms commitment does not match the on-chain escrow");
       }
       if (
-        counterparty.onchain_address == null ||
+        counterparty.onchain_address === null ||
+        counterparty.onchain_address === undefined ||
         counterparty.onchain_address.toLowerCase() !== onchain.payee.toLowerCase()
       ) {
         failures.push("escrow payee does not match the counterparty on-chain address");
@@ -705,8 +707,12 @@ export async function runPreExecutionGate(
         counterpartyId: input.intent.destination_counterparty_id,
         amount: input.intent.amount,
         currency: input.intent.currency,
-        ...(input.intent.invoice_id != null ? { invoiceId: input.intent.invoice_id } : {}),
-        ...(input.intent.obligation_id != null ? { obligationId: input.intent.obligation_id } : {}),
+        ...(input.intent.invoice_id !== null && input.intent.invoice_id !== undefined
+          ? { invoiceId: input.intent.invoice_id }
+          : {}),
+        ...(input.intent.obligation_id !== null && input.intent.obligation_id !== undefined
+          ? { obligationId: input.intent.obligation_id }
+          : {}),
       },
       evidence: resolvedEvidence,
       ...(agent.max_risk_level !== undefined ? { maxRiskLevel: agent.max_risk_level } : {}),
@@ -749,8 +755,12 @@ export async function runPreExecutionGate(
         counterpartyId: input.intent.destination_counterparty_id,
         amount: input.intent.amount,
         currency: input.intent.currency,
-        ...(input.intent.invoice_id != null ? { invoiceId: input.intent.invoice_id } : {}),
-        ...(input.intent.obligation_id != null ? { obligationId: input.intent.obligation_id } : {}),
+        ...(input.intent.invoice_id !== null && input.intent.invoice_id !== undefined
+          ? { invoiceId: input.intent.invoice_id }
+          : {}),
+        ...(input.intent.obligation_id !== null && input.intent.obligation_id !== undefined
+          ? { obligationId: input.intent.obligation_id }
+          : {}),
         evidenceArtifactIds: input.intent.evidence_ids,
       },
     });
