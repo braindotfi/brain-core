@@ -1,9 +1,14 @@
 # Smart contract audit scope
 
-Scope package for the external audit of Brain's five Solidity contracts (Foundry,
-Solidity ≥0.8.24, no upgradeable proxies in MVP). Total ~1,200 LoC. Each contract
+Scope package for the external audit of Brain's six Solidity contracts (Foundry,
+Solidity ≥0.8.24, no upgradeable proxies in MVP). Total ~1,300 LoC. Each contract
 below lists its size, the invariants the auditor must verify, known hardening
 additions, and existing test coverage.
+
+> **Severity tiers.** `BrainEscrow` is the **only funds-custodying** contract —
+> highest priority. `BrainReputationRegistry` is **non-custodial** (no value path)
+> and is a **Policy-input-only** artifact — included for completeness, lower
+> severity. The other four are the previously-scoped audited core.
 
 > **Highest priority: `BrainEscrow`.** It is the only contract that **custodies
 > user funds** (USDC), and it is the gate for Phase 5 (first real governed
@@ -156,12 +161,52 @@ On-chain registration of external MCP agents with an EIP-712 scope attestation.
 **Coverage:** unit + fuzz per external function; invariant "registered agents
 have a `scope_hash` matching stored scope."
 
+## BrainReputationRegistry (51 LoC impl + 32 LoC `IBrainReputationRegistry` interface) — NON-CUSTODIAL
+
+ERC-8004-style agent reputation registry (RFC 0001 §7.7, D-6). An attestor
+(reputation oracle; a Safe multi-sig in prod) publishes, per agent, a single
+**reputation pointer** — a `bytes32` Merkle root committing to the agent's
+off-chain reputation dataset — versioned by a monotonically increasing `epoch`.
+**Holds no funds and has no value path.** Read by Brain's Policy layer as a
+**tighten-only threshold input** — never a money gate, never a §6 precondition
+(Standards §6, Principle #5).
+
+Design + threat model: `docs/contracts/reputation-registry.md`.
+
+**Critical invariants:**
+
+- **Monotonic epoch / no regression:** the stored `epoch` always equals the max
+  published epoch for an agent and never decreases under any interleaving; the
+  stored root is always the most-recent non-zero root
+  (`invariant_epochTracksGhostAndRootNonZero`).
+- **Anti-replay:** any `epoch <= current` reverts (`StaleEpoch`) — a stale pointer
+  can never overwrite a newer one (unit + `testFuzz_staleEpochAlwaysReverts`).
+- **Authorization:** only the attestor publishes / rotates; strangers revert
+  (`NotAttestor`); rotation (`setAttestor`) is attestor-only with a zero-address
+  guard; no admin / upgrade / pause.
+- **Non-custodial:** confirm there is **no** `transfer` / `transferFrom` / `call`
+  / `payable` / `selfdestruct` / `delegatecall` — the contract cannot hold or move
+  value, so a compromised attestor can at worst publish a bad pointer (which, via
+  Policy's tighten-only rule, can only make payments _stricter_).
+- **Hash-only / no PII (RFC §3):** ABI is `bytes32` / `address` / `uint` only; a
+  non-zero root is required (`ZeroRoot`). Enforced by `scripts/check-no-onchain-pii.mjs`.
+
+**Coverage** (`contracts/test/BrainReputationRegistry.t.sol`): unit (publish
+records pointer + event, higher-epoch update, distinct-agent independence,
+non-attestor / zero-root / zero-epoch / equal-epoch / lower-epoch rejections,
+attestor rotation + old-loses/new-gains, unknown-agent reads zero), **fuzz**
+(`testFuzz_strictlyIncreasingEpochsStoreLatest`, `testFuzz_staleEpochAlwaysReverts`),
+and **invariant** (`invariant_epochTracksGhostAndRootNonZero` with a randomized
+multi-agent handler).
+
 ---
 
 ## What the auditor receives
 
-- This scope doc + the five contracts (incl. `BrainEscrow.sol` +
-  `IBrainEscrow.sol`) + `contracts/test/*.t.sol` (unit + fuzz + invariant) + gas
+- This scope doc + the six contracts (incl. `BrainEscrow.sol` +
+  `IBrainEscrow.sol` and `BrainReputationRegistry.sol` +
+  `IBrainReputationRegistry.sol`) + `contracts/test/*.t.sol` (unit + fuzz +
+  invariant) + gas
   baselines.
 - `docs/contracts/x402-escrow.md` — the `BrainEscrow` design, state machine,
   authorization matrix, security properties, and external-audit scope.

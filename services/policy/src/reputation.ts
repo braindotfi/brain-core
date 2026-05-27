@@ -18,9 +18,12 @@
  * implemented.
  *
  * Hash-only (RFC 0001 §3): the on-chain ERC-8004 artifact is a pointer / Merkle
- * root, never raw history. `ReputationScore.source` carries that opaque pointer;
- * the numeric `score` is derived off-chain. The concrete on-chain reader is the
- * deferred live-wiring step (injected via `ReputationResolver`).
+ * root, never raw history. The on-chain home is `BrainReputationRegistry`
+ * (contracts/src/BrainReputationRegistry.sol — `reputationOf(agentId)` returns the
+ * `scoreRoot` pointer + monotonic epoch; see docs/contracts/reputation-registry.md).
+ * `ReputationScore.source` carries that opaque pointer; the numeric `score` is
+ * derived off-chain from the dataset the root commits to. The concrete on-chain
+ * reader is the deferred live-wiring step (injected via `ReputationResolver`).
  */
 
 import type { GatePolicyDecision, ServiceCallContext } from "@brain/shared";

@@ -1,6 +1,6 @@
 # RFP — Brain smart-contract security audit (DRAFT)
 
-Draft RFP for the external audit of Brain's five Solidity contracts. Paste into
+Draft RFP for the external audit of Brain's six Solidity contracts. Paste into
 outreach to candidate firms with minimal edits. **Pending founder approval.**
 
 > TODO(brain-hardening): confirm budget ceiling, target dates, and the audited
@@ -10,24 +10,27 @@ outreach to candidate firms with minimal edits. **Pending founder approval.**
 
 Brain Finance is a financial-intelligence protocol whose Agent layer can move
 money on-chain under a deterministic pre-execution gate. We are seeking a
-security audit of the five MVP smart contracts ahead of Base mainnet deployment.
+security audit of the six MVP smart contracts ahead of Base mainnet deployment.
 
 ## Scope
 
-Five contracts, ~1,200 LoC total (Foundry, Solidity ≥0.8.24, non-upgradeable):
+Six contracts, ~1,300 LoC total (Foundry, Solidity ≥0.8.24, non-upgradeable):
 
-| Contract                       | LoC | Focus                                                                                                             |
-| ------------------------------ | --- | ----------------------------------------------------------------------------------------------------------------- |
-| **`BrainEscrow`** _(priority)_ | 169 | **Funds custody** — lock/release/refund; solvency; reentrancy; arbiter can't redirect. (+ 96-LoC `IBrainEscrow`.) |
-| `BrainAuditAnchor`             | 135 | Append-only Merkle anchor; `verifyInclusion` parity.                                                              |
-| `BrainPolicyRegistry`          | 255 | Signed policy versions; EIP-712; no downgrade.                                                                    |
-| `BrainSmartAccount`            | 256 | Session-key execution; H-03 replay + re-entrancy.                                                                 |
-| `BrainMCPAgentRegistry`        | 287 | Agent scope-hash attestation; revocation.                                                                         |
+| Contract                                    | LoC | Focus                                                                                                                |
+| ------------------------------------------- | --- | -------------------------------------------------------------------------------------------------------------------- |
+| **`BrainEscrow`** _(priority)_              | 132 | **Funds custody** — partial release/refund; solvency; reentrancy; arbiter can't redirect. (+ 56-LoC `IBrainEscrow`.) |
+| `BrainAuditAnchor`                          | 135 | Append-only Merkle anchor; `verifyInclusion` parity.                                                                 |
+| `BrainPolicyRegistry`                       | 255 | Signed policy versions; EIP-712; no downgrade.                                                                       |
+| `BrainSmartAccount`                         | 256 | Session-key execution; H-03 replay + re-entrancy.                                                                    |
+| `BrainMCPAgentRegistry`                     | 287 | Agent scope-hash attestation; revocation.                                                                            |
+| `BrainReputationRegistry` _(non-custodial)_ | 51  | ERC-8004 reputation pointer; monotonic epoch; attestor-only; **no value path**. (+ 32-LoC interface.)                |
 
 **`BrainEscrow` is the priority** — it is the only contract that custodies user
 funds (USDC) and gates the first real mainnet payment; it is currently UNAUDITED
-/ testnet-only. Full per-contract invariants in `contracts/AUDIT-SCOPE.md`. The
-audited commit SHA will be pinned at kickoff.
+/ testnet-only. **`BrainReputationRegistry` is non-custodial** (no fund path) and
+a Policy-input-only artifact — included for completeness at lower severity. Full
+per-contract invariants in `contracts/AUDIT-SCOPE.md`. The audited commit SHA will
+be pinned at kickoff.
 
 ## Deliverables expected
 
