@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Redis } from "ioredis";
 import {
   InMemorySlidingWindowRateLimiter,
   RedisSlidingWindowRateLimiter,
@@ -83,7 +84,7 @@ describe("RedisSlidingWindowRateLimiter", () => {
       };
       return chain;
     }
-    return { multi } as unknown as import("ioredis").Redis;
+    return { multi } as unknown as Redis;
   }
 
   it("flips allowed=false once the limit is exceeded", async () => {

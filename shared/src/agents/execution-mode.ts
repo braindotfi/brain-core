@@ -191,7 +191,9 @@ export function resolveFinalExecutionMode(input: FinalExecutionModeInput): Execu
       input.evidenceComplete &&
       input.confidence >= high &&
       input.riskLevel === "low" &&
-      (input.counterpartyRisk == null || input.counterpartyRisk === "low");
+      (input.counterpartyRisk === null ||
+        input.counterpartyRisk === undefined ||
+        input.counterpartyRisk === "low");
     if (!eligible) {
       mode = "propose";
     }

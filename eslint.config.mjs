@@ -30,6 +30,10 @@ export default [
         sourceType: "module",
 
         project: [
+          // shared/tsconfig.typecheck.json includes src/**/*.ts (tests too), so
+          // type-aware lint can parse every @brain/shared file.
+          "./shared/tsconfig.json",
+          "./shared/tsconfig.typecheck.json",
           "./services/*/tsconfig.json",
           "./services/*/tsconfig.typecheck.json",
           "./clients/*/tsconfig.json",
