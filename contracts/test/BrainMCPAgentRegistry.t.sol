@@ -169,8 +169,15 @@ contract BrainMCPAgentRegistryTest is Test {
             agentId, a, TENANT, scope, BEHAVIOR, _sign(signerPk, _regDigest(agentId, a, scope))
         );
         bytes32 next = keccak256("behavior.v2");
+        // Compute the signature BEFORE expectRevert: _behaviorDigest() makes an
+        // external call (registry.domainSeparator()), and a bare expectRevert
+        // binds to the NEXT external call — computing the arg inline would bind
+        // the cheatcode to domainSeparator() (which never reverts) instead of to
+        // updateBehaviorHash. (Matches the sig-before-expectRevert pattern used
+        // by the other reject tests.)
+        bytes memory sig = _sign(externalPk, _behaviorDigest(agentId, next));
         // externalPk is not a tenant signer → reject.
-        vm.expectRevert();
-        registry.updateBehaviorHash(agentId, next, _sign(externalPk, _behaviorDigest(agentId, next)));
+        vm.expectRevert(abi.encodeWithSelector(BrainMCPAgentRegistry.NotTenantSigner.selector, a));
+        registry.updateBehaviorHash(agentId, next, sig);
     }
 }

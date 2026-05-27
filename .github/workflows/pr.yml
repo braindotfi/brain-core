@@ -116,8 +116,11 @@ jobs:
         run: forge build --sizes
 
       - name: forge test
+        # Hard gate: the contracts (incl. the UNAUDITED BrainEscrow that gates
+        # Phase 5) must have GREEN unit + fuzz + invariant tests before the
+        # external audit. A red contract test can no longer hide behind
+        # continue-on-error.
         run: forge test -vvv
-        continue-on-error: true # no tests yet — placeholder until stage-5
 
   # --------- Secret scanning ---------
   secrets:
