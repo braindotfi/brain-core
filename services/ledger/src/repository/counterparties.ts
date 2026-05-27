@@ -11,6 +11,8 @@ export interface CounterpartyRow extends LedgerRowCommon {
   linked_accounts: string[];
   /** For type="agent": the execution-layer agent id (RFC 0001); null otherwise. */
   agent_id: string | null;
+  /** Payee on-chain (EVM) address for x402/on-chain settlement; null off-chain (RFC 0001 §6.1). */
+  onchain_address: string | null;
 }
 
 export interface CounterpartyListFilters {

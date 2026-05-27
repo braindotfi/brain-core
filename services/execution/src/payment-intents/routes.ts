@@ -57,7 +57,12 @@ interface CreateBody {
   invoice_id?: string;
   agent_id?: string;
   evidence_ids?: string[];
+  /** x402 settlement recipient on-chain address (required for x402_settle). */
+  pay_to?: string;
 }
+
+/** EVM address shape for the x402 settlement recipient (RFC 0001 §6.1). */
+const ONCHAIN_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
 const ACTION_TYPES = new Set([
   "ach_outbound",
@@ -143,6 +148,14 @@ export async function registerPaymentIntentRoutes(
       ) {
         throw brainError("request_body_invalid", "missing or malformed PaymentIntent fields");
       }
+      // x402 settlement requires the on-chain recipient up front; the §6 gate
+      // (check 6.5) re-validates it against the resolved counterparty's address.
+      if (
+        b.action_type === "x402_settle" &&
+        (b.pay_to === undefined || !ONCHAIN_ADDRESS.test(b.pay_to))
+      ) {
+        throw brainError("request_body_invalid", "x402_settle requires a 0x pay_to address");
+      }
       const intent = await service.create(ctx, {
         action_type: b.action_type as never,
         source_account_id: b.source_account_id,
@@ -153,6 +166,7 @@ export async function registerPaymentIntentRoutes(
         ...(b.invoice_id !== undefined ? { invoice_id: b.invoice_id } : {}),
         ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
         ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
+        ...(b.action_type === "x402_settle" && b.pay_to !== undefined ? { pay_to: b.pay_to } : {}),
       });
       reply.status(201);
       return intent;

@@ -181,6 +181,11 @@ export class PaymentIntentService implements IPaymentIntentService {
         status,
         policyDecisionId: decision.id,
         evidenceIds: input.evidence_ids ?? [],
+        // x402 recipient — persisted only for x402_settle (DB CHECK enforces null
+        // otherwise). The §6 gate re-validates it against the counterparty (6.5).
+        ...(input.action_type === "x402_settle" && input.pay_to !== undefined
+          ? { settlementPayTo: input.pay_to }
+          : {}),
       }),
     );
 
@@ -807,6 +812,23 @@ function railFor(actionType: string): string {
   }
 }
 
+/**
+ * Build the gate's on-chain `settlement` context (RFC 0001 §6.1) for an x402
+ * settlement intent. The settled asset IS the intent currency (USDC) and the
+ * network is Base (D-4). Absent for non-x402 actions or when the recipient is
+ * not yet carried — then gate checks 3.5/6.5 stay dormant (no row), preserving
+ * the canonical path. The gate (check 6.5) re-validates every field.
+ */
+export function gateSettlement(
+  actionType: string,
+  currency: string,
+  amount: string,
+  payTo: string | null | undefined,
+): Pick<GatePaymentIntent, "settlement"> {
+  if (actionType !== "x402_settle" || payTo === null || payTo === undefined) return {};
+  return { settlement: { asset: currency, network: "base", amount, pay_to: payTo } };
+}
+
 function intentToGate(row: PaymentIntentRow): GatePaymentIntent {
   return {
     id: row.id,
@@ -820,6 +842,7 @@ function intentToGate(row: PaymentIntentRow): GatePaymentIntent {
     status: row.status,
     policy_decision_id: row.policy_decision_id,
     evidence_ids: row.evidence_ids,
+    ...gateSettlement(row.action_type, row.currency, row.amount, row.settlement_pay_to),
   };
 }
 
@@ -840,6 +863,12 @@ function stubGateIntent(args: {
     status: "proposed",
     policy_decision_id: null,
     evidence_ids: args.input.evidence_ids ?? [],
+    ...gateSettlement(
+      args.input.action_type,
+      args.input.currency,
+      args.input.amount,
+      args.input.pay_to,
+    ),
   };
 }
 

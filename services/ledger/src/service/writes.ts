@@ -79,6 +79,8 @@ export interface UpsertCounterpartyArgs {
     | "other";
   /** For type="agent": the execution-layer agent id this counterparty is (RFC 0001). */
   agent_id?: string;
+  /** Payee on-chain (EVM) address for x402/on-chain settlement (RFC 0001 §6.1). */
+  onchain_address?: string;
   risk_level?: "low" | "medium" | "high" | "sanctioned";
   verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared";
   aliases?: string[];
@@ -136,8 +138,9 @@ export async function upsertCounterpartyRow(
     const { rows } = await c.query<CounterpartyRow>(
       `INSERT INTO ledger_counterparties
          (id, owner_id, name, normalized_name, type, risk_level, verified_status,
-          aliases, linked_accounts, source_ids, evidence_ids, provenance, confidence, agent_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,ARRAY[]::TEXT[],$9,$10,$11,$12,$13)
+          aliases, linked_accounts, source_ids, evidence_ids, provenance, confidence, agent_id,
+          onchain_address)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,ARRAY[]::TEXT[],$9,$10,$11,$12,$13,$14)
        RETURNING *`,
       [
         id,
@@ -153,6 +156,7 @@ export async function upsertCounterpartyRow(
         args.provenance,
         conf,
         args.agent_id ?? null,
+        args.onchain_address ?? null,
       ],
     );
     return { row: rows[0]!, created: true };

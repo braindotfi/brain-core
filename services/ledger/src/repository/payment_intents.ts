@@ -20,6 +20,8 @@ export interface PaymentIntentRow {
   provenance: string;
   confidence: number;
   proposal_dedup_key: string | null;
+  /** x402 settlement recipient (RFC 0001 §6.1); null unless action_type=x402_settle. */
+  settlement_pay_to: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -84,6 +86,8 @@ export interface InsertPaymentIntentInput {
   evidenceIds: string[];
   /** Proposal-layer idempotency key (1a.5); null means no dedup is enforced. */
   proposalDedupKey?: string | null;
+  /** x402 settlement recipient (RFC 0001 §6.1); set only for action_type=x402_settle. */
+  settlementPayTo?: string | null;
 }
 
 export async function insertPaymentIntent(
@@ -96,9 +100,9 @@ export async function insertPaymentIntent(
        source_account_id, destination_counterparty_id,
        amount, currency, obligation_id, invoice_id,
        status, policy_decision_id, evidence_ids,
-       provenance, confidence, proposal_dedup_key
+       provenance, confidence, proposal_dedup_key, settlement_pay_to
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',1.0,$14)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',1.0,$14,$15)
      RETURNING *`,
     [
       input.id,
@@ -115,6 +119,7 @@ export async function insertPaymentIntent(
       input.policyDecisionId,
       input.evidenceIds,
       input.proposalDedupKey ?? null,
+      input.settlementPayTo ?? null,
     ],
   );
   const row = rows[0];

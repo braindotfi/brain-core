@@ -384,6 +384,8 @@ function serializeCounterparty(row: CounterpartyRow): Counterparty {
     verified_status: row.verified_status as Counterparty["verified_status"],
     aliases: row.aliases,
     linked_accounts: row.linked_accounts,
+    agent_id: row.agent_id,
+    onchain_address: row.onchain_address,
   };
 }
 

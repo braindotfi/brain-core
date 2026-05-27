@@ -34,11 +34,13 @@ describe("upsertCounterpartyRow — agent counterparties (RFC 0001)", () => {
         { id: "cp_agent", type: "agent", agent_id: AGENT_ID, name: "Payments Agent" },
       ],
     });
+    const onchainAddress = "0x" + "ab".repeat(20);
     const audit = new InMemoryAuditEmitter();
     const { row, created } = await upsertCounterpartyRow(pool, audit, ctx, {
       name: "Payments Agent",
       type: "agent",
       agent_id: AGENT_ID,
+      onchain_address: onchainAddress,
       source_ids: ["raw_1"],
       evidence_ids: [],
       provenance: "extracted",
@@ -50,8 +52,9 @@ describe("upsertCounterpartyRow — agent counterparties (RFC 0001)", () => {
     expect(row.agent_id).toBe(AGENT_ID);
 
     const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_counterparties"))!;
-    // agent_id is the 13th positional param ($13).
+    // agent_id is the 13th positional param ($13); onchain_address the 14th ($14).
     expect(insert.values[12]).toBe(AGENT_ID);
+    expect(insert.values[13]).toBe(onchainAddress);
     expect(audit.events).toHaveLength(1);
     expect(audit.events[0]!.action).toBe("ledger.counterparty.created");
   });
@@ -71,6 +74,8 @@ describe("upsertCounterpartyRow — agent counterparties (RFC 0001)", () => {
     });
     const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_counterparties"))!;
     expect(insert.values[12]).toBeNull();
+    // onchain_address ($14) defaults to null for an off-chain counterparty.
+    expect(insert.values[13]).toBeNull();
   });
 });
 
