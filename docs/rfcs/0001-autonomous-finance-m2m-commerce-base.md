@@ -28,7 +28,9 @@ piece fails closed until explicitly promoted; no money can move.
 - **Phase 3 (escrow):** `BrainEscrow` reference contract (**UNAUDITED /
   testnet-only**, hash-only) + Foundry unit/fuzz/invariant tests, §6 gate check
   6.6 (escrow-state binding), and the `escrow_release` action + carriage.
-  Shipped.
+  Shipped. **Extended** with incremental partial release/refund (milestone
+  payments + arbiter dispute-splits); 6.6 now binds against the escrow's
+  _remaining_ balance.
 - **Deferred live-wiring (TODO):** the concrete on-chain readers/loaders that
   make checks 3.5 / 5.5 / 6.6 / 8.5 _enforce_ (registry attestation,
   rolling-window spend, escrow state via `getEscrow`, the policy-VM dimensions);
@@ -36,8 +38,20 @@ piece fails closed until explicitly promoted; no money can move.
   commerce agent into `LIVE_AGENTS`. Each gate check is **dormant** (records no
   row) until wired — the canonical §6 path is unchanged meanwhile.
 - **Gated on external audit:** any mainnet deployment of `BrainEscrow` (§9).
-- **Phase 4 (open ecosystem):** ERC-4337 / Coinbase Smart Wallet / paymaster and
-  ERC-8004 reputation (§7.5 / §7.7) — not started.
+- **Phase 4 (open ecosystem):** off-chain spine shipped — the Coinbase Spend
+  Permission ↔ session-key model + resolver (ERC-4337 / Coinbase Smart Wallet /
+  CDP Paymaster interop, §7.5) and reputation as a tighten-only Policy threshold
+  input (`services/policy/src/reputation.ts`). The live external SDK construction
+  remains deferred wiring.
+- **Phase 5 (ERC-8004 reputation, §7.7 / D-6):** `BrainReputationRegistry`
+  reference contract (**UNAUDITED / testnet-only**, **non-custodial**, hash-only)
+  — per-agent reputation pointer / Merkle root with a monotonic epoch,
+  attestor-written, read by Policy as a threshold input only (never a money gate,
+  never a §6 precondition) + Foundry unit/fuzz/invariant tests. Shipped. The live
+  on-chain `ReputationResolver` reader is deferred wiring.
+- **Gated on external audit:** any mainnet deployment of `BrainEscrow` and
+  `BrainReputationRegistry` (§9) — the registry is non-custodial but batched into
+  the same audit for completeness.
 
 ## 1. Goal
 
@@ -328,18 +342,18 @@ fix is **status discipline**, not deletion: tag every relevant page and promote
 it into the source-of-truth specs (OpenAPI / Standards / Architecture) as it
 lands. Build to the spec, not the narrative.
 
-| Doc area                                                       | Status today           | Action                                                                                                           |
-| -------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Six-layer stack, gate, provenance, RLS, audit, propose≠execute | **Shipped**            | Reconcile stale facts (gate count = 13+4=17; anchor cadence = hourly; remove "Policy reads Wiki").               |
-| MCP surface (9 tools, no execute)                              | **Shipped**            | Fix tool count (9), scopes (`execution:propose`), error codes, resource URIs.                                    |
-| API reference (auth, errors, endpoints)                        | **Shipped (drifted)**  | Regenerate from `Brain_API_Specification.yaml` + `shared/src/errors.ts` + `scopes.ts`; remove phantom endpoints. |
-| Session-key `BrainSmartAccount`                                | **Shipped**            | Replace the ERC-4337 `validateUserOp` description with the real session-key model.                               |
-| On-chain privacy / data classification                         | **Shipped (implicit)** | Document §3 explicitly: commitments on-chain, data off-chain, GDPR rationale.                                    |
-| x402 / agent commerce                                          | **Planned (this RFC)** | Mark **Planned**; build per §7–§8; promote to spec on landing.                                                   |
-| Escrow / ERC-8183                                              | **Planned**            | Mark **Planned**; gated on §9 audit.                                                                             |
-| ERC-8004 reputation                                            | **Planned**            | Mark **Planned**; Policy input only.                                                                             |
-| 4337 / Coinbase Smart Wallet / paymaster                       | **Planned**            | Mark **Planned** for the open surface (§7.5).                                                                    |
-| Proxy + timelock upgrades                                      | **Not planned (MVP)**  | Mark **Not in MVP**; revisit per D-3.                                                                            |
+| Doc area                                                       | Status today                             | Action                                                                                                           |
+| -------------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Six-layer stack, gate, provenance, RLS, audit, propose≠execute | **Shipped**                              | Reconcile stale facts (gate count = 13+4=17; anchor cadence = hourly; remove "Policy reads Wiki").               |
+| MCP surface (9 tools, no execute)                              | **Shipped**                              | Fix tool count (9), scopes (`execution:propose`), error codes, resource URIs.                                    |
+| API reference (auth, errors, endpoints)                        | **Shipped (drifted)**                    | Regenerate from `Brain_API_Specification.yaml` + `shared/src/errors.ts` + `scopes.ts`; remove phantom endpoints. |
+| Session-key `BrainSmartAccount`                                | **Shipped**                              | Replace the ERC-4337 `validateUserOp` description with the real session-key model.                               |
+| On-chain privacy / data classification                         | **Shipped (implicit)**                   | Document §3 explicitly: commitments on-chain, data off-chain, GDPR rationale.                                    |
+| x402 / agent commerce                                          | **Planned (this RFC)**                   | Mark **Planned**; build per §7–§8; promote to spec on landing.                                                   |
+| Escrow / ERC-8183                                              | **Reference impl (UNAUDITED / testnet)** | `BrainEscrow` w/ partial release/refund; mainnet gated on §9 audit.                                              |
+| ERC-8004 reputation                                            | **Reference impl (UNAUDITED / testnet)** | `BrainReputationRegistry` (non-custodial, hash-only pointer); Policy tighten-only input. Audit-batched.          |
+| 4337 / Coinbase Smart Wallet / paymaster                       | **Off-chain spine shipped**              | Spend Permission ↔ session-key model + resolver (§7.5); live SDK construction deferred.                          |
+| Proxy + timelock upgrades                                      | **Not planned (MVP)**                    | Mark **Not in MVP**; revisit per D-3.                                                                            |
 
 **Enforcement:** add a doc-drift CI check (precedent: `check-scope-vocab`,
 `check-gate-bypass`) asserting (a) every endpoint named in `api-reference/*.md`
