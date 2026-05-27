@@ -34,6 +34,21 @@ export interface RouteAndProposeDeps {
   readonly evidence: EvidenceGatherer;
   readonly propose: ProposeDeps;
   /**
+   * True when the agent must not move money yet (shadow-by-default). REQUIRED —
+   * the event/BullMQ path must enforce the SAME LIVE_AGENTS shadow gate as
+   * `/agents/run` (AgentRunService). A financial proposal from a shadowed agent
+   * is NOT created — it terminates as `shadow_completed`. Wired from the
+   * graduated PromotionPolicy at the composition root.
+   */
+  readonly isShadowed: (agentId: string) => boolean;
+  /**
+   * Graduated-rollout rail allowlist (1b): for a LIVE agent's financial
+   * proposal, returns false if the action's rail is not on the agent's
+   * allowlist — the proposal is held in shadow rather than created. Absent ⇒ no
+   * rail restriction (only `isShadowed` gates). Mirrors AgentRunService.
+   */
+  readonly checkRail?: (agentId: string, actionType: string) => boolean;
+  /**
    * Per-agent IAgentService overrides. A non-financial proposal for an agent
    * listed here is routed to that IAgentService instead of `propose.agents`,
    * letting an agent delegate to an external reasoning service.
@@ -114,6 +129,29 @@ export async function routeAndPropose(
     context: input.context ?? {},
     evidence: bundle,
   });
+
+  // SHADOW GATE (parity with AgentRunService /agents/run): a financial proposal
+  // moves no money — and is NOT created — when the agent is shadowed, OR
+  // (graduated rollout) when it's live but the action's rail is not allowlisted.
+  // Without this, the event/BullMQ path could create a PaymentIntent row for a
+  // shadowed agent (the §6 gate would still block execution, but the row should
+  // never exist). The proposal terminates as shadow_completed.
+  if (proposed.channel === "payment_intent") {
+    const shadowed = deps.isShadowed(decision.selected_agent_id);
+    const railBlocked =
+      !shadowed &&
+      deps.checkRail !== undefined &&
+      !deps.checkRail(decision.selected_agent_id, proposed.intent.action_type);
+    if (shadowed || railBlocked) {
+      return {
+        selected_agent_id: decision.selected_agent_id,
+        action,
+        status: "shadow_completed",
+        reason: shadowed ? "agent_shadowed" : "rail_not_allowlisted",
+      };
+    }
+  }
+
   // Delegate to a per-agent IAgentService when one is bound (e.g. reconciliation
   // → Python agent). Only affects the agent (non-financial) channel; financial
   // proposals always use propose.paymentIntents.

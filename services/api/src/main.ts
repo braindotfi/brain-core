@@ -1180,6 +1180,12 @@ async function main(): Promise<void> {
     if (actionType === "card_payment") return "card";
     return actionType;
   };
+  // Shadow gate shared by BOTH agent entry points (/agents/run + the BullMQ
+  // /agents/events worker) so neither can create a financial proposal for a
+  // shadowed agent. Shadow-by-default: every agent not promoted in LIVE_AGENTS.
+  const isShadowed = (agentId: string): boolean => !promotionPolicy.isLive(agentId);
+  const checkRail = (agentId: string, actionType: string): boolean =>
+    promotionPolicy.isRailAllowed(agentId, railKindForAction(actionType));
   const agentRunService = new AgentRunService({
     router: agentRouter,
     actionResolver,
@@ -1189,9 +1195,8 @@ async function main(): Promise<void> {
     propose: { agents: agentService, paymentIntents: paymentIntentService },
     store: agentRunStore,
     getTenantCategory: () => "business",
-    isShadowed: (agentId) => !promotionPolicy.isLive(agentId),
-    checkRail: (agentId, actionType) =>
-      promotionPolicy.isRailAllowed(agentId, railKindForAction(actionType)),
+    isShadowed,
+    checkRail,
     intentClassifierStrategy: cfg.AGENT_INTENT_CLASSIFIER === "embedding" ? "embedding" : "rules",
     agentOverrides,
   });
@@ -1624,6 +1629,10 @@ async function main(): Promise<void> {
     actionResolver,
     evidence: agentEvidence,
     propose: { agents: agentService, paymentIntents: paymentIntentService },
+    // Same shadow gate as /agents/run — a shadowed agent's financial proposal
+    // terminates as shadow_completed and creates no PaymentIntent.
+    isShadowed,
+    checkRail,
     agentOverrides,
     redisUrl: cfg.REDIS_URL,
     actor: "agent_router_worker",

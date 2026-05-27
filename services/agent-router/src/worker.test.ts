@@ -26,8 +26,12 @@ const EVIDENCE: Evidence[] = [
 ];
 
 let proposeCalls = 0;
-function makeDeps(): RouteAndProposeDeps {
+let createPICalls = 0;
+function makeDeps(
+  opts: { scoped?: string[]; isShadowed?: (agentId: string) => boolean } = {},
+): RouteAndProposeDeps {
   proposeCalls = 0;
+  createPICalls = 0;
   const agents = {
     propose: async () => {
       proposeCalls += 1;
@@ -42,14 +46,20 @@ function makeDeps(): RouteAndProposeDeps {
       };
     },
   } as unknown as IAgentService;
-  const paymentIntents = {} as unknown as IPaymentIntentService;
+  // A shadowed financial proposal must never reach create() — it throws if it does.
+  const paymentIntents = {
+    create: async () => {
+      createPICalls += 1;
+      throw new Error("payment intent must not be created in shadow mode");
+    },
+  } as unknown as IPaymentIntentService;
   return {
     router: new AgentRouter({
       catalog: () => internalAgentCatalog,
       classifier: new RulesIntentClassifier(),
       evidence: new StaticEvidenceGatherer(EVIDENCE),
       getScopedCapabilities: () =>
-        new Set(["collections_followup", "treasury_sweep", "reconciliation_review"]),
+        new Set(opts.scoped ?? ["collections_followup", "treasury_sweep", "reconciliation_review"]),
       audit: new InMemoryAuditEmitter(),
     }),
     handlers: internalAgentHandlers,
@@ -57,6 +67,8 @@ function makeDeps(): RouteAndProposeDeps {
     actionResolver: new ActionResolver({ classifier: new RulesIntentClassifier() }),
     evidence: new StaticEvidenceGatherer(EVIDENCE),
     propose: { agents, paymentIntents },
+    // Default: not shadowed (existing non-financial tests propose through).
+    isShadowed: opts.isShadowed ?? (() => false),
   };
 }
 
@@ -113,5 +125,35 @@ describe("routeAndPropose", () => {
     expect(delegated).toBe(1);
     // The default agents.propose must NOT have been used for reconciliation.
     expect(proposeCalls).toBe(0);
+  });
+
+  it("terminates a shadowed agent's financial proposal as shadow_completed (no PaymentIntent created)", async () => {
+    // The /agents/events path must enforce the same LIVE_AGENTS shadow gate as
+    // /agents/run: route a financial event to a shadowed agent and confirm no
+    // PaymentIntent is created (the bug this closes let a shadowed agent create
+    // a real proposal row via the BullMQ path).
+    const deps = makeDeps({ scoped: ["payment_propose"], isShadowed: () => true });
+    const result = await routeAndPropose(
+      CTX,
+      { tenant_id: "tnt_acme", event: "bill.due_soon" },
+      deps,
+    );
+    expect(result.selected_agent_id).toBe("payment");
+    expect(result.status).toBe("shadow_completed");
+    expect(result.reason).toBe("agent_shadowed");
+    expect(result.proposed).toBeUndefined();
+    expect(createPICalls).toBe(0); // no money-moving proposal created
+    expect(proposeCalls).toBe(0);
+  });
+
+  it("creates a financial proposal when the agent is NOT shadowed (live path)", async () => {
+    // Same financial route, but live → the proposal flows through to create().
+    // create() throws here by design, proving the gate let it through (we don't
+    // assert success, only that the shadow gate did not short-circuit).
+    const deps = makeDeps({ scoped: ["payment_propose"], isShadowed: () => false });
+    await expect(
+      routeAndPropose(CTX, { tenant_id: "tnt_acme", event: "bill.due_soon" }, deps),
+    ).rejects.toThrow(/payment intent must not be created/);
+    expect(createPICalls).toBe(1); // the gate let the financial proposal through
   });
 });
