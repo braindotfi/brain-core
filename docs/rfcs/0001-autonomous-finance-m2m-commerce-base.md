@@ -1,7 +1,8 @@
 # RFC 0001 — Autonomous Finance + Machine-to-Machine Agent Commerce on Base
 
-- **Status:** Draft (for review)
-- **Date:** 2026-05-26
+- **Status:** Accepted — implemented shadow-first (Phases 1–3 landed; see
+  Implementation status below).
+- **Date:** 2026-05-26 (accepted 2026-05-27)
 - **Authors:** ai-assisted
 - **Affects:** Ledger, Policy, Agent (execution), Audit layers; `contracts/`; the
   `agent-router` promotion model; the `@brain/mcp` surface; the published docs.
@@ -11,6 +12,32 @@
 > invariant. Each on-chain primitive ships **shadowed**, is promoted **one at a
 > time** behind `scripts/check-promotion-readiness.mjs` (H-24), and no money
 > contract reaches mainnet without an external audit (`contracts/AUDIT-SCOPE.md`).
+
+## Implementation status (2026-05-27)
+
+The off-chain spine for x402 + escrow is built and **live-in-shadow** — every
+piece fails closed until explicitly promoted; no money can move.
+
+- **Phase 1 (Ledger):** on-chain-settlement reconciliation matcher, agent
+  counterparties (`type=agent` + `agent_id` + `onchain_address`), USDC
+  `chain_tx_hash`. Shipped.
+- **Phase 2 (x402):** `X402BaseRail` (USDC-on-Base, fails closed), the
+  `x402_settle` action type + settlement-context carriage, and new §6 gate
+  checks 3.5 (on-chain-settlement-permitted), 5.5 (agent-counterparty
+  attestation), 6.5 (x402 payment-context), 8.5 (micropayment cap). Shipped.
+- **Phase 3 (escrow):** `BrainEscrow` reference contract (**UNAUDITED /
+  testnet-only**, hash-only) + Foundry unit/fuzz/invariant tests, §6 gate check
+  6.6 (escrow-state binding), and the `escrow_release` action + carriage.
+  Shipped.
+- **Deferred live-wiring (TODO):** the concrete on-chain readers/loaders that
+  make checks 3.5 / 5.5 / 6.6 / 8.5 _enforce_ (registry attestation,
+  rolling-window spend, escrow state via `getEscrow`, the policy-VM dimensions);
+  registering the `x402_base` / `escrow_base` rails at boot; and promoting a
+  commerce agent into `LIVE_AGENTS`. Each gate check is **dormant** (records no
+  row) until wired — the canonical §6 path is unchanged meanwhile.
+- **Gated on external audit:** any mainnet deployment of `BrainEscrow` (§9).
+- **Phase 4 (open ecosystem):** ERC-4337 / Coinbase Smart Wallet / paymaster and
+  ERC-8004 reputation (§7.5 / §7.7) — not started.
 
 ## 1. Goal
 
