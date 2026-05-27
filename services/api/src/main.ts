@@ -58,6 +58,7 @@ import {
 
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
+import { registerPasswordLoginRoute, PostgresUserCredentialReader } from "./onboarding/login.js";
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { registerProofViewRoute } from "./proof/view.js";
@@ -1421,6 +1422,18 @@ async function main(): Promise<void> {
             pool,
             audit,
             exposeVerificationToken: cfg.NODE_ENV !== "production",
+          }),
+        );
+        // Owner password login → short-lived management JWT. The email→user
+        // lookup is cross-tenant, so it uses the brain_privileged pool (the same
+        // sanctioned entry point as the SIWX address→agent lookup).
+        const credentialReader = new PostgresUserCredentialReader(privilegedPool);
+        await v1.register(async (child) =>
+          registerPasswordLoginRoute(child, {
+            resolveUserByEmail: (email) => credentialReader.resolveByEmail(email),
+            signer: siwxSigner,
+            audit,
+            tokenTtlSeconds: 15 * 60,
           }),
         );
       }

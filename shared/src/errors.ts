@@ -205,6 +205,8 @@ export const BRAIN_ERROR_CODES = [
   // Self-serve onboarding (RFC 0002)
   "signup_email_taken",
   "signup_token_invalid",
+  "auth_invalid_credentials",
+  "auth_email_unverified",
 ] as const;
 
 export type BrainErrorCode = (typeof BRAIN_ERROR_CODES)[number];
@@ -294,6 +296,8 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   audit_anchor_not_yet_published: 409,
   signup_email_taken: 409,
   signup_token_invalid: 400,
+  auth_invalid_credentials: 401,
+  auth_email_unverified: 403,
 
   // 422 — semantic precondition unsatisfiable (ledger evidence/balance, gate
   // approval/decision preconditions)
