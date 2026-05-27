@@ -106,6 +106,10 @@ export const BRAIN_ERROR_CODES = [
   "invoice_shortcut_not_payable",
   "invoice_shortcut_no_evidence",
   "invoice_shortcut_source_account_unresolved",
+  // Phase 4 open-ecosystem (4337 / Coinbase Smart Wallet) settlement resolution.
+  "open_ecosystem_invalid_permission",
+  "open_ecosystem_unknown_payee",
+  "open_ecosystem_unknown_wallet",
   "agent_rail_unavailable",
   // §4.3 agent_* aliases of the legacy execution_* proposal codes (v0.3 transition).
   "agent_proposal_not_found",
@@ -305,6 +309,10 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   invoice_shortcut_not_payable: 422,
   invoice_shortcut_no_evidence: 422,
   invoice_shortcut_source_account_unresolved: 422,
+  // Phase 4 open-ecosystem settlement resolution.
+  open_ecosystem_invalid_permission: 422,
+  open_ecosystem_unknown_payee: 404,
+  open_ecosystem_unknown_wallet: 404,
   // The rail reached the provider but it refused the request (e.g. Plaid
   // declined an ACH authorization, an on-chain call reverted).
   execution_rail_declined: 422,

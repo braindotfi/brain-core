@@ -71,7 +71,7 @@ export {
   type X402SettleArgs,
   type X402SettleResult,
 } from "./rails/x402-base.js";
-// Phase 4 — open-ecosystem (4337 / Coinbase Smart Wallet) authorization model.
+// Phase 4 — open-ecosystem (4337 / Coinbase Smart Wallet) authorization model + resolver.
 export {
   validateSpendPermission,
   toMicropaymentWindowCap,
@@ -80,6 +80,11 @@ export {
   type SpendRequest,
   type SpendValidation,
 } from "./open-ecosystem/spend-permission.js";
+export {
+  resolveSpendPermissionSettlement,
+  type SpendPermissionResolverDeps,
+  type ResolvedSpendPermissionIntent,
+} from "./open-ecosystem/spend-permission-resolver.js";
 
 // Boot-binary route registration hooks.
 export { registerExecutionRoutes } from "./routes.js";
