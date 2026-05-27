@@ -23,7 +23,15 @@
  * evidence pointers only. Callers hash/redact before emitting.
  */
 
-export type AuditLayer = "raw" | "ledger" | "wiki" | "policy" | "execution" | "agent" | "audit";
+export type AuditLayer =
+  | "raw"
+  | "ledger"
+  | "wiki"
+  | "policy"
+  | "execution"
+  | "agent"
+  | "audit"
+  | "identity";
 
 export interface AuditEventInput {
   readonly tenantId: string;

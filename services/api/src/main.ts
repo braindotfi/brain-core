@@ -57,6 +57,7 @@ import {
 } from "@brain/shared";
 
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
+import { registerOnboardingRoutes } from "./onboarding/routes.js";
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { registerProofViewRoute } from "./proof/view.js";
@@ -1409,6 +1410,20 @@ async function main(): Promise<void> {
           ...(cfg.BRAIN_DEMO_MODE ? { demoMode: true } : {}),
         }),
       );
+
+      // Public self-serve onboarding (RFC 0002) — registered ONLY when the flag
+      // is on; absent it the routes do not exist. New tenants are sandbox-only
+      // and grant no execution capability. The raw verification token is exposed
+      // in the response outside production (no email provider wired yet).
+      if (cfg.BRAIN_SELF_SERVE_SIGNUP) {
+        await v1.register(async (child) =>
+          registerOnboardingRoutes(child, {
+            pool,
+            audit,
+            exposeVerificationToken: cfg.NODE_ENV !== "production",
+          }),
+        );
+      }
 
       if (cfg.BRAIN_DEMO_MODE) {
         // GET /v1/demo/token — mints a short-lived read-heavy demo JWT for the

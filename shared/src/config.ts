@@ -87,6 +87,17 @@ const envSchema = z.object({
     .transform((v) => v === "true")
     .default("false"),
 
+  // ---- Self-serve onboarding (RFC 0002) ----
+  /**
+   * Set to "true" to expose the public self-serve signup surface
+   * (POST /v1/signup, /v1/auth/verify-email). Default OFF — the routes are not
+   * registered unless this is enabled. New tenants are sandbox-only regardless.
+   */
+  BRAIN_SELF_SERVE_SIGNUP: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
+
   // ---- Plaid (consumed by tools/plaid-sandbox and Raw webhook verifier) ----
   PLAID_CLIENT_ID: z.string().min(1).optional(),
   PLAID_SECRET: z.string().min(1).optional(),
