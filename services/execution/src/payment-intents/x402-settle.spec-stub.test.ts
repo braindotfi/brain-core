@@ -20,9 +20,11 @@
 
 import { describe, expect, it } from "vitest";
 import { isAcceptedActionType, isValidCurrency } from "./routes.js";
-import { gateSettlement } from "./PaymentIntentService.js";
+import { gateSettlement, gateEscrow } from "./PaymentIntentService.js";
 
 const PAY_TO = "0x" + "ab".repeat(20);
+const ESCROW_ID = "0x" + "11".repeat(32);
+const TERMS = "0x" + "22".repeat(32);
 
 describe("x402_settle (RFC 0001) — 2C-A: action type + currency", () => {
   it("accepts `x402_settle` as a create action type", () => {
@@ -73,4 +75,30 @@ describe("x402_settle (RFC 0001) — 2C-B: settlement-context carriage (activate
   it.todo("settles USDC on Base via X402BaseRail; dispatched → settled on confirmation");
   it.todo("emits the same audit events as any other settlement (Merkle-anchored)");
   it.todo("fails closed under NODE_ENV=production when the x402 client is unconfigured");
+});
+
+describe("escrow_release (RFC 0001 §7.6) — 3E: action type + escrow-context carriage", () => {
+  it("accepts escrow_release as a create action type, USDC-only", () => {
+    expect(isAcceptedActionType("escrow_release")).toBe(true);
+    expect(isValidCurrency("escrow_release", "USDC")).toBe(true);
+    expect(isValidCurrency("escrow_release", "USD")).toBe(false);
+  });
+
+  it("builds the on-chain escrow context for an escrow_release intent (activates gate 6.6)", () => {
+    expect(gateEscrow("escrow_release", ESCROW_ID, TERMS)).toEqual({
+      escrow: { escrowId: ESCROW_ID, jobTermsHash: TERMS },
+    });
+  });
+
+  it("carries no escrow context for non-escrow actions or when fields are absent", () => {
+    expect(gateEscrow("x402_settle", ESCROW_ID, TERMS)).toEqual({});
+    expect(gateEscrow("escrow_release", null, TERMS)).toEqual({});
+    expect(gateEscrow("escrow_release", ESCROW_ID, undefined)).toEqual({});
+  });
+
+  // The gate check that consumes this context (6.6 — Locked/amount/payee/terms)
+  // is proven in shared/src/gate/gate.escrow.test.ts; the loader pass-through is
+  // proven in PaymentIntentService.execute.test.ts.
+  it.todo("resolves an escrow release request to { source, agent counterparty, USDC }");
+  it.todo("releases the BrainEscrow lock on-chain (escrow_base rail; dispatched → settled)");
 });

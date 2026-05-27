@@ -59,10 +59,16 @@ interface CreateBody {
   evidence_ids?: string[];
   /** x402 settlement recipient on-chain address (required for x402_settle). */
   pay_to?: string;
+  /** On-chain BrainEscrow id (required for escrow_release). */
+  escrow_id?: string;
+  /** keccak256 job-terms commitment (required for escrow_release). */
+  job_terms_hash?: string;
 }
 
 /** EVM address shape for the x402 settlement recipient (RFC 0001 §6.1). */
 const ONCHAIN_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+/** bytes32 hex shape for escrow id + job-terms commitment (RFC 0001 §7.6). */
+const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 
 const ACTION_TYPES = new Set([
   "ach_outbound",
@@ -71,11 +77,12 @@ const ACTION_TYPES = new Set([
   "onchain_transfer",
   "erp_writeback",
   "card_payment",
-  // x402 USDC-on-Base settlement (RFC 0001 §7.1). Shadow-first: accepting the
-  // action type only makes the intent creatable + §6-gated; it cannot settle
-  // until the commerce agent is in LIVE_AGENTS and an x402_base rail is
-  // registered at boot (RailRegistry fails closed until then).
+  // x402 USDC-on-Base settlement (RFC 0001 §7.1) and escrow release (RFC 0001
+  // §7.6). Shadow-first: accepting the action type only makes the intent
+  // creatable + §6-gated; it cannot settle until the commerce agent is in
+  // LIVE_AGENTS and the rail is registered at boot (RailRegistry fails closed).
   "x402_settle",
+  "escrow_release",
 ]);
 
 /** Whether `t` is an action type the create route accepts (exported for tests). */
@@ -91,7 +98,8 @@ export function isAcceptedActionType(t: string | undefined): boolean {
  * Exported for unit tests (routes.ts itself is integration-tested).
  */
 export function isValidCurrency(actionType: string | undefined, currency: string): boolean {
-  if (actionType === "x402_settle") return currency === "USDC";
+  // Both on-chain settlement actions are USDC-denominated (D-4).
+  if (actionType === "x402_settle" || actionType === "escrow_release") return currency === "USDC";
   return /^[A-Z]{3}$/.test(currency);
 }
 
@@ -156,6 +164,20 @@ export async function registerPaymentIntentRoutes(
       ) {
         throw brainError("request_body_invalid", "x402_settle requires a 0x pay_to address");
       }
+      // escrow_release requires the on-chain escrow id + job-terms commitment;
+      // the §6 gate (check 6.6) binds them to the on-chain lock.
+      if (
+        b.action_type === "escrow_release" &&
+        (b.escrow_id === undefined ||
+          !BYTES32.test(b.escrow_id) ||
+          b.job_terms_hash === undefined ||
+          !BYTES32.test(b.job_terms_hash))
+      ) {
+        throw brainError(
+          "request_body_invalid",
+          "escrow_release requires 0x bytes32 escrow_id and job_terms_hash",
+        );
+      }
       const intent = await service.create(ctx, {
         action_type: b.action_type as never,
         source_account_id: b.source_account_id,
@@ -167,6 +189,11 @@ export async function registerPaymentIntentRoutes(
         ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
         ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
         ...(b.action_type === "x402_settle" && b.pay_to !== undefined ? { pay_to: b.pay_to } : {}),
+        ...(b.action_type === "escrow_release" &&
+        b.escrow_id !== undefined &&
+        b.job_terms_hash !== undefined
+          ? { escrow_id: b.escrow_id, job_terms_hash: b.job_terms_hash }
+          : {}),
       });
       reply.status(201);
       return intent;

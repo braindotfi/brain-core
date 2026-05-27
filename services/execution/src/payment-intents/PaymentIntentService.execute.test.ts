@@ -483,3 +483,68 @@ describe("PaymentIntentService.execute — x402 gate-loader pass-through (2C-C)"
     expect(spendCalls).toEqual([{ agentId: AGENT_ID, windowSeconds: 3600 }]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 3E-2 — escrow_release gate-loader pass-through (RFC 0001 §7.6). Proves
+// resolveEscrowState reaches the §6 gate (check 6.6 — escrow-state binding).
+// The check logic itself is proven in shared/src/gate/gate.escrow.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("PaymentIntentService.execute — escrow gate-loader pass-through (3E-2)", () => {
+  const PAYEE = "0x" + "ab".repeat(20);
+  const ESCROW_ID = "0x" + "11".repeat(32);
+  const TERMS = "0x" + "22".repeat(32);
+  const ESCROW_ROW: PaymentIntentRow = {
+    ...APPROVED_INTENT_ROW,
+    action_type: "escrow_release",
+    currency: "USDC",
+    amount: "10.00",
+    escrow_id: ESCROW_ID,
+    job_terms_hash: TERMS,
+  };
+  const AGENT_CP: GateCounterparty = {
+    ...GATE_CP,
+    type: "agent",
+    agent_id: AGENT_ID,
+    onchain_address: PAYEE,
+  };
+  const USDC_ACCOUNT: GateAccount = { ...GATE_ACCOUNT, currency: "USDC" };
+
+  it("forwards resolveEscrowState → a mismatched on-chain lock hard-rejects at 6.6", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const pool = makeFakePool((sql) =>
+      sql.includes("FROM ledger_payment_intents WHERE id")
+        ? { rows: [ESCROW_ROW], rowCount: 1 }
+        : { rows: [], rowCount: 0 },
+    );
+    const calls: string[] = [];
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals: new ApprovalService({ pool, audit, resolveRole: async () => null }),
+      resolveAgent: async () => GATE_AGENT,
+      resolveAccount: async () => USDC_ACCOUNT,
+      resolveCounterparty: async () => AGENT_CP,
+      evaluatePolicy: async () => POLICY_DECISION,
+      resolvePrincipal: async () => GATE_PRINCIPAL,
+      resolveEscrowState: async (_ctx, input) => {
+        calls.push(input.escrowId);
+        // Locked + right amount/terms, but a DIFFERENT payee → 6.6 must reject.
+        return {
+          state: "Locked",
+          payer: "0x" + "cd".repeat(20),
+          payee: "0x" + "99".repeat(20),
+          token: "0x" + "ef".repeat(20),
+          amount: "10.00",
+          jobTermsHash: TERMS,
+        };
+      },
+    });
+
+    await expect(service.execute(ctx, PI_ID)).rejects.toMatchObject({
+      code: "payment_intent_gate_failed",
+    });
+    expect(calls).toEqual([ESCROW_ID]);
+  });
+});
