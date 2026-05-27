@@ -44,6 +44,16 @@ export {
   type DuplicateCheckInput,
   type DuplicateCheckResult,
 } from "./duplicate-detector.js";
+// ERC-8004 reputation as a Policy threshold input (RFC 0001 §7.7) — tighten-only;
+// never a §6 precondition. PR 4A: the pure adjustment + envelope reader; wiring
+// into evaluateForGate is the follow-up.
+export {
+  applyReputationAdjustment,
+  readReputationEnvelope,
+  type ReputationScore,
+  type ReputationResolver,
+  type ReputationEnvelope,
+} from "./reputation.js";
 export type {
   ApplyTo,
   ExecuteMode,
