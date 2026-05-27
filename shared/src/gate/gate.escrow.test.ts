@@ -75,6 +75,9 @@ function lockedEscrow(overrides: Partial<ResolvedEscrowState> = {}): ResolvedEsc
     payee: PAYEE,
     token: "0x" + "ef".repeat(20),
     amount: "10.00",
+    released: "0",
+    refunded: "0",
+    remaining: "10.00",
     jobTermsHash: TERMS,
     ...overrides,
   };
@@ -131,9 +134,32 @@ describe("§6 — check 6.6: escrow-state binding (RFC 0001 §7.6)", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("passes a milestone release while the escrow is partially settled (Locked)", async () => {
+    // 100 locked, 30 already released, 70 remaining; this release is 10 ≤ 70.
+    const { deps } = makeDeps({
+      resolveEscrowState: async () =>
+        lockedEscrow({ amount: "100.00", released: "30.00", remaining: "70.00" }),
+    });
+    const result = await run(deps, escrowIntent());
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.checks.find((c) => c.name === "escrow_state_bound")?.passed).toBe(true);
+    }
+  });
+
+  it("passes when the release exactly drains the remaining balance", async () => {
+    // remaining == intent amount (10.00): cmpDecimal == 0, not < 0 → allowed.
+    const { deps } = makeDeps({
+      resolveEscrowState: async () =>
+        lockedEscrow({ amount: "100.00", released: "90.00", remaining: "10.00" }),
+    });
+    const result = await run(deps, escrowIntent());
+    expect(result.ok).toBe(true);
+  });
+
   it.each([
-    ["escrow not Locked", lockedEscrow({ state: "Released" })],
-    ["amount mismatch", lockedEscrow({ amount: "9.99" })],
+    ["escrow already Settled", lockedEscrow({ state: "Settled" })],
+    ["release exceeds remaining", lockedEscrow({ remaining: "9.99" })],
     ["job-terms mismatch", lockedEscrow({ jobTermsHash: "0x" + "33".repeat(32) })],
     ["payee mismatch", lockedEscrow({ payee: "0x" + "99".repeat(20) })],
   ])("HARD-fails at 6.6 on %s", async (_label, onchain) => {

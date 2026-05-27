@@ -570,11 +570,15 @@ export async function runPreExecutionGate(
 
   // 6.6 — escrow-state binding (RFC 0001 §6.2 / §7.6). For a conditional
   // (escrow) settlement, the on-chain escrow lock must match the intent before a
-  // release is gated: still Locked, same amount, same payee (== the counterparty
-  // on-chain address), same job-terms commitment. The chain read is injected
-  // (the gate must not touch the chain). Active only when the intent carries an
-  // `escrow` context AND the loader is wired; otherwise add no row (canonical
-  // path preserved). Deterministic state + field comparison — never a judgment.
+  // release is gated: still Locked, enough REMAINING balance to cover this
+  // release (BrainEscrow settles incrementally — milestones / dispute-splits —
+  // so the escrow stays Locked across partial releases; binding against the
+  // total `amount` would wrongly reject every milestone after the first), same
+  // payee (== the counterparty on-chain address), same job-terms commitment. The
+  // chain read is injected (the gate must not touch the chain). Active only when
+  // the intent carries an `escrow` context AND the loader is wired; otherwise add
+  // no row (canonical path preserved). Deterministic comparison — never a
+  // judgment.
   if (input.intent.escrow !== undefined && deps.resolveEscrowState !== undefined) {
     const onchain = await deps.resolveEscrowState({
       tenantId: input.ctx.tenantId,
@@ -587,8 +591,8 @@ export async function runPreExecutionGate(
       if (onchain.state !== "Locked") {
         failures.push(`escrow is not Locked (state=${onchain.state})`);
       }
-      if (cmpDecimal(onchain.amount, input.intent.amount) !== 0) {
-        failures.push("escrow amount does not match intent amount");
+      if (cmpDecimal(onchain.remaining, input.intent.amount) < 0) {
+        failures.push("release amount exceeds escrow remaining balance");
       }
       if (onchain.jobTermsHash !== input.intent.escrow.jobTermsHash) {
         failures.push("job-terms commitment does not match the on-chain escrow");

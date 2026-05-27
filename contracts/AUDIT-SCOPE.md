@@ -15,31 +15,42 @@ Commit under audit: **TODO(brain-hardening): pin the audited commit SHA + tag.**
 
 ---
 
-## BrainEscrow (169 LoC impl + 96 LoC `IBrainEscrow` interface) — PRIORITY
+## BrainEscrow (132 LoC impl + 56 LoC `IBrainEscrow` interface) — PRIORITY
 
 Conditional x402 / M2M settlement escrow (RFC 0001 §7.6): a payer locks USDC
 against a hashed job commitment; funds **release** to the payee on attested
-completion, or **refund** to the payer on timeout / arbiter dispute. State
-machine: `None → Locked → Released | Refunded` (terminal). The **only**
-funds-custodying contract — treat as the highest-severity surface.
+completion, or **refund** to the payer on timeout / arbiter dispute. Settlement is
+**incremental** — `release(amount)` and `refund(amount)` each move a partial
+amount (`≤ remaining`), supporting **milestone payments** and **arbiter
+dispute-splits** (release part to the payee, refund the rest to the payer). State
+machine: `None → Locked → Settled`, where `Settled` is reached exactly when
+`released + refunded == amount` (terminal). The **only** funds-custodying contract
+— treat as the highest-severity surface. The partial-settlement accounting
+(`released` / `refunded` accumulators, the `remaining` bound) is **new since the
+last revision** and deserves focused attention.
 
 Design + threat model + the audit-scope rationale: `docs/contracts/x402-escrow.md`.
 
 **Critical invariants:**
 
 - **Solvency / funds conservation:** the contract's token balance always equals
-  the sum of currently-`Locked` amounts. No interleaving of lock/release/refund
-  strands or double-counts funds (`invariant_solvency`).
-- **Settle-once + replay-safe ids:** a `Locked` escrow reaches exactly one
-  terminal state — double-release and release-then-refund both revert
-  (`EscrowNotLocked`); an `escrowId` is single-use (a settled id can never be
-  reused).
+  the sum of every escrow's outstanding (`amount - released - refunded`) balance.
+  No interleaving of lock and **partial** release/refund strands or double-counts
+  funds (`invariant_solvency`, exercised with a partial-release handler).
+- **No over-payment / settle-once-in-aggregate + replay-safe ids:** every
+  `release` / `refund` is bounded by `remaining` (`AmountExceedsRemaining`
+  otherwise), so cumulative `released + refunded` can never exceed `amount`. Once
+  it equals `amount` the escrow is `Settled` and any further `release` / `refund`
+  reverts (`EscrowNotLocked`); an `escrowId` is single-use (a settled id can never
+  be reused). The auditor should confirm no rounding / off-by-one lets the sum
+  exceed `amount` or strand the last unit.
 - **Authorization:** only `payer` or `arbiter` may `release`; only `arbiter`
   (any time) or `payer` after `deadline` may `refund`; everyone else reverts
   (`NotAuthorized` / `DeadlineNotReached`). Crucially, the **immutable** arbiter
   can only release to the _designated_ payee or refund to the _designated_ payer
-  — it can NEVER redirect funds to an arbitrary address, and there is no admin /
-  drain / upgrade / pause / `selfdestruct` / `delegatecall` path.
+  (including across a partial dispute-split) — it can NEVER redirect funds to an
+  arbitrary address, and there is no admin / drain / upgrade / pause /
+  `selfdestruct` / `delegatecall` path.
 - **Reentrancy-safe:** a `nonReentrant` latch plus checks-effects-interactions
   (terminal state set _before_ the external token transfer). A malicious token
   that reenters `release` during its `transfer` cannot double-spend.
@@ -63,11 +74,15 @@ arbiter with no fund-redirection power; a dependency-free SafeERC20-style wrappe
   resolve disputes — but, per the authorization invariant, never able to
   redirect funds.
 
-**Coverage** (`contracts/test/BrainEscrow.t.sol`): unit (lock→release happy,
-refund pre/post deadline, arbiter dispute release/refund, double-settle
-rejection, stranger/auth rejections, unknown-id), **fuzz**
-(`testFuzz_lockReleaseConservesFunds`), **invariant** (`invariant_solvency`), and
-a **reentrancy** test (a reentrant token cannot double-spend).
+**Coverage** (`contracts/test/BrainEscrow.t.sol`): unit (full release settles,
+**partial milestone** releases keep `Locked` until drained, byArbiter,
+refund pre/post deadline, **arbiter partial refund-then-release** and a
+**dispute-split** (release 70% + refund 30%), over-`remaining` rejection
+(`AmountExceedsRemaining`), release-after-`Settled` rejection, stranger/auth
+rejections, zero-amount, unknown-id), **fuzz**
+(`testFuzz_lockReleaseConservesFunds`), **invariant** (`invariant_solvency` with a
+partial-release handler), and a **reentrancy** test (a reentrant token cannot
+double-spend).
 
 ## BrainAuditAnchor (135 LoC)
 
