@@ -22,6 +22,10 @@ export interface PaymentIntentRow {
   proposal_dedup_key: string | null;
   /** x402 settlement recipient (RFC 0001 §6.1); null unless action_type=x402_settle. */
   settlement_pay_to: string | null;
+  /** On-chain BrainEscrow id (RFC 0001 §7.6); null unless action_type=escrow_release. */
+  escrow_id: string | null;
+  /** keccak256 job-terms commitment (RFC 0001 §7.6); null unless action_type=escrow_release. */
+  job_terms_hash: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -88,6 +92,10 @@ export interface InsertPaymentIntentInput {
   proposalDedupKey?: string | null;
   /** x402 settlement recipient (RFC 0001 §6.1); set only for action_type=x402_settle. */
   settlementPayTo?: string | null;
+  /** On-chain BrainEscrow id (RFC 0001 §7.6); set only for action_type=escrow_release. */
+  escrowId?: string | null;
+  /** keccak256 job-terms commitment (RFC 0001 §7.6); set only for escrow_release. */
+  jobTermsHash?: string | null;
 }
 
 export async function insertPaymentIntent(
@@ -100,9 +108,10 @@ export async function insertPaymentIntent(
        source_account_id, destination_counterparty_id,
        amount, currency, obligation_id, invoice_id,
        status, policy_decision_id, evidence_ids,
-       provenance, confidence, proposal_dedup_key, settlement_pay_to
+       provenance, confidence, proposal_dedup_key, settlement_pay_to,
+       escrow_id, job_terms_hash
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',1.0,$14,$15)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',1.0,$14,$15,$16,$17)
      RETURNING *`,
     [
       input.id,
@@ -120,6 +129,8 @@ export async function insertPaymentIntent(
       input.evidenceIds,
       input.proposalDedupKey ?? null,
       input.settlementPayTo ?? null,
+      input.escrowId ?? null,
+      input.jobTermsHash ?? null,
     ],
   );
   const row = rows[0];
