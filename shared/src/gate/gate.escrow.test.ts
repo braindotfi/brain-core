@@ -45,7 +45,8 @@ const AGENT_CP: GateCounterparty = {
   onchain_address: PAYEE,
 };
 
-function escrowIntent(overrides: Partial<GatePaymentIntent> = {}): GatePaymentIntent {
+/** A settlement intent WITHOUT an escrow context (escrow checks stay dormant). */
+function baseIntent(overrides: Partial<GatePaymentIntent> = {}): GatePaymentIntent {
   return {
     id: "pi_ESC",
     owner_id: TENANT,
@@ -58,9 +59,13 @@ function escrowIntent(overrides: Partial<GatePaymentIntent> = {}): GatePaymentIn
     status: "approved",
     policy_decision_id: null,
     evidence_ids: [],
-    escrow: { escrowId: ESCROW_ID, jobTermsHash: TERMS },
     ...overrides,
   };
+}
+
+/** An escrow_release intent carrying the on-chain escrow context (activates 6.6). */
+function escrowIntent(overrides: Partial<GatePaymentIntent> = {}): GatePaymentIntent {
+  return { ...baseIntent(), escrow: { escrowId: ESCROW_ID, jobTermsHash: TERMS }, ...overrides };
 }
 
 function lockedEscrow(overrides: Partial<ResolvedEscrowState> = {}): ResolvedEscrowState {
@@ -162,7 +167,7 @@ describe("§6 — check 6.6: escrow-state binding (RFC 0001 §7.6)", () => {
 
   it("adds no row for a non-escrow intent even when the loader is wired", async () => {
     const { deps } = makeDeps({ resolveEscrowState: async () => lockedEscrow() });
-    const result = await run(deps, escrowIntent({ escrow: undefined }));
+    const result = await run(deps, baseIntent({ action_type: "ach_outbound" }));
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.checks.some((c) => c.name === "escrow_state_bound")).toBe(false);
