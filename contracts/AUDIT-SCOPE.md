@@ -1,13 +1,73 @@
 # Smart contract audit scope
 
-Scope package for the external audit of Brain's four Solidity contracts (Foundry,
-Solidity ≥0.8.24, no upgradeable proxies in MVP). Total ~933 LoC. Each contract
+Scope package for the external audit of Brain's five Solidity contracts (Foundry,
+Solidity ≥0.8.24, no upgradeable proxies in MVP). Total ~1,200 LoC. Each contract
 below lists its size, the invariants the auditor must verify, known hardening
 additions, and existing test coverage.
+
+> **Highest priority: `BrainEscrow`.** It is the only contract that **custodies
+> user funds** (USDC), and it is the gate for Phase 5 (first real governed
+> machine payment on mainnet). It is currently **UNAUDITED / Base Sepolia
+> testnet-only** and immutable; it must clear this audit before any mainnet
+> address is funded (RFC 0001 §9). Audit it first and most thoroughly.
 
 Commit under audit: **TODO(brain-hardening): pin the audited commit SHA + tag.**
 
 ---
+
+## BrainEscrow (169 LoC impl + 96 LoC `IBrainEscrow` interface) — PRIORITY
+
+Conditional x402 / M2M settlement escrow (RFC 0001 §7.6): a payer locks USDC
+against a hashed job commitment; funds **release** to the payee on attested
+completion, or **refund** to the payer on timeout / arbiter dispute. State
+machine: `None → Locked → Released | Refunded` (terminal). The **only**
+funds-custodying contract — treat as the highest-severity surface.
+
+Design + threat model + the audit-scope rationale: `docs/contracts/x402-escrow.md`.
+
+**Critical invariants:**
+
+- **Solvency / funds conservation:** the contract's token balance always equals
+  the sum of currently-`Locked` amounts. No interleaving of lock/release/refund
+  strands or double-counts funds (`invariant_solvency`).
+- **Settle-once + replay-safe ids:** a `Locked` escrow reaches exactly one
+  terminal state — double-release and release-then-refund both revert
+  (`EscrowNotLocked`); an `escrowId` is single-use (a settled id can never be
+  reused).
+- **Authorization:** only `payer` or `arbiter` may `release`; only `arbiter`
+  (any time) or `payer` after `deadline` may `refund`; everyone else reverts
+  (`NotAuthorized` / `DeadlineNotReached`). Crucially, the **immutable** arbiter
+  can only release to the _designated_ payee or refund to the _designated_ payer
+  — it can NEVER redirect funds to an arbitrary address, and there is no admin /
+  drain / upgrade / pause / `selfdestruct` / `delegatecall` path.
+- **Reentrancy-safe:** a `nonReentrant` latch plus checks-effects-interactions
+  (terminal state set _before_ the external token transfer). A malicious token
+  that reenters `release` during its `transfer` cannot double-spend.
+- **SafeERC20 semantics:** the low-level transfer wrapper tolerates both
+  bool-returning (USDC) and no-return ERC-20s and reverts on a false/failed
+  return (`TransferFailed`).
+- **Hash-only / no PII (RFC §3):** the ABI is `bytes32` / `address` / `uint`
+  only — the sole job datum on-chain is `jobTermsHash` (a keccak commitment).
+  Enforced by `scripts/check-no-onchain-pii.mjs`.
+
+**Hardening:** `nonReentrant` + CEI ordering; single-use escrow ids; an immutable
+arbiter with no fund-redirection power; a dependency-free SafeERC20-style wrapper
+(inline `IERC20Minimal`, no external libs).
+
+**Documented assumptions the auditor should confirm:**
+
+- Settlement token is **USDC on Base** — a standard ERC-20 (6 decimals, bool
+  return). **Fee-on-transfer / rebasing tokens are out of scope** (the design
+  assumes `amount` received == `amount` transferred).
+- `arbiter` is a Safe multi-sig in production, trusted to attest completion /
+  resolve disputes — but, per the authorization invariant, never able to
+  redirect funds.
+
+**Coverage** (`contracts/test/BrainEscrow.t.sol`): unit (lock→release happy,
+refund pre/post deadline, arbiter dispute release/refund, double-settle
+rejection, stranger/auth rejections, unknown-id), **fuzz**
+(`testFuzz_lockReleaseConservesFunds`), **invariant** (`invariant_solvency`), and
+a **reentrancy** test (a reentrant token cannot double-spend).
 
 ## BrainAuditAnchor (135 LoC)
 
@@ -85,9 +145,15 @@ have a `scope_hash` matching stored scope."
 
 ## What the auditor receives
 
-- This scope doc + the four contracts + `contracts/test/*.t.sol` (unit + fuzz +
-  invariant) + gas baselines.
+- This scope doc + the five contracts (incl. `BrainEscrow.sol` +
+  `IBrainEscrow.sol`) + `contracts/test/*.t.sol` (unit + fuzz + invariant) + gas
+  baselines.
+- `docs/contracts/x402-escrow.md` — the `BrainEscrow` design, state machine,
+  authorization matrix, security properties, and external-audit scope.
 - `Brain_MVP_Architecture.md` (§Layer 6 audit anchor, §Layer 5 smart account) and
   `Brain_Engineering_Standards.md` §8.3 for context.
 - The off-chain counterpart (`services/audit/src/merkle.ts`) so the auditor can
   confirm on-/off-chain hashing parity.
+- Build/test reproduction: `forge build --sizes` + `forge test -vvv` from
+  `contracts/` (Solidity 0.8.24, deterministic build — `bytecode_hash = none`,
+  `cbor_metadata = false`; fuzz 1000 / invariant 256×64 per `foundry.toml`).

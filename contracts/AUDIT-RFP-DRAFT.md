@@ -1,6 +1,6 @@
 # RFP — Brain smart-contract security audit (DRAFT)
 
-Draft RFP for the external audit of Brain's four Solidity contracts. Paste into
+Draft RFP for the external audit of Brain's five Solidity contracts. Paste into
 outreach to candidate firms with minimal edits. **Pending founder approval.**
 
 > TODO(brain-hardening): confirm budget ceiling, target dates, and the audited
@@ -10,21 +10,24 @@ outreach to candidate firms with minimal edits. **Pending founder approval.**
 
 Brain Finance is a financial-intelligence protocol whose Agent layer can move
 money on-chain under a deterministic pre-execution gate. We are seeking a
-security audit of the four MVP smart contracts ahead of Base mainnet deployment.
+security audit of the five MVP smart contracts ahead of Base mainnet deployment.
 
 ## Scope
 
-Four contracts, ~933 LoC total (Foundry, Solidity ≥0.8.24, non-upgradeable):
+Five contracts, ~1,200 LoC total (Foundry, Solidity ≥0.8.24, non-upgradeable):
 
-| Contract                | LoC | Focus                                                |
-| ----------------------- | --- | ---------------------------------------------------- |
-| `BrainAuditAnchor`      | 135 | Append-only Merkle anchor; `verifyInclusion` parity. |
-| `BrainPolicyRegistry`   | 255 | Signed policy versions; EIP-712; no downgrade.       |
-| `BrainSmartAccount`     | 256 | Session-key execution; H-03 replay + re-entrancy.    |
-| `BrainMCPAgentRegistry` | 287 | Agent scope-hash attestation; revocation.            |
+| Contract                       | LoC | Focus                                                                                                             |
+| ------------------------------ | --- | ----------------------------------------------------------------------------------------------------------------- |
+| **`BrainEscrow`** _(priority)_ | 169 | **Funds custody** — lock/release/refund; solvency; reentrancy; arbiter can't redirect. (+ 96-LoC `IBrainEscrow`.) |
+| `BrainAuditAnchor`             | 135 | Append-only Merkle anchor; `verifyInclusion` parity.                                                              |
+| `BrainPolicyRegistry`          | 255 | Signed policy versions; EIP-712; no downgrade.                                                                    |
+| `BrainSmartAccount`            | 256 | Session-key execution; H-03 replay + re-entrancy.                                                                 |
+| `BrainMCPAgentRegistry`        | 287 | Agent scope-hash attestation; revocation.                                                                         |
 
-Full per-contract invariants in `contracts/AUDIT-SCOPE.md`. The audited commit
-SHA will be pinned at kickoff.
+**`BrainEscrow` is the priority** — it is the only contract that custodies user
+funds (USDC) and gates the first real mainnet payment; it is currently UNAUDITED
+/ testnet-only. Full per-contract invariants in `contracts/AUDIT-SCOPE.md`. The
+audited commit SHA will be pinned at kickoff.
 
 ## Deliverables expected
 
