@@ -29,6 +29,8 @@ import {
   newTenantId,
   newAgentId,
   newPaymentIntentId,
+  brainId,
+  ID_PREFIX,
   type ServiceCallContext,
 } from "@brain/shared";
 import { isValidPaymentIntentTransition } from "@brain/execution";
@@ -344,5 +346,77 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       expect(Number(r.before_n)).toBe(1);
       expect(Number(r.after_n)).toBe(1);
     }
+  });
+
+  // 6 — RFC 0002 self-serve onboarding: tenant isolation of the identity tables.
+  // Insert a users row under the freshly-minted tenant (the same scope-to-new-id
+  // pattern provisionTenant uses); FORCE RLS makes the WITH CHECK apply even to
+  // the owner, so the insert is only permitted for that tenant.
+  async function insertOwner(tenant: string, email: string): Promise<string> {
+    const userId = brainId(ID_PREFIX.user);
+    await withTenantScope(pool, tenant, (c) =>
+      c.query(
+        `INSERT INTO users (id, tenant_id, email, role, password_hash, status)
+         VALUES ($1, $2, $3, 'owner', 'scrypt$32768$8$1$c2FsdA$ZGs', 'active')`,
+        [userId, tenant, email],
+      ),
+    );
+    return userId;
+  }
+
+  it("onboarding identity tables (tenants, users, email_verifications) all enforce RLS", async () => {
+    const rows = (
+      await pool.query<{ relname: string; relrowsecurity: boolean; npol: string }>(
+        `SELECT c.relname,
+                c.relrowsecurity,
+                (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid) AS npol
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = $1
+            AND c.relkind = 'r'
+            AND c.relname IN ('tenants', 'users', 'email_verifications')`,
+        [schema],
+      )
+    ).rows;
+    expect(rows.length).toBe(3);
+    for (const r of rows) {
+      expect(r.relrowsecurity).toBe(true);
+      expect(Number(r.npol)).toBeGreaterThan(0);
+    }
+  });
+
+  it("an owner user written under tenant A is invisible under tenant B (RLS enforced)", async () => {
+    const a = newTenantId();
+    const b = newTenantId();
+    const uid = await insertOwner(a, `iso-${a.slice(-8)}@example.com`);
+
+    async function seenAs(tenant: string): Promise<number> {
+      const c = await pool.connect();
+      try {
+        await c.query(`SET search_path TO ${schema}, public`);
+        await c.query("BEGIN");
+        await c.query(`SET LOCAL ROLE ${appRole}`);
+        await c.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+        const res = await c.query(`SELECT id FROM users WHERE id = $1`, [uid]);
+        await c.query("ROLLBACK");
+        return res.rows.length;
+      } finally {
+        c.release();
+      }
+    }
+
+    expect(await seenAs(b)).toBe(0);
+    expect(await seenAs(a)).toBe(1);
+  });
+
+  it("rejects the same password-login email across tenants (signup_email_taken basis)", async () => {
+    const a = newTenantId();
+    const b = newTenantId();
+    const email = `dup-${newPaymentIntentId().slice(-10)}@example.com`;
+    await insertOwner(a, email);
+    // The global partial unique index users_login_email_unique (lower(email) WHERE
+    // password_hash IS NOT NULL) is enforced beneath RLS, so a second tenant
+    // cannot register the same login email — this is what backs signup_email_taken.
+    await expect(insertOwner(b, email)).rejects.toThrow(/duplicate key|unique/i);
   });
 });
