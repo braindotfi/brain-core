@@ -170,7 +170,11 @@ they slot into the snapshot):
 1. **x402 payment-context validation** — the x402 `paymentRequirements`
    (amount, asset=USDC, network=Base, recipient) match the PaymentIntent.
 2. **Escrow-state binding** — for escrow settlements, the on-chain escrow lock
-   state matches the intent (amount, parties, job-id hash) before release.
+   matches the intent before release: still `Locked`, enough **remaining**
+   (`amount − released − refunded`) to cover this release (the escrow settles
+   incrementally — milestones / dispute-splits — so binding against `remaining`,
+   not the total `amount`, is what lets a second milestone through), same parties
+   and job-id hash.
 3. **Agent-counterparty attestation** — when the payee is an agent, it is
    registered + attested in `BrainMCPAgentRegistry` and not paused.
 4. **Micropayment cumulative cap** — per-agent rolling-window spend stays within

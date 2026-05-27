@@ -21,6 +21,14 @@ immediately. A payer locks USDC against a hashed commitment of the job terms; th
 funds release to the payee when the job is attested complete, or refund to the
 payer on timeout / dispute.
 
+Settlement is **incremental**: `release` and `refund` each move a partial amount
+(`amount` ≤ remaining), so a single lock supports **milestone payments** (release
+in stages as work lands) and **arbiter dispute-splits** (release part to the
+payee, refund the rest to the payer). The escrow stays `Locked` until
+`released + refunded` reaches the full locked `amount`, at which point it becomes
+`Settled` (terminal). An id therefore settles **exactly once in aggregate**, never
+in a single mandatory all-or-nothing move.
+
 It does **not** create a second money path. Every escrow lock and release still
 originates from a `PaymentIntent` that passes the **§6 deterministic gate** and is
 audited (RFC 0001 §2 — never fork the payment path). The contract is the
@@ -36,10 +44,16 @@ On-chain we store **only** what is non-reversible-to-PII:
 | `payer`        | `address` | Funder (buyer/agent).                                      |
 | `payee`        | `address` | Beneficiary on release (seller/agent).                     |
 | `token`        | `address` | ERC-20 settled — USDC on Base (D-4).                       |
-| `amount`       | `uint256` | Locked amount (token base units).                          |
+| `amount`       | `uint256` | Total locked amount (token base units).                    |
+| `released`     | `uint256` | Cumulative amount transferred to the payee.                |
+| `refunded`     | `uint256` | Cumulative amount returned to the payer.                   |
 | `jobTermsHash` | `bytes32` | keccak256 **commitment** of the off-chain job terms.       |
 | `deadline`     | `uint64`  | Unix seconds; after it the payer may self-refund.          |
-| `state`        | `enum`    | `None / Locked / Released / Refunded`.                     |
+| `state`        | `enum`    | `None / Locked / Settled`.                                 |
+
+`remaining = amount - released - refunded` is the unsettled balance (derived, not
+stored). Each `release` / `refund` is bounded by `remaining`; the escrow flips to
+`Settled` exactly when `remaining` reaches 0.
 
 There is **no `string` anywhere on the ABI** — enforced by
 `scripts/check-no-onchain-pii.mjs` in CI. Job descriptions, invoices, identities,
@@ -49,17 +63,24 @@ keeps Brain GDPR-compatible against an immutable, un-erasable ledger.
 ## 3. State machine
 
 ```
-            lock()                 release()  (payer | arbiter)
-   None ───────────────▶ Locked ─────────────────────────────▶ Released  (terminal)
+                       release(amt)  (payer | arbiter)  ─┐  each ≤ remaining;
+                       refund(amt)   (arbiter | payer    │  escrow stays Locked
+            lock()                    after deadline)    │  while remaining > 0
+   None ───────────────▶ Locked ◀───────────────────────┘
                             │
-                            │       refund()   (arbiter any time |
-                            └─────────────────  payer after deadline) ──▶ Refunded (terminal)
+                            │  when released + refunded == amount
+                            ▼
+                         Settled  (terminal)
 ```
 
 - An `escrowId` is **single-use**: once it leaves `None` it can never return, so a
   settled id cannot be replayed.
-- `Released` and `Refunded` are terminal — an escrow settles **exactly once**
-  (no release-then-refund, no double release).
+- `release` and `refund` are **incremental** — each moves `amount ≤ remaining`
+  and the escrow stays `Locked` while `remaining > 0`. This is what enables
+  milestone payments and dispute-splits (mix releases and refunds on one lock).
+- `Settled` is terminal — reached exactly when `released + refunded == amount`.
+  After it, any further `release` / `refund` reverts (`EscrowNotLocked`). Total
+  out ≤ `amount` always, so an escrow can never over-pay.
 
 ## 4. Authorization matrix
 
@@ -76,14 +97,20 @@ in production). It is Brain's attester / dispute resolver. There is deliberately
 ## 5. Security properties (asserted in tests)
 
 1. **Solvency / funds conservation** — the contract's token balance always equals
-   the sum of currently-`Locked` amounts. Funds are never created or destroyed;
-   every deposit is held, released to the payee, or refunded to the payer
-   (`invariant_solvency`).
-2. **Settle-once** — a `Locked` escrow transitions to exactly one terminal state;
-   double-release and release-then-refund both revert (`EscrowNotLocked`).
+   the sum of every escrow's outstanding (`amount - released - refunded`) balance,
+   under any interleaving of locks and **partial** releases. Funds are never
+   created or destroyed; every deposit is held, released to the payee, or refunded
+   to the payer (`invariant_solvency`, with a partial-release handler).
+2. **No over-payment / settle-once-in-aggregate** — each `release` / `refund` is
+   bounded by `remaining` (`AmountExceedsRemaining` otherwise), so cumulative
+   `released + refunded` can never exceed `amount`. Once it equals `amount` the
+   escrow is `Settled` and every further `release` / `refund` reverts
+   (`EscrowNotLocked`) — no double-spend past the locked total.
 3. **Authorization** — only payer/arbiter release; only arbiter (or payer
    after deadline) refunds; strangers revert (`NotAuthorized` /
-   `DeadlineNotReached`).
+   `DeadlineNotReached`). The arbiter can split a disputed lock (partial release +
+   partial refund) but only ever to the **designated** payee / payer — never to an
+   arbitrary address.
 4. **Reentrancy-safe** — a `nonReentrant` latch plus checks-effects-interactions
    (terminal state set **before** the external token transfer). A malicious token
    that reenters `release` during its `transfer` cannot double-spend (proven with
@@ -94,12 +121,18 @@ in production). It is Brain's attester / dispute resolver. There is deliberately
 
 ## 6. Relationship to the rest of Brain
 
-- **§6 gate (escrow-state binding).** RFC 0001 §6 lists an _escrow-state-binding_
-  check (deferred from Phase 2B). When wired, the gate reads `getEscrow(escrowId)`
-  and binds the `PaymentIntent` to the on-chain lock — amount, parties, and
-  `jobTermsHash` must match before a release is gated through. `getEscrow` exposes
-  exactly those fields for that purpose. **TODO(brain-hardening):** add the
-  escrow-state-binding gate check + its loader (mirrors checks 6.5/3.5).
+- **§6 gate (escrow-state binding, check 6.6).** The gate reads
+  `getEscrow(escrowId)` and binds the `PaymentIntent` to the on-chain lock before
+  a release is gated through: still `Locked`, enough **remaining** balance to
+  cover this release (`remaining >= intent.amount` — _not_ an exact match against
+  the total `amount`, which would reject every milestone after the first), same
+  payee (== the counterparty's on-chain address), same `jobTermsHash`. The chain
+  read is injected (`resolveEscrowState`); the gate in `@brain/shared` never
+  touches the chain. The shared type contract is `shared/src/gate/escrow-binding.ts`
+  (`ResolvedEscrowState` carries `amount` / `released` / `refunded` / `remaining`).
+  The on-chain reader itself (BrainEscrow.getEscrow via viem) is the deferred
+  live-wiring — **TODO(brain-hardening):** implement `resolveEscrowState` in
+  services/policy.
 - **x402 rail vs escrow.** The simple x402 settlement (immediate USDC transfer)
   uses the existing session-key `BrainSmartAccount` path (RFC 0001 §7.5) — no new
   contract. `BrainEscrow` is only for _conditional_ settlement (job must complete
@@ -131,7 +164,13 @@ Before any mainnet deployment an external auditor must review at minimum:
 ## 8. Explicitly out of scope (this pass)
 
 - ERC-4337 / Coinbase Smart Wallet / paymaster interop (RFC 0001 §7.5 — Phase 4).
-- Partial release / milestone payments, multi-asset escrows, on-chain dispute
-  arbitration beyond the single arbiter.
-- Mainnet deployment (audit-gated) and the §6 escrow-state-binding gate check
-  (separate follow-up).
+- Multi-asset escrows (one lock = one token; D-4 is USDC-only) and on-chain
+  dispute arbitration beyond the single arbiter (the arbiter resolves disputes
+  off-chain and settles via partial release + refund).
+- Mainnet deployment (audit-gated) and the live `resolveEscrowState` on-chain
+  reader that wires gate check 6.6 (separate follow-up).
+
+> **Now in scope (this revision):** partial release / refund — milestone payments
+> and arbiter dispute-splits. The gate's escrow-state binding (check 6.6) and its
+> shared types were updated to bind against `remaining` rather than the total
+> locked `amount`.

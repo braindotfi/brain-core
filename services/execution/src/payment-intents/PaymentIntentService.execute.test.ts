@@ -530,13 +530,17 @@ describe("PaymentIntentService.execute — escrow gate-loader pass-through (3E-2
       resolvePrincipal: async () => GATE_PRINCIPAL,
       resolveEscrowState: async (_ctx, input) => {
         calls.push(input.escrowId);
-        // Locked + right amount/terms, but a DIFFERENT payee → 6.6 must reject.
+        // Locked + enough remaining + right terms, but a DIFFERENT payee → 6.6
+        // must reject (only the payee mismatch trips the binding).
         return {
           state: "Locked",
           payer: "0x" + "cd".repeat(20),
           payee: "0x" + "99".repeat(20),
           token: "0x" + "ef".repeat(20),
           amount: "10.00",
+          released: "0",
+          refunded: "0",
+          remaining: "10.00",
           jobTermsHash: TERMS,
         };
       },

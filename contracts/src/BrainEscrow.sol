@@ -15,22 +15,25 @@ interface IERC20Minimal {
 /// @title BrainEscrow
 /// @notice x402 / M2M settlement escrow on Base (RFC 0001 §7.6). A payer locks
 ///         USDC for a payee against a hashed job commitment; funds release to the
-///         payee when the job is attested complete, or refund to the payer on
-///         timeout / arbiter dispute. Every settlement still flows through the
-///         off-chain PaymentIntent → §6 gate → audit path — this contract is the
-///         on-chain settlement venue, never an un-gated money path.
+///         payee or refund to the payer **incrementally** — supporting milestone
+///         payments and arbiter dispute-splits (release part to the payee, refund
+///         the rest to the payer). An escrow is `Settled` once
+///         `released + refunded == amount`. Every settlement still flows through
+///         the off-chain PaymentIntent → §6 gate → audit path — this contract is
+///         the on-chain settlement venue, never an un-gated money path.
 /// @dev    ⚠️ UNAUDITED — NOT FOR MAINNET. Pre-audit reference implementation
-///         (RFC 0001 §9: "Audit required before mainnet"). It MUST pass an
-///         external security audit before ANY mainnet deployment; testnet
-///         (Base Sepolia) only until then. Immutable by design — no admin, no
-///         upgrade path, no pause. Hash-only (RFC 0001 §3): no string / PII on
-///         the ABI; the only job datum on-chain is `jobTermsHash`.
+///         (RFC 0001 §9: "Audit required before mainnet"). Base Sepolia testnet
+///         only until an external audit clears. Immutable — no admin, no upgrade,
+///         no pause. Hash-only (RFC 0001 §3): no string / PII on the ABI; the
+///         only job datum on-chain is `jobTermsHash`.
 contract BrainEscrow is IBrainEscrow {
     struct Escrow {
         address payer;
         address payee;
         address token;
-        uint256 amount;
+        uint256 amount; // total locked
+        uint256 released; // cumulative transferred to the payee
+        uint256 refunded; // cumulative returned to the payer
         bytes32 jobTermsHash;
         uint64 deadline;
         State state;
@@ -44,8 +47,7 @@ contract BrainEscrow is IBrainEscrow {
     ///      so a settled id can never be reused (replay-safe).
     mapping(bytes32 => Escrow) private _escrows;
 
-    /// @dev Non-reentrancy latch (1 = idle, 2 = entered). Cheaper than a bool
-    ///      flip-flop's cold/warm pattern and explicit for auditors.
+    /// @dev Non-reentrancy latch (1 = idle, 2 = entered).
     uint256 private _entered = 1;
 
     modifier nonReentrant() {
@@ -84,6 +86,8 @@ contract BrainEscrow is IBrainEscrow {
             payee: payee,
             token: token,
             amount: amount,
+            released: 0,
+            refunded: 0,
             jobTermsHash: jobTermsHash,
             deadline: deadline,
             state: State.Locked
@@ -93,26 +97,31 @@ contract BrainEscrow is IBrainEscrow {
     }
 
     /// @inheritdoc IBrainEscrow
-    function release(bytes32 escrowId) external override nonReentrant {
+    function release(bytes32 escrowId, uint256 amount) external override nonReentrant {
         Escrow storage e = _escrows[escrowId];
         if (e.state != State.Locked) revert EscrowNotLocked(escrowId);
-        // Happy path: the payer confirms delivery. Dispute path: the arbiter
-        // attests completion. No one else can move the funds.
+        // Happy path: the payer confirms (a milestone of) delivery. Dispute path:
+        // the arbiter attests / resolves. No one else can move the funds.
         if (msg.sender != e.payer && msg.sender != arbiter) revert NotAuthorized();
+        if (amount == 0) revert ZeroAmount();
 
-        // Checks-effects-interactions: mark terminal BEFORE the external transfer
-        // so a reentrant release/refund hits State.Released and reverts.
-        e.state = State.Released;
+        uint256 remaining = e.amount - e.released - e.refunded;
+        if (amount > remaining) revert AmountExceedsRemaining(escrowId, amount, remaining);
+
+        // Checks-effects-interactions: account + (maybe) settle BEFORE the
+        // external transfer, so a reentrant call sees the updated state.
+        e.released += amount;
+        bool settled = e.released + e.refunded == e.amount;
+        if (settled) e.state = State.Settled;
         address payee = e.payee;
         address token = e.token;
-        uint256 amount = e.amount;
 
         _safeTransfer(token, payee, amount);
-        emit EscrowReleased(escrowId, msg.sender, amount);
+        emit EscrowReleased(escrowId, msg.sender, amount, settled);
     }
 
     /// @inheritdoc IBrainEscrow
-    function refund(bytes32 escrowId) external override nonReentrant {
+    function refund(bytes32 escrowId, uint256 amount) external override nonReentrant {
         Escrow storage e = _escrows[escrowId];
         if (e.state != State.Locked) revert EscrowNotLocked(escrowId);
         // Arbiter may refund any time (dispute); the payer may self-refund only
@@ -123,14 +132,19 @@ contract BrainEscrow is IBrainEscrow {
             if (msg.sender == e.payer) revert DeadlineNotReached(e.deadline);
             revert NotAuthorized();
         }
+        if (amount == 0) revert ZeroAmount();
 
-        e.state = State.Refunded;
+        uint256 remaining = e.amount - e.released - e.refunded;
+        if (amount > remaining) revert AmountExceedsRemaining(escrowId, amount, remaining);
+
+        e.refunded += amount;
+        bool settled = e.released + e.refunded == e.amount;
+        if (settled) e.state = State.Settled;
         address payer = e.payer;
         address token = e.token;
-        uint256 amount = e.amount;
 
         _safeTransfer(token, payer, amount);
-        emit EscrowRefunded(escrowId, msg.sender, amount);
+        emit EscrowRefunded(escrowId, msg.sender, amount, settled);
     }
 
     /// @inheritdoc IBrainEscrow
@@ -143,20 +157,33 @@ contract BrainEscrow is IBrainEscrow {
             address payee,
             address token,
             uint256 amount,
+            uint256 released,
+            uint256 refunded,
             bytes32 jobTermsHash,
             uint64 deadline,
             State state
         )
     {
         Escrow storage e = _escrows[escrowId];
-        return (e.payer, e.payee, e.token, e.amount, e.jobTermsHash, e.deadline, e.state);
+        return (
+            e.payer,
+            e.payee,
+            e.token,
+            e.amount,
+            e.released,
+            e.refunded,
+            e.jobTermsHash,
+            e.deadline,
+            e.state
+        );
     }
 
     /// @dev SafeERC20-style transfer: tolerates tokens that return no data
     ///      (non-standard) and those that return a bool. Reverts on a false
     ///      return or a failed call. USDC returns bool true.
     function _safeTransfer(address token, address to, uint256 amount) private {
-        (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20Minimal.transfer.selector, to, amount));
+        (bool ok, bytes memory data) =
+            token.call(abi.encodeWithSelector(IERC20Minimal.transfer.selector, to, amount));
         if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert TransferFailed();
     }
 
