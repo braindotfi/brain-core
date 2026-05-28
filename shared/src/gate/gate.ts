@@ -675,7 +675,14 @@ export async function runPreExecutionGate(
   //   available_balance - SUM(active reservations) >= amount
   // i.e. available_balance >= amount + reserved. Reservations are read-only here,
   // so the same check holds in dry-run.
-  if (account.available_balance !== null) {
+  // x402_settle and escrow_release settle from on-chain wallet / locked funds,
+  // not a ledger account — balance enforcement is at the rail layer.
+  if (
+    input.intent.action_type === "x402_settle" ||
+    input.intent.action_type === "escrow_release"
+  ) {
+    pass(checks, 8, "available_balance_sufficient", { not_applicable: true });
+  } else if (account.available_balance !== null) {
     if (account.currency !== input.intent.currency) {
       return failGate(8, "available_balance_sufficient", {
         reason: "currency mismatch between account and intent",
@@ -690,8 +697,10 @@ export async function runPreExecutionGate(
         reserved,
       });
     }
+    pass(checks, 8, "available_balance_sufficient");
+  } else {
+    pass(checks, 8, "available_balance_sufficient");
   }
-  pass(checks, 8, "available_balance_sufficient");
 
   // 8.5 — micropayment cumulative cap (RFC 0001 §6.4). Active ONLY when BOTH the
   // policy envelope (`micropayment_window_cap`) and the window-spend reader are

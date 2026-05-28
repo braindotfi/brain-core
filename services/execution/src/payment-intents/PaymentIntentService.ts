@@ -661,6 +661,29 @@ export class PaymentIntentService implements IPaymentIntentService {
       }
     }
 
+    // For x402 settle, merge the rail fields the worker needs: asset, network, pay_to.
+    // The NETWORK "base" matches the constant in x402-base.ts; the env BRAIN_X402_NETWORK
+    // is informational for the facilitator client only.
+    if (intent.action_type === "x402_settle") {
+      payload["asset"] = intent.currency;
+      payload["network"] = "base";
+      if (intent.settlement_pay_to !== null) {
+        payload["pay_to"] = intent.settlement_pay_to;
+      }
+    }
+
+    // For escrow release, merge the on-chain lock identifiers and convert the
+    // decimal amount to USDC base units (6 decimals) for BrainEscrow.release().
+    if (intent.action_type === "escrow_release") {
+      if (intent.escrow_id !== null) payload["escrow_id"] = intent.escrow_id;
+      if (intent.job_terms_hash !== null) payload["job_terms_hash"] = intent.job_terms_hash;
+      // Convert decimal amount string to USDC units (multiply by 1e6, no floats).
+      const parts = intent.amount.split(".");
+      const intPart = parts[0] ?? "0";
+      const fracPart = (parts[1] ?? "").slice(0, 6).padEnd(6, "0");
+      payload["amount_units"] = String(BigInt(intPart) * 1_000_000n + BigInt(fracPart));
+    }
+
     // For ACH intents, merge the provider credentials (e.g. Plaid access_token)
     // into the outbox payload so the worker can dispatch without a second lookup.
     // Credentials are never included in the gate trace, audit-before, or audit-after.
