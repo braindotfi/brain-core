@@ -187,6 +187,13 @@ Resources are read-only typed identifiers. Brain exposes:
 | `brain://ledger/payment-intents/{id}`          | PaymentIntent row + PolicyDecision |
 | `brain://wiki/pages/{slug}`                    | Wiki page (markdown body)          |
 | `brain://audit/events/{id}`                    | Audit event with inclusion proof   |
+| `brain://payments/action_types`                | PaymentIntent action_type catalog  |
+
+The action-type catalog is a static document of the propose vocabulary:
+each `action_type` plus the extra fields the propose tool requires
+(e.g. `x402_settle` needs `pay_to`; `escrow_release` needs `escrow_id` +
+`job_terms_hash`). On-chain settlement types are requested by NAME —
+there is no implicit resolver from `onchain_transfer`.
 
 Resources are syntactic sugar over the equivalent tools, useful for
 clients that want stable URIs they can pin in their reasoning context.

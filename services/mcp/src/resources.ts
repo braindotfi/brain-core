@@ -42,7 +42,45 @@ export const RESOURCE_DESCRIPTORS: ReadonlyArray<ResourceDescriptor> = [
     description: "Memory page (markdown body).",
     mimeType: "text/markdown",
   },
+  {
+    uri: "brain://payments/action_types",
+    name: "PaymentIntent action types",
+    description: "Canonical action_type vocabulary + required fields for payment_intent.propose.",
+    mimeType: "application/json",
+  },
 ];
+
+/**
+ * Canonical payment-intent action-type vocabulary, served read-only so an agent
+ * can discover exactly what to send to payment_intent.propose. On-chain
+ * settlement types are requested by NAME — there is no implicit
+ * onchain_transfer→x402/escrow resolver — and each lists the extra fields the
+ * propose tool requires (validated identically on the HTTP route).
+ */
+const ACTION_TYPE_CATALOG = {
+  description:
+    "action_type vocabulary for payment_intent.propose. On-chain settlement types are named explicitly (no implicit resolver from onchain_transfer).",
+  action_types: [
+    { action_type: "ach_outbound", currency: "ISO-4217 (3-letter)", required_fields: [] },
+    { action_type: "ach_inbound", currency: "ISO-4217 (3-letter)", required_fields: [] },
+    { action_type: "wire", currency: "ISO-4217 (3-letter)", required_fields: [] },
+    { action_type: "card_payment", currency: "ISO-4217 (3-letter)", required_fields: [] },
+    { action_type: "erp_writeback", currency: "ISO-4217 (3-letter)", required_fields: [] },
+    { action_type: "onchain_transfer", currency: "ISO-4217 (3-letter)", required_fields: [] },
+    {
+      action_type: "x402_settle",
+      currency: "USDC",
+      required_fields: ["pay_to"],
+      note: "pay_to = 0x EVM recipient; §6 gate check 6.5 re-validates it against the counterparty address.",
+    },
+    {
+      action_type: "escrow_release",
+      currency: "USDC",
+      required_fields: ["escrow_id", "job_terms_hash"],
+      note: "0x bytes32 escrow_id + job_terms_hash; §6 gate check 6.6 binds them to the on-chain BrainEscrow lock.",
+    },
+  ],
+} as const;
 
 export interface ResourceScopeRequirement {
   scopes: string[];
@@ -124,6 +162,16 @@ export async function readResource(
         },
       };
     }
+    case "payments.action_types": {
+      return {
+        requiredScopes: ["payment_intent:propose"],
+        result: {
+          contents: [
+            { uri, mimeType: "application/json", text: JSON.stringify(ACTION_TYPE_CATALOG, null, 2) },
+          ],
+        },
+      };
+    }
   }
 }
 
@@ -133,7 +181,8 @@ interface ParsedBrainUri {
     | "ledger.transaction"
     | "ledger.obligation"
     | "ledger.payment_intent"
-    | "wiki.page";
+    | "wiki.page"
+    | "payments.action_types";
   id: string;
 }
 
@@ -147,6 +196,10 @@ export function parseBrainUri(uri: string): ParsedBrainUri | null {
   if (!uri.startsWith("brain://")) return null;
   const rest = uri.slice("brain://".length).replace(/\/+$/, "");
   const segments = rest.split("/");
+  // Collection-level resource (no id): the static action-type catalog.
+  if (segments.length === 2 && segments[0] === "payments" && segments[1] === "action_types") {
+    return { kind: "payments.action_types", id: "" };
+  }
   if (segments.length < 3) return null;
   const [layer, collection, id] = segments;
   if (layer === "ledger" && collection === "accounts" && id) return { kind: "ledger.account", id };
