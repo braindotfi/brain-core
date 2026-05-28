@@ -278,6 +278,27 @@ export async function transitionAgent(
   return row;
 }
 
+/**
+ * Promote a `pending_onchain` agent to `active` after its BrainMCPAgentRegistry
+ * scope attestation confirms — recording the attestation tx hash. Conditional on
+ * the row still being `pending_onchain` (idempotent: returns null if it isn't, so
+ * a duplicate relay does not error or re-stamp). RFC 0002 Phase C.
+ */
+export async function markAgentRegistered(
+  client: TenantScopedClient,
+  id: string,
+  txHash: string,
+): Promise<AgentRow | null> {
+  const { rows } = await client.query<AgentRow>(
+    `UPDATE agents
+        SET state = 'active', registered_tx = $2, registered_at = now()
+      WHERE id = $1 AND state = 'pending_onchain'
+      RETURNING *`,
+    [id, txHash],
+  );
+  return rows[0] ?? null;
+}
+
 // ---------- users ----------
 
 export interface UserRow {
