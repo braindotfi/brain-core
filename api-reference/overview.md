@@ -11,10 +11,10 @@ Brain exposes a **REST + JSON-RPC HTTP surface** and an **MCP server surface**. 
 
 ### Authentication
 
-| Caller     | Mechanism                                             |
-| ---------- | ----------------------------------------------------- |
-| **Humans** | OAuth / SSO (Auth0)                                   |
-| **Agents** | SIWX (EIP-4361 over Base) + EIP-712 ScopeAttestations |
+| Caller     | Mechanism                                              |
+| ---------- | ------------------------------------------------------ |
+| **Humans** | Self-serve email + password, or a linked wallet (SIWX) |
+| **Agents** | SIWX (EIP-4361 over Base) + EIP-712 ScopeAttestations  |
 
 [**→ Authentication reference**](authentication.md)
 

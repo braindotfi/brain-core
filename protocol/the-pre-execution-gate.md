@@ -53,6 +53,20 @@ Four further deterministic checks were added as hardening, each inserted at its 
 
 These persist into the `gate_checks` snapshot on the audit-before event, so the full 17-entry trace is part of the verifiable Proof artifact.
 
+### M2M / x402 settlement checks (dormant until wired)
+
+For agent-to-agent settlement (x402 USDC-on-Base and `BrainEscrow` releases), RFC 0001 adds five further deterministic checks at positions 3.5, 5.5, 6.5, 6.6, 8.5. Each is **dormant-until-wired**: it adds a row only when the PaymentIntent carries the relevant settlement/escrow context **and** its (deferred) on-chain loader is configured — otherwise it records nothing and the canonical 13 + 4 path is unchanged. None is a money path of its own; each only tightens an already-gated settlement.
+
+| Check                                    | What It Enforces                                                                                                                                            | Reads From                        |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| **On-chain-settlement permitted** (3.5)  | The payment class is allowed to settle on-chain for this tenant (else it must route off-chain)                                                              | policy dimension                  |
+| **Agent-counterparty attested** (5.5)    | When the payee is an agent, it is registered + active in `BrainMCPAgentRegistry`                                                                            | `BrainMCPAgentRegistry`           |
+| **x402 payment-context valid** (6.5)     | The x402 `paymentRequirements` (amount, asset = USDC, network = Base, recipient) match the intent                                                           | intent settlement context         |
+| **Escrow-state bound** (6.6)             | For an escrow release, the on-chain `BrainEscrow` lock matches: still `Locked`, enough **remaining** to cover this release, same payee, same `jobTermsHash` | `BrainEscrow.getEscrow` (testnet) |
+| **Micropayment cap within window** (8.5) | Per-agent rolling-window spend stays within the policy envelope (mirrors the on-chain session-key window cap)                                               | `executions`                      |
+
+The on-chain readers for 3.5 / 5.5 / 6.6 / 8.5 are deferred live-wiring; until they are configured those checks stay dormant, so the gate is unchanged for non-settlement payments.
+
 ### Audit Emission
 
 The gate emits two audit events per step.
