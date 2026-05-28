@@ -40,9 +40,9 @@ language Q&A orchestrator, the Phase-5 page rendering system (8 generators +
 
 Layer 3 in the six-layer model. Dual responsibility per `Brain_MVP_Architecture.md` §3:
 
-1. **Bitemporal entity/relation graph** — `wiki_entities` + `wiki_relations` store human-readable, temporally versioned facts whose canonical record lives in another service (post-v0.3, only `policy` and `agent` pointer types remain in the graph; financial-truth kinds moved to Ledger in migration 0003).
+1. **Bitemporal entity/relation graph**. `wiki_entities` + `wiki_relations` store human-readable, temporally versioned facts whose canonical record lives in another service (post-v0.3, only `policy` and `agent` pointer types remain in the graph; financial-truth kinds moved to Ledger in migration 0003).
 
-2. **Narrative memory + Q&A** — `WikiPageService` renders markdown pages on demand from Ledger state; `askWiki` answers natural-language questions grounded in live Ledger rows (not Wiki text). `/memory/search` uses pgvector cosine similarity over `body_embedding`.
+2. **Narrative memory + Q&A**. `WikiPageService` renders markdown pages on demand from Ledger state; `askWiki` answers natural-language questions grounded in live Ledger rows (not Wiki text). `/memory/search` uses pgvector cosine similarity over `body_embedding`.
 
 Layer boundary invariants (per `CLAUDE.md`):
 - Wiki may read Ledger tables (sanctioned cross-service read via `TenantScopedClient`).
@@ -59,16 +59,16 @@ Fully implemented. `insertEntity` closes the predecessor's `valid_to` atomically
 
 **Kind narrowing (migration 0003):** The `wiki_entities.kind` CHECK constraint was narrowed in migration 0003 from `{account, counterparty, transaction, obligation, policy, agent}` to `{policy, agent}` only. The migration dynamically discovers and drops the v0.1 constraint before adding the v0.3 one.
 
-The source migration file (`0001_wiki_entities.sql`) still lists the broader set in a comment from when it was originally written — the live constraint is determined by migration 0003, not 0001.
+The source migration file (`0001_wiki_entities.sql`) still lists the broader set in a comment from when it was originally written. The live constraint is determined by migration 0003, not 0001.
 
 ### 3.2 Q&A orchestrator
 
 `askWiki` is implemented end-to-end:
 1. Checks Redis cache (5-minute TTL, SHA-256 dedup key over question + asOf + tenantId + model).
-2. Pulls bounded Ledger rows via three parameterized SELECTs (30 transactions, 15 obligations, 15 counterparties) — all reads, never writes.
+2. Pulls bounded Ledger rows via three parameterized SELECTs (30 transactions, 15 obligations, 15 counterparties). All reads, never writes.
 3. Composes evidence context as a string of typed IDs.
 4. Calls `LlmAdapter.complete` with temperature=0, 15s timeout.
-5. Filters the LLM's `evidence_ids` against the retrieved set (§11.2 prompt-injection mitigation — the LLM can only cite what it was shown).
+5. Filters the LLM's `evidence_ids` against the retrieved set (§11.2 prompt-injection mitigation. The LLM can only cite what it was shown).
 6. Caches result, emits latency + cost metrics.
 
 **Ledger reads are sanctioned:** The orchestrator reads `ledger_transactions`, `ledger_obligations`, `ledger_counterparties` directly via `TenantScopedClient`. This is the documented cross-service read exception for the Wiki layer (CLAUDE.md §"Data-Flow Rules").
@@ -108,8 +108,8 @@ There are **two annotation concepts** with the same name:
 
 | Surface | Target | Status |
 |---------|--------|--------|
-| `POST /wiki/annotate` (HTTP route) | `{policy, agent}` wiki entities and relations | **Working** — writes to `wiki_entities`/`wiki_relations`, rate-limited |
-| `IWikiMemoryService.annotate` (internal contract) | Ledger kinds (`ledger_account`, `ledger_transaction`, etc.) — write-through path | **Stubbed** — throws `internal_server_error` unconditionally (R-16 confirmed) |
+| `POST /wiki/annotate` (HTTP route) | `{policy, agent}` wiki entities and relations | **Working**. Writes to `wiki_entities`/`wiki_relations`, rate-limited |
+| `IWikiMemoryService.annotate` (internal contract) | Ledger kinds (`ledger_account`, `ledger_transaction`, etc.). Write-through path | **Stubbed**. Throws `internal_server_error` unconditionally (R-16 confirmed) |
 
 The MCP `wiki.annotate` tool calls `IWikiMemoryService.annotate` (the stub), so the MCP path always returns 500. The HTTP `POST /wiki/annotate` route is unrelated and works for `policy`/`agent` kinds.
 
@@ -121,7 +121,7 @@ The MCP `wiki.annotate` tool calls `IWikiMemoryService.annotate` (the stub), so 
 
 Live grep confirms zero matches.
 
-**H-14 role isolation** (`migration 0005_wiki_role.sql`): creates `brain_wiki_reader` with `SELECT` on all tables but `INSERT/UPDATE/DELETE` only on `wiki_entities`, `wiki_pages`, `wiki_relations`. This makes the no-write invariant physical at the Postgres permission level — a wiki code path attempting to write `ledger_*` would receive a Postgres permission error. **Unverified against live DB** (requires `psql` + role inspection).
+**H-14 role isolation** (`migration 0005_wiki_role.sql`): creates `brain_wiki_reader` with `SELECT` on all tables but `INSERT/UPDATE/DELETE` only on `wiki_entities`, `wiki_pages`, `wiki_relations`. This makes the no-write invariant physical at the Postgres permission level. A wiki code path attempting to write `ledger_*` would receive a Postgres permission error. **Unverified against live DB** (requires `psql` + role inspection).
 
 ---
 
@@ -140,13 +140,13 @@ $ pnpm --filter @brain/wiki run test
  Tests 36 passed (8 files)
 
 $ pnpm --filter @brain/wiki run typecheck
-(no output — clean)
+(no output. Clean)
 
 $ node scripts/check-wiki-no-ledger-write.mjs services/wiki/src
 wiki-no-ledger-write guard: OK
 ```
 
-**Integration tests:** `vitest.integration.config.ts` exists but `passWithNoTests: true` — zero integration tests are present. No happy-path or error-path HTTP integration coverage for any wiki route.
+**Integration tests:** `vitest.integration.config.ts` exists but `passWithNoTests: true`. Zero integration tests are present. No happy-path or error-path HTTP integration coverage for any wiki route.
 
 **Embedding path untested:** `WikiPageService.search` and `regenerate` call `EmbeddingAdapter.embed`; tests mock the adapter. The ivfflat index at `lists=50` would require at least ~2500 vectors to be useful per Postgres docs, but this is a tuning gap, not a correctness bug.
 
@@ -156,7 +156,7 @@ wiki-no-ledger-write guard: OK
 
 **Mostly Working**
 
-The bitemporal graph, annotation rate-limiter, page rendering (8 generators), and Q&A orchestrator are all implemented and type-clean. 36 unit tests pass. The `IWikiMemoryService.annotate` (Ledger write-through path) is intentionally stubbed and causes all MCP `wiki.annotate` invocations to return 500. The `/memory/search` pgvector path depends on Ledger data being populated (requires `normalizeWorker` pipeline to be operational — see R-19 in `services/raw-and-ledger.md`). Integration test coverage is zero.
+The bitemporal graph, annotation rate-limiter, page rendering (8 generators), and Q&A orchestrator are all implemented and type-clean. 36 unit tests pass. The `IWikiMemoryService.annotate` (Ledger write-through path) is intentionally stubbed and causes all MCP `wiki.annotate` invocations to return 500. The `/memory/search` pgvector path depends on Ledger data being populated (requires `normalizeWorker` pipeline to be operational. See R-19 in `services/raw-and-ledger.md`). Integration test coverage is zero.
 
 ---
 
@@ -174,19 +174,19 @@ The bitemporal graph, annotation rate-limiter, page rendering (8 generators), an
 
 ## 7. Missing Pieces
 
-1. **`IWikiMemoryService.annotate` write-through path** — deferred to "refactor-4". Any MCP agent calling `wiki.annotate` gets `internal_server_error`. The HTTP `POST /wiki/annotate` route (policy/agent kinds only) is unrelated and works. (R-16, confirmed)
+1. **`IWikiMemoryService.annotate` write-through path**. Deferred to "refactor-4". Any MCP agent calling `wiki.annotate` gets `internal_server_error`. The HTTP `POST /wiki/annotate` route (policy/agent kinds only) is unrelated and works. (R-16, confirmed)
 
-2. **Zero integration tests** — `vitest.integration.config.ts` exists with `passWithNoTests: true`. No happy-path or error-path coverage for `/wiki/entity/*`, `/wiki/search`, `/wiki/annotate`, `/wiki/question`, `/memory/*`. Integration coverage is a §7.1 Engineering Standards obligation.
+2. **Zero integration tests**. `vitest.integration.config.ts` exists with `passWithNoTests: true`. No happy-path or error-path coverage for `/wiki/entity/*`, `/wiki/search`, `/wiki/annotate`, `/wiki/question`, `/memory/*`. Integration coverage is a §7.1 Engineering Standards obligation.
 
-3. **`listPages` lacks FTS index** — the `q` filter uses `LOWER(body_md) LIKE $n` with no full-text index. A corpus of 1000+ pages would produce sequential scans.
+3. **`listPages` lacks FTS index**. The `q` filter uses `LOWER(body_md) LIKE $n` with no full-text index. A corpus of 1000+ pages would produce sequential scans.
 
-4. **`/memory/search` depends on populated embeddings** — `wiki_pages.body_embedding` is `NULL` until `regenerate` is called. On a fresh DB, `/memory/search` returns 0 results silently (the query `WHERE body_embedding IS NOT NULL` filters everything). No population job exists.
+4. **`/memory/search` depends on populated embeddings**. `wiki_pages.body_embedding` is `NULL` until `regenerate` is called. On a fresh DB, `/memory/search` returns 0 results silently (the query `WHERE body_embedding IS NOT NULL` filters everything). No population job exists.
 
-5. **`brain_wiki_reader` role application unverified** — H-14 (`migration 0005`) creates the role but live DB verification requires `psql` against a migrated instance. CI cannot confirm.
+5. **`brain_wiki_reader` role application unverified**. H-14 (`migration 0005`) creates the role but live DB verification requires `psql` against a migrated instance. CI cannot confirm.
 
-6. **ivfflat `lists=50` tuning** — Postgres IVFFlat documentation recommends `lists = rows / 1000`. At `lists=50` the index is effective only for corpora of ~50,000+ vectors. For small tenants this adds overhead with no ANN benefit. A tuning `TODO` exists in the migration comment.
+6. **ivfflat `lists=50` tuning**. Postgres IVFFlat documentation recommends `lists = rows / 1000`. At `lists=50` the index is effective only for corpora of ~50,000+ vectors. For small tenants this adds overhead with no ANN benefit. A tuning `TODO` exists in the migration comment.
 
-7. **`wiki_entities` CHECK in migration 0001 vs 0003 mismatch** — The `0001` source file still documents the old kind set as a comment. Migration 0003 correctly narrows it at runtime, but reading 0001 in isolation is misleading. Low cosmetic impact.
+7. **`wiki_entities` CHECK in migration 0001 vs 0003 mismatch**. The `0001` source file still documents the old kind set as a comment. Migration 0003 correctly narrows it at runtime, but reading 0001 in isolation is misleading. Low cosmetic impact.
 
 ---
 
@@ -202,7 +202,7 @@ poison pool asserts DB not touched on the denied path
 **Q&A evidence filtering (`orchestrator.test.ts:152–179`):**
 ```
 LLM returns evidence_ids: ["tx_01HQ7K3BBBBBBBBBBBBBBBBBBBB", "tx_NOT_RETRIEVED"]
-result.evidence maps to only ["tx_01HQ7K3BBBBBBBBBBBBBBBBBBBB"] — NOT_RETRIEVED filtered
+result.evidence maps to only ["tx_01HQ7K3BBBBBBBBBBBBBBBBBBBB"]. NOT_RETRIEVED filtered
 ```
 
 **IWikiMemoryService.annotate stub (`services/api/src/main.ts:349–354`):**
@@ -267,10 +267,10 @@ All source files read directly. CI guard executed against live source. Test suit
 - No ledger writes from wiki code (CI-guarded, grep-confirmed)
 
 **Blockers / risks:**
-- **R-16 (Medium):** `IWikiMemoryService.annotate` unconditionally throws 500 — all MCP `wiki.annotate` calls fail. This is a stub, not a regression, but any MCP agent expecting annotation capability is broken.
+- **R-16 (Medium):** `IWikiMemoryService.annotate` unconditionally throws 500. All MCP `wiki.annotate` calls fail. This is a stub, not a regression, but any MCP agent expecting annotation capability is broken.
 - **Zero integration tests (Medium):** No HTTP-layer integration coverage for any wiki route. A transport-layer regression (header parsing, serialization, auth hook) would go undetected until staging.
-- **`/memory/search` returns empty on fresh DB** — not a bug but an operational surprise: pages must be regenerated before search is useful. No seed job exists.
-- **`listPages` `q` filter degrades at scale** — sequential scan on `body_md ILIKE`.
+- **`/memory/search` returns empty on fresh DB**. Not a bug but an operational surprise: pages must be regenerated before search is useful. No seed job exists.
+- **`listPages` `q` filter degrades at scale**. Sequential scan on `body_md ILIKE`.
 
 **Non-blockers:**
 - `brain_wiki_reader` role: code verified, live DB unverified (shared risk with all RLS claims).
@@ -284,8 +284,8 @@ All source files read directly. CI guard executed against live source. Test suit
 
 Two items warrant targeted attention before production:
 
-1. **Add integration tests** (Medium priority) — `vitest.integration.config.ts` exists, the config is in place, no `.integration.test.ts` files have been written. Happy path + 401 + 429 for `/wiki/annotate`, `/wiki/question`, and `/memory/regenerate` would close the gap. Required by §7.1 of Engineering Standards.
+1. **Add integration tests** (Medium priority). `vitest.integration.config.ts` exists, the config is in place, no `.integration.test.ts` files have been written. Happy path + 401 + 429 for `/wiki/annotate`, `/wiki/question`, and `/memory/regenerate` would close the gap. Required by §7.1 of Engineering Standards.
 
-2. **Wire `IWikiMemoryService.annotate`** (Medium priority, deferred "refactor-4") — the HTTP `POST /wiki/annotate` route for wiki-resident `{policy, agent}` kinds works; the MCP write-through path for Ledger kinds is the stub. Either wire it or document that MCP agents cannot annotate Ledger entities in v0.3.
+2. **Wire `IWikiMemoryService.annotate`** (Medium priority, deferred "refactor-4"). The HTTP `POST /wiki/annotate` route for wiki-resident `{policy, agent}` kinds works; the MCP write-through path for Ledger kinds is the stub. Either wire it or document that MCP agents cannot annotate Ledger entities in v0.3.
 
-The architectural invariants (no Ledger writes, correct rate-limiting, bitemporal correctness) are sound. The existing implementation is coherent and clean. Refactoring should be additive — tests and the missing annotate write-through — not corrective.
+The architectural invariants (no Ledger writes, correct rate-limiting, bitemporal correctness) are sound. The existing implementation is coherent and clean. Refactoring should be additive. Tests and the missing annotate write-through. Not corrective.

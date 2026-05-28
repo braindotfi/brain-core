@@ -1,6 +1,6 @@
-# RFC 0001 — Autonomous Finance + Machine-to-Machine Agent Commerce on Base
+# RFC 0001. Autonomous Finance + Machine-to-Machine Agent Commerce on Base
 
-- **Status:** Accepted — implemented shadow-first (Phases 1–3 landed; see
+- **Status:** Accepted. Implemented shadow-first (Phases 1–3 landed; see
   Implementation status below).
 - **Date:** 2026-05-26 (accepted 2026-05-27)
 - **Authors:** ai-assisted
@@ -15,7 +15,7 @@
 
 ## Implementation status (2026-05-27)
 
-The off-chain spine for x402 + escrow is built and **live-in-shadow** — every
+The off-chain spine for x402 + escrow is built and **live-in-shadow**. Every
 piece fails closed until explicitly promoted; no money can move.
 
 - **Phase 1 (Ledger):** on-chain-settlement reconciliation matcher, agent
@@ -36,21 +36,21 @@ piece fails closed until explicitly promoted; no money can move.
   rolling-window spend, escrow state via `getEscrow`, the policy-VM dimensions);
   registering the `x402_base` / `escrow_base` rails at boot; and promoting a
   commerce agent into `LIVE_AGENTS`. Each gate check is **dormant** (records no
-  row) until wired — the canonical §6 path is unchanged meanwhile.
+  row) until wired. The canonical §6 path is unchanged meanwhile.
 - **Gated on external audit:** any mainnet deployment of `BrainEscrow` (§9).
-- **Phase 4 (open ecosystem):** off-chain spine shipped — the Coinbase Spend
+- **Phase 4 (open ecosystem):** off-chain spine shipped. The Coinbase Spend
   Permission ↔ session-key model + resolver (ERC-4337 / Coinbase Smart Wallet /
   CDP Paymaster interop, §7.5) and reputation as a tighten-only Policy threshold
   input (`services/policy/src/reputation.ts`). The live external SDK construction
   remains deferred wiring.
 - **Phase 5 (ERC-8004 reputation, §7.7 / D-6):** `BrainReputationRegistry`
   reference contract (**UNAUDITED / testnet-only**, **non-custodial**, hash-only)
-  — per-agent reputation pointer / Merkle root with a monotonic epoch,
+ . Per-agent reputation pointer / Merkle root with a monotonic epoch,
   attestor-written, read by Policy as a threshold input only (never a money gate,
   never a §6 precondition) + Foundry unit/fuzz/invariant tests. Shipped. The live
   on-chain `ReputationResolver` reader is deferred wiring.
 - **Gated on external audit:** any mainnet deployment of `BrainEscrow` and
-  `BrainReputationRegistry` (§9) — the registry is non-custodial but batched into
+  `BrainReputationRegistry` (§9). The registry is non-custodial but batched into
   the same audit for completeness.
 
 ## 1. Goal
@@ -62,8 +62,8 @@ account abstraction, USDC settlement, on-chain proof).
 
 ## 2. Design principle (non-negotiable)
 
-**Extend the spine; never fork the payment path.** Every money movement — ACH,
-on-chain transfer, and the new x402/agent-commerce settlement — flows through
+**Extend the spine; never fork the payment path.** Every money movement. ACH,
+on-chain transfer, and the new x402/agent-commerce settlement. Flows through
 the same chain:
 
 ```
@@ -73,7 +73,7 @@ PaymentIntent  →  §6 deterministic gate  →  rail dispatch  →  audit (Merk
 The differentiator is not "another payment rail." It is **governed, provable
 x402**: an autonomous machine payment that carries a deterministic policy
 decision and an on-chain audit proof. Ungoverned x402 is a commodity; the gate +
-audit are the moat — and M2M (autonomous, high-frequency, agent-initiated) is
+audit are the moat. And M2M (autonomous, high-frequency, agent-initiated) is
 exactly where that governance is most valuable.
 
 **Anti-goal:** a separate "fast" un-gated path for agent micropayments. If
@@ -100,12 +100,12 @@ off-chain in Postgres under RLS (and per-tenant blob prefixes).
 | -------------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------- |
 | Balances, transactions, invoices, **counterparty names**, line items | Postgres, RLS per-tenant   | ❌ never                                                        |
 | Wiki memory / narrative, reasoning traces, evidence                  | Postgres, RLS              | ❌ never                                                        |
-| **Audit event payloads** (the who/what/why)                          | Postgres, RLS              | ❌ — only the **Merkle root** is anchored (`BrainAuditAnchor`)  |
-| Policy specifics, spend envelopes                                    | Postgres + signed template | ❌ — only a **policy-version hash** (`BrainPolicyRegistry`)     |
-| Agent identity / scope / behavior                                    | Registry                   | ❌ — only `bytes32 agentId/scopeHash/behaviorHash` + address    |
-| **Escrow job terms**                                                 | Postgres                   | ❌ — only a **hash/commitment** on-chain                        |
-| **Reputation history** (ERC-8004)                                    | Postgres                   | ❌ — only a **pointer / Merkle root** on-chain                  |
-| x402/USDC **settlement: amount + payee address**                     | —                          | ✅ **intrinsic to any on-chain payment** (pseudonymous, no PII) |
+| **Audit event payloads** (the who/what/why)                          | Postgres, RLS              | ❌. Only the **Merkle root** is anchored (`BrainAuditAnchor`)  |
+| Policy specifics, spend envelopes                                    | Postgres + signed template | ❌. Only a **policy-version hash** (`BrainPolicyRegistry`)     |
+| Agent identity / scope / behavior                                    | Registry                   | ❌. Only `bytes32 agentId/scopeHash/behaviorHash` + address    |
+| **Escrow job terms**                                                 | Postgres                   | ❌. Only a **hash/commitment** on-chain                        |
+| **Reputation history** (ERC-8004)                                    | Postgres                   | ❌. Only a **pointer / Merkle root** on-chain                  |
+| x402/USDC **settlement: amount + payee address**                     |.                          | ✅ **intrinsic to any on-chain payment** (pseudonymous, no PII) |
 
 ### 3.3 Why this matters most (compliance)
 
@@ -117,7 +117,7 @@ hard compliance constraint, not a stylistic choice.
 
 ### 3.4 The genuine new exposure (and mitigations)
 
-Going more on-chain for M2M introduces real risk — not from putting data
+Going more on-chain for M2M introduces real risk. Not from putting data
 on-chain, but from the public nature of on-chain settlement:
 
 1. **Transaction-graph linkability.** On-chain USDC flows are public +
@@ -135,7 +135,7 @@ on-chain, but from the public nature of on-chain settlement:
 
 A `scripts/check-no-onchain-pii.mjs` guard (precedent: `check-gate-bypass`,
 `check-scope-vocab`) asserts that contract call sites pass only hashes /
-`bytes32` / addresses / amounts — never raw tenant/customer/invoice fields. Wired
+`bytes32` / addresses / amounts. Never raw tenant/customer/invoice fields. Wired
 into `pnpm run lint`.
 
 ## 4. What already exists (the foundation)
@@ -153,7 +153,7 @@ not greenfield:
 - **Smart account** (`contracts/src/BrainSmartAccount.sol`): a session-key model
   with on-chain **spend caps**, **`policyVersion` binding at grant time**,
   pause/revoke, and nonce replay protection. (Conceptually ≈ Coinbase **Spend
-  Permissions** — see §7.5.)
+  Permissions**. See §7.5.)
 - **On-chain footprint is already commitment-only:** `BrainAuditAnchor` anchors
   `(bytes32 tenantId, bytes32 root)`; `BrainMCPAgentRegistry` stores only
   `bytes32` ids/hashes + an address. No PII on-chain today.
@@ -173,7 +173,7 @@ not greenfield:
 | **Policy**       | **Micropayment spend envelopes** + per-agent rate limits in the signed policy template; **on-chain-settlement-allowed** flag per payment class; attestation/reputation as policy _inputs_ (informing thresholds, never replacing the gate). |
 | **Agent**        | x402/commerce agents promoted through the **same** shadow→readiness→live model; **ERC-8004**-style reputation as an additive `BrainMCPAgentRegistry` extension (pointer/root only).                                                         |
 | **Execution**    | **New `x402` rail + action type** (§7.3); **Coinbase Smart Wallet / 4337 + CDP Paymaster** interop for gasless agent UX (§7.5); **escrow settlement** contract + rail (job terms hashed).                                                   |
-| **Audit**        | The headline M2M feature — every machine payment provable on Base **via Merkle inclusion against an anchored root** (data stays off-chain). Expose via the proof viewer + a settlement-proof resource.                                      |
+| **Audit**        | The headline M2M feature. Every machine payment provable on Base **via Merkle inclusion against an anchored root** (data stays off-chain). Expose via the proof viewer + a settlement-proof resource.                                      |
 
 ## 6. New §6 gate checks (determinism preserved)
 
@@ -181,25 +181,25 @@ The gate gains checks; it does **not** gain discretion. Proposed additions
 (numbered in the existing `1.5 / 7.5 / 9.5 / 11.5` "hardening addition" style so
 they slot into the snapshot):
 
-1. **x402 payment-context validation** — the x402 `paymentRequirements`
+1. **x402 payment-context validation**. The x402 `paymentRequirements`
    (amount, asset=USDC, network=Base, recipient) match the PaymentIntent.
-2. **Escrow-state binding** — for escrow settlements, the on-chain escrow lock
+2. **Escrow-state binding**. For escrow settlements, the on-chain escrow lock
    matches the intent before release: still `Locked`, enough **remaining**
    (`amount − released − refunded`) to cover this release (the escrow settles
-   incrementally — milestones / dispute-splits — so binding against `remaining`,
+   incrementally. Milestones / dispute-splits. So binding against `remaining`,
    not the total `amount`, is what lets a second milestone through), same parties
    and job-id hash.
-3. **Agent-counterparty attestation** — when the payee is an agent, it is
+3. **Agent-counterparty attestation**. When the payee is an agent, it is
    registered + attested in `BrainMCPAgentRegistry` and not paused.
-4. **Micropayment cumulative cap** — per-agent rolling-window spend stays within
+4. **Micropayment cumulative cap**. Per-agent rolling-window spend stays within
    the policy envelope (mirrors the on-chain session-key window cap, so the
    off-chain gate and on-chain contract agree).
-5. **On-chain settlement permitted** — the payment class is allowed to settle
+5. **On-chain settlement permitted**. The payment class is allowed to settle
    on-chain for this tenant (the privacy/rail-sensitivity dimension, §3.4). If
    not, the gate fails closed and the payment must route over an off-chain rail.
 
 Reputation may _raise or lower a policy threshold_ but must never _be_ the
-precondition — LLM/reputation judgment stays out of the deterministic path
+precondition. LLM/reputation judgment stays out of the deterministic path
 (Standards §6, Principle #5).
 
 ## 7. Component designs
@@ -273,7 +273,7 @@ release each emit audit events and pass the gate (escrow-state-binding check,
 ### 7.7 Reputation (ERC-8004)
 
 Extend `BrainMCPAgentRegistry` (or a companion registry) with a reputation
-**pointer / Merkle root** — never raw history. It feeds Policy as
+**pointer / Merkle root**. Never raw history. It feeds Policy as
 **evidence/threshold input** only. It is explicitly **not** a contract-level money
 gate and **not** a §6 precondition.
 
@@ -281,7 +281,7 @@ gate and **not** a §6 precondition.
 
 Each step is shadow-launched and individually promotable:
 
-1. **USDC ledger + on-chain settlement reconciliation** — the foundation;
+1. **USDC ledger + on-chain settlement reconciliation**. The foundation;
    incremental on existing ledger/reconciliation/rail code.
 2. **`x402` rail + `x402_settle` action type** through the gate (shadowed).
 3. **Coinbase Smart Wallet / 4337 + CDP Paymaster** interop for gasless UX.
@@ -297,11 +297,11 @@ grants.
 
 - New money contracts (x402 settlement, escrow) are added to
   `contracts/AUDIT-SCOPE.md` and **externally audited before mainnet**.
-- **No raw data in calldata** — contract interfaces accept only hashes /
+- **No raw data in calldata**. Contract interfaces accept only hashes /
   `bytes32` / addresses / amounts (§3.5 enforces this in CI).
 - Default posture stays **immutable** (CLAUDE.md: no upgradable contracts in
   MVP). If a deliberate upgrade path is wanted for fast-moving commerce
-  primitives, it must be an explicit decision (timelock + multisig), audited —
+  primitives, it must be an explicit decision (timelock + multisig), audited.
   not the default. (See Decision D-3.)
 
 ## 10. Decisions needed (decision log)
@@ -319,19 +319,19 @@ grants.
 
 ## 11. Risks
 
-- **Forking the payment path** (the cardinal risk) — mitigated by §2/§6: one
+- **Forking the payment path** (the cardinal risk). Mitigated by §2/§6: one
   gate, one audit trail.
-- **Data on-chain / PII leakage** — mitigated by §3: hash-only invariant + CI
+- **Data on-chain / PII leakage**. Mitigated by §3: hash-only invariant + CI
   guard; on-chain settlement is a gated policy dimension.
-- **Transaction-graph linkability + amount visibility** — mitigated by §3.4
+- **Transaction-graph linkability + amount visibility**. Mitigated by §3.4
   (address hygiene, rail-by-sensitivity).
-- **GDPR/erasure vs on-chain immutability** — mitigated by §3.3 (no erasable
+- **GDPR/erasure vs on-chain immutability**. Mitigated by §3.3 (no erasable
   personal data ever anchored).
-- **Un-audited money contracts** — mitigated by §9.
-- **Gate throughput** under M2M frequency — mitigated by §7.4 aggregation.
-- **Counterparty trust** for agent payees — mitigated by the attestation check
+- **Un-audited money contracts**. Mitigated by §9.
+- **Gate throughput** under M2M frequency. Mitigated by §7.4 aggregation.
+- **Counterparty trust** for agent payees. Mitigated by the attestation check
   (§6 check 3) against the registry.
-- **Doc/reality drift** re-opening — mitigated by §12 (promote to spec as each
+- **Doc/reality drift** re-opening. Mitigated by §12 (promote to spec as each
   lands; don't let the narrative outrun the enforcement).
 
 ## 12. Documentation restructure (Shipped / In-Progress / Planned)
@@ -362,8 +362,8 @@ match code constants. This is how the narrative stays honest as it grows.
 
 ## 13. Non-goals (for this RFC)
 
-- Custody of funds (Brain remains non-custodial — reads, reasons, governs).
-- **Putting PII or financial detail on-chain — ever** (only hashes / roots /
+- Custody of funds (Brain remains non-custodial. Reads, reasons, governs).
+- **Putting PII or financial detail on-chain. Ever** (only hashes / roots /
   commitments / intrinsic settlement values; §3).
 - Replacing the deterministic gate with reputation/LLM judgment.
 - A parallel un-gated agent-payment path.

@@ -1,4 +1,4 @@
-# Hardening run — summary
+# Hardening run. Summary
 
 Autonomous hardening pass (P0/P1/P2). Three stacked branches:
 `brain/hardening-p0` → `brain/hardening-p1` → `brain/hardening-p2`.
@@ -8,7 +8,7 @@ Autonomous hardening pass (P0/P1/P2). Three stacked branches:
 | Task                                     | Status | Commit                        | Tests added (local-run unless noted) |
 | ---------------------------------------- | ------ | ----------------------------- | ------------------------------------ |
 | P0.1 mandatory behavior-hash pinning     | done   | `0df3ae8`                     | 5 (gate)                             |
-| P0.2 DB-integration invariants           | done   | `d355549`                     | 5 (CI-only — DATABASE_URL)           |
+| P0.2 DB-integration invariants           | done   | `d355549`                     | 5 (CI-only. DATABASE_URL)           |
 | P0.3 wiki annotation rate limiting       | done   | `7fc4227`                     | 5 (3 limiter + 2 route)              |
 | P0.4 approver/quorum hardening           | done   | `4c1a236`                     | 9 (7 ApprovalService + 2 gate)       |
 | P0.5 invoice shortcut resolution         | done   | `cce4c3a`                     | 10 (resolver)                        |
@@ -30,7 +30,7 @@ Autonomous hardening pass (P0/P1/P2). Three stacked branches:
 
 All 20 tasks: **done**. None blocked. The CI-only / build-only items below were
 implemented + wired into CI but could not be executed in the dev environment
-(no Docker / Postgres / Redis — see `BLOCKERS.md` B-1): P0.2, P0.6, P1.5, P1.1
+(no Docker / Postgres / Redis. See `BLOCKERS.md` B-1): P0.2, P0.6, P1.5, P1.1
 integration, P1.3 Foundry. They are type-/syntax-/build-graph-validated locally.
 
 ## Aggregate deltas
@@ -44,16 +44,16 @@ integration, P1.3 Foundry. They are type-/syntax-/build-graph-validated locally.
 
 ## Verification (full stack, p2 tip)
 
-- `pnpm run build` — ✅ all packages
-- `pnpm run typecheck` — ✅ all packages
-- `pnpm run lint` — ✅ (eslint + prettier + scope-vocab + gate-bypass +
+- `pnpm run build`. ✅ all packages
+- `pnpm run typecheck`. ✅ all packages
+- `pnpm run lint`. ✅ (eslint + prettier + scope-vocab + gate-bypass +
   wiki-no-ledger-write + policy-no-wiki-read + OpenAPI valid; 56 pre-existing
   OpenAPI warnings, non-fatal)
-- `pnpm run test:coverage` — every suite **passes** and all hardening code meets
+- `pnpm run test:coverage`. Every suite **passes** and all hardening code meets
   the 80/80/75/80 gate (after `proof/view.ts` was raised to 95% lines / 100%
   funcs, `19c6bea`). **However**, the aggregate `test:coverage` is **RED** because
   the merge with `main` pulled in `main`'s untested files (`PostgresSourceRepository.ts`
-  9%, `rails/{onchainExecutor,plaidClient}.ts` 0%) — `main`'s own CI is currently
+  9%, `rails/{onchainExecutor,plaidClient}.ts` 0%). `main`'s own CI is currently
   failing on the same. This is inherited debt, **not** from this run (see
   `BLOCKERS.md` B-2). The local `shared/config.test.ts > loadConfig` case also
   fails on missing ambient `ANTHROPIC_API_KEY` (set in CI; shared is not in the
@@ -66,7 +66,7 @@ went `DIRTY`. Resolved without force-push:
 
 - Merged `origin/main` into all three branches (merge-based; merge commits
   `7a486cf` → `ebc8f09` → `94cce2c`, then the view-coverage fix `19c6bea` →
-  `b6138cf` → `3c7ef6b`). Only `services/api/src/main.ts` truly conflicted —
+  `b6138cf` → `3c7ef6b`). Only `services/api/src/main.ts` truly conflicted.
   resolved **additively** (kept both the P0 wiring and `main`'s on-chain/Plaid
   rail + credential resolvers).
 - Renamed migration `0019_approvals_hardening.sql` → `0020` to clear a collision
@@ -79,14 +79,14 @@ went `DIRTY`. Resolved without force-push:
 
 ## Blockers (`BLOCKERS.md`)
 
-- **B-1 — No live infrastructure in the dev environment** (open, environmental):
+- **B-1. No live infrastructure in the dev environment** (open, environmental):
   no Docker / Postgres / Redis / `psql`, `DATABASE_URL` unset. DB/infra-dependent
   deliverables are implemented to run in CI and skip-guarded locally; verified by
   typecheck/build, not by execution here.
-- **B-2 — `main` is currently red; its coverage debt blocks `test:coverage`**
+- **B-2. `main` is currently red; its coverage debt blocks `test:coverage`**
   (open, external): `main` shipped `PostgresSourceRepository.ts` /
   `rails/{onchainExecutor,plaidClient}.ts` with no tests, so the merged branches
-  inherit a failing `test:coverage`. Chosen path: option (a) — fix on `main`,
+  inherit a failing `test:coverage`. Chosen path: option (a). Fix on `main`,
   then re-merge so the PRs inherit green. None of this red is from P0/P1/P2.
 
 ## Smart-contract audit status (after P2.1)
@@ -99,7 +99,7 @@ records the same.
 
 All three opened (after installing `gh`), labeled `ai-assisted` (Standards
 §13.4), **stacked** (each builds on the previous so P1 tests can exercise P0
-code). All currently **`MERGEABLE`** — **open, not merged**.
+code). All currently **`MERGEABLE`**. **open, not merged**.
 
 | PR                                                         | Head → Base                                 | Mergeability                       |
 | ---------------------------------------------------------- | ------------------------------------------- | ---------------------------------- |
@@ -113,7 +113,7 @@ red **only** on `main`'s inherited coverage debt (B-2), and `contracts` hit a
 transient `foundryup` flake. Per decision (a), `main` is fixed first; re-merging
 it here then turns all three green.
 
-## Post-merge status (update — 2026-05-26)
+## Post-merge status (update. 2026-05-26)
 
 All three hardening PRs are **merged to `main`**:
 
@@ -125,7 +125,7 @@ All three hardening PRs are **merged to `main`**:
 
 **B-2 (the old "`main` is red") is resolved.** `main`'s pre-existing CI debt was
 fixed in a follow-up `fix/main-green` effort (PRs #17–#26) using **real unit
-tests — no coverage `exclude`s** — plus a `compareDecimal` `-0` bug fix and a
+tests. No coverage `exclude`s**. Plus a `compareDecimal` `-0` bug fix and a
 series of CI repairs that `main.yml` had hidden behind its lint failure:
 
 - **Coverage backfill:** raw `PostgresSourceRepository`; api rails
@@ -143,9 +143,9 @@ series of CI repairs that `main.yml` had hidden behind its lint failure:
   satisfy the P0.5 invoice-shortcut preconditions in the seed (linked document
   evidence + a default AP account).
 
-**CI status on `main`:** the **quality gates are green** — `pr.yml`
+**CI status on `main`:** the **quality gates are green**. `pr.yml`
 (lint/build/typecheck/test:coverage/contracts/secret-scan) and `main.yml`'s
 `unit + integration` job (incl. P0.2 invariants + P1.1 adversarial DB-integration).
 The **only** remaining red is the Azure deploy chain (`build + push` →
-`deploy` → `E2E` → `promote`), which fails on missing Azure OIDC secrets — see
+`deploy` → `E2E` → `promote`), which fails on missing Azure OIDC secrets. See
 `BLOCKERS.md` **B-2**. No fix PR reaches it; it needs repo secrets (or gating).

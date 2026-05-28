@@ -1,6 +1,6 @@
 # Ledger API
 
-Query the deterministic structured records the Brain protocol produces from Raw evidence. The Ledger is the single source of financial truth — every row carries provenance, evidence references, and a confidence score.
+Query the deterministic structured records the Brain protocol produces from Raw evidence. The Ledger is the single source of financial truth. Every row carries provenance, evidence references, and a confidence score.
 
 | Operation                         | Endpoint                                        |
 | --------------------------------- | ----------------------------------------------- |
@@ -129,7 +129,7 @@ GET /v1/ledger/obligations?status=due&due_before=2026-06-30
 
 ### Promote Raw → Ledger
 
-Normalize a Raw-parsed row into typed Ledger entities. Idempotent — re-running with the same input returns the same Ledger row ids.
+Normalize a Raw-parsed row into typed Ledger entities. Idempotent. Re-running with the same input returns the same Ledger row ids.
 
 ```http
 POST /v1/ledger/normalize
@@ -208,7 +208,7 @@ Every Ledger row carries:
 | `created_at` / `updated_at` | Bitemporal timestamps                      |
 
 {% hint style="info" %}
-Records are immutable. Corrections are written as **superseding** records that reference what they correct (`supersedes` field). The history is preserved end-to-end — query `GET /v1/audit/entity/{entityType}/{entityId}` for the full causal trail.
+Records are immutable. Corrections are written as **superseding** records that reference what they correct (`supersedes` field). The history is preserved end-to-end. Query `GET /v1/audit/entity/{entityType}/{entityId}` for the full causal trail.
 {% endhint %}
 
 ### What's Next

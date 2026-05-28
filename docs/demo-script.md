@@ -6,9 +6,9 @@
 
 ---
 
-## Beat 1 — What Brain is (2 min)
+## Beat 1. What Brain is (2 min)
 
-Brain is a financial intelligence protocol that sits between a company's raw data (bank feeds, invoices, contracts) and the decisions that move money. It answers questions like "can we pay this vendor?" with cryptographic certainty, not human judgment — and leaves an immutable, on-chain audit trail for every decision.
+Brain is a financial intelligence protocol that sits between a company's raw data (bank feeds, invoices, contracts) and the decisions that move money. It answers questions like "can we pay this vendor?" with cryptographic certainty, not human judgment. And leaves an immutable, on-chain audit trail for every decision.
 
 Show the architecture diagram or just say:
 
@@ -16,7 +16,7 @@ Show the architecture diagram or just say:
 
 ---
 
-## Beat 2 — SDK ledger read (2 min)
+## Beat 2. SDK ledger read (2 min)
 
 Open a terminal. The SDK is five lines:
 
@@ -35,24 +35,24 @@ BRAIN_TOKEN=$(node tools/dev-token/dist/cli.js) \
   pnpm -C clients/sdk exec tsx examples/quickstart.ts
 ```
 
-**Expected output:** Two bank accounts (First National, Silicon Valley Bank), one card (Brex), one counterparty (Stripe). Tenant is "Brain Inc." The data is live from Postgres — not mocked.
+**Expected output:** Two bank accounts (First National, Silicon Valley Bank), one card (Brex), one counterparty (Stripe). Tenant is "Brain Inc." The data is live from Postgres. Not mocked.
 
 **Talking point:** This is the SDK investors use. When we ship `@brain/sdk` to npm, this code works without changing a line.
 
 ---
 
-## Beat 3 — Wiki Q&A (2 min)
+## Beat 3. Wiki Q&A (2 min)
 
 ```typescript
 const answer = await brain.ask("What is our largest unpaid invoice?");
 console.log(answer.text);
 ```
 
-Expected: A natural-language answer citing the $15,000 invoice from AWS (evidence-backed, `source_ids` attached). The Wiki layer ingests narrative context from raw payloads and answers questions — but it never drives decisions. That's what Beat 4 is for.
+Expected: A natural-language answer citing the $15,000 invoice from AWS (evidence-backed, `source_ids` attached). The Wiki layer ingests narrative context from raw payloads and answers questions. But it never drives decisions. That's what Beat 4 is for.
 
 ---
 
-## Beat 4 — MCP agent proposes a payment (2 min)
+## Beat 4. MCP agent proposes a payment (2 min)
 
 The MCP server exposes Brain to external AI agents over JSON-RPC. Show a raw `curl` or the MCP client:
 
@@ -69,22 +69,22 @@ curl -s -X POST http://localhost:3000/v1/agents/mcp \
         "amount": 50000,
         "currency": "USD",
         "counterparty_id": "<stripe-id>",
-        "description": "Platform fee — May 2026"
+        "description": "Platform fee. May 2026"
       }
     },
     "id": 1
   }'
 ```
 
-Response carries a `payment_intent_id`. Note: agents can only _propose_ — they can never execute.
+Response carries a `payment_intent_id`. Note: agents can only _propose_. They can never execute.
 
 ---
 
-## Beat 5 — §6 gate rejects, then approves (3 min)
+## Beat 5. §6 gate rejects, then approves (3 min)
 
 This is the core of the protocol.
 
-**Step 5a — trigger a rejection.**  
+**Step 5a. Trigger a rejection.**  
 Use the `payment_intent_id` from Beat 4. The seeded data includes an active policy with a $25,000 single-payment limit. A $50,000 attempt will be blocked:
 
 ```bash
@@ -104,14 +104,14 @@ Response:
 }
 ```
 
-**Talking point:** The `policy_decision_id` is in the error envelope. Every rejection is recorded in the audit log. The decision is deterministic — no LLM involved.
+**Talking point:** The `policy_decision_id` is in the error envelope. Every rejection is recorded in the audit log. The decision is deterministic. No LLM involved.
 
-**Step 5b — approve with a lower amount.**  
+**Step 5b. Approve with a lower amount.**  
 Create a new intent for $5,000 against Stripe and execute. This one passes all 13 checks and returns `status: "executed"` with a `policy_decision_id`.
 
 ---
 
-## Beat 6 — Live audit anchor on Base Sepolia (2 min)
+## Beat 6. Live audit anchor on Base Sepolia (2 min)
 
 Trigger an on-chain anchor via the admin endpoint:
 
@@ -132,7 +132,7 @@ Response:
 }
 ```
 
-Open the `basescan_url` in a browser. The transaction confirms within ~5 seconds. The Merkle root covering every audit event from this session — ledger reads, policy decisions, payment execution — is now permanently on-chain.
+Open the `basescan_url` in a browser. The transaction confirms within ~5 seconds. The Merkle root covering every audit event from this session. Ledger reads, policy decisions, payment execution. Is now permanently on-chain.
 
 **Talking point:** This is not a simulation. The contract at `0xb900add824064098342c869ff83efdeb05eb95ce` on Base Sepolia just anchored cryptographic proof of everything that happened in this demo. Any event can be independently verified against that root.
 
@@ -142,14 +142,14 @@ Open the `basescan_url` in a browser. The transaction confirms within ~5 seconds
 
 Run these before each investor session:
 
-- [ ] **Seed fresh:** `DATABASE_URL=… BRAIN_TENANT_ID=tnt_01GOLDEN00000000000000000 BRAIN_ACTOR=usr_01GOLDEN00000000000000000 pnpm run demo:reset` — completes in <30s
-- [ ] **Services up:** `pnpm run dev:up && BRAIN_DEMO_MODE=true pnpm -C services/api dev` — wait for "listening on 3000"
+- [ ] **Seed fresh:** `DATABASE_URL=… BRAIN_TENANT_ID=tnt_01GOLDEN00000000000000000 BRAIN_ACTOR=usr_01GOLDEN00000000000000000 pnpm run demo:reset`. Completes in <30s
+- [ ] **Services up:** `pnpm run dev:up && BRAIN_DEMO_MODE=true pnpm -C services/api dev`. Wait for "listening on 3000"
 - [ ] **Dev token works:** `node tools/dev-token/dist/cli.js` returns a JWT
 - [ ] **Anchor publisher healthy:** env `ANCHOR_PUBLISHER_PRIVATE_KEY` and `BASE_SEPOLIA_RPC_URL` set; `ENABLE_ANCHOR_PUBLISHER=true`
 - [ ] **BaseScan reachable:** `curl -s https://sepolia.basescan.org` returns 200
 - [ ] **SDK quickstart green:** Beat 2 command returns 3+ accounts
 
-If anchor publisher key or RPC is missing, the `POST /v1/audit/anchor/publish` endpoint returns 404 — skip Beat 6 or use the pre-recorded tx hash.
+If anchor publisher key or RPC is missing, the `POST /v1/audit/anchor/publish` endpoint returns 404. Skip Beat 6 or use the pre-recorded tx hash.
 
 ---
 

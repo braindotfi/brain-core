@@ -1,16 +1,16 @@
 # Grafana dashboards
 
-## `gate.json` — Brain §6 gate
+## `gate.json`. Brain §6 gate
 
 Panels:
 
-1. **Gate outcome rate** — `brain_gate_outcome_count{outcome ∈ ok|fail}` over time.
-2. **Per-check outcomes** — `brain_gate_check_count{check, outcome ∈ pass|fail|not_applicable}`.
-3. **Gate duration** — p50/p95/p99 derived from `brain_gate_duration_ms`.
+1. **Gate outcome rate**. `brain_gate_outcome_count{outcome ∈ ok|fail}` over time.
+2. **Per-check outcomes**. `brain_gate_check_count{check, outcome ∈ pass|fail|not_applicable}`.
+3. **Gate duration**. P50/p95/p99 derived from `brain_gate_duration_ms`.
 
 The variable `dry_run` filters the live execution path (`false`) from dry-run policy previews (`true`).
 
-### Metric naming — Datadog vs Prometheus
+### Metric naming. Datadog vs Prometheus
 
 The gate emits via the shared `MetricsEmitter` (DogStatsD / `hot-shots`). Metric names use the Datadog dot convention:
 

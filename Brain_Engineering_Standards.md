@@ -10,13 +10,13 @@ Read alongside: Brain_API_Specification.yaml (the OpenAPI contract) and Brain_MV
 
 v0.4.0 records the hardening wave on top of the v0.3 six-layer architecture. The model is unchanged; the safety surfaces are sharpened:
 
-- §6 pre-execution gate is now **13 numbered checks + 4 hardening additions** (17 entries) — the four sub-checks `1.5` (agent behavior pinned), `7.5` (ledger-state binding, H-08), `9.5` (evidence semantics, H-21), and `11.5` (duplicate-payment hard reject, H-22) join the original 13. The audit-before event persists the full check trace (H-07). See §6.2.1.
+- §6 pre-execution gate is now **13 numbered checks + 4 hardening additions** (17 entries). The four sub-checks `1.5` (agent behavior pinned), `7.5` (ledger-state binding, H-08), `9.5` (evidence semantics, H-21), and `11.5` (duplicate-payment hard reject, H-22) join the original 13. The audit-before event persists the full check trace (H-07). See §6.2.1.
 - §6.5 documents **shadow-by-default + the promotion-readiness gate** (H-24): an agent cannot go live without `scripts/check-promotion-readiness.mjs` all-green, enforced in CI on `promotion-config.ts` diffs.
 - Execution is now a **durable outbox** (H-04): `execute` enqueues + transitions `approved → dispatching`; an outbox worker dispatches the rail and settles. New `dispatching` PaymentIntent status.
 - New trust surfaces: the **Proof API** (`GET /v1/proof/{action_id}`, H-07) and **Agent Run History** (`/v1/agents/runs/{run_id}/*`, H-25).
 - Outbound webhooks gained a **dead-letter queue + replay** (`/v1/webhooks/{endpoint_id}/{dead-letters,replay}`, H-20) instead of dropping failed deliveries.
-- **Policy governance tooling** (H-18): `POST /v1/policy/{tenant_id}/{lint,diff,simulate-historical}` — static lint (amount cap / counterparty / approval-path / currency / role / risk rules), version diff, and historical replay before signing.
-- **Policy DSL agent-output primitives** (H-16): `agent.confidence.gte`, `agent.evidence_score.gte`, `agent.risk_level.lte` — policy can now gate on an agent's canonical `AgentOutput` (confidence / evidence_score / risk_level). These are `when` keys in the DSL, not `{layer}:{verb}` scopes.
+- **Policy governance tooling** (H-18): `POST /v1/policy/{tenant_id}/{lint,diff,simulate-historical}`. Static lint (amount cap / counterparty / approval-path / currency / role / risk rules), version diff, and historical replay before signing.
+- **Policy DSL agent-output primitives** (H-16): `agent.confidence.gte`, `agent.evidence_score.gte`, `agent.risk_level.lte`. Policy can now gate on an agent's canonical `AgentOutput` (confidence / evidence_score / risk_level). These are `when` keys in the DSL, not `{layer}:{verb}` scopes.
 - **Agent capability manifests** (H-15): a canonical `AgentManifest` (schemas/agent-manifest.schema.json) derived per internal agent; MCP external-agent registration requires + scope-hash-validates a manifest.
 - **Domain event bus** (H-17): a Postgres LISTEN/NOTIFY `domain_events` substrate for runtime fan-out (durability still comes from the audit log).
 
@@ -25,7 +25,7 @@ v0.4.0 records the hardening wave on top of the v0.3 six-layer architecture. The
 v0.2.0 of this document realigns to the v0.3 architecture (six layers). Specifically:
 
 - §1 adds a fifth principle: deterministic pre-execution gate.
-- §2 repo layout adds `services/ledger/`; a planned `services/execution/` directory rename to the Agent-layer name was **not** carried out — the workspace stays `services/execution/` (the Agent layer, layer 5).
+- §2 repo layout adds `services/ledger/`; a planned `services/execution/` directory rename to the Agent-layer name was **not** carried out. The workspace stays `services/execution/` (the Agent layer, layer 5).
 - §3.2 scope list updated: `ledger:*`, `payment_intent:*`, `agent:*`.
 - §4.3 error code registry adds ledger and payment*intent codes; `execution*\_`codes alias to`agent\_\_` for back-compat.
 - §6 Pre-execution gate is a NEW SECTION (renumbers Observability → §7, Testing → §8, etc.).
@@ -66,7 +66,7 @@ brain/
 │   ├── agent-router/     # TypeScript. Event/intent → internal-agent routing.
 │   ├── internal-agents/  # TypeScript. First-party agent catalog (definitions + handlers).
 │   └── agents/           # Python. Extractors, reasoners, the three MVP agents.
-├── shared/               # TypeScript. @brain/shared — all cross-cutting primitives.
+├── shared/               # TypeScript. @brain/shared. All cross-cutting primitives.
 ├── contracts/            # Solidity + Foundry. The four smart contracts.
 ├── infra/                # Terraform. Azure resource definitions.
 ├── schemas/              # JSON Schemas per Ledger entity, per Wiki page type.
@@ -200,18 +200,18 @@ payment_intent_approval_required,
 payment_intent_approval_invalid,
 
 // Approver / quorum hardening (P0.4)
-approval_signer_revoked,                   // 403 — signer is no longer an active approver
-approval_cross_tenant,                     // 403 — signer tenant does not own the subject
-approval_duplicate_signer,                 // 409 — principal already signed this subject
-approval_policy_stale,                     // 409 — signature was against a superseded policy version
+approval_signer_revoked,                   // 403. Signer is no longer an active approver
+approval_cross_tenant,                     // 403. Signer tenant does not own the subject
+approval_duplicate_signer,                 // 409. Principal already signed this subject
+approval_policy_stale,                     // 409. Signature was against a superseded policy version
 
-// Invoice shortcut (P0.5) — POST /payment-intents { type: pay_invoice }
-invoice_shortcut_invalid,                  // 400 — malformed invoice_id / shortcut not enabled
-invoice_shortcut_not_found,                // 404 — invoice missing or cross-tenant (no existence leak)
-invoice_shortcut_already_paid,             // 409 — invoice fully paid / no balance due
-invoice_shortcut_not_payable,              // 422 — invoice status is not payable
-invoice_shortcut_no_evidence,              // 422 — invoice has no linked document evidence
-invoice_shortcut_source_account_unresolved // 422 — no AP account / multiple without a default
+// Invoice shortcut (P0.5). POST /payment-intents { type: pay_invoice }
+invoice_shortcut_invalid,                  // 400. Malformed invoice_id / shortcut not enabled
+invoice_shortcut_not_found,                // 404. Invoice missing or cross-tenant (no existence leak)
+invoice_shortcut_already_paid,             // 409. Invoice fully paid / no balance due
+invoice_shortcut_not_payable,              // 422. Invoice status is not payable
+invoice_shortcut_no_evidence,              // 422. Invoice has no linked document evidence
+invoice_shortcut_source_account_unresolved // 422. No AP account / multiple without a default
 
 // Audit
 audit_event_not_found, audit_proof_invalid, audit_anchor_not_yet_published
@@ -255,7 +255,7 @@ Any of the following must pass through the gate:
 ### 6.2 The 13 Deterministic Checks + 4 Hardening Additions
 
 The gate runs **13 numbered checks** in order, interleaved with **4 hardening
-sub-checks** (`1.5`, `7.5`, `9.5`, `11.5`) added across the v0.4 hardening wave —
+sub-checks** (`1.5`, `7.5`, `9.5`, `11.5`) added across the v0.4 hardening wave.
 17 entries total. The canonical happy path is the 13 numbered checks; the four
 additions are additive and several record `not_applicable` when their loader is
 not wired (see §6.2.1), so a minimal caller still sees the canonical 13. Failure
@@ -271,23 +271,23 @@ check identified. The full check index recorded on a fully-wired passing run is
 5. **Counterparty allowed.** `counterparty_id` exists in `ledger_counterparties`, not on a sanctions list.
 6. **Counterparty verified.** `verified_status` ≠ `unverified` for amounts above the policy-defined threshold.
 7. **Amount within policy limit.** `amount.lte` rule from active policy holds.
-   7.5. **Ledger state bound (H-08).** A `ledger_snapshot_hash` of the source account + counterparty state is computed and pinned onto the decision + audit-before event — a tamper-evident record of what the action moved against.
+   7.5. **Ledger state bound (H-08).** A `ledger_snapshot_hash` of the source account + counterparty state is computed and pinned onto the decision + audit-before event. A tamper-evident record of what the action moved against.
 8. **Available balance sufficient.** `ledger_accounts.available_balance` ≥ amount + reserved.
-9. **Required evidence present.** Policy clause `evidence_required` (e.g. invoice attached for B2B AP) holds — the referenced evidence rows exist and are of the right kind.
-   9.5. **Evidence supports the action (H-21).** Semantic validation: the evidence's amount, counterparty, currency, and freshness actually match the PaymentIntent — not just that _some_ evidence is attached. (A $500 invoice on a $50k payment fails here.)
+9. **Required evidence present.** Policy clause `evidence_required` (e.g. invoice attached for B2B AP) holds. The referenced evidence rows exist and are of the right kind.
+   9.5. **Evidence supports the action (H-21).** Semantic validation: the evidence's amount, counterparty, currency, and freshness actually match the PaymentIntent. Not just that _some_ evidence is attached. (A $500 invoice on a $50k payment fails here.)
 10. **Approval requirement determined.** Policy decision is one of `allow` (no approval), `confirm` (approval needed), `reject` (refuse).
 11. **Approval granted when required.** If `confirm`, all `required_approvers` have signed.
-    11.5. **No duplicate payment (H-22).** Hard reject — even with a valid approval — if any duplicate-payment rule fires (invoice already paid, obligation already settled, same vendor+amount recently executed, evidence artifact reused, destination instructions changed). "Brain will not pay an invoice twice" as a gate property.
+    11.5. **No duplicate payment (H-22).** Hard reject. Even with a valid approval. If any duplicate-payment rule fires (invoice already paid, obligation already settled, same vendor+amount recently executed, evidence artifact reused, destination instructions changed). "Brain will not pay an invoice twice" as a gate property.
 12. **PolicyDecision row created.** Inserted with `policy_decision_id` returned to caller.
 13. **Audit event before execution attempt** _and_ **audit event after execution result.** Both rows are mandatory; the post-execution audit captures success or failure, with rail receipt where applicable. The audit-before event persists the full check trace (H-07) so the Proof API can reproduce it.
 
-Steps 12 and 13 are non-skippable even if every other check passes. The audit-before/audit-after pair is what makes execution forensically reconstructible — and is what the Proof API (`GET /v1/proof/{action_id}`) assembles into a verifiable artifact.
+Steps 12 and 13 are non-skippable even if every other check passes. The audit-before/audit-after pair is what makes execution forensically reconstructible. And is what the Proof API (`GET /v1/proof/{action_id}`) assembles into a verifiable artifact.
 
 #### 6.2.1 The four hardening additions
 
 Each maps 1:1 to a check in `shared/src/gate/gate.ts`. When the addition's loader
 is not wired by the caller, it records `not_applicable` (a passing row) rather
-than failing — so the happy path stays the canonical 13. The exception is `7.5`,
+than failing. So the happy path stays the canonical 13. The exception is `7.5`,
 which has no loader and always runs.
 
 | Index  | Name (in `gate.ts`)        | Guards against                                                                   | When its loader is not wired                                                                                                                                                           |
@@ -317,7 +317,7 @@ Both routes reach it through `PaymentIntentService.execute`. Calling sites are e
 
 Money-moving agents are **shadow-by-default**: until an operator explicitly
 promotes an agent, every financial proposal it makes terminates as
-`shadow_completed` — fully gated, evidenced, and audited, but no rail is
+`shadow_completed`. Fully gated, evidenced, and audited, but no rail is
 dispatched. Promotion is the single dangerous moment, so it is gated:
 
 > **An agent cannot be promoted from shadow to live without all
@@ -339,7 +339,7 @@ per-agent adversarial test suites exist; and the agent's on-chain behavior hash
 
 KYC/KYB/sanctions/velocity/rail-allowlist belong in the §6 sequence so the shape
 is correct from day one, even while the providers are mocked. They are
-**planned gate additions** — documented here with the check index they will
+**planned gate additions**. Documented here with the check index they will
 occupy so the gate trace shape is stable. Like the other additions, each records
 `not_applicable` until its provider loader is wired (mirrors §6.2.1).
 
@@ -347,14 +347,14 @@ occupy so the gate trace shape is stable. Like the other additions, each records
 | ------------- | -------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `2.7`         | `tenant_kyb_verified`      | The tenant's KYB status is `verified` (business onboarding complete).                     | Planned. Provider mocked.                                              |
 | `4.5`         | `source_account_kyc`       | The source account's owner KYC status is cleared.                                         | Planned. Provider mocked.                                              |
-| `5`           | `counterparty_allowed`     | Counterparty not sanctioned — **already live** via Chainalysis at check 5.                | **Implemented** (documented here explicitly).                          |
+| `5`           | `counterparty_allowed`     | Counterparty not sanctioned. **already live** via Chainalysis at check 5.                | **Implemented** (documented here explicitly).                          |
 | `4.6`         | `rail_allowlisted`         | The action's rail is on the tenant's allowlist (e.g. ACH-only tenants can't go on-chain). | Planned. Tenant rail-allowlist config TBD.                             |
 | `11.6`        | `velocity_within_envelope` | Cumulative spend/count to this counterparty within a rolling window is under the cap.     | Planned. Builds on the existing spend/tx-count window reads (§Policy). |
 
 These slot in without renumbering the canonical 13: KYB after agent auth (2.7),
 KYC + rail-allowlist after source-account (4.5 / 4.6), velocity after the
 duplicate guard (11.6). Sanctions is check 5 today. No implementation in this
-pass — this section fixes the contract so the loaders can land additively.
+pass. This section fixes the contract so the loaders can land additively.
 
 ## 7. Observability
 

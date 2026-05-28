@@ -9,7 +9,7 @@ The Brain HTTP surface does **not** expose a `/v1/sources/*` resource family. So
 | Read the deterministic parser output for an artifact               | `GET /v1/raw/{raw_id}/parsed`                             |
 | Promote parsed Raw into typed Ledger rows                          | `POST /v1/ledger/normalize` (see Ledger API)              |
 
-The "Source Types" table further down is the conceptual taxonomy — the `source_type` you tag an ingested artifact with, not a list of HTTP resources you create.
+The "Source Types" table further down is the conceptual taxonomy. The `source_type` you tag an ingested artifact with, not a list of HTTP resources you create.
 
 ### Ingest a Raw Artifact
 
@@ -59,7 +59,7 @@ Limits: 50 MB per artifact. Errors: `400`, `401`, `403`, `413`, `415`, `429`.
 
 ### Source Types
 
-The `source_type` you tag an ingested artifact with — used for routing to the right parser.
+The `source_type` you tag an ingested artifact with. Used for routing to the right parser.
 
 | `source_type`       | Typical Origin                                          |
 | ------------------- | ------------------------------------------------------- |
@@ -88,7 +88,7 @@ X-Provider-Signature: <hmac>
 <provider-specific payload>
 ```
 
-This route has `security: []` — the HMAC signature replaces bearer auth. Brain verifies the signature, stores the payload as a Raw artifact, and returns `202 Accepted` with `{ accepted: true, request_id: "req_..." }`. A signature mismatch returns `401` with `raw_webhook_signature_invalid`.
+This route has `security: []`. The HMAC signature replaces bearer auth. Brain verifies the signature, stores the payload as a Raw artifact, and returns `202 Accepted` with `{ accepted: true, request_id: "req_..." }`. A signature mismatch returns `401` with `raw_webhook_signature_invalid`.
 
 ### Read a Raw Artifact
 
@@ -149,7 +149,7 @@ Parsed rows are append-only; a re-run with a new `parser_version` produces a new
 
 ### Promoting Raw to Ledger
 
-Parsed Raw becomes typed Ledger rows via `POST /v1/ledger/normalize` (documented in the Ledger API). Normalization is idempotent — the same `raw_parsed_id` produces the same Ledger row ids on re-run.
+Parsed Raw becomes typed Ledger rows via `POST /v1/ledger/normalize` (documented in the Ledger API). Normalization is idempotent. The same `raw_parsed_id` produces the same Ledger row ids on re-run.
 
 ### What's Next
 

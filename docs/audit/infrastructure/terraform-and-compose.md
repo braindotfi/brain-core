@@ -1,4 +1,4 @@
-# Audit #14 — Infrastructure (Terraform + docker-compose)
+# Audit #14. Infrastructure (Terraform + docker-compose)
 
 **Subsystem**: `infra/` (Terraform, Azure), `docker-compose.yml`, `Dockerfile`, `.github/workflows/main.yml`
 **Auditor**: Evidence-driven, commands executed 2026-05-26
@@ -10,12 +10,12 @@
 ## 1. Scope
 
 This audit covers:
-- `docker-compose.yml` — local dev stack (Postgres, Redis, LocalStack, agents)
-- Root `Dockerfile` — production container (Node monolith)
-- `infra/main.tf` — Azure Terraform resources (Container Apps, Postgres, Redis, Blob, Key Vault, ACR, Front Door)
-- `infra/variables.tf`, `infra/versions.tf`, `infra/poc.tfvars` — Terraform config
-- `infra/db-roles.sql` — database role model (deploy artifact)
-- `.github/workflows/main.yml` — build, deploy, promote pipeline
+- `docker-compose.yml`. Local dev stack (Postgres, Redis, LocalStack, agents)
+- Root `Dockerfile`. Production container (Node monolith)
+- `infra/main.tf`. Azure Terraform resources (Container Apps, Postgres, Redis, Blob, Key Vault, ACR, Front Door)
+- `infra/variables.tf`, `infra/versions.tf`, `infra/poc.tfvars`. Terraform config
+- `infra/db-roles.sql`. Database role model (deploy artifact)
+- `.github/workflows/main.yml`. Build, deploy, promote pipeline
 - Alignment between Terraform, the runtime (what `main.ts` actually needs), and the deploy pipeline
 
 Out of scope: live Terraform state (no Azure credentials), live Docker builds, Front Door WAF policy.
@@ -42,8 +42,8 @@ Out of scope: live Terraform state (no Azure credentials), live Docker builds, F
 **LocalStack**: S3 only (`SERVICES: s3`), persistence enabled. Models Azure Blob Storage via LocalStack S3 compatibility. The `BlobAdapter` wraps S3-compatible client, so the abstraction holds in dev. Clean.
 
 **Agents**: Two confirmed gaps from Audit #12 are visible here:
-- `BRAIN_API_BASE_URL: ${BRAIN_API_BASE_URL:-http://host.docker.internal:3001}` — default port 3001; TS API listens on 3000 (F-12-C)
-- `healthcheck: CMD ["curl", "-f", "http://localhost:8001/health"]` — `curl` absent in `python:3.12-slim` (F-12-A)
+- `BRAIN_API_BASE_URL: ${BRAIN_API_BASE_URL:-http://host.docker.internal:3001}`. Default port 3001; TS API listens on 3000 (F-12-C)
+- `healthcheck: CMD ["curl", "-f", "http://localhost:8001/health"]`. `curl` absent in `python:3.12-slim` (F-12-A)
 
 **TS API container is not in docker-compose.** The compose file boots infrastructure only. Developers run `node services/api/dist/main.js` (or the dev server) locally. This is documented behavior (`dev:up` / `dev:down`).
 
@@ -76,9 +76,9 @@ runtime stage (node:22-slim):
 
 ### Assessment
 
-Clean multi-stage build with layer caching. The `--prod` install in the runtime stage correctly strips dev dependencies. Healthcheck uses Node's built-in `fetch` (Node 22 native) — no curl dependency, no shell required. Port correct (`3000` matching `.env.example`).
+Clean multi-stage build with layer caching. The `--prod` install in the runtime stage correctly strips dev dependencies. Healthcheck uses Node's built-in `fetch` (Node 22 native). No curl dependency, no shell required. Port correct (`3000` matching `.env.example`).
 
-**Missing workspaces in Dockerfile**: `services/agent-router` and `services/internal-agents` are not explicitly listed in the Dockerfile `COPY` steps. However, both are `private: true` packages with no standalone dist — they are imported as workspace deps by `@brain/api`, so their built output lands under the transitive copy. This is fine **only if** `pnpm install` resolves workspace symlinks correctly in the runtime stage. Since only `package.json` files (not `tsconfig.json`) are copied for the runtime install, this should work — but if `agent-router` or `internal-agents` ever need their own `dist/` copy, the Dockerfile needs updating.
+**Missing workspaces in Dockerfile**: `services/agent-router` and `services/internal-agents` are not explicitly listed in the Dockerfile `COPY` steps. However, both are `private: true` packages with no standalone dist. They are imported as workspace deps by `@brain/api`, so their built output lands under the transitive copy. This is fine **only if** `pnpm install` resolves workspace symlinks correctly in the runtime stage. Since only `package.json` files (not `tsconfig.json`) are copied for the runtime install, this should work. But if `agent-router` or `internal-agents` ever need their own `dist/` copy, the Dockerfile needs updating.
 
 **Note**: The root Dockerfile produces ONE image (`brain-api:latest`). All TS services are bundled into this single process. The Terraform provisions separate Container Apps per service, but only the `api` app is actually updated in the deploy pipeline (see §5).
 
@@ -109,11 +109,11 @@ Clean multi-stage build with layer caching. The `--prod` install in the runtime 
 
 ### What is NOT provisioned
 
-- Front Door origin groups, routes, and WAF policy — `main.tf:300–302`: "See ./frontdoor.tf in the post-stage-8 bundle." **`frontdoor.tf` does not exist in `infra/`.** The Front Door profile is created but is non-functional (no traffic routing configured).
-- VNET / private endpoints — Postgres has `public_network_access_enabled = false`, but no `azurerm_private_endpoint` resource exists. Without a private endpoint, Postgres is unreachable from the Container Apps.
-- DNS zone / custom domain — no `azurerm_dns_*` or Front Door custom domain resources.
-- Azure Monitor diagnostic settings / Datadog integration — header comment promises these but no resources exist.
-- Backup/PITR configuration — no `azurerm_postgresql_flexible_server_configuration` for backup retention.
+- Front Door origin groups, routes, and WAF policy. `main.tf:300–302`: "See ./frontdoor.tf in the post-stage-8 bundle." **`frontdoor.tf` does not exist in `infra/`.** The Front Door profile is created but is non-functional (no traffic routing configured).
+- VNET / private endpoints. Postgres has `public_network_access_enabled = false`, but no `azurerm_private_endpoint` resource exists. Without a private endpoint, Postgres is unreachable from the Container Apps.
+- DNS zone / custom domain. No `azurerm_dns_*` or Front Door custom domain resources.
+- Azure Monitor diagnostic settings / Datadog integration. Header comment promises these but no resources exist.
+- Backup/PITR configuration. No `azurerm_postgresql_flexible_server_configuration` for backup retention.
 
 ---
 
@@ -145,14 +145,14 @@ Missing from Terraform (full list from `.env.example`):
 
 | Variable | Impact if missing |
 |----------|------------------|
-| `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE` | JWT auth fails — every authenticated request rejected |
+| `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE` | JWT auth fails. Every authenticated request rejected |
 | `OPENAI_API_KEY` | Wiki Q&A and Python agents fail |
 | `ANTHROPIC_API_KEY` | Any Claude-backed feature fails |
 | `PLAID_CLIENT_ID`, `PLAID_SECRET` | ACH rails fail at dispatch |
 | `RPC_URL`, `AUDIT_ANCHOR_ADDRESS` | On-chain anchor broadcasts fail |
 | `MCP_AGENT_REGISTRY_ADDRESS`, `POLICY_REGISTRY_ADDRESS` | On-chain scope check and policy signer fail |
 | `BRAIN_DEMO_MODE` | Demo mode toggle absent |
-| `WIKI_LLM_MODEL`, `WIKI_EMBED_MODEL` | Wiki uses defaults (gpt-4o-mini) — tolerable |
+| `WIKI_LLM_MODEL`, `WIKI_EMBED_MODEL` | Wiki uses defaults (gpt-4o-mini). Tolerable |
 | `PLAID_ENV` | Plaid uses wrong environment |
 | `AUDIT_ANCHOR_INTERVAL_MS` | Anchor cadence uses hardcoded default |
 | `PRIVILEGED_DATABASE_URL` | All BYPASSRLS paths use the single DATABASE_URL (not split yet) |
@@ -171,7 +171,7 @@ A staging deployment with only these 4 variables will boot but all authenticatio
 # }
 ```
 
-State is stored locally. Running `terraform apply` from CI or a second machine creates a new independent state, risking resource drift or duplicate provisioning. The named storage account (`braintfstate`) and resource group (`brain-tfstate`) are referenced but not provisioned by this Terraform (catch-22 — they must be manually created before uncommenting).
+State is stored locally. Running `terraform apply` from CI or a second machine creates a new independent state, risking resource drift or duplicate provisioning. The named storage account (`braintfstate`) and resource group (`brain-tfstate`) are referenced but not provisioned by this Terraform (catch-22. They must be manually created before uncommenting).
 
 ### Gap 4: `frontdoor.tf` referenced but missing (SEVERITY: High)
 
@@ -192,7 +192,7 @@ for svc in api; do
 done
 ```
 
-Seven Container Apps are provisioned; only one is updated on each deploy. The other six apps (`raw`, `wiki`, `policy`, `execution`, `audit`, `agents`) are created but never updated. They would run `brain-raw:latest`, etc., which all point at the same single-process boot binary (the root Dockerfile). The Python agents app (`brain-staging-agents`) points at `brain-agents:latest` — the correct Python image — but it's never updated by the CI pipeline.
+Seven Container Apps are provisioned; only one is updated on each deploy. The other six apps (`raw`, `wiki`, `policy`, `execution`, `audit`, `agents`) are created but never updated. They would run `brain-raw:latest`, etc., which all point at the same single-process boot binary (the root Dockerfile). The Python agents app (`brain-staging-agents`) points at `brain-agents:latest`. The correct Python image. But it's never updated by the CI pipeline.
 
 `poc.tfvars` correctly narrows this to `services = ["api"]` for the investor demo. But the default `variables.tf` will over-provision in staging unless `poc.tfvars` is always used.
 
@@ -203,7 +203,7 @@ Seven Container Apps are provisioned; only one is updated on each deploy. The ot
 - CI pipeline step
 - `tools/migrate` integration (the file explicitly notes it is NOT a migration)
 
-The file relies on `:'brain_app_password'` and `:'brain_privileged_password'` psql variables (substituted by a deploy pipeline step that doesn't exist). Without this, production uses the `brain_admin` owner role for all queries — RLS is armed but not enforced.
+The file relies on `:'brain_app_password'` and `:'brain_privileged_password'` psql variables (substituted by a deploy pipeline step that doesn't exist). Without this, production uses the `brain_admin` owner role for all queries. RLS is armed but not enforced.
 
 ---
 
@@ -232,7 +232,7 @@ push to main:
 
 ### Pipeline gaps
 
-1. **Python agents image**: The build matrix includes `agents`, but the matrix iterates over services using the root Dockerfile for all entries — unless the matrix dynamically selects the Dockerfile. The main.yml build step is not fully shown but given the comment "All 8 images," it appears both the Node monolith and Python container are built. Verification: `services/agents/Dockerfile` exists and is referenced from docker-compose; it must be explicitly specified in the matrix build step.
+1. **Python agents image**: The build matrix includes `agents`, but the matrix iterates over services using the root Dockerfile for all entries. Unless the matrix dynamically selects the Dockerfile. The main.yml build step is not fully shown but given the comment "All 8 images," it appears both the Node monolith and Python container are built. Verification: `services/agents/Dockerfile` exists and is referenced from docker-compose; it must be explicitly specified in the matrix build step.
 
 2. **E2E target URL `api.sandbox.brain.fi`**: This URL is referenced but no DNS or Front Door origin is configured (Gap 4). The e2e tests would fail with a connection error unless the URL is manually configured out-of-band.
 
@@ -244,16 +244,16 @@ push to main:
 
 | Component | Status |
 |-----------|--------|
-| docker-compose (postgres, redis, localstack) | Working — used in development |
-| docker-compose agents | Broken (curl healthcheck, port mismatch) — from Audit #12 |
+| docker-compose (postgres, redis, localstack) | Working. Used in development |
+| docker-compose agents | Broken (curl healthcheck, port mismatch). From Audit #12 |
 | Root Dockerfile | Structurally correct; NODE_ENV/PORT alignment with Terraform needs fix |
 | Terraform resource definitions | Structurally correct for declared resources |
-| Terraform env var injection | Critical gap — 4 of ~20 required vars |
-| Container App target port | **Broken** — 8080 vs API 3000 |
-| Front Door routing | **Non-functional** — frontdoor.tf missing |
-| Private networking | **Incomplete** — no private endpoint for Postgres |
-| Remote state | **Local only** — commented out |
-| db-roles.sql automation | **Manual only** — no CI or Terraform path |
+| Terraform env var injection | Critical gap. 4 of ~20 required vars |
+| Container App target port | **Broken**. 8080 vs API 3000 |
+| Front Door routing | **Non-functional**. Frontdoor.tf missing |
+| Private networking | **Incomplete**. No private endpoint for Postgres |
+| Remote state | **Local only**. Commented out |
+| db-roles.sql automation | **Manual only**. No CI or Terraform path |
 
 ---
 
@@ -265,12 +265,12 @@ The Terraform covers the right resources for a cloud-native Azure deployment. Th
 
 | Dimension | Assessment |
 |-----------|-----------|
-| Resource coverage | Good — all required Azure resources modeled |
-| Security posture | Good — managed identity, Key Vault, no admin, TLS enforced |
-| Runtime alignment | **Critical gaps** — port 8080 vs 3000, 16 missing env vars |
-| Networking | Incomplete — no private endpoints |
-| Remote state | Not configured — local only |
-| Front Door | Non-functional — no routes |
+| Resource coverage | Good. All required Azure resources modeled |
+| Security posture | Good. Managed identity, Key Vault, no admin, TLS enforced |
+| Runtime alignment | **Critical gaps**. Port 8080 vs 3000, 16 missing env vars |
+| Networking | Incomplete. No private endpoints |
+| Remote state | Not configured. Local only |
+| Front Door | Non-functional. No routes |
 | CI/CD | Deploy partial (api only) |
 
 ---
@@ -282,7 +282,7 @@ The Terraform covers the right resources for a cloud-native Azure deployment. Th
 | Terraform resource list | High | Full `main.tf` read |
 | Missing env vars | High | Cross-referenced `.env.example` vs Terraform env blocks |
 | Port mismatch | High | `target_port = 8080` vs `EXPOSE 3000` in Dockerfile |
-| frontdoor.tf missing | High | `ls infra/` — file not present |
+| frontdoor.tf missing | High | `ls infra/`. File not present |
 | Private endpoint missing | High | No `azurerm_private_endpoint` resource in main.tf |
 | Remote state status | High | Commented-out backend block confirmed |
 | CI build matrix | Medium | Inferred from comment; full matrix YAML not fully quoted |
@@ -292,37 +292,37 @@ The Terraform covers the right resources for a cloud-native Azure deployment. Th
 
 ## 10. Findings
 
-### F-14-A — Container App `target_port = 8080` vs API `PORT = 3000` (SEVERITY: Critical)
+### F-14-A. Container App `target_port = 8080` vs API `PORT = 3000` (SEVERITY: Critical)
 
 - **File**: `infra/main.tf:268`, `Dockerfile:EXPOSE 3000`, `.env.example:9`
-- **Impact**: Staging deployment unreachable — Container Apps routes to 8080, app listens on 3000.
+- **Impact**: Staging deployment unreachable. Container Apps routes to 8080, app listens on 3000.
 - **Fix**: Change `target_port = 8080` to `target_port = 3000` in `main.tf:268`, or add `PORT=8080` to the Container App env block.
 
-### F-14-B — Terraform injects only 4 of ~20 required env vars (SEVERITY: Critical)
+### F-14-B. Terraform injects only 4 of ~20 required env vars (SEVERITY: Critical)
 
 - **File**: `infra/main.tf:237–253`
 - **Impact**: Auth fails, LLM fails, Plaid/Base rail fails. A staged deployment with these 4 vars boots but is non-functional.
 - **Fix**: Add Key Vault secrets for all env vars from `.env.example` and reference them in the Container App `env` + `secret` blocks. Group by rotation frequency: stable (JWT config, model names) vs rotatable (API keys, contract addresses).
 
-### F-14-C — `frontdoor.tf` missing (SEVERITY: High)
+### F-14-C. `frontdoor.tf` missing (SEVERITY: High)
 
 - **File**: `infra/main.tf:300–302` (comment references `./frontdoor.tf`)
 - **Impact**: Front Door profile exists but routes no traffic. `api.sandbox.brain.fi` is unconfigured.
 - **Fix**: Create `infra/frontdoor.tf` with origin group, origin (Container App `api` FQDN), route (HTTPS → origin), WAF policy.
 
-### F-14-D — Postgres private endpoint missing (SEVERITY: High)
+### F-14-D. Postgres private endpoint missing (SEVERITY: High)
 
 - **File**: `infra/main.tf:86–88`
 - **Impact**: `public_network_access_enabled = false` + no private endpoint = Container Apps cannot reach Postgres.
 - **Fix**: Add `azurerm_private_endpoint` for the Postgres server within the Container Apps environment VNET. Requires VNET injection for the Container App environment.
 
-### F-14-E — Terraform remote state commented out (SEVERITY: High)
+### F-14-E. Terraform remote state commented out (SEVERITY: High)
 
 - **File**: `infra/versions.tf:22–28`
-- **Impact**: Local state — CI or second machine creates diverged state.
+- **Impact**: Local state. CI or second machine creates diverged state.
 - **Fix**: Provision `brain-tfstate` resource group and `braintfstate` storage account (manually, once), then uncomment the backend block and run `terraform init -migrate-state`.
 
-### F-14-F — `db-roles.sql` has no automated application path (SEVERITY: Medium)
+### F-14-F. `db-roles.sql` has no automated application path (SEVERITY: Medium)
 
 - **File**: `infra/db-roles.sql`, `infra/main.tf` (no reference)
 - **Impact**: Production database does not have `brain_app` / `brain_privileged` roles; RLS policies are armed but enforcement depends on the `brain_admin` owner role bypassing RLS.

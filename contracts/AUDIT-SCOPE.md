@@ -5,9 +5,9 @@ Solidity ≥0.8.24, no upgradeable proxies in MVP). Total ~1,300 LoC. Each contr
 below lists its size, the invariants the auditor must verify, known hardening
 additions, and existing test coverage.
 
-> **Severity tiers.** `BrainEscrow` is the **only funds-custodying** contract —
+> **Severity tiers.** `BrainEscrow` is the **only funds-custodying** contract.
 > highest priority. `BrainReputationRegistry` is **non-custodial** (no value path)
-> and is a **Policy-input-only** artifact — included for completeness, lower
+> and is a **Policy-input-only** artifact. Included for completeness, lower
 > severity. The other four are the previously-scoped audited core.
 
 > **Highest priority: `BrainEscrow`.** It is the only contract that **custodies
@@ -20,17 +20,17 @@ Commit under audit: **TODO(brain-hardening): pin the audited commit SHA + tag.**
 
 ---
 
-## BrainEscrow (132 LoC impl + 56 LoC `IBrainEscrow` interface) — PRIORITY
+## BrainEscrow (132 LoC impl + 56 LoC `IBrainEscrow` interface). PRIORITY
 
 Conditional x402 / M2M settlement escrow (RFC 0001 §7.6): a payer locks USDC
 against a hashed job commitment; funds **release** to the payee on attested
 completion, or **refund** to the payer on timeout / arbiter dispute. Settlement is
-**incremental** — `release(amount)` and `refund(amount)` each move a partial
+**incremental**. `release(amount)` and `refund(amount)` each move a partial
 amount (`≤ remaining`), supporting **milestone payments** and **arbiter
 dispute-splits** (release part to the payee, refund the rest to the payer). State
 machine: `None → Locked → Settled`, where `Settled` is reached exactly when
 `released + refunded == amount` (terminal). The **only** funds-custodying contract
-— treat as the highest-severity surface. The partial-settlement accounting
+, treat as the highest-severity surface. The partial-settlement accounting
 (`released` / `refunded` accumulators, the `remaining` bound) is **new since the
 last revision** and deserves focused attention.
 
@@ -53,7 +53,7 @@ Design + threat model + the audit-scope rationale: `docs/contracts/x402-escrow.m
   (any time) or `payer` after `deadline` may `refund`; everyone else reverts
   (`NotAuthorized` / `DeadlineNotReached`). Crucially, the **immutable** arbiter
   can only release to the _designated_ payee or refund to the _designated_ payer
-  (including across a partial dispute-split) — it can NEVER redirect funds to an
+  (including across a partial dispute-split). It can NEVER redirect funds to an
   arbitrary address, and there is no admin / drain / upgrade / pause /
   `selfdestruct` / `delegatecall` path.
 - **Reentrancy-safe:** a `nonReentrant` latch plus checks-effects-interactions
@@ -63,7 +63,7 @@ Design + threat model + the audit-scope rationale: `docs/contracts/x402-escrow.m
   bool-returning (USDC) and no-return ERC-20s and reverts on a false/failed
   return (`TransferFailed`).
 - **Hash-only / no PII (RFC §3):** the ABI is `bytes32` / `address` / `uint`
-  only — the sole job datum on-chain is `jobTermsHash` (a keccak commitment).
+  only. The sole job datum on-chain is `jobTermsHash` (a keccak commitment).
   Enforced by `scripts/check-no-onchain-pii.mjs`.
 
 **Hardening:** `nonReentrant` + CEI ordering; single-use escrow ids; an immutable
@@ -72,11 +72,11 @@ arbiter with no fund-redirection power; a dependency-free SafeERC20-style wrappe
 
 **Documented assumptions the auditor should confirm:**
 
-- Settlement token is **USDC on Base** — a standard ERC-20 (6 decimals, bool
+- Settlement token is **USDC on Base**. A standard ERC-20 (6 decimals, bool
   return). **Fee-on-transfer / rebasing tokens are out of scope** (the design
   assumes `amount` received == `amount` transferred).
 - `arbiter` is a Safe multi-sig in production, trusted to attest completion /
-  resolve disputes — but, per the authorization invariant, never able to
+  resolve disputes. But, per the authorization invariant, never able to
   redirect funds.
 
 **Coverage** (`contracts/test/BrainEscrow.t.sol`): unit (full release settles,
@@ -161,14 +161,14 @@ On-chain registration of external MCP agents with an EIP-712 scope attestation.
 **Coverage:** unit + fuzz per external function; invariant "registered agents
 have a `scope_hash` matching stored scope."
 
-## BrainReputationRegistry (51 LoC impl + 32 LoC `IBrainReputationRegistry` interface) — NON-CUSTODIAL
+## BrainReputationRegistry (51 LoC impl + 32 LoC `IBrainReputationRegistry` interface). NON-CUSTODIAL
 
 ERC-8004-style agent reputation registry (RFC 0001 §7.7, D-6). An attestor
 (reputation oracle; a Safe multi-sig in prod) publishes, per agent, a single
-**reputation pointer** — a `bytes32` Merkle root committing to the agent's
-off-chain reputation dataset — versioned by a monotonically increasing `epoch`.
+**reputation pointer**. A `bytes32` Merkle root committing to the agent's
+off-chain reputation dataset. Versioned by a monotonically increasing `epoch`.
 **Holds no funds and has no value path.** Read by Brain's Policy layer as a
-**tighten-only threshold input** — never a money gate, never a §6 precondition
+**tighten-only threshold input**. Never a money gate, never a §6 precondition
 (Standards §6, Principle #5).
 
 Design + threat model: `docs/contracts/reputation-registry.md`.
@@ -179,13 +179,13 @@ Design + threat model: `docs/contracts/reputation-registry.md`.
   published epoch for an agent and never decreases under any interleaving; the
   stored root is always the most-recent non-zero root
   (`invariant_epochTracksGhostAndRootNonZero`).
-- **Anti-replay:** any `epoch <= current` reverts (`StaleEpoch`) — a stale pointer
+- **Anti-replay:** any `epoch <= current` reverts (`StaleEpoch`). A stale pointer
   can never overwrite a newer one (unit + `testFuzz_staleEpochAlwaysReverts`).
 - **Authorization:** only the attestor publishes / rotates; strangers revert
   (`NotAttestor`); rotation (`setAttestor`) is attestor-only with a zero-address
   guard; no admin / upgrade / pause.
 - **Non-custodial:** confirm there is **no** `transfer` / `transferFrom` / `call`
-  / `payable` / `selfdestruct` / `delegatecall` — the contract cannot hold or move
+  / `payable` / `selfdestruct` / `delegatecall`. The contract cannot hold or move
   value, so a compromised attestor can at worst publish a bad pointer (which, via
   Policy's tighten-only rule, can only make payments _stricter_).
 - **Hash-only / no PII (RFC §3):** ABI is `bytes32` / `address` / `uint` only; a
@@ -208,12 +208,12 @@ multi-agent handler).
   `IBrainReputationRegistry.sol`) + `contracts/test/*.t.sol` (unit + fuzz +
   invariant) + gas
   baselines.
-- `docs/contracts/x402-escrow.md` — the `BrainEscrow` design, state machine,
+- `docs/contracts/x402-escrow.md`. The `BrainEscrow` design, state machine,
   authorization matrix, security properties, and external-audit scope.
 - `Brain_MVP_Architecture.md` (§Layer 6 audit anchor, §Layer 5 smart account) and
   `Brain_Engineering_Standards.md` §8.3 for context.
 - The off-chain counterpart (`services/audit/src/merkle.ts`) so the auditor can
   confirm on-/off-chain hashing parity.
 - Build/test reproduction: `forge build --sizes` + `forge test -vvv` from
-  `contracts/` (Solidity 0.8.24, deterministic build — `bytecode_hash = none`,
+  `contracts/` (Solidity 0.8.24, deterministic build. `bytecode_hash = none`,
   `cbor_metadata = false`; fuzz 1000 / invariant 256×64 per `foundry.toml`).

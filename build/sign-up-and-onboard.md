@@ -1,5 +1,5 @@
 ---
-description: Go from zero to an authenticated sandbox tenant — human login or a wallet-based agent.
+description: Go from zero to an authenticated sandbox tenant. Human login or a wallet-based agent.
 ---
 
 # Sign Up and Onboard
@@ -7,7 +7,7 @@ description: Go from zero to an authenticated sandbox tenant — human login or 
 Self-serve onboarding provisions a **sandbox tenant** you can read and _propose_ against immediately. Real money stays behind the promotion + external-audit gates, so onboarding is safe to explore end-to-end.
 
 {% hint style="info" %}
-Self-serve signup is gated by the `BRAIN_SELF_SERVE_SIGNUP` flag and lands every new tenant in **sandbox** (RFC 0002). Two principals share one tenant: a **human owner** (email/password or a linked wallet) for management + reads + approvals, and **agents** (wallet + on-chain scope) for the M2M tool surface. The human owner never gets `payment_intent:propose` / `*:execute` — money movement is an agent + §6-gate concern.
+Self-serve signup is gated by the `BRAIN_SELF_SERVE_SIGNUP` flag and lands every new tenant in **sandbox** (RFC 0002). Two principals share one tenant: a **human owner** (email/password or a linked wallet) for management + reads + approvals, and **agents** (wallet + on-chain scope) for the M2M tool surface. The human owner never gets `payment_intent:propose` / `*:execute`. Money movement is an agent + §6-gate concern.
 {% endhint %}
 
 ### 1. Sign up
@@ -50,7 +50,7 @@ curl -s "$BRAIN/v1/ledger/accounts" -H "authorization: Bearer $ACCESS_TOKEN"
 ### 4. Bring in a wallet or an agent
 
 - **Link your own wallet** (so you can also sign in with it): `POST /v1/tenants/{tenant_id}/wallets` with your owner token. A wallet-based sign-in then mints the same owner token via SIWX.
-- **Point an agent at Brain**: register the agent (it lands `pending_onchain`, becomes `active` once its `BrainMCPAgentRegistry` scope attestation confirms), then the agent signs in with SIWX and calls the MCP surface — read, contribute, and **propose** (never execute; every settlement passes the §6 gate).
+- **Point an agent at Brain**: register the agent (it lands `pending_onchain`, becomes `active` once its `BrainMCPAgentRegistry` scope attestation confirms), then the agent signs in with SIWX and calls the MCP surface. Read, contribute, and **propose** (never execute; every settlement passes the §6 gate).
 
 ### What's Next
 

@@ -1,6 +1,6 @@
-# RFC 0002 — Self-serve onboarding (open, sandbox-first signup + two-principal identity)
+# RFC 0002. Self-serve onboarding (open, sandbox-first signup + two-principal identity)
 
-- **Status:** Proposed — design of record for the cold-start onboarding funnel.
+- **Status:** Proposed. Design of record for the cold-start onboarding funnel.
 - **Date:** 2026-05-27
 - **Authors:** ai-assisted
 - **Affects:** `services/api` (new public auth/signup surface), `services/execution`
@@ -15,7 +15,7 @@
 > money can move until the existing H-24 promotion + external-audit gates clear.
 > Each phase ships **shadowed** behind config and is individually revertible.
 
-## 1. Problem — the cold-start gap
+## 1. Problem. The cold-start gap
 
 Tracing the onboarding path against the code (verified 2026-05-27) shows Brain is
 **self-serve _within_ an onboarded tenant, but not for cold start**:
@@ -26,7 +26,7 @@ Tracing the onboarding path against the code (verified 2026-05-27) shows Brain i
   `deprecated: true`, not implemented.)
 - **First-agent bootstrap is operator-provisioned.** `AgentService.register`
   (`services/execution/src/AgentService.ts`) inserts an agent under
-  `withTenantScope(ctx.tenantId)` — it needs an **already-authenticated tenant
+  `withTenantScope(ctx.tenantId)`. It needs an **already-authenticated tenant
   principal**. SIWX-prod (`services/api/src/auth/siwx.ts` →
   `PostgresAgentRegistry.resolveByAddress`) only mints a useful token when an
   `agents` row already exists `WHERE onchain_address = <wallet> AND state =
@@ -34,7 +34,7 @@ Tracing the onboarding path against the code (verified 2026-05-27) shows Brain i
   wallet login) an active agent to get a tenant-scoped token.
 - **No human credential store.** The `users` table
   (`services/execution/migrations/0005_users.sql`) maps humans to an approval
-  `role` (owner/admin/approver/viewer) — but has **no password / credential
+  `role` (owner/admin/approver/viewer). But has **no password / credential
   column** and no login endpoint. Human email auth does not exist yet.
 - **External-agent on-chain registration is not turnkey.** Rows sit
   `pending_onchain`; the `BrainMCPAgentRegistry` tx + EIP-712 scope attestation is
@@ -51,7 +51,7 @@ agent at Brain without operator help.
 2. **No new money path.** Execution still flows `PaymentIntent → §6 gate → audit`
    via `PaymentIntentService`. Signup grants **no** execution capability; sandbox
    tenants' agents are never in `LIVE_AGENTS`; rails fail closed. `propose ≠
-execute` is unchanged — the MCP surface still has no execute tool.
+execute` is unchanged. The MCP surface still has no execute tool.
 3. **Sandbox-first / fail-closed.** New self-serve tenants are flagged `sandbox`.
    They can read + propose (shadow), producing full §6 dry-run gate traces and
    audit, but move no money. Promotion to live is the existing human-gated step.
@@ -59,7 +59,7 @@ execute` is unchanged — the MCP surface still has no execute tool.
    `agent.registered`, `wallet.linked` all emit audit events.
 5. **Least privilege + abuse-resistant.** The public endpoints are rate-limited,
    email-verified before anything sensitive, and reuse the existing JWT/scope
-   model — no bespoke crypto.
+   model. No bespoke crypto.
 
 ## 3. The two-principal identity model
 
@@ -72,7 +72,7 @@ A tenant has **two kinds of principal**, both linkable under one tenant:
 
 Key point established during design: **email is for the human account; the
 wallet + on-chain attestation is for the agent that acts autonomously.** They are
-not interchangeable per-endpoint — the MCP auth chain requires the JWT
+not interchangeable per-endpoint. The MCP auth chain requires the JWT
 `scope_hash` to match the on-chain registry, which is address-based. "Both,
 linked" means one tenant can hold an email owner **and** one or more wallet
 agents, and the human may _also_ hold a wallet login.
@@ -95,22 +95,22 @@ The legacy `POST /execution/agents/register` is superseded by `POST /v1/agents`
 
 Additive, back-compat migrations (forward-compatible per the migrate tool):
 
-- **`tenants`** — add `sandbox BOOLEAN NOT NULL DEFAULT FALSE` (self-serve signup
+- **`tenants`**. Add `sandbox BOOLEAN NOT NULL DEFAULT FALSE` (self-serve signup
   sets it `TRUE`; existing/seeded tenants stay non-sandbox). Add `created_via TEXT`
   (`'seed' | 'self_serve' | 'admin'`) for provenance. RLS unchanged (`id =
 app.tenant_id`).
-- **`users`** — add `password_hash TEXT` (argon2id; NULL for wallet-only humans),
+- **`users`**. Add `password_hash TEXT` (argon2id; NULL for wallet-only humans),
   `email_verified_at TIMESTAMPTZ`, `status TEXT` (`'pending' | 'active' |
 'disabled'`). RLS unchanged.
-- **`wallet_identities`** (new) — `address TEXT`, `tenant_id`, `principal_type
+- **`wallet_identities`** (new). `address TEXT`, `tenant_id`, `principal_type
 TEXT ('human' | 'agent')`, `user_id`/`agent_id` FK, unique on `address`. Lets
   SIWX resolve a wallet → (tenant, principal) for **both** humans and agents
   (today only agents resolve). RLS by `tenant_id`; the cross-tenant
   address→tenant lookup uses the existing `brain_privileged` reader path SIWX
   already runs under.
-- **`email_verifications`** (new) — `token_hash`, `user_id`, `expires_at`,
+- **`email_verifications`** (new). `token_hash`, `user_id`, `expires_at`,
   `consumed_at`. Tokens are single-use, short-TTL, stored hashed.
-- **`agents`** — reuse the existing `state` lifecycle: `pending_onchain → active`.
+- **`agents`**. Reuse the existing `state` lifecycle: `pending_onchain → active`.
   Add `onchain_attestation_attempts` + `last_attestation_error` for the relayer.
 
 ## 6. Tenant-isolation safety (the critical section)
@@ -120,13 +120,13 @@ yet, so it cannot run under the normal `withTenantScope` predicate. The signup
 writer is therefore privileged and must be **surgically narrow**:
 
 1. **Mint the new tenant id first**, then perform the inserts with
-   `app.tenant_id` **set to the freshly-minted id** — so the existing
+   `app.tenant_id` **set to the freshly-minted id**. So the existing
    `tenants`/`users` RLS write policies (`id = app.tenant_id` /
    `tenant_id = app.tenant_id`) pass for the new tenant and **only** the new
    tenant. The writer never reads or writes any other tenant's rows.
 2. The privileged connection is used **only** for: `INSERT` one `tenants` row,
    `INSERT` one owner `users` row, `INSERT` the email-verification token, and (on
-   wallet link/agent register) one `wallet_identities` / `agents` row — all keyed
+   wallet link/agent register) one `wallet_identities` / `agents` row. All keyed
    to the new tenant id. No `SELECT *` across tenants, no update of foreign rows.
 3. **Uniqueness is enforced at the DB** (`UNIQUE(email)` globally for owner login;
    `UNIQUE(address)` on `wallet_identities`) so signup cannot hijack or collide
@@ -147,14 +147,14 @@ operate as sanctioned `brain_privileged` cross-tenant paths (CLAUDE.md §1).
 - **Passwords:** argon2id, per-user salt, never logged; a hashed, single-use,
   short-TTL reset token flow. Wallet-only humans have `password_hash = NULL`.
 - **Wallet proof:** SIWX already proves key control via EIP-4361 signature over a
-  server nonce (Redis, 5-min TTL, single-use) — reused unchanged.
+  server nonce (Redis, 5-min TTL, single-use). Reused unchanged.
 - **Secrets:** the JWT signing key (`AUTH_SIGN_KEY`) stays in Azure Key Vault; no
   new long-lived secret. The relayer signer (Phase C) is KMS-backed and
   fail-closed (see §8).
-- **No PII on-chain:** unchanged — only the agent address + `bytes32 scope_hash`
+- **No PII on-chain:** unchanged. Only the agent address + `bytes32 scope_hash`
   reach `BrainMCPAgentRegistry`; email/password never touch the chain.
 
-## 8. On-chain agent registration — off-chain pending + async relayer (D-3)
+## 8. On-chain agent registration. Off-chain pending + async relayer (D-3)
 
 Decision: **register off-chain immediately, confirm on-chain asynchronously.**
 
@@ -166,9 +166,9 @@ Decision: **register off-chain immediately, confirm on-chain asynchronously.**
    **KMS-backed signer** and, on confirmation, flips the row to `active`
    (the state SIWX-prod requires). Until the signer/RPC is configured the relayer
    **fails closed** (the row stays `pending_onchain`, the agent cannot get a live
-   token) — mirroring the rail boot-fence in RFC 0001.
+   token). Mirroring the rail boot-fence in RFC 0001.
 3. **Swappable:** the same `agents` lifecycle supports the gasless-at-signup or
-   user-submits-the-tx variants later without a schema change — only the relay
+   user-submits-the-tx variants later without a schema change. Only the relay
    strategy differs.
 
 The KMS signer construction + Base RPC wiring is the deferred live-wiring step
@@ -184,25 +184,25 @@ A self-serve tenant is `sandbox = TRUE`. Sandbox semantics:
 - Rails fail closed regardless (`rails/stubs.ts` throws in production).
 - Promotion to a live, money-moving tenant remains the existing human/business
   decision behind `scripts/check-promotion-readiness.mjs` (H-24) **and** the
-  external contract audit — explicitly out of scope for self-serve.
+  external contract audit. Explicitly out of scope for self-serve.
 
 So "open signup" is safe **by construction**: the worst a new tenant can do is
 read its own (empty) ledger and generate shadow proposals.
 
 ## 10. Sequencing (shadow-first, small reviewed PRs)
 
-- **Phase A — this RFC.** Design of record. _(doc PR)_
-- **Phase B — tenant provisioning + human email auth.** `/signup`,
+- **Phase A. This RFC.** Design of record. _(doc PR)_
+- **Phase B. Tenant provisioning + human email auth.** `/signup`,
   `/auth/login`, `/auth/verify-email`; `tenants.sandbox` + `users` auth columns +
   `email_verifications`; the narrow privileged signup writer; the isolation
   invariant test. **No agent, no money.** Behind `BRAIN_SELF_SERVE_SIGNUP` flag,
   default off.
-- **Phase C — agent registration + relayer interface.** `POST /v1/agents`,
+- **Phase C. Agent registration + relayer interface.** `POST /v1/agents`,
   `pending_onchain` lifecycle, the `brain.agents.onchainRegister` job + a
   fail-closed relayer interface (signer deferred).
-- **Phase D — wallet identities + SIWX linking.** `wallet_identities`, extend
+- **Phase D. Wallet identities + SIWX linking.** `wallet_identities`, extend
   SIWX to resolve humans + link wallets; unify the address→principal lookup.
-- **Phase E — API spec + SDK + docs.** Update `Brain_API_Specification.yaml`,
+- **Phase E. API spec + SDK + docs.** Update `Brain_API_Specification.yaml`,
   regenerate `@brain/sdk`, write an onboarding quickstart.
 
 Each phase is additive, flag-gated, fails closed, and lands green
@@ -216,7 +216,7 @@ Each phase is additive, flag-gated, fails closed, and lands green
 | **O-2** | Identity model              | **Two principals, linked:** email (+password) for the human owner/management; SIWX wallet + on-chain attestation for the agent. A human may also link a wallet login. |
 | **O-3** | On-chain agent registration | **Off-chain `pending_onchain` + async KMS relayer** (fail-closed; deferred signer). Swappable to gasless-at-signup / user-submits later.                              |
 | **O-4** | New tenant default posture  | **`sandbox = TRUE`**; existing/seeded tenants stay non-sandbox (column defaults FALSE).                                                                               |
-| **O-5** | Human login scopes          | Management/read + approve only — **never** `*:execute` or `payment_intent:propose` by default (those belong to agents).                                               |
+| **O-5** | Human login scopes          | Management/read + approve only. **never** `*:execute` or `payment_intent:propose` by default (those belong to agents).                                               |
 
 ## 12. Non-goals (this RFC)
 
@@ -228,7 +228,7 @@ Each phase is additive, flag-gated, fails closed, and lands green
 
 ## 13. New error codes + audit events
 
-- **Errors** (`shared/src/errors.ts` — add code + `HTTP_STATUS_BY_CODE`):
+- **Errors** (`shared/src/errors.ts`. Add code + `HTTP_STATUS_BY_CODE`):
   `signup_email_taken` (409), `signup_disabled` (403, when the flag is off),
   `auth_invalid_credentials` (401), `auth_email_unverified` (403),
   `auth_rate_limited` (429), `wallet_already_linked` (409),

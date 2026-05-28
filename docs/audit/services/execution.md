@@ -42,7 +42,7 @@ This report covers:
 - State machine: the 9-state `PaymentIntentState` diagram.
 - Migrations 0016–0020 in `services/execution/`.
 
-Not covered: the legacy v0.2 `/execution/*` routes (covered by `services/api.md`), the gate itself (`shared/src/gate/` — already audited indirectly), and per-rail live integration (Plaid sandbox, anvil — deferred per CLAUDE.md).
+Not covered: the legacy v0.2 `/execution/*` routes (covered by `services/api.md`), the gate itself (`shared/src/gate/`. Already audited indirectly), and per-rail live integration (Plaid sandbox, anvil. Deferred per CLAUDE.md).
 
 ---
 
@@ -66,7 +66,7 @@ Fully implemented. Key paths:
 
 - `create()`: evaluates policy at creation time, persists the row with `policyDecisionId`, emits `payment_intent.created`.
 - `execute()`: requires `status='approved'`; builds `GateDependencies`, calls `runPreExecutionGate`; on pass: constructs the rail payload, resolves optional on-chain params and ACH credentials (never logged), atomically transitions `approved → dispatching` AND inserts the outbox row in one `withTenantScope` transaction; aborts cleanly if the intent was paused between gate and hand-off (conditional UPDATE matches no row → whole tx rolls back, no enqueue). Returns 202 with `outbox_id`.
-- `completeExecution()`: idempotent — no-ops if already `executed`. One transaction: insert execution row, set receipt, transition `dispatching → executed`.
+- `completeExecution()`: idempotent. No-ops if already `executed`. One transaction: insert execution row, set receipt, transition `dispatching → executed`.
 - `failExecution()`: transitions `dispatching → failed` (definitive failure only; ambiguous failures go to `reconciling` via outbox).
 - `pause()` / `resume()`: kill-switch (1b.3). `resume()` re-runs the full §6 gate before re-entering `approved`.
 - `pauseByAgent()`: bulk-pauses approved intents for a quarantined agent.
@@ -79,9 +79,9 @@ Verified transitions: `approved → dispatching` (H-04 outbox path, no direct `a
 
 ### Outbox (H-04)
 
-`OutboxService` is a thin SQL layer with no owned pool — accepts explicit query clients. Key guarantees:
-- `enqueue()`: `ON CONFLICT (tenant_id, idempotency_key) DO NOTHING RETURNING id` — idempotent on re-retry.
-- `claimNext()`: `FOR UPDATE SKIP LOCKED` — concurrent workers claim disjoint row sets without blocking.
+`OutboxService` is a thin SQL layer with no owned pool. Accepts explicit query clients. Key guarantees:
+- `enqueue()`: `ON CONFLICT (tenant_id, idempotency_key) DO NOTHING RETURNING id`. Idempotent on re-retry.
+- `claimNext()`: `FOR UPDATE SKIP LOCKED`. Concurrent workers claim disjoint row sets without blocking.
 - `reclaimStale()`: returns `dispatching | dispatched` rows whose lock is older than `staleSeconds` (default 300s) to `pending`. Handles both "died before receipt persist" and "died before settle" crash cases.
 - `markFailed()`: bumps `attempt_count`; at `MAX_DISPATCH_ATTEMPTS` (3) → `reconciling`. Ambiguous failures (receipt validation fail, settle DB error) always go straight to `reconciling`.
 
@@ -106,7 +106,7 @@ All four guards in `sign()`:
 3. Duplicate signer: `findApprovalForSigner` non-null → `approval_duplicate_signer` (hard reject, not silent no-op).
 4. Policy-version staleness: `resolveActivePolicyVersion` recorded on insert; `markStaleForSupersededVersion` called in `signedValidRoles`.
 
-`hasRequiredApprovals()` passes through `signedValidRoles` which excludes stale signatures. Quorum logic: `every required role in signedRoles set`. At `main.ts:801` the primary `approvalService` is fully wired with all four optional hooks. At `main.ts:1286` the HTTP payment-intent plugin creates a fresh `piApprovals` — also fully wired.
+`hasRequiredApprovals()` passes through `signedValidRoles` which excludes stale signatures. Quorum logic: `every required role in signedRoles set`. At `main.ts:801` the primary `approvalService` is fully wired with all four optional hooks. At `main.ts:1286` the HTTP payment-intent plugin creates a fresh `piApprovals`. Also fully wired.
 
 ### Sagas (`runSaga`)
 
@@ -116,12 +116,12 @@ All four guards in `sign()`:
 
 ### Rails
 
-- `AchPlaidRail.dispatch()`: two-step Plaid Transfer — `transferAuthorizationCreate` (idempotency-keyed) then `transferCreate` (with `client_transaction_id`). Returns `status: 'pending'` — ACH settles asynchronously via `TRANSFER_EVENTS_UPDATE` webhook.
+- `AchPlaidRail.dispatch()`: two-step Plaid Transfer. `transferAuthorizationCreate` (idempotency-keyed) then `transferCreate` (with `client_transaction_id`). Returns `status: 'pending'`. ACH settles asynchronously via `TRANSFER_EVENTS_UPDATE` webhook.
 - `OnchainBaseRail.dispatch()`: reads live session-key nonce via `getSessionKeyNonce`, then calls `executor.execute()`. `BadNonce` and `ReentrantCall` surface as `execution_rail_declined`.
 - `defaultRails()`: stubs fail closed at `assertStubRailsAllowed()` under `NODE_ENV=production`.
-- Boot (main.ts:886–913): real rails registered conditionally — Plaid only if `PLAID_CLIENT_ID` + `PLAID_SECRET` present; on-chain only if `BRAIN_SESSION_KEY` + `BASE_RPC_URL` present. If neither is configured, `defaultRails()` is used (with its production fence).
+- Boot (main.ts:886–913): real rails registered conditionally. Plaid only if `PLAID_CLIENT_ID` + `PLAID_SECRET` present; on-chain only if `BRAIN_SESSION_KEY` + `BASE_RPC_URL` present. If neither is configured, `defaultRails()` is used (with its production fence).
 
-**Gap: `applyPlaidTransferEvent` is never called.** The function is defined at `ach-plaid.ts:218`, exported at `index.ts:47`, and designed to be called by the `/raw/webhooks/plaid` handler on `TRANSFER_EVENTS_UPDATE` events. Neither `services/api/src/main.ts` nor `services/raw/` references it. ACH payments dispatched via the real `AchPlaidRail` will never receive a terminal settlement event from Brain — the intent remains stuck in `dispatching` until the outbox worker exhausts its 3-attempt budget and routes to `reconciling`.
+**Gap: `applyPlaidTransferEvent` is never called.** The function is defined at `ach-plaid.ts:218`, exported at `index.ts:47`, and designed to be called by the `/raw/webhooks/plaid` handler on `TRANSFER_EVENTS_UPDATE` events. Neither `services/api/src/main.ts` nor `services/raw/` references it. ACH payments dispatched via the real `AchPlaidRail` will never receive a terminal settlement event from Brain. The intent remains stuck in `dispatching` until the outbox worker exhausts its 3-attempt budget and routes to `reconciling`.
 
 ---
 
@@ -131,7 +131,7 @@ All four guards in `sign()`:
 # Typecheck
 $ pnpm --filter @brain/execution run typecheck
 > tsc --noEmit -p tsconfig.typecheck.json
-[no output — 0 errors]
+[no output. 0 errors]
 
 # Tests
 $ pnpm --filter @brain/execution run test
@@ -166,7 +166,7 @@ $ grep -rn "applyPlaidTransferEvent|TRANSFER_EVENTS_UPDATE" services/ --include=
 
 **Mostly Working**
 
-The core execute path — §6 gate → durable outbox hand-off → worker drain → settle — is correctly implemented and well-tested. The ApprovalService quorum logic with P0.4 hardening is correct. The state machine is sound. Rails are real implementations that fail closed in production without credentials.
+The core execute path. §6 gate → durable outbox hand-off → worker drain → settle. Is correctly implemented and well-tested. The ApprovalService quorum logic with P0.4 hardening is correct. The state machine is sound. Rails are real implementations that fail closed in production without credentials.
 
 Two production gaps prevent full production-readiness:
 1. ACH payments dispatched via the real `AchPlaidRail` cannot auto-settle (webhook handler missing).
@@ -178,7 +178,7 @@ Two production gaps prevent full production-readiness:
 
 None of the standard violations (layer leakage, circular deps, business logic in transport) are present.
 
-The `PaymentIntentService` reads `ledger_payment_intents` via the `LedgerPaymentIntents` facade from `@brain/ledger` — not raw SQL — preserving the "every service owns its schema" rule. The comment at `PaymentIntentService.ts:9` documents this.
+The `PaymentIntentService` reads `ledger_payment_intents` via the `LedgerPaymentIntents` facade from `@brain/ledger`. Not raw SQL. Preserving the "every service owns its schema" rule. The comment at `PaymentIntentService.ts:9` documents this.
 
 One R-20 wiring mismatch: the HTTP-path `piService` at `main.ts:1294` omits `resolveTenantFlags`, while the agent/MCP-path service at `main.ts:870` includes it. This is a pre-existing finding (R-20 in the risk register). No new violations found.
 
@@ -186,15 +186,15 @@ One R-20 wiring mismatch: the HTTP-path `piService` at `main.ts:1294` omits `res
 
 ## 7. Missing Pieces
 
-1. **ACH webhook settlement unwired** — `applyPlaidTransferEvent` is defined and exported but has no caller in the Plaid webhook handler. ACH intents dispatched via `AchPlaidRail` remain stuck in `dispatching` until the outbox exhausts retries (→ `reconciling`). Any production ACH flow using Plaid credentials requires this wiring to ever auto-settle.
+1. **ACH webhook settlement unwired**. `applyPlaidTransferEvent` is defined and exported but has no caller in the Plaid webhook handler. ACH intents dispatched via `AchPlaidRail` remain stuck in `dispatching` until the outbox exhausts retries (→ `reconciling`). Any production ACH flow using Plaid credentials requires this wiring to ever auto-settle.
 
-2. **Saga persistence gap** — `runSaga` is a pure in-memory executor. The `agent_action_sagas` and `agent_saga_steps` DB tables exist (migration 0016, with FORCE RLS) but are never written to. Compensation logic is correct and audited, but there is no persistent saga record that ops or replay could inspect. No production caller exists.
+2. **Saga persistence gap**. `runSaga` is a pure in-memory executor. The `agent_action_sagas` and `agent_saga_steps` DB tables exist (migration 0016, with FORCE RLS) but are never written to. Compensation logic is correct and audited, but there is no persistent saga record that ops or replay could inspect. No production caller exists.
 
-3. **`privilegedPool` not closed on shutdown** — already documented as R-15. The `outboxWorker` uses `privilegedPool` which is never closed in `shutdown()`.
+3. **`privilegedPool` not closed on shutdown**. Already documented as R-15. The `outboxWorker` uses `privilegedPool` which is never closed in `shutdown()`.
 
-4. **`piService` missing `resolveTenantFlags`** — R-20. HTTP payment-intent execute path skips gate check 1.5 (behavior hash) for all callers.
+4. **`piService` missing `resolveTenantFlags`**. R-20. HTTP payment-intent execute path skips gate check 1.5 (behavior hash) for all callers.
 
-5. **`DATABASE_PRIVILEGED_URL` optional in dev** — the outbox worker falls back to `DATABASE_URL` (no BYPASSRLS) with a `console.warn`. Under dev conditions the worker runs as the table owner, bypassing the RLS policies that would otherwise scope `claimNext` to the calling tenant. This is explicitly documented in the boot code comment as "dev/testnet only" but is not enforced — if `DATABASE_PRIVILEGED_URL` is missing in a staging/pre-prod environment, cross-tenant outbox claims would be RLS-blocked (the owner role still sees all rows — FORCE RLS wouldn't apply to the owner without explicit BYPASSRLS, so actually the worker would accidentally claim all tenants' rows via the owner role).
+5. **`DATABASE_PRIVILEGED_URL` optional in dev**. The outbox worker falls back to `DATABASE_URL` (no BYPASSRLS) with a `console.warn`. Under dev conditions the worker runs as the table owner, bypassing the RLS policies that would otherwise scope `claimNext` to the calling tenant. This is explicitly documented in the boot code comment as "dev/testnet only" but is not enforced. If `DATABASE_PRIVILEGED_URL` is missing in a staging/pre-prod environment, cross-tenant outbox claims would be RLS-blocked (the owner role still sees all rows. FORCE RLS wouldn't apply to the owner without explicit BYPASSRLS, so actually the worker would accidentally claim all tenants' rows via the owner role).
 
 ---
 
@@ -283,8 +283,8 @@ All key files were read in full. The execute path, outbox cycle, approval quorum
 
 **Risks:**
 
-- `DATABASE_PRIVILEGED_URL` missing from staging → outbox worker runs as table owner, no BYPASSRLS isolation. The owner role sees all rows — the intent is "cross-tenant drain," but without the `brain_privileged` role this bypasses the intended security boundary.
-- The real on-chain rail requires `BRAIN_SESSION_KEY` (private key in env). No KMS fallback at runtime — if the env var is a raw private key, it's exposed in the process environment. KMS is the intended path (per CLAUDE.md), but the README defers this to a follow-up. This is a secrets-handling concern for the security audit.
+- `DATABASE_PRIVILEGED_URL` missing from staging → outbox worker runs as table owner, no BYPASSRLS isolation. The owner role sees all rows. The intent is "cross-tenant drain," but without the `brain_privileged` role this bypasses the intended security boundary.
+- The real on-chain rail requires `BRAIN_SESSION_KEY` (private key in env). No KMS fallback at runtime. If the env var is a raw private key, it's exposed in the process environment. KMS is the intended path (per CLAUDE.md), but the README defers this to a follow-up. This is a secrets-handling concern for the security audit.
 
 ---
 
@@ -292,6 +292,6 @@ All key files were read in full. The execute path, outbox cycle, approval quorum
 
 **Medium** for the saga persistence gap (library without callers is zero value, and the tables exist waiting to be used).
 
-**High** for the ACH webhook wiring — this is a functional gap that blocks production ACH settlement. Once `PLAID_CLIENT_ID`/`PLAID_SECRET` are configured, every ACH payment becomes a manual reconciliation case without this fix.
+**High** for the ACH webhook wiring. This is a functional gap that blocks production ACH settlement. Once `PLAID_CLIENT_ID`/`PLAID_SECRET` are configured, every ACH payment becomes a manual reconciliation case without this fix.
 
-The outbox, state machine, and approval logic are sound and do not need refactoring — they are production-quality.
+The outbox, state machine, and approval logic are sound and do not need refactoring. They are production-quality.

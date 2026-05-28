@@ -8,28 +8,28 @@ User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Inte
 
 ### v0.5 (M2M Commerce + Self-Serve Onboarding)
 
-Two additive tracks: **machine-to-machine (M2M) agent commerce** (RFC 0001) and **self-serve onboarding** (RFC 0002). Everything money-moving here is **shadow-first / fail-closed** — the new settlement rails are unregistered at boot and the new contracts are unaudited testnet/reference code. Self-serve signup is gated behind `BRAIN_SELF_SERVE_SIGNUP` (default off, sandbox-first).
+Two additive tracks: **machine-to-machine (M2M) agent commerce** (RFC 0001) and **self-serve onboarding** (RFC 0002). Everything money-moving here is **shadow-first / fail-closed**. The new settlement rails are unregistered at boot and the new contracts are unaudited testnet/reference code. Self-serve signup is gated behind `BRAIN_SELF_SERVE_SIGNUP` (default off, sandbox-first).
 
-#### Added — Self-serve onboarding (RFC 0002)
+#### Added. Self-serve onboarding (RFC 0002)
 
-- `POST /v1/auth/signup` — open, sandbox-first tenant + owner creation (email + password). Returns a verification token directly only outside production (no email provider wired yet).
-- `POST /v1/auth/verify-email` — verify the owner's email with the issued token.
-- `POST /v1/auth/login` — email + password login for the human owner; mints an owner JWT.
-- `POST /v1/tenants/{tenant_id}/wallets` — link a wallet to a tenant; a linked wallet can then sign in over SIWX as the owner.
+- `POST /v1/auth/signup`. Open, sandbox-first tenant + owner creation (email + password). Returns a verification token directly only outside production (no email provider wired yet).
+- `POST /v1/auth/verify-email`. Verify the owner's email with the issued token.
+- `POST /v1/auth/login`. Email + password login for the human owner; mints an owner JWT.
+- `POST /v1/tenants/{tenant_id}/wallets`. Link a wallet to a tenant; a linked wallet can then sign in over SIWX as the owner.
 - Agent on-chain registration is async: a newly registered agent starts `pending_onchain` and a relayer submits the `BrainMCPAgentRegistry` registration (the relayer is fail-closed until configured).
 
-#### Added — M2M / x402 settlement (RFC 0001)
+#### Added. M2M / x402 settlement (RFC 0001)
 
-- `x402_settle` action type — USDC-on-Base settlement via the `x402_base` rail.
-- `escrow_release` action type — milestone / dispute-split release via the `escrow_base` rail (`BrainEscrow`).
+- `x402_settle` action type. USDC-on-Base settlement via the `x402_base` rail.
+- `escrow_release` action type. Milestone / dispute-split release via the `escrow_base` rail (`BrainEscrow`).
 - Both settlement rails are **unregistered at boot and fail closed** until promoted; they throw rather than fake-settle.
 - Five dormant-until-wired §6 gate checks (3.5 on-chain-settlement-permitted, 5.5 agent-counterparty-attested, 6.5 x402-payment-context, 6.6 escrow-state-bound, 8.5 micropayment-cap-in-window). Each adds a row only when the intent carries settlement/escrow context **and** its on-chain loader is configured; the canonical path is unchanged for non-settlement payments.
 - On-chain-settlement reconciliation matcher; agent counterparties; `chain_tx_hash` on `ledger_transactions`.
 
-#### Added — Smart contracts (Base; unaudited)
+#### Added. Smart contracts (Base; unaudited)
 
-- `BrainEscrow` — custodial escrow with partial release, refund, and dispute splits (**UNAUDITED reference implementation**, testnet only).
-- `BrainReputationRegistry` — an ERC-8004-style per-agent reputation pointer / score root (RFC 0001, **UNAUDITED testnet**). Policy reads it as a **tighten-only** threshold input — never a money gate or a §6 precondition.
+- `BrainEscrow`. Custodial escrow with partial release, refund, and dispute splits (**UNAUDITED reference implementation**, testnet only).
+- `BrainReputationRegistry`. An ERC-8004-style per-agent reputation pointer / score root (RFC 0001, **UNAUDITED testnet**). Policy reads it as a **tighten-only** threshold input. Never a money gate or a §6 precondition.
 
 #### Errors
 
@@ -37,26 +37,26 @@ Two additive tracks: **machine-to-machine (M2M) agent commerce** (RFC 0001) and 
 
 ### v0.4 (Agent Autonomy v3)
 
-Hardens the 19-agent internal library for production autonomous execution. **Money-movers stay shadowed by default** — going live is a deliberate, per-agent promotion (strict caps + allowlisted rails); no agent moves money until promoted.
+Hardens the 19-agent internal library for production autonomous execution. **Money-movers stay shadowed by default**. Going live is a deliberate, per-agent promotion (strict caps + allowlisted rails); no agent moves money until promoted.
 
-#### Added — HTTP API
+#### Added. HTTP API
 
-- `POST /v1/agents/route` — routing decision only (no run).
-- `POST /v1/agents/run` — route → resolve action → dry-run gate → persist run → propose (shadow-aware; a shadowed agent's financial proposal terminates as `shadow_completed`).
-- `POST /v1/agents/events` — enqueue an event-driven route/run job.
-- `GET /v1/agents/runs`, `GET /v1/agents/runs/{run_id}`, `GET /v1/agents/runs/{run_id}/why` — run history + the structured-reason / trace / gate / receipt bundle.
-- `GET /v1/agents/routing-decisions/{id}` — routing decision detail.
-- `POST /v1/agents/{agent_id}/halt`, `POST /v1/agents/halt-category` — kill-switch: pause an agent's in-flight intents + quarantine it, or emergency-stop a whole category.
-- `POST /v1/payment-intents/{id}/pause`, `POST /v1/payment-intents/{id}/resume` — pause/resume an approved intent (resume re-runs the live §6 gate).
-- `GET /v1/payment-intents/{id}/replay-investigation` — typed forensic record (intent + executions + rail receipts + linking ids).
+- `POST /v1/agents/route`. Routing decision only (no run).
+- `POST /v1/agents/run`. Route → resolve action → dry-run gate → persist run → propose (shadow-aware; a shadowed agent's financial proposal terminates as `shadow_completed`).
+- `POST /v1/agents/events`. Enqueue an event-driven route/run job.
+- `GET /v1/agents/runs`, `GET /v1/agents/runs/{run_id}`, `GET /v1/agents/runs/{run_id}/why`. Run history + the structured-reason / trace / gate / receipt bundle.
+- `GET /v1/agents/routing-decisions/{id}`. Routing decision detail.
+- `POST /v1/agents/{agent_id}/halt`, `POST /v1/agents/halt-category`. Kill-switch: pause an agent's in-flight intents + quarantine it, or emergency-stop a whole category.
+- `POST /v1/payment-intents/{id}/pause`, `POST /v1/payment-intents/{id}/resume`. Pause/resume an approved intent (resume re-runs the live §6 gate).
+- `GET /v1/payment-intents/{id}/replay-investigation`. Typed forensic record (intent + executions + rail receipts + linking ids).
 
-#### Added — Policy DSL (signed)
+#### Added. Policy DSL (signed)
 
 - `agent.id`, `tenant.category`, `action.in` / `action.not_in`, `agent.behaviorHash`, `agent.spend_in_window`, `agent.tx_count_in_window`, and rule-level `approval_required_above`. All covered by the policy content hash, so they're signed.
 
-#### Added — Smart contracts
+#### Added. Smart contracts
 
-- `BrainSmartAccount.pauseSessionKey(holder)` / `unpauseSessionKey(holder)` — disable execution while preserving the key record, window spend, limits, and metadata (distinct from `revokeSessionKey`, which is permanent removal).
+- `BrainSmartAccount.pauseSessionKey(holder)` / `unpauseSessionKey(holder)`. Disable execution while preserving the key record, window spend, limits, and metadata (distinct from `revokeSessionKey`, which is permanent removal).
 - `BrainMCPAgentRegistry.registerAgent` now takes a `behaviorHash`; `updateBehaviorHash(...)` re-attests on a model/prompt/tool change. The §6 gate adds check 1.5 (runtime `behaviorHash` must match the registered value).
 
 #### Changed
@@ -66,7 +66,7 @@ Hardens the 19-agent internal library for production autonomous execution. **Mon
 
 #### Errors
 
-- `agent_proposal_duplicate` (409) — proposal-layer idempotency collision.
+- `agent_proposal_duplicate` (409). Proposal-layer idempotency collision.
 
 #### SDK (`@brain/sdk`)
 
@@ -81,12 +81,12 @@ Hardens the 19-agent internal library for production autonomous execution. **Mon
 
 #### Added
 
-- `Dockerfile` — multi-stage build for the `brain-server` single-process boot binary.
-- `GET /v1/demo/token` — mints a 15-minute read-heavy JWT for the golden demo tenant (requires `BRAIN_DEMO_MODE=true`, refused in `NODE_ENV=production`).
-- `POST /v1/audit/anchor/publish` — on-demand anchor trigger (requires `audit:admin`, 60s per-tenant cooldown).
-- Live viem anchor broadcaster — `AUDIT_PUBLISHER_KEY` + `AUDIT_ANCHOR_ADDRESS` wires on-chain anchoring to Base Sepolia.
-- `CORS_ALLOWED_ORIGINS` config variable — replaces the previous reflect-any-origin behaviour.
-- `tools/demo-reset` — wipes and re-seeds golden-path demo-tenant business entities; audit log preserved.
+- `Dockerfile`. Multi-stage build for the `brain-server` single-process boot binary.
+- `GET /v1/demo/token`. Mints a 15-minute read-heavy JWT for the golden demo tenant (requires `BRAIN_DEMO_MODE=true`, refused in `NODE_ENV=production`).
+- `POST /v1/audit/anchor/publish`. On-demand anchor trigger (requires `audit:admin`, 60s per-tenant cooldown).
+- Live viem anchor broadcaster. `AUDIT_PUBLISHER_KEY` + `AUDIT_ANCHOR_ADDRESS` wires on-chain anchoring to Base Sepolia.
+- `CORS_ALLOWED_ORIGINS` config variable. Replaces the previous reflect-any-origin behaviour.
+- `tools/demo-reset`. Wipes and re-seeds golden-path demo-tenant business entities; audit log preserved.
 
 ## Current: Six-Layer Protocol with MCP
 

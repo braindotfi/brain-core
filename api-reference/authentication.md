@@ -1,6 +1,6 @@
 # Authentication
 
-Brain authenticates three caller types: humans, internal agents, and external agents. The same API endpoints serve all three — only the credential differs.
+Brain authenticates three caller types: humans, internal agents, and external agents. The same API endpoints serve all three. Only the credential differs.
 
 | Caller             | Mode                                                | Credential                            |
 | ------------------ | --------------------------------------------------- | ------------------------------------- |
@@ -14,9 +14,9 @@ Self-serve signup is gated by the `BRAIN_SELF_SERVE_SIGNUP` flag and is **sandbo
 
 ### Human Authentication (self-serve email + password)
 
-A developer self-provisions a sandbox tenant, verifies their email, then logs in for a short-lived **owner JWT** carrying management/read/approve scopes only — never `payment_intent:propose` / `payment_intent:execute` / `execution:propose` (money movement is an agent + §6-gate concern, never a human-login capability).
+A developer self-provisions a sandbox tenant, verifies their email, then logs in for a short-lived **owner JWT** carrying management/read/approve scopes only. Never `payment_intent:propose` / `payment_intent:execute` / `execution:propose` (money movement is an agent + §6-gate concern, never a human-login capability).
 
-**1. Sign up** — provisions a sandbox tenant + owner.
+**1. Sign up**. Provisions a sandbox tenant + owner.
 
 ```http
 POST /v1/signup
@@ -28,7 +28,7 @@ Content-Type: application/json
         "verification_token": "…" }   // returned outside production; emailed in prod
 ```
 
-**2. Verify the email** — single-use, short-TTL token, scoped to the tenant.
+**2. Verify the email**. Single-use, short-TTL token, scoped to the tenant.
 
 ```http
 POST /v1/auth/verify-email
@@ -37,7 +37,7 @@ POST /v1/auth/verify-email
 → 200 { "verified": true, "user_id": "user_…", "status": "active" }
 ```
 
-**3. Log in** — email + password → owner JWT.
+**3. Log in**. Email + password → owner JWT.
 
 ```http
 POST /v1/auth/login
@@ -56,9 +56,9 @@ GET /v1/ledger/transactions
 Authorization: Bearer <access_token>
 ```
 
-### Wallet Authentication (SIWX) — agents and humans
+### Wallet Authentication (SIWX). Agents and humans
 
-External agents — and humans who **link a wallet** — authenticate with **Sign-In With X** (EIP-4361 over Base). An owner can link a wallet to their tenant:
+External agents. And humans who **link a wallet**. Authenticate with **Sign-In With X** (EIP-4361 over Base). An owner can link a wallet to their tenant:
 
 ```http
 POST /v1/tenants/{tenant_id}/wallets        (owner JWT)
@@ -111,7 +111,7 @@ Authorization: Bearer <access_token>
 ```
 
 {% hint style="info" %}
-The MCP auth chain additionally verifies the agent record is `active` and that the JWT's `scope_hash` matches the on-chain hash in `BrainMCPAgentRegistry`. Agents can read, contribute evidence, and **propose** — never **execute** (there is no execute tool; every settlement passes the §6 gate).
+The MCP auth chain additionally verifies the agent record is `active` and that the JWT's `scope_hash` matches the on-chain hash in `BrainMCPAgentRegistry`. Agents can read, contribute evidence, and **propose**. Never **execute** (there is no execute tool; every settlement passes the §6 gate).
 {% endhint %}
 
 ### ScopeAttestation EIP-712 Type
@@ -133,7 +133,7 @@ ScopeAttestation(
 
 | Token                        | Default TTL | Refreshable                  |
 | ---------------------------- | ----------- | ---------------------------- |
-| **Owner JWT** (email/wallet) | 15 minutes  | Yes — log in / re-sign again |
+| **Owner JWT** (email/wallet) | 15 minutes  | Yes. Log in / re-sign again |
 | **Agent token (SIWX)**       | 1 hour      | Yes, by re-signing SIWX      |
 | **Service token**            | 90 days     | Rotated by tenant admin      |
 | **Email-verification token** | 24 hours    | No, single-use               |

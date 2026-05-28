@@ -1,6 +1,6 @@
-# Audit #13 — SDK / Generated Client (`@brain/sdk`)
+# Audit #13. SDK / Generated Client (`@brain/sdk`)
 
-**Subsystem**: `clients/sdk/` — `@brain/sdk v0.1.0-rc.0`, OpenAPI-typed client
+**Subsystem**: `clients/sdk/`. `@brain/sdk v0.1.0-rc.0`, OpenAPI-typed client
 **Auditor**: Evidence-driven, commands executed 2026-05-26
 **Status**: Complete
 **Score**: 6 / 10
@@ -56,8 +56,8 @@ git diff after regeneration:
 ### CI pipeline check
 
 ```
-.github/workflows/pr.yml — no `codegen:check` step
-package.json root scripts — no `codegen:check` invocation
+.github/workflows/pr.yml. No `codegen:check` step
+package.json root scripts. No `codegen:check` invocation
 ```
 
 Codegen drift check is not wired into CI. Drift accumulates silently.
@@ -82,7 +82,7 @@ clients/sdk/
     errors.ts              # BrainAPIError, PolicyApprovalRequiredError, PolicyRejectedError
     index.ts               # public re-exports
     generated/
-      openapi.d.ts         # openapi-typescript generated types (STALE — see §4)
+      openapi.d.ts         # openapi-typescript generated types (STALE. See §4)
     resources/
       actions.ts           # ActionsResource: propose, approve, execute, escalate
       agent-runs.ts        # AgentRunsResource: get, why, proof
@@ -109,20 +109,20 @@ The committed `openapi.d.ts` was generated from an earlier snapshot of `Brain_AP
 
 | Category | Direction | Impact |
 |----------|-----------|--------|
-| `@deprecated` markers on `proposeAgentAction` + `registerAgent` | In spec now, not in committed | Low — doc-only in generated types |
-| Expanded description blocks for `listAgents`, `getAgent`, `getAgentRunWhy`, proof endpoints | In spec now, not in committed | Low — doc-only |
-| `parameters: { ... }` formatting change (inline → multiline) | In spec now, not in committed | None — structurally identical |
-| Response type changes for deprecated endpoints (Agent/AgentRun → Error) | In spec now, not in committed | **Medium** — TS types diverge from runtime |
+| `@deprecated` markers on `proposeAgentAction` + `registerAgent` | In spec now, not in committed | Low. Doc-only in generated types |
+| Expanded description blocks for `listAgents`, `getAgent`, `getAgentRunWhy`, proof endpoints | In spec now, not in committed | Low. Doc-only |
+| `parameters: { ... }` formatting change (inline → multiline) | In spec now, not in committed | None. Structurally identical |
+| Response type changes for deprecated endpoints (Agent/AgentRun → Error) | In spec now, not in committed | **Medium**. TS types diverge from runtime |
 
 ### Severity of drift
 
 The type changes for deprecated endpoints are the only structurally meaningful divergence. Specifically:
-- `POST /agents/{id}/actions` (`proposeAgentAction`): spec now marks as `@deprecated` and returns 404 — the committed type still shows the old response schema.
-- `POST /agents/register` (`registerAgent`): same — spec deprecated it to document the still-live legacy route.
+- `POST /agents/{id}/actions` (`proposeAgentAction`): spec now marks as `@deprecated` and returns 404. The committed type still shows the old response schema.
+- `POST /agents/register` (`registerAgent`): same. Spec deprecated it to document the still-live legacy route.
 
-These are not new required fields — the committed types are a subset of the current spec. The SDK won't type-error against the runtime response because the deprecated paths return 404, not a mismatched schema. **Type safety is not broken; it is stale.**
+These are not new required fields. The committed types are a subset of the current spec. The SDK won't type-error against the runtime response because the deprecated paths return 404, not a mismatched schema. **Type safety is not broken; it is stale.**
 
-The `agents?: components["schemas"]["Agent"][]` field visible in the committed `openapi.d.ts` for `listAgents` but not in the fresh types suggests a response shape was simplified in the spec. This is the only case where the committed type is RICHER than the spec — callers using `response.agents` would typecheck against the committed type but receive a different shape at runtime if the spec change was also implemented server-side.
+The `agents?: components["schemas"]["Agent"][]` field visible in the committed `openapi.d.ts` for `listAgents` but not in the fresh types suggests a response shape was simplified in the spec. This is the only case where the committed type is RICHER than the spec. Callers using `response.agents` would typecheck against the committed type but receive a different shape at runtime if the spec change was also implemented server-side.
 
 ---
 
@@ -150,20 +150,20 @@ The SDK wraps these route groups:
 | `CompoundsResource` | `snapshot`, `trace` client-side aggregates | Client-side |
 | `CashFlowResource` | `summarize` | Client-side |
 
-**Compound helpers on `Brain`**: `pay`, `approve`, `reject`, `ask`, `snapshot`, `trace`, `proof` — these are the "homepage" developer-facing shortcuts.
+**Compound helpers on `Brain`**: `pay`, `approve`, `reject`, `ask`, `snapshot`, `trace`, `proof`. These are the "homepage" developer-facing shortcuts.
 
-Coverage is broad — all six layers plus the agent, audit, proof surfaces. No obvious missing routes.
+Coverage is broad. All six layers plus the agent, audit, proof surfaces. No obvious missing routes.
 
 ---
 
 ## 6. Consumer Reality
 
 `@brain/sdk` has **zero internal consumers**. It is:
-- `private: true` in `package.json` — not publishable to npm in current state
+- `private: true` in `package.json`. Not publishable to npm in current state
 - Explicitly noted as unpublished in CLAUDE.md (R-10)
 - Not imported by any service, test, or script in the monorepo
 
-The three Series A e2e tests (`tests/e2e/`) use a handwritten raw-fetch `BrainClient` with no type safety from the spec. If `@brain/sdk` were used there, codegen drift would surface as a test failure — the current setup provides no such signal.
+The three Series A e2e tests (`tests/e2e/`) use a handwritten raw-fetch `BrainClient` with no type safety from the spec. If `@brain/sdk` were used there, codegen drift would surface as a test failure. The current setup provides no such signal.
 
 The SDK is maintained as a standalone artifact with its own test suite (120 tests, all passing). It has no integration with the rest of the test estate.
 
@@ -172,7 +172,7 @@ The SDK is maintained as a standalone artifact with its own test suite (120 test
 ## 7. Build Mechanics
 
 - Codegen: `openapi-typescript >=7.5.0` → `src/generated/openapi.d.ts` from `Brain_API_Specification.yaml`
-- Transport: `openapi-fetch ^0.13.0` — type-safe fetch wrapper keyed on the generated path types
+- Transport: `openapi-fetch ^0.13.0`. Type-safe fetch wrapper keyed on the generated path types
 - Output: `dist/` (ESM, `type: "module"`), declarations, source maps
 - 120 tests: mock-server pattern (MSW or respx-style intercepts), covers happy paths + error paths per resource
 
@@ -188,7 +188,7 @@ The root `package.json` wires `clients/**` into `build`, `lint`, `typecheck`, `t
 |-----------|--------|
 | Tests | 120 / 120 passing |
 | Typecheck | Clean |
-| Codegen sync | **Stale** — 479 line drift from current spec |
+| Codegen sync | **Stale**. 479 line drift from current spec |
 | CI gate on codegen sync | **Missing** |
 | Internal consumers | None |
 | npm publication | Blocked (`private: true`, R-10) |
@@ -199,14 +199,14 @@ The root `package.json` wires `clients/**` into `build`, `lint`, `typecheck`, `t
 
 **Score: 6 / 10**
 
-The SDK is well-engineered — broad coverage, 120 tests, strict types. The gaps are operational:
+The SDK is well-engineered. Broad coverage, 120 tests, strict types. The gaps are operational:
 
 | Dimension | Assessment |
 |-----------|-----------|
-| Code quality | High — 120 tests, typecheck clean |
-| Spec sync | Medium risk — 27 hunks of drift, one response-type divergence |
+| Code quality | High. 120 tests, typecheck clean |
+| Spec sync | Medium risk. 27 hunks of drift, one response-type divergence |
 | CI enforcement | Missing `codegen:check` in pipeline |
-| Internal adoption | Zero — e2e tests use a handwritten client |
+| Internal adoption | Zero. E2e tests use a handwritten client |
 | External availability | Not published (private) |
 
 The SDK will not be useful to external integrators (Series A proof-point requirement) until it is published and the codegen drift is resolved. The e2e test suite not using the SDK means drift goes undetected until it breaks an external caller.
@@ -220,25 +220,25 @@ The SDK will not be useful to external integrators (Series A proof-point require
 | Test results | High | Ran `pnpm -C clients/sdk run test` directly |
 | Codegen drift | High | `codegen:check` ran, diff measured |
 | Nature of drift | Medium | Diff examined; docstring/deprecation dominant; one type-level change noted |
-| Zero internal consumers | High | grep across services/, tests/ — zero hits |
+| Zero internal consumers | High | grep across services/, tests/. Zero hits |
 | CI gate absent | High | Confirmed by reading pr.yml and package.json root scripts |
 
 ---
 
 ## 11. Findings
 
-### F-13-A — `codegen:check` not wired into CI (SEVERITY: Medium)
+### F-13-A. `codegen:check` not wired into CI (SEVERITY: Medium)
 
 - **File**: `.github/workflows/pr.yml`, `package.json:21–25`
 - **Evidence**: `codegen:check` is defined in `clients/sdk/package.json` but is not invoked by the root CI pipeline (no reference in pr.yml or main.yml). Drift is confirmed at 479 lines / 27 hunks.
 - **Fix**: Add `pnpm -C clients/sdk run codegen:check` to the `typescript` job in `pr.yml` before the `build` step.
 
-### F-13-B — `listAgents` response type richer in committed types than current spec (SEVERITY: Low)
+### F-13-B. `listAgents` response type richer in committed types than current spec (SEVERITY: Low)
 
 - **Evidence**: `diff` shows committed `openapi.d.ts` includes `agents?: components["schemas"]["Agent"][]` in the `listAgents` response; fresh generation from current spec does not. If the server response omits `agents` at the root level (returning it under a different key), callers typing against the SDK will see `agents` but find it undefined at runtime.
 - **Fix**: Regenerate (`pnpm -C clients/sdk run codegen`), review the diff, update any callers.
 
-### F-13-C — Zero internal consumers means drift is invisible (SEVERITY: Low)
+### F-13-C. Zero internal consumers means drift is invisible (SEVERITY: Low)
 
 - **Evidence**: `@brain/sdk` is imported by no service, test, or script. The e2e suite uses a handwritten client.
 - **Fix**: Use `@brain/sdk` in at least the e2e tests. This makes codegen drift immediately visible as a type error in CI, removing the need for `codegen:check` as a separate gate.
@@ -261,5 +261,5 @@ No new risk register entries.
 |----------|--------|
 | P0 | Add `pnpm -C clients/sdk run codegen:check` to `pr.yml` CI pipeline |
 | P1 | Regenerate `openapi.d.ts` from current spec (`pnpm -C clients/sdk run codegen`), review type changes, update SDK resource classes if response shapes changed |
-| P1 | Use `@brain/sdk` in `tests/e2e/` instead of the handwritten `BrainClient` — makes codegen drift a CI-breaking change |
+| P1 | Use `@brain/sdk` in `tests/e2e/` instead of the handwritten `BrainClient`. Makes codegen drift a CI-breaking change |
 | P2 | Set `private: false`, add a `prepublishOnly` script (`build && codegen:check`), publish `0.1.0-rc.0` to npm before Series A demos |

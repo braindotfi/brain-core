@@ -47,11 +47,11 @@ Out of scope: the §6 gate itself (in `shared/src/gate/gate.ts`, covered in the 
 
 Per `Brain_MVP_Architecture.md` §3 Layer 4 and the CLAUDE.md policy section:
 
-- **Deterministic rule VM** — 6 MVP primitives + 7 Agent Autonomy v3 extensions + 3 H-16 agent-output gating signals; no LLM, no Wiki reads.
-- **EIP-712 signed policies** — `compose` → `pending_signatures` → `active`; quorum of authorized signers verified against on-chain `BrainPolicyRegistry.isTenantSigner`.
-- **`agent_actions` allowlist (H-23)** — a `PolicyDocument.agent_actions` map restricts which action keys each named agent may request. Enforced at the `ActionResolver`.
-- **Spend envelopes (1b.2)** — `policy_spend_counters` accumulates per-agent aggregate spend per tumbling window; the gate reads counters pre-evaluation and increments them post-execution.
-- **Per-layer isolation** — policy never reads Wiki; `check-policy-no-wiki-read.mjs` enforces this in CI.
+- **Deterministic rule VM**. 6 MVP primitives + 7 Agent Autonomy v3 extensions + 3 H-16 agent-output gating signals; no LLM, no Wiki reads.
+- **EIP-712 signed policies**. `compose` → `pending_signatures` → `active`; quorum of authorized signers verified against on-chain `BrainPolicyRegistry.isTenantSigner`.
+- **`agent_actions` allowlist (H-23)**. A `PolicyDocument.agent_actions` map restricts which action keys each named agent may request. Enforced at the `ActionResolver`.
+- **Spend envelopes (1b.2)**. `policy_spend_counters` accumulates per-agent aggregate spend per tumbling window; the gate reads counters pre-evaluation and increments them post-execution.
+- **Per-layer isolation**. Policy never reads Wiki; `check-policy-no-wiki-read.mjs` enforces this in CI.
 
 ---
 
@@ -61,7 +61,7 @@ Per `Brain_MVP_Architecture.md` §3 Layer 4 and the CLAUDE.md policy section:
 
 `evaluate(policy, action)` iterates rules, calls `matchRule` for each, and returns the first matching rule's outcome. Default-deny: no match → `reject`. Correct first-match semantics.
 
-`matchRule` evaluates all `when` primitives in order: `counterparty.in`, `counterparty.not_in`, `amount.lte`, `amount.gt`, `agent.role`, `time_window`, `agent.id`, `tenant.category`, `action.in`, `action.not_in`, `agent.behaviorHash`, `agent.spend_in_window`, `agent.tx_count_in_window`, `agent.confidence.gte`, `agent.evidence_score.gte`, `agent.risk_level.lte` — all fail-closed when the corresponding action field is missing.
+`matchRule` evaluates all `when` primitives in order: `counterparty.in`, `counterparty.not_in`, `amount.lte`, `amount.gt`, `agent.role`, `time_window`, `agent.id`, `tenant.category`, `action.in`, `action.not_in`, `agent.behaviorHash`, `agent.spend_in_window`, `agent.tx_count_in_window`, `agent.confidence.gte`, `agent.evidence_score.gte`, `agent.risk_level.lte`. All fail-closed when the corresponding action field is missing.
 
 **`compareDecimal`** (the P0 #2-adjacent fix): Implemented via `normalizeDecimal` → `compareBigNumeric`. Uses only string operations and BigInt; no floating-point arithmetic. Handles negative zero explicitly at `vm.ts:261` (`if (fracCmp === 0) return 0;` prevents `-0`). `addDecimal` uses the same BigInt path. Property-tested with fast-check over integers ±1M.
 
@@ -71,17 +71,17 @@ Per `Brain_MVP_Architecture.md` §3 Layer 4 and the CLAUDE.md policy section:
 
 ### 3.2 EIP-712 Signing (`signing.ts`)
 
-Full EIP-712 implementation in ~230 lines using `@noble/hashes/sha3`. Does not depend on viem for signature generation — only for verification at the `/sign` route (`viem.verifyTypedData`). Domain separator, struct hash, and `encodeField` are correct against the EIP-712 spec for `bytes32`, `address`, `string`, and `uint*` types.
+Full EIP-712 implementation in ~230 lines using `@noble/hashes/sha3`. Does not depend on viem for signature generation. Only for verification at the `/sign` route (`viem.verifyTypedData`). Domain separator, struct hash, and `encodeField` are correct against the EIP-712 spec for `bytes32`, `address`, `string`, and `uint*` types.
 
-`tenantIdToBytes32`: `keccak256(tenantId)` — deterministic, irreversible. Matches `keccak256(abi.encodePacked(tenantId))` on-chain (per comment).
+`tenantIdToBytes32`: `keccak256(tenantId)`. Deterministic, irreversible. Matches `keccak256(abi.encodePacked(tenantId))` on-chain (per comment).
 
 ### 3.3 Quorum Enforcement (`routes.ts`)
 
 `POST /policy/:tenant_id/sign` enforces three guards before counting a signature toward quorum:
 
-1. **Valid EIP-712 signature** — `verifyTypedData` with the reconstructed domain.
-2. **Non-duplicate signer** — `seen` Set, rejects same address twice (`routes.ts:186-190`).
-3. **Authorized tenant signer** — `deps.isAuthorizedSigner(tenant, sig.address)` (`routes.ts:193`).
+1. **Valid EIP-712 signature**. `verifyTypedData` with the reconstructed domain.
+2. **Non-duplicate signer**. `seen` Set, rejects same address twice (`routes.ts:186-190`).
+3. **Authorized tenant signer**. `deps.isAuthorizedSigner(tenant, sig.address)` (`routes.ts:193`).
 
 In `main.ts:757-762`:
 - Demo mode: `() => Promise.resolve(true)` (any signer accepted in sandbox).
@@ -89,7 +89,7 @@ In `main.ts:757-762`:
 
 Policy activates atomically: `transition(c, id, "pending_signatures", "active")` first runs `UPDATE ... state = 'deactivated'` on any currently active policy, then UPDATEs the new one. Backed by `UNIQUE INDEX ... WHERE state = 'active'` at the DB layer.
 
-### 3.4 H-23 Agent Action Allowlist — NOT WIRED
+### 3.4 H-23 Agent Action Allowlist. NOT WIRED
 
 `PolicyDocument.agent_actions` and `allowedActionsFor(doc, agentKey)` are correctly defined (`dsl.ts:114-124`) and exported. The `ActionResolver` in `services/agent-router/src/action-resolver.ts` has an optional `isActionAllowed` dep (`action-resolver.ts:53`).
 
@@ -101,7 +101,7 @@ const actionResolver = new ActionResolver({ classifier: agentClassifier });
 
 The comment at `main.ts:1085-1091` explicitly acknowledges this: "Until wired, an explicit action is accepted if the agent offers it (pre-H-23 behavior)." This means the `agent_actions` field in the signed policy has no runtime enforcement. An agent can request any action it offers regardless of the signed policy's per-agent allowlist.
 
-### 3.5 Spend Counter Increment — NOT WIRED
+### 3.5 Spend Counter Increment. NOT WIRED
 
 `incrementSpendCounter` in `spend-counters.ts:65` is exported at `index.ts:71` but has **zero call sites** outside the policy package definition. Confirmed by global grep across all TS source files.
 
@@ -111,7 +111,7 @@ Effect: All agents always see the same spend-window values (initial or stale). S
 
 ### 3.6 `tenant.category` Hardcoded
 
-In `service.ts:163`, `evaluateForGate` sets `tenant_category: "business"` unconditionally. A TODO comment acknowledges this: "resolve real tenant category (router defaults to 'business' today)." All `tenant.category: "consumer"` policy rules are effectively dead — they never match because every gate call presents "business".
+In `service.ts:163`, `evaluateForGate` sets `tenant_category: "business"` unconditionally. A TODO comment acknowledges this: "resolve real tenant category (router defaults to 'business' today)." All `tenant.category: "consumer"` policy rules are effectively dead. They never match because every gate call presents "business".
 
 ### 3.7 Linter (`linter.ts`, H-18)
 
@@ -130,7 +130,7 @@ In `service.ts:163`, `evaluateForGate` sets `tenant_category: "business"` uncond
 | `unreachable_rule` | WARN | Rule after a catch-all (first match semantics) |
 | `zero_recent_matches` | WARN | Data-dependent; only when `recentMatchCounts` is supplied |
 
-The linter is pure over a `PolicyDocument`; it is exposed at `POST /policy/:tenant_id/lint`. There is no enforcement that a policy must pass the linter before activation — a policy with lint ERRORs can be signed and activated.
+The linter is pure over a `PolicyDocument`; it is exposed at `POST /policy/:tenant_id/lint`. There is no enforcement that a policy must pass the linter before activation. A policy with lint ERRORs can be signed and activated.
 
 ### 3.8 State Machine (`repository.ts`)
 
@@ -140,10 +140,10 @@ Valid transitions: `draft → pending_signatures | cancelled`, `pending_signatur
 
 4 migrations, no prefix conflicts:
 
-- `0001_policies.sql` — `policies` table, partial unique index on `(tenant_id) WHERE state = 'active'`, ENABLE RLS
-- `0002_policy_decisions.sql` — `policy_decisions` table, ENABLE RLS
-- `0003_policy_spend_counters.sql` — `policy_spend_counters` with `period_window` (P0 #2 fix — `window` was a Postgres reserved keyword)
-- `0004_force_rls.sql` — FORCE RLS on all three tables
+- `0001_policies.sql`. `policies` table, partial unique index on `(tenant_id) WHERE state = 'active'`, ENABLE RLS
+- `0002_policy_decisions.sql`. `policy_decisions` table, ENABLE RLS
+- `0003_policy_spend_counters.sql`. `policy_spend_counters` with `period_window` (P0 #2 fix. `window` was a Postgres reserved keyword)
+- `0004_force_rls.sql`. FORCE RLS on all three tables
 
 ---
 
@@ -199,8 +199,8 @@ All three pass using real `viem/accounts` key generation and actual `verifyTyped
 
 The rule VM is correct, the EIP-712 signing machinery is sound, and on-chain quorum enforcement is wired and security-tested. Two concrete runtime gaps prevent full "Working" status:
 
-1. Spend counter increment path never executes — spend-envelope rules evaluate correctly on read, but the counters never grow, so the aggregate cap is effectively bypassed after the first execution in a window.
-2. H-23 agent action allowlist (`isActionAllowed`) is not injected at the `ActionResolver` construction site — the signed policy's `agent_actions` field has no runtime effect.
+1. Spend counter increment path never executes. Spend-envelope rules evaluate correctly on read, but the counters never grow, so the aggregate cap is effectively bypassed after the first execution in a window.
+2. H-23 agent action allowlist (`isActionAllowed`) is not injected at the `ActionResolver` construction site. The signed policy's `agent_actions` field has no runtime effect.
 
 ---
 
@@ -208,7 +208,7 @@ The rule VM is correct, the EIP-712 signing machinery is sound, and on-chain quo
 
 **`simulate-historical` reads `ledger_payment_intents` directly** (`routes.ts:354-380`). This is a Policy→Ledger cross-service DB read. It is the sanctioned §6 read-only exception documented in CLAUDE.md: "Policy reads Ledger state (sanctioned §6 read; never Wiki). RLS scopes it." The route comment confirms this explicitly. Not a violation.
 
-**Linter NOT gating activation** — a policy with lint ERRORs (`auto_no_amount_cap`, `broad_any_auto`, etc.) can be signed and activated. The linter is advisory. This is a design gap: the spec does not mandate lint-gating activation, but dangerous policies (auto money-movement with no amount cap) can reach `active` state. This is architectural debt, not a layer violation.
+**Linter NOT gating activation**. A policy with lint ERRORs (`auto_no_amount_cap`, `broad_any_auto`, etc.) can be signed and activated. The linter is advisory. This is a design gap: the spec does not mandate lint-gating activation, but dangerous policies (auto money-movement with no amount cap) can reach `active` state. This is architectural debt, not a layer violation.
 
 No Wiki imports found in policy source. No circular deps.
 
@@ -216,23 +216,23 @@ No Wiki imports found in policy source. No circular deps.
 
 ## 7. Missing Pieces
 
-1. **`incrementSpendCounter` never called** — spend-envelope protection (`agent.spend_in_window`, `agent.tx_count_in_window`) reads counters but never updates them after execution. Must be called inside the gate commit transaction when `dryRun === false`, before the audit-before event.
+1. **`incrementSpendCounter` never called**. Spend-envelope protection (`agent.spend_in_window`, `agent.tx_count_in_window`) reads counters but never updates them after execution. Must be called inside the gate commit transaction when `dryRun === false`, before the audit-before event.
 
-2. **H-23 `isActionAllowed` not wired** — `new ActionResolver({ classifier: agentClassifier })` at `main.ts:1092` omits the hook. Fix: supply `isActionAllowed: (agentKey, action) => allowedActionsFor(policyGetActive(tenantId), agentKey).includes(action)` using the requesting tenant's active policy.
+2. **H-23 `isActionAllowed` not wired**. `new ActionResolver({ classifier: agentClassifier })` at `main.ts:1092` omits the hook. Fix: supply `isActionAllowed: (agentKey, action) => allowedActionsFor(policyGetActive(tenantId), agentKey).includes(action)` using the requesting tenant's active policy.
 
-3. **`tenant.category` hardcoded "business"** — `service.ts:163`. Consumer-tenant policies with `tenant.category: "consumer"` rules will never match.
+3. **`tenant.category` hardcoded "business"**. `service.ts:163`. Consumer-tenant policies with `tenant.category: "consumer"` rules will never match.
 
-4. **Linter not enforced at activation** — dangerous policies can bypass lint checks and reach `active` state.
+4. **Linter not enforced at activation**. Dangerous policies can bypass lint checks and reach `active` state.
 
-5. **No integration tests** — all 89 tests are unit tests against fake/mocked DB clients. No end-to-end sign-and-evaluate path exercised against a real Postgres instance.
+5. **No integration tests**. All 89 tests are unit tests against fake/mocked DB clients. No end-to-end sign-and-evaluate path exercised against a real Postgres instance.
 
 ---
 
 ## 8. Evidence
 
-**`compareDecimal` correctness** — `vm.ts:251-263`: uses `normalizeDecimal` (string ops only) and `compareBigNumeric` (string length then lexicographic). Negative-zero guard at line 261. Fast-check property test at `vm.test.ts:31-44` hammers over integers ±1M.
+**`compareDecimal` correctness**. `vm.ts:251-263`: uses `normalizeDecimal` (string ops only) and `compareBigNumeric` (string length then lexicographic). Negative-zero guard at line 261. Fast-check property test at `vm.test.ts:31-44` hammers over integers ±1M.
 
-**Quorum enforcement** — `routes.ts:165-200`:
+**Quorum enforcement**. `routes.ts:165-200`:
 ```ts
 // 1. EIP-712 verify
 const ok = await verifyTypedData({ address, domain, types, primaryType, message, signature });
@@ -247,7 +247,7 @@ if (!(await deps.isAuthorizedSigner(tenant, sig.address)))
   throw brainError("policy_signature_invalid", "signer is not an authorized tenant signer", ...);
 ```
 
-**H-23 not wired** — `main.ts:1092`:
+**H-23 not wired**. `main.ts:1092`:
 ```ts
 const actionResolver = new ActionResolver({ classifier: agentClassifier });
 // isActionAllowed is not supplied → any offered action is accepted
@@ -255,9 +255,9 @@ const actionResolver = new ActionResolver({ classifier: agentClassifier });
 
 Comment at `main.ts:1085-1091` confirms this is intentional-but-deferred.
 
-**Spend counter increment absent** — global grep result shows `incrementSpendCounter` appears only in `spend-counters.ts` (definition) and `index.ts` (export). Zero callers across the entire codebase.
+**Spend counter increment absent**. Global grep result shows `incrementSpendCounter` appears only in `spend-counters.ts` (definition) and `index.ts` (export). Zero callers across the entire codebase.
 
-**FORCE RLS** — `0004_force_rls.sql`:
+**FORCE RLS**. `0004_force_rls.sql`:
 ```sql
 ALTER TABLE policies               FORCE ROW LEVEL SECURITY;
 ALTER TABLE policy_decisions       FORCE ROW LEVEL SECURITY;
@@ -266,7 +266,7 @@ ALTER TABLE policy_spend_counters  FORCE ROW LEVEL SECURITY;
 
 All three policy-owned tables covered. Live DB: unverified (CI-only).
 
-**Spend counter comment (design intent)** — `spend-counters.ts:8-9`: "The gate reads the current bucket to evaluate ... then (on a passing LIVE gate, never dry-run) increments it." Not implemented.
+**Spend counter comment (design intent)**. `spend-counters.ts:8-9`: "The gate reads the current bucket to evaluate ... then (on a passing LIVE gate, never dry-run) increments it." Not implemented.
 
 ---
 
@@ -311,4 +311,4 @@ The spend counter increment gap is the highest priority fix in the policy layer.
 
 H-23 wiring is the next priority: inject `isActionAllowed` into `ActionResolver` at `main.ts:1092` using a per-request load of the tenant's active policy (already imported as `policyGetActive`).
 
-The `tenant.category` hardcoding is Medium priority — no consumer-facing product has launched yet, so the urgency is lower, but it must be resolved before any consumer-segment deployment.
+The `tenant.category` hardcoding is Medium priority. No consumer-facing product has launched yet, so the urgency is lower, but it must be resolved before any consumer-segment deployment.

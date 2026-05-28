@@ -6,7 +6,7 @@
 | ----------------- | --------------------------------------------------------------------- |
 | **Network**       | Base L2                                                               |
 | **Solidity**      | 0.8.x                                                                 |
-| **Pattern**       | Immutable — no upgrade path in MVP; changes ship as audited redeploys |
+| **Pattern**       | Immutable. No upgrade path in MVP; changes ship as audited redeploys |
 | **Anchorer keys** | HSM-protected, rotated on a fixed schedule                            |
 
 ### Interface
@@ -105,7 +105,7 @@ Base L2 has fast finality, but small reorgs are possible.
 
 ### Anchorer Key Rotation
 
-Anchorer keys are rotated on a fixed schedule. The current publisher rotates the authorized signer on-chain via `setPublisher(next)` (publisher-only); the contract itself is immutable, so there is no upgrade path — only the signer changes.
+Anchorer keys are rotated on a fixed schedule. The current publisher rotates the authorized signer on-chain via `setPublisher(next)` (publisher-only); the contract itself is immutable, so there is no upgrade path. Only the signer changes.
 
 ```solidity
 event AnchorerAdded(address indexed signer);

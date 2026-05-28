@@ -1,4 +1,4 @@
-# Audit: Runtime Boot — `services/api/src/main.ts`
+# Audit: Runtime Boot. `services/api/src/main.ts`
 
 **Audited:** 2026-05-26
 **Branch:** `audit/full-system-audit`
@@ -19,7 +19,7 @@
 - `pnpm --filter @brain/api typecheck` (before root build)
 - `pnpm run build`
 - `pnpm --filter @brain/api typecheck` (after root build)
-- `pnpm --filter @brain/api build` (before root build — fails)
+- `pnpm --filter @brain/api build` (before root build. Fails)
 - grep traces across main.ts, tsconfig files, shared/src/config.ts
 
 ---
@@ -41,7 +41,7 @@ Out of scope: the correctness of individual service layer logic (covered in per-
 
 ## 2. Intended Architecture
 
-`main.ts` is documented as `brain-server` — the single binary that composes all six service layers into one Fastify process. From the file header:
+`main.ts` is documented as `brain-server`. The single binary that composes all six service layers into one Fastify process. From the file header:
 
 > "Composes all six service layers into a single-process Fastify app. Shared plugins (auth, error handler, request-id, idempotency) are registered ONCE on the root app; each service layer registers its routes as a Fastify plugin on top."
 
@@ -59,46 +59,46 @@ Intended composition order per `docs/boot-binary-spec.md` reference:
 
 ### Boot sequence (line references are main.ts)
 
-**Phase 1 — Infra (lines 547–680)**
-1. `loadConfig()` — zod-validated env config (throws on missing required vars)
-2. `initTracing()` — OTLP setup; non-blocking, no connection required at boot
+**Phase 1. Infra (lines 547–680)**
+1. `loadConfig()`. Zod-validated env config (throws on missing required vars)
+2. `initTracing()`. OTLP setup; non-blocking, no connection required at boot
 3. `createLogger()`
 4. `createPool()` → main DB pool (`DATABASE_URL`)
-5. `createPool()` → `wikiPool` — conditional: only if `BRAIN_WIKI_DB_URL` is set; falls back to main pool with `console.warn` (line 583)
-6. `new Redis(...)` with `lazyConnect: true` + `redis.connect()` at line 590 — **Redis connection is eagerly awaited** at boot; failure here aborts boot before HTTP listener registers
-7. `new WebhookAuditEmitter(new PostgresAuditEmitter(pool), new WebhookDispatcher(pool))` — audit emitter composed
-8. **Production guards** (lines 597–608): three explicit `throw` checks — DEMO_MODE in prod, MCP_DEV_AUTH_BYPASS in prod, BLOB_BACKEND=memory in prod
+5. `createPool()` → `wikiPool`. Conditional: only if `BRAIN_WIKI_DB_URL` is set; falls back to main pool with `console.warn` (line 583)
+6. `new Redis(...)` with `lazyConnect: true` + `redis.connect()` at line 590. **Redis connection is eagerly awaited** at boot; failure here aborts boot before HTTP listener registers
+7. `new WebhookAuditEmitter(new PostgresAuditEmitter(pool), new WebhookDispatcher(pool))`. Audit emitter composed
+8. **Production guards** (lines 597–608): three explicit `throw` checks. DEMO_MODE in prod, MCP_DEV_AUTH_BYPASS in prod, BLOB_BACKEND=memory in prod
 9. Blob adapter creation
-10. `createPool()` → `privilegedPool` — conditional: only if `DATABASE_PRIVILEGED_URL` set; falls back to main pool with `console.warn` (line 945)
+10. `createPool()` → `privilegedPool`. Conditional: only if `DATABASE_PRIVILEGED_URL` set; falls back to main pool with `console.warn` (line 945)
 
-**Phase 2 — Service layer deps (lines 638–1194)**
+**Phase 2. Service layer deps (lines 638–1194)**
 All deps objects and service classes constructed synchronously. Key cross-service wiring:
 - `LedgerService` used inside `makeResolveAccount` and `makeResolveCounterparty` (adapters for execution gate)
 - `PolicyService.evaluateForGate` wired to `PaymentIntentService.evaluatePolicy`
 - `WikiPageService` + `buildWikiMemoryService` adapter wires `annotate` stub → throws `internal_server_error` (annotate write-through not implemented, deferred to refactor-4, line 348–355)
 - `BrainMcpServer` gets `auth: McpAuthVerifier` (real viem on-chain check) or `FakeAuthVerifier` when `BRAIN_MCP_DEV_AUTH_BYPASS` is set
 
-**Phase 3 — Fastify app and plugin registration (lines 1196–1558)**
+**Phase 3. Fastify app and plugin registration (lines 1196–1558)**
 Plugin registration order (inside `main()`):
 1. `fastifyCors` (origin allowlist from `CORS_ALLOWED_ORIGINS`)
-2. `registerSecurityHeaders` — CSP + security headers (P1.4 hardening)
+2. `registerSecurityHeaders`. CSP + security headers (P1.4 hardening)
 3. `fastifyRateLimit` (max 300 req/min global)
-4. `requestIdPlugin`, `errorHandlerPlugin`, `authPlugin`, `idempotencyPlugin` — registered once on root app
-5. `GET /health` — `skipAuth: true`, always available
+4. `requestIdPlugin`, `errorHandlerPlugin`, `authPlugin`, `idempotencyPlugin`. Registered once on root app
+5. `GET /health`. `skipAuth: true`, always available
 6. All service routes under `/v1` via `app.register(async (v1) => {...}, { prefix: "/v1" })`:
    - Raw, Ledger, Wiki, Policy, Execution, PaymentIntent, Audit, Webhook, Proof, ProofView, MCP, AgentApi, SIWX
    - Demo-only routes (`/v1/demo/token`, `/v1/demo/policy/activate`, `/v1/demo/anchor/trigger`) added when `BRAIN_DEMO_MODE=true`
-   - Production guard for `AUTH_SIGN_KEY` happens inside v1 registration (line 1377) — deferred guard, not at top of `main()`
+   - Production guard for `AUTH_SIGN_KEY` happens inside v1 registration (line 1377). Deferred guard, not at top of `main()`
 
-**Phase 4 — Workers and background jobs (lines 1561–1628)**
+**Phase 4. Workers and background jobs (lines 1561–1628)**
 Workers start **before** `app.listen()` (line 1630):
-1. `startNormalizeWorker({ pool, audit })` (line 1561) — BullMQ worker consuming `brain.normalize` queue
-2. Anchor broadcaster setup (lines 1563–1608) — conditional on `AUDIT_ANCHOR_ADDRESS` and `AUDIT_PUBLISHER_KEY`; if configured, schedules periodic anchor publishing via `setTimeout` loop
-3. `createAgentRouteWorker(...)` (line 1616) — BullMQ worker consuming `brain.agent.route` queue
+1. `startNormalizeWorker({ pool, audit })` (line 1561). BullMQ worker consuming `brain.normalize` queue
+2. Anchor broadcaster setup (lines 1563–1608). Conditional on `AUDIT_ANCHOR_ADDRESS` and `AUDIT_PUBLISHER_KEY`; if configured, schedules periodic anchor publishing via `setTimeout` loop
+3. `createAgentRouteWorker(...)` (line 1616). BullMQ worker consuming `brain.agent.route` queue
 
-`startOutboxWorker` is created earlier at line 961 (before Fastify app creation) — this is the only worker that starts before app construction.
+`startOutboxWorker` is created earlier at line 961 (before Fastify app creation). This is the only worker that starts before app construction.
 
-**Phase 5 — HTTP listen and shutdown handlers (lines 1630–1671)**
+**Phase 5. HTTP listen and shutdown handlers (lines 1630–1671)**
 - `app.listen({ host: "0.0.0.0", port: cfg.PORT })`
 - `process.on("SIGINT")` and `process.on("SIGTERM")` → `shutdown()`
 
@@ -156,12 +156,12 @@ All 12 in-scope packages compile successfully in dependency order.
 
 ```
 $ pnpm --filter @brain/api typecheck
-(no output — exit 0)
+(no output. Exit 0)
 ```
 
 All 16 pre-build errors resolve after fresh dist/ files are generated.
 
-### Build graph — root `tsconfig.json`
+### Build graph. Root `tsconfig.json`
 
 ```
 services/api  ✓
@@ -202,7 +202,7 @@ const reconciliationAgentUrl = process.env.RECONCILIATION_AGENT_URL;
 
 All other environment variables go through `loadConfig()` (a zod-validated schema in `shared/src/config.ts`). This one is read directly from `process.env`. It is not documented in `config.ts`, receives no type coercion, no URL validation, and no schema presence. If misconfigured (wrong URL format, missing trailing slash), the error surfaces at request time, not boot time.
 
-This is a minor but reproducible convention break — the codebase has a clear pattern (`loadConfig()`) which this line ignores.
+This is a minor but reproducible convention break. The codebase has a clear pattern (`loadConfig()`) which this line ignores.
 
 ### B-2: Deferred production guard inside v1 plugin registration (main.ts:1377)
 
@@ -222,7 +222,7 @@ async annotate(_ctx, _input): Promise<...> {
 }
 ```
 
-`IWikiMemoryService.annotate` is exposed in the `BrainMcpServer` surface (tool: `wiki.annotate`). Calls to this MCP tool return HTTP 500 with an `internal_server_error` code. This is documented as "deferred to refactor-4" but constitutes a broken tool in the published MCP surface — an external agent invoking `wiki.annotate` receives a 500 with no indication this is expected behavior.
+`IWikiMemoryService.annotate` is exposed in the `BrainMcpServer` surface (tool: `wiki.annotate`). Calls to this MCP tool return HTTP 500 with an `internal_server_error` code. This is documented as "deferred to refactor-4" but constitutes a broken tool in the published MCP surface. An external agent invoking `wiki.annotate` receives a 500 with no indication this is expected behavior.
 
 ---
 
@@ -235,7 +235,7 @@ async annotate(_ctx, _input): Promise<...> {
 privilegedPool = createPool({ connectionString: cfg.DATABASE_PRIVILEGED_URL, max: 3, ... });
 ```
 
-The shutdown handler (lines 1634–1663) calls `pool.end()` but never `privilegedPool.end()`. On SIGTERM/SIGINT, the 3 outbox-worker connections to the privileged DB will be abandoned — the Postgres server will see the client disconnect during query (if in-flight) or clean up via TCP timeout otherwise. In production, the `DATABASE_PRIVILEGED_URL` pool is always distinct from the main pool, so the leak is guaranteed on every graceful shutdown.
+The shutdown handler (lines 1634–1663) calls `pool.end()` but never `privilegedPool.end()`. On SIGTERM/SIGINT, the 3 outbox-worker connections to the privileged DB will be abandoned. The Postgres server will see the client disconnect during query (if in-flight) or clean up via TCP timeout otherwise. In production, the `DATABASE_PRIVILEGED_URL` pool is always distinct from the main pool, so the leak is guaranteed on every graceful shutdown.
 
 ### M-2: `wikiPool` not closed in shutdown handler (Medium)
 
@@ -292,7 +292,7 @@ The outer `paymentIntentService` (line 870, used by outbox worker and agent run 
 | `anchorReconciler` | 994 | Yes (`anchorReconciler?.stop()`) |
 | `createAgentRouteWorker` | 1616 | Yes (`agentRouteWorker.close()`) |
 
-`app.listen()` at line 1630 — **all workers registered before HTTP starts**.
+`app.listen()` at line 1630. **all workers registered before HTTP starts**.
 
 ### Shutdown pool leak evidence
 
@@ -312,13 +312,13 @@ const shutdown = async (signal: string): Promise<void> => {
 };
 ```
 
-`wikiPool` (created line 576) — **never closed**.
-`privilegedPool` (created line 938) — **never closed**.
+`wikiPool` (created line 576). **never closed**.
+`privilegedPool` (created line 938). **never closed**.
 
 ### `RECONCILIATION_AGENT_URL` config bypass
 
-`shared/src/config.ts` — no `RECONCILIATION_AGENT_URL` entry (verified via grep — absent).
-`main.ts:1097` — `process.env.RECONCILIATION_AGENT_URL` read directly.
+`shared/src/config.ts`. No `RECONCILIATION_AGENT_URL` entry (verified via grep. Absent).
+`main.ts:1097`. `process.env.RECONCILIATION_AGENT_URL` read directly.
 All other optional URLs (`BRAIN_WIKI_DB_URL`, `DATABASE_PRIVILEGED_URL`, `BASE_RPC_URL`, etc.) are in the zod schema.
 
 ### `anchorBroadcaster` at `services/api/src/anchorBroadcaster.ts` (confirmed)
@@ -346,9 +346,9 @@ The `AnchorBroadcaster` type and ABI are duplicated inline rather than imported 
 
 **High**
 
-The entire `main.ts` file (1677 lines) was read directly. All line references are verified. Both the root build and per-service typecheck were executed with actual output captured. The plugin registration order, worker startup sequence, graceful shutdown, and production guards were traced by reading the source — not inferred from documentation.
+The entire `main.ts` file (1677 lines) was read directly. All line references are verified. Both the root build and per-service typecheck were executed with actual output captured. The plugin registration order, worker startup sequence, graceful shutdown, and production guards were traced by reading the source. Not inferred from documentation.
 
-The only unverified aspects are live runtime behaviors (Redis connectivity, actual DB connections, worker queue consumption) — those require a running infra stack per BLOCKERS.md B-1.
+The only unverified aspects are live runtime behaviors (Redis connectivity, actual DB connections, worker queue consumption). Those require a running infra stack per BLOCKERS.md B-1.
 
 ---
 
@@ -367,17 +367,17 @@ The only unverified aspects are live runtime behaviors (Redis connectivity, actu
 
 | ID | Issue | Severity |
 |---|---|---|
-| M-1 | `privilegedPool` not closed on shutdown — guaranteed connection leaks in production | High |
+| M-1 | `privilegedPool` not closed on shutdown. Guaranteed connection leaks in production | High |
 | M-2 | `wikiPool` not closed on shutdown | Medium |
-| M-3 | `agent-router` + `internal-agents` missing from tsconfig references — incremental build drift | Medium |
-| B-1 | `RECONCILIATION_AGENT_URL` bypasses validated config — silently misbehaves on misconfiguration | Low |
+| M-3 | `agent-router` + `internal-agents` missing from tsconfig references. Incremental build drift | Medium |
+| B-1 | `RECONCILIATION_AGENT_URL` bypasses validated config. Silently misbehaves on misconfiguration | Low |
 | B-3 | `wiki.annotate` MCP tool returns `internal_server_error` in production | Medium |
 | M-5 | `anchorBroadcaster` silently disabled with no boot warning when key is absent | Low |
 
 **Runtime risks:**
 - Redis is a hard boot dependency. No Redis → no boot. No circuit breaker, no retry at boot time.
 - Per-service `pnpm --filter @brain/api typecheck` will return 16 errors on a fresh clone without root build. CI must run `pnpm run build` before any per-service typecheck step; if that ordering is not enforced, typecheck appears to pass (if the root build was previously cached) but is unreliable.
-- The `anchorBroadcaster` ABI is inlined in `services/api/src/anchorBroadcaster.ts`. If the on-chain contract is upgraded, the inline ABI must be manually updated — no type-safe link to the canonical ABI source.
+- The `anchorBroadcaster` ABI is inlined in `services/api/src/anchorBroadcaster.ts`. If the on-chain contract is upgraded, the inline ABI must be manually updated. No type-safe link to the canonical ABI source.
 
 ---
 
@@ -385,11 +385,11 @@ The only unverified aspects are live runtime behaviors (Redis connectivity, actu
 
 **High**
 
-The two pool leak fixes (M-1, M-2) are two-line additions to the shutdown handler and should be done before production. The `RECONCILIATION_AGENT_URL` config bypass (B-1) is a one-line fix: add the variable to `shared/src/config.ts`. The tsconfig project reference gap (M-3) requires adding two entries to `tsconfig.main.json` and `tsconfig.json` — low risk, high correctness value.
+The two pool leak fixes (M-1, M-2) are two-line additions to the shutdown handler and should be done before production. The `RECONCILIATION_AGENT_URL` config bypass (B-1) is a one-line fix: add the variable to `shared/src/config.ts`. The tsconfig project reference gap (M-3) requires adding two entries to `tsconfig.main.json` and `tsconfig.json`. Low risk, high correctness value.
 
 `wiki.annotate` (B-3) requires implementing the write-through path, which is a larger effort (refactor-4). The stub behaviour (returning 500) is known and deferred but constitutes a broken public MCP tool in any deployed instance.
 
-The `anchorBroadcaster` ABI duplication is a maintenance debt item — low refactor priority but should be tracked so it doesn't diverge from the Foundry contract.
+The `anchorBroadcaster` ABI duplication is a maintenance debt item. Low refactor priority but should be tracked so it doesn't diverge from the Foundry contract.
 
 ---
 
@@ -399,6 +399,6 @@ The `anchorBroadcaster` ABI duplication is a maintenance debt item — low refac
 |---|---|---|---|
 | F-7 | `privilegedPool` and `wikiPool` not closed in shutdown handler | High | Open |
 | F-8 | `RECONCILIATION_AGENT_URL` bypasses validated config | Low | Open |
-| F-9 | `anchorBroadcaster` ABI inlined in `services/api` — divergence risk from Foundry source | Low | Open |
+| F-9 | `anchorBroadcaster` ABI inlined in `services/api`. Divergence risk from Foundry source | Low | Open |
 | F-10 | `wiki.annotate` MCP tool returns 500 in all deployments | Medium | Open (deferred: refactor-4) |
 | F-11 | Per-service typecheck requires prior root build (stale dist/ issue) | Medium | Open |

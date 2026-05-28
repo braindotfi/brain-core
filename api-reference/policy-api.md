@@ -14,7 +14,7 @@ Compose a policy, sign it, activate it, evaluate proposed actions against it, an
 | Replay a period            | `POST /v1/policy/{tenant_id}/simulate-historical` |
 | Diff two versions          | `POST /v1/policy/{tenant_id}/diff`                |
 
-There is no separate `register` or `revoke` endpoint — activation happens at `sign`, and superseding a version means signing a new one. The previous active version is recorded in `versions` history.
+There is no separate `register` or `revoke` endpoint. Activation happens at `sign`, and superseding a version means signing a new one. The previous active version is recorded in `versions` history.
 
 ### Compose a Candidate Policy
 
@@ -57,7 +57,7 @@ Response:
 }
 ```
 
-`execute` is one of `auto | confirm | reject` — these are the rule-level outcomes that produce the policy decision (`allow | confirm | reject`).
+`execute` is one of `auto | confirm | reject`. These are the rule-level outcomes that produce the policy decision (`allow | confirm | reject`).
 
 ### Sign and Activate
 
@@ -134,7 +134,7 @@ Authorization: Bearer <token>
 
 ### Evaluate an Action
 
-Dry-run an action against the active policy. This is the same evaluator the §6 pre-execution gate uses internally; it does **not** propose, reserve, or audit — it just returns the decision.
+Dry-run an action against the active policy. This is the same evaluator the §6 pre-execution gate uses internally; it does **not** propose, reserve, or audit. It just returns the decision.
 
 ```http
 POST /v1/policy/{tenant_id}/evaluate
@@ -173,7 +173,7 @@ Content-Type: application/json
 | `confirm` | Rule matched with `execute: "confirm"`; named `required_approvers` must sign first    |
 | `reject`  | Rule matched with `execute: "reject"`, or no rule matched the default-deny vocabulary |
 
-Casing is **lowercase** — `allow | confirm | reject`. The historical-simulation counters mirror it (`would_allow`, `would_confirm`, `would_reject`).
+Casing is **lowercase**. `allow | confirm | reject`. The historical-simulation counters mirror it (`would_allow`, `would_confirm`, `would_reject`).
 
 ### Action Vocabulary
 
@@ -190,9 +190,9 @@ Casing is **lowercase** — `allow | confirm | reject`. The historical-simulatio
 | `bank_ach`        | Bank ACH via Plaid Transfer      |
 | `erp_writeback`   | NetSuite (and similar) writeback |
 | `onchain_base`    | `BrainSmartAccount` on Base      |
-| `notification`    | No money — surface to a human    |
+| `notification`    | No money. Surface to a human    |
 
-These are the vocabularies the spec's `ProposedAction` accepts. (The PaymentIntent layer uses a separate, broader `action_type` set — `ach_outbound`, `wire`, `x402_settle`, etc. — that maps onto these rails internally.)
+These are the vocabularies the spec's `ProposedAction` accepts. (The PaymentIntent layer uses a separate, broader `action_type` set. `ach_outbound`, `wire`, `x402_settle`, etc.. That maps onto these rails internally.)
 
 ### Lint a Draft
 

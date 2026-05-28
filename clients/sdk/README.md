@@ -33,13 +33,13 @@ The Brain sandbox is hosted at `https://api.brain.dev/v1` and runs in demo
 mode with a pre-seeded golden-path dataset (Brain Inc. accounts, Stripe
 counterparty, invoices).
 
-**Step 1 — get a demo token:**
+**Step 1. Get a demo token:**
 
 ```bash
 export BRAIN_TOKEN=$(curl -s https://api.brain.dev/v1/demo/token | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).token))")
 ```
 
-**Step 2 — run the quickstart:**
+**Step 2. Run the quickstart:**
 
 ```bash
 BRAIN_BASE_URL=https://api.brain.dev/v1 \
@@ -57,7 +57,7 @@ BRAIN_BASE_URL=https://api.brain.dev/v1 \
 The token is valid for 24 hours. To reset the dataset between demo sessions:
 
 ```bash
-# (on the server, or via API — see docs/demo-script.md for the pre-flight checklist)
+# (on the server, or via API. See docs/demo-script.md for the pre-flight checklist)
 pnpm run demo:reset
 ```
 
@@ -90,13 +90,13 @@ const verification = await brain.audit.verify({
   merkleRoot: "0x...",
 });
 // H-07 Proof API: one canonical, verifiable proof for an action (PaymentIntent
-// or agent-action id) — gate trace, evidence, policy decision, audit Merkle
+// or agent-action id). Gate trace, evidence, policy decision, audit Merkle
 // proof + anchor, rail receipt, and a human_explanation.
 const proof = await brain.proof("pi_8231");
 // (For the low-level Merkle inclusion proof of a single audit event, use
 //  brain.audit.get(eventId).inclusionProof.)
 
-// H-25 Agent Run History — the reasoning behind an action, step by step.
+// H-25 Agent Run History. The reasoning behind an action, step by step.
 const run = await brain.agentRuns.get("agnr_8231");
 const why = await brain.agentRuns.why("agnr_8231"); // candidates + behavior hash
 await brain.agentRuns.evidence("agnr_8231");

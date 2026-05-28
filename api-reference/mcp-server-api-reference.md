@@ -10,7 +10,7 @@ Authorization: Bearer <jwt>
 Content-Type: application/json
 ```
 
-There is **no separate MCP hostname** — the surface is a JSON-RPC endpoint on the same API host.
+There is **no separate MCP hostname**. The surface is a JSON-RPC endpoint on the same API host.
 
 | Environment    | URL                                          |
 | -------------- | -------------------------------------------- |
@@ -38,7 +38,7 @@ The HTTP layer always returns `200`; application errors live in the JSON-RPC res
 
 ### The 10 Tools
 
-Five Ledger reads, two Wiki reads, one Raw contribute, one PaymentIntent propose, one agent action propose. **There is no `payment_intent.execute` tool, and there will never be one** — execution is reserved for internal Brain workers running under tenant policy and the §6 gate.
+Five Ledger reads, two Wiki reads, one Raw contribute, one PaymentIntent propose, one agent action propose. **There is no `payment_intent.execute` tool, and there will never be one**. Execution is reserved for internal Brain workers running under tenant policy and the §6 gate.
 
 [**→ Tool reference**](../mcp-server/tools.md)
 
@@ -83,7 +83,7 @@ Brain-specific JSON-RPC error codes (`-32001..-32005`) and the standard JSON-RPC
 | `-32001` | Auth token missing, invalid, or expired (`auth_token_missing/invalid/expired`)                 |
 | `-32002` | Scope insufficient (also tenant mismatch) (`auth_scope_insufficient` / `auth_tenant_mismatch`) |
 | `-32003` | Agent not registered or inactive (`agent_not_registered`)                                      |
-| `-32004` | Pre-execution gate failed — covers every `gate_*` sub-code (`payment_intent_gate_failed`)      |
+| `-32004` | Pre-execution gate failed. Covers every `gate_*` sub-code (`payment_intent_gate_failed`)      |
 | `-32005` | Agent `scope_hash` mismatch against on-chain registration (`agent_scope_hash_mismatch`)        |
 | `-32600` | Invalid request (standard JSON-RPC)                                                            |
 | `-32601` | Method not found                                                                               |
@@ -91,7 +91,7 @@ Brain-specific JSON-RPC error codes (`-32001..-32005`) and the standard JSON-RPC
 | `-32603` | Internal error                                                                                 |
 | `-32700` | Parse error                                                                                    |
 
-The mapping is enforced in `services/mcp/src/types.ts` and `dispatcher.ts` — every Brain HTTP error code routes deterministically into one of these five Brain-specific JSON-RPC codes.
+The mapping is enforced in `services/mcp/src/types.ts` and `dispatcher.ts`. Every Brain HTTP error code routes deterministically into one of these five Brain-specific JSON-RPC codes.
 
 ### A First Call
 

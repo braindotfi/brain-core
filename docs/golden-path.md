@@ -1,4 +1,4 @@
-# Golden Path — end-to-end demo runbook
+# Golden Path. End-to-end demo runbook
 
 `pnpm demo:golden-path` drives the **entire** Brain protocol against a running
 local stack and prints a summary table. It is the strongest single artifact for
@@ -58,14 +58,14 @@ verify       ok      130ms      true
 ✓ Human-readable proof: http://localhost:3000/v1/proof/pi_01J…/view
 ```
 
-The run ends by printing the **proof view URL** — open it in a browser for the
+The run ends by printing the **proof view URL**. Open it in a browser for the
 compliance-/investor-facing screen (see `services/api/src/proof/view.ts`).
 
 ## Sandbox vs mock providers
 
 - **Plaid**: sandbox (no real money). `onchain_base`: Base Sepolia testnet.
 - **Audit anchoring**: the on-chain anchor publisher is a background worker, so
-  the `anchor` step may report `warn` if the batch anchors asynchronously — the
+  the `anchor` step may report `warn` if the batch anchors asynchronously. The
   proof is still recorded and verifiable off-chain immediately.
 - **LLM / embeddings**: deterministic mock adapters in demo mode.
 
@@ -76,7 +76,7 @@ compliance-/investor-facing screen (see `services/api/src/proof/view.ts`).
 | `seed failed`                        | See `/tmp/gp_seed.log`; ensure migrations ran (`migrate up`). |
 | `no normalized invoice`              | The normalize worker isn't running; start it or re-run seed.  |
 | `propose failed`                     | Confirm `BRAIN_DEMO_MODE=true` and the API is on `:3000`.     |
-| `anchor` shows `warn`                | Expected — anchoring is async. Re-fetch the proof shortly.    |
+| `anchor` shows `warn`                | Expected. Anchoring is async. Re-fetch the proof shortly.    |
 | endpoint shape mismatch (warn steps) | Some calls are best-effort; align paths on first live run.    |
 
 > **Note (CI parity):** `docker-compose.smoke.yml` runs this exact script against

@@ -1,4 +1,4 @@
-# Audit: Services — API Gateway (`services/api`, `@brain/api`)
+# Audit: Services. API Gateway (`services/api`, `@brain/api`)
 
 **Audited:** 2026-05-26
 **Files examined:**
@@ -18,7 +18,7 @@
 - `services/api/src/rails/plaidClient.ts`, `onchainExecutor.ts`
 - `services/api/src/webhooks/plaidJwks.ts`, `plaidTenant.ts`
 - `services/execution/src/payment-intents/PaymentIntentService.ts` (lines 350–380)
-- `services/execution/src/server.ts` (standalone app builder — not production path)
+- `services/execution/src/server.ts` (standalone app builder. Not production path)
 - `services/ledger/src/routes/index.ts`
 - `services/ledger/src/server.ts`
 - `services/wiki/src/routes/annotate.ts`
@@ -37,7 +37,7 @@
 ## 1. Scope
 
 What this report covers:
-- `services/api/src/main.ts` — the single composition root for the entire Node runtime
+- `services/api/src/main.ts`. The single composition root for the entire Node runtime
 - Route registration order and prefix mapping to `Brain_API_Specification.yaml`
 - Auth plugin wiring: JWT, SIWX, demo mode guards
 - Idempotency, CORS, rate limiting, security headers
@@ -135,7 +135,7 @@ const requireBehaviorHash = tenantFlags?.requireBehaviorHash ?? false;
 ```
 
 When `resolveTenantFlags` is `undefined` (all HTTP `/v1/payment-intents/{id}/execute` calls via `piService`):
-- Gate check 1.5 is **not run** — no gate_checks row emitted for 1.5
+- Gate check 1.5 is **not run**. No gate_checks row emitted for 1.5
 - `require_behavior_hash` is treated as `false` regardless of what the tenant's row in `tenants` says
 - Behavior hash pinning is effectively opt-out for HTTP API callers even for tenants where `tenants.require_behavior_hash = true`
 
@@ -154,7 +154,7 @@ SIWX in production: `PostgresAgentRegistry` queries `agents` table by `onchain_a
 
 Production boot guard at `main.ts:1377-1381`: throws if `NODE_ENV=production && AUTH_SIGN_KEY=undefined`.
 
-### 3.5 `wiki.annotate` — HTTP route vs MCP tool
+### 3.5 `wiki.annotate`. HTTP route vs MCP tool
 
 Two separate code paths:
 1. **HTTP `POST /v1/wiki/annotate`**: Implemented in `services/wiki/src/routes/annotate.ts`. Rate-limited (Redis sliding window, 60/hr default). For `policy` and `agent` entity kinds: fully functional → inserts entity row + emits audit event. For Ledger-type annotations (`account`, `counterparty`, `transaction`, `obligation`): returns `400 request_body_invalid` with explicit "refactor-4" message.
@@ -224,12 +224,12 @@ The API gateway does not read or write service-owned DB tables directly (all rea
 
 ## 7. Missing Pieces
 
-1. **Gate check 1.5 missing from HTTP execution path** — `resolveTenantFlags` not passed to `piService` (F-14, R-20).
-2. **MCP `wiki.annotate` tool broken** — `buildWikiMemoryService.annotate` throws unconditionally (F-10, R-16, deferred refactor-4).
-3. **`RECONCILIATION_AGENT_URL` bypasses validated config** — `process.env.RECONCILIATION_AGENT_URL` read at `main.ts:1097` without going through `loadConfig()` zod schema (F-8).
-4. **No test for dual-instance behavioral divergence** — the gap between `paymentIntentService` and `piService` is not caught by any existing test. A test executing `/payment-intents/{id}/execute` with `require_behavior_hash=true` would expose the missing check.
-5. **`wiki.annotate` HTTP route**: Ledger-type annotations (`account`, `counterparty`, `transaction`, `obligation`) return 400 not 501. The error message mentions refactor-4 but callers receive a `request_body_invalid` error code, which implies a client error rather than an unimplemented endpoint — potentially confusing.
-6. **`privilegedPool` and `wikiPool` not closed on SIGTERM** — already F-7; repeated here as it is in this scope.
+1. **Gate check 1.5 missing from HTTP execution path**. `resolveTenantFlags` not passed to `piService` (F-14, R-20).
+2. **MCP `wiki.annotate` tool broken**. `buildWikiMemoryService.annotate` throws unconditionally (F-10, R-16, deferred refactor-4).
+3. **`RECONCILIATION_AGENT_URL` bypasses validated config**. `process.env.RECONCILIATION_AGENT_URL` read at `main.ts:1097` without going through `loadConfig()` zod schema (F-8).
+4. **No test for dual-instance behavioral divergence**. The gap between `paymentIntentService` and `piService` is not caught by any existing test. A test executing `/payment-intents/{id}/execute` with `require_behavior_hash=true` would expose the missing check.
+5. **`wiki.annotate` HTTP route**: Ledger-type annotations (`account`, `counterparty`, `transaction`, `obligation`) return 400 not 501. The error message mentions refactor-4 but callers receive a `request_body_invalid` error code, which implies a client error rather than an unimplemented endpoint. Potentially confusing.
+6. **`privilegedPool` and `wikiPool` not closed on SIGTERM**. Already F-7; repeated here as it is in this scope.
 
 ---
 
@@ -248,7 +248,7 @@ The API gateway does not read or write service-owned DB tables directly (all rea
 - `registerLedgerPlugin` (`services/ledger/src/server.ts:50-53`): always passes `ReconciliationService` to routes
 
 **Auth:**
-- `main.ts:1215`: `await app.register(authPlugin, { verifier: jwtVerifier })` — once, on root app
+- `main.ts:1215`: `await app.register(authPlugin, { verifier: jwtVerifier })`. Once, on root app
 - `main.ts:1392-1394`: `cfg.BRAIN_DEMO_MODE ? new StubAgentRegistry() : new PostgresAgentRegistry(pool)`
 - `siwx.ts:232-252`: `StubAgentRegistry` accepts any `0x[a-f0-9]{40}` address
 
@@ -301,4 +301,4 @@ One area remains Medium confidence: whether there are any routes registered insi
 
 **Medium**
 
-The one-line fix (`resolveTenantFlags` added to `piService` at `main.ts:1294`) eliminates the behavioral inconsistency. The `main()` god function is a medium-term architectural debt — extracting a `wireServices()` helper and a separate `registerRoutes()` pass would make the composition testable, but carries no runtime risk today. The MCP `wiki.annotate` is already deferred and documented.
+The one-line fix (`resolveTenantFlags` added to `piService` at `main.ts:1294`) eliminates the behavioral inconsistency. The `main()` god function is a medium-term architectural debt. Extracting a `wireServices()` helper and a separate `registerRoutes()` pass would make the composition testable, but carries no runtime risk today. The MCP `wiki.annotate` is already deferred and documented.

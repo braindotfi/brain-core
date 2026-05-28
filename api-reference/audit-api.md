@@ -65,7 +65,7 @@ Authorization: Bearer <token>
 }
 ```
 
-`inputs` and `outputs` carry **hashes and evidence references only** — never raw payloads or PII. The full encrypted payload stays off-chain.
+`inputs` and `outputs` carry **hashes and evidence references only**. Never raw payloads or PII. The full encrypted payload stays off-chain.
 
 ### Get One Event with Inclusion Proof
 
@@ -114,7 +114,7 @@ Content-Type: application/json
 { "verified": true, "onchain_block": 8829110 }
 ```
 
-Brain also publishes a `verifyMerkleProof(...)` helper in `@brain/sdk` and an on-chain `BrainAuditAnchor.verify(...)` view function — three independent paths to the same conclusion.
+Brain also publishes a `verifyMerkleProof(...)` helper in `@brain/sdk` and an on-chain `BrainAuditAnchor.verify(...)` view function. Three independent paths to the same conclusion.
 
 ### Export
 
@@ -141,7 +141,7 @@ Poll `status_url` until the job is ready (the URL is returned by the API; the sp
 
 ### The Canonical Proof for an Action
 
-For investor / compliance / counterparty use cases, the flagship artifact is the per-action **Proof** — assembled from the §6 gate trace, evidence chain, policy decision, and anchored audit Merkle chain. It has its own page so this one can stay focused on raw events and anchors.
+For investor / compliance / counterparty use cases, the flagship artifact is the per-action **Proof**. Assembled from the §6 gate trace, evidence chain, policy decision, and anchored audit Merkle chain. It has its own page so this one can stay focused on raw events and anchors.
 
 [**→ Proof API**](proof-api.md)
 

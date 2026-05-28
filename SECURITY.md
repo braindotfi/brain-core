@@ -7,15 +7,18 @@ independently. This is the 90-minute diligence summary; the full detail lives in
 ## Safety model summary
 
 No agent and no LLM can move money on its own. Every financial action passes
-through the **§6 deterministic pre-execution gate** (`shared/src/gate/gate.ts`) —
-13 numbered checks plus 4 hardening additions (`1.5`, `7.5`, `9.5`, `11.5`):
-identity, behavior-hash pinning, scope, policy match, source account,
-counterparty + sanctions, amount limit, ledger-state binding, balance, evidence
-present + semantically supporting the action, approval quorum, duplicate-payment
-guard, policy-decision creation, and a mandatory audit-before/after pair. Each
-check is deterministic — no LLM judgment substitutes for any precondition. A
-failure is a hard stop; the gate never catches-and-continues. Execution is
-Brain-internal and only reachable through `PaymentIntentService`.
+through the **§6 deterministic pre-execution gate** (`shared/src/gate/gate.ts`).
+13 numbered checks plus 9 hardening additions (`1.5`, `3.5`, `5.5`, `6.5`,
+`6.6`, `7.5`, `8.5`, `9.5`, `11.5`): identity, behavior-hash pinning, scope,
+policy match, on-chain settlement permitted, source account, counterparty +
+sanctions, agent-counterparty attestation, x402 payment context, escrow-state
+binding, amount limit, ledger-state binding, balance, micropayment cap within
+window, evidence present + semantically supporting the action, approval
+quorum, duplicate-payment guard, policy-decision creation, and a mandatory
+audit-before/after pair. Each check is deterministic. No LLM judgment
+substitutes for any precondition. A failure is a hard stop; the gate never
+catches-and-continues. Execution is Brain-internal and only reachable through
+`PaymentIntentService`.
 
 ## Layer boundaries (CI-enforced)
 
@@ -42,7 +45,7 @@ byte-identical between the off-chain builder (`services/audit/src/merkle.ts`,
 
 A third party verifies **without trusting Brain**:
 
-- `POST /v1/audit/verify` — public, unauthenticated, pure function: given a
+- `POST /v1/audit/verify`. Public, unauthenticated, pure function: given a
   Merkle root, a leaf, and a proof path, returns whether the leaf is included.
 - Re-check the anchor transaction on the Base block explorer (link in any
   rendered proof view, `GET /v1/proof/{action_id}/view`).
@@ -97,7 +100,7 @@ From Engineering Standards §12.2 (full detail in `docs/threat-model.md`):
 
 ## Bug bounty
 
-Pre-launch — no public bounty yet. Vulnerability reports are handled privately
+Pre-launch. No public bounty yet. Vulnerability reports are handled privately
 via the contact below; a public program will launch alongside mainnet.
 
 ## Contact

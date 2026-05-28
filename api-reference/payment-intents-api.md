@@ -1,6 +1,6 @@
 # Payment Intents API
 
-The canonical Brain HTTP surface for proposing, approving, and executing financial actions is the **PaymentIntent** family. The `agent_id`-keyed proposal route from earlier drafts (`POST /v1/agents/{agent_id}/propose`) and the `/v1/actions/*` paths are **not implemented** — both are documented as deprecated stubs in the spec and return 404. Use the routes below.
+The canonical Brain HTTP surface for proposing, approving, and executing financial actions is the **PaymentIntent** family. The `agent_id`-keyed proposal route from earlier drafts (`POST /v1/agents/{agent_id}/propose`) and the `/v1/actions/*` paths are **not implemented**. Both are documented as deprecated stubs in the spec and return 404. Use the routes below.
 
 | Operation              | Endpoint                                             |
 | ---------------------- | ---------------------------------------------------- |
@@ -154,7 +154,7 @@ POST /v1/payment-intents/{id}/pause      # approved → paused
 POST /v1/payment-intents/{id}/resume     # paused → approved (re-runs the live §6 gate)
 ```
 
-No request body for either. Resume re-evaluates the §6 gate against the **current** Ledger state — defending against drift while paused — and returns `409` if any check now fails.
+No request body for either. Resume re-evaluates the §6 gate against the **current** Ledger state. Defending against drift while paused. And returns `409` if any check now fails.
 
 A halted agent (`POST /v1/agents/{agent_id}/halt`) pauses every one of its in-flight intents at once.
 
@@ -165,7 +165,7 @@ GET /v1/payment-intents/{id}/replay-investigation
 Authorization: Bearer <token>
 ```
 
-Typed forensic record — the intent, each execution (with its typed rail receipt), and the linking ids you'd join to reconstruct exactly what happened:
+Typed forensic record. The intent, each execution (with its typed rail receipt), and the linking ids you'd join to reconstruct exactly what happened:
 
 ```json
 {
