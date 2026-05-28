@@ -18,6 +18,21 @@ import type { TenantScopedClient } from "../db/tenant-scoped.js";
 /** Replay stops auto-retrying a dead-letter after this many failed attempts. */
 export const MAX_WEBHOOK_DELIVERY_ATTEMPTS = 5;
 
+/**
+ * Exponential backoff schedule used by the dispatch worker (item 13): the wait
+ * BEFORE the next retry given the current `attempt_count` of a DLQ row.
+ *
+ *   attempt_count = 1 → 30s, 2 → 60s, 3 → 120s, 4 → 240s, ≥5 → 480s (cap).
+ *
+ * Computed in TS for the schedule and mirrored in SQL by getDueDeadLetters.
+ */
+export function nextAttemptDelaySeconds(attemptCount: number): number {
+  const base = 30;
+  const cap = 480;
+  const shift = Math.max(0, attemptCount - 1);
+  return Math.min(base * 2 ** shift, cap);
+}
+
 export interface WebhookDeadLetterRow {
   id: string;
   tenant_id: string;
@@ -121,4 +136,51 @@ export async function incrementDeadLetterAttempt(
       WHERE id = $1`,
     [id, error],
   );
+}
+
+/** Row shape returned by the cross-tenant due-rows scan. */
+export interface DueDeadLetter {
+  id: string;
+  tenant_id: string;
+  endpoint_id: string;
+  event_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  attempt_count: number;
+  last_error: string | null;
+  last_attempt_at: Date;
+}
+
+/** Minimal query surface the cross-tenant scan needs (a raw pg client). */
+export interface RawQueryClient {
+  query<T = Record<string, unknown>>(
+    text: string,
+    values?: ReadonlyArray<unknown>,
+  ): Promise<{ rows: T[]; rowCount: number | null }>;
+}
+
+/**
+ * Cross-tenant scan (item 13): DLQ rows still under the retry cap whose
+ * backoff window has elapsed. The SQL mirrors {@link nextAttemptDelaySeconds}.
+ *
+ * Caller must run under BYPASSRLS (or owner) — this is a worker scan, not a
+ * tenant-scoped query. Same posture as the normalize worker (see
+ * services/ledger/src/workers/normalizeWorker.ts).
+ */
+export async function getDueDeadLetters(
+  c: RawQueryClient,
+  maxAttempts: number,
+  limit: number,
+): Promise<DueDeadLetter[]> {
+  const { rows } = await c.query<DueDeadLetter>(
+    `SELECT id, tenant_id, endpoint_id, event_id, event_type, payload,
+            attempt_count, last_error, last_attempt_at
+       FROM webhook_dead_letters
+      WHERE attempt_count < $1
+        AND last_attempt_at + (LEAST(30 * power(2, attempt_count - 1), 480) || ' seconds')::interval <= now()
+      ORDER BY last_attempt_at ASC
+      LIMIT $2`,
+    [maxAttempts, limit],
+  );
+  return rows;
 }

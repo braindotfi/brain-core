@@ -28,3 +28,9 @@ export {
   type ReconcileOptions,
   type AnchorReconciler,
 } from "./reconciler.js";
+export {
+  runWebhookDispatchCycle,
+  startWebhookDispatchWorker,
+  type WebhookDispatchWorkerDeps,
+  type CycleResult as WebhookDispatchCycleResult,
+} from "./webhook-dispatch-worker.js";

@@ -132,6 +132,7 @@ import {
   registerWebhookRoutes,
   publishAnchor,
   startAnchorReconciler,
+  startWebhookDispatchWorker,
 } from "@brain/audit";
 import type { AuditDeps } from "@brain/audit";
 
@@ -983,6 +984,22 @@ async function main(): Promise<void> {
   );
   log.info("outbox worker started");
 
+  // Item 13: drain webhook_dead_letters with exponential backoff so failed
+  // deliveries retry without /replay being invoked manually. The first inline
+  // dispatch attempt still happens in WebhookDispatcher; this worker handles
+  // attempts 2..MAX and emits the dlq.count metric + exhausted audit event on
+  // hard giveup.
+  const webhookDispatchWorker = startWebhookDispatchWorker(
+    {
+      pool,
+      audit,
+      metrics,
+      workerId: `webhook-dispatch-worker-${process.pid}`,
+    },
+    { intervalMs: 5_000 },
+  );
+  log.info("webhook dispatch worker started");
+
   const anchorBroadcaster =
     cfg.AUDIT_PUBLISHER_KEY !== undefined
       ? createViemAnchorBroadcaster({
@@ -1694,6 +1711,7 @@ async function main(): Promise<void> {
     if (anchorTimer !== undefined) clearTimeout(anchorTimer);
     normalizeWorker.stop();
     outboxWorker.stop();
+    webhookDispatchWorker.stop();
     anchorReconciler?.stop();
     try {
       await agentRouteWorker.close();
