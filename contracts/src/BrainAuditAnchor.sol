@@ -20,9 +20,17 @@ contract BrainAuditAnchor {
     /// @notice Emitted when the publisher is rotated (multi-sig change).
     event PublisherChanged(address indexed oldPublisher, address indexed newPublisher);
 
+    /// @notice Emitted when a two-step publisher rotation is proposed; the
+    ///         rotation completes only when `pendingPublisher` calls acceptPublisher.
+    event PublisherTransferStarted(address indexed currentPublisher, address indexed pendingPublisher);
+
     /// @dev The single publisher address. In production this is a Safe
     ///      multi-sig (2-of-3) so a single-key compromise cannot publish.
     address public publisher;
+
+    /// @dev Two-step rotation: the proposed next publisher, who must call
+    ///      acceptPublisher() to take the role. Zero when none is pending.
+    address public pendingPublisher;
 
     /// @dev Tracks the most recent anchor per tenant for the view helper.
     struct Latest {
@@ -38,6 +46,7 @@ contract BrainAuditAnchor {
     mapping(bytes32 => mapping(bytes32 => bool)) private _published;
 
     error NotPublisher();
+    error NotPendingPublisher();
     error RootAlreadyPublished(bytes32 tenantId, bytes32 root);
     error ZeroAddress();
     error InvalidPeriod();
@@ -81,13 +90,25 @@ contract BrainAuditAnchor {
         emit AnchorPublished(tenantId, root, eventCount, periodStart, periodEnd);
     }
 
-    /// @notice Rotate the publisher. Only the current publisher can rotate.
-    ///         Intended for multi-sig membership changes.
+    /// @notice Begin a two-step publisher rotation (multi-sig membership change).
+    ///         Only the current publisher may propose. The rotation does NOT take
+    ///         effect until `next` calls acceptPublisher() — a one-step set to a
+    ///         mistyped or uncontrolled address would permanently brick anchoring.
+    /// @param  next The proposed next publisher, or address(0) to cancel a pending
+    ///         rotation.
     function setPublisher(address next) external onlyPublisher {
-        if (next == address(0)) revert ZeroAddress();
+        pendingPublisher = next;
+        emit PublisherTransferStarted(publisher, next);
+    }
+
+    /// @notice Complete a two-step publisher rotation. Callable only by the
+    ///         address named in a prior setPublisher; clears the pending slot.
+    function acceptPublisher() external {
+        if (msg.sender != pendingPublisher) revert NotPendingPublisher();
         address prev = publisher;
-        publisher = next;
-        emit PublisherChanged(prev, next);
+        publisher = pendingPublisher;
+        pendingPublisher = address(0);
+        emit PublisherChanged(prev, publisher);
     }
 
     /// @notice Verify that a leaf is included in a root by a Merkle proof.

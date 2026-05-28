@@ -27,6 +27,14 @@ contract BrainSmartAccount {
     /// @dev Kill-switch: execution disabled but the key record is preserved.
     event SessionKeyPaused(address indexed holder);
     event SessionKeyResumed(address indexed holder);
+    /// @dev Account-wide kill-switch: blocks every holder at once, independent
+    ///      of per-holder pause state.
+    event AccountPaused();
+    event AccountResumed();
+    /// @dev Two-step ownership rotation (Ownable2Step): a transfer is proposed,
+    ///      then accepted by the pending owner before it takes effect.
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event AgentActionExecuted(
         bytes32 indexed tenantId,
         bytes32 indexed agentId,
@@ -39,6 +47,9 @@ contract BrainSmartAccount {
 
     /// @dev Root key (hardware wallet or institutional custody).
     address public owner;
+    /// @dev Two-step ownership: the proposed next owner, who must call
+    ///      acceptOwnership() to take control. Zero when no transfer is pending.
+    address public pendingOwner;
     /// @dev Immutable tenant id hash anchoring this account.
     bytes32 public immutable tenantId;
     /// @dev BrainPolicyRegistry this account trusts; policyVersion in a
@@ -56,6 +67,9 @@ contract BrainSmartAccount {
     mapping(address => uint256) private _nonces;
     /// @dev H-03: per-holder re-entrancy guard for the external call.
     mapping(address => bool) private _locked;
+    /// @dev Account-wide kill-switch. When set, NO holder can execute,
+    ///      regardless of per-holder pause state. Owner-controlled.
+    bool private _allPaused;
 
     error NotOwner();
     error NotHolder();
@@ -74,6 +88,9 @@ contract BrainSmartAccount {
     error SelectorsRequired();
     error ReentrantCall();
     error BadNonce(uint256 expected, uint256 supplied);
+    // Two-step ownership + account-wide pause hardening.
+    error NotPendingOwner();
+    error AccountIsPaused();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -86,10 +103,26 @@ contract BrainSmartAccount {
         policyRegistry = _policyRegistry;
     }
 
-    /// @notice Rotate the owner. Use this on hardware-wallet swap.
+    /// @notice Begin a two-step owner rotation (e.g. a hardware-wallet swap).
+    ///         The transfer does NOT take effect until `next` calls
+    ///         acceptOwnership(). A one-step rotation to a mistyped or
+    ///         uncontrolled address would permanently brick the account, so
+    ///         ownership only moves once the incoming key proves control.
+    /// @param  next The proposed next owner, or address(0) to cancel a pending
+    ///         transfer.
     function transferOwnership(address next) external onlyOwner {
-        if (next == address(0)) revert ZeroAddress();
-        owner = next;
+        pendingOwner = next;
+        emit OwnershipTransferStarted(owner, next);
+    }
+
+    /// @notice Complete a two-step owner rotation. Callable only by the address
+    ///         named in a prior transferOwnership; clears the pending slot.
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
+        address previous = owner;
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(previous, owner);
     }
 
     /// @notice Grant a session key. Overwrites any existing key for the holder.
@@ -142,12 +175,37 @@ contract BrainSmartAccount {
         return _paused[holder];
     }
 
+    /// @notice Account-wide kill-switch. Owner-only. Immediately blocks EVERY
+    ///         holder's execution at once — the right blast-radius control during
+    ///         a security incident, versus pausing N session keys individually.
+    ///         Per-holder pause flags are left untouched, so unpauseAll() restores
+    ///         exactly the pre-incident posture. Idempotent.
+    function pauseAll() external onlyOwner {
+        _allPaused = true;
+        emit AccountPaused();
+    }
+
+    /// @notice Lift the account-wide pause. Owner-only. Holders that were paused
+    ///         individually remain paused (their flag was never cleared).
+    function unpauseAll() external onlyOwner {
+        _allPaused = false;
+        emit AccountResumed();
+    }
+
+    /// @notice Whether the account-wide kill-switch is currently engaged.
+    function isAccountPaused() external view returns (bool) {
+        return _allPaused;
+    }
+
     /// @notice Execute a call via a session key. Holder-authenticated.
     ///         Reverts if anything falls outside the key's scope.
     function executeViaSessionKey(uint256 nonceSupplied, address target, uint256 value, bytes calldata data)
         external
         returns (bytes memory result)
     {
+        // Account-wide kill-switch short-circuits every holder during an incident.
+        if (_allPaused) revert AccountIsPaused();
+
         // H-03: re-entrancy guard — a malicious target cannot call back in.
         if (_locked[msg.sender]) revert ReentrantCall();
 
