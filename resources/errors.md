@@ -1,6 +1,6 @@
 # Errors
 
-Every error Brain returns uses a single envelope: a stable snake*case `code`, a human-readable `message`, optional structured `details`, a `request_id` for cross-system correlation, and a `docs_url`. Codes are stable forever once shipped (format: `{domain}*{condition}`). The full registry lives in `shared/src/errors.ts`.
+Every error Brain returns uses a single envelope: a stable `snake_case` `code`, a human-readable `message`, optional structured `details`, a `request_id` for cross-system correlation, and a `docs_url`. Codes are stable forever once shipped (format: `{domain}_{condition}`). The full registry lives in `shared/src/errors.ts`.
 
 {% hint style="warning" %}
 Brain **never** returns HTTP 200 with an error in the body. A non-2xx status always carries this envelope.
@@ -144,17 +144,17 @@ When the §6 gate rejects an intent it surfaces as `payment_intent_gate_failed`,
 
 The MCP surface (`POST /v1/agents/mcp`) returns JSON-RPC error codes:
 
-| Code     | Meaning                                   |
-| -------- | ----------------------------------------- |
-| `-32001` | JWT invalid or expired                    |
-| `-32002` | Agent record not active                   |
-| `-32003` | `scope_hash` does not match on-chain hash |
-| `-32004` | Per-call scope insufficient               |
-| `-32005` | Tenant mismatch                           |
-| `-32600` | Invalid request (standard JSON-RPC)       |
-| `-32601` | Method not found                          |
-| `-32602` | Invalid params                            |
-| `-32603` | Internal error                            |
+| Code     | Meaning                                                                                               |
+| -------- | ----------------------------------------------------------------------------------------------------- |
+| `-32001` | Auth token missing, invalid, or expired (covers `auth_token_missing/invalid/expired`)                 |
+| `-32002` | Scope insufficient — also tenant mismatch (covers `auth_scope_insufficient` / `auth_tenant_mismatch`) |
+| `-32003` | Agent not registered or inactive (`agent_not_registered`)                                             |
+| `-32004` | Pre-execution gate failed — covers every `gate_*` sub-code (`payment_intent_gate_failed`)             |
+| `-32005` | Agent `scope_hash` does not match on-chain registration (`agent_scope_hash_mismatch`)                 |
+| `-32600` | Invalid request (standard JSON-RPC)                                                                   |
+| `-32601` | Method not found                                                                                      |
+| `-32602` | Invalid params                                                                                        |
+| `-32603` | Internal error                                                                                        |
 
 ### Getting Help
 
