@@ -17,6 +17,8 @@
  * that wiring is a single-file change rather than a boot-path rewrite.
  */
 
+import { SecretClient } from "@azure/keyvault-secrets";
+import { DefaultAzureCredential } from "@azure/identity";
 import { decodeEnvCredentialKey } from "./aes-gcm.js";
 
 export interface CredentialKey {
@@ -65,28 +67,40 @@ class NoneCredentialKeyProvider implements CredentialKeyProvider {
 }
 
 /**
- * Azure Key Vault provider stub. The shape is fixed — the only thing missing
- * is the actual SDK call. When wiring it:
+ * Azure Key Vault provider. Authenticates via DefaultAzureCredential, which
+ * chains managed identity (production), workload identity (AKS), Azure CLI
+ * (dev override), and others. The secret value is a base64-encoded 32-byte AES
+ * key — same format as the env-var path so rotation moves the value, not the
+ * format. The secret version is used as the keyId so a key rotation in Key
+ * Vault is observable end-to-end (logged with every encrypt + carried into
+ * ciphertext metadata).
  *
- *   import { SecretClient } from "@azure/keyvault-secrets";
- *   import { DefaultAzureCredential } from "@azure/identity";
- *   const client = new SecretClient(vaultUrl, new DefaultAzureCredential());
- *   const secret = await client.getSecret(secretName);
- *   return { key: Buffer.from(secret.value, "base64"), keyId: secret.properties.version };
- *
- * Until that's wired, this throws with a clear pointer rather than silently
- * falling back to env-var keys.
+ * The SecretClient is constructed once per provider instance and reused. The
+ * caller is expected to call load() once at boot (cached by the consumer); we
+ * intentionally do not cache here because rotation should be observable on the
+ * next boot, not silently masked by an in-process cache.
  */
 class AzureKeyVaultCredentialKeyProvider implements CredentialKeyProvider {
   public readonly source = "azure-key-vault" as const;
-  public constructor(
-    private readonly vaultUrl: string,
-    private readonly secretName: string,
-  ) {}
+  private readonly client: SecretClient;
+  public constructor(vaultUrl: string, private readonly secretName: string) {
+    this.client = new SecretClient(vaultUrl, new DefaultAzureCredential());
+  }
   public async load(): Promise<CredentialKey> {
-    throw new Error(
-      `credential-key-provider: Azure Key Vault path is selected (vault=${this.vaultUrl}, secret=${this.secretName}) but the @azure/keyvault-secrets SDK is not wired yet. See shared/src/crypto/credential-key-provider.ts for the integration block.`,
-    );
+    const secret = await this.client.getSecret(this.secretName);
+    if (secret.value === undefined) {
+      throw new Error(
+        `credential-key-provider: Key Vault secret '${this.secretName}' has no value`,
+      );
+    }
+    const key = Buffer.from(secret.value, "base64");
+    if (key.length !== 32) {
+      throw new Error(
+        `credential-key-provider: Key Vault secret '${this.secretName}' decodes to ${key.length} bytes; expected 32 (AES-256)`,
+      );
+    }
+    const keyId = secret.properties.version ?? this.secretName;
+    return { key, keyId };
   }
 }
 
