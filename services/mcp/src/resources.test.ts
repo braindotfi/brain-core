@@ -36,6 +36,13 @@ describe("parseBrainUri", () => {
       id: "",
     });
   });
+  it("parses proof uris (2-segment)", () => {
+    expect(parseBrainUri("brain://proofs/act_X")).toEqual({ kind: "proof", id: "act_X" });
+    expect(parseBrainUri("brain://proofs/act_X/")).toEqual({ kind: "proof", id: "act_X" });
+  });
+  it("returns null for proof uri missing id", () => {
+    expect(parseBrainUri("brain://proofs/")).toBeNull();
+  });
   it("strips trailing slash", () => {
     expect(parseBrainUri("brain://ledger/accounts/acct_X/")).toEqual({
       kind: "ledger.account",
@@ -60,6 +67,7 @@ describe("listResources", () => {
     expect(uris).toContain("brain://ledger/accounts/{account_id}");
     expect(uris).toContain("brain://wiki/pages/{slug}");
     expect(uris).toContain("brain://payments/action_types");
-    expect(r.resources.length).toBe(6);
+    expect(uris).toContain("brain://proofs/{action_id}");
+    expect(r.resources.length).toBe(7);
   });
 });

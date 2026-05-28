@@ -8,6 +8,8 @@ exports[`MCP tool registry — no execution surface (P1.2) > snapshots the expos
   "ledger.counterparties.list",
   "ledger.obligations.list",
   "ledger.transactions.list",
+  "payment_intent.cancel",
+  "payment_intent.list",
   "payment_intent.propose",
   "raw.contribute",
   "wiki.page.get",

@@ -48,6 +48,13 @@ export const RESOURCE_DESCRIPTORS: ReadonlyArray<ResourceDescriptor> = [
     description: "Canonical action_type vocabulary + required fields for payment_intent.propose.",
     mimeType: "application/json",
   },
+  {
+    uri: "brain://proofs/{action_id}",
+    name: "Action proof (H-07)",
+    description:
+      "Canonical proof for an executed action: §6 gate trace, policy decision, audit before/after, Merkle proof, and on-chain anchor tx hash.",
+    mimeType: "application/json",
+  },
 ];
 
 /**
@@ -172,6 +179,23 @@ export async function readResource(
         },
       };
     }
+    case "proof": {
+      if (ctx.buildProof === undefined) {
+        throw brainError("internal_server_error", "proof builder is not wired");
+      }
+      const proof = await ctx.buildProof(parsed.id);
+      if (proof === null) {
+        // Tenant isolation: an action for another tenant is indistinguishable
+        // from "doesn't exist" — never leak existence across tenants.
+        throw brainError("proof_not_found", "no proof for that action");
+      }
+      return {
+        requiredScopes: ["audit:read"],
+        result: {
+          contents: [{ uri, mimeType: "application/json", text: JSON.stringify(proof, null, 2) }],
+        },
+      };
+    }
   }
 }
 
@@ -182,7 +206,8 @@ interface ParsedBrainUri {
     | "ledger.obligation"
     | "ledger.payment_intent"
     | "wiki.page"
-    | "payments.action_types";
+    | "payments.action_types"
+    | "proof";
   id: string;
 }
 
@@ -199,6 +224,11 @@ export function parseBrainUri(uri: string): ParsedBrainUri | null {
   // Collection-level resource (no id): the static action-type catalog.
   if (segments.length === 2 && segments[0] === "payments" && segments[1] === "action_types") {
     return { kind: "payments.action_types", id: "" };
+  }
+  // brain://proofs/{action_id} — 2-segment URI; handled before the length-3 guard.
+  if (segments.length === 2 && segments[0] === "proofs") {
+    const id = segments[1];
+    if (id !== undefined && id !== "") return { kind: "proof", id };
   }
   if (segments.length < 3) return null;
   const [layer, collection, id] = segments;

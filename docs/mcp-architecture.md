@@ -164,10 +164,12 @@ Ten tools across four capability groups. Each tool name is an
 
 ### `payment_intent:propose` And `agent:propose` Capabilities
 
-| Tool                     | Maps to                       | Notes                                                  |
-| ------------------------ | ----------------------------- | ------------------------------------------------------ |
-| `payment_intent.propose` | `PaymentIntentService.create` | Returns intent + PolicyDecision. **Never `.execute`.** |
-| `agent.action.propose`   | `IAgentService.propose`       | Non-financial proposal.                                |
+| Tool                     | Maps to                       | Notes                                                                                                |
+| ------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `payment_intent.propose` | `PaymentIntentService.create` | Returns intent + PolicyDecision. **Never `.execute`.**                                               |
+| `payment_intent.cancel`  | `PaymentIntentService.cancel` | Only the proposing agent; allowed from `proposed` / `pending_approval`. Item 17. Needs `payment_intent:propose`. |
+| `payment_intent.list`    | `PaymentIntentService.list`   | Lists the calling agent's own intents (tenant- and agent-scoped). Item 17. Needs `ledger:read`.       |
+| `agent.action.propose`   | `IAgentService.propose`       | Non-financial proposal.                                                                              |
 
 A tool that the agent isn't scoped for is still **listed** (`tools/list`
 returns the full registry); attempting to **call** it returns
@@ -188,12 +190,21 @@ Resources are read-only typed identifiers. Brain exposes:
 | `brain://wiki/pages/{slug}`                    | Wiki page (markdown body)          |
 | `brain://audit/events/{id}`                    | Audit event with inclusion proof   |
 | `brain://payments/action_types`                | PaymentIntent action_type catalog  |
+| `brain://proofs/{action_id}`                   | Canonical H-07 proof for an action |
 
-The action-type catalog is a static document of the propose vocabulary:
-each `action_type` plus the extra fields the propose tool requires
-(e.g. `x402_settle` needs `pay_to`; `escrow_release` needs `escrow_id` +
-`job_terms_hash`). On-chain settlement types are requested by NAME —
-there is no implicit resolver from `onchain_transfer`.
+The action-type catalog (item 14) is a static document of the propose
+vocabulary: each `action_type` plus the extra fields the propose tool
+requires (e.g. `x402_settle` needs `pay_to`; `escrow_release` needs
+`escrow_id` + `job_terms_hash`). On-chain settlement types are
+requested by NAME — there is no implicit resolver from
+`onchain_transfer`.
+
+The `brain://proofs/{action_id}` resource (item 17) returns the same
+JSON the HTTP `GET /v1/proof/{action_id}` route returns — the §6 gate
+trace, the matched policy decision, the audit before/after pair, the
+Merkle proof, and the on-chain anchor tx hash. Requires `audit:read`.
+Tenant isolation is enforced: an action that belongs to another tenant
+is indistinguishable from "doesn't exist".
 
 Resources are syntactic sugar over the equivalent tools, useful for
 clients that want stable URIs they can pin in their reasoning context.
