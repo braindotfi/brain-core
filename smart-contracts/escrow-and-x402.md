@@ -1,78 +1,45 @@
 # Escrow and X402
 
-Where an external agent is paid for its work, Brain coordinates settlement **without ever custodying funds**. Two standards do the heavy lifting: ERC-8183 for escrowed jobs, x402 for HTTP-native machine payments.
+For agent-to-agent (M2M) commerce where a payment must be **conditioned on job completion**, Brain provides `BrainEscrow` — a custodial USDC escrow on Base. For per-call API access, Brain integrates **x402**. Both terminate in the same `PaymentIntent → §6 gate → audit` flow; neither is a second money path.
 
-| Standard     | Use Case                                                                |
-| ------------ | ----------------------------------------------------------------------- |
-| **ERC-8183** | Job-style work where payment releases on verified completion            |
-| **x402**     | Per-call API access where payment settles inline with each HTTP request |
-
-### ERC-8183 Escrowed Job Flow
-
-The tenant locks payment. The agent does the work. Brain co-signs the release. Funds settle to the agent.
-
-```
-1. Tenant proposes a job
-        │
-        ↓
-2. BrainSmartAccount locks payment in escrow
-        │
-        ↓
-3. Agent executes the work
-        │
-        ↓
-4. Agent submits a completion attestation
-        │
-        ↓
-5. Brain (neutral verifier) co-signs release
-        │
-        ↓
-6. Funds settle to agent's address
-```
-
-If verification fails, funds return to the tenant after a timeout.
-
-| Phase       | What Happens                                                                                                                            |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| **Lock**    | Tenant's smart account transfers funds into the escrow contract; the entry references `agent`, `capability`, `actionId`, and a deadline |
-| **Work**    | Agent performs the action, off-chain or on-chain                                                                                        |
-| **Attest**  | Agent submits a signed completion attestation                                                                                           |
-| **Verify**  | Brain validates the attestation against the action receipt                                                                              |
-| **Settle**  | If valid, Brain co-signs release; funds settle to the agent                                                                             |
-| **Timeout** | If the deadline passes without valid completion, funds return to the tenant                                                             |
-
-{% hint style="success" %}
-Brain is a **neutral verifier**, not a custodian. Funds move directly between the tenant's account and the agent's address. Brain signs that the work was done; it does not hold the money in transit.
+{% hint style="warning" %}
+**`BrainEscrow` is UNAUDITED and Base Sepolia testnet only.** It is a pre-audit reference implementation (RFC 0001 §7.6) — immutable (no admin, no upgrade, no pause), and it must clear an external security audit before any mainnet address is funded.
 {% endhint %}
 
-### EIP-712 Attestation Type
+| Mechanism       | Use case                                                                |
+| --------------- | ----------------------------------------------------------------------- |
+| **BrainEscrow** | Job-style work where USDC releases incrementally as milestones complete |
+| **x402**        | Per-call API access where payment settles inline with each HTTP request |
+
+### BrainEscrow — custodial, hash-only, incremental
+
+A payer locks USDC **into the contract** against a `jobTermsHash` (a keccak256 commitment of the off-chain terms — no PII, RFC 0001 §3). Funds then **release** to the payee or **refund** to the payer. Settlement is **incremental**: `release(amount)` and `refund(amount)` each move a partial sum, supporting **milestone payments** and **arbiter dispute-splits**. The escrow stays `Locked` until `released + refunded` reaches the full amount, then becomes `Settled`.
 
 ```
-JobCompletion(
-  bytes32 actionId,
-  address agent,
-  bytes32 resultHash,
-  uint64  timestamp,
-  uint256 nonce
-)
+lock(escrowId, payee, USDC, amount, jobTermsHash, deadline)   ← payer deposits USDC
+        │
+        ▼   release(amount)  (payer confirms delivery, or arbiter attests)
+   Locked ───────────────────────────────────────────────►  pays the payee
+        │   refund(amount)   (arbiter any time, or payer after deadline)
+        └───────────────────────────────────────────────►  returns to the payer
+        │
+        ▼  when released + refunded == amount
+     Settled (terminal)
 ```
 
-| Field        | Purpose                                |
-| ------------ | -------------------------------------- |
-| `actionId`   | The action this completion attests to  |
-| `resultHash` | Hash of the work output (audit-linked) |
-| `timestamp`  | Used to enforce job deadline           |
-| `nonce`      | Replay protection                      |
+| Action      | Who                                                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **lock**    | The payer (buyer/agent) — deposits USDC against the job commitment                                                         |
+| **release** | The payer (confirming delivery, incl. per-milestone) **or** the arbiter (attesting / resolving a dispute) — pays the payee |
+| **refund**  | The **arbiter** any time (dispute), **or** the payer once the `deadline` passes (job not delivered) — returns to the payer |
 
-### Dispute Resolution
+{% hint style="info" %}
+**The contract custodies the USDC; Brain (the operator) cannot redirect it.** The `arbiter` is immutable (a Safe multi-sig in production) and can only ever **release to the designated payee** or **refund to the designated payer** — never to an arbitrary address. There is no admin/drain path. A dispute is resolved by a partial release to the payee plus a partial refund to the payer on the same lock.
+{% endhint %}
 
-If the agent and tenant disagree on whether work was completed:
+### Gate binding (§6 check 6.6)
 
-| Path                                                 | Outcome                                                                 |
-| ---------------------------------------------------- | ----------------------------------------------------------------------- |
-| **Agent submits valid attestation, tenant disputes** | Brain reviews evidence; can co-sign release or hold pending arbitration |
-| **Agent fails to submit before deadline**            | Funds return to tenant automatically                                    |
-| **Brain detects fraud**                              | Release blocked; reputation slashed against agent's `reputationRoot`    |
+Before a release is gated through, the §6 pre-execution gate reads `getEscrow(escrowId)` and binds the PaymentIntent to the on-chain lock: still `Locked`, enough **remaining** balance (`amount − released − refunded`) to cover this release, same payee, same `jobTermsHash`. Binding against `remaining` (not the full `amount`) is what lets each milestone after the first through.
 
 ### X402 Machine-Native Payments
 
@@ -106,22 +73,22 @@ Agent                      Resource Server
 
 ### When to Use Which
 
-| Scenario                                | Standard                                |
-| --------------------------------------- | --------------------------------------- |
-| Agent paid on completion of a job       | ERC-8183                                |
-| Agent pays per-call for an API or tool  | x402                                    |
-| Agent pays another agent for a sub-task | x402 (immediate) or ERC-8183 (deferred) |
+| Scenario                                | Mechanism                                  |
+| --------------------------------------- | ------------------------------------------ |
+| Agent paid on completion of a job       | BrainEscrow                                |
+| Agent pays per-call for an API or tool  | x402                                       |
+| Agent pays another agent for a sub-task | x402 (immediate) or BrainEscrow (deferred) |
 
 ### Where Settlement Is **Not** Brain's Job
 
-| Boundary          | Who Handles                                    |
-| ----------------- | ---------------------------------------------- |
-| Funds in transit  | Tenant's smart account or rail; not Brain      |
-| Final settlement  | The settlement layer (Base, an off-chain rail) |
-| Tax and reporting | Tenant and tenant's accounting tooling         |
+| Boundary                          | Who Handles                                    |
+| --------------------------------- | ---------------------------------------------- |
+| Immediate (x402) funds in transit | The tenant's smart account / rail; not Brain   |
+| Final settlement                  | The settlement layer (Base, an off-chain rail) |
+| Tax and reporting                 | Tenant and tenant's accounting tooling         |
 
-Brain coordinates and proves; it does not hold.
+Brain (the operator) never holds or redirects funds. For _conditional_ settlement the immutable `BrainEscrow` contract escrows USDC — but it can only ever release to the designated payee or refund the designated payer; there is no path for Brain to redirect it.
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔐 BrainSmartAccount</strong></td><td>The smart account that locks and releases.</td><td><a href="brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr><tr><td><strong>🪪 BrainMCPAgentRegistry</strong></td><td>How agent reputation accumulates.</td><td><a href="brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>The conceptual model.</td><td><a href="../concepts/agents.md">agents.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔐 BrainSmartAccount</strong></td><td>The smart account that locks and releases.</td><td><a href="brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr><tr><td><strong>🏅 BrainReputationRegistry</strong></td><td>How agent reputation is referenced on-chain.</td><td><a href="brainreputationregistry.md">brainreputationregistry.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>The conceptual model.</td><td><a href="../concepts/agents.md">agents.md</a></td><td></td></tr></tbody></table>

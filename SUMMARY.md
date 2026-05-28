@@ -75,6 +75,7 @@
 - [BrainPolicyRegistry](smart-contracts/brainpolicyregistry.md)
 - [BrainSmartAccount](smart-contracts/brainsmartaccount.md)
 - [BrainMCPAgentRegistry](smart-contracts/brainmcpagentregistry.md)
+- [BrainReputationRegistry](smart-contracts/brainreputationregistry.md)
 - [Escrow and X402](smart-contracts/escrow-and-x402.md)
 
 ## Resources
