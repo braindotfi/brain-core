@@ -38,11 +38,17 @@ const GITBOOK_DIRS = [
 
 // Wrong-about-the-current-code — never allowed.
 const HARD = [
-  [/\bvalidateUserOp\b/, "ERC-4337 validateUserOp — the account is session-key (executeViaSessionKey)"],
+  [
+    /\bvalidateUserOp\b/,
+    "ERC-4337 validateUserOp — the account is session-key (executeViaSessionKey)",
+  ],
   [/\bUserOperation\b/, "ERC-4337 UserOperation — not the deployed model"],
   [/\bEntryPoint\b/, "ERC-4337 EntryPoint — not used"],
   [/\b_verifyScope\b/, "non-existent contract function"],
-  [/\b16-step\b|\b16-check\b|\b16 checks\b/, "gate is 13 numbered checks + 4 hardening additions (17)"],
+  [
+    /\b16-step\b|\b16-check\b|\b16 checks\b/,
+    "gate is 13 numbered checks + 4 hardening additions (17)",
+  ],
   [
     // Only the *anchor cadence* claim, not any "10 minutes" (e.g. a session-key
     // validity window). Require an anchoring keyword on the same line.
@@ -64,7 +70,13 @@ const MARKED = [
   [/\bagent:propose\b/, "agent:propose (the real scope is execution:propose)"],
 ];
 
-const ALLOW_MARKER = /planned|roadmap|RFC 0001|conceptual|alias|not in MVP|not yet|future/i;
+// A MARKED term is allowed on a line that ALSO carries one of these markers —
+// i.e. the doc is not claiming the feature is live on mainnet. Besides the
+// forward-looking markers, an honest "shipped-but-not-live" status counts:
+// UNAUDITED / testnet / shadow / Base Sepolia (the actual posture of the escrow
+// + ERC-8004 reputation reference contracts).
+const ALLOW_MARKER =
+  /planned|roadmap|RFC 0001|RFC 0002|conceptual|alias|not in MVP|not yet|future|unaudited|testnet|base sepolia|shadow|reference implementation/i;
 
 function walk(dir) {
   const out = [];
