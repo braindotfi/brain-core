@@ -35,10 +35,12 @@ import {
   listAgents,
   findAgent,
   insertAgent,
+  markAgentRegistered,
   transitionProposal,
 } from "./repository.js";
 import type { AgentRecord } from "@brain/shared";
 import type { AgentRow } from "./repository.js";
+import type { AgentRegistrationRelayer } from "./registration-relayer.js";
 
 export interface AgentServiceDeps {
   pool: Pool;
@@ -53,6 +55,13 @@ export interface AgentServiceDeps {
     trace: unknown[];
     policy_version: number;
   }>;
+  /**
+   * On-chain registration relayer (RFC 0002 Phase C). Optional: when absent or
+   * unconfigured, {@link AgentService.confirmRegistration} fails closed and the
+   * agent stays `pending_onchain` (never auto-activated). Wiring a real
+   * KMS-backed relayer is deferred live-wiring.
+   */
+  relayer?: AgentRegistrationRelayer;
 }
 
 function rowToRecord(row: AgentRow): AgentRecord {
@@ -165,6 +174,68 @@ export class AgentService implements IAgentService {
         registered_tx: input.registered_tx,
       }),
     );
+    return rowToRecord(row);
+  }
+
+  /**
+   * Confirm a `pending_onchain` agent's BrainMCPAgentRegistry attestation and
+   * promote it to `active` (RFC 0002 Phase C). Intended to be driven by an async
+   * worker after registration.
+   *
+   * FAIL-CLOSED: if no relayer is configured (or its signer is unwired), this
+   * throws and the agent stays `pending_onchain` — it is never auto-activated.
+   * The attestation tx is submitted BEFORE the state flip, so the row only
+   * reaches `active` once the on-chain proof exists (recorded as registered_tx).
+   */
+  public async confirmRegistration(ctx: ServiceCallContext, agentId: string): Promise<AgentRecord> {
+    const existing = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+      findAgent(c, agentId),
+    );
+    if (existing === null) {
+      throw brainError("agent_not_registered", `agent ${agentId} not found`);
+    }
+    if (existing.state !== "pending_onchain") {
+      throw brainError(
+        "agent_proposal_invalid_state",
+        `agent ${agentId} is ${existing.state}, not pending_onchain`,
+      );
+    }
+    if (this.deps.relayer === undefined || !this.deps.relayer.configured) {
+      // No real on-chain relayer wired — fail closed, leave the agent pending.
+      throw brainError(
+        "agent_rail_unavailable",
+        "agent on-chain registration relayer is not configured",
+      );
+    }
+
+    const { txHash } = await this.deps.relayer.submitRegistration({
+      agentId,
+      tenantId: ctx.tenantId,
+      onchainAddress: existing.onchain_address ?? "",
+      scopeHash: existing.scope_hash !== null ? existing.scope_hash.toString("hex") : "",
+    });
+
+    const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+      markAgentRegistered(c, agentId, txHash),
+    );
+    if (row === null) {
+      // Lost a race — another relay already promoted it. Return current state.
+      const current = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+        findAgent(c, agentId),
+      );
+      if (current === null) throw brainError("agent_not_registered", `agent ${agentId} not found`);
+      return rowToRecord(current);
+    }
+
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "agent",
+      actor: ctx.actor,
+      action: "agent.onchain_confirmed",
+      inputs: { agent_id: agentId },
+      outputs: { state: "active", registered_tx: txHash },
+    });
+
     return rowToRecord(row);
   }
 

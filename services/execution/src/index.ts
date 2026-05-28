@@ -19,6 +19,12 @@ export * from "./state-machines.js";
 export { PaymentIntentService } from "./payment-intents/PaymentIntentService.js";
 export { AgentService } from "./AgentService.js";
 export type { AgentServiceDeps } from "./AgentService.js";
+export {
+  UnconfiguredRegistrationRelayer,
+  type AgentRegistrationRelayer,
+  type AgentRegistrationRequest,
+  type AgentRegistrationResult,
+} from "./registration-relayer.js";
 export type {
   PaymentIntentServiceDeps,
   PaymentIntentPolicyEvaluator,
