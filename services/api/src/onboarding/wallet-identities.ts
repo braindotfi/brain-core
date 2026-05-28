@@ -1,0 +1,99 @@
+/**
+ * Wallet ↔ tenant identity store — RFC 0002 Phase D.
+ *
+ * A `wallet_identities` row links a wallet address to a (tenant, principal):
+ * either a human owner (`user_…`) or an agent (`agent_…`). This is what will let
+ * SIWX resolve a wallet to a human owner (Phase D-2), not just an agent — so a
+ * tenant can authenticate with **either** email (Phase B login) **or** a linked
+ * wallet, the "support both" model.
+ *
+ * `linkWallet` writes under `withTenantScope` (RLS WITH CHECK passes only for the
+ * caller's tenant). The address is globally single-homed (PK), so a wallet
+ * already linked anywhere → `wallet_already_linked` (409). The cross-tenant
+ * `resolveByAddress` reader (for SIWX, which has no tenant context) uses the
+ * brain_privileged pool — the same sanctioned entry point as the agent lookup.
+ */
+
+import type { Pool } from "pg";
+import { brainError, withTenantScope, type TenantScopedClient } from "@brain/shared";
+
+export type WalletPrincipalType = "human" | "agent";
+
+export interface WalletLinkInput {
+  readonly tenantId: string;
+  /** Wallet address; normalized to lowercase here. */
+  readonly address: string;
+  readonly principalType: WalletPrincipalType;
+  /** `user_…` for a human, `agent_…` for an agent. */
+  readonly principalId: string;
+}
+
+export interface ResolvedWalletIdentity {
+  readonly tenantId: string;
+  readonly principalType: WalletPrincipalType;
+  readonly principalId: string;
+}
+
+const PG_UNIQUE_VIOLATION = "23505";
+
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === PG_UNIQUE_VIOLATION
+  );
+}
+
+/**
+ * Link a wallet to a (tenant, principal). Idempotent-safe at the DB: a wallet
+ * already linked (here or in any tenant) → `wallet_already_linked` (409), never a
+ * silent re-home. Runs under the caller's tenant scope (RLS WITH CHECK).
+ */
+export async function linkWallet(pool: Pool, input: WalletLinkInput): Promise<void> {
+  const address = input.address.toLowerCase();
+  try {
+    await withTenantScope(pool, input.tenantId, async (c: TenantScopedClient) => {
+      await c.query(
+        `INSERT INTO wallet_identities (address, tenant_id, principal_type, principal_id)
+         VALUES ($1, $2, $3, $4)`,
+        [address, input.tenantId, input.principalType, input.principalId],
+      );
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw brainError("wallet_already_linked", "this wallet is already linked to an account");
+    }
+    throw err;
+  }
+}
+
+/**
+ * Resolve a wallet address to its (tenant, principal) across tenants. Uses the
+ * brain_privileged (BYPASSRLS) pool — SIWX has no tenant context at sign-in, the
+ * same sanctioned cross-tenant entry point as the address→agent lookup. Returns
+ * null when the wallet is not linked.
+ */
+export class PostgresWalletIdentityReader {
+  public constructor(private readonly privilegedPool: Pool) {}
+
+  public async resolveByAddress(address: string): Promise<ResolvedWalletIdentity | null> {
+    const { rows } = await this.privilegedPool.query<{
+      tenant_id: string;
+      principal_type: WalletPrincipalType;
+      principal_id: string;
+    }>(
+      `SELECT tenant_id, principal_type, principal_id
+         FROM wallet_identities
+        WHERE address = LOWER($1)
+        LIMIT 1`,
+      [address],
+    );
+    const row = rows[0];
+    if (row === undefined) return null;
+    return {
+      tenantId: row.tenant_id,
+      principalType: row.principal_type,
+      principalId: row.principal_id,
+    };
+  }
+}
