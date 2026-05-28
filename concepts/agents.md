@@ -6,11 +6,11 @@ description: Who can read, propose, and act. Internal and external.
 
 In Brain, an **agent** is any non-human caller that proposes or executes actions on a tenant's behalf. Agents and humans share the same authorization model. The only thing that differs is the credential.
 
-| Caller                                    | Credential                                |
-| ----------------------------------------- | ----------------------------------------- |
-| **Human**                                 | OAuth/SSO via the Console                 |
-| **Internal agent** (your backend)         | Server API key                            |
-| **External agent** (third-party software) | JWT, anchored to an on-chain registration |
+| Caller                                    | Credential                                  |
+| ----------------------------------------- | ------------------------------------------- |
+| **Human**                                 | Email + password, or a linked wallet (SIWX) |
+| **Internal agent** (your backend)         | Server API key                              |
+| **External agent** (third-party software) | JWT, anchored to an on-chain registration   |
 
 All three hit the same endpoints, run through Policy, and land in the Audit log.
 

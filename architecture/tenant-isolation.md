@@ -57,11 +57,11 @@ Action evaluation
 ALLOW / ESCALATE / DENY
 ```
 
-| Subject Type       | Identified By        | Authenticated By          |
-| ------------------ | -------------------- | ------------------------- |
-| **Human**          | User ID              | OAuth / SSO (Auth0)       |
-| **Internal agent** | Service principal ID | Service credentials       |
-| **External agent** | Agent address        | SIWX (EIP-4361 over Base) |
+| Subject Type       | Identified By        | Authenticated By                   |
+| ------------------ | -------------------- | ---------------------------------- |
+| **Human**          | User ID              | Email + password, or wallet (SIWX) |
+| **Internal agent** | Service principal ID | Service credentials                |
+| **External agent** | Agent address        | SIWX (EIP-4361 over Base)          |
 
 ### On-Chain Isolation
 

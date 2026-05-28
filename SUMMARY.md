@@ -10,6 +10,7 @@
 ## Build
 
 - [Overview](build/overview.md)
+- [Sign Up and Onboard](build/sign-up-and-onboard.md)
 - [Read a Financial Picture](build/read-a-financial-picture.md)
 - [Pay an Invoice Safely](build/pay-an-invoice-safely.md)
 - [Give an Agent a Spending Limit](build/give-an-agent-a-spending-limit.md)
