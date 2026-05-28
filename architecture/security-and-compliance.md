@@ -56,14 +56,14 @@ The output of these checks feeds directly into Policy. A tenant policy can refer
 
 ### Smart Contract Security
 
-| Mitigation                   | Detail                                                                                                   |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------- |
-| **Minimal on-chain surface** | Most logic off-chain. Less code = smaller attack surface                                                 |
-| **Two independent audits**   | Performed before mainnet deployment                                                                      |
-| **Public bug bounty**        | Continuous coverage post-deployment                                                                      |
-| **Immutable contracts**      | No upgrade path in MVP; changes ship as audited redeploys                                                |
-| **Anchorer keys on HSMs**    | Hardware-backed signing for `BrainAuditAnchor`                                                           |
-| **Session-key enforcement**  | On-chain scope, spend caps, `policyVersion` binding, and replay nonce enforced in `executeViaSessionKey` |
+| Mitigation                        | Detail                                                                                                                        |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Minimal on-chain surface**      | Most logic off-chain. Less code = smaller attack surface                                                                      |
+| **External audit before mainnet** | No money-moving contract ships to mainnet without an external audit; testnet/reference contracts are clearly marked unaudited |
+| **Public bug bounty**             | Continuous coverage post-deployment                                                                                           |
+| **Immutable contracts**           | No upgrade path in MVP; changes ship as audited redeploys                                                                     |
+| **Anchorer keys on HSMs**         | Hardware-backed signing for `BrainAuditAnchor`                                                                                |
+| **Session-key enforcement**       | On-chain scope, spend caps, `policyVersion` binding, and replay nonce enforced in `executeViaSessionKey`                      |
 
 ### Privacy of Audit Anchors
 

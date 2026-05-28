@@ -59,13 +59,13 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 
 **Mitigation.**
 
-| Mechanism                | How It Helps                                                 |
-| ------------------------ | ------------------------------------------------------------ |
-| Minimal on-chain surface | Less code = smaller attack surface                           |
-| Two independent audits   | Performed before mainnet deployment                          |
-| Public bug bounty        | Continuous post-deployment coverage                          |
-| Immutable contracts      | No upgrade path in MVP; changes ship as audited redeploys    |
-| Anchorer keys on HSMs    | Compromise of the operational machine does not yield the key |
+| Mechanism                     | How It Helps                                                        |
+| ----------------------------- | ------------------------------------------------------------------- |
+| Minimal on-chain surface      | Less code = smaller attack surface                                  |
+| External audit before mainnet | No money-moving contract ships to mainnet without an external audit |
+| Public bug bounty             | Continuous post-deployment coverage                                 |
+| Immutable contracts           | No upgrade path in MVP; changes ship as audited redeploys           |
+| Anchorer keys on HSMs         | Compromise of the operational machine does not yield the key        |
 
 ### L2 Finality and Reorgs
 

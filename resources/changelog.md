@@ -6,6 +6,35 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5 (M2M Commerce + Self-Serve Onboarding)
+
+Two additive tracks: **machine-to-machine (M2M) agent commerce** (RFC 0001) and **self-serve onboarding** (RFC 0002). Everything money-moving here is **shadow-first / fail-closed** — the new settlement rails are unregistered at boot and the new contracts are unaudited testnet/reference code. Self-serve signup is gated behind `BRAIN_SELF_SERVE_SIGNUP` (default off, sandbox-first).
+
+#### Added — Self-serve onboarding (RFC 0002)
+
+- `POST /v1/auth/signup` — open, sandbox-first tenant + owner creation (email + password). Returns a verification token directly only outside production (no email provider wired yet).
+- `POST /v1/auth/verify-email` — verify the owner's email with the issued token.
+- `POST /v1/auth/login` — email + password login for the human owner; mints an owner JWT.
+- `POST /v1/tenants/{tenant_id}/wallets` — link a wallet to a tenant; a linked wallet can then sign in over SIWX as the owner.
+- Agent on-chain registration is async: a newly registered agent starts `pending_onchain` and a relayer submits the `BrainMCPAgentRegistry` registration (the relayer is fail-closed until configured).
+
+#### Added — M2M / x402 settlement (RFC 0001)
+
+- `x402_settle` action type — USDC-on-Base settlement via the `x402_base` rail.
+- `escrow_release` action type — milestone / dispute-split release via the `escrow_base` rail (`BrainEscrow`).
+- Both settlement rails are **unregistered at boot and fail closed** until promoted; they throw rather than fake-settle.
+- Five dormant-until-wired §6 gate checks (3.5 on-chain-settlement-permitted, 5.5 agent-counterparty-attested, 6.5 x402-payment-context, 6.6 escrow-state-bound, 8.5 micropayment-cap-in-window). Each adds a row only when the intent carries settlement/escrow context **and** its on-chain loader is configured; the canonical path is unchanged for non-settlement payments.
+- On-chain-settlement reconciliation matcher; agent counterparties; `chain_tx_hash` on `ledger_transactions`.
+
+#### Added — Smart contracts (Base; unaudited)
+
+- `BrainEscrow` — custodial escrow with partial release, refund, and dispute splits (**UNAUDITED reference implementation**, testnet only).
+- `BrainReputationRegistry` — an ERC-8004-style per-agent reputation pointer / score root (RFC 0001, **UNAUDITED testnet**). Policy reads it as a **tighten-only** threshold input — never a money gate or a §6 precondition.
+
+#### Errors
+
+- `signup_email_taken` (409), `signup_token_invalid` (400), `wallet_already_linked` (409), `auth_invalid_credentials` (401), `auth_email_unverified` (403).
+
 ### v0.4 (Agent Autonomy v3)
 
 Hardens the 19-agent internal library for production autonomous execution. **Money-movers stay shadowed by default** — going live is a deliberate, per-agent promotion (strict caps + allowlisted rails); no agent moves money until promoted.

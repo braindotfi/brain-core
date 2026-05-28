@@ -9,7 +9,7 @@ Brain is a layered protocol where information flows up and control flows down. E
 │                    Clients (humans, agents)                    │
 │         Dashboard · Internal services · External MCP           │
 └────────────────────────────────────────────────────────────────┘
-                              ↓ Auth (OAuth / SIWX)
+                              ↓ Auth (email/password · SIWX)
 ┌────────────────────────────────────────────────────────────────┐
 │                          Brain API                             │
 │              REST · JSON-RPC · MCP server surface              │
