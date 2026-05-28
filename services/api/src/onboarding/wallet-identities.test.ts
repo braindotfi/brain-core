@@ -1,6 +1,12 @@
+import Fastify, { type FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { linkWallet, PostgresWalletIdentityReader } from "./wallet-identities.js";
+import { errorHandlerPlugin, requestIdPlugin, type Principal } from "@brain/shared";
+import {
+  linkWallet,
+  PostgresWalletIdentityReader,
+  registerWalletRoutes,
+} from "./wallet-identities.js";
 
 interface Captured {
   sql: string;
@@ -113,5 +119,98 @@ describe("PostgresWalletIdentityReader — RFC 0002 Phase D", () => {
     const { pool } = makeQueryPool([]);
     const res = await new PostgresWalletIdentityReader(pool).resolveByAddress(ADDR);
     expect(res).toBeNull();
+  });
+});
+
+describe("POST /tenants/:tenant_id/wallets — RFC 0002 Phase D link route", () => {
+  function ownerPrincipal(tenantId: string, scopes: string[]): Principal {
+    return {
+      id: "user_owner",
+      type: "user",
+      tenantId,
+      scopes: scopes as unknown as Principal["scopes"],
+      tokenId: "tok_test",
+      expiresAt: Math.floor(Date.now() / 1000) + 300,
+    };
+  }
+
+  async function buildApp(pool: Pool, principal: Principal): Promise<FastifyInstance> {
+    const app = Fastify({ logger: false });
+    await app.register(requestIdPlugin);
+    await app.register(errorHandlerPlugin);
+    app.addHook("onRequest", async (req) => {
+      req.principal = principal;
+    });
+    await registerWalletRoutes(app, { pool });
+    await app.ready();
+    return app;
+  }
+
+  it("links the owner's own wallet (principal_id defaults to the caller, lowercased)", async () => {
+    const { pool, calls } = makeScopedPool();
+    const app = await buildApp(pool, ownerPrincipal(TENANT, ["policy:write"]));
+    const res = await app.inject({
+      method: "POST",
+      url: `/tenants/${TENANT}/wallets`,
+      payload: { address: ADDR, principal_type: "human" },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.linked).toBe(true);
+    expect(body.address).toBe(ADDR.toLowerCase());
+    expect(body.principal_id).toBe("user_owner");
+    expect(calls.some((c) => /INSERT INTO wallet_identities/.test(c.sql))).toBe(true);
+    await app.close();
+  });
+
+  it("rejects when the path tenant_id does not match the token (403)", async () => {
+    const { pool } = makeScopedPool();
+    const app = await buildApp(pool, ownerPrincipal(TENANT, ["policy:write"]));
+    const res = await app.inject({
+      method: "POST",
+      url: `/tenants/tnt_01J0000000000000000000000Q/wallets`,
+      payload: { address: ADDR, principal_type: "human" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe("auth_tenant_mismatch");
+    await app.close();
+  });
+
+  it("rejects a principal without the management scope (403)", async () => {
+    const { pool } = makeScopedPool();
+    const app = await buildApp(pool, ownerPrincipal(TENANT, ["ledger:read"]));
+    const res = await app.inject({
+      method: "POST",
+      url: `/tenants/${TENANT}/wallets`,
+      payload: { address: ADDR, principal_type: "human" },
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it("rejects an agent link with no principal_id (400)", async () => {
+    const { pool } = makeScopedPool();
+    const app = await buildApp(pool, ownerPrincipal(TENANT, ["policy:write"]));
+    const res = await app.inject({
+      method: "POST",
+      url: `/tenants/${TENANT}/wallets`,
+      payload: { address: ADDR, principal_type: "agent" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("request_body_invalid");
+    await app.close();
+  });
+
+  it("maps a duplicate wallet to 409 wallet_already_linked", async () => {
+    const { pool } = makeScopedPool({ failOn: /INSERT INTO wallet_identities/ });
+    const app = await buildApp(pool, ownerPrincipal(TENANT, ["policy:write"]));
+    const res = await app.inject({
+      method: "POST",
+      url: `/tenants/${TENANT}/wallets`,
+      payload: { address: ADDR, principal_type: "human" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("wallet_already_linked");
+    await app.close();
   });
 });
