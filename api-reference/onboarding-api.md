@@ -1,6 +1,6 @@
 # Onboarding API
 
-Self-serve tenant signup, email verification, owner login, and wallet linking — the RFC 0002 surface. All of these routes are **public** (no bearer token) and gated behind the `BRAIN_SELF_SERVE_SIGNUP` environment flag. With the flag off (the default), `/signup` and `/auth/verify-email` return `404`. Sandbox-first by design.
+Self-serve tenant signup, email verification, owner login, and wallet linking. The RFC 0002 surface. All of these routes are **public** (no bearer token) and gated behind the `BRAIN_SELF_SERVE_SIGNUP` environment flag. With the flag off (the default), `/signup` and `/auth/verify-email` return `404`. Sandbox-first by design.
 
 | Operation              | Endpoint                               | Auth                       |
 | ---------------------- | -------------------------------------- | -------------------------- |
@@ -59,7 +59,7 @@ Content-Type: application/json
 }
 ```
 
-Errors: `400` (`signup_token_invalid` — invalid, expired, or already used), `429`.
+Errors: `400` (`signup_token_invalid`. Invalid, expired, or already used), `429`.
 
 ### Password Login
 
@@ -98,14 +98,14 @@ Content-Type: application/json
 ```
 
 {% hint style="warning" %}
-The owner JWT **never** carries `payment_intent:propose`, `payment_intent:execute`, or `execution:propose`. The owner can read, approve, and manage policy — proposing or executing payments is reserved for registered agents running through the §6 gate.
+The owner JWT **never** carries `payment_intent:propose`, `payment_intent:execute`, or `execution:propose`. The owner can read, approve, and manage policy. Proposing or executing payments is reserved for registered agents running through the §6 gate.
 {% endhint %}
 
 Errors: `401` (`auth_invalid_credentials`), `403` (`auth_email_unverified`), `429`.
 
 ### Link a Wallet
 
-Once the owner is logged in (password JWT), they can link a wallet to the tenant. After linking, the same wallet can sign in over SIWX and receive an owner JWT — the "two linked principals" model (email/password for humans + wallet/SIWX for the agent runtime).
+Once the owner is logged in (password JWT), they can link a wallet to the tenant. After linking, the same wallet can sign in over SIWX and receive an owner JWT. The "two linked principals" model (email/password for humans + wallet/SIWX for the agent runtime).
 
 ```http
 POST /v1/tenants/{tenant_id}/wallets

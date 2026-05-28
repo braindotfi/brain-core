@@ -1,4 +1,4 @@
-# Wiki vector store — scaling migration plan
+# Wiki vector store. Scaling migration plan
 
 Planning doc (no implementation). Wiki embeddings currently share the primary
 Postgres with tenant data; that hits a ceiling. This plans the move before it is
@@ -9,7 +9,7 @@ urgent.
 - **pgvector** extension on the **primary** Postgres (Azure Database for
   PostgreSQL Flexible Server).
 - 1536-dim embeddings (OpenAI `text-embedding-3-small`) on `wiki_*` tables.
-- ANN index (HNSW/IVFFlat) co-located with OLTP tenant data — embedding queries
+- ANN index (HNSW/IVFFlat) co-located with OLTP tenant data. Embedding queries
   compete with transactional load for the same CPU/IO/buffer cache.
 
 ## Trigger metrics (move when either crosses)
@@ -29,7 +29,7 @@ urgent.
 | **(c) Pinecone (managed)**         | Zero ops; scales transparently.                                     | Third-party data residency; cost at scale; vendor lock-in.         |
 
 **Recommendation:** start with **(a)** (read replica) when the trigger first
-fires — lowest risk, preserves RLS — and evaluate **(b) Qdrant** if ANN
+fires. Lowest risk, preserves RLS. And evaluate **(b) Qdrant** if ANN
 throughput on the replica still saturates.
 
 ## Migration plan (provider-agnostic)

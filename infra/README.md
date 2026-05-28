@@ -37,7 +37,7 @@ total Postgres connections = instances × pool, and managed Postgres has a hard
 `max_connections`. pgBouncer multiplexes many client connections onto few server
 connections.
 
-**When to deploy:** before horizontal scale-out — when
+**When to deploy:** before horizontal scale-out. When
 `instances × DATABASE_POOL_MAX` approaches ~60–70% of the Postgres
 `max_connections`, or connection-establishment latency/`too many connections`
 errors appear. TODO(brain-hardening): set the exact instance-count trigger from
@@ -49,13 +49,13 @@ the chosen Postgres tier's `max_connections`.
   at the end of each transaction → highest multiplexing. Constraint: **no
   session-scoped state across transactions**. Brain's `withTenantScope` uses
   `SET LOCAL app.tenant_id` inside the transaction (transaction-scoped), so RLS
-  is compatible. **Prepared statements** must be handled carefully — pg's named
+  is compatible. **Prepared statements** must be handled carefully. Pg's named
   prepared statements are session-scoped; use `pg` with prepared statements
   disabled or pgBouncer ≥1.21 protocol-level prepared-statement support.
   TODO(brain-hardening): confirm the `pg` client isn't relying on session-pinned
   prepared statements, and that no long-lived transactions (the outbox worker
-  uses short `FOR UPDATE SKIP LOCKED` txns — compatible).
-- **Session mode:** a server connection is pinned for the whole client session —
+  uses short `FOR UPDATE SKIP LOCKED` txns. Compatible).
+- **Session mode:** a server connection is pinned for the whole client session.
   safe for any session state, but barely better than direct pooling. Use only if
   a transaction-mode incompatibility is found.
 
@@ -69,4 +69,4 @@ saturation can't starve them.
 of the Flexible Server; app `DATABASE_URL` points at pgBouncer, not Postgres
 directly. TODO(brain-hardening): author `infra/modules/pgbouncer/`.
 
-Plan only — no implementation in this pass.
+Plan only. No implementation in this pass.

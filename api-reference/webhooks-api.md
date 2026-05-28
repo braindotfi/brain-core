@@ -1,6 +1,6 @@
 # Webhooks API
 
-Inspect and replay failed deliveries on Brain's outbound webhook endpoints. This is the operator-facing surface for dead-lettered events — the inbound provider webhook (`POST /v1/raw/webhooks/{provider}`) lives in [Sources & Raw Ingestion](sources-api.md).
+Inspect and replay failed deliveries on Brain's outbound webhook endpoints. This is the operator-facing surface for dead-lettered events. The inbound provider webhook (`POST /v1/raw/webhooks/{provider}`) lives in [Sources & Raw Ingestion](sources-api.md).
 
 | Operation                 | Endpoint                                       |
 | ------------------------- | ---------------------------------------------- |
@@ -39,7 +39,7 @@ Authorization: Bearer <token>
 
 ### Replay Dead-Letter Events
 
-Re-attempts delivery for every dead-letter row that is still under the attempt cap. Successes clear the row; failures bump `attempt_count`. The operation is **idempotent** — it accepts an `Idempotency-Key` header and is safe to retry.
+Re-attempts delivery for every dead-letter row that is still under the attempt cap. Successes clear the row; failures bump `attempt_count`. The operation is **idempotent**. It accepts an `Idempotency-Key` header and is safe to retry.
 
 ```http
 POST /v1/webhooks/{endpoint_id}/replay

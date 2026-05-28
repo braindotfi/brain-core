@@ -18,7 +18,7 @@ v0.4 hardens the Agent layer for production autonomous execution without changin
 - A multi-agent **router** + two-strategy **intent classifier** select which agent handles a request; an **ActionResolver** selects which action that agent runs, never silently defaulting.
 - **Money-movers stay shadowed by default.** Going live is a deliberate, per-agent promotion under strict caps and an allowlisted rail; no agent moves money until promoted.
 - The §6 gate gains a **dry-run** mode (all 16 checks, persists nothing) plus the sub-checks **1.5** (runtime `behaviorHash` matches the on-chain attestation), **7.5** (ledger-state binding), **9.5** (evidence semantics), and **11.5** (duplicate-payment hard reject).
-- Internal and external agents share one registry, one ScopeAttestation, one propose path, and one gate — provenance is a metadata field, never a separate code path.
+- Internal and external agents share one registry, one ScopeAttestation, one propose path, and one gate. Provenance is a metadata field, never a separate code path.
 
 Detailed §6 dry-run / check-1.5 mechanics and the per-agent promotion gates live in `Brain_Engineering_Standards.md`; the per-phase delivery log lives in `docs/agent-autonomy-v3.md`.
 
@@ -29,7 +29,7 @@ v0.3 introduces a Normalized Ledger layer between Raw and Wiki. v0.2 conflated n
 - Raw remains source evidence.
 - Ledger owns machine-readable financial truth, the source from which Policy evaluates and Agents act.
 - Wiki becomes derived human-readable memory, regenerable from Ledger and Raw at any time.
-- The layer-5 role is named **Agent** to better describe its responsibility (proposing and orchestrating actions, not directly executing them). The rename is conceptual only — the workspace directory stays `services/execution/` (the directory rename is on hold), and back-compat `/execution/*` routes remain alongside `/agents/*`.
+- The layer-5 role is named **Agent** to better describe its responsibility (proposing and orchestrating actions, not directly executing them). The rename is conceptual only. The workspace directory stays `services/execution/` (the directory rename is on hold), and back-compat `/execution/*` routes remain alongside `/agents/*`.
 
 The smart contracts, the §1 principles, the audit chain, and the public API contract for Raw / Policy / Audit are unchanged. The Wiki API is preserved but its role in MVP shifts to memory rendering rather than authoritative storage.
 
@@ -377,7 +377,7 @@ What it does. Encode what a tenant allows as a versioned, signable artifact. Eva
 
 Key change from v0.2. Policy evaluators read Ledger state directly (current balance, counterparty verified status, obligation due, etc.) rather than against an opaque action object. The 16-check pre-execution gate (defined in §6 of Engineering Standards) runs deterministic Ledger checks before any payment can execute.
 
-v0.4 gate additions. The gate gains a **dry-run** mode — the same 16 checks against the same Ledger state, but it persists no `policy_decisions` row and emits no audit event (its trace is cached ~60 s for the run path). The agent run pipeline dry-runs before proposing so a doomed proposal never reaches the live path. The gate also adds four sub-checks: **1.5** (the runtime agent's `behaviorHash` — a hash over its model id/version, prompt template, and tool manifest — must equal the value attested on-chain in `BrainMCPAgentRegistry`, else a hard reject), **7.5** (a tamper-evident `ledger_snapshot_hash` of the state moved against), **9.5** (evidence semantically supports the action — amount/counterparty/currency/freshness), and **11.5** (duplicate-payment hard reject, even with approval). Both modes remain a single evaluator — live and dry-run share the same gate code (INV: one evaluator).
+v0.4 gate additions. The gate gains a **dry-run** mode. The same 16 checks against the same Ledger state, but it persists no `policy_decisions` row and emits no audit event (its trace is cached ~60 s for the run path). The agent run pipeline dry-runs before proposing so a doomed proposal never reaches the live path. The gate also adds four sub-checks: **1.5** (the runtime agent's `behaviorHash`. A hash over its model id/version, prompt template, and tool manifest. Must equal the value attested on-chain in `BrainMCPAgentRegistry`, else a hard reject), **7.5** (a tamper-evident `ledger_snapshot_hash` of the state moved against), **9.5** (evidence semantically supports the action. Amount/counterparty/currency/freshness), and **11.5** (duplicate-payment hard reject, even with approval). Both modes remain a single evaluator. Live and dry-run share the same gate code (INV: one evaluator).
 
 Data model.
 
@@ -444,11 +444,11 @@ What's NOT in MVP. Multi-jurisdictional rules. Complex delegation chains. Policy
 
 ### Layer 5: Agent (Action Orchestration)
 
-What it does. Run specialized agents that read the Ledger, propose actions, pass them through Policy, orchestrate execution of approved actions through external rails, and log everything. The Agent layer **proposes and orchestrates**: it does not execute financial actions directly. (Implemented by the `services/execution/` workspace — the directory rename to an Agent-named folder is on hold; back-compat `/execution/*` routes remain alongside `/agents/*`.) Execution happens through provider rails (Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain) under a deterministic gate.
+What it does. Run specialized agents that read the Ledger, propose actions, pass them through Policy, orchestrate execution of approved actions through external rails, and log everything. The Agent layer **proposes and orchestrates**: it does not execute financial actions directly. (Implemented by the `services/execution/` workspace. The directory rename to an Agent-named folder is on hold; back-compat `/execution/*` routes remain alongside `/agents/*`.) Execution happens through provider rails (Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain) under a deterministic gate.
 
 Agents in MVP. Nineteen, in one shared library: 8 business, 8 consumer, 3 agnostic. The original demo agents (reconciliation, payment, fraud-anomaly) are still here; the library extends them rather than replacing them.
 
-Each agent declares an `execution_mode` — one of `execute | propose | confirm | notify_only | reject` — and carries a **risk tier**. The tier is the hard gate on autonomy: only low-risk agents can resolve to `execute`; high-risk agents (`compliance`, `vendor_risk`) are pinned at `confirm`/`reject` and declare no `default_action`; money-movers (`treasury`, `payment`, `savings`, `bill_management`) are **shadowed by default** — a financial proposal terminates as `shadow_completed` and moves no money until an operator promotes that specific agent under strict caps and an allowlisted rail.
+Each agent declares an `execution_mode`. One of `execute | propose | confirm | notify_only | reject`. And carries a **risk tier**. The tier is the hard gate on autonomy: only low-risk agents can resolve to `execute`; high-risk agents (`compliance`, `vendor_risk`) are pinned at `confirm`/`reject` and declare no `default_action`; money-movers (`treasury`, `payment`, `savings`, `bill_management`) are **shadowed by default**. A financial proposal terminates as `shadow_completed` and moves no money until an operator promotes that specific agent under strict caps and an allowlisted rail.
 
 - **Business (8):** `cash_forecast`, `collections`, `compliance` (high-risk), `dispute`, `payment` (money-mover, shadowed), `revenue_intel`, `treasury` (money-mover, shadowed), `vendor_risk` (high-risk).
 - **Consumer (8):** `bill_management` (money-mover, shadowed), `debt_optimization`, `financial_health`, `personal_budget`, `purchase_advisor`, `savings` (money-mover, shadowed), `tax_prep`, `travel_finance`.
@@ -458,7 +458,7 @@ Reconciliation, fraud-anomaly, and payment still cover the original demo and exe
 
 Routing. A request does not name an agent directly. A multi-agent **router** selects the handling agent using category-aware routing (the tenant's `category` narrows the candidate set to business vs. consumer agents), backed by a two-strategy **intent classifier** (a deterministic keyword strategy and an embedding strategy, selectable per deployment). Within the selected agent, an **ActionResolver** picks the action: explicit `requested_action` → `event_action_map` → `intent_action_map` → an opt-in `default_action`. It never silently falls back to the first declared action; an unresolved request persists as `missing_action`. Money-movers and high-risk agents declare **no** `default_action`. The routing decision and its structured reason are persisted (`agent_routing_decisions`) and surfaced via `GET /v1/agents/runs/{run_id}/why`.
 
-Provenance. Internal and external agents are the same machinery — one registry (`BrainMCPAgentRegistry`), one EIP-712 ScopeAttestation, one propose path, one §6 gate. Provenance (`internal` vs. `external`) is a metadata field on the agent record and the run, never a separate code path. There is no privileged "BrainNativeAgent" that skips the gate; an internal agent earns no authority an external agent couldn't be granted. This is what keeps Brain a protocol rather than a product with a plugin slot.
+Provenance. Internal and external agents are the same machinery. One registry (`BrainMCPAgentRegistry`), one EIP-712 ScopeAttestation, one propose path, one §6 gate. Provenance (`internal` vs. `external`) is a metadata field on the agent record and the run, never a separate code path. There is no privileged "BrainNativeAgent" that skips the gate; an internal agent earns no authority an external agent couldn't be granted. This is what keeps Brain a protocol rather than a product with a plugin slot.
 
 Data model.
 
@@ -521,7 +521,7 @@ POST /v1/payment-intents/{id}/approve            human approval for `confirm` in
 POST /v1/payment-intents/{id}/reject             human/agent rejection
 POST /v1/payment-intents/{id}/execute            execute approved intent through rail
 POST /v1/payment-intents/{id}/pause              pause an approved intent (v0.4)
-POST /v1/payment-intents/{id}/resume             resume — re-runs the live §6 gate (v0.4)
+POST /v1/payment-intents/{id}/resume             resume. Re-runs the live §6 gate (v0.4)
 GET  /v1/payment-intents/{id}/replay-investigation  typed forensic record (v0.4)
 
 # MCP, external agent surface
@@ -548,9 +548,9 @@ What Agent must not do. Agents must not mutate Raw, Ledger, Policy, or Audit sto
 
 Rails in MVP. Three rails, all first-class. (1) ACH via the tenant's existing bank API (Plaid Transfer as a fallback where direct bank integration isn't available). (2) ERP writeback to NetSuite. (3) On-chain execution to Base via the ERC-4337 BrainSmartAccount pattern with session keys and policy guard (see contracts). Card rails, wire rails, international rails are post-MVP. Rail receipts are **typed** per rail (`ach` / `wire` / `erp` / `onchain`); the audit-after step refuses to commit a receipt that fails its schema, and `GET /v1/payment-intents/{id}/replay-investigation` returns the full forensic bundle (intent + executions + rail receipts + linking ids).
 
-Containment (v0.4). Autonomy is reversible at three scopes. A single approved intent can be **paused** (`/pause`) and **resumed** (`/resume` re-runs the live §6 gate before continuing) — the rail dispatcher aborts if it sees `paused`. An agent can be **halted** (`/halt`): its in-flight intents pause and the agent moves to `quarantined`. A whole **category** can be emergency-stopped (`/halt-category`). On-chain, `BrainSmartAccount.pauseSessionKey(holder)` disables execution while preserving the key record, window spend, limits, and metadata — distinct from `revokeSessionKey`, which is permanent removal. Per-task minimum-privilege session keys (`derivePerTaskSessionKey`) bound a one-time child key to the exact counterparty, exact amount, and a short TTL.
+Containment (v0.4). Autonomy is reversible at three scopes. A single approved intent can be **paused** (`/pause`) and **resumed** (`/resume` re-runs the live §6 gate before continuing). The rail dispatcher aborts if it sees `paused`. An agent can be **halted** (`/halt`): its in-flight intents pause and the agent moves to `quarantined`. A whole **category** can be emergency-stopped (`/halt-category`). On-chain, `BrainSmartAccount.pauseSessionKey(holder)` disables execution while preserving the key record, window spend, limits, and metadata. Distinct from `revokeSessionKey`, which is permanent removal. Per-task minimum-privilege session keys (`derivePerTaskSessionKey`) bound a one-time child key to the exact counterparty, exact amount, and a short TTL.
 
-Shadow by default. Every money-mover starts shadowed: its financial proposal runs the full pipeline (route → resolve → dry-run gate → persist → propose) but terminates as `shadow_completed` and moves no money. Promotion to live money movement is a deliberate, per-agent operator action (`StaticPromotionPolicy`) gated by strict caps and an allowlisted rail — no agent in this build moves money until promoted.
+Shadow by default. Every money-mover starts shadowed: its financial proposal runs the full pipeline (route → resolve → dry-run gate → persist → propose) but terminates as `shadow_completed` and moves no money. Promotion to live money movement is a deliberate, per-agent operator action (`StaticPromotionPolicy`) gated by strict caps and an allowlisted rail. No agent in this build moves money until promoted.
 
 ### Layer 6: Audit (Proof)
 
@@ -768,7 +768,7 @@ Multi-region. Single region (East US) with cross-region backups.
 
 Every source adapter except the five listed under Raw.
 
-Agent types beyond the nineteen listed under Agent (FX, payroll, tax, on-chain yield). Live money movement is also out of scope by default — money-movers ship shadowed and require a deliberate per-agent promotion.
+Agent types beyond the nineteen listed under Agent (FX, payroll, tax, on-chain yield). Live money movement is also out of scope by default. Money-movers ship shadowed and require a deliberate per-agent promotion.
 
 Every rail except ACH, ERP writeback, and optional Base on-chain.
 

@@ -1,14 +1,14 @@
-# Hardening run — blockers
+# Hardening run. Blockers
 
 Tracked blockers encountered during the autonomous hardening run (P0/P1/P2).
 Each entry: what was attempted, what's needed, who can unblock.
 
 ---
 
-## B-1 — No live infrastructure in the execution environment
+## B-1. No live infrastructure in the execution environment
 
 **Status:** resolved in CI (2026-05-26). The local environment still has no
-Docker/Postgres/Redis, so the suites below remain skip-guarded locally — but
+Docker/Postgres/Redis, so the suites below remain skip-guarded locally. But
 they now **run and pass in CI**. `main.yml`'s `unit + integration` job is green,
 including the P0.2 invariants and P1.1 adversarial DB-integration suites and the
 raw integration tests, and the P0.6 `golden-path` smoke job seeds + runs.
@@ -25,11 +25,11 @@ Postgres+Redis are available) and are **skip-guarded locally** (they no-op when
 `DATABASE_URL` is absent, mirroring `services/raw/src/__integration__/harness.ts`).
 They could **not be executed/verified in this environment**:
 
-- P0.2 — `tests/invariants/integration/db-invariants.integration.test.ts`
-- P0.3 — wiki annotation rate limiter (Redis sliding-window) integration path
-- P0.6 — `scripts/demo/golden-path.sh` end-to-end run + `docker-compose.smoke.yml`
-- P0.7 — proof-viewer end-to-end render against a real intent
-- P1.1 — `tests/adversarial/` DB-backed attack-vector suite
+- P0.2. `tests/invariants/integration/db-invariants.integration.test.ts`
+- P0.3. Wiki annotation rate limiter (Redis sliding-window) integration path
+- P0.6. `scripts/demo/golden-path.sh` end-to-end run + `docker-compose.smoke.yml`
+- P0.7. Proof-viewer end-to-end render against a real intent
+- P1.1. `tests/adversarial/` DB-backed attack-vector suite
 
 Everything that does **not** require infra (gate logic, unit tests, type/shape
 tests, docs, CI wiring, Dockerfiles) was fully verified locally.
@@ -43,9 +43,9 @@ so the CI job is the canonical verifier.
 
 ---
 
-## B-2 — `main.yml` deploy chain fails: Azure credentials not configured
+## B-2. `main.yml` deploy chain fails: Azure credentials not configured
 
-**Status:** open (external; owned by the team — deliberately not gated, per
+**Status:** open (external; owned by the team. Deliberately not gated, per
 decision to add secrets rather than skip the jobs).
 
 **What was found:** With the quality gates green, the `main.yml` deploy jobs run
@@ -58,7 +58,7 @@ no `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` secrets, so
 
 **Secondary effect:** the 8 always-failing `build + push` matrix jobs start in
 parallel with `golden_path_smoke` (both `needs: unit_and_integration`) and
-intermittently **starve/cancel** golden-path before it gets a runner — so that
+intermittently **starve/cancel** golden-path before it gets a runner. So that
 job is occasionally cancelled while queued despite being correct.
 
 **What's needed to unblock (pick one):**
@@ -66,7 +66,7 @@ job is occasionally cancelled while queued despite being correct.
 1. Configure the Azure OIDC secrets + federated-credential trust, so the deploy
    jobs authenticate and run (the chosen path).
 2. Or gate the deploy jobs behind a flag (e.g. `if: vars.DEPLOY_ENABLED == 'true'`)
-   so they skip — turning `main.yml` green on the quality gates and removing the
-   golden-path scheduling contention — until secrets are ready.
+   so they skip. Turning `main.yml` green on the quality gates and removing the
+   golden-path scheduling contention. Until secrets are ready.
 
 **Who can unblock:** the team that owns the Azure subscription / repo secrets.

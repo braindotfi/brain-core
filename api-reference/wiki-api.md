@@ -1,6 +1,6 @@
 # Wiki API
 
-Natural-language and structured access to the tenant's memory graph. The Wiki is downstream of the Ledger — narrative, evidence-cited recall — and is never the source of truth for balances, transactions, or permissions.
+Natural-language and structured access to the tenant's memory graph. The Wiki is downstream of the Ledger. Narrative, evidence-cited recall. And is never the source of truth for balances, transactions, or permissions.
 
 | Operation                        | Endpoint                                    |
 | -------------------------------- | ------------------------------------------- |
@@ -49,7 +49,7 @@ Content-Type: application/json
 }
 ```
 
-`question` is 1–2000 chars. `max_evidence_depth` defaults to 3 (max 5). This route puts an LLM in the hot path — per-call costs apply. Every answer carries `evidence_path` back to Ledger rows and Raw artifacts.
+`question` is 1–2000 chars. `max_evidence_depth` defaults to 3 (max 5). This route puts an LLM in the hot path. Per-call costs apply. Every answer carries `evidence_path` back to Ledger rows and Raw artifacts.
 
 ### Search Entities
 
@@ -103,7 +103,7 @@ Authorization: Bearer <token>
 }
 ```
 
-`as_of` enables bitemporal reads — the entity as it was known at that moment.
+`as_of` enables bitemporal reads. The entity as it was known at that moment.
 
 ### Evidence Chain
 
@@ -182,7 +182,7 @@ Returns `{ counterparty: <JSON Schema document>, ... }`. Omit `kind` for the ful
 
 ### Memory Pages
 
-Memory pages are pre-rendered narrative views (Markdown) over the Ledger graph — "the AWS page," "Q1 cash flow," "vendor X relationship." Browsable and searchable.
+Memory pages are pre-rendered narrative views (Markdown) over the Ledger graph. "the AWS page," "Q1 cash flow," "vendor X relationship." Browsable and searchable.
 
 ```http
 GET /v1/memory/pages?page_type=counterparty&q=AWS

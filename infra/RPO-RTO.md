@@ -7,10 +7,10 @@ know" is the worst answer.
 
 | Store                       | RPO                                                              | RTO                                                       |
 | --------------------------- | --------------------------------------------------------------- | --------------------------------------------------------- |
-| **Postgres** (primary)      | ≤ 5 min — Azure Database for PostgreSQL Flexible Server PITR. <br>TODO(brain-hardening): confirm the configured backup/redo cadence + retention in Terraform. | ≤ 1 hour target (PITR restore + app redeploy). <br>TODO(brain-hardening): confirm against Azure managed Postgres SLA. |
-| **Raw blob store** (Azure Blob) | Near-zero — geo/zone-redundant storage (immutable payloads, write-once). <br>TODO(brain-hardening): confirm redundancy tier (LRS/ZRS/GRS) in Terraform. | ≤ 1 hour (re-point readers; objects are immutable, no replay needed). |
-| **Redis** (cache + idempotency + rate-limit windows) | **No RPO commitment** — cache only. Idempotency keys (24h TTL) and rate-limit windows are reconstructible; loss degrades dedup/limits transiently, never correctness (the §6 gate's duplicate guard 11.5 is DB-backed). | RTO ≈ container restart time (seconds–minutes). |
-| **Audit chain** (Postgres + on-chain anchor) | Same as Postgres for the rows; the on-chain anchor is permanent once broadcast. | Verification (`POST /v1/audit/verify`) is a pure function — available as soon as the API is up. |
+| **Postgres** (primary)      | ≤ 5 min. Azure Database for PostgreSQL Flexible Server PITR. <br>TODO(brain-hardening): confirm the configured backup/redo cadence + retention in Terraform. | ≤ 1 hour target (PITR restore + app redeploy). <br>TODO(brain-hardening): confirm against Azure managed Postgres SLA. |
+| **Raw blob store** (Azure Blob) | Near-zero. Geo/zone-redundant storage (immutable payloads, write-once). <br>TODO(brain-hardening): confirm redundancy tier (LRS/ZRS/GRS) in Terraform. | ≤ 1 hour (re-point readers; objects are immutable, no replay needed). |
+| **Redis** (cache + idempotency + rate-limit windows) | **No RPO commitment**. Cache only. Idempotency keys (24h TTL) and rate-limit windows are reconstructible; loss degrades dedup/limits transiently, never correctness (the §6 gate's duplicate guard 11.5 is DB-backed). | RTO ≈ container restart time (seconds–minutes). |
+| **Audit chain** (Postgres + on-chain anchor) | Same as Postgres for the rows; the on-chain anchor is permanent once broadcast. | Verification (`POST /v1/audit/verify`) is a pure function. Available as soon as the API is up. |
 
 ## Smart-contract anchoring
 

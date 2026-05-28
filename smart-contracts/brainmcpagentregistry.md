@@ -1,13 +1,13 @@
 # BrainMCPAgentRegistry
 
-`BrainMCPAgentRegistry` registers agents as a compact on-chain record: `agentId`, `agentAddress`, `tenantId`, `scopeHash`, and `behaviorHash`, each registration authorized by an EIP-712 signature from a tenant-allowlisted signer. On-chain reputation is planned, not yet implemented — see RFC 0001.
+`BrainMCPAgentRegistry` registers agents as a compact on-chain record: `agentId`, `agentAddress`, `tenantId`, `scopeHash`, and `behaviorHash`, each registration authorized by an EIP-712 signature from a tenant-allowlisted signer. On-chain reputation is planned, not yet implemented. See RFC 0001.
 
 | Property     | Value                                                                    |
 | ------------ | ------------------------------------------------------------------------ |
 | **Network**  | Base L2                                                                  |
 | **Solidity** | 0.8.x                                                                    |
-| **Pattern**  | Immutable — no upgrade path in MVP; changes ship as audited redeploys    |
-| **Standard** | EIP-712 signed registration (ERC-8004 reputation planned — see RFC 0001) |
+| **Pattern**  | Immutable. No upgrade path in MVP; changes ship as audited redeploys    |
+| **Standard** | EIP-712 signed registration (ERC-8004 reputation planned. See RFC 0001) |
 
 ### Interface
 
@@ -61,7 +61,7 @@ contract BrainMCPAgentRegistry {
 }
 ```
 
-The fuller ERC-8004 identity record (identity Merkle root, `mcpEndpoint`, capability-hash array) and per-capability scope grants are the **planned** target — see RFC 0001. Reputation is out of scope here and lives in [`BrainReputationRegistry`](brainreputationregistry.md).
+The fuller ERC-8004 identity record (identity Merkle root, `mcpEndpoint`, capability-hash array) and per-capability scope grants are the **planned** target. See RFC 0001. Reputation is out of scope here and lives in [`BrainReputationRegistry`](brainreputationregistry.md).
 
 ### Agent Record
 
@@ -69,22 +69,22 @@ The deployed `AgentRegistration` struct stores exactly these fields:
 
 | Field          | Purpose                                                                                                                 |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `agentId`      | Global agent identifier — the registry's primary key                                                                    |
+| `agentId`      | Global agent identifier. The registry's primary key                                                                    |
 | `agentAddress` | The agent's on-chain address                                                                                            |
 | `tenantId`     | The tenant this registration is bound to                                                                                |
 | `scopeHash`    | Hash of the agent's granted scope set; the agent's JWT `scope_hash` must equal this                                     |
-| `behaviorHash` | `keccak256(model_id, model_version, prompt_template_hash, tool_manifest_hash)` — pins model/prompt/tools (§6 check 1.5) |
+| `behaviorHash` | `keccak256(model_id, model_version, prompt_template_hash, tool_manifest_hash)`. Pins model/prompt/tools (§6 check 1.5) |
 | `registeredAt` | Block timestamp at registration                                                                                         |
 | `revokedAt`    | Block timestamp at revocation; `0` while active (`isAuthorized` reads this)                                             |
 
-The fuller record below is the **planned** target — see RFC 0001. None of these fields exist in the deployed struct today:
+The fuller record below is the **planned** target. See RFC 0001. None of these fields exist in the deployed struct today:
 
 | Planned field (RFC 0001) | Purpose                                                                 |
 | ------------------------ | ----------------------------------------------------------------------- |
-| `identityRoot`           | ERC-8004 identity Merkle root (planned — RFC 0001)                      |
+| `identityRoot`           | ERC-8004 identity Merkle root (planned. RFC 0001)                      |
 | `mcpEndpoint`            | URL where Brain can reach the agent over MCP                            |
 | `capabilities[]`         | Hashes of capability identifiers (e.g., `keccak256("pay_invoice")`)     |
-| `reputationRoot`         | Reputation pointer — now a separate contract, `BrainReputationRegistry` |
+| `reputationRoot`         | Reputation pointer. Now a separate contract, `BrainReputationRegistry` |
 
 ### Registration
 
@@ -108,7 +108,7 @@ The contract recovers the signer, rejects it unless it is on the tenant's allowl
 
 ### Per-Tenant Scoping
 
-A tenant must first configure at least one allowlisted signer with `setTenantSigner` — the very first signer for a tenant is bootstrapped by `initialAdmin`, after which signers manage each other. Only an allowlisted signer can register, re-attest, or revoke an agent for that tenant.
+A tenant must first configure at least one allowlisted signer with `setTenantSigner`. The very first signer for a tenant is bootstrapped by `initialAdmin`, after which signers manage each other. Only an allowlisted signer can register, re-attest, or revoke an agent for that tenant.
 
 Each registration binds the agent to exactly one `tenantId` plus a single `scopeHash` that encodes the whole granted scope set; the agent's JWT `scope_hash` must equal it. The predicate Brain consults before granting a session key is:
 
@@ -116,7 +116,7 @@ Each registration binds the agent to exactly one `tenantId` plus a single `scope
 registry.isAuthorized(agentId, tenantId); // true while registered, not revoked, and tenant matches
 ```
 
-Finer-grained, per-capability scope grants (`grantScope`/`isScoped`) are the **planned** target — see RFC 0001. The MVP collapses scope into one signed `scopeHash`.
+Finer-grained, per-capability scope grants (`grantScope`/`isScoped`) are the **planned** target. See RFC 0001. The MVP collapses scope into one signed `scopeHash`.
 
 ### Deactivation
 
@@ -128,16 +128,16 @@ Revocation (signed by a tenant signer) sets `revokedAt` to the current block tim
 
 ### Reputation lives in a separate contract
 
-Reputation is **not** stored in this registry. It lives in [`BrainReputationRegistry`](brainreputationregistry.md) — an _ERC-8004-style_ per-agent pointer / Merkle root (RFC 0001, **UNAUDITED testnet**). This registry's deployed `AgentRegistration` struct stores only `agentId`, `agentAddress`, `tenantId`, `scopeHash`, and `behaviorHash` — there is **no** `reputationRoot` field here. Policy reads the reputation pointer as a **tighten-only threshold input**; it is never a money gate or a §6 precondition.
+Reputation is **not** stored in this registry. It lives in [`BrainReputationRegistry`](brainreputationregistry.md). An _ERC-8004-style_ per-agent pointer / Merkle root (RFC 0001, **UNAUDITED testnet**). This registry's deployed `AgentRegistration` struct stores only `agentId`, `agentAddress`, `tenantId`, `scopeHash`, and `behaviorHash`. There is **no** `reputationRoot` field here. Policy reads the reputation pointer as a **tighten-only threshold input**; it is never a money gate or a §6 precondition.
 
 ### Discovery
 
-On-chain, the deployed registry answers per-id queries — `getAgent(agentId)` and `isAuthorized(agentId, tenantId)`. Richer discovery (by capability, by reputation standing) is resolved off-chain today; on-chain capability indexing is the planned target — see RFC 0001.
+On-chain, the deployed registry answers per-id queries. `getAgent(agentId)` and `isAuthorized(agentId, tenantId)`. Richer discovery (by capability, by reputation standing) is resolved off-chain today; on-chain capability indexing is the planned target. See RFC 0001.
 
 | Query                | Result                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------ |
-| Authorization        | `isAuthorized(agentId, tenantId)` — registered, not revoked, tenant matches                            |
-| Capability filter    | Active agents declaring a capability (resolved off-chain; on-chain index planned — RFC 0001)           |
+| Authorization        | `isAuthorized(agentId, tenantId)`. Registered, not revoked, tenant matches                            |
+| Capability filter    | Active agents declaring a capability (resolved off-chain; on-chain index planned. RFC 0001)           |
 | Reputation threshold | Resolved via `BrainReputationRegistry` (testnet); Policy maps the pointer to a minimum score off-chain |
 
 {% hint style="success" %}
@@ -152,17 +152,17 @@ The deployed registry stores identity + scope as `agentId`/`tenantId`/`scopeHash
 
 | ERC-8004 concept (RFC 0001) | Brain Implementation                                                            |
 | --------------------------- | ------------------------------------------------------------------------------- |
-| **Identity record**         | `BrainMCPAgentRegistry` — `agentId` / `tenantId` / `scopeHash` / `behaviorHash` |
+| **Identity record**         | `BrainMCPAgentRegistry`. `agentId` / `tenantId` / `scopeHash` / `behaviorHash` |
 | **Reputation root**         | `BrainReputationRegistry.scoreRoot` per agent (testnet)                         |
 | **Validation records**      | Committed off-chain under the reputation `scoreRoot` (testnet)                  |
 | **Discovery**               | View functions across both registries                                           |
 
 ## behaviorHash Pinning
 
-`registerAgent` now also takes a `behaviorHash = keccak256(model_id, model_version, prompt_template_hash, tool_manifest_hash)`, emitted on `AgentRegistered` and stored on the registration. This freezes the agent's behavior at a known version — enterprise security teams get a "the agent cannot silently change its model/prompt/tools" guarantee.
+`registerAgent` now also takes a `behaviorHash = keccak256(model_id, model_version, prompt_template_hash, tool_manifest_hash)`, emitted on `AgentRegistered` and stored on the registration. This freezes the agent's behavior at a known version. Enterprise security teams get a "the agent cannot silently change its model/prompt/tools" guarantee.
 
 - The §6 gate adds **check 1.5**: the runtime `behaviorHash` must equal the registered value, or the action is rejected regardless of every other signal.
-- Promotion to a new behavior requires fresh tenant re-attestation via `updateBehaviorHash(agentId, behaviorHash, tenantSignature)` (EIP-712 signed by a tenant signer) — the on-chain analogue of re-signing the ScopeAttestation.
+- Promotion to a new behavior requires fresh tenant re-attestation via `updateBehaviorHash(agentId, behaviorHash, tenantSignature)` (EIP-712 signed by a tenant signer). The on-chain analogue of re-signing the ScopeAttestation.
 
 ### What's Next
 

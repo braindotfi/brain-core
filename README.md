@@ -115,4 +115,4 @@ The full SDK surface (`brain.accounts`, `brain.transactions`, `brain.payments`, 
 - Understand it: [Concepts](concepts/overview.md), then [Protocol](protocol/overview.md).
 - Integrate an external agent: [MCP server](mcp-server/overview.md).
 - Verify a payment on-chain: [Smart contracts](smart-contracts/overview.md) and [BrainAuditAnchor](smart-contracts/brainauditanchor.md).
-- Review the safety model: [SECURITY.md](SECURITY.md) — the §6 gate, layer boundaries, audit verification, and threat model.
+- Review the safety model: [SECURITY.md](SECURITY.md). The §6 gate, layer boundaries, audit verification, and threat model.

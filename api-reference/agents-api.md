@@ -58,11 +58,11 @@ Response (`201 Created`):
 }
 ```
 
-The agent then connects over MCP using a JWT whose `scope_hash` claim must equal the `scope_hash` stored on-chain — the MCP server verifies that match on every call.
+The agent then connects over MCP using a JWT whose `scope_hash` claim must equal the `scope_hash` stored on-chain. The MCP server verifies that match on every call.
 
 ### List the First-Party Agent Catalog
 
-`GET /v1/agents` returns the **internal** first-party agent definitions (capability, category, default-enabled state) — not the external-agent registry.
+`GET /v1/agents` returns the **internal** first-party agent definitions (capability, category, default-enabled state). Not the external-agent registry.
 
 ```http
 GET /v1/agents?category=business&state=enabled
@@ -96,7 +96,7 @@ Returns the catalog definition plus, if present, the on-chain registration recor
 
 ### Route an Event
 
-The router scores candidate agents by capability + tenant scope grants + evidence and returns the best one. Routing is advisory — the selected agent still proposes through the gated path. The selection is itself an audit event.
+The router scores candidate agents by capability + tenant scope grants + evidence and returns the best one. Routing is advisory. The selected agent still proposes through the gated path. The selection is itself an audit event.
 
 ```http
 POST /v1/agents/route
@@ -134,7 +134,7 @@ Provide `event` (a domain-event name) **or** `intent` (free-form text), plus opt
 
 ### Run an Agent End-to-End
 
-The full route → resolve action → dry-run §6 gate → persist `agent_runs` row → propose pipeline. **Money-movers are shadowed by default** — a financial proposal from an un-promoted agent terminates as `shadow_completed` and moves no money. Going live is a deliberate per-agent promotion with strict caps + allowlisted rails.
+The full route → resolve action → dry-run §6 gate → persist `agent_runs` row → propose pipeline. **Money-movers are shadowed by default**. A financial proposal from an un-promoted agent terminates as `shadow_completed` and moves no money. Going live is a deliberate per-agent promotion with strict caps + allowlisted rails.
 
 ```http
 POST /v1/agents/run
@@ -191,7 +191,7 @@ Content-Type: application/json
 | Endpoint                          | Purpose                                                                       |
 | --------------------------------- | ----------------------------------------------------------------------------- |
 | `POST /v1/agents/{agent_id}/halt` | Pause every in-flight intent for the agent and set its state to `quarantined` |
-| `POST /v1/agents/halt-category`   | Emergency-stop every agent in a category — body `{ "category": "business" }`  |
+| `POST /v1/agents/halt-category`   | Emergency-stop every agent in a category. Body `{ "category": "business" }`  |
 
 Both routes are tenant-root and emit audit events. Halting an agent atomically pauses its in-flight PaymentIntents (the rail dispatcher re-reads state immediately before submission and aborts cleanly if the intent was paused).
 

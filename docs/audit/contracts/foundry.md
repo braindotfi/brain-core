@@ -1,6 +1,6 @@
-# Audit #11 — Solidity Contracts (Foundry)
+# Audit #11. Solidity Contracts (Foundry)
 
-**Subsystem**: `contracts/` — `BrainAuditAnchor`, `BrainSmartAccount`, `BrainPolicyRegistry`, `BrainMCPAgentRegistry`
+**Subsystem**: `contracts/`. `BrainAuditAnchor`, `BrainSmartAccount`, `BrainPolicyRegistry`, `BrainMCPAgentRegistry`
 **Auditor**: Evidence-driven, commands executed 2026-05-26
 **Status**: Complete
 **Score**: 5 / 10
@@ -58,7 +58,7 @@ Configuration (`foundry.toml`):
 | `contracts/src/BrainSmartAccount.sol` (257 lines) | ERC-4337 session keys |
 | `contracts/src/BrainPolicyRegistry.sol` (255 lines) | Policy hash registry |
 | `contracts/src/BrainMCPAgentRegistry.sol` (287 lines) | Agent scope attestation |
-| `contracts/test/BrainMCPAgentRegistry.t.sol` (176 lines) | Failing test — full read |
+| `contracts/test/BrainMCPAgentRegistry.t.sol` (176 lines) | Failing test. Full read |
 | `services/api/src/anchorBroadcaster.ts` | TS → BrainAuditAnchor ABI |
 | `services/api/src/mcp/viemScopeChecker.ts` | TS → BrainMCPAgentRegistry ABI |
 | `services/api/src/rails/onchainExecutor.ts` | TS → BrainSmartAccount ABI |
@@ -72,8 +72,8 @@ Configuration (`foundry.toml`):
 
 **Status: Clean.**
 
-- `anchor(bytes32 tenantId, bytes32 root, uint256 eventCount, uint256 periodStart, uint256 periodEnd)` — `onlyPublisher` modifier, write-once per `(tenantId, root)` pair via `_published[tenantId][root]`.
-- `verifyInclusion(bytes32 root, bytes32 leaf, bytes32[] calldata proof)` — domain-separated keccak256: leaf = `keccak256(0x00 || leaf)`, internal nodes = `keccak256(0x01 || sorted_pair)`. Matches `services/audit/src/merkle.ts` implementation exactly.
+- `anchor(bytes32 tenantId, bytes32 root, uint256 eventCount, uint256 periodStart, uint256 periodEnd)`. `onlyPublisher` modifier, write-once per `(tenantId, root)` pair via `_published[tenantId][root]`.
+- `verifyInclusion(bytes32 root, bytes32 leaf, bytes32[] calldata proof)`. Domain-separated keccak256: leaf = `keccak256(0x00 || leaf)`, internal nodes = `keccak256(0x01 || sorted_pair)`. Matches `services/audit/src/merkle.ts` implementation exactly.
 - `latestAnchor()` / `latestAnchorFull()` view helpers for off-chain reconciliation.
 - Idempotency invariant: re-anchoring the same root reverts with `AlreadyPublished`.
 
@@ -110,7 +110,7 @@ struct SessionKey {
 `executeViaSessionKey(uint256 nonceSupplied, address target, uint256 value, bytes calldata data)`:
 - H-03 nonce replay guard: requires `nonceSupplied == _nonces[holder]`, increments before external call.
 - Re-entrancy guard: sets `_locked = true` before external call, clears in `finally` equivalent.
-- `allowedTargets` / `allowedSelectors` enforcement — unknown targets or selectors revert.
+- `allowedTargets` / `allowedSelectors` enforcement. Unknown targets or selectors revert.
 - Per-tx cap: `value > key.maxPerTx` reverts (for ETH transfers and decoded ERC-20 amounts).
 - Per-period cap: cumulative `_periodSpent[holder]` tracked with `periodResetAt` timestamp.
 - ERC-20 amount decoding: reads token amount from calldata for `transfer`, `approve`, `transferFrom` when `value == 0`.
@@ -122,7 +122,7 @@ struct SessionKey {
 ```
 Both function signatures match Solidity exactly. No drift.
 
-**Chain**: `onchainExecutor.ts` is chain-aware — uses `base` (mainnet 8453) when `chainId === 8453`, `baseSepolia` otherwise (line 32). This is the correct pattern; this caller does not have the hardcoded-chain issue.
+**Chain**: `onchainExecutor.ts` is chain-aware. Uses `base` (mainnet 8453) when `chainId === 8453`, `baseSepolia` otherwise (line 32). This is the correct pattern; this caller does not have the hardcoded-chain issue.
 
 ---
 
@@ -142,13 +142,13 @@ Both function signatures match Solidity exactly. No drift.
   - Re-bootstrap allowed after all signers are removed (lockout prevention).
 
 **ABI alignment** (`viemPolicySignerChecker.ts`):
-- `isTenantSigner(bytes32 tenantId, address signer)` — matches Solidity. No drift.
+- `isTenantSigner(bytes32 tenantId, address signer)`. Matches Solidity. No drift.
 
 ---
 
 ### BrainMCPAgentRegistry.sol (`contracts/src/BrainMCPAgentRegistry.sol`)
 
-**Status: 1 failing test — potential access control regression.**
+**Status: 1 failing test. Potential access control regression.**
 
 Contract design is correct per static analysis:
 - EIP-712 signed registration, revocation, and behavior update.
@@ -174,13 +174,13 @@ Possible root causes (requires `forge test -vvvv` to confirm):
 
 2. **Hex literal encoding**: both contract and test use `hex"19_01"` (EIP-712 prefix). Solidity 0.8.x supports underscore separators in hex literals, but if the Foundry version under test interprets them differently, digest computation would diverge consistently.
 
-3. **`_tenantSignerCount` mapping collision**: highly unlikely — different private keys produce different secp256k1 addresses.
+3. **`_tenantSignerCount` mapping collision**: highly unlikely. Different private keys produce different secp256k1 addresses.
 
 **Security impact**: if this represents a real access control gap, any caller who can produce a signature over the `AgentBehaviorUpdate` typehash can update an agent's `behaviorHash`. This bypasses the §6 gate check 1.5, which rejects execution when the runtime `behaviorHash` differs from the registered value.
 
 **Immediate action**: run `forge test -vvvv --match-test test_updateBehaviorHash_rejectsNonSigner` and inspect the recovered address trace.
 
-#### ABI Mismatch — `viemScopeChecker.ts` (CRITICAL, Latent)
+#### ABI Mismatch. `viemScopeChecker.ts` (CRITICAL, Latent)
 
 `BrainMCPAgentRegistry.getAgent` returns an `AgentRegistration` tuple with 7 fields:
 
@@ -198,7 +198,7 @@ uint256 revokedAt
 The TS ABI in `viemScopeChecker.ts` (line 8–29) defines only 6 components:
 
 ```ts
-// TS ABI components (6 fields — missing behaviorHash):
+// TS ABI components (6 fields. Missing behaviorHash):
 { name: "agentId",      type: "bytes32" }
 { name: "agentAddress", type: "address" }
 { name: "tenantId",     type: "bytes32" }
@@ -241,15 +241,15 @@ This makes on-chain scope verification fail for 100% of agents when the real sco
 
 | Dimension | Assessment |
 |-----------|-----------|
-| Build integrity | Pass — no compilation errors |
-| Test coverage | 67/68 tests pass — 1 access control regression unresolved |
+| Build integrity | Pass. No compilation errors |
+| Test coverage | 67/68 tests pass. 1 access control regression unresolved |
 | ABI alignment | 3/4 callers aligned; `viemScopeChecker` has critical structural mismatch |
 | Chain targeting | Anchor broadcaster hardcoded to `baseSepolia` (R-30); scope checker same; executor is chain-aware |
-| Security model | EIP-712 multi-sig, replay nonces, write-once invariants — correct in design; implementation gap in MCPAgentRegistry |
+| Security model | EIP-712 multi-sig, replay nonces, write-once invariants. Correct in design; implementation gap in MCPAgentRegistry |
 | Idempotency | Anchor and policy registry enforce write-once; MCPAgentRegistry revocation is non-reversible |
 
 **Blockers before mainnet activation:**
-1. Diagnose and fix `test_updateBehaviorHash_rejectsNonSigner` — potential behavior hash bypass.
+1. Diagnose and fix `test_updateBehaviorHash_rejectsNonSigner`. Potential behavior hash bypass.
 2. Add `behaviorHash` to `BRAIN_MCP_AGENT_REGISTRY_ABI` in `viemScopeChecker.ts`.
 3. Parameterize `chain` in `anchorBroadcaster.ts` and `viemScopeChecker.ts` (mirrors R-30).
 
@@ -270,21 +270,21 @@ This makes on-chain scope verification fail for 100% of agents when the real sco
 
 ## 7. Findings
 
-### F-11-A — `test_updateBehaviorHash_rejectsNonSigner` fails (SEVERITY: High)
+### F-11-A. `test_updateBehaviorHash_rejectsNonSigner` fails (SEVERITY: High)
 
 - **File**: `contracts/test/BrainMCPAgentRegistry.t.sol:163`, `contracts/src/BrainMCPAgentRegistry.sol:161`
-- **Evidence**: `forge test` output — `[FAIL: next call did not revert as expected]`, gas 246559 (write-path level)
+- **Evidence**: `forge test` output. `[FAIL: next call did not revert as expected]`, gas 246559 (write-path level)
 - **Impact**: If the contract has a real access control gap, any caller can update an agent's `behaviorHash`, defeating §6 gate check 1.5 (behavior pinning). The on-chain record of the agent's expected model/prompt hash becomes untrustworthy.
 - **Action**: `forge test -vvvv --match-test test_updateBehaviorHash_rejectsNonSigner`; inspect recovered address. If contract bug confirmed, fix `_hashBehaviorUpdate` or the access control branch; add to R-31 in findings register.
 
-### F-11-B — `viemScopeChecker.ts` ABI missing `behaviorHash` (SEVERITY: Critical, Latent)
+### F-11-B. `viemScopeChecker.ts` ABI missing `behaviorHash` (SEVERITY: Critical, Latent)
 
 - **File**: `services/api/src/mcp/viemScopeChecker.ts:8–29`
 - **Evidence**: Struct has 7 fields in Solidity; TS ABI has 6. `registeredAt` and `revokedAt` decode from wrong offsets. `getOnchainScopeHash` always returns `null`.
 - **Impact**: When the real `ViemOnchainScopeChecker` is wired (replacing the stub), all MCP agent auth will fail with `agent_scope_hash_missing` or `agent_scope_hash_mismatch`. The MCP surface becomes inaccessible.
 - **Fix**: Add `{ name: "behaviorHash", type: "bytes32" }` after `scopeHash` in `BRAIN_MCP_AGENT_REGISTRY_ABI`.
 
-### F-11-C — Anchor and scope checkers hardcoded to `baseSepolia` (SEVERITY: High, already R-30)
+### F-11-C. Anchor and scope checkers hardcoded to `baseSepolia` (SEVERITY: High, already R-30)
 
 - **Files**: `services/api/src/anchorBroadcaster.ts:3,47,52`, `services/api/src/mcp/viemScopeChecker.ts:2,39`
 - **Already tracked**: R-30. Production mainnet anchoring (Base 8453) requires code change.
@@ -295,10 +295,10 @@ This makes on-chain scope verification fail for 100% of agents when the real sco
 
 | ID | Finding | Severity | Status |
 |----|---------|----------|--------|
-| R-31 | `updateBehaviorHash` access control regression — Forge test fails; potential behavior hash bypass | High | Open |
-| R-32 | `viemScopeChecker` ABI missing `behaviorHash` — MCP on-chain scope verification structurally broken when activated | Critical (latent) | Open |
+| R-31 | `updateBehaviorHash` access control regression. Forge test fails; potential behavior hash bypass | High | Open |
+| R-32 | `viemScopeChecker` ABI missing `behaviorHash`. MCP on-chain scope verification structurally broken when activated | Critical (latent) | Open |
 
-(R-30 — hardcoded `baseSepolia` — previously logged; no new entry.)
+(R-30. Hardcoded `baseSepolia`. Previously logged; no new entry.)
 
 ---
 
@@ -306,10 +306,10 @@ This makes on-chain scope verification fail for 100% of agents when the real sco
 
 | Priority | Item |
 |----------|------|
-| P0 | Fix `viemScopeChecker.ts` ABI (add `behaviorHash` field) — pre-activation blocker |
-| P0 | Diagnose `test_updateBehaviorHash_rejectsNonSigner` — run `forge test -vvvv`, fix root cause |
+| P0 | Fix `viemScopeChecker.ts` ABI (add `behaviorHash` field). Pre-activation blocker |
+| P0 | Diagnose `test_updateBehaviorHash_rejectsNonSigner`. Run `forge test -vvvv`, fix root cause |
 | P1 | Parameterize chain in `anchorBroadcaster.ts` and `viemScopeChecker.ts` via `BRAIN_BASE_CHAIN_ID` (already in `onchainExecutor.ts`) |
-| P2 | Generate canonical ABI JSON from Foundry artifacts (`out/`) and import them in TS callers instead of inline definitions — eliminates this class of drift |
+| P2 | Generate canonical ABI JSON from Foundry artifacts (`out/`) and import them in TS callers instead of inline definitions. Eliminates this class of drift |
 
 ---
 
@@ -325,7 +325,7 @@ The H-03 nonce replay guard (claimed as remediated) is verified correct in `Brai
 
 ## 11. Recommended Next Steps
 
-1. **Immediate**: `forge test -vvvv --match-test test_updateBehaviorHash_rejectsNonSigner` — root-cause the failing test.
+1. **Immediate**: `forge test -vvvv --match-test test_updateBehaviorHash_rejectsNonSigner`. Root-cause the failing test.
 2. **Before MCP on-chain auth activation**: fix `viemScopeChecker.ts` ABI (one-line addition).
 3. **Before mainnet deploy**: parameterize chain selectors; use Foundry-generated ABI artifacts in TS callers.
 4. **Ongoing**: wire `forge test` into CI with a hard fail gate so the one failing test blocks merges.

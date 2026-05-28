@@ -6,7 +6,7 @@
 | ------------------ | --------------------------------------------------------------------- |
 | **Network**        | Base L2                                                               |
 | **Solidity**       | 0.8.x                                                                 |
-| **Pattern**        | Immutable — no upgrade path in MVP; changes ship as audited redeploys |
+| **Pattern**        | Immutable. No upgrade path in MVP; changes ship as audited redeploys |
 | **Tenant signing** | EIP-712 `PolicyRegistration`                                          |
 
 ### Interface

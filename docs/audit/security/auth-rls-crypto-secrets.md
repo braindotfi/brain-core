@@ -1,6 +1,6 @@
-# Audit #15 — Security: Auth, RLS, Crypto, Secrets
+# Audit #15. Security: Auth, RLS, Crypto, Secrets
 
-**Subsystem**: Cross-cutting — JWT, SIWX, RLS role model, AES-256-GCM, boot guards, adversarial coverage
+**Subsystem**: Cross-cutting. JWT, SIWX, RLS role model, AES-256-GCM, boot guards, adversarial coverage
 **Auditor**: Evidence-driven, commands executed 2026-05-26
 **Status**: Complete
 **Score**: 7 / 10
@@ -29,15 +29,15 @@ Out of scope: Plaid webhook HMAC signature verification, pre-commit secret scann
 ### Auth layer
 
 ```
-shared/src/auth/jwt.ts — JwtVerifier: production JWKS, demo HS256, claim validation
-shared/src/auth/middleware.ts — Fastify onRequest hook, skipAuth config flag
-shared/src/auth/scopes.ts — VALID_SCOPES (23), AGENT_PERMITTED_SCOPES (5)
-shared/src/db/tenant-scoped.ts — withTenantScope implementation
-shared/src/crypto/aes-gcm.ts — AES-256-GCM encrypt/decrypt
-services/api/src/main.ts — boot guards (lines 597–609, 1377–1381), DEMO_SIGN_SECRET (line 612)
-infra/db-roles.sql — brain_app (NOLOGIN NOBYPASSRLS), brain_privileged (BYPASSRLS)
-tests/adversarial/src/adversarial.test.ts — 10 attack vectors
-tests/invariants/integration/db-invariants.integration.test.ts — RLS non-owner probes
+shared/src/auth/jwt.ts. JwtVerifier: production JWKS, demo HS256, claim validation
+shared/src/auth/middleware.ts. Fastify onRequest hook, skipAuth config flag
+shared/src/auth/scopes.ts. VALID_SCOPES (23), AGENT_PERMITTED_SCOPES (5)
+shared/src/db/tenant-scoped.ts. WithTenantScope implementation
+shared/src/crypto/aes-gcm.ts. AES-256-GCM encrypt/decrypt
+services/api/src/main.ts. Boot guards (lines 597–609, 1377–1381), DEMO_SIGN_SECRET (line 612)
+infra/db-roles.sql. Brain_app (NOLOGIN NOBYPASSRLS), brain_privileged (BYPASSRLS)
+tests/adversarial/src/adversarial.test.ts. 10 attack vectors
+tests/invariants/integration/db-invariants.integration.test.ts. RLS non-owner probes
 ```
 
 ### RLS migration coverage
@@ -56,7 +56,7 @@ find . -name "*.sql" | xargs grep -l "FORCE ROW LEVEL SECURITY" | sort
 ```
 
 `services/api/migrations/0001_tenants.sql` uses `ENABLE ROW LEVEL SECURITY` (not FORCE). The `tenants` table
-is covered by the `infra/db-roles.sql` bulk FORCE loop — not by a service-specific FORCE migration.
+is covered by the `infra/db-roles.sql` bulk FORCE loop. Not by a service-specific FORCE migration.
 
 ### Adversarial suite run
 
@@ -72,7 +72,7 @@ which creates the workspace symlinks. `main.yml` confirms CI runs both the logic
 the DB-integration suite and they pass. Local failure is stale pnpm state, not a logic error.
 
 ```
-HARDENING-SUMMARY.md confirms: P1.1 adversarial safety suite — done — 10 (logic) + integration (CI)
+HARDENING-SUMMARY.md confirms: P1.1 adversarial safety suite. Done. 10 (logic) + integration (CI)
 main.yml: pnpm -C tests/adversarial run test && pnpm -C tests/adversarial run test:integration
 ```
 
@@ -92,10 +92,10 @@ line 1377: AUTH_SIGN_KEY required in NODE_ENV=production (SIWX signing)
 ```
 shared/src/auth/
   jwt.ts            # JwtVerifier (production JWKS, demo HS256), JwtSigner
-  middleware.ts     # Fastify plugin — onRequest hook, skipAuth flag
+  middleware.ts     # Fastify plugin. OnRequest hook, skipAuth flag
   scopes.ts         # VALID_SCOPES (23), AGENT_PERMITTED_SCOPES (5), requireScope()
 shared/src/db/
-  tenant-scoped.ts  # withTenantScope — BEGIN + SET LOCAL + fn + COMMIT
+  tenant-scoped.ts  # withTenantScope. BEGIN + SET LOCAL + fn + COMMIT
 shared/src/crypto/
   aes-gcm.ts        # AES-256-GCM encrypt/decrypt, wire format iv||authTag||ciphertext
 infra/
@@ -103,7 +103,7 @@ infra/
 tests/adversarial/
   src/adversarial.test.ts        # 10 logic-layer attack vectors
   integration/                   # DB-backed tenant-swap + policy-downgrade (CI-only)
-  vitest.config.ts               # no resolve.alias — relies on pnpm workspace symlinks
+  vitest.config.ts               # no resolve.alias. Relies on pnpm workspace symlinks
   vitest.integration.config.ts   # skip-guarded on DATABASE_URL
 ```
 
@@ -120,9 +120,9 @@ The JWKS URL comes from `cfg.AUTH_JWKS_URL`. No hardcoded keys in the production
 // shared/src/auth/jwt.ts
 if (opts.secret !== undefined && opts.secret !== "") {
   const keyBytes = new TextEncoder().encode(opts.secret);
-  this.jwks = async () => keyBytes;  // HS256 symmetric — dev/test only
+  this.jwks = async () => keyBytes;  // HS256 symmetric. Dev/test only
 } else {
-  this.jwks = createRemoteJWKSet(new URL(opts.jwksUrl));  // asymmetric JWKS — production
+  this.jwks = createRemoteJWKSet(new URL(opts.jwksUrl));  // asymmetric JWKS. Production
 }
 ```
 
@@ -130,7 +130,7 @@ if (opts.secret !== undefined && opts.secret !== "") {
 
 `BRAIN_DEMO_MODE=true` sets `secret: "brain-demo-mode-insecure-dev-only"` in `JwtVerifier` options and
 `JwtSigner` options (via `DEMO_SIGN_SECRET` constant at line 612). The secret is defined once and
-shared between the verifier and signer — no silent divergence if the literal changes.
+shared between the verifier and signer. No silent divergence if the literal changes.
 
 `BRAIN_DEMO_MODE=true` is blocked at boot in `NODE_ENV=production` (line 597–598). The HS256 path is
 unreachable in production.
@@ -149,12 +149,12 @@ From reading the middleware + JwtVerifier:
 
 `RedisRevocationStore` stores `auth:revoked:{jti}` as a key with TTL equal to the token's remaining
 lifetime. The check happens on every request in the middleware, before `withTenantScope` is called.
-TTLs self-evict — no background cleanup job needed.
+TTLs self-evict. No background cleanup job needed.
 
 ### SIWX agent auth
 
 Agent JWT minting is via `registerSiwxRoutes` (the `/auth/siwx` path). Production requires `AUTH_SIGN_KEY`
-(a JWK JSON string from Azure Key Vault) for the SIWX signer — boot throws if absent (line 1377–1379).
+(a JWK JSON string from Azure Key Vault) for the SIWX signer. Boot throws if absent (line 1377–1379).
 Without `AUTH_SIGN_KEY`, no agent JWTs can be minted in production, and no hardcoded fallback exists.
 
 ---
@@ -175,7 +175,7 @@ export const VALID_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
 
 export const AGENT_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "ledger:read", "wiki:read", "raw:write", "payment_intent:propose", "execution:propose",
-]);  // 5 scopes — external agents only
+]);  // 5 scopes. External agents only
 ```
 
 `admin` implies all verbs for a layer via `impliedAdmin()` in `hasScope()`. `requireScope` throws
@@ -192,15 +192,15 @@ with the on-chain `scope_hash`. CLAUDE.md notes this rename is tracked separatel
 
 | Route | Rationale |
 |-------|-----------|
-| `GET /health` (all services) | Infrastructure probe — no data access |
-| `POST /auth/siwx/challenge` | Nonce generation — initiates auth, no session yet |
-| `POST /auth/siwx` | Authentication endpoint itself — no JWT to present yet |
-| `POST /audit/verify` | Public audit verification — cryptographic function, no tenant data |
-| `POST /raw/webhooks/{provider}` | Provider HMAC signed — different auth scheme |
+| `GET /health` (all services) | Infrastructure probe. No data access |
+| `POST /auth/siwx/challenge` | Nonce generation. Initiates auth, no session yet |
+| `POST /auth/siwx` | Authentication endpoint itself. No JWT to present yet |
+| `POST /audit/verify` | Public audit verification. Cryptographic function, no tenant data |
+| `POST /raw/webhooks/{provider}` | Provider HMAC signed. Different auth scheme |
 | `GET /v1/demo/token` | Only registered if `BRAIN_DEMO_MODE=true` (blocked in production) |
 
 All six exemptions are legitimate. No route is accidentally unauthenticated. The audit verify
-endpoint is intentionally public — it takes a hash + proof, returns validity, and does not
+endpoint is intentionally public. It takes a hash + proof, returns validity, and does not
 access tenant data.
 
 ---
@@ -233,11 +233,11 @@ export async function withTenantScope<T>(pool, tenantId, fn): Promise<T> {
 ```
 
 Key properties:
-- `SET LOCAL` is `set_config(..., true)` — transaction-scoped, not session-scoped
+- `SET LOCAL` is `set_config(..., true)`. Transaction-scoped, not session-scoped
 - Cannot leak across requests (connection pool gives a fresh client per `withTenantScope` call)
 - `isBrainId("tnt")` rejects malformed tenant IDs before any DB operation
-- Parameterized — not string-interpolated; SQL injection not possible via `tenantId`
-- Rollback on throw — no partial-write with scope leak
+- Parameterized. Not string-interpolated; SQL injection not possible via `tenantId`
+- Rollback on throw. No partial-write with scope leak
 
 ### FORCE ROW LEVEL SECURITY coverage
 
@@ -247,7 +247,7 @@ individual `FORCE ROW LEVEL SECURITY` applied.
 
 **`services/api` tenants table:** `0001_tenants.sql` uses `ENABLE ROW LEVEL SECURITY` but no
 `FORCE` migration. The `infra/db-roles.sql` bulk `DO $$ ... ALTER TABLE %s FORCE ROW LEVEL SECURITY`
-loop covers it at deploy time — provided `db-roles.sql` runs.
+loop covers it at deploy time. Provided `db-roles.sql` runs.
 
 **`infra/db-roles.sql`**: creates `brain_app` (LOGIN, NOBYPASSRLS) and `brain_privileged` (BYPASSRLS)
 roles, grants DML on all tables, and runs a PL/pgSQL loop to FORCE RLS on every `relrowsecurity=true`
@@ -298,12 +298,12 @@ export function decryptCredentials(ciphertext: Buffer, key: Buffer): object {
   const authTag = ciphertext.subarray(12, 28);
   const encrypted = ciphertext.subarray(28);
   const decipher = createDecipheriv("aes-256-gcm", key, iv);
-  decipher.setAuthTag(authTag);    // GCM integrity check — throws on tamper
+  decipher.setAuthTag(authTag);    // GCM integrity check. Throws on tamper
   // …
 }
 ```
 
-The GCM auth tag is enforced on every decrypt — a tampered ciphertext causes `decipheriv` to throw
+The GCM auth tag is enforced on every decrypt. A tampered ciphertext causes `decipheriv` to throw
 before any plaintext is returned. IV is freshly generated per encryption (`randomBytes(12)`), so no
 IV reuse. Node's `node:crypto` implementation is FIPS-compatible.
 
@@ -334,7 +334,7 @@ path is used.` The TODO is unimplemented.
 | `BRAIN_MCP_DEV_AUTH_BYPASS=true` | `NODE_ENV=production` | Boot throw (line 600) |
 | `BLOB_BACKEND=memory` | `NODE_ENV=production` | Boot throw (line 603) |
 | `AUTH_SIGN_KEY` absent | `NODE_ENV=production` | Boot throw (line 1377) |
-| `BRAIN_SOURCE_CREDENTIAL_KEY` absent | `NODE_ENV=production` | **No guard — silently unencrypted** |
+| `BRAIN_SOURCE_CREDENTIAL_KEY` absent | `NODE_ENV=production` | **No guard. Silently unencrypted** |
 
 All four positive guards are correct boot-time throws. The missing guard for
 `BRAIN_SOURCE_CREDENTIAL_KEY` is the only gap in this set.
@@ -360,13 +360,13 @@ All four positive guards are correct boot-time throws. The missing guard for
 
 ### Integration vectors (`integration/`)
 
-Two DB-backed vectors — tenant RLS row swap + policy-downgrade persistence — run in CI via
+Two DB-backed vectors. Tenant RLS row swap + policy-downgrade persistence. Run in CI via
 `pnpm -C tests/adversarial run test:integration` (skip-guarded on `DATABASE_URL`).
 
 ### CI wiring
 
 `main.yml` (`unit_and_integration` job): both logic suite and integration suite run after `pnpm run build`.
-`pr.yml` does **not** include adversarial tests — only the standard `test:coverage` sweep.
+`pr.yml` does **not** include adversarial tests. Only the standard `test:coverage` sweep.
 A security regression introduced in a PR would not fail CI until post-merge on `main`.
 
 ### Local run state
@@ -377,7 +377,7 @@ pnpm -C tests/adversarial run test
 ```
 
 Fails locally because `tests/adversarial/node_modules/@brain/` symlinks were never created (stale
-pnpm state — the package was added to pnpm-workspace.yaml after the local `pnpm install`). CI
+pnpm state. The package was added to pnpm-workspace.yaml after the local `pnpm install`). CI
 does a clean `pnpm install` which creates the workspace symlinks and then runs the full build.
 The suite logic is correct and CI-verified; the local failure is a developer ergonomics issue.
 
@@ -387,23 +387,23 @@ The suite logic is correct and CI-verified; the local failure is a developer erg
 
 | Dimension | Status |
 |-----------|--------|
-| JWT production path (JWKS) | Correct — asymmetric, production-only |
-| JWT demo path (HS256) | Boot-guarded — unreachable in `NODE_ENV=production` |
-| SIWX / AUTH_SIGN_KEY | Boot-guarded — required in production |
-| Claim validation (sub, exp, jti, scopes) | Comprehensive — all checked at middleware |
-| Revocation store | Functional — Redis per-jti TTL, self-evicting |
-| Scope enforcement | Comprehensive — 23 VALID_SCOPES, AGENT_PERMITTED_SCOPES(5), requireScope |
-| `skipAuth` surface | Minimal and justified — 6 routes, all legitimate |
-| `withTenantScope` | Correct — SET LOCAL, parameterized, rollback-on-throw, isBrainId guard |
-| FORCE ROW LEVEL SECURITY | Complete — all 6 service schemas covered; api/tenants via db-roles.sql loop |
+| JWT production path (JWKS) | Correct. Asymmetric, production-only |
+| JWT demo path (HS256) | Boot-guarded. Unreachable in `NODE_ENV=production` |
+| SIWX / AUTH_SIGN_KEY | Boot-guarded. Required in production |
+| Claim validation (sub, exp, jti, scopes) | Comprehensive. All checked at middleware |
+| Revocation store | Functional. Redis per-jti TTL, self-evicting |
+| Scope enforcement | Comprehensive. 23 VALID_SCOPES, AGENT_PERMITTED_SCOPES(5), requireScope |
+| `skipAuth` surface | Minimal and justified. 6 routes, all legitimate |
+| `withTenantScope` | Correct. SET LOCAL, parameterized, rollback-on-throw, isBrainId guard |
+| FORCE ROW LEVEL SECURITY | Complete. All 6 service schemas covered; api/tenants via db-roles.sql loop |
 | `brain_app` NOLOGIN NOBYPASSRLS role | Defined in `infra/db-roles.sql` (deploy artifact, not migration) |
-| DB connection role enforcement | **Not verified at boot** — app does not check that `DATABASE_URL` connects as `brain_app` |
-| AES-256-GCM wire format | Correct — iv(12)||authTag(16)||ciphertext, auth tag enforced |
-| BRAIN_SOURCE_CREDENTIAL_KEY production guard | **Missing** — key optional, no boot throw |
+| DB connection role enforcement | **Not verified at boot**. App does not check that `DATABASE_URL` connects as `brain_app` |
+| AES-256-GCM wire format | Correct. Iv(12)||authTag(16)||ciphertext, auth tag enforced |
+| BRAIN_SOURCE_CREDENTIAL_KEY production guard | **Missing**. Key optional, no boot throw |
 | Boot guards (demo/bypass/blob/sign-key) | All four present and correct |
 | Adversarial suite (10 vectors) | Passes in CI; local run broken (stale pnpm symlinks) |
-| Adversarial suite in `pr.yml` | **Not wired** — only in `main.yml` post-merge |
-| RLS integration tests | Fixed (PR #23) — now probe as non-owner role, not superuser |
+| Adversarial suite in `pr.yml` | **Not wired**. Only in `main.yml` post-merge |
+| RLS integration tests | Fixed (PR #23). Now probe as non-owner role, not superuser |
 
 ---
 
@@ -413,13 +413,13 @@ The suite logic is correct and CI-verified; the local failure is a developer erg
 
 | Dimension | Assessment |
 |-----------|-----------|
-| JWT / SIWX auth | High — production JWKS, demo blocked at boot, full claim validation |
-| Scope enforcement | High — finite set, enforced at JWT claim + route level |
-| RLS implementation | High — `withTenantScope` correct, FORCE RLS on all schemas, non-owner probe fixed |
-| Credential encryption | Medium — GCM correct, but key optional with no production boot guard |
-| Boot guards | High — four guards present; one gap (credential key) |
-| Adversarial coverage | Medium — 10 vectors correct, CI passing, but not in `pr.yml` |
-| DB connection role | Medium — `brain_app` defined but not enforced at boot |
+| JWT / SIWX auth | High. Production JWKS, demo blocked at boot, full claim validation |
+| Scope enforcement | High. Finite set, enforced at JWT claim + route level |
+| RLS implementation | High. `withTenantScope` correct, FORCE RLS on all schemas, non-owner probe fixed |
+| Credential encryption | Medium. GCM correct, but key optional with no production boot guard |
+| Boot guards | High. Four guards present; one gap (credential key) |
+| Adversarial coverage | Medium. 10 vectors correct, CI passing, but not in `pr.yml` |
+| DB connection role | Medium. `brain_app` defined but not enforced at boot |
 
 ---
 
@@ -440,30 +440,30 @@ The suite logic is correct and CI-verified; the local failure is a developer erg
 
 ## 14. Findings
 
-### F-15-A — `BRAIN_SOURCE_CREDENTIAL_KEY` optional in production with no boot guard (SEVERITY: Medium)
+### F-15-A. `BRAIN_SOURCE_CREDENTIAL_KEY` optional in production with no boot guard (SEVERITY: Medium)
 
 - **Files**: `shared/src/config.ts:168` (`.optional()`), `services/api/src/main.ts:646–657` (key-absent branch), `shared/src/crypto/aes-gcm.ts:2` (TODO comment)
-- **Evidence**: `z.string()...optional()` — not required. `main.ts` explicitly branches on key presence. No `if (cfg.NODE_ENV === "production" && cfg.BRAIN_SOURCE_CREDENTIAL_KEY === undefined)` throw exists. A production deployment without the key stores Plaid credentials as plaintext JSON in `raw_plaid_items.credentials`.
-- **Fix**: Add boot guard in `main.ts` after the existing BLOB_BACKEND guard: `if (cfg.NODE_ENV === "production" && cfg.BRAIN_SOURCE_CREDENTIAL_KEY === undefined) { throw new Error("BRAIN_SOURCE_CREDENTIAL_KEY must be set in production — configure a 256-bit key in Azure Key Vault"); }`
+- **Evidence**: `z.string()...optional()`. Not required. `main.ts` explicitly branches on key presence. No `if (cfg.NODE_ENV === "production" && cfg.BRAIN_SOURCE_CREDENTIAL_KEY === undefined)` throw exists. A production deployment without the key stores Plaid credentials as plaintext JSON in `raw_plaid_items.credentials`.
+- **Fix**: Add boot guard in `main.ts` after the existing BLOB_BACKEND guard: `if (cfg.NODE_ENV === "production" && cfg.BRAIN_SOURCE_CREDENTIAL_KEY === undefined) { throw new Error("BRAIN_SOURCE_CREDENTIAL_KEY must be set in production. Configure a 256-bit key in Azure Key Vault"); }`
 
-### F-15-B — DB connection role not verified at boot (SEVERITY: Medium)
+### F-15-B. DB connection role not verified at boot (SEVERITY: Medium)
 
 - **Files**: `services/api/src/main.ts` (pool construction from `cfg.DATABASE_URL`), `infra/db-roles.sql` (`brain_app` role definition)
-- **Evidence**: `DATABASE_URL` is consumed by `new Pool({ connectionString: cfg.DATABASE_URL })` without asserting that the connection role is `brain_app` (NOBYPASSRLS). A development or accidentally misconfigured deployment using the Postgres superuser as `DATABASE_URL` would bypass RLS for all queries even with FORCE RLS — because Postgres superusers are exempt from RLS regardless of FORCE.
+- **Evidence**: `DATABASE_URL` is consumed by `new Pool({ connectionString: cfg.DATABASE_URL })` without asserting that the connection role is `brain_app` (NOBYPASSRLS). A development or accidentally misconfigured deployment using the Postgres superuser as `DATABASE_URL` would bypass RLS for all queries even with FORCE RLS. Because Postgres superusers are exempt from RLS regardless of FORCE.
 - **Impact**: FORCE RLS on individual tables is a defense-in-depth measure, but it does not protect against a superuser connection. The `brain_app` role model is the primary defense.
 - **Fix**: Add a boot assertion: `SELECT current_user` from the pool; in `NODE_ENV=production`, throw if the result is `postgres` or any role that has `BYPASSRLS=true`. Alternatively, add a `ROLE brain_app` parameter to the `DATABASE_URL` connection string in the production deploy configuration and assert the role name in config validation.
 
-### F-15-C — Adversarial suite not wired in `pr.yml` (SEVERITY: Low)
+### F-15-C. Adversarial suite not wired in `pr.yml` (SEVERITY: Low)
 
 - **Files**: `.github/workflows/pr.yml` (no adversarial step), `.github/workflows/main.yml` (`unit_and_integration` job, line `pnpm -C tests/adversarial run test`)
 - **Evidence**: `pr.yml` runs `pnpm run test:coverage` which filters to `./services/**` and `./clients/**`. Adversarial tests are in `./tests/adversarial/`. A PR that regresses any of the 10 attack vectors would pass PR CI and only fail after merging to main.
 - **Fix**: Add an adversarial step to `pr.yml` after the build step, before `test:coverage`: `pnpm -C tests/adversarial run test` (logic-layer only, no DATABASE_URL required).
 
-### F-15-D — `infra/db-roles.sql` is not a migration and has no enforcement gate (SEVERITY: Low)
+### F-15-D. `infra/db-roles.sql` is not a migration and has no enforcement gate (SEVERITY: Low)
 
 - **Files**: `infra/db-roles.sql`, `tools/migrate/`
-- **Evidence**: `db-roles.sql` is documented as "not a tools/migrate migration — role/grant management is an operator concern". It must be applied manually (or via deploy pipeline) to a new database. If it is missed, the `brain_app` role doesn't exist and the production DB connects as whoever `DATABASE_URL` points to. The FORCE RLS in per-service migrations still runs, but against the table owner.
-- **Fix**: Document in `infra/README.md` (or existing deploy docs) that `db-roles.sql` must run before the application is deployed. Consider a startup check that `SELECT 1 FROM pg_roles WHERE rolname = 'brain_app'` returns a row — throw in production if missing.
+- **Evidence**: `db-roles.sql` is documented as "not a tools/migrate migration. Role/grant management is an operator concern". It must be applied manually (or via deploy pipeline) to a new database. If it is missed, the `brain_app` role doesn't exist and the production DB connects as whoever `DATABASE_URL` points to. The FORCE RLS in per-service migrations still runs, but against the table owner.
+- **Fix**: Document in `infra/README.md` (or existing deploy docs) that `db-roles.sql` must run before the application is deployed. Consider a startup check that `SELECT 1 FROM pg_roles WHERE rolname = 'brain_app'` returns a row. Throw in production if missing.
 
 ---
 
@@ -477,9 +477,9 @@ New risks:
 
 | ID | Risk | Severity | Verified |
 |----|------|----------|---------|
-| R-33 | Plaid credentials stored plaintext if `BRAIN_SOURCE_CREDENTIAL_KEY` absent — no production boot guard | Medium | Yes — F-15-A |
-| R-34 | DB connection role unverified at boot — superuser `DATABASE_URL` bypasses RLS | Medium | Yes — F-15-B |
-| R-35 | Adversarial suite not in `pr.yml` — security regressions reach `main` before detection | Low | Yes — F-15-C |
+| R-33 | Plaid credentials stored plaintext if `BRAIN_SOURCE_CREDENTIAL_KEY` absent. No production boot guard | Medium | Yes. F-15-A |
+| R-34 | DB connection role unverified at boot. Superuser `DATABASE_URL` bypasses RLS | Medium | Yes. F-15-B |
+| R-35 | Adversarial suite not in `pr.yml`. Security regressions reach `main` before detection | Low | Yes. F-15-C |
 
 ---
 
@@ -488,6 +488,6 @@ New risks:
 | Priority | Action |
 |----------|--------|
 | P0 | Add production boot guard for `BRAIN_SOURCE_CREDENTIAL_KEY` (one `if` block in `main.ts`, mirrors the existing blob/demo guards) |
-| P1 | Add `pnpm -C tests/adversarial run test` to `pr.yml` — logic-layer only (no DATABASE_URL needed), fails fast on vector regression |
+| P1 | Add `pnpm -C tests/adversarial run test` to `pr.yml`. Logic-layer only (no DATABASE_URL needed), fails fast on vector regression |
 | P1 | Add boot assertion on DB connection role: `SELECT current_user` from pool, throw in production if not `brain_app` or similar non-owner role |
 | P2 | Document `infra/db-roles.sql` deployment prerequisite in `infra/README.md`; add startup check for `brain_app` role existence |

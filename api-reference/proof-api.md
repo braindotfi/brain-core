@@ -1,13 +1,13 @@
 # Proof API
 
-The Proof API returns the canonical, single-artifact record of how a financial action was decided, gated, executed, and anchored. It's the flagship trust artifact: one fetch, every dimension — policy decision, §6 gate trace, evidence chain, audit Merkle proof, on-chain anchor, rail receipt, plain-English explanation.
+The Proof API returns the canonical, single-artifact record of how a financial action was decided, gated, executed, and anchored. It's the flagship trust artifact: one fetch, every dimension. Policy decision, §6 gate trace, evidence chain, audit Merkle proof, on-chain anchor, rail receipt, plain-English explanation.
 
 | Operation                   | Endpoint                         | Scope        |
 | --------------------------- | -------------------------------- | ------------ |
 | Canonical Proof (JSON)      | `GET /v1/proof/{action_id}`      | `audit:read` |
 | Human-readable Proof (HTML) | `GET /v1/proof/{action_id}/view` | `audit:read` |
 
-`action_id` is the PaymentIntent id. Both routes are **tenant-isolated**: a cross-tenant id returns `404` — the existence of the action is never leaked across tenants.
+`action_id` is the PaymentIntent id. Both routes are **tenant-isolated**: a cross-tenant id returns `404`. The existence of the action is never leaked across tenants.
 
 ### Get a Proof
 
@@ -49,7 +49,7 @@ Authorization: Bearer <token>
 | Field                            | Description                                                                                        |
 | -------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `outcome`                        | `allowed` \| `confirmed` \| `rejected` \| `executed` \| `failed` \| `shadow_completed`             |
-| `behavior_hash`                  | The agent's runtime `behaviorHash` — must equal the value registered on-chain (§6 check 1.5)       |
+| `behavior_hash`                  | The agent's runtime `behaviorHash`. Must equal the value registered on-chain (§6 check 1.5)       |
 | `policy_version` / `policy_hash` | The policy version evaluated and its content hash                                                  |
 | `matched_rule_id`                | The DSL rule that fired                                                                            |
 | `gate_checks[]`                  | Every numbered + hardening check, in execution order, with `passed: boolean` and optional `reason` |
@@ -57,7 +57,7 @@ Authorization: Bearer <token>
 | `ledger_snapshot_hash`           | Hash of the Ledger state Policy decided against (the snapshot the §6 7.5 check re-validates)       |
 | `audit_events[]`                 | Every audit event id covering this action                                                          |
 | `merkle_root` / `merkle_proof`   | The Merkle inclusion proof for the audit-chain leaves                                              |
-| `chain_anchor`                   | The on-chain anchor for the containing batch — `null` until the batch lands on Base                |
+| `chain_anchor`                   | The on-chain anchor for the containing batch. `null` until the batch lands on Base                |
 | `rail_receipt`                   | The typed rail receipt (`ach` / `wire` / `erp` / `onchain` schemas)                                |
 | `human_explanation`              | One-paragraph plain-English summary, deterministically generated                                   |
 
@@ -67,13 +67,13 @@ Three independent paths to the same conclusion:
 
 | Method                       | Description                                                                                   |
 | ---------------------------- | --------------------------------------------------------------------------------------------- |
-| **SDK helper**               | `verifyMerkleProof(...)` from `@brain/sdk` — no Brain account required                        |
+| **SDK helper**               | `verifyMerkleProof(...)` from `@brain/sdk`. No Brain account required                        |
 | **On-chain call**            | `BrainAuditAnchor.verify(tenantId, batchIndex, leaf, merkleProof)` from any Solidity contract |
-| **Public verifier endpoint** | `POST /v1/audit/verify` — supply event hash, Merkle proof, and claimed root                   |
+| **Public verifier endpoint** | `POST /v1/audit/verify`. Supply event hash, Merkle proof, and claimed root                   |
 
 ### Human-Readable View
 
-For compliance, investor, or counterparty screens — the same Proof rendered as a single HTML page:
+For compliance, investor, or counterparty screens. The same Proof rendered as a single HTML page:
 
 ```http
 GET /v1/proof/{action_id}/view

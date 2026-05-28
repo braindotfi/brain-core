@@ -6,10 +6,10 @@ autonomous **agent** at Brain is the SIWX + on-chain registration path (separate
 see §"Agents" below).
 
 > **Status / safety.** Self-serve signup is gated by the `BRAIN_SELF_SERVE_SIGNUP`
-> flag (default **off** — the routes don't exist unless enabled). Every new tenant
+> flag (default **off**. The routes don't exist unless enabled). Every new tenant
 > is **sandbox-only**: it can read and _propose_, but moves **no money**. Real
 > settlement stays behind the existing promotion + external-audit gates. Email
-> delivery is not wired yet — outside production the verification token is
+> delivery is not wired yet. Outside production the verification token is
 > returned in the signup response.
 
 ## The two principals
@@ -19,7 +19,7 @@ see §"Agents" below).
 | **Human owner**     | email + password                                                   | tenant management, reads, approving payment intents (a management JWT) |
 | **Agent** (machine) | wallet (SIWX) + on-chain `BrainMCPAgentRegistry` scope attestation | the M2M / MCP tool surface (propose, reads, contribute)                |
 
-The owner JWT carries **management/read/approve scopes only** — never
+The owner JWT carries **management/read/approve scopes only**. Never
 `payment_intent:propose`, `payment_intent:execute`, or `execution:propose`. Money
 movement is an agent + §6-gate concern, never a human-login capability.
 
@@ -106,9 +106,9 @@ To run an autonomous agent against the MCP surface (`POST /v1/agents/mcp`), the
 agent registers on-chain in `BrainMCPAgentRegistry` with an EIP-712 scope
 attestation and authenticates via SIWX (`POST /v1/auth/siwx/challenge` →
 `/v1/auth/siwx`). The agent can read, contribute evidence, and **propose**
-payment intents — it can never `execute` (there is no execute tool; every
+payment intents. It can never `execute` (there is no execute tool; every
 settlement passes the §6 gate). Turnkey agent self-registration
-(`POST /v1/agents` + async on-chain relayer) is RFC 0002 Phase C — in progress.
+(`POST /v1/agents` + async on-chain relayer) is RFC 0002 Phase C. In progress.
 
 ## Reference
 

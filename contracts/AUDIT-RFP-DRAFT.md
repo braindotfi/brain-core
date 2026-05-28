@@ -1,4 +1,4 @@
-# RFP — Brain smart-contract security audit (DRAFT)
+# RFP. Brain smart-contract security audit (DRAFT)
 
 Draft RFP for the external audit of Brain's six Solidity contracts. Paste into
 outreach to candidate firms with minimal edits. **Pending founder approval.**
@@ -18,17 +18,17 @@ Six contracts, ~1,300 LoC total (Foundry, Solidity ≥0.8.24, non-upgradeable):
 
 | Contract                                    | LoC | Focus                                                                                                                |
 | ------------------------------------------- | --- | -------------------------------------------------------------------------------------------------------------------- |
-| **`BrainEscrow`** _(priority)_              | 132 | **Funds custody** — partial release/refund; solvency; reentrancy; arbiter can't redirect. (+ 56-LoC `IBrainEscrow`.) |
+| **`BrainEscrow`** _(priority)_              | 132 | **Funds custody**. Partial release/refund; solvency; reentrancy; arbiter can't redirect. (+ 56-LoC `IBrainEscrow`.) |
 | `BrainAuditAnchor`                          | 135 | Append-only Merkle anchor; `verifyInclusion` parity.                                                                 |
 | `BrainPolicyRegistry`                       | 255 | Signed policy versions; EIP-712; no downgrade.                                                                       |
 | `BrainSmartAccount`                         | 256 | Session-key execution; H-03 replay + re-entrancy.                                                                    |
 | `BrainMCPAgentRegistry`                     | 287 | Agent scope-hash attestation; revocation.                                                                            |
 | `BrainReputationRegistry` _(non-custodial)_ | 51  | ERC-8004 reputation pointer; monotonic epoch; attestor-only; **no value path**. (+ 32-LoC interface.)                |
 
-**`BrainEscrow` is the priority** — it is the only contract that custodies user
+**`BrainEscrow` is the priority**. It is the only contract that custodies user
 funds (USDC) and gates the first real mainnet payment; it is currently UNAUDITED
 / testnet-only. **`BrainReputationRegistry` is non-custodial** (no fund path) and
-a Policy-input-only artifact — included for completeness at lower severity. Full
+a Policy-input-only artifact. Included for completeness at lower severity. Full
 per-contract invariants in `contracts/AUDIT-SCOPE.md`. The audited commit SHA will
 be pinned at kickoff.
 
@@ -45,8 +45,8 @@ be pinned at kickoff.
 
 Two rounds (matches our build cadence):
 
-1. **Mid-build round** — current contracts, surface design issues early.
-2. **Pre-deploy round** — final contracts + remediations, sign-off for mainnet.
+1. **Mid-build round**. Current contracts, surface design issues early.
+2. **Pre-deploy round**. Final contracts + remediations, sign-off for mainnet.
 
 Target: round 1 within ~4 weeks of kickoff; round 2 before mainnet. Exact dates
 TBD with the selected firm.

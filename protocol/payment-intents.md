@@ -85,10 +85,10 @@ A gate-passed intent is dispatched through a durable outbox to the rail named by
 
 | Rail           | Implementation                           | Settlement                                                                                                         |
 | -------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `bank_ach`     | Plaid Transfer (authorization → create)  | **Async** — `dispatch` returns `pending`; a Plaid `TRANSFER_EVENTS_UPDATE` webhook settles or fails the outbox row |
+| `bank_ach`     | Plaid Transfer (authorization → create)  | **Async**. `dispatch` returns `pending`; a Plaid `TRANSFER_EVENTS_UPDATE` webhook settles or fails the outbox row |
 | `onchain_base` | `BrainSmartAccount.executeViaSessionKey` | On-chain receipt; the rail threads the per-holder session-key nonce and signs via Azure Key Vault                  |
 
-Both are idempotency-keyed by the outbox row so a crash-retry never moves money twice. `erp_writeback` (NetSuite) remains a fail-closed stub. The M2M settlement action types `x402_settle` / `escrow_release` map to the `x402_base` / `escrow_base` rails (USDC on Base / `BrainEscrow`), which are **fail-closed and unregistered at boot** until promoted — they throw rather than fake-settle. The live SDK wiring (Plaid / viem+KMS) and the sandbox/anvil round-trips are a follow-up; see `services/execution/README.md`.
+Both are idempotency-keyed by the outbox row so a crash-retry never moves money twice. `erp_writeback` (NetSuite) remains a fail-closed stub. The M2M settlement action types `x402_settle` / `escrow_release` map to the `x402_base` / `escrow_base` rails (USDC on Base / `BrainEscrow`), which are **fail-closed and unregistered at boot** until promoted. They throw rather than fake-settle. The live SDK wiring (Plaid / viem+KMS) and the sandbox/anvil round-trips are a follow-up; see `services/execution/README.md`.
 
 ### State Transitions
 

@@ -196,11 +196,11 @@ The action-type catalog (item 14) is a static document of the propose
 vocabulary: each `action_type` plus the extra fields the propose tool
 requires (e.g. `x402_settle` needs `pay_to`; `escrow_release` needs
 `escrow_id` + `job_terms_hash`). On-chain settlement types are
-requested by NAME — there is no implicit resolver from
+requested by NAME. There is no implicit resolver from
 `onchain_transfer`.
 
 The `brain://proofs/{action_id}` resource (item 17) returns the same
-JSON the HTTP `GET /v1/proof/{action_id}` route returns — the §6 gate
+JSON the HTTP `GET /v1/proof/{action_id}` route returns. The §6 gate
 trace, the matched policy decision, the audit before/after pair, the
 Merkle proof, and the on-chain anchor tx hash. Requires `audit:read`.
 Tenant isolation is enforced: an action that belongs to another tenant

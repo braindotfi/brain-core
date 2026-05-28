@@ -4,7 +4,7 @@
 **Mapped from:** `main` HEAD `ff6d046` (2026-05-26)
 **Prior baseline:** [`_archive/2026-05-25-runtime-reality-audit.md`](./_archive/2026-05-25-runtime-reality-audit.md) (monolithic, rev 6)
 
-This document maps what exists — not what's intended. Every claim is backed by a file path or command result. Confidence levels explain the quality of each assertion.
+This document maps what exists. Not what's intended. Every claim is backed by a file path or command result. Confidence levels explain the quality of each assertion.
 
 ---
 
@@ -16,31 +16,31 @@ All packages declared in `pnpm-workspace.yaml` plus the non-pnpm Python containe
 |---|---|---|---|---|
 | `schemas/` | `@brain/schemas` | Type registry / JSON schema catalog | `schemas/index.ts` (re-exports only) | High |
 | `shared/` | `@brain/shared` | Cross-cutting primitives library | `shared/src/index.ts` (barrel) | High |
-| `services/api/` | `@brain/api` | **Sole TS runtime process** — HTTP gateway + worker host | `services/api/src/main.ts` (bin: `brain-server`) | High |
-| `services/raw/` | `@brain/raw` | Layer 1 ingestion — Fastify plugin composed into api | `services/raw/src/server.ts` (factory); no standalone `main.ts` | High |
-| `services/ledger/` | `@brain/ledger` | Layer 2 machine-readable truth — Fastify plugin + normalizeWorker | `services/ledger/src/server.ts`; worker exported as `startNormalizeWorker` | High |
-| `services/wiki/` | `@brain/wiki` | Layer 3 narrative/Q&A — Fastify plugin | `services/wiki/src/server.ts` | High |
-| `services/policy/` | `@brain/policy` | Layer 4 rule VM + EIP-712 signer — Fastify plugin | `services/policy/src/server.ts` | High |
-| `services/execution/` | `@brain/execution` | Layer 5 agent/payment orchestration — Fastify plugin + outbox worker | `services/execution/src/server.ts`; worker as `startOutboxWorker` | High |
-| `services/mcp/` | `@brain/mcp` | Layer 5′ MCP JSON-RPC surface — Fastify route plugin | `services/mcp/src/server.ts` (`BrainMcpServer`); mounted via `registerMcpRoute` | High |
-| `services/audit/` | `@brain/audit` | Layer 6 Merkle log + webhook dispatcher — Fastify plugin | `services/audit/src/server.ts` | High |
-| `services/agent-router/` | `@brain/agent-router` | Cross-cutting — BullMQ routing worker + route plugin; **no standalone process** | `services/agent-router/src/worker.ts` + `src/route.ts`; composed into api via `createAgentRouteWorker` | High |
-| `services/internal-agents/` | `@brain/internal-agents` | Cross-cutting — first-party agent catalog library; **no Fastify, no workers** | `services/internal-agents/src/index.ts` (catalog only) | High |
+| `services/api/` | `@brain/api` | **Sole TS runtime process**. HTTP gateway + worker host | `services/api/src/main.ts` (bin: `brain-server`) | High |
+| `services/raw/` | `@brain/raw` | Layer 1 ingestion. Fastify plugin composed into api | `services/raw/src/server.ts` (factory); no standalone `main.ts` | High |
+| `services/ledger/` | `@brain/ledger` | Layer 2 machine-readable truth. Fastify plugin + normalizeWorker | `services/ledger/src/server.ts`; worker exported as `startNormalizeWorker` | High |
+| `services/wiki/` | `@brain/wiki` | Layer 3 narrative/Q&A. Fastify plugin | `services/wiki/src/server.ts` | High |
+| `services/policy/` | `@brain/policy` | Layer 4 rule VM + EIP-712 signer. Fastify plugin | `services/policy/src/server.ts` | High |
+| `services/execution/` | `@brain/execution` | Layer 5 agent/payment orchestration. Fastify plugin + outbox worker | `services/execution/src/server.ts`; worker as `startOutboxWorker` | High |
+| `services/mcp/` | `@brain/mcp` | Layer 5′ MCP JSON-RPC surface. Fastify route plugin | `services/mcp/src/server.ts` (`BrainMcpServer`); mounted via `registerMcpRoute` | High |
+| `services/audit/` | `@brain/audit` | Layer 6 Merkle log + webhook dispatcher. Fastify plugin | `services/audit/src/server.ts` | High |
+| `services/agent-router/` | `@brain/agent-router` | Cross-cutting. BullMQ routing worker + route plugin; **no standalone process** | `services/agent-router/src/worker.ts` + `src/route.ts`; composed into api via `createAgentRouteWorker` | High |
+| `services/internal-agents/` | `@brain/internal-agents` | Cross-cutting. First-party agent catalog library; **no Fastify, no workers** | `services/internal-agents/src/index.ts` (catalog only) | High |
 | `clients/sdk/` | `@brain/sdk` | HTTP client SDK (codegen from OpenAPI); not published to npm | `clients/sdk/src/index.ts` | High |
 | `tools/migrate/` | `@brain/migrate` | CLI: apply `services/*/migrations/*.sql` | `tools/migrate/dist/cli.js` | High |
-| `tools/demo-reset/` | `@brain/demo-reset` | CLI: truncate + re-seed demo tenant | — | Medium |
-| `tools/dev-token/` | `@brain/dev-token` | CLI: mint dev JWTs | — | Medium |
-| `tools/plaid-sandbox/` | `@brain/plaid-sandbox` | CLI: pull Plaid Sandbox transactions | — | Medium |
-| `tools/seed-golden-path/` | `@brain/seed-golden-path` | CLI: seed golden-path demo dataset | — | Medium |
-| `tests/e2e/` | `@brain/e2e` | E2E: three "Series A" proof-point tests against staging | — | High |
-| `tests/invariants/` | `@brain/invariants` | Static + DB invariants (15 cross-layer + RLS coverage + DB integration) | — | High |
-| `tests/adversarial/` | `@brain/adversarial` | Adversarial safety suite — 10 logic + integration CI-only attack-vector tests | — | High |
+| `tools/demo-reset/` | `@brain/demo-reset` | CLI: truncate + re-seed demo tenant |. | Medium |
+| `tools/dev-token/` | `@brain/dev-token` | CLI: mint dev JWTs |. | Medium |
+| `tools/plaid-sandbox/` | `@brain/plaid-sandbox` | CLI: pull Plaid Sandbox transactions |. | Medium |
+| `tools/seed-golden-path/` | `@brain/seed-golden-path` | CLI: seed golden-path demo dataset |. | Medium |
+| `tests/e2e/` | `@brain/e2e` | E2E: three "Series A" proof-point tests against staging |. | High |
+| `tests/invariants/` | `@brain/invariants` | Static + DB invariants (15 cross-layer + RLS coverage + DB integration) |. | High |
+| `tests/adversarial/` | `@brain/adversarial` | Adversarial safety suite. 10 logic + integration CI-only attack-vector tests |. | High |
 | `services/agents/` *(not in pnpm)* | Python package | Python container: reconciliation agent + stubs | `services/agents/brain_agents/` | Medium |
 | `contracts/` *(not in pnpm)* | Foundry project | 4 Solidity contracts, Base Sepolia deployed | `contracts/src/*.sol` | High |
 
 **Dependency notes (per workspace `package.json`):**
 
-- `@brain/api` depends on: `@brain/agent-router`, `@brain/audit`, `@brain/execution`, `@brain/internal-agents`, `@brain/ledger`, `@brain/mcp`, `@brain/policy`, `@brain/raw`, `@brain/shared`, `@brain/wiki` — every other TS workspace.
+- `@brain/api` depends on: `@brain/agent-router`, `@brain/audit`, `@brain/execution`, `@brain/internal-agents`, `@brain/ledger`, `@brain/mcp`, `@brain/policy`, `@brain/raw`, `@brain/shared`, `@brain/wiki`. Every other TS workspace.
 - `@brain/execution` depends on: `@brain/shared`, `@brain/schemas`, `@brain/policy`, `@brain/ledger`.
 - `@brain/mcp` depends on: `@brain/shared`, `@brain/execution`, `@brain/ledger`, `@brain/wiki`.
 - `@brain/wiki` depends on: `@brain/shared`, `@brain/schemas`.
@@ -80,7 +80,7 @@ All six layer services and both agent infrastructure packages are composed as Fa
 
 | Entrypoint | File | Status |
 |---|---|---|
-| FastAPI app | `services/agents/brain_agents/` | Prior audit: UNHEALTHY (crash loop). Status as of 2026-05-26: not re-verified — requires Docker. |
+| FastAPI app | `services/agents/brain_agents/` | Prior audit: UNHEALTHY (crash loop). Status as of 2026-05-26: not re-verified. Requires Docker. |
 
 ---
 
@@ -90,15 +90,15 @@ All six layer services and both agent infrastructure packages are composed as Fa
 |---|---|---|---|
 | Root `Dockerfile` | `/Dockerfile` (multi-stage, Node 22-slim) | **Live deploy target** | Runs `node services/api/dist/main.js`. Single container for all TS services + workers. |
 | `services/agents/Dockerfile` | `services/agents/Dockerfile` | Live (in docker-compose) | Python container for `brain_agents`. |
-| `services/audit/Dockerfile` | Added P1.5 hardening | **CI build validation only** — cannot run | `CMD ["node", "services/audit/dist/main.js"]` → no standalone `main.js` exists. TODO noted in file header. |
-| `services/execution/Dockerfile` | Added P1.5 | **CI build validation only** | Same pattern — no standalone entrypoint. |
+| `services/audit/Dockerfile` | Added P1.5 hardening | **CI build validation only**. Cannot run | `CMD ["node", "services/audit/dist/main.js"]` → no standalone `main.js` exists. TODO noted in file header. |
+| `services/execution/Dockerfile` | Added P1.5 | **CI build validation only** | Same pattern. No standalone entrypoint. |
 | `services/ledger/Dockerfile` | Added P1.5 | **CI build validation only** | Same pattern. |
 | `services/mcp/Dockerfile` | Added P1.5 | **CI build validation only** | Same pattern. |
 | `services/policy/Dockerfile` | Added P1.5 | **CI build validation only** | Same pattern. |
 | `services/raw/Dockerfile` | Added P1.5 | **CI build validation only** | Same pattern. |
 | `services/wiki/Dockerfile` | Added P1.5 | **CI build validation only** | Same pattern. |
 
-**`docker-compose.yml` provisions** (infra-only — does NOT boot the TS API):
+**`docker-compose.yml` provisions** (infra-only. Does NOT boot the TS API):
 - `postgres`: pgvector/pgvector:pg16, port 5432, volume-persisted, `tools/postgres-init/` mounted as init scripts.
 - `redis`: redis:7-alpine, port 6379, appendonly persistence.
 - `localstack`: localstack/localstack:3, port 4566, S3 emulation.
@@ -133,7 +133,7 @@ Claimed in `Brain_MVP_Architecture.md` v0.4, `protocol/the-six-layer-stack.md`, 
 - `scripts/check-*.mjs` scripts enforce the most critical cross-layer violations (Policy-no-Wiki, Wiki-no-Ledger-write, Gate-bypass) at lint time.
 - All scripts are wired into `pnpm run lint` and pre-commit hooks.
 - Enforcement is static (AST/text grep), not runtime.
-- Layer isolation at the DB level depends on `brain_app` / `brain_privileged` roles from `infra/db-roles.sql` being applied — not a code-level guarantee.
+- Layer isolation at the DB level depends on `brain_app` / `brain_privileged` roles from `infra/db-roles.sql` being applied. Not a code-level guarantee.
 
 ---
 
@@ -181,7 +181,7 @@ These two workspaces type-check only transitively (via `@brain/agent-router` ←
 | **BullMQ** | api (3 queue producers), ledger (normalizeWorker), execution (outboxWorker), agent-router (routing worker) | `bullmq` | Required |
 | **S3 (LocalStack local / Azure prod)** | api (artifact uploads) | `@aws-sdk/client-s3` + presigner | Local: LocalStack; prod: Azure Blob (Terraform provisioned) |
 | **Plaid** | api (`AchPlaidRail`, rail client) | `plaid@^42.2.0` | Real implementation, live SDK integration TBD |
-| **Plaid** | raw (webhook ingest, source sync) | `plaid@^27.0.0` | **15-major-version skew** — likely API surface incompatibilities |
+| **Plaid** | raw (webhook ingest, source sync) | `plaid@^27.0.0` | **15-major-version skew**. Likely API surface incompatibilities |
 | **Anthropic** | wiki (Q&A), api (agent flows) | `@anthropic-ai/sdk` | Real call paths (credentials required) |
 | **OpenAI** | wiki (embedding?), internal-agents | `openai` | Consumed; credentials required |
 | **viem / Base RPC** | api (anchorBroadcaster, policy signer, onchain rail) | `viem`, `BASE_RPC_URL` env | Real implementation; live integration TBD |
@@ -201,17 +201,17 @@ Each service owns its schema in a dedicated Postgres schema namespace. The `tool
 | Service | Migration Dir | File Count | Notable Migrations |
 |---|---|---|---|
 | `services/api` | `services/api/migrations/` | 2 | `0001_tenants.sql` (RLS on `id = app.tenant_id`), `0002_tenants_default_ap_account.sql` |
-| `services/raw` | `services/raw/migrations/` | 7 | Artifacts, parsed, plaid_items, sources (new), force_rls. **Warning: two files share prefix `0004_`** (`0004_force_rls.sql` + `0004_raw_plaid_items_rls.sql`) — migration ordering conflict risk. |
+| `services/raw` | `services/raw/migrations/` | 7 | Artifacts, parsed, plaid_items, sources (new), force_rls. **Warning: two files share prefix `0004_`** (`0004_force_rls.sql` + `0004_raw_plaid_items_rls.sql`). Migration ordering conflict risk. |
 | `services/ledger` | `services/ledger/migrations/` | 20 | Categories → force_rls chain |
 | `services/wiki` | `services/wiki/migrations/` | 6 | Entities, relations, pages, role, force_rls |
 | `services/policy` | `services/policy/migrations/` | 4 | Policies, decisions, spend_counters (`period_window` rename), force_rls |
 | `services/execution` | `services/execution/migrations/` | 20 | Proposals (`0001`) → approvals_hardening (`0020`) |
 | `services/audit` | `services/audit/migrations/` | 7 | Audit_events, anchors, webhooks, dead_letters, domain_events, force_rls |
-| **Total** | — | **66** | `services/raw` has two files sharing prefix `0004_` — ordering conflict risk. |
+| **Total** |. | **66** | `services/raw` has two files sharing prefix `0004_`. Ordering conflict risk. |
 
 **P0 remediation claims (unverified in this map; require live DB in `database/migrations-and-rls.md`):**
-- `period_window` rename: `services/policy/migrations/0003_policy_spend_counters.sql` — verified in code, not yet in live DB.
-- Force-RLS migrations: six new `force_rls` files committed — code exists, live enforcement requires `infra/db-roles.sql` applied against a running DB.
+- `period_window` rename: `services/policy/migrations/0003_policy_spend_counters.sql`. Verified in code, not yet in live DB.
+- Force-RLS migrations: six new `force_rls` files committed. Code exists, live enforcement requires `infra/db-roles.sql` applied against a running DB.
 - New `tests/invariants/integration/db-invariants.integration.test.ts` (CI-only) asserts RLS isolation.
 
 ---
@@ -223,14 +223,14 @@ Each service owns its schema in a dedicated Postgres schema namespace. The `tool
 | Queue name | Producer | Consumer | Status |
 |---|---|---|---|
 | `brain.ledger.normalize` | `services/raw/` (post-ingest enqueue) | `startNormalizeWorker` (`services/ledger/`) | Active |
-| `brain.execution.outbox` | `PaymentIntentService.execute` (enqueues to outbox table, not directly to BullMQ) | `startOutboxWorker` (`services/execution/src/outbox/worker.ts`) — dequeues from DB outbox, dispatches rail | Active |
+| `brain.execution.outbox` | `PaymentIntentService.execute` (enqueues to outbox table, not directly to BullMQ) | `startOutboxWorker` (`services/execution/src/outbox/worker.ts`). Dequeues from DB outbox, dispatches rail | Active |
 | `brain.agents.route` | `registerAgentApiRoutes` (`POST /agents/route`) | `createAgentRouteWorker` (`services/agent-router/src/worker.ts`) | Active |
 
-*Exact queue names unverified — derived from worker registration patterns. Confirm in `queues/bullmq-queues.md`.*
+*Exact queue names unverified. Derived from worker registration patterns. Confirm in `queues/bullmq-queues.md`.*
 
 ### Domain Event Bus (`shared/src/events/`)
 
-New in 2026-05-25 hardening run. Purpose: emit structured domain events (`agent.mcp.tool_called`, etc.) for observability and downstream consumption. Whether events are consumed by any subscriber beyond logging is unverified — see `queues/domain-events.md`.
+New in 2026-05-25 hardening run. Purpose: emit structured domain events (`agent.mcp.tool_called`, etc.) for observability and downstream consumption. Whether events are consumed by any subscriber beyond logging is unverified. See `queues/domain-events.md`.
 
 ### Schedulers / Background Jobs
 
@@ -241,14 +241,14 @@ New in 2026-05-25 hardening run. Purpose: emit structured domain events (`agent.
 | Outbox worker | `services/execution/src/outbox/worker.ts` | BullMQ consumer | Rail dispatch (ACH Plaid, On-chain Base) |
 | Agent route worker | `services/agent-router/src/worker.ts` | BullMQ consumer | Intent → internal agent routing |
 | Webhook reconciler | `services/audit/src/reconciler.ts` | Scheduled or triggered | Dead-letter replay |
-| Webhook dispatcher | `services/audit/src/webhooks.ts` | Audit event trigger | Fire-and-forget (no retry queue yet — open debt) |
+| Webhook dispatcher | `services/audit/src/webhooks.ts` | Audit event trigger | Fire-and-forget (no retry queue yet. Open debt) |
 
 ---
 
 ## 9. MCP Surface
 
 **Runtime implementation:** `services/mcp/` (`@brain/mcp`).
-**Documentation:** `mcp-server/` (markdown only — not runtime).
+**Documentation:** `mcp-server/` (markdown only. Not runtime).
 
 | Attribute | Value |
 |---|---|
@@ -257,7 +257,7 @@ New in 2026-05-25 hardening run. Purpose: emit structured domain events (`agent.
 | Tools declared | 10 |
 | Tool categories | Ledger reads ×5, Wiki reads ×2, `raw.contribute` ×1, propose-only payment/agent actions ×2 |
 | Auth chain | Fastify JWT → agent `active` check → `scope_hash` match against on-chain `BrainMCPAgentRegistry` (60s cache, Base RPC) → tool scope → tenant equality |
-| No-execute defense | `payment_intent.execute` is NOT a tool — enforced by P1.2 hardening (snapshot test added) |
+| No-execute defense | `payment_intent.execute` is NOT a tool. Enforced by P1.2 hardening (snapshot test added) |
 | Cross-service DB concern | Prior audit: `services/mcp/src/auth.ts:117` queried execution's `agents` table directly. Must re-verify in `mcp/runtime.md`. |
 
 ---
@@ -265,7 +265,7 @@ New in 2026-05-25 hardening run. Purpose: emit structured domain events (`agent.
 ## 10. Smart-Contract Surface
 
 **Runtime contracts:** `contracts/src/` (Foundry project).
-**Documentation:** `smart-contracts/` (markdown only — no Solidity source).
+**Documentation:** `smart-contracts/` (markdown only. No Solidity source).
 
 | Contract | File | Base Sepolia Address | TS Consumer |
 |---|---|---|---|
@@ -292,7 +292,7 @@ Five `scripts/check-*.mjs` files run in `pnpm run lint` and pre-commit hook:
 | `check-promotion-readiness.mjs` | H-24: agent promotion from SHADOW to LIVE requires explicit gate | Import/flag analysis |
 | `check-scope-vocab.mjs` | Scope string literals must match the canonical scope vocabulary | String literal scan |
 
-All five are wired into `pnpm run lint`. Static enforcement only — violations cause lint failure, not runtime errors.
+All five are wired into `pnpm run lint`. Static enforcement only. Violations cause lint failure, not runtime errors.
 
 Additionally, `tests/invariants/` (`@brain/invariants`) enforces 15 cross-layer properties at test time including RLS coverage scan, tenant isolation, and schema invariants. `tests/adversarial/` adds 10 attack-vector unit tests (10 CI-only integration tests also present but require live DB).
 

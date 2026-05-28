@@ -25,7 +25,7 @@ Agent owners register once. Tenants do not see this step.
 ```typescript
 const agent = await brain.agents.register({
   address:        "0xAgentAddress",
-  identityRoot:   "0x...",         // ERC-8004 identity root (planned — RFC 0001)
+  identityRoot:   "0x...",         // ERC-8004 identity root (planned. RFC 0001)
   mcpEndpoint:    "https://my-agent.example.com/mcp",
   capabilities:   ["read", "propose_payment", "propose_action"],
 });
@@ -66,7 +66,7 @@ External agents can **propose** but cannot **execute**. Execution is reserved fo
 
 ### Step 3: the Agent Connects
 
-The MCP surface is a JSON-RPC endpoint on the same API host — there is no separate MCP hostname. The agent owner points their MCP runtime at:
+The MCP surface is a JSON-RPC endpoint on the same API host. There is no separate MCP hostname. The agent owner points their MCP runtime at:
 
 ```
 POST https://api.brain.fi/v1/agents/mcp           (production)

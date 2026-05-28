@@ -20,7 +20,7 @@ Think of Policy as the **standing rule** and the gate as the **flight check**. B
 
 ### The Core Steps
 
-The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol. These are the 13 numbered checks of the canonical happy path; 4 hardening additions are inserted at their correct positions (checks 1.5, 7.5, 9.5, 11.5 — see **Hardening Additions** below) for 17 entries total.
+The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol. These are the 13 numbered checks of the canonical happy path; 4 hardening additions are inserted at their correct positions (checks 1.5, 7.5, 9.5, 11.5. See **Hardening Additions** below) for 17 entries total.
 
 | #   | Step                                                                                           | Reads From                              |
 | --- | ---------------------------------------------------------------------------------------------- | --------------------------------------- |
@@ -55,7 +55,7 @@ These persist into the `gate_checks` snapshot on the audit-before event, so the 
 
 ### M2M / x402 settlement checks (dormant until wired)
 
-For agent-to-agent settlement (x402 USDC-on-Base and `BrainEscrow` releases), RFC 0001 adds five further deterministic checks at positions 3.5, 5.5, 6.5, 6.6, 8.5. Each is **dormant-until-wired**: it adds a row only when the PaymentIntent carries the relevant settlement/escrow context **and** its (deferred) on-chain loader is configured — otherwise it records nothing and the canonical 13 + 4 path is unchanged. None is a money path of its own; each only tightens an already-gated settlement.
+For agent-to-agent settlement (x402 USDC-on-Base and `BrainEscrow` releases), RFC 0001 adds five further deterministic checks at positions 3.5, 5.5, 6.5, 6.6, 8.5. Each is **dormant-until-wired**: it adds a row only when the PaymentIntent carries the relevant settlement/escrow context **and** its (deferred) on-chain loader is configured. Otherwise it records nothing and the canonical 13 + 4 path is unchanged. None is a money path of its own; each only tightens an already-gated settlement.
 
 | Check                                    | What It Enforces                                                                                                                                            | Reads From                        |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
@@ -125,7 +125,7 @@ This is the same logic as airline pre-flight checklists: not because the captain
 
 ### Dry-Run Mode (Agent Autonomy)
 
-The gate accepts a `dryRun` flag. In dry-run it runs the **same** checks against the **same** Ledger state and returns the same envelope, but does **not** insert a `policy_decisions` row, write a reservation, or emit audit events. Agents call dry-run before building a full proposal — to short-circuit obvious rejects and to decide `confirm` vs `execute`. There is **one** evaluator: the same gate code runs live and dry-run, so the two can never drift. The live gate still runs at execute time.
+The gate accepts a `dryRun` flag. In dry-run it runs the **same** checks against the **same** Ledger state and returns the same envelope, but does **not** insert a `policy_decisions` row, write a reservation, or emit audit events. Agents call dry-run before building a full proposal. To short-circuit obvious rejects and to decide `confirm` vs `execute`. There is **one** evaluator: the same gate code runs live and dry-run, so the two can never drift. The live gate still runs at execute time.
 
 ### Behavior Pinning Check
 

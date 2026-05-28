@@ -36,7 +36,7 @@ Brain selects based on:
    - capability match
    - policy compatibility
    - cost
-   - historical performance (on-chain reputation via BrainReputationRegistry — RFC 0001, testnet)
+   - historical performance (on-chain reputation via BrainReputationRegistry. RFC 0001, testnet)
    ↓
 Selection itself is an audited event
 ```
@@ -53,10 +53,10 @@ A category mismatch is a **scoring downgrade, not a hard reject**. A mismatched 
 
 When a request carries a free-form intent rather than a domain event, the router scores it against each agent's declared `intent_patterns`. Two classifier strategies share one interface, selected by the `AGENT_INTENT_CLASSIFIER` flag:
 
-- **`rules`** (default) — a deterministic token-overlap classifier. Fast and dependency-free, but it only matches phrasings that share words with a pattern.
-- **`embedding`** — embeds the intent and the patterns and scores by cosine similarity, so paraphrases match ("chase late-paying customers" routes to Collections even though it shares no tokens with "follow up on overdue invoice"). Pattern embeddings are cached and reindexed when the catalog changes.
+- **`rules`** (default). A deterministic token-overlap classifier. Fast and dependency-free, but it only matches phrasings that share words with a pattern.
+- **`embedding`**. Embeds the intent and the patterns and scores by cosine similarity, so paraphrases match ("chase late-paying customers" routes to Collections even though it shares no tokens with "follow up on overdue invoice"). Pattern embeddings are cached and reindexed when the catalog changes.
 
-The embedding classifier keeps the rules classifier as a **live fallback**: when an intent scores below the similarity threshold (or the embedding service is unavailable) the router falls back to token overlap. Selection scoring is unchanged — only the source of the intent-match score differs.
+The embedding classifier keeps the rules classifier as a **live fallback**: when an intent scores below the similarity threshold (or the embedding service is unavailable) the router falls back to token overlap. Selection scoring is unchanged. Only the source of the intent-match score differs.
 
 ### Three Execution Paths
 
@@ -73,7 +73,7 @@ Where an external agent is paid for its work, Brain coordinates settlement so th
 | **Escrowed jobs**          | `BrainEscrow` (UNAUDITED testnet) | Multi-step work where USDC releases incrementally as milestones complete |
 | **HTTP-native settlement** | x402                              | Per-call pay-per-use (an agent paying for an API call or tool call)      |
 
-For x402 the tenant's smart account / EOA pays and the agent's address receives. For conditional work, the immutable `BrainEscrow` contract escrows USDC against a hashed job commitment and releases/refunds incrementally — the arbiter can only ever pay the designated payee or refund the designated payer, never redirect. Brain records and proves the flow.
+For x402 the tenant's smart account / EOA pays and the agent's address receives. For conditional work, the immutable `BrainEscrow` contract escrows USDC against a hashed job commitment and releases/refunds incrementally. The arbiter can only ever pay the designated payee or refund the designated payer, never redirect. Brain records and proves the flow.
 
 **→ Escrow and x402 reference**
 
