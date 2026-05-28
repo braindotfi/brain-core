@@ -64,6 +64,13 @@ contract BrainEscrow is IBrainEscrow {
     }
 
     /// @inheritdoc IBrainEscrow
+    /// @dev Records the amount the escrow ACTUALLY received — the balanceOf
+    ///      delta across the transferFrom — rather than the nominal `amount`. A
+    ///      fee-on-transfer or rebasing token that delivers less than `amount`
+    ///      would otherwise leave the escrow under-collateralised while it
+    ///      believed it held the full sum, breaking the solvency invariant that
+    ///      release/refund rely on. For standard tokens (USDC) the delta equals
+    ///      `amount`. Reverts if nothing was received.
     function lock(
         bytes32 escrowId,
         address payee,
@@ -78,14 +85,18 @@ contract BrainEscrow is IBrainEscrow {
 
         // Pull funds first: the safe wrapper reverts on failure, so a failed
         // transfer rolls the whole tx back and records no escrow. nonReentrant
-        // prevents a malicious token from observing an intermediate state.
+        // prevents a malicious token from observing an intermediate state. We
+        // measure the balance delta and record THAT (fee-on-transfer guard).
+        uint256 balanceBefore = IERC20Minimal(token).balanceOf(address(this));
         _safeTransferFrom(token, msg.sender, address(this), amount);
+        uint256 received = IERC20Minimal(token).balanceOf(address(this)) - balanceBefore;
+        if (received == 0) revert ZeroAmount();
 
         _escrows[escrowId] = Escrow({
             payer: msg.sender,
             payee: payee,
             token: token,
-            amount: amount,
+            amount: received,
             released: 0,
             refunded: 0,
             jobTermsHash: jobTermsHash,
@@ -93,7 +104,7 @@ contract BrainEscrow is IBrainEscrow {
             state: State.Locked
         });
 
-        emit EscrowLocked(escrowId, msg.sender, payee, token, amount, jobTermsHash, deadline);
+        emit EscrowLocked(escrowId, msg.sender, payee, token, received, jobTermsHash, deadline);
     }
 
     /// @inheritdoc IBrainEscrow

@@ -48,8 +48,10 @@ contract ReentrantToken {
         targetId = _id;
     }
 
-    function transferFrom(address, address, uint256) external pure returns (bool) {
-        return true; // allow the lock to succeed
+    function transferFrom(address, address to, uint256 amount) external returns (bool) {
+        // Credit the escrow so the lock()'s balance-delta guard sees real funds.
+        balanceOf[to] += amount;
+        return true;
     }
 
     function transfer(address to, uint256 amount) external returns (bool) {
@@ -63,6 +65,65 @@ contract ReentrantToken {
         }
         balanceOf[to] += amount;
         return true;
+    }
+}
+
+/// @dev ERC-20 that skims a 1% fee on every transfer/transferFrom (the skimmed
+///      amount is burned). Models a fee-on-transfer token to prove the escrow
+///      records what it actually RECEIVED, not the nominal amount requested.
+contract FeeOnTransferToken {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    uint256 public constant FEE_BPS = 100; // 1%
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function _move(address from, address to, uint256 amount) internal {
+        uint256 fee = (amount * FEE_BPS) / 10_000;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount - fee; // fee disappears (skim)
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        _move(msg.sender, to, amount);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        allowance[from][msg.sender] -= amount;
+        _move(from, to, amount);
+        return true;
+    }
+}
+
+/// @dev Malicious token whose transferFrom reports success but moves nothing —
+///      proves the escrow rejects a lock that received zero.
+contract NoOpToken {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function transfer(address, uint256) external pure returns (bool) {
+        return true;
+    }
+
+    function transferFrom(address, address, uint256) external pure returns (bool) {
+        return true; // claims success, transfers nothing
     }
 }
 
@@ -156,6 +217,45 @@ contract BrainEscrowTest is Test {
         vm.prank(payer);
         vm.expectRevert(IBrainEscrow.ZeroAmount.selector);
         escrow.lock(ID, payee, address(token), 0, TERMS, deadline);
+    }
+
+    // --- fee-on-transfer guard (item 9) --------------------------------------
+
+    function test_lock_feeOnTransfer_recordsReceivedNotNominal() public {
+        FeeOnTransferToken fee = new FeeOnTransferToken();
+        bytes32 id = keccak256("fee");
+        uint256 nominal = 1_000e6;
+        uint256 net = nominal - (nominal * 100) / 10_000; // 1% skim → 990e6
+
+        fee.mint(payer, nominal);
+        vm.startPrank(payer);
+        fee.approve(address(escrow), nominal);
+        // The event must report the NET amount received, not the nominal request.
+        vm.expectEmit(true, true, true, true, address(escrow));
+        emit IBrainEscrow.EscrowLocked(id, payer, payee, address(fee), net, TERMS, deadline);
+        escrow.lock(id, payee, address(fee), nominal, TERMS, deadline);
+        vm.stopPrank();
+
+        // Stored amount == actual received; escrow holds exactly that, never less.
+        (,,, uint256 amount,,,,,) = escrow.getEscrow(id);
+        assertEq(amount, net);
+        assertEq(fee.balanceOf(address(escrow)), net);
+
+        // Releasing the full recorded amount settles and drains the escrow.
+        vm.prank(payer);
+        escrow.release(id, net);
+        assertEq(fee.balanceOf(address(escrow)), 0);
+        assertTrue(_state(id) == IBrainEscrow.State.Settled);
+    }
+
+    function test_lock_rejectsZeroReceived() public {
+        NoOpToken noop = new NoOpToken();
+        noop.mint(payer, AMOUNT);
+        vm.startPrank(payer);
+        noop.approve(address(escrow), AMOUNT);
+        vm.expectRevert(IBrainEscrow.ZeroAmount.selector);
+        escrow.lock(keccak256("noop"), payee, address(noop), AMOUNT, TERMS, deadline);
+        vm.stopPrank();
     }
 
     // --- release (full + partial / milestones) -------------------------------

@@ -70,17 +70,70 @@ contract BrainAuditAnchorTest is Test {
         anchor.anchor(TENANT_A, keccak256("r"), 1, 200, 100);
     }
 
-    function test_setPublisher_rotates() public {
+    function test_setPublisher_isTwoStep() public {
         address next = address(0xCAFE);
         vm.prank(publisher);
         anchor.setPublisher(next);
+        // Rotation does NOT take effect until the new publisher accepts.
+        assertEq(anchor.publisher(), publisher);
+        assertEq(anchor.pendingPublisher(), next);
+
+        vm.expectEmit(true, true, false, false, address(anchor));
+        emit BrainAuditAnchor.PublisherChanged(publisher, next);
+        vm.prank(next);
+        anchor.acceptPublisher();
         assertEq(anchor.publisher(), next);
+        assertEq(anchor.pendingPublisher(), address(0));
     }
 
     function test_setPublisher_onlyCurrentPublisher() public {
         vm.prank(nonPublisher);
         vm.expectRevert(BrainAuditAnchor.NotPublisher.selector);
         anchor.setPublisher(address(0xCAFE));
+    }
+
+    function test_acceptPublisher_onlyPending() public {
+        address next = address(0xCAFE);
+        vm.prank(publisher);
+        anchor.setPublisher(next);
+        // A non-pending address cannot accept the role.
+        vm.prank(nonPublisher);
+        vm.expectRevert(BrainAuditAnchor.NotPendingPublisher.selector);
+        anchor.acceptPublisher();
+        assertEq(anchor.publisher(), publisher);
+    }
+
+    function test_setPublisher_cancel() public {
+        address next = address(0xCAFE);
+        vm.prank(publisher);
+        anchor.setPublisher(next);
+        // Cancel the pending rotation by proposing the zero address.
+        vm.prank(publisher);
+        anchor.setPublisher(address(0));
+        assertEq(anchor.pendingPublisher(), address(0));
+        // The previously-pending publisher can no longer accept.
+        vm.prank(next);
+        vm.expectRevert(BrainAuditAnchor.NotPendingPublisher.selector);
+        anchor.acceptPublisher();
+        assertEq(anchor.publisher(), publisher);
+    }
+
+    /// The publisher role still anchors after a completed two-step rotation.
+    function test_acceptPublisher_newPublisherCanAnchor() public {
+        address next = address(0xCAFE);
+        vm.prank(publisher);
+        anchor.setPublisher(next);
+        vm.prank(next);
+        anchor.acceptPublisher();
+
+        // Old publisher is locked out; new publisher can anchor.
+        vm.prank(publisher);
+        vm.expectRevert(BrainAuditAnchor.NotPublisher.selector);
+        anchor.anchor(TENANT_A, keccak256("r"), 1, 0, 1);
+
+        vm.prank(next);
+        anchor.anchor(TENANT_A, keccak256("r"), 1, 0, 1);
+        assertTrue(anchor.isPublished(TENANT_A, keccak256("r")));
     }
 
     // --- Merkle verify ---

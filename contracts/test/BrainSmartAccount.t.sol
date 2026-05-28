@@ -576,4 +576,146 @@ contract BrainSmartAccountTest is Test {
         vm.expectRevert(BrainSmartAccount.KeyNotActive.selector);
         acct.executeViaSessionKey(0, address(target), 1 ether, data);
     }
+
+    // --- Two-step ownership (item 8 / Ownable2Step) --------------------------
+
+    function _grantKeyFor(address h, address t) internal {
+        address[] memory targets = new address[](1);
+        targets[0] = t;
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = Target.ping.selector;
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: h,
+            validAfter: 0,
+            validUntil: block.timestamp + 3600,
+            allowedTargets: targets,
+            allowedSelectors: selectors,
+            maxPerTx: 1 ether,
+            maxPerPeriod: 5 ether,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+    }
+
+    function test_transferOwnership_isTwoStep() public {
+        address newOwner = address(0xC0FFEE);
+        vm.prank(ownerKey);
+        acct.transferOwnership(newOwner);
+        // Ownership does NOT move until the pending owner accepts.
+        assertEq(acct.owner(), ownerKey);
+        assertEq(acct.pendingOwner(), newOwner);
+
+        vm.prank(newOwner);
+        acct.acceptOwnership();
+        assertEq(acct.owner(), newOwner);
+        assertEq(acct.pendingOwner(), address(0));
+    }
+
+    function test_transferOwnership_onlyOwner() public {
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(BrainSmartAccount.NotOwner.selector);
+        acct.transferOwnership(address(0xC0FFEE));
+    }
+
+    function test_acceptOwnership_onlyPendingOwner() public {
+        address newOwner = address(0xC0FFEE);
+        vm.prank(ownerKey);
+        acct.transferOwnership(newOwner);
+        // A non-pending address cannot accept.
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(BrainSmartAccount.NotPendingOwner.selector);
+        acct.acceptOwnership();
+        assertEq(acct.owner(), ownerKey);
+    }
+
+    function test_transferOwnership_cancel() public {
+        address newOwner = address(0xC0FFEE);
+        vm.prank(ownerKey);
+        acct.transferOwnership(newOwner);
+        // Cancel by proposing the zero address.
+        vm.prank(ownerKey);
+        acct.transferOwnership(address(0));
+        assertEq(acct.pendingOwner(), address(0));
+        // The previously-pending owner can no longer accept.
+        vm.prank(newOwner);
+        vm.expectRevert(BrainSmartAccount.NotPendingOwner.selector);
+        acct.acceptOwnership();
+        assertEq(acct.owner(), ownerKey);
+    }
+
+    function test_acceptOwnership_transfersOwnerPowers() public {
+        address newOwner = address(0xC0FFEE);
+        vm.prank(ownerKey);
+        acct.transferOwnership(newOwner);
+        vm.prank(newOwner);
+        acct.acceptOwnership();
+
+        // Old owner is locked out of owner-only functions; new owner is in.
+        vm.prank(ownerKey);
+        vm.expectRevert(BrainSmartAccount.NotOwner.selector);
+        acct.pauseSessionKey(holder);
+
+        vm.prank(newOwner);
+        acct.pauseSessionKey(holder);
+        assertTrue(acct.isSessionKeyPaused(holder));
+    }
+
+    // --- Account-wide kill-switch (item 10) ----------------------------------
+
+    function test_pauseAll_onlyOwner() public {
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(BrainSmartAccount.NotOwner.selector);
+        acct.pauseAll();
+    }
+
+    function test_pauseAll_blocksAllHoldersRegardlessOfPerHolderState() public {
+        address holder2 = address(0xB0B2);
+        _grantBasicKey(address(target)); // holder
+        _grantKeyFor(holder2, address(target));
+        assertFalse(acct.isAccountPaused());
+
+        vm.prank(ownerKey);
+        acct.pauseAll();
+        assertTrue(acct.isAccountPaused());
+
+        // Neither holder is individually paused, yet both are blocked.
+        assertFalse(acct.isSessionKeyPaused(holder));
+        assertFalse(acct.isSessionKeyPaused(holder2));
+        bytes memory data = abi.encodeCall(Target.ping, (1));
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.AccountIsPaused.selector);
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, data);
+        vm.prank(holder2);
+        vm.expectRevert(BrainSmartAccount.AccountIsPaused.selector);
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, data);
+    }
+
+    function test_unpauseAll_restoresPriorPerHolderState() public {
+        address holder2 = address(0xB0B2);
+        _grantBasicKey(address(target)); // holder
+        _grantKeyFor(holder2, address(target));
+
+        // Individually pause holder (not holder2), then engage the account-wide pause.
+        vm.prank(ownerKey);
+        acct.pauseSessionKey(holder);
+        vm.prank(ownerKey);
+        acct.pauseAll();
+
+        // Lift the account-wide pause.
+        vm.prank(ownerKey);
+        acct.unpauseAll();
+        assertFalse(acct.isAccountPaused());
+
+        bytes memory data = abi.encodeCall(Target.ping, (1));
+        // holder was individually paused → still blocked with KeyPaused.
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.KeyPaused.selector);
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, data);
+        // holder2 was never individually paused → executes again.
+        vm.prank(holder2);
+        acct.executeViaSessionKey(0, address(target), 0.5 ether, data);
+        assertEq(target.counter(), 1);
+    }
 }
