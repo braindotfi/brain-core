@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { decryptCredentials, encryptCredentials } from "./aes-gcm.js";
+import { decodeEnvCredentialKey, decryptCredentials, encryptCredentials } from "./aes-gcm.js";
 
 const KEY = randomBytes(32);
 const KEY_ID = "test-v1";
@@ -40,5 +40,30 @@ describe("encryptCredentials / decryptCredentials", () => {
   it("throws when ciphertext is too short", () => {
     const tooShort = Buffer.alloc(10);
     expect(() => decryptCredentials(tooShort, KEY)).toThrow("too short");
+  });
+});
+
+describe("decodeEnvCredentialKey — production fail-closed guard", () => {
+  const ENV_KEY_B64 = randomBytes(32).toString("base64");
+
+  it("returns undefined when env-var is unset (any environment)", () => {
+    expect(decodeEnvCredentialKey({ envVarKey: undefined, nodeEnv: "production" })).toBeUndefined();
+    expect(decodeEnvCredentialKey({ envVarKey: undefined, nodeEnv: "development" })).toBeUndefined();
+  });
+
+  it("decodes the env-var in non-production environments", () => {
+    const buf = decodeEnvCredentialKey({ envVarKey: ENV_KEY_B64, nodeEnv: "development" });
+    expect(buf).toBeInstanceOf(Buffer);
+    expect(buf?.length).toBe(32);
+  });
+
+  it("throws in production when the env-var path is used (Key Vault required)", () => {
+    expect(() =>
+      decodeEnvCredentialKey({ envVarKey: ENV_KEY_B64, nodeEnv: "production" }),
+    ).toThrow(/forbidden in NODE_ENV=production/);
+  });
+
+  it("does not throw in production when the env-var is unset (caller decides)", () => {
+    expect(() => decodeEnvCredentialKey({ envVarKey: undefined, nodeEnv: "production" })).not.toThrow();
   });
 });

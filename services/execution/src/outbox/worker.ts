@@ -127,6 +127,20 @@ export async function processClaimedRow(
   const ctx = ctxForRow(row, deps.workerId);
   const executionId = newExecutionId();
 
+  // 0 — §6 runtime invariant: refuse to dispatch if audit-before never fired
+  // for this row. PaymentIntentService.execute writes audit_before_id atomically
+  // with the outbox row, and scripts/check-gate-bypass.mjs forbids any rail
+  // dispatch site outside this worker. This is the runtime belt to that
+  // commit-time suspender: if a code path ever races around the lint guard, we
+  // refuse to move money, mark the row reconciling, and emit a loud audit event
+  // so ops sees it immediately. Defence in depth, not a substitute for the gate.
+  if (!row.audit_before_id || row.audit_before_id.length === 0) {
+    const reason = `§6 invariant violated: outbox row has no audit_before_id; refusing to dispatch`;
+    await deps.withPrivileged((c) => deps.outbox.markReconciling(c, row.id, reason));
+    await emitStuck(deps, row, row.attempt_count, reason);
+    return "reconciling";
+  }
+
   // 1 — dispatch the rail.
   let receipt: Record<string, unknown>;
   try {

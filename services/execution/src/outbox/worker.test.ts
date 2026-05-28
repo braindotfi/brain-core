@@ -196,6 +196,22 @@ describe("processClaimedRow", () => {
     expect(outbox.markFailed).toHaveBeenCalledTimes(1);
     expect(outbox.markSettled).not.toHaveBeenCalled();
   });
+
+  it("§6 runtime invariant: refuses to dispatch a row with no audit_before_id", async () => {
+    // Belt to the gate-bypass lint suspender: if a code path ever races around
+    // scripts/check-gate-bypass.mjs and writes an outbox row before audit-before
+    // fires, the worker must NOT move money. It reconciles + emits a stuck event.
+    const { deps, outbox, executor, audit } = makeDeps({});
+    const outcome = await processClaimedRow(deps, makeRow({ audit_before_id: "" }));
+
+    expect(outcome).toBe("reconciling");
+    // Did not dispatch the rail.
+    expect(executor.completeExecution).not.toHaveBeenCalled();
+    expect(outbox.markReconciling).toHaveBeenCalledTimes(1);
+    const stuck = audit.events.find((e) => e.action === "execution.outbox.stuck");
+    expect(stuck).toBeDefined();
+    expect(String(stuck?.outputs.last_error)).toContain("audit_before_id");
+  });
 });
 
 describe("runOutboxCycle", () => {

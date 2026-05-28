@@ -4,11 +4,33 @@
  * Wire format: iv (12 bytes) || authTag (16 bytes) || ciphertext.
  *
  * Production keys come from Azure Key Vault. The env-var path
- * (BRAIN_SOURCE_CREDENTIAL_KEY) is for staging/dev only.
- * TODO: throw at boot when NODE_ENV=production and env-var path is used.
+ * (BRAIN_SOURCE_CREDENTIAL_KEY) is for staging/dev only — guarded at boot via
+ * {@link decodeEnvCredentialKey} so a production boot that tries to use it
+ * fails closed instead of silently encrypting under a weak/env-only key.
  */
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+
+/**
+ * Decode the BRAIN_SOURCE_CREDENTIAL_KEY env-var into a key buffer. In
+ * NODE_ENV=production this path is forbidden — production must source the key
+ * from a real KMS (Azure Key Vault); the env-var path is for staging/dev. Throws
+ * in production if the env-var is set; returns `undefined` when the env-var is
+ * unset (the caller decides whether running without encryption is acceptable —
+ * which it is NOT in production).
+ */
+export function decodeEnvCredentialKey(opts: {
+  envVarKey: string | undefined;
+  nodeEnv: string | undefined;
+}): Buffer | undefined {
+  if (opts.envVarKey === undefined) return undefined;
+  if (opts.nodeEnv === "production") {
+    throw new Error(
+      "aes-gcm: BRAIN_SOURCE_CREDENTIAL_KEY env-var path is forbidden in NODE_ENV=production; source the key from Azure Key Vault",
+    );
+  }
+  return Buffer.from(opts.envVarKey, "base64");
+}
 
 const IV_BYTES = 12;
 const AUTH_TAG_BYTES = 16;

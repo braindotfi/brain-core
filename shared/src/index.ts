@@ -155,4 +155,8 @@ export * from "./events/types.js";
 export * from "./events/bus.js";
 
 // Credential encryption helpers (source secrets at rest).
-export { encryptCredentials, decryptCredentials } from "./crypto/aes-gcm.js";
+export {
+  encryptCredentials,
+  decryptCredentials,
+  decodeEnvCredentialKey,
+} from "./crypto/aes-gcm.js";
