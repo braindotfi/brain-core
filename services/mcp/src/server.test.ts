@@ -345,6 +345,140 @@ describe("BrainMcpServer.handle — payment_intent.propose scope gate", () => {
   });
 });
 
+describe("BrainMcpServer.handle — payment_intent.propose on-chain settlement (item 14)", () => {
+  function serverWithCapture(scopes: string[]) {
+    const created: Array<Record<string, unknown>> = [];
+    const base = fakePI();
+    const pi = {
+      ...base,
+      create: vi.fn(async (_ctx: unknown, input: Record<string, unknown>) => {
+        created.push(input);
+        return {
+          id: "pi_TEST",
+          owner_id: TENANT,
+          source_ids: [],
+          evidence_ids: [],
+          provenance: "inferred" as const,
+          confidence: 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          created_by_agent_id: null,
+          action_type: input.action_type,
+          source_account_id: input.source_account_id,
+          destination_counterparty_id: input.destination_counterparty_id,
+          amount: input.amount,
+          currency: input.currency,
+          obligation_id: null,
+          invoice_id: null,
+          status: "approved" as const,
+          policy_decision_id: "pd_TEST",
+          approval_ids: [],
+          execution_receipt_ids: [],
+        };
+      }),
+    } as unknown as IPaymentIntentService;
+    const server = new BrainMcpServer({
+      auth: new FakeAuthVerifier(ACTIVE_AGENT),
+      ledger: fakeLedger(),
+      wiki: fakeWiki(),
+      raw: fakeRaw(),
+      paymentIntents: pi,
+      audit: new InMemoryAuditEmitter(),
+    });
+    return { server, created, p: principal(scopes) };
+  }
+
+  function propose(args: Record<string, unknown>) {
+    return {
+      jsonrpc: "2.0" as const,
+      id: 1,
+      method: "tools/call",
+      params: { name: "payment_intent.propose", arguments: args },
+    };
+  }
+
+  const baseArgs = {
+    source_account_id: "acct_x",
+    destination_counterparty_id: "cp_y",
+    amount: "5.00",
+    currency: "USDC",
+  };
+
+  it("accepts x402_settle with pay_to and forwards it to create", async () => {
+    const { server, created, p } = serverWithCapture(["payment_intent:propose"]);
+    const payTo = "0x" + "ab".repeat(20);
+    const res = await server.handle(
+      propose({ ...baseArgs, action_type: "x402_settle", pay_to: payTo }),
+      p,
+    );
+    expect("result" in res).toBe(true);
+    expect(created).toHaveLength(1);
+    expect(created[0]!.action_type).toBe("x402_settle");
+    expect(created[0]!.pay_to).toBe(payTo);
+  });
+
+  it("rejects x402_settle without pay_to", async () => {
+    const { server, p } = serverWithCapture(["payment_intent:propose"]);
+    const res = await server.handle(propose({ ...baseArgs, action_type: "x402_settle" }), p);
+    expect("error" in res && res.error.code).toBe(-32602);
+  });
+
+  it("rejects on-chain settlement in a non-USDC currency", async () => {
+    const { server, p } = serverWithCapture(["payment_intent:propose"]);
+    const res = await server.handle(
+      propose({
+        ...baseArgs,
+        currency: "USD",
+        action_type: "x402_settle",
+        pay_to: "0x" + "ab".repeat(20),
+      }),
+      p,
+    );
+    expect("error" in res && res.error.code).toBe(-32602);
+  });
+
+  it("accepts escrow_release with escrow_id + job_terms_hash", async () => {
+    const { server, created, p } = serverWithCapture(["payment_intent:propose"]);
+    const escrowId = "0x" + "11".repeat(32);
+    const jobTermsHash = "0x" + "22".repeat(32);
+    const res = await server.handle(
+      propose({
+        ...baseArgs,
+        action_type: "escrow_release",
+        escrow_id: escrowId,
+        job_terms_hash: jobTermsHash,
+      }),
+      p,
+    );
+    expect("result" in res).toBe(true);
+    expect(created[0]!.escrow_id).toBe(escrowId);
+    expect(created[0]!.job_terms_hash).toBe(jobTermsHash);
+  });
+
+  it("serves the action_type catalog resource", async () => {
+    const { server, p } = serverWithCapture(["payment_intent:propose"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "brain://payments/action_types" },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { contents: Array<{ text: string }> };
+      const body = JSON.parse(r.contents[0]!.text) as {
+        action_types: Array<{ action_type: string }>;
+      };
+      const names = body.action_types.map((a) => a.action_type);
+      expect(names).toContain("x402_settle");
+      expect(names).toContain("escrow_release");
+    }
+  });
+});
+
 describe("BrainMcpServer.handle — remaining prompt renders", () => {
   it("prompts/get renders wiki.question.bills_due with default days", async () => {
     const { server, p } = makeServer();

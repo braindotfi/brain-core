@@ -1468,9 +1468,9 @@ paths:
           * `initialize`, `ping`
           * `tools/list`, `tools/call` — 10 tools across ledger, wiki,
             raw evidence, payment intents, and agent action proposals
-          * `resources/list`, `resources/read` — 5 resource templates
-            (ledger accounts/transactions/payment-intents, wiki pages,
-            raw evidence)
+          * `resources/list`, `resources/read` — 6 resource templates
+            (ledger accounts/transactions/obligations/payment-intents,
+            wiki pages, payments action_types catalog)
           * `prompts/list`, `prompts/get` — 5 canned prompts
 
         Tools enforce per-call scopes (e.g. `ledger:read`,
