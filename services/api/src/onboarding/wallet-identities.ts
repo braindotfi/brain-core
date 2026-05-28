@@ -14,8 +14,16 @@
  * brain_privileged pool — the same sanctioned entry point as the agent lookup.
  */
 
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
-import { brainError, withTenantScope, type TenantScopedClient } from "@brain/shared";
+import { z } from "zod";
+import {
+  brainError,
+  requireScope,
+  withTenantScope,
+  type Scope,
+  type TenantScopedClient,
+} from "@brain/shared";
 
 export type WalletPrincipalType = "human" | "agent";
 
@@ -96,4 +104,75 @@ export class PostgresWalletIdentityReader {
       principalId: row.principal_id,
     };
   }
+}
+
+const linkBody = z.object({
+  address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+  principal_type: z.enum(["human", "agent"]),
+  principal_id: z.string().min(1).optional(),
+});
+
+/**
+ * Authenticated link route — RFC 0002 Phase D.
+ *
+ *   POST /v1/tenants/:tenant_id/wallets  (owner JWT)
+ *
+ * Links a wallet to the caller's tenant. Tenant equality is enforced (the path
+ * id must match the token's tenant), gated on a management scope. A human link
+ * defaults to the calling owner (`principal.id`); an agent link must name the
+ * agent id. Registered only when self-serve onboarding is enabled.
+ */
+export async function registerWalletRoutes(
+  app: FastifyInstance,
+  deps: { pool: Pool },
+): Promise<void> {
+  app.post(
+    "/tenants/:tenant_id/wallets",
+    async (req: FastifyRequest<{ Params: { tenant_id: string } }>, reply: FastifyReply) => {
+      const principal = req.principal;
+      if (principal === undefined) {
+        throw brainError("auth_token_missing", "principal required");
+      }
+      if (req.params.tenant_id !== principal.tenantId) {
+        throw brainError(
+          "auth_tenant_mismatch",
+          "tenant_id does not match the authenticated tenant",
+        );
+      }
+      // Management capability — tenant owners carry policy:write.
+      requireScope(principal.scopes, "policy:write" as Scope);
+
+      const parsed = linkBody.safeParse(req.body);
+      if (!parsed.success) {
+        throw brainError(
+          "request_body_invalid",
+          "address (0x…40 hex) and principal_type are required",
+        );
+      }
+      const principalType = parsed.data.principal_type;
+      // Humans default to the calling owner; agents must name the agent id.
+      const principalId =
+        principalType === "human"
+          ? (parsed.data.principal_id ?? principal.id)
+          : parsed.data.principal_id;
+      if (principalId === undefined || principalId.length === 0) {
+        throw brainError("request_body_invalid", "principal_id is required for an agent link");
+      }
+
+      await linkWallet(deps.pool, {
+        tenantId: principal.tenantId,
+        address: parsed.data.address,
+        principalType,
+        principalId,
+      });
+
+      reply.status(201);
+      return {
+        linked: true,
+        address: parsed.data.address.toLowerCase(),
+        principal_type: principalType,
+        principal_id: principalId,
+      };
+    },
+  );
 }

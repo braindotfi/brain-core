@@ -31,6 +31,8 @@ import type { Pool } from "pg";
 import { SiweMessage, generateNonce } from "siwe";
 import { brainError, brainId, newAgentId, newTokenId } from "@brain/shared";
 import type { JwtSigner, Scope } from "@brain/shared";
+import { OWNER_SCOPES } from "../onboarding/login.js";
+import type { ResolvedWalletIdentity } from "../onboarding/wallet-identities.js";
 
 const NONCE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_AGENT_TTL_SECONDS = 60 * 60; // 1 hour per docs
@@ -62,6 +64,14 @@ export interface SiwxOptions {
   /** EIP-4361 `domain` claim. Defaults to `"api.brain.fi"`. */
   readonly domain?: string;
   readonly registry: AgentRegistryLookup;
+  /**
+   * RFC 0002 Phase D: resolve a wallet to a linked tenant principal. When a
+   * wallet is linked to a HUMAN owner, SIWX mints an owner JWT (the same
+   * management scopes as /auth/login) instead of an agent token — so a tenant
+   * can sign in with email OR a linked wallet. Additive: when unset, or the
+   * wallet isn't a human link, sign-in falls through to the agent path.
+   */
+  readonly resolveWalletIdentity?: (address: string) => Promise<ResolvedWalletIdentity | null>;
   /** Redis client for nonce persistence across replicas. */
   readonly redis: Redis;
   /** Override the token TTL for tests. */
@@ -186,6 +196,38 @@ export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions
       }
 
       const address = verifyResult.data.address.toLowerCase();
+
+      // RFC 0002 Phase D: a wallet linked to a HUMAN owner mints an owner JWT
+      // (management/read/approve scopes — never propose/execute), so a tenant can
+      // sign in with email OR a linked wallet. Checked before the agent path;
+      // additive (falls through when unwired or the wallet isn't a human link).
+      if (opts.resolveWalletIdentity !== undefined) {
+        const wallet = await opts.resolveWalletIdentity(address);
+        if (wallet !== null && wallet.principalType === "human") {
+          const humanExpiresAt = Math.floor(Date.now() / 1000) + tokenTtl;
+          const humanToken = await opts.signer.sign({
+            id: wallet.principalId,
+            type: "user",
+            tenantId: wallet.tenantId,
+            scopes: OWNER_SCOPES as Scope[],
+            tokenId: newTokenId(),
+            expiresAt: humanExpiresAt,
+          });
+          reply.status(200);
+          return {
+            access_token: humanToken,
+            token_type: "Bearer",
+            expires_in: tokenTtl,
+            principal: {
+              id: wallet.principalId,
+              type: "user",
+              tenantId: wallet.tenantId,
+              scopes: OWNER_SCOPES,
+            },
+          };
+        }
+      }
+
       const resolution = await opts.registry.resolveByAddress(address);
       if (resolution === null) {
         throw brainError("agent_not_found", `no active agent registered for ${address}`);

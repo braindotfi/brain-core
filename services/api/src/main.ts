@@ -59,6 +59,10 @@ import {
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
 import { registerPasswordLoginRoute, PostgresUserCredentialReader } from "./onboarding/login.js";
+import {
+  registerWalletRoutes,
+  PostgresWalletIdentityReader,
+} from "./onboarding/wallet-identities.js";
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { registerProofViewRoute } from "./proof/view.js";
@@ -1403,10 +1407,16 @@ async function main(): Promise<void> {
       const agentRegistry = cfg.BRAIN_DEMO_MODE
         ? new StubAgentRegistry()
         : new PostgresAgentRegistry(pool);
+      // RFC 0002 Phase D: SIWX resolves a wallet linked to a HUMAN owner to an
+      // owner JWT (email-or-wallet login). Cross-tenant read ⇒ privileged pool.
+      // Always wired — additive and harmless (returns null absent any link, so
+      // sign-in falls through to the agent path).
+      const walletIdentityReader = new PostgresWalletIdentityReader(privilegedPool);
       await v1.register(async (child) =>
         registerSiwxRoutes(child, {
           signer: siwxSigner,
           registry: agentRegistry,
+          resolveWalletIdentity: (addr) => walletIdentityReader.resolveByAddress(addr),
           redis,
           ...(cfg.BRAIN_DEMO_MODE ? { demoMode: true } : {}),
         }),
@@ -1436,6 +1446,8 @@ async function main(): Promise<void> {
             tokenTtlSeconds: 15 * 60,
           }),
         );
+        // Authenticated wallet-link route (owner JWT) → wallet_identities.
+        await v1.register(async (child) => registerWalletRoutes(child, { pool }));
       }
 
       if (cfg.BRAIN_DEMO_MODE) {

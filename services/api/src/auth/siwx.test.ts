@@ -12,6 +12,7 @@ import {
   type AgentRegistryLookup,
   type AgentResolution,
 } from "./siwx.js";
+import type { ResolvedWalletIdentity } from "../onboarding/wallet-identities.js";
 
 function makeRedisStub(): Redis {
   const store = new Map<string, string>();
@@ -45,7 +46,10 @@ const HS256_KEY = {
 
 async function buildApp(
   registry: AgentRegistryLookup,
-  opts?: { demoMode?: boolean },
+  opts?: {
+    demoMode?: boolean;
+    resolveWalletIdentity?: (address: string) => Promise<ResolvedWalletIdentity | null>;
+  },
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(requestIdPlugin);
@@ -217,6 +221,62 @@ describe("POST /auth/siwx — happy path", () => {
     const b = await issue();
     expect(a.id).toBe(b.id);
     expect(a.tenantId).toBe(b.tenantId);
+  });
+});
+
+describe("POST /auth/siwx — Phase D human wallet login", () => {
+  async function signIn(
+    app: FastifyInstance,
+  ): Promise<{ id: string; type: string; tenantId: string; scopes: string[] }> {
+    const challenge = (
+      await app.inject({ method: "POST", url: "/auth/siwx/challenge" })
+    ).json() as Record<string, string>;
+    const signed = await makeSignedMessage({ nonce: challenge["nonce"] ?? "" });
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/siwx",
+      payload: {
+        message: signed.message,
+        signature: signed.signature,
+        session_id: challenge["session_id"],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    return (
+      res.json() as { principal: { id: string; type: string; tenantId: string; scopes: string[] } }
+    ).principal;
+  }
+
+  it("mints an owner JWT (user, management scopes — no propose/execute) for a human-linked wallet", async () => {
+    const app = await buildApp(new StubAgentRegistry(), {
+      resolveWalletIdentity: async () => ({
+        tenantId: "tnt_01J0000000000000000000000Z",
+        principalType: "human",
+        principalId: "user_01J0000000000000000000000A",
+      }),
+    });
+    const principal = await signIn(app);
+    expect(principal.type).toBe("user");
+    expect(principal.id).toBe("user_01J0000000000000000000000A");
+    expect(principal.tenantId).toBe("tnt_01J0000000000000000000000Z");
+    expect(principal.scopes).toContain("payment_intent:approve");
+    for (const forbidden of [
+      "payment_intent:propose",
+      "payment_intent:execute",
+      "execution:propose",
+    ]) {
+      expect(principal.scopes).not.toContain(forbidden);
+    }
+    await app.close();
+  });
+
+  it("falls through to the agent path when the wallet is not a human link", async () => {
+    const app = await buildApp(new StubAgentRegistry(), {
+      resolveWalletIdentity: async () => null,
+    });
+    const principal = await signIn(app);
+    expect(principal.type).toBe("agent");
+    await app.close();
   });
 });
 
