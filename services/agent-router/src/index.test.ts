@@ -25,9 +25,11 @@ describe("@brain/agent-router barrel", () => {
 
 describe("LIVE_AGENTS promotion config", () => {
   it("promotes all 19 internal agents to ach + onchain rails", () => {
-    const agents = Object.keys(LIVE_AGENTS.liveAgents);
+    // liveAgents is typed as optional on PromotionConfig; LIVE_AGENTS sets it.
+    const live = LIVE_AGENTS.liveAgents ?? {};
+    const agents = Object.keys(live);
     expect(agents).toHaveLength(19);
-    for (const rails of Object.values(LIVE_AGENTS.liveAgents)) {
+    for (const rails of Object.values(live)) {
       expect(rails).toEqual(["ach", "onchain"]);
     }
   });

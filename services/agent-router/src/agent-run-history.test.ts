@@ -78,6 +78,7 @@ function makeDeps(over: Partial<AgentApiDeps> = {}): AgentApiDeps {
     enqueueRouteJob: vi.fn(async () => ({ jobId: "job_1" })),
     haltAgent: vi.fn(async () => ({ paused: [], quarantined: false })),
     runHistory: noopRunHistory,
+    isShadowed: () => false,
     ...over,
   };
 }
