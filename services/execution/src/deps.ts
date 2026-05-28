@@ -1,5 +1,8 @@
 import type {
+  AgentAttestationInput,
+  AgentAttestationResult,
   AuditEmitter,
+  EscrowStateInput,
   GateAccount,
   GateAgent,
   GateCounterparty,
@@ -7,6 +10,8 @@ import type {
   GatePolicyDecision,
   GatePrincipal,
   GateTenantFlags,
+  MetricsEmitter,
+  ResolvedEscrowState,
   ServiceCallContext,
 } from "@brain/shared";
 import type { Pool } from "pg";
@@ -84,4 +89,32 @@ export interface ExecutionDeps {
     ctx: ServiceCallContext,
     invoiceId: string,
   ) => Promise<ResolvedInvoiceShortcut>;
+
+  // -- §6 M2M gate loaders (composition-root parity with api/main.ts) -----
+  // These must match the loaders wired in services/api/src/main.ts:922-937
+  // so the standalone execution server's §6 gate enforces checks 5.5 / 8.5 /
+  // 6.6 the same way the all-in-one api boot does. Without them, those checks
+  // record `not_applicable` and the M2M attack surface degrades silently.
+  // scripts/check-payment-intent-loaders.mjs enforces that every production
+  // PaymentIntentService construction site injects the required loaders.
+
+  /** RFC 0001 §6.3 — agent payee attestation read (check 5.5). */
+  attestCounterpartyAgent?: (
+    ctx: ServiceCallContext,
+    input: AgentAttestationInput,
+  ) => Promise<AgentAttestationResult>;
+  /** RFC 0001 §6.4 — rolling-window per-agent spend (check 8.5). */
+  sumAgentWindowSpend?: (
+    ctx: ServiceCallContext,
+    agentId: string,
+    windowSeconds: number,
+  ) => Promise<string>;
+  /** RFC 0001 §7.6 — on-chain escrow lock state (check 6.6). */
+  resolveEscrowState?: (
+    ctx: ServiceCallContext,
+    input: EscrowStateInput,
+  ) => Promise<ResolvedEscrowState | null>;
+
+  /** Item 11 — §6 gate metrics emission (per-check, outcome, duration). */
+  metrics?: MetricsEmitter;
 }
