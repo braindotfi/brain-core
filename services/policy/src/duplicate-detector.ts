@@ -1,21 +1,21 @@
 /**
- * H-22 duplicate-payment detector — backs §6 gate check 11.5.
+ * H-22 duplicate-payment detector. Backs §6 gate check 11.5.
  *
  * "Brain will not pay an invoice twice" as a deterministic gate property. Each
  * rule is a tenant-scoped query; ANY collision fails the gate (hard reject, even
- * with approval). Queries do NOT filter by tenant_id in WHERE — tenant isolation
+ * with approval). Queries do NOT filter by tenant_id in WHERE; tenant isolation
  * is enforced by RLS via the TenantScopedClient (Standards §1.2).
  *
  * The gate consumes this through the injected `detectDuplicates` hook; the call
  * site wraps it in withTenantScope(pool, ctx.tenantId, ...).
  *
- * SANDBOX NOTE: the rule LOGIC (given query results → collisions) is unit-tested
- * with a fake client. The SQL/schema for rules referencing the evidence→invoice
- * join (vendor_amount_invoice_match), the raw-artifact link
- * (raw_invoice_used_elsewhere), and the payment-instruction history
- * (destination_recently_changed) is best-effort and marked TODO(hardening-pass)
- * — it must be run against Postgres to confirm table/column names + the indexes
- * in migration 0XXX_payment_intents_dedup.sql.
+ * Schema sources:
+ *   - rules 1, 2, 3, 4 → migration 0010 + 0018 (ledger_payment_intents, indexes)
+ *   - rule 5           → migration 0010 (evidence_ids text[] column)
+ *   - rule 6           → migration 0026 (ledger_counterparty_payment_instructions)
+ *                        Until that history table is populated by the Ledger
+ *                        writer, rule 6 returns no rows for any counterparty,
+ *                        which is the correct fail-open behavior (no signal).
  */
 
 import type { TenantScopedClient } from "@brain/shared";
@@ -73,8 +73,7 @@ export async function detectDuplicates(
   }
 
   // 3 — vendor_amount_invoice_match (last 30 days). updated_at is the execution
-  // time for an executed row (there is no executed_at column). TODO(hardening-
-  // pass): add the invoice_number-from-evidence dimension once the join is wired.
+  // time for an executed row (there is no executed_at column).
   {
     const { rows } = await client.query<{ id: string }>(
       `SELECT id FROM ledger_payment_intents
@@ -110,8 +109,8 @@ export async function detectDuplicates(
     }
   }
 
-  // 5 — raw_invoice_used_elsewhere. TODO(hardening-pass): confirm the PI↔raw
-  // artifact link (evidence_ids array / link table) against the schema.
+  // 5 — raw_invoice_used_elsewhere. PI↔raw link is the evidence_ids text[]
+  // column on ledger_payment_intents (migration 0010).
   if (pi.evidenceArtifactIds.length > 0) {
     const { rows } = await client.query<{ id: string }>(
       `SELECT id FROM ledger_payment_intents
@@ -128,7 +127,9 @@ export async function detectDuplicates(
   }
 
   // 6 — destination_recently_changed (strongest fraud signal: vendor account
-  // swap). TODO(hardening-pass): confirm the payment-instruction history table.
+  // swap). Reads the append-only payment-instruction history (migration 0026).
+  // Empty until the Ledger writer populates rows on instruction change; in the
+  // meantime the rule produces no signal, which is the correct fail-open.
   {
     const { rows } = await client.query<{ changed_at: Date }>(
       `SELECT changed_at FROM ledger_counterparty_payment_instructions

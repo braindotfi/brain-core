@@ -54,16 +54,11 @@ export interface GatePaymentIntent {
   obligation_id?: string | null;
   /**
    * On-chain settlement context for x402 / on-chain payments (RFC 0001 §6.1,
-   * §6.5). Populated by the resolver only for settlement actions (e.g.
-   * `x402_settle`); absent for ACH/wire/card. Its presence is what makes checks
-   * 3.5 (on-chain-settlement-permitted) and 6.5 (x402-payment-context) applicable
-   * — when absent, those checks add no row and the canonical path is unchanged.
-   *
-   * TODO(brain-hardening): PaymentIntentService does not yet populate this from
-   * the stored action payload (deferred to the Phase 2C live-wiring step,
-   * alongside the counterparty `onchain_address` loader). Until then the x402
-   * path is live-in-shadow and these checks stay dormant — mirroring how the
-   * 9.5 / 11.5 loaders shipped dormant.
+   * §6.5). Populated by `gateSettlement` in PaymentIntentService for `x402_settle`
+   * actions when the row carries `settlement_pay_to`; absent for ACH/wire/card.
+   * Its presence is what makes checks 3.5 (on-chain-settlement-permitted) and
+   * 6.5 (x402-payment-context) applicable. When absent, those checks add no row
+   * and the canonical path is unchanged.
    */
   settlement?: {
     /** Settled asset (must be USDC). */
@@ -77,13 +72,11 @@ export interface GatePaymentIntent {
   };
   /**
    * On-chain escrow context for a conditional settlement (RFC 0001 §6.2 / §7.6).
-   * Populated by the resolver only for escrow release actions. Its presence is
+   * Populated by `gateEscrow` in PaymentIntentService for `escrow_release` actions
+   * when the row carries both `escrow_id` and `job_terms_hash`. Its presence is
    * what makes check 6.6 (escrow-state binding) applicable; absent ⇒ no row and
-   * the canonical path is unchanged.
-   *
-   * TODO(brain-hardening): wire the resolver (carry escrowId + jobTermsHash onto
-   * the intent) and the `resolveEscrowState` loader — deferred live-wiring,
-   * mirroring how the x402 settlement context + loaders shipped dormant.
+   * the canonical path is unchanged. The companion `resolveEscrowState` loader is
+   * wired in main.ts via the `BRAIN_ESCROW_ADDRESS` env-var.
    */
   escrow?: {
     /** On-chain escrow id (bytes32 hex) the release settles. */
