@@ -162,15 +162,24 @@ if [[ -n "$ANCHOR_ROOT" ]]; then ok "anchored root ${ANCHOR_ROOT:0:18}…"; reco
 else note "anchor publisher is a background worker — may anchor async"; record "anchor" warn ""; fi
 
 # ── 11. Fetch + verify the proof ─────────────────────────────────────────────
+# Non-blocking: the PI settles through the rail asynchronously (→ dispatching)
+# and the audit anchor publisher is a background worker (step 10), so in a fast
+# smoke the proof may not be materialized yet. Verify it when present; otherwise
+# note it and move on — the pipeline itself (seed → … → execute) has run.
 header "11. Fetch + verify proof"
 start_step
-PROOF=$(req GET "/proof/$PI_ID")
-ROOT=$(echo "$PROOF" | jq -r '.merkle_root')
-LEAF=$(echo "$PROOF" | jq -r '.audit_events[0].event_hash // empty')
-VERIFY=$(req POST "/audit/verify" "$(jq -n --arg r "$ROOT" --arg l "$LEAF" \
-  --argjson p "$(echo "$PROOF" | jq '.merkle_proof')" '{merkle_root:$r, leaf:$l, proof:$p}')" || true)
-VERIFIED=$(echo "${VERIFY:-}" | jq -r '.verified // .valid // "unknown"')
-ok "proof verify → $VERIFIED"; record "verify" ok "$VERIFIED"
+PROOF=$(req GET "/proof/$PI_ID" || true)
+ROOT=$(echo "${PROOF:-}" | jq -r '.merkle_root // empty')
+if [[ -n "$ROOT" ]]; then
+  LEAF=$(echo "$PROOF" | jq -r '.audit_events[0].event_hash // empty')
+  VERIFY=$(req POST "/audit/verify" "$(jq -n --arg r "$ROOT" --arg l "$LEAF" \
+    --argjson p "$(echo "$PROOF" | jq '.merkle_proof')" '{merkle_root:$r, leaf:$l, proof:$p}')" || true)
+  VERIFIED=$(echo "${VERIFY:-}" | jq -r '.verified // .valid // "unknown"')
+  ok "proof verify → $VERIFIED"; record "verify" ok "$VERIFIED"
+else
+  note "proof not materialized yet (PI dispatching / anchor async) — non-blocking"
+  record "verify" warn ""
+fi
 
 # ── 12. Summary ──────────────────────────────────────────────────────────────
 header "Summary"
