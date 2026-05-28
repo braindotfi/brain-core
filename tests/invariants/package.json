@@ -19,6 +19,8 @@
   "dependencies": {
     "@brain/shared": "workspace:*",
     "@brain/ledger": "workspace:*",
-    "@brain/execution": "workspace:*"
+    "@brain/execution": "workspace:*",
+    "@brain/internal-agents": "workspace:*",
+    "@brain/agent-router": "workspace:*"
   }
 }

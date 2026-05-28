@@ -21,6 +21,26 @@ import type { PromotionConfig } from "./promotion.js";
 
 export const LIVE_AGENTS: PromotionConfig = {
   liveAgents: {
+    // Business agents
     payment: ["ach", "onchain"],
+    collections: ["ach", "onchain"],
+    treasury: ["ach", "onchain"],
+    reconciliation: ["ach", "onchain"],
+    subscription: ["ach", "onchain"],
+    vendor_risk: ["ach", "onchain"],
+    cash_forecast: ["ach", "onchain"],
+    dispute: ["ach", "onchain"],
+    compliance: ["ach", "onchain"],
+    revenue_intel: ["ach", "onchain"],
+    // Consumer agents
+    personal_budget: ["ach", "onchain"],
+    bill_management: ["ach", "onchain"],
+    savings: ["ach", "onchain"],
+    debt_optimization: ["ach", "onchain"],
+    fraud_anomaly: ["ach", "onchain"],
+    tax_prep: ["ach", "onchain"],
+    travel_finance: ["ach", "onchain"],
+    financial_health: ["ach", "onchain"],
+    purchase_advisor: ["ach", "onchain"],
   },
 };

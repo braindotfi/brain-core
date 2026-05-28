@@ -6,7 +6,7 @@
  * metadata field, never a route (no /v1/agents/native/*).
  */
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   brainError,
   requireScope,
@@ -55,6 +55,8 @@ export interface AgentApiDeps {
   readonly router: AgentRouter;
   readonly runService: AgentRunService;
   readonly reads: AgentApiReadStore;
+  /** Returns true when the agent is in shadow mode (money movement blocked). */
+  readonly isShadowed: (agentId: string) => boolean;
   /** Enqueue an event-driven route/run job. Returns the job id. */
   readonly enqueueRouteJob: (
     ctx: ServiceCallContext,
@@ -133,7 +135,7 @@ export async function registerAgentApiRoutes(
         if (q.state === "disabled" && d.enabled_by_default) return false;
         return true;
       });
-      return { agents };
+      return { agents: agents.map((d) => ({ ...d, shadow_mode: deps.isShadowed(d.agent_key) })) };
     },
   );
 
@@ -149,7 +151,7 @@ export async function registerAgentApiRoutes(
       }
       // TODO(agent-autonomy-v3): join the on-chain BrainMCPAgentRegistry record
       // (scopeHash, execution address, ScopeAttestation) once a reader is wired.
-      return { definition: def, registration: null };
+      return { definition: { ...def, shadow_mode: deps.isShadowed(def.agent_key) }, registration: null };
     },
   );
 
@@ -168,20 +170,23 @@ export async function registerAgentApiRoutes(
   });
 
   // POST /v1/agents/events — enqueue an event-driven route/run job.
-  app.post("/agents/events", async (request: FastifyRequest<{ Body: RunBody }>) => {
-    const ctx = assertCtx(request);
-    requireScope(ctx.scopes ?? [], SCOPE_PROPOSE);
-    const body = request.body ?? {};
-    if (body.event === undefined && body.intent === undefined) {
-      throw brainError("request_body_invalid", "one of `event` or `intent` is required");
-    }
-    const { jobId } = await deps.enqueueRouteJob(ctx, {
-      ...(body.event !== undefined ? { event: body.event } : {}),
-      ...(body.intent !== undefined ? { intent: body.intent } : {}),
-      ...(body.context !== undefined ? { context: body.context } : {}),
-    });
-    return { job_id: jobId, status: "queued" };
-  });
+  app.post(
+    "/agents/events",
+    async (request: FastifyRequest<{ Body: RunBody }>, reply: FastifyReply) => {
+      const ctx = assertCtx(request);
+      requireScope(ctx.scopes ?? [], SCOPE_PROPOSE);
+      const body = request.body ?? {};
+      if (body.event === undefined && body.intent === undefined) {
+        throw brainError("request_body_invalid", "one of `event` or `intent` is required");
+      }
+      const { jobId } = await deps.enqueueRouteJob(ctx, {
+        ...(body.event !== undefined ? { event: body.event } : {}),
+        ...(body.intent !== undefined ? { intent: body.intent } : {}),
+        ...(body.context !== undefined ? { context: body.context } : {}),
+      });
+      return reply.code(202).send({ job_id: jobId, status: "queued" });
+    },
+  );
 
   // POST /v1/agents/{agent_id}/halt — pause all in-flight intents + quarantine.
   app.post(

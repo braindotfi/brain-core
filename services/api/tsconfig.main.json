@@ -9,6 +9,9 @@
   "exclude": ["node_modules", "dist"],
   "references": [
     { "path": "." },
+    { "path": "../../shared" },
+    { "path": "../agent-router" },
+    { "path": "../internal-agents" },
     { "path": "../raw" },
     { "path": "../ledger" },
     { "path": "../wiki" },

@@ -679,9 +679,15 @@ importers:
 
   tests/invariants:
     dependencies:
+      '@brain/agent-router':
+        specifier: workspace:*
+        version: link:../../services/agent-router
       '@brain/execution':
         specifier: workspace:*
         version: link:../../services/execution
+      '@brain/internal-agents':
+        specifier: workspace:*
+        version: link:../../services/internal-agents
       '@brain/ledger':
         specifier: workspace:*
         version: link:../../services/ledger
