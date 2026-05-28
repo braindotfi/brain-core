@@ -891,6 +891,8 @@ async function main(): Promise<void> {
     resolvePrincipal,
     ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
     sourceCredentialResolver,
+    // Item 11: forwarded into the §6 gate so check + outcome + duration emit.
+    metrics,
   });
 
   // Build the live rail registry. When credentials are present the real rails
@@ -1319,6 +1321,8 @@ async function main(): Promise<void> {
           resolvePrincipal,
           ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
           sourceCredentialResolver,
+          // Item 11: forwarded into the §6 gate so check + outcome + duration emit.
+          metrics,
         });
         await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
       });

@@ -17,6 +17,7 @@
 import { createHash } from "node:crypto";
 import type { AuditEmitter } from "../audit/emitter.js";
 import type { ServiceCallContext } from "../contracts/types.js";
+import type { MetricsEmitter } from "../metrics.js";
 import { computeLedgerSnapshot } from "./snapshot.js";
 import { validateEvidence, type ResolvedEvidence, type RiskLevel } from "./evidence-validator.js";
 import type { DuplicateCheckInput, DuplicateCheckResult } from "./duplicate.js";
@@ -281,6 +282,15 @@ export interface GateDependencies {
    * runs in dry-run too. Returns null when the escrow id is unknown on-chain.
    */
   resolveEscrowState?: (input: EscrowStateInput) => Promise<ResolvedEscrowState | null>;
+  /**
+   * Optional metrics sink (item 11). When wired, the gate emits at termination:
+   *   - brain.gate.check.count   {check, outcome ∈ pass|fail|not_applicable, dry_run}
+   *   - brain.gate.outcome.count {outcome ∈ ok|fail, dry_run}
+   *   - brain.gate.duration_ms   {outcome ∈ ok|fail, dry_run}
+   * Emission is fire-and-forget; metric failures never fail a gate. Dots map to
+   * underscores on a Prometheus bridge (brain_gate_check_count, …).
+   */
+  metrics?: MetricsEmitter;
 }
 
 export interface RunGateInput {
@@ -334,6 +344,27 @@ export async function runPreExecutionGate(
   let requiredApprovers: string[] = [];
   let trace: Array<Record<string, unknown>> = [];
 
+  // Item 11 — gate instrumentation. Captured once; emitted at every exit.
+  const startedAt = Date.now();
+  const emitMetrics = (allChecks: ReadonlyArray<GateCheck>, gateOutcome: "ok" | "fail"): void => {
+    if (deps.metrics === undefined) return;
+    const tags = { outcome: gateOutcome, dry_run: dryRun };
+    deps.metrics.increment("brain.gate.outcome.count", tags);
+    deps.metrics.duration("brain.gate.duration_ms", Date.now() - startedAt, tags);
+    for (const c of allChecks) {
+      const checkOutcome: "pass" | "fail" | "not_applicable" = !c.passed
+        ? "fail"
+        : c.detail?.not_applicable === true
+          ? "not_applicable"
+          : "pass";
+      deps.metrics.increment("brain.gate.check.count", {
+        check: c.name,
+        outcome: checkOutcome,
+        dry_run: dryRun,
+      });
+    }
+  };
+
   // Local failure builder: captures the current outcome/approvers/trace so a
   // failure before policy eval reports nulls and one after reports the decision.
   const failGate = (
@@ -342,13 +373,15 @@ export async function runPreExecutionGate(
     detail: Record<string, unknown>,
   ): GateResult => {
     const failed: GateCheck = { index, name, passed: false, detail };
+    const all = [...checks, failed];
+    emitMetrics(all, "fail");
     return {
       ok: false,
       dryRun,
       outcome,
       requiredApprovers,
       failedCheck: failed,
-      checks: [...checks, failed],
+      checks: all,
       trace,
     };
   };
@@ -817,6 +850,7 @@ export async function runPreExecutionGate(
     pass(checks, 13, "audit_before_emitted", { audit_event_id: auditEvent.id });
   }
 
+  emitMetrics(checks, "ok");
   return {
     ok: true,
     dryRun,

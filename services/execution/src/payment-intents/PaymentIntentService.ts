@@ -39,6 +39,7 @@ import {
   type AgentAttestationResult,
   type EscrowStateInput,
   type ResolvedEscrowState,
+  type MetricsEmitter,
 } from "@brain/shared";
 import { LedgerPaymentIntents, type PaymentIntentRow } from "@brain/ledger";
 import type { Pool } from "pg";
@@ -163,6 +164,12 @@ export interface PaymentIntentServiceDeps {
       sourceAccountId: string,
     ): Promise<{ credentials: object; source_type: string } | null>;
   };
+  /**
+   * Optional: metrics sink forwarded into the §6 gate (item 11). When wired the
+   * gate emits brain.gate.check.count, brain.gate.outcome.count, and
+   * brain.gate.duration_ms on every evaluation. Absent ⇒ no emission.
+   */
+  metrics?: MetricsEmitter;
 }
 
 /** On-chain dispatch params merged into the outbox payload by PaymentIntentService.execute. */
@@ -446,6 +453,7 @@ export class PaymentIntentService implements IPaymentIntentService {
       ...(resolveEscrowState !== undefined
         ? { resolveEscrowState: (input) => resolveEscrowState(ctx, input) }
         : {}),
+      ...(this.deps.metrics !== undefined ? { metrics: this.deps.metrics } : {}),
     };
   }
 

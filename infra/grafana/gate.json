@@ -1,0 +1,80 @@
+{
+  "title": "Brain §6 Gate",
+  "uid": "brain-gate",
+  "schemaVersion": 38,
+  "version": 1,
+  "tags": ["brain", "gate", "security"],
+  "timezone": "browser",
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "dry_run",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(brain_gate_outcome_count, dry_run)",
+        "current": { "text": "false", "value": "false" },
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Gate outcome rate (per second)",
+      "description": "Rate of brain_gate_outcome_count split by outcome (ok|fail). A sustained fail rate is a security signal — any failing check short-circuits the gate.",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(brain_gate_outcome_count{dry_run=\"$dry_run\"}[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Per-check outcomes (pass / fail / not_applicable)",
+      "description": "Per-check counter rate. A check sliding from pass to fail is the early-warning signal once the dormant loaders enforce on Sepolia.",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (check, outcome) (rate(brain_gate_check_count{dry_run=\"$dry_run\"}[5m]))",
+          "legendFormat": "{{check}} / {{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Gate duration p50 / p95 / p99 (ms)",
+      "description": "Per-evaluation duration. The gate is the single most security-critical hot path; latency growth here matters.",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(brain_gate_duration_ms_bucket{dry_run=\"$dry_run\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(brain_gate_duration_ms_bucket{dry_run=\"$dry_run\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(brain_gate_duration_ms_bucket{dry_run=\"$dry_run\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ]
+    }
+  ]
+}
