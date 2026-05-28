@@ -111,8 +111,12 @@ export {
   getReplayableDeadLetters,
   deleteDeadLetterById,
   incrementDeadLetterAttempt,
+  nextAttemptDelaySeconds,
+  getDueDeadLetters,
   type WebhookDeadLetterRow,
   type RecordDeliveryFailureInput,
+  type DueDeadLetter,
+  type RawQueryClient,
 } from "./webhooks/dead-letters.js";
 
 // LLM + embeddings (§2 stack: Claude + OpenAI)
