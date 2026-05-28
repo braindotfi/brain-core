@@ -4,7 +4,10 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
+from brain_agents.anomaly.agent import AnomalyAgent
 from brain_agents.client import BrainApiClient
+from brain_agents.payment.agent import PaymentAgent
+from brain_agents.plaid_extractor.agent import PlaidExtractorAgent
 from brain_agents.reconciliation.agent import ReconciliationAgent
 
 
@@ -12,6 +15,9 @@ from brain_agents.reconciliation.agent import ReconciliationAgent
 class AppDeps:
     brain_client: BrainApiClient
     recon_agent: ReconciliationAgent
+    payment_agent: PaymentAgent
+    anomaly_agent: AnomalyAgent
+    plaid_extractor_agent: PlaidExtractorAgent
 
 
 def get_deps(request: Request) -> AppDeps:
