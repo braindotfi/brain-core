@@ -90,6 +90,10 @@ import {
   contentHash,
   getActive as policyGetActive,
   getById as policyGetById,
+  makeAttestCounterpartyAgent,
+  makeSumAgentWindowSpend,
+  makeResolveEscrowState,
+  makeResolveReputation,
 } from "@brain/policy";
 import type { PolicyDeps, PolicyDocument, PolicyRow } from "@brain/policy";
 
@@ -102,6 +106,8 @@ import {
   AgentService,
   AchPlaidRail,
   OnchainBaseRail,
+  X402BaseRail,
+  EscrowBaseRail,
   RailRegistry,
   defaultRails,
   startOutboxWorker,
@@ -126,6 +132,7 @@ import type {
 import { parseEther } from "viem";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
+import { buildX402Client } from "./rails/x402Client.js";
 
 import {
   registerAuditRoutes,
@@ -773,7 +780,19 @@ async function main(): Promise<void> {
         }),
   };
 
-  const policyService = new PolicyService({ pool, audit });
+  const policyService = new PolicyService({
+    pool,
+    audit,
+    ...(cfg.BRAIN_REPUTATION_REGISTRY_ADDRESS !== undefined
+      ? {
+          resolveReputation: makeResolveReputation({
+            registryAddress: cfg.BRAIN_REPUTATION_REGISTRY_ADDRESS,
+            rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+            chainId: cfg.BRAIN_BASE_CHAIN_ID,
+          }),
+        }
+      : {}),
+  });
 
   const rawEvidenceService = buildRawEvidenceService(rawDeps);
 
@@ -892,8 +911,26 @@ async function main(): Promise<void> {
     resolvePrincipal,
     ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
     sourceCredentialResolver,
-    // Item 11: forwarded into the §6 gate so check + outcome + duration emit.
     metrics,
+    // §6 gate loaders: wired unconditionally; gate checks 5.5/8.5 stay dormant
+    // only when the policy envelope has no micropayment_window_cap (8.5) or the
+    // counterparty is not an agent-type (5.5).
+    attestCounterpartyAgent: makeAttestCounterpartyAgent({
+      registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS,
+      rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+      chainId: cfg.BRAIN_BASE_CHAIN_ID,
+    }),
+    sumAgentWindowSpend: makeSumAgentWindowSpend(pool),
+    // 6.6 escrow binding is opt-in by env: no escrow address → check stays dormant.
+    ...(cfg.BRAIN_ESCROW_ADDRESS !== undefined
+      ? {
+          resolveEscrowState: makeResolveEscrowState({
+            escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
+            rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+            chainId: cfg.BRAIN_BASE_CHAIN_ID,
+          }),
+        }
+      : {}),
   });
 
   // Build the live rail registry. When credentials are present the real rails
@@ -909,14 +946,48 @@ async function main(): Promise<void> {
       configured.push(new AchPlaidRail({ client: plaidClient }));
       log.info({ env: cfg.PLAID_ENV }, "ACH Plaid rail registered");
     }
+    let onchainExecutor: ReturnType<typeof buildOnchainExecutor> | undefined;
     if (cfg.BRAIN_SESSION_KEY !== undefined && cfg.BASE_RPC_URL !== undefined) {
-      const executor = buildOnchainExecutor({
+      onchainExecutor = buildOnchainExecutor({
         privateKey: cfg.BRAIN_SESSION_KEY as `0x${string}`,
         rpcUrl: cfg.BASE_RPC_URL,
         chainId: cfg.BRAIN_BASE_CHAIN_ID,
       });
-      configured.push(new OnchainBaseRail({ executor }));
+      configured.push(new OnchainBaseRail({ executor: onchainExecutor }));
       log.info({ chainId: cfg.BRAIN_BASE_CHAIN_ID }, "on-chain Base rail registered");
+    }
+    if (
+      cfg.BRAIN_X402_FACILITATOR_URL !== undefined &&
+      cfg.BRAIN_X402_USDC_ADDRESS !== undefined &&
+      cfg.BRAIN_SESSION_KEY !== undefined &&
+      cfg.BASE_RPC_URL !== undefined
+    ) {
+      const x402Client = buildX402Client({
+        facilitatorUrl: cfg.BRAIN_X402_FACILITATOR_URL,
+        usdcAddress: cfg.BRAIN_X402_USDC_ADDRESS,
+        network: cfg.BRAIN_X402_NETWORK,
+        privateKey: cfg.BRAIN_SESSION_KEY as `0x${string}`,
+        rpcUrl: cfg.BASE_RPC_URL,
+        chainId: cfg.BRAIN_BASE_CHAIN_ID,
+      });
+      configured.push(new X402BaseRail({ client: x402Client }));
+      log.info({ network: cfg.BRAIN_X402_NETWORK }, "x402 Base rail registered");
+    }
+    if (
+      cfg.BRAIN_ESCROW_ADDRESS !== undefined &&
+      onchainExecutor !== undefined &&
+      cfg.BRAIN_SESSION_KEY !== undefined &&
+      cfg.BRAIN_ONCHAIN_SMART_ACCOUNT !== undefined
+    ) {
+      configured.push(
+        new EscrowBaseRail({
+          executor: onchainExecutor,
+          escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
+          holderAddress: getHolderAddress(cfg.BRAIN_SESSION_KEY as `0x${string}`),
+          smartAccount: cfg.BRAIN_ONCHAIN_SMART_ACCOUNT,
+        }),
+      );
+      log.info({ escrowAddress: cfg.BRAIN_ESCROW_ADDRESS }, "escrow Base rail registered");
     }
     if (configured.length === 0) {
       log.warn("no real payment rails configured — falling back to dev stubs");

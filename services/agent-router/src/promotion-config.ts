@@ -22,7 +22,8 @@ import type { PromotionConfig } from "./promotion.js";
 export const LIVE_AGENTS: PromotionConfig = {
   liveAgents: {
     // Business agents
-    payment: ["ach", "onchain"],
+    // x402 + escrow added: payment handles x402_settle / escrow_release action types.
+    payment: ["ach", "onchain", "x402", "escrow"],
     collections: ["ach", "onchain"],
     treasury: ["ach", "onchain"],
     reconciliation: ["ach", "onchain"],

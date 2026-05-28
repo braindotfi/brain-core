@@ -85,3 +85,7 @@ export {
   findMessageTemplate,
   type RenderedMessage,
 } from "./message-templates.js";
+export { makeAttestCounterpartyAgent } from "./agent-attestation.js";
+export { makeSumAgentWindowSpend } from "./agent-window-spend.js";
+export { makeResolveEscrowState } from "./escrow-resolver.js";
+export { makeResolveReputation } from "./reputation-resolver.js";

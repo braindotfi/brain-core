@@ -77,6 +77,7 @@ export {
   type X402SettleArgs,
   type X402SettleResult,
 } from "./rails/x402-base.js";
+export { EscrowBaseRail, type EscrowBaseRailDeps } from "./rails/escrow-base.js";
 // Phase 4 — open-ecosystem (4337 / Coinbase Smart Wallet) authorization model + resolver.
 export {
   validateSpendPermission,

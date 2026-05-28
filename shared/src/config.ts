@@ -183,6 +183,35 @@ const envSchema = z.object({
   /** Label for the current credential key — used for key-rotation tracking. */
   BRAIN_SOURCE_CREDENTIAL_KEY_ID: z.string().min(1).default("local-dev-v1"),
 
+  // ---- x402 settlement rail ----
+  /** Coinbase/facilitator URL for the x402 HTTP settlement protocol. Presence enables X402BaseRail at boot. */
+  BRAIN_X402_FACILITATOR_URL: z.string().url().optional(),
+  /** USDC contract address on Base (or Base Sepolia for testnet). */
+  BRAIN_X402_USDC_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .optional(),
+  /** Base network identifier forwarded in x402 settlement requests. Defaults to "base-sepolia". */
+  BRAIN_X402_NETWORK: z.string().default("base-sepolia"),
+
+  // ---- Escrow rail (BrainEscrow) ----
+  /** BrainEscrow contract address on Base Sepolia. Presence enables EscrowBaseRail at boot. */
+  BRAIN_ESCROW_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .optional(),
+
+  // ---- Reputation registry (BrainReputationRegistry) ----
+  /** BrainReputationRegistry contract address. Presence wires resolveReputation into PolicyService. */
+  BRAIN_REPUTATION_REGISTRY_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .optional(),
+
+  // ---- Agent window spend (gate check 8.5) ----
+  /** Trailing lookback window for agent cumulative spend enforcement. Defaults to 86400s (24h). */
+  BRAIN_AGENT_WINDOW_LOOKBACK_SECONDS: z.coerce.number().int().positive().default(86_400),
+
   // ---- Agent service ----
   /** Base URL of the brain-agents FastAPI service. Required when running the agent layer. */
   AGENT_SERVICE_URL: z.string().url().optional(),
