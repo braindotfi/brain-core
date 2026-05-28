@@ -2,15 +2,15 @@
 
 Query audit events, pull a Merkle inclusion proof, verify a proof independently, walk the full history for any Ledger entity, export, and pull the canonical **Proof** for an action. All event payloads land in the append-only hash chain and are batch-anchored to `BrainAuditAnchor` on Base.
 
-| Operation                         | Endpoint                                                       |
-| --------------------------------- | -------------------------------------------------------------- |
-| Get the latest anchor             | `GET  /v1/audit/anchor/latest`                                 |
-| Walk an entity's history          | `GET  /v1/audit/entity/{entityType}/{entityId}`                |
-| Get one event (+ inclusion proof) | `GET  /v1/audit/event/{event_id}`                              |
-| Query events                      | `GET  /v1/audit/events`                                        |
-| Export                            | `POST /v1/audit/export`                                        |
-| Independent verification          | `POST /v1/audit/verify`                                        |
-| Canonical Proof for an action     | `GET  /v1/proof/{action_id}`, `GET /v1/proof/{action_id}/view` |
+| Operation                         | Endpoint                                        |
+| --------------------------------- | ----------------------------------------------- |
+| Get the latest anchor             | `GET  /v1/audit/anchor/latest`                  |
+| Walk an entity's history          | `GET  /v1/audit/entity/{entityType}/{entityId}` |
+| Get one event (+ inclusion proof) | `GET  /v1/audit/event/{event_id}`               |
+| Query events                      | `GET  /v1/audit/events`                         |
+| Export                            | `POST /v1/audit/export`                         |
+| Independent verification          | `POST /v1/audit/verify`                         |
+| Canonical Proof for an action     | See the [Proof API](proof-api.md)               |
 
 ### Get the Latest Anchor
 
@@ -141,46 +141,10 @@ Poll `status_url` until the job is ready (the URL is returned by the API; the sp
 
 ### The Canonical Proof for an Action
 
-For investor / compliance / counterparty use cases, the flagship artifact is the per-action **Proof** — assembled from the §6 gate trace, evidence chain, policy decision, and anchored audit Merkle chain.
+For investor / compliance / counterparty use cases, the flagship artifact is the per-action **Proof** — assembled from the §6 gate trace, evidence chain, policy decision, and anchored audit Merkle chain. It has its own page so this one can stay focused on raw events and anchors.
 
-```http
-GET /v1/proof/{action_id}
-Authorization: Bearer <token>
-```
-
-```json
-{
-  "action_id":            "pi_a1b2c3",
-  "tenant_id":            "acme",
-  "agent_id":             "ag_payment_v1",
-  "behavior_hash":        "0x...",
-  "outcome":              "executed",
-  "policy_version":       4,
-  "policy_hash":          "0xabc...",
-  "matched_rule_id":      "rule_invoice_above_5k",
-  "gate_checks":          [ { "index": 1, "name": "intent_exists_and_approved", "passed": true }, ... ],
-  "evidence":             [ { "raw_id": "raw_8231", "parser": "invoice_v2", "confidence": 0.98 } ],
-  "ledger_snapshot_hash": "0x...",
-  "audit_events":         ["audit_evt_001", "audit_evt_002"],
-  "merkle_root":          "0xabc...",
-  "merkle_proof":         ["0x111...", "0x222..."],
-  "chain_anchor":         { "tx_hash": "0xdef...", "block": 8829110 },
-  "rail_receipt":         { "rail": "bank_ach", "provider_id": "..." },
-  "human_explanation":    "Paid invoice inv_8231 for $7,800.00 to Amazon Web Services..."
-}
-```
-
-`outcome` is the action's terminal state: `allowed | confirmed | rejected | executed | failed | shadow_completed`. `chain_anchor` is `null` until the containing batch lands on-chain. Cross-tenant ids return `404` (existence is never leaked).
-
-For a server-rendered HTML view of the same Proof (compliance / investor screen) — same auth + `audit:read` scope:
-
-```http
-GET /v1/proof/{action_id}/view
-Authorization: Bearer <token>
-```
-
-Returns `text/html`.
+[**→ Proof API**](proof-api.md)
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📜 Audit Concepts</strong></td><td>How the hash chain and Merkle anchoring work.</td><td><a href="../protocol/audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>📜 BrainAuditAnchor</strong></td><td>The on-chain anchor contract.</td><td><a href="../smart-contracts/brainauditanchor.md">brainauditanchor.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📜 Proof API</strong></td><td>The per-action trust artifact.</td><td><a href="proof-api.md">proof-api.md</a></td><td></td></tr><tr><td><strong>📜 Audit Concepts</strong></td><td>How the hash chain and Merkle anchoring work.</td><td><a href="../protocol/audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>📜 BrainAuditAnchor</strong></td><td>The on-chain anchor contract.</td><td><a href="../smart-contracts/brainauditanchor.md">brainauditanchor.md</a></td><td></td></tr></tbody></table>

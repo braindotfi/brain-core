@@ -36,6 +36,7 @@
 - [Agents](protocol/agents.md)
 - [Payment Intents](protocol/payment-intents.md)
 - [The Pre-Execution Gate](protocol/the-pre-execution-gate.md)
+- [M2M and x402](protocol/m2m-and-x402.md)
 - [Audit and Proof](protocol/audit-and-proof.md)
 - [Agent Contributions](protocol/agent-contributions.md)
 
@@ -52,13 +53,16 @@
 
 - [Overview](api-reference/overview.md)
 - [Authentication](api-reference/authentication.md)
-- [Sources API](api-reference/sources-api.md)
+- [Onboarding](api-reference/onboarding-api.md)
+- [Sources & Raw Ingestion](api-reference/sources-api.md)
 - [Ledger API](api-reference/ledger-api.md)
 - [Wiki API](api-reference/wiki-api.md)
 - [Policy API](api-reference/policy-api.md)
 - [Agents API](api-reference/agents-api.md)
-- [Actions API](api-reference/actions-api.md)
+- [Payment Intents API](api-reference/payment-intents-api.md)
 - [Audit API](api-reference/audit-api.md)
+- [Proof API](api-reference/proof-api.md)
+- [Webhooks](api-reference/webhooks-api.md)
 - [MCP Server (API Reference)](api-reference/mcp-server-api-reference.md)
 
 ## MCP Server
