@@ -108,6 +108,18 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     ...(opts.deps.resolveTenantFlags !== undefined
       ? { resolveTenantFlags: opts.deps.resolveTenantFlags }
       : {}),
+    // §6 M2M loaders — composition-root parity with services/api/src/main.ts.
+    // Required by scripts/check-payment-intent-loaders.mjs.
+    ...(opts.deps.attestCounterpartyAgent !== undefined
+      ? { attestCounterpartyAgent: opts.deps.attestCounterpartyAgent }
+      : {}),
+    ...(opts.deps.sumAgentWindowSpend !== undefined
+      ? { sumAgentWindowSpend: opts.deps.sumAgentWindowSpend }
+      : {}),
+    ...(opts.deps.resolveEscrowState !== undefined
+      ? { resolveEscrowState: opts.deps.resolveEscrowState }
+      : {}),
+    ...(opts.deps.metrics !== undefined ? { metrics: opts.deps.metrics } : {}),
   });
   // Legacy /payment-intents/* routes (deprecated in v0.3) — every reply
   // gets the RFC 8594 `Deprecation: true` header and a `Link` header

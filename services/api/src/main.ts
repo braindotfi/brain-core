@@ -901,6 +901,27 @@ async function main(): Promise<void> {
     },
   };
 
+  // §6 M2M gate loaders — extracted so EVERY PaymentIntentService construction
+  // in this file shares the same posture. scripts/check-payment-intent-loaders.mjs
+  // enforces that the M2M loaders (5.5 / 8.5) appear at every production site.
+  // Loaders are unconditionally wired; gate checks 5.5/8.5 stay dormant only
+  // when the policy envelope has no micropayment_window_cap (8.5) or the
+  // counterparty is not an agent-type (5.5). Escrow (6.6) is env-gated.
+  const attestCounterpartyAgent = makeAttestCounterpartyAgent({
+    registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS,
+    rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+    chainId: cfg.BRAIN_BASE_CHAIN_ID,
+  });
+  const sumAgentWindowSpend = makeSumAgentWindowSpend(pool);
+  const resolveEscrowState =
+    cfg.BRAIN_ESCROW_ADDRESS !== undefined
+      ? makeResolveEscrowState({
+          escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
+          rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+          chainId: cfg.BRAIN_BASE_CHAIN_ID,
+        })
+      : undefined;
+
   const paymentIntentService = new PaymentIntentService({
     pool,
     audit,
@@ -916,25 +937,9 @@ async function main(): Promise<void> {
     ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
     sourceCredentialResolver,
     metrics,
-    // §6 gate loaders: wired unconditionally; gate checks 5.5/8.5 stay dormant
-    // only when the policy envelope has no micropayment_window_cap (8.5) or the
-    // counterparty is not an agent-type (5.5).
-    attestCounterpartyAgent: makeAttestCounterpartyAgent({
-      registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS,
-      rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
-      chainId: cfg.BRAIN_BASE_CHAIN_ID,
-    }),
-    sumAgentWindowSpend: makeSumAgentWindowSpend(pool),
-    // 6.6 escrow binding is opt-in by env: no escrow address → check stays dormant.
-    ...(cfg.BRAIN_ESCROW_ADDRESS !== undefined
-      ? {
-          resolveEscrowState: makeResolveEscrowState({
-            escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
-            rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
-            chainId: cfg.BRAIN_BASE_CHAIN_ID,
-          }),
-        }
-      : {}),
+    attestCounterpartyAgent,
+    sumAgentWindowSpend,
+    ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
   });
 
   // Build the live rail registry. When credentials are present the real rails
@@ -1442,6 +1447,11 @@ async function main(): Promise<void> {
           sourceCredentialResolver,
           // Item 11: forwarded into the §6 gate so check + outcome + duration emit.
           metrics,
+          // Composition-root parity — same M2M loaders the canonical site uses
+          // above. Required by scripts/check-payment-intent-loaders.mjs.
+          attestCounterpartyAgent,
+          sumAgentWindowSpend,
+          ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
         });
         await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
       });
