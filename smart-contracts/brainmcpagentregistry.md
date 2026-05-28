@@ -113,68 +113,36 @@ registry.deactivateAgent(agent, ownerSig);
 
 Deactivation flips `active` to false. Brain refuses to grant or use session keys for a deactivated agent. Existing scope grants for this agent stop matching `isScoped()`.
 
-### Reputation (planned — RFC 0001)
+### Reputation lives in a separate contract
 
-{% hint style="info" %}
-On-chain reputation is **not implemented in the MVP**. The deployed `AgentRegistration` struct stores `agentId`, `agentAddress`, `tenantId`, `scopeHash`, and `behaviorHash` only — there is no `reputationRoot` field. The design below is the roadmap target tracked in RFC 0001.
-{% endhint %}
-
-Reputation is stored off-chain and committed as a Merkle root per agent.
-
-```
-        reputationRoot
-       /              \
-   batch_h1         batch_h2
-   /     \          /     \
- att_a  att_b   att_c   att_d
-```
-
-| Component        | Detail                                                                             |
-| ---------------- | ---------------------------------------------------------------------------------- |
-| **Attestation**  | Signed (EIP-712) by a tenant after a successful or failed action                   |
-| **Aggregation**  | Off-chain service builds a Merkle tree per agent                                   |
-| **Commitment**   | The root is updated on-chain via a separate update path                            |
-| **Verification** | A tenant verifying an attestation supplies a Merkle proof against `reputationRoot` |
-
-```
-ReputationAttestation(
-  bytes32 tenantId,
-  address agent,
-  bytes32 actionId,
-  bool    success,
-  uint64  timestamp,
-  uint256 nonce
-)
-```
+Reputation is **not** stored in this registry. It lives in [`BrainReputationRegistry`](brainreputationregistry.md) — an _ERC-8004-style_ per-agent pointer / Merkle root (RFC 0001, **UNAUDITED testnet**). This registry's deployed `AgentRegistration` struct stores only `agentId`, `agentAddress`, `tenantId`, `scopeHash`, and `behaviorHash` — there is **no** `reputationRoot` field here. Policy reads the reputation pointer as a **tighten-only threshold input**; it is never a money gate or a §6 precondition.
 
 ### Discovery
 
-Tenants and other agents query the registry to discover agents by capability and reputation.
+Tenants and other agents query the registry to discover agents by capability, and the reputation registry for standing.
 
-| Query                | Result                                                            |
-| -------------------- | ----------------------------------------------------------------- |
-| Capability filter    | All active agents that have declared this capability              |
-| Reputation threshold | Agents with `reputationRoot` mapping to a minimum score off-chain |
-| Combined             | Capability filter intersected with reputation threshold           |
+| Query                | Result                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| Capability filter    | All active agents that have declared this capability                                                   |
+| Reputation threshold | Resolved via `BrainReputationRegistry` (testnet); Policy maps the pointer to a minimum score off-chain |
+| Combined             | Capability filter intersected with the reputation threshold                                            |
 
 {% hint style="success" %}
 Discovery is itself audited. Brain logs every selection event so a tenant can later verify why a particular agent was chosen.
 {% endhint %}
 
-### ERC-8004 Alignment (planned — RFC 0001)
+### ERC-8004 Alignment (RFC 0001)
 
 {% hint style="info" %}
-ERC-8004 compatibility is a roadmap target (RFC 0001), not an MVP guarantee. The deployed contract stores identity and scope as `agentId`/`tenantId`/`scopeHash`/`behaviorHash` hashes; the mapping below describes the planned alignment.
+The deployed registry stores identity + scope as `agentId`/`tenantId`/`scopeHash`/`behaviorHash` hashes. The _reputation_ half of ERC-8004 alignment is now a separate (RFC 0001, **UNAUDITED testnet**) contract, `BrainReputationRegistry`.
 {% endhint %}
 
-| ERC-8004 Concept       | Planned Brain Implementation                           |
-| ---------------------- | ------------------------------------------------------ |
-| **Identity record**    | `identityRoot` per agent                               |
-| **Validation records** | Signed performance attestations under `reputationRoot` |
-| **Reputation root**    | `reputationRoot` per agent                             |
-| **Discovery**          | View functions on the registry                         |
-
-The MVP registry is a compact identity/scope/behavior record; full ERC-8004 alignment (reputation, validation records) is planned per RFC 0001.
+| ERC-8004 concept (RFC 0001) | Brain Implementation                                                            |
+| --------------------------- | ------------------------------------------------------------------------------- |
+| **Identity record**         | `BrainMCPAgentRegistry` — `agentId` / `tenantId` / `scopeHash` / `behaviorHash` |
+| **Reputation root**         | `BrainReputationRegistry.scoreRoot` per agent (testnet)                         |
+| **Validation records**      | Committed off-chain under the reputation `scoreRoot` (testnet)                  |
+| **Discovery**               | View functions across both registries                                           |
 
 ## behaviorHash Pinning
 
