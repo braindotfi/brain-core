@@ -45,16 +45,7 @@ import {
   isDomainEvent,
   newTokenId,
   newPolicyId,
-  type IRawEvidenceService,
-  type IWikiMemoryService,
   type ServiceCallContext,
-  type RawIngestRequest,
-  type RawIngestResult,
-  type ParsedOutput,
-  type WikiPage,
-  type QuestionRequest,
-  type QuestionAnswer,
-  type AnnotationInput,
 } from "@brain/shared";
 
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
@@ -73,10 +64,6 @@ import { makeRunLoaders } from "./agents/run-loaders.js";
 
 import {
   registerRawPlugin,
-  ingestOne,
-  findArtifactById,
-  tombstoneArtifact,
-  listParsedByArtifact,
   SourceService,
   PostgresSourceRepository,
   type RegisterRawPluginOptions,
@@ -84,7 +71,7 @@ import {
 
 import { LedgerService, registerLedgerPlugin, startNormalizeWorker } from "@brain/ledger";
 
-import { WikiPageService, registerWikiPlugin, loadRegistry, askWiki } from "@brain/wiki";
+import { WikiPageService, registerWikiPlugin, loadRegistry } from "@brain/wiki";
 
 import {
   registerPolicyRoutes,
@@ -114,7 +101,6 @@ import {
   defaultRails,
   startOutboxWorker,
   findAgent,
-  findUser,
   insertAgentRun,
   insertRoutingDecision,
   findAgentRun,
@@ -122,12 +108,9 @@ import {
   findRoutingDecision,
   transitionAgent,
   releaseAgentQuarantine,
-  resolveInvoiceShortcut as resolveInvoiceShortcutFn,
 } from "@brain/execution";
 import type {
   ExecutionDeps,
-  InvoiceShortcutInvoice,
-  ResolvedInvoiceShortcut,
   OnchainDispatchParams,
   Rail,
 } from "@brain/execution";
@@ -183,19 +166,25 @@ import { createViemPolicySignerChecker } from "./policy/viemPolicySignerChecker.
 import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
+import { buildRawEvidenceService } from "./adapters/raw-evidence-adapter.js";
+import { buildWikiMemoryService } from "./adapters/wiki-memory-adapter.js";
+import {
+  makeResolveAgent,
+  makeResolveTenantFlags,
+  makeResolveAccount,
+  makeResolveCounterparty,
+  resolvePrincipalFromCtx,
+  makeResolveRole,
+  makeIsApproverActive,
+  makeResolveSubjectOwnerTenant,
+  makeResolveActivePolicyVersion,
+  makeInvoiceShortcutResolver,
+} from "./gate-loaders/index.js";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps, PolicyReader, AgentReader, PolicyView } from "@brain/wiki";
 import type { RawDeps } from "@brain/raw";
-import type {
-  GateAccount,
-  GateAgent,
-  GateCounterparty,
-  GatePaymentIntent,
-  GatePrincipal,
-  GateTenantFlags,
-  TenantScopedClient,
-} from "@brain/shared";
+import type { GatePaymentIntent, TenantScopedClient } from "@brain/shared";
 
 // ---------------------------------------------------------------------------
 // .env loader (optional — repo-root .env only)
@@ -213,350 +202,6 @@ try {
   }
 } catch {
   // No .env file present — that is fine in CI / container environments.
-}
-
-// ---------------------------------------------------------------------------
-// IRawEvidenceService adapter
-//
-// @brain/raw exports ingestOne (a standalone function) but the MCP server
-// and other callers expect IRawEvidenceService (a service-shaped object).
-// This adapter bridges them.
-// ---------------------------------------------------------------------------
-
-function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
-  return {
-    async ingest(ctx: ServiceCallContext, req: RawIngestRequest): Promise<RawIngestResult> {
-      const result = await ingestOne(deps, {
-        tenantId: ctx.tenantId,
-        actor: ctx.actor,
-        sourceType: req.sourceType,
-        sourceRef: req.sourceRef,
-        body: req.body,
-        mimeType: req.mimeType,
-      });
-      return {
-        rawId: result.rawId,
-        sha256: result.sha256,
-        bytes: result.bytes,
-        sourceType: result.sourceType,
-        ingestedAt: result.ingestedAt,
-        deduplicated: result.deduplicated,
-      };
-    },
-    async signedUrl(ctx: ServiceCallContext, rawId: string, ttlSeconds: number): Promise<string> {
-      const row = await withTenantScope(deps.pool, ctx.tenantId, (c) => findArtifactById(c, rawId));
-      if (row === null) {
-        throw brainError("raw_artifact_not_found", "no such raw artifact", {
-          details: { raw_id: rawId },
-        });
-      }
-      if (row.tombstoned_at !== null) {
-        throw brainError("raw_artifact_tombstoned", "artifact has been tombstoned", {
-          details: { raw_id: rawId },
-        });
-      }
-      return deps.blob.signedUrl(row.blob_uri, { expiresInSeconds: ttlSeconds });
-    },
-    async listParsed(ctx: ServiceCallContext, rawId: string): Promise<ParsedOutput[]> {
-      const rows = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
-        listParsedByArtifact(c, rawId),
-      );
-      return rows.map((r) => ({
-        id: r.id,
-        rawArtifactId: r.raw_artifact_id,
-        parser: r.parser,
-        parserVersion: r.parser_version,
-        extracted: r.extracted,
-        confidence: r.confidence,
-        extractedAt: r.extracted_at.toISOString(),
-      }));
-    },
-    async tombstone(ctx: ServiceCallContext, rawId: string): Promise<void> {
-      const outcome = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
-        tombstoneArtifact(c, rawId),
-      );
-      if (outcome.notFound) {
-        throw brainError("raw_artifact_not_found", "no such raw artifact", {
-          details: { raw_id: rawId },
-        });
-      }
-      if (!outcome.alreadyTombstoned) {
-        // Tombstone blob metadata too; best-effort, row tombstone is authoritative.
-        try {
-          const row = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
-            findArtifactById(c, rawId),
-          );
-          if (row !== null) {
-            await deps.blob.tombstone(row.blob_uri, ctx.actor);
-          }
-        } catch {
-          /* blob tombstone is best-effort */
-        }
-        await deps.audit.emit({
-          tenantId: ctx.tenantId,
-          layer: "raw",
-          actor: ctx.actor,
-          action: "raw.tombstone",
-          inputs: { raw_id: rawId },
-          outputs: {},
-        });
-      }
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// IWikiMemoryService adapter
-//
-// The MCP server needs IWikiMemoryService. WikiPageService covers
-// listPages / getPage / search / regenerate / question. annotate is stubbed
-// pending the write-through path (refactor-4).
-// ---------------------------------------------------------------------------
-
-function buildWikiMemoryService(
-  pageService: WikiPageService,
-  wikiDeps: WikiDeps,
-): IWikiMemoryService {
-  return {
-    async listPages(
-      ctx: ServiceCallContext,
-      f: { page_type?: WikiPage["page_type"]; q?: string; limit?: number },
-    ) {
-      return pageService.listPages(ctx, f);
-    },
-    async getPage(ctx: ServiceCallContext, slugOrId: string) {
-      return pageService.getPage(ctx, slugOrId);
-    },
-    async regenerate(ctx: ServiceCallContext, slugOrId: string) {
-      return pageService.regenerate(ctx, slugOrId);
-    },
-    async search(ctx: ServiceCallContext, q: string, limit: number) {
-      return pageService.search(ctx, q, limit);
-    },
-    async question(ctx: ServiceCallContext, req: QuestionRequest): Promise<QuestionAnswer> {
-      const result = await withTenantScope(wikiDeps.pool, ctx.tenantId, (client) =>
-        askWiki(
-          {
-            client,
-            llm: wikiDeps.llm,
-            embed: wikiDeps.embed,
-            redis: wikiDeps.redis,
-            metrics: wikiDeps.metrics,
-          },
-          {
-            question: req.question,
-            asOf: req.asOf !== null ? new Date(req.asOf) : null,
-            maxEvidenceDepth: req.maxEvidenceDepth,
-            tenantId: ctx.tenantId,
-            model: wikiDeps.questionModel,
-          },
-        ),
-      );
-      return {
-        question: req.question,
-        answer: result.answer,
-        evidence: result.evidence,
-        model: result.model,
-        usage: result.usage,
-        ...(result.cachedAt !== undefined ? { cachedAt: result.cachedAt } : {}),
-      };
-    },
-    // annotate write-through deferred to refactor-4.
-    async annotate(
-      _ctx: ServiceCallContext,
-      _input: AnnotationInput,
-    ): Promise<{ annotation_id: string; raw_artifact_id: string }> {
-      throw brainError("internal_server_error", "wiki.annotate not yet wired in boot binary");
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Stub hook factories — reduce repetition in ExecutionDeps / PaymentIntentDeps
-// ---------------------------------------------------------------------------
-
-function makeResolveAgent(
-  pool: ReturnType<typeof createPool>,
-): (ctx: ServiceCallContext, agentId: string) => Promise<GateAgent | null> {
-  return async (ctx, agentId) => {
-    const row = await withTenantScope(pool, ctx.tenantId, (c) => findAgent(c, agentId));
-    if (row === null) return null;
-    return {
-      id: row.id,
-      state: row.state,
-      scope: { canExecutePayments: row.state === "active" && row.role === "payment" },
-    };
-  };
-}
-
-function makeResolveTenantFlags(
-  pool: ReturnType<typeof createPool>,
-): (ctx: ServiceCallContext, tenantId: string) => Promise<GateTenantFlags> {
-  return async (ctx, tenantId) => {
-    // No row ⇒ flags default off (back-compat). RLS scopes the read to the
-    // caller's own tenant; we also filter by id so an admin BYPASSRLS connection
-    // would still read the correct tenant.
-    const row = await withTenantScope(pool, ctx.tenantId, async (c) => {
-      const res = await c.query<{ require_behavior_hash: boolean }>(
-        `SELECT require_behavior_hash FROM tenants WHERE id = $1`,
-        [tenantId],
-      );
-      return res.rows[0] ?? null;
-    });
-    return { requireBehaviorHash: row?.require_behavior_hash ?? false };
-  };
-}
-
-function makeResolveAccount(
-  ledger: LedgerService,
-): (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null> {
-  return async (ctx, accountId) => {
-    const result = await ledger.getAccount(ctx, accountId);
-    if (result === null) return null;
-    return {
-      id: result.account.id,
-      status: result.account.status,
-      currency: result.account.currency,
-      available_balance:
-        result.latest_balance !== null
-          ? result.latest_balance.available_balance
-          : result.account.available_balance,
-    };
-  };
-}
-
-function makeResolveCounterparty(
-  ledger: LedgerService,
-): (ctx: ServiceCallContext, counterpartyId: string) => Promise<GateCounterparty | null> {
-  return async (ctx, counterpartyId) => {
-    const cp = await ledger.findCounterpartyById(ctx, counterpartyId);
-    if (cp === null) return null;
-    return {
-      id: cp.id,
-      type: cp.type,
-      risk_level: cp.risk_level ?? null,
-      verified_status: cp.verified_status ?? null,
-      // RFC 0001 §6.3/§6.1 — agent attestation (check 5.5) + x402 recipient match
-      // (check 6.5). Null for non-agent / off-chain counterparties.
-      agent_id: cp.agent_id ?? null,
-      onchain_address: cp.onchain_address ?? null,
-    };
-  };
-}
-
-function resolvePrincipalFromCtx(ctx: ServiceCallContext): Promise<GatePrincipal> {
-  return Promise.resolve({
-    id: ctx.actor,
-    type: ctx.principalType ?? "user",
-    scopes: ctx.scopes !== undefined ? [...ctx.scopes] : [],
-  });
-}
-
-function makeResolveRole(
-  pool: ReturnType<typeof createPool>,
-): (ctx: ServiceCallContext, principalId: string) => Promise<string | null> {
-  return async (ctx, principalId) => {
-    const agentRow = await withTenantScope(pool, ctx.tenantId, (c) => findAgent(c, principalId));
-    if (agentRow !== null) return agentRow.role;
-    const userRow = await withTenantScope(pool, ctx.tenantId, (c) => findUser(c, principalId));
-    return userRow?.role ?? null;
-  };
-}
-
-// ---------------------------------------------------------------------------
-// P0.4 approver/quorum hardening hooks
-// ---------------------------------------------------------------------------
-
-function makeIsApproverActive(
-  pool: ReturnType<typeof createPool>,
-): (ctx: ServiceCallContext, principalId: string) => Promise<boolean> {
-  return async (ctx, principalId) =>
-    withTenantScope(pool, ctx.tenantId, async (c) => {
-      const agent = await findAgent(c, principalId);
-      if (agent !== null) return agent.state === "active";
-      // MVP user model has no revocation column; existence ⇒ active approver.
-      // TODO(brain-hardening): honor a user.status/disabled flag once it exists.
-      const user = await findUser(c, principalId);
-      return user !== null;
-    });
-}
-
-function makeResolveSubjectOwnerTenant(
-  pool: ReturnType<typeof createPool>,
-): (
-  ctx: ServiceCallContext,
-  subject: { type: "payment_intent" | "proposal"; id: string },
-) => Promise<string | null> {
-  return async (ctx, subject) =>
-    withTenantScope(pool, ctx.tenantId, async (c) => {
-      if (subject.type === "payment_intent") {
-        const { rows } = await c.query<{ owner_id: string }>(
-          `SELECT owner_id FROM ledger_payment_intents WHERE id = $1`,
-          [subject.id],
-        );
-        return rows[0]?.owner_id ?? null;
-      }
-      const { rows } = await c.query<{ tenant_id: string }>(
-        `SELECT tenant_id FROM proposals WHERE id = $1`,
-        [subject.id],
-      );
-      return rows[0]?.tenant_id ?? null;
-    });
-}
-
-function makeResolveActivePolicyVersion(
-  pool: ReturnType<typeof createPool>,
-): (ctx: ServiceCallContext) => Promise<number | null> {
-  return async (ctx) =>
-    withTenantScope(pool, ctx.tenantId, async (c) => {
-      const active = await policyGetActive(c);
-      return active?.version ?? null;
-    });
-}
-
-// ---------------------------------------------------------------------------
-// P0.5 invoice shortcut resolver (LedgerService-backed lookups)
-// ---------------------------------------------------------------------------
-
-function makeInvoiceShortcutResolver(
-  ledger: LedgerService,
-  pool: ReturnType<typeof createPool>,
-): (ctx: ServiceCallContext, invoiceId: string) => Promise<ResolvedInvoiceShortcut> {
-  return (ctx, invoiceId) =>
-    resolveInvoiceShortcutFn(
-      {
-        resolveInvoice: async (c, id): Promise<InvoiceShortcutInvoice | null> => {
-          const inv = await ledger.findInvoiceById(c, id);
-          if (inv === null) return null;
-          return {
-            id: inv.id,
-            counterparty_id: inv.counterparty_id,
-            amount_due: String(inv.amount_due),
-            amount_paid: String(inv.amount_paid),
-            currency: inv.currency,
-            status: inv.status,
-            linked_document_ids: inv.linked_document_ids,
-            linked_transaction_ids: inv.linked_transaction_ids,
-          };
-        },
-        listApAccounts: async (c): Promise<string[]> => {
-          const res = await ledger.listAccounts(c, { status: "active", limit: 500 });
-          return res.items
-            .filter((a) => a.account_type === "bank_checking" || a.account_type === "bank_savings")
-            .map((a) => a.id);
-        },
-        resolveDefaultApAccount: (c): Promise<string | null> =>
-          withTenantScope(pool, c.tenantId, async (cl) => {
-            const r = await cl.query<{ default_ap_account_id: string | null }>(
-              `SELECT default_ap_account_id FROM tenants WHERE id = $1`,
-              [c.tenantId],
-            );
-            return r.rows[0]?.default_ap_account_id ?? null;
-          }),
-      },
-      ctx,
-      invoiceId,
-    );
 }
 
 // ---------------------------------------------------------------------------
