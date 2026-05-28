@@ -152,9 +152,12 @@ describe("BrainMcpServer.handle — protocol surface", () => {
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" }, p);
     if (!("result" in res)) throw new Error("expected result");
     const r = res.result as { tools: Array<{ name: string }> };
-    expect(r.tools.length).toBe(10);
-    expect(r.tools.map((t) => t.name)).toContain("ledger.account.get");
-    expect(r.tools.map((t) => t.name)).toContain("payment_intent.propose");
+    expect(r.tools.length).toBe(12);
+    const names = r.tools.map((t) => t.name);
+    expect(names).toContain("ledger.account.get");
+    expect(names).toContain("payment_intent.propose");
+    expect(names).toContain("payment_intent.cancel");
+    expect(names).toContain("payment_intent.list");
   });
 
   it("tools/call rejects when the agent lacks the required scope", async () => {
@@ -342,6 +345,313 @@ describe("BrainMcpServer.handle — payment_intent.propose scope gate", () => {
       expect(r.content[0]!.text).toContain("PaymentIntent `pi_TEST`");
     }
     expect(audit.events.some((e) => e.action === "agent.mcp.tool_called")).toBe(true);
+  });
+});
+
+describe("BrainMcpServer.handle — payment_intent.cancel + .list (item 17)", () => {
+  function makePI(overrides: Partial<IPaymentIntentService>): IPaymentIntentService {
+    return { ...fakePI(), ...overrides } as unknown as IPaymentIntentService;
+  }
+
+  function serverWithPI(pi: IPaymentIntentService, scopes: string[]) {
+    const server = new BrainMcpServer({
+      auth: new FakeAuthVerifier(ACTIVE_AGENT),
+      ledger: fakeLedger(),
+      wiki: fakeWiki(),
+      raw: fakeRaw(),
+      paymentIntents: pi,
+      audit: new InMemoryAuditEmitter(),
+    });
+    return { server, p: principal(scopes) };
+  }
+
+  function ownIntent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "pi_OWN",
+      owner_id: TENANT,
+      created_by_agent_id: AGENT_ID,
+      action_type: "ach_outbound",
+      source_account_id: "acct_x",
+      destination_counterparty_id: "cp_y",
+      amount: "10.00",
+      currency: "USD",
+      obligation_id: null,
+      invoice_id: null,
+      status: "proposed",
+      policy_decision_id: "pd_TEST",
+      approval_ids: [],
+      execution_receipt_ids: [],
+      evidence_ids: [],
+      provenance: "inferred",
+      confidence: 1,
+      source_ids: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  // --- cancel ---
+
+  it("cancel happy path — own intent in `proposed` calls service.cancel", async () => {
+    const cancel = vi.fn(async () =>
+      ownIntent({ status: "cancelled" }),
+    ) as unknown as IPaymentIntentService["cancel"];
+    const pi = makePI({
+      get: vi.fn(async () => ownIntent() as never),
+      cancel,
+    });
+    const { server, p } = serverWithPI(pi, ["payment_intent:propose"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "payment_intent.cancel", arguments: { intent_id: "pi_OWN" } },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("cancel rejects when the intent belongs to a different agent", async () => {
+    const cancel = vi.fn() as unknown as IPaymentIntentService["cancel"];
+    const pi = makePI({
+      get: vi.fn(async () => ownIntent({ created_by_agent_id: "agent_other" }) as never),
+      cancel,
+    });
+    const { server, p } = serverWithPI(pi, ["payment_intent:propose"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "payment_intent.cancel", arguments: { intent_id: "pi_OTHER" } },
+      },
+      p,
+    );
+    expect("error" in res).toBe(true);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("cancel rejects from non-cancellable states (e.g. executed)", async () => {
+    const cancel = vi.fn() as unknown as IPaymentIntentService["cancel"];
+    const pi = makePI({
+      get: vi.fn(async () => ownIntent({ status: "executed" }) as never),
+      cancel,
+    });
+    const { server, p } = serverWithPI(pi, ["payment_intent:propose"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "payment_intent.cancel", arguments: { intent_id: "pi_OWN" } },
+      },
+      p,
+    );
+    expect("error" in res).toBe(true);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("cancel returns not-found when the intent does not exist for this tenant", async () => {
+    const pi = makePI({
+      get: vi.fn(async () => null),
+      cancel: vi.fn() as unknown as IPaymentIntentService["cancel"],
+    });
+    const { server, p } = serverWithPI(pi, ["payment_intent:propose"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "payment_intent.cancel", arguments: { intent_id: "pi_ABSENT" } },
+      },
+      p,
+    );
+    expect("error" in res).toBe(true);
+  });
+
+  it("cancel blocks when payment_intent:propose scope is missing", async () => {
+    const pi = fakePI();
+    const { server, p } = serverWithPI(pi, ["ledger:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "payment_intent.cancel", arguments: { intent_id: "pi_OWN" } },
+      },
+      p,
+    );
+    expect("error" in res && res.error.code).toBe(-32002);
+  });
+
+  // --- list ---
+
+  it("list forces agent_id = caller and forwards the status filter", async () => {
+    const list = vi.fn(async () => [ownIntent()]) as unknown as IPaymentIntentService["list"];
+    const pi = makePI({ list });
+    const { server, p } = serverWithPI(pi, ["ledger:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "payment_intent.list",
+          arguments: { status: "proposed", limit: 5 },
+        },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    expect(list).toHaveBeenCalledOnce();
+    const [, opts] = (list as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(opts).toMatchObject({ agent_id: AGENT_ID, status: "proposed", limit: 5 });
+  });
+
+  it("list blocks when ledger:read scope is missing", async () => {
+    const pi = fakePI();
+    const { server, p } = serverWithPI(pi, []);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "payment_intent.list", arguments: {} },
+      },
+      p,
+    );
+    expect("error" in res && res.error.code).toBe(-32002);
+  });
+});
+
+describe("BrainMcpServer.handle — brain://proofs/{action_id} resource (item 17)", () => {
+  function serverWithProof(
+    buildProof: ((tenantId: string, actionId: string) => Promise<unknown>) | undefined,
+    scopes: string[],
+  ) {
+    const deps: ConstructorParameters<typeof BrainMcpServer>[0] = {
+      auth: new FakeAuthVerifier(ACTIVE_AGENT),
+      ledger: fakeLedger(),
+      wiki: fakeWiki(),
+      raw: fakeRaw(),
+      paymentIntents: fakePI(),
+      audit: new InMemoryAuditEmitter(),
+    };
+    if (buildProof !== undefined) {
+      deps.buildProof = buildProof as NonNullable<
+        ConstructorParameters<typeof BrainMcpServer>[0]["buildProof"]
+      >;
+    }
+    const server = new BrainMcpServer(deps);
+    return { server, p: principal(scopes) };
+  }
+
+  it("returns the canonical Proof JSON for a known action", async () => {
+    const proof = {
+      action_id: "act_X",
+      tenant_id: TENANT,
+      agent_id: AGENT_ID,
+      behavior_hash: null,
+      outcome: "executed",
+      policy_version: "v1",
+      policy_hash: "0xabc",
+      matched_rule_id: "r1",
+      gate_checks: [{ index: 1, name: "agent_identity_verified", passed: true }],
+      evidence: [],
+      ledger_snapshot_hash: "0xledger",
+      audit_events: [],
+      merkle_root: "0xroot",
+      merkle_proof: [],
+      chain_anchor: null,
+      rail_receipt: null,
+      human_explanation: "human-readable summary",
+    };
+    const buildProof = vi.fn(async () => proof);
+    const { server, p } = serverWithProof(buildProof, ["audit:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "brain://proofs/act_X" },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if ("result" in res) {
+      const r = res.result as { contents: Array<{ text: string }> };
+      const body = JSON.parse(r.contents[0]!.text) as { action_id: string };
+      expect(body.action_id).toBe("act_X");
+    }
+    expect(buildProof).toHaveBeenCalledWith(TENANT, "act_X");
+  });
+
+  it("404s for an unknown action (tenant-isolated — never leaks existence)", async () => {
+    const buildProof = vi.fn(async () => null);
+    const { server, p } = serverWithProof(buildProof, ["audit:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "brain://proofs/act_MISSING" },
+      },
+      p,
+    );
+    expect("error" in res).toBe(true);
+  });
+
+  it("errors with internal_server_error when buildProof is unwired", async () => {
+    const { server, p } = serverWithProof(undefined, ["audit:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "brain://proofs/act_X" },
+      },
+      p,
+    );
+    expect("error" in res).toBe(true);
+  });
+
+  it("blocks when audit:read is missing", async () => {
+    // The scope check runs AFTER readResource builds the body, so we need
+    // buildProof to succeed for the scope rejection to be the surfaced error.
+    const buildProof = vi.fn(async () => ({
+      action_id: "act_X",
+      tenant_id: TENANT,
+      agent_id: AGENT_ID,
+      behavior_hash: null,
+      outcome: "executed",
+      policy_version: "v1",
+      policy_hash: "0x",
+      matched_rule_id: null,
+      gate_checks: [],
+      evidence: [],
+      ledger_snapshot_hash: "0x",
+      audit_events: [],
+      merkle_root: "0x",
+      merkle_proof: [],
+      chain_anchor: null,
+      rail_receipt: null,
+      human_explanation: "",
+    }));
+    const { server, p } = serverWithProof(buildProof, ["ledger:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "brain://proofs/act_X" },
+      },
+      p,
+    );
+    expect("error" in res && res.error.code).toBe(-32002);
   });
 });
 

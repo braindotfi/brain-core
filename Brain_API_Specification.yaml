@@ -1466,11 +1466,12 @@ paths:
 
         Supported methods (v0.3):
           * `initialize`, `ping`
-          * `tools/list`, `tools/call` — 10 tools across ledger, wiki,
-            raw evidence, payment intents, and agent action proposals
-          * `resources/list`, `resources/read` — 5 resource templates
-            (ledger accounts/transactions/payment-intents, wiki pages,
-            raw evidence)
+          * `tools/list`, `tools/call` — 12 tools across ledger, wiki,
+            raw evidence, payment intents (propose/cancel/list), and
+            agent action proposals
+          * `resources/list`, `resources/read` — 6 resource templates
+            (ledger accounts/transactions/obligations/payment-intents,
+            wiki pages, action proofs)
           * `prompts/list`, `prompts/get` — 5 canned prompts
 
         Tools enforce per-call scopes (e.g. `ledger:read`,

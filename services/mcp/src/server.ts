@@ -20,6 +20,7 @@ import {
   type IRawEvidenceService,
   type IWikiMemoryService,
   type Principal,
+  type Proof,
 } from "@brain/shared";
 import { dispatch, invalidParams, type JsonRpcHandler } from "./dispatcher.js";
 import {
@@ -49,6 +50,8 @@ export interface McpServerDeps {
   /** Optional. When absent, agent.action.propose returns internal_server_error. */
   agentService?: IAgentService;
   audit: AuditEmitter;
+  /** Optional H-07 proof builder — wires the brain://proofs/{action_id} resource. */
+  buildProof?: (tenantId: string, actionId: string) => Promise<Proof | null>;
 }
 
 export class BrainMcpServer {
@@ -65,6 +68,8 @@ export class BrainMcpServer {
     // Verify the agent FIRST. Any failure here returns a JSON-RPC error
     // before we even look at the method name.
     const auth = await this.deps.auth.verify(principal);
+    const buildProof = this.deps.buildProof;
+    const tenantId = auth.ctx.tenantId;
     const toolCtx: ToolContext = {
       ctx: { ...auth.ctx, requestId },
       agent: auth.agent,
@@ -74,6 +79,10 @@ export class BrainMcpServer {
       paymentIntents: this.deps.paymentIntents,
       ...(this.deps.agentService !== undefined ? { agentService: this.deps.agentService } : {}),
       audit: this.deps.audit,
+      // Bind the tenant on the ToolContext so resources don't have to re-derive it.
+      ...(buildProof !== undefined
+        ? { buildProof: (actionId: string) => buildProof(tenantId, actionId) }
+        : {}),
     };
 
     const handlers: Record<string, JsonRpcHandler> = {

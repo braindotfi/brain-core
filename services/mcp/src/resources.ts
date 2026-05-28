@@ -42,6 +42,13 @@ export const RESOURCE_DESCRIPTORS: ReadonlyArray<ResourceDescriptor> = [
     description: "Memory page (markdown body).",
     mimeType: "text/markdown",
   },
+  {
+    uri: "brain://proofs/{action_id}",
+    name: "Action proof (H-07)",
+    description:
+      "Canonical proof for an executed action: §6 gate trace, policy decision, audit before/after, Merkle proof, and on-chain anchor tx hash.",
+    mimeType: "application/json",
+  },
 ];
 
 export interface ResourceScopeRequirement {
@@ -124,6 +131,23 @@ export async function readResource(
         },
       };
     }
+    case "proof": {
+      if (ctx.buildProof === undefined) {
+        throw brainError("internal_server_error", "proof builder is not wired");
+      }
+      const proof = await ctx.buildProof(parsed.id);
+      if (proof === null) {
+        // Tenant isolation: an action for another tenant is indistinguishable
+        // from "doesn't exist" — never leak existence across tenants.
+        throw brainError("proof_not_found", "no proof for that action");
+      }
+      return {
+        requiredScopes: ["audit:read"],
+        result: {
+          contents: [{ uri, mimeType: "application/json", text: JSON.stringify(proof, null, 2) }],
+        },
+      };
+    }
   }
 }
 
@@ -133,7 +157,8 @@ interface ParsedBrainUri {
     | "ledger.transaction"
     | "ledger.obligation"
     | "ledger.payment_intent"
-    | "wiki.page";
+    | "wiki.page"
+    | "proof";
   id: string;
 }
 
@@ -147,6 +172,11 @@ export function parseBrainUri(uri: string): ParsedBrainUri | null {
   if (!uri.startsWith("brain://")) return null;
   const rest = uri.slice("brain://".length).replace(/\/+$/, "");
   const segments = rest.split("/");
+  // brain://proofs/{action_id} — 2-segment URI; handled before the length-3 guard.
+  if (segments.length === 2 && segments[0] === "proofs") {
+    const id = segments[1];
+    if (id !== undefined && id !== "") return { kind: "proof", id };
+  }
   if (segments.length < 3) return null;
   const [layer, collection, id] = segments;
   if (layer === "ledger" && collection === "accounts" && id) return { kind: "ledger.account", id };

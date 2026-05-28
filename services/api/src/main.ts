@@ -1040,6 +1040,14 @@ async function main(): Promise<void> {
     evaluatePolicy: evaluateLegacyPolicy,
   });
 
+  // H-07 Proof builder (shared with the HTTP /v1/proof/{action_id} route).
+  // Hoisted so the MCP brain://proofs/{action_id} resource and the HTTP route
+  // resolve byte-identically through the same pipeline.
+  const proofBuilder = poolProofBuilder(pool, {
+    anchorContractAddress: cfg.AUDIT_ANCHOR_ADDRESS ?? null,
+    chain: "base-sepolia",
+  });
+
   const mcpServer = new BrainMcpServer({
     auth: mcpAuthVerifier,
     ledger: ledgerService,
@@ -1048,6 +1056,8 @@ async function main(): Promise<void> {
     paymentIntents: paymentIntentService,
     agentService,
     audit,
+    // Item 17: brain://proofs/{action_id} resource is wired through the shared builder.
+    buildProof: proofBuilder,
   });
 
   // -- Agent router (Phase 1) -----------------------------------------
@@ -1327,11 +1337,9 @@ async function main(): Promise<void> {
       await v1.register(async (child) => registerWebhookRoutes(child, { pool }));
       // H-07 Proof API — GET /v1/proof/{action_id}. Flagship trust artifact:
       // one verifiable proof per action, assembled across Ledger/Policy/Audit/Raw.
-      // Shared with the H-25 run-history /proof sub-resource below.
-      const proofBuilder = poolProofBuilder(pool, {
-        anchorContractAddress: cfg.AUDIT_ANCHOR_ADDRESS ?? null,
-        chain: "base-sepolia",
-      });
+      // Shared with the H-25 run-history /proof sub-resource below AND with the
+      // MCP brain://proofs/{action_id} resource (item 17). `proofBuilder` is
+      // hoisted above where the MCP server is constructed; reused here.
       await v1.register(async (child) => registerProofRoutes(child, { buildProof: proofBuilder }));
       // P0.7 human-readable proof viewer — GET /v1/proof/{id}/view → text/html.
       await v1.register(async (child) =>

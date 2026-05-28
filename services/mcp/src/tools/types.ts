@@ -17,6 +17,7 @@ import type {
   IPaymentIntentService,
   IRawEvidenceService,
   IWikiMemoryService,
+  Proof,
   ServiceCallContext,
 } from "@brain/shared";
 import type { AgentRecord } from "../auth.js";
@@ -32,6 +33,13 @@ export interface ToolContext {
    *  is set; agent.action.propose returns internal_server_error when absent. */
   agentService?: IAgentService;
   audit: AuditEmitter;
+  /**
+   * Optional — builds the canonical H-07 Proof for an action id. Wired by the
+   * api boot from the same `poolProofBuilder` the HTTP /v1/proof/{id} route
+   * uses, so the MCP `brain://proofs/{action_id}` resource and the HTTP route
+   * return byte-identical JSON. Absent ⇒ the MCP resource returns an error.
+   */
+  buildProof?: (actionId: string) => Promise<Proof | null>;
 }
 
 export interface ToolResult {
