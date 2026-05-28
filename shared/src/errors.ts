@@ -207,6 +207,7 @@ export const BRAIN_ERROR_CODES = [
   "signup_token_invalid",
   "auth_invalid_credentials",
   "auth_email_unverified",
+  "wallet_already_linked",
 ] as const;
 
 export type BrainErrorCode = (typeof BRAIN_ERROR_CODES)[number];
@@ -298,6 +299,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   signup_token_invalid: 400,
   auth_invalid_credentials: 401,
   auth_email_unverified: 403,
+  wallet_already_linked: 409,
 
   // 422 — semantic precondition unsatisfiable (ledger evidence/balance, gate
   // approval/decision preconditions)
