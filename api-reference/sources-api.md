@@ -1,6 +1,6 @@
-# Sources & Raw Ingestion API
+# Sources and Raw Ingestion
 
-The Brain HTTP surface does **not** expose a `/v1/sources/*` resource family. Source connectors (Plaid, on-chain extractors, ERP integrations) are configured out-of-band — via the Console or per-tenant infra wiring — and they push evidence into Brain through the **Raw layer**. The Raw API is what you call to ingest artifacts directly and to inspect what's been ingested.
+The Brain HTTP surface does **not** expose a `/v1/sources/*` resource family. Source connectors (Plaid, on-chain extractors, ERP integrations) are configured out-of-band via the Console or per-tenant infra wiring and they push evidence into Brain through the **Raw layer**. The Raw API is what you call to ingest artifacts directly and to inspect what's been ingested.
 
 | Concern                                                            | API                                                       |
 | ------------------------------------------------------------------ | --------------------------------------------------------- |
