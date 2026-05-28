@@ -44,6 +44,11 @@ contracts/cache/
 contracts/broadcast/*/
 !contracts/broadcast/*/run-latest.json
 contracts/.forge-snapshots/
+# `forge install` artifacts — first-time setup is `cd contracts && forge install`
+# (per CLAUDE.md); each developer materializes lib/ locally.
+contracts/lib/
+contracts/foundry.lock
+.gitmodules
 
 # Terraform
 *.tfstate
