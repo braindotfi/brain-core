@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Logger } from "@brain/shared";
 import { logBootCapabilities, type BootCapabilities } from "./capabilities.js";
 
@@ -31,6 +31,7 @@ function base(): BootCapabilities {
     auditAnchorBroadcaster: false,
     mcpProofBuilder: true,
     sourceCredentialEncryption: false,
+    sourceCredentialKeyProvider: "none",
   };
 }
 
@@ -69,7 +70,18 @@ describe("logBootCapabilities", () => {
     expect(payload.audit_anchor_broadcaster).toBe(false);
     expect(payload.mcp_proof_builder).toBe(true);
     expect(payload.source_credential_encryption).toBe(false);
+    expect(payload.source_credential_key_provider).toBe("none");
     expect(payload.node_env).toBe("development");
+  });
+
+  it("surfaces the active credential-key provider source", () => {
+    const { log, calls } = fakeLog();
+    logBootCapabilities(
+      { ...base(), sourceCredentialEncryption: true, sourceCredentialKeyProvider: "azure-key-vault" },
+      log,
+    );
+    expect(calls[0]![0].source_credential_key_provider).toBe("azure-key-vault");
+    expect(calls[0]![0].source_credential_encryption).toBe(true);
   });
 
   it("defaults node_env to 'unset' when missing", () => {

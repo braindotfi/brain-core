@@ -102,4 +102,71 @@ describe("McpAuthVerifier", () => {
       code: "agent_not_registered",
     });
   });
+
+  describe("clearCache (scope-rotation seam)", () => {
+    // Two distinct agent ids so per-agent invalidation can be observed not
+    // disturbing the other entry.
+    const AGENT_A = "agent_01j9z9q9q9q9q9q9q9q9q9q9aa";
+    const AGENT_B = "agent_01j9z9q9q9q9q9q9q9q9q9q9bb";
+
+    function principalFor(id: string): Principal {
+      return { ...principal(), id };
+    }
+
+    // Route every loadAgent() to a record matching the principal's id.
+    function stubLoadAgentForBoth(): void {
+      vi.mocked(withTenantScope).mockImplementation(async (_pool, _tenantId, fn) => {
+        const client = {
+          query: vi.fn(async (_sql: string, params: unknown[] = []) => {
+            const agentId = params[0] as string;
+            const row =
+              agentId === AGENT_A || agentId === AGENT_B
+                ? activeAgent({ id: agentId })
+                : null;
+            return { rows: row !== null ? [row] : [] };
+          }),
+        };
+        return fn(client as never);
+      });
+    }
+
+    it("cache hit on second verify (no second on-chain read within TTL)", async () => {
+      stubLoadAgentForBoth();
+      const checker = makeChecker(SCOPE_HASH_HEX);
+      const verifier = new McpAuthVerifier(makePool(), checker);
+      await verifier.verify(principalFor(AGENT_A));
+      await verifier.verify(principalFor(AGENT_A));
+      expect(checker.getOnchainScopeHash).toHaveBeenCalledTimes(1);
+    });
+
+    it("clearCache(agentId) drops only that agent's entry", async () => {
+      stubLoadAgentForBoth();
+      const checker = makeChecker(SCOPE_HASH_HEX);
+      const verifier = new McpAuthVerifier(makePool(), checker);
+      await verifier.verify(principalFor(AGENT_A));
+      await verifier.verify(principalFor(AGENT_B));
+      expect(checker.getOnchainScopeHash).toHaveBeenCalledTimes(2);
+
+      verifier.clearCache(AGENT_A);
+
+      await verifier.verify(principalFor(AGENT_A)); // miss — must re-check on-chain
+      await verifier.verify(principalFor(AGENT_B)); // hit — must NOT re-check
+      expect(checker.getOnchainScopeHash).toHaveBeenCalledTimes(3);
+    });
+
+    it("clearCache() with no argument flushes every entry", async () => {
+      stubLoadAgentForBoth();
+      const checker = makeChecker(SCOPE_HASH_HEX);
+      const verifier = new McpAuthVerifier(makePool(), checker);
+      await verifier.verify(principalFor(AGENT_A));
+      await verifier.verify(principalFor(AGENT_B));
+      expect(checker.getOnchainScopeHash).toHaveBeenCalledTimes(2);
+
+      verifier.clearCache();
+
+      await verifier.verify(principalFor(AGENT_A));
+      await verifier.verify(principalFor(AGENT_B));
+      expect(checker.getOnchainScopeHash).toHaveBeenCalledTimes(4);
+    });
+  });
 });

@@ -182,6 +182,12 @@ const envSchema = z.object({
     .optional(),
   /** Label for the current credential key — used for key-rotation tracking. */
   BRAIN_SOURCE_CREDENTIAL_KEY_ID: z.string().min(1).default("local-dev-v1"),
+  /**
+   * Production KMS path: name of the Azure Key Vault secret that holds the
+   * base64-encoded credential key. When set alongside BRAIN_AZURE_KEY_VAULT_URL,
+   * the boot path selects the Key Vault provider over the env-var path.
+   */
+  BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME: z.string().min(1).optional(),
 
   // ---- x402 settlement rail ----
   /** Coinbase/facilitator URL for the x402 HTTP settlement protocol. Presence enables X402BaseRail at boot. */

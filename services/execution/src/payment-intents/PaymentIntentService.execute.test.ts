@@ -309,6 +309,43 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
     expect(insertSpy).not.toHaveBeenCalled();
   });
 
+  it("completeExecution refuses to settle a row with no policy_decision_id (§6 runtime invariant)", async () => {
+    // A row that somehow reached `dispatching` without the §6 gate having run.
+    // Defense-in-depth: even if the outbox-side guard is bypassed, this row must
+    // not be allowed to transition to `executed`.
+    const orphanRow: PaymentIntentRow = {
+      ...APPROVED_INTENT_ROW,
+      status: "dispatching",
+      policy_decision_id: null,
+    };
+    const insertSpy = vi.fn();
+    const pool = makeFakePool((sql) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [orphanRow], rowCount: 1 };
+      }
+      if (sql.includes("INTO executions")) {
+        insertSpy();
+        return { rows: [{ id: "exec_1" }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const service = makeService(pool, new InMemoryAuditEmitter());
+    await expect(
+      service.completeExecution(ctx, {
+        paymentIntentId: PI_ID,
+        executionId: "exec_orphan",
+        rail: "bank_ach",
+        railReceipt: { rail: "ach", ach_trace: "t" },
+        idempotencyKey: `pi:${PI_ID}:none`,
+      }),
+    ).rejects.toMatchObject({
+      code: "payment_intent_invalid_state",
+      message: expect.stringContaining("policy_decision_id"),
+    });
+    // Must reject BEFORE any execution row is inserted.
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
   it("failExecution moves dispatching → failed", async () => {
     const failedRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "failed" };
     const pool = makeFakePool((sql) =>

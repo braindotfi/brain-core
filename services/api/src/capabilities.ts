@@ -48,8 +48,15 @@ export interface BootCapabilities {
   auditAnchorBroadcaster: boolean;
   /** Whether the MCP brain://proofs/{action_id} resource is wired through poolProofBuilder. */
   mcpProofBuilder: boolean;
-  /** Whether at-rest credential encryption is active (BRAIN_SOURCE_CREDENTIAL_KEY decoded). */
+  /** Whether at-rest credential encryption is active (a credential key is loaded). */
   sourceCredentialEncryption: boolean;
+  /**
+   * Which credential-key provider the boot path selected:
+   *   "azure-key-vault" — KMS (production)
+   *   "env-var"         — BRAIN_SOURCE_CREDENTIAL_KEY (dev/staging only)
+   *   "none"            — no key configured (forbidden in production)
+   */
+  sourceCredentialKeyProvider: "azure-key-vault" | "env-var" | "none";
 }
 
 /**
@@ -80,6 +87,7 @@ export function logBootCapabilities(c: BootCapabilities, log: Logger): void {
       audit_anchor_broadcaster: c.auditAnchorBroadcaster,
       mcp_proof_builder: c.mcpProofBuilder,
       source_credential_encryption: c.sourceCredentialEncryption,
+      source_credential_key_provider: c.sourceCredentialKeyProvider,
     },
     "brain.runtime.capabilities",
   );

@@ -136,10 +136,22 @@ export class McpAuthVerifier implements AuthVerifier {
     return hash;
   }
 
-  /** Test/operations seam: drop the cache (e.g. when an operator rotates
-   *  an agent's scope on-chain). */
-  public clearCache(): void {
-    this.cache.clear();
+  /**
+   * Operations seam for scope rotation. When an operator updates an agent's
+   * on-chain scope attestation in BrainMCPAgentRegistry, the previous hash is
+   * cached in-process for up to {@link CACHE_TTL_MS}. Calling this with the
+   * affected agent id drops just that entry so the next tool call re-reads
+   * from chain and either picks up the new hash or hard-rejects on mismatch.
+   *
+   * Called with no argument (or `undefined`), clears every entry — used by
+   * tests and as a panic button if the on-chain checker itself rotates.
+   */
+  public clearCache(agentId?: string): void {
+    if (agentId === undefined) {
+      this.cache.clear();
+      return;
+    }
+    this.cache.delete(agentId);
   }
 }
 

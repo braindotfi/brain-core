@@ -802,6 +802,21 @@ export class PaymentIntentService implements IPaymentIntentService {
           `completeExecution: intent ${args.paymentIntentId} in '${current.status}', expected 'dispatching'`,
         );
       }
+      // §6 runtime invariant (defense-in-depth, mirrors the dispatch-site check
+      // in outbox/worker.ts): the only legal path to `executed` runs through the
+      // gate, which sets policy_decision_id atomically. If a future code path
+      // races us to `dispatching` without that pointer, refuse to advance
+      // rather than ship a row that violates the IPaymentIntentService contract
+      // ("status = executed unreachable without policy_decision_id").
+      if (
+        current.policy_decision_id === null ||
+        current.policy_decision_id.length === 0
+      ) {
+        throw brainError(
+          "payment_intent_invalid_state",
+          `completeExecution: intent ${args.paymentIntentId} has no policy_decision_id; §6 gate did not run`,
+        );
+      }
       await insertExecution(c, {
         id: args.executionId,
         tenantId: ctx.tenantId,

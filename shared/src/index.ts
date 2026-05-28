@@ -160,3 +160,9 @@ export {
   decryptCredentials,
   decodeEnvCredentialKey,
 } from "./crypto/aes-gcm.js";
+export {
+  buildCredentialKeyProvider,
+  type CredentialKey,
+  type CredentialKeyProvider,
+  type CredentialKeyProviderOptions,
+} from "./crypto/credential-key-provider.js";

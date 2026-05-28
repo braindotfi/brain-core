@@ -39,7 +39,7 @@ import {
   loadConfig,
   brainError,
   brainId,
-  decodeEnvCredentialKey,
+  buildCredentialKeyProvider,
   withTenantScope,
   createRoutingEnqueue,
   isDomainEvent,
@@ -660,20 +660,23 @@ async function main(): Promise<void> {
   const ledgerService = new LedgerService(ledgerDeps);
 
   // -- source credential store ----------------------------------------
-  // Always use PostgresSourceRepository for persistence. Credential
-  // encryption is enabled only when BRAIN_SOURCE_CREDENTIAL_KEY is set, and
-  // decodeEnvCredentialKey hard-throws in NODE_ENV=production if the env-var
-  // path is used (production must source the key from Azure Key Vault).
-  const sourceCredentialKey = decodeEnvCredentialKey({
+  // Always use PostgresSourceRepository for persistence. The credential-key
+  // provider selects between Azure Key Vault (production) and the env-var path
+  // (dev/staging); both paths fail closed in production via boot-time guards.
+  const credentialKeyProvider = buildCredentialKeyProvider({
+    kmsVaultUrl: cfg.BRAIN_AZURE_KEY_VAULT_URL,
+    kmsSecretName: cfg.BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME,
     envVarKey: cfg.BRAIN_SOURCE_CREDENTIAL_KEY,
+    envKeyId: cfg.BRAIN_SOURCE_CREDENTIAL_KEY_ID,
     nodeEnv: cfg.NODE_ENV,
   });
+  const sourceCredential = await credentialKeyProvider.load();
   const postgresSourceRepo = new PostgresSourceRepository({
     pool,
-    ...(sourceCredentialKey !== undefined
+    ...(sourceCredential !== undefined
       ? {
-          credentialKey: sourceCredentialKey,
-          credentialKeyId: cfg.BRAIN_SOURCE_CREDENTIAL_KEY_ID,
+          credentialKey: sourceCredential.key,
+          credentialKeyId: sourceCredential.keyId,
         }
       : {}),
   });
@@ -1830,7 +1833,8 @@ async function main(): Promise<void> {
       webhookDispatchWorker: true,
       auditAnchorBroadcaster: anchorBroadcaster !== undefined,
       mcpProofBuilder: true,
-      sourceCredentialEncryption: sourceCredentialKey !== undefined,
+      sourceCredentialEncryption: sourceCredential !== undefined,
+      sourceCredentialKeyProvider: credentialKeyProvider.source,
     },
     log,
   );
