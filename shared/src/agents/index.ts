@@ -7,3 +7,4 @@
 export * from "./capability.js";
 export * from "./execution-mode.js";
 export * from "./tenant.js";
+export * from "./autonomy.js";

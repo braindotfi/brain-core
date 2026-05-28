@@ -194,8 +194,110 @@ describe("P1.1 adversarial — fail closed", () => {
       "resolveEvidence",
       "detectDuplicates",
       "resolveTenantFlags",
+      "attestCounterpartyAgent",
+      "sumAgentWindowSpend",
+      "resolveEscrowState",
+      "metrics",
     ];
     expect(allowed.some((k) => String(k).toLowerCase().includes("wiki"))).toBe(false);
+    expect(allowed.some((k) => String(k).toLowerCase().includes("narrative"))).toBe(false);
+    expect(allowed.some((k) => String(k).toLowerCase().includes("memory"))).toBe(false);
+  });
+
+  // 10. Poisoned Wiki memory in the PROPOSE path: CreatePaymentIntentInput
+  //     carries only structured fields. No narrative/memory/wiki key is
+  //     accepted, so a Wiki page that gets re-rendered with an embedded
+  //     "instruction" can never become an input to PaymentIntentService.create.
+  it("prompt injection: CreatePaymentIntentInput has no narrative/wiki field", () => {
+    type K = keyof import("@brain/shared").CreatePaymentIntentInput;
+    const allowed: K[] = [
+      "action_type",
+      "source_account_id",
+      "destination_counterparty_id",
+      "amount",
+      "currency",
+      "obligation_id",
+      "invoice_id",
+      "agent_id",
+      "evidence_ids",
+      "pay_to",
+      "escrow_id",
+      "job_terms_hash",
+    ];
+    expect(allowed.some((k) => String(k).toLowerCase().includes("wiki"))).toBe(false);
+    expect(allowed.some((k) => String(k).toLowerCase().includes("narrative"))).toBe(false);
+    expect(allowed.some((k) => String(k).toLowerCase().includes("memory"))).toBe(false);
+    expect(allowed.some((k) => String(k).toLowerCase().includes("description"))).toBe(false);
+  });
+
+  // 11. Fake counterparty / x402 pay_to mismatch: even if a counterparty record
+  //     has high verified_status, a settlement where pay_to differs from the
+  //     counterparty's on-chain address is a HARD reject at check 6.5. Proves
+  //     §6 binds the settlement recipient to the resolved counterparty, not to
+  //     a value supplied alongside the intent.
+  it("fake counterparty / x402 pay_to mismatch: hard reject at 6.5", async () => {
+    const honestPayee = "0x" + "ab".repeat(20);
+    const maliciousPayTo = "0x" + "cd".repeat(20);
+    const deps = gateDeps({
+      // Counterparty is "trusted" off-chain but its on-chain address differs from
+      // the settlement recipient the intent claims to pay.
+      resolveCounterparty: async () => ({ ...TRUSTED_CP, onchain_address: honestPayee }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: principal(),
+      intent: intent({
+        action_type: "x402_settle",
+        currency: "USDC",
+        settlement: {
+          asset: "USDC",
+          network: "base",
+          amount: "50.00",
+          pay_to: maliciousPayTo,
+        },
+      }),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.name).toBe("x402_payment_context_valid");
+      expect(result.failedCheck.index).toBe(6.5);
+      const failures = String(JSON.stringify(result.failedCheck.detail ?? {}));
+      expect(failures).toContain("counterparty on-chain address");
+    }
+  });
+
+  // 12. Compromised / non-attested agent payee: even if the agent counterparty
+  //     record exists, the §6 gate (check 5.5) HARD rejects when the on-chain
+  //     attestation reader reports the agent is not registered or is paused.
+  //     This is the M2M-commerce membership check: a malicious external agent
+  //     that hasn't passed BrainMCPAgentRegistry attestation cannot receive funds.
+  it("non-attested agent payee: hard reject at 5.5", async () => {
+    const agentCP: GateCounterparty = {
+      id: "cp_agent",
+      type: "agent",
+      risk_level: "low",
+      verified_status: "document_verified",
+      agent_id: "agent_unattested",
+    };
+    const deps = gateDeps({
+      resolveCounterparty: async () => agentCP,
+      attestCounterpartyAgent: async () => ({
+        attested: false,
+        registered: false,
+        paused: false,
+        reason: "agent not registered in BrainMCPAgentRegistry",
+      }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: principal(),
+      intent: intent({ destination_counterparty_id: agentCP.id }),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.name).toBe("agent_counterparty_attested");
+      expect(result.failedCheck.index).toBe(5.5);
+    }
   });
 });
 

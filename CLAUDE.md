@@ -179,6 +179,21 @@ New v0.3 routes live under `/agents/*`, `/payment-intents/*`, `/agents/mcp`. The
 - Every successful tool/resource call emits `agent.mcp.tool_called`; mutating tools also emit the same inner audit events as the HTTP API.
 - Wired into the execution Fastify app via an optional `registerMcp` callback, `services/execution` does not depend on `@brain/mcp` (no workspace cycle).
 
+## Autonomy Modes (shadow / recommend / confirm / live)
+
+`shared/src/agents/autonomy.ts` collapses three orthogonal axes (LIVE_AGENTS promotion, `default_authority`, policy outcome) into one observable label so the surface vocabulary lines up with the pitch deck. Use `deriveAutonomyMode({ isLive, defaultAuthority, policyMaxOutcome })`. Truth table (first matching row wins):
+
+| isLive | defaultAuthority | policyMaxOutcome | → Autonomy mode |
+| ------ | ---------------- | ---------------- | --------------- |
+| false  | (any)            | (any)            | **shadow**      |
+| true   | `notify_only`    | (any)            | **shadow**      |
+| true   | `propose`        | (any)            | **recommend**   |
+| true   | `execute`        | `reject`         | **shadow**      |
+| true   | `execute`        | `confirm`        | **confirm**     |
+| true   | `execute`        | `allow`          | **live**        |
+
+`live` is the only mode that permits unattended execution. Every mode (including `live`) still passes the deterministic §6 gate — the four modes label *operator expectations*, not safety bypasses.
+
 ## Per-Layer "Must Not" Rules
 
 - **Raw**: never mutate ingested payloads (tombstone only); never store financial conclusions as authoritative facts.
