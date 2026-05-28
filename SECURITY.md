@@ -49,14 +49,29 @@ A third party verifies **without trusting Brain**:
 
 ## Deployed contract addresses
 
-| Contract                | Base Sepolia (staging)              | Base mainnet           |
-| ----------------------- | ----------------------------------- | ---------------------- |
-| `BrainAuditAnchor`      | TODO(brain-hardening): fill address | pending external audit |
-| `BrainPolicyRegistry`   | TODO(brain-hardening): fill address | pending external audit |
-| `BrainSmartAccount`     | TODO(brain-hardening): fill address | pending external audit |
-| `BrainMCPAgentRegistry` | TODO(brain-hardening): fill address | pending external audit |
+Brain protocol contracts on Base Sepolia (chain 84532). Mainnet deployment is
+blocked on the external smart-contract audit.
 
-Mainnet deployment is blocked on the external smart-contract audit.
+| Contract                  | Base Sepolia (staging)                              | Base mainnet           |
+| ------------------------- | --------------------------------------------------- | ---------------------- |
+| `BrainAuditAnchor`        | `0xb900add824064098342c869ff83efdeb05eb95ce`        | pending external audit |
+| `BrainPolicyRegistry`     | `0x92d1CC5c46eAE229C8A9dD95a334cec0cE33CAD9`        | pending external audit |
+| `BrainSmartAccount`       | `0x8cC094d03676d29c8cE0267480f58188E7F1E23D`        | pending external audit |
+| `BrainMCPAgentRegistry`   | `0xd1558828ef31630164aa8942dd41bc63a4d8bed7`        | pending external audit |
+| `BrainEscrow`             | `0x5924BD26Bc827FB3cAd6f3a0DBDC793562555Cc0`        | pending external audit |
+| `BrainReputationRegistry` | `0xcEf6C25aE3DF9c5cfC0B3E11D031eAAa2c26026C`        | pending external audit |
+
+`BrainEscrow` and `BrainReputationRegistry` were deployed 2026-05-28 via
+`contracts/script/DeployEscrow.s.sol` and `DeployReputationRegistry.s.sol`. The
+arbiter / attestor on both is the `BRAIN_SESSION_KEY` EOA in staging; production
+must rotate to a Safe multi-sig before mainnet.
+
+### External (third-party) contracts referenced by Brain rails
+
+| Surface               | Address / endpoint                                  | Network      |
+| --------------------- | --------------------------------------------------- | ------------ |
+| x402 facilitator      | `https://x402.org/facilitate` (Coinbase testnet)    | base-sepolia |
+| USDC (x402 + escrow)  | `0x036CbD53842c5426634e7929541eC2318f3dCF7e`        | base-sepolia |
 
 ## Audit status
 
