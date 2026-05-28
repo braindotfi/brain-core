@@ -39,6 +39,7 @@ import {
   loadConfig,
   brainError,
   brainId,
+  decodeEnvCredentialKey,
   withTenantScope,
   createRoutingEnqueue,
   isDomainEvent,
@@ -64,6 +65,7 @@ import {
   PostgresWalletIdentityReader,
 } from "./onboarding/wallet-identities.js";
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
+import { logBootCapabilities } from "./capabilities.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { registerProofViewRoute } from "./proof/view.js";
 import { registerSecurityHeaders } from "./security-headers.js";
@@ -659,11 +661,13 @@ async function main(): Promise<void> {
 
   // -- source credential store ----------------------------------------
   // Always use PostgresSourceRepository for persistence. Credential
-  // encryption is enabled only when BRAIN_SOURCE_CREDENTIAL_KEY is set.
-  const sourceCredentialKey =
-    cfg.BRAIN_SOURCE_CREDENTIAL_KEY !== undefined
-      ? Buffer.from(cfg.BRAIN_SOURCE_CREDENTIAL_KEY, "base64")
-      : undefined;
+  // encryption is enabled only when BRAIN_SOURCE_CREDENTIAL_KEY is set, and
+  // decodeEnvCredentialKey hard-throws in NODE_ENV=production if the env-var
+  // path is used (production must source the key from Azure Key Vault).
+  const sourceCredentialKey = decodeEnvCredentialKey({
+    envVarKey: cfg.BRAIN_SOURCE_CREDENTIAL_KEY,
+    nodeEnv: cfg.NODE_ENV,
+  });
   const postgresSourceRepo = new PostgresSourceRepository({
     pool,
     ...(sourceCredentialKey !== undefined
@@ -935,8 +939,9 @@ async function main(): Promise<void> {
 
   // Build the live rail registry. When credentials are present the real rails
   // are used; otherwise fall back to dev stubs (which fail closed in production).
-  const rails: RailRegistry = (() => {
+  const railsBuild = (() => {
     const configured: Rail[] = [];
+    const liveNames: string[] = [];
     if (cfg.PLAID_CLIENT_ID !== undefined && cfg.PLAID_SECRET !== undefined) {
       const plaidClient = buildPlaidTransferClient({
         clientId: cfg.PLAID_CLIENT_ID,
@@ -944,6 +949,7 @@ async function main(): Promise<void> {
         env: cfg.PLAID_ENV,
       });
       configured.push(new AchPlaidRail({ client: plaidClient }));
+      liveNames.push("bank_ach");
       log.info({ env: cfg.PLAID_ENV }, "ACH Plaid rail registered");
     }
     let onchainExecutor: ReturnType<typeof buildOnchainExecutor> | undefined;
@@ -954,6 +960,7 @@ async function main(): Promise<void> {
         chainId: cfg.BRAIN_BASE_CHAIN_ID,
       });
       configured.push(new OnchainBaseRail({ executor: onchainExecutor }));
+      liveNames.push("onchain_base");
       log.info({ chainId: cfg.BRAIN_BASE_CHAIN_ID }, "on-chain Base rail registered");
     }
     if (
@@ -971,6 +978,7 @@ async function main(): Promise<void> {
         chainId: cfg.BRAIN_BASE_CHAIN_ID,
       });
       configured.push(new X402BaseRail({ client: x402Client }));
+      liveNames.push("x402_base");
       log.info({ network: cfg.BRAIN_X402_NETWORK }, "x402 Base rail registered");
     }
     if (
@@ -987,14 +995,27 @@ async function main(): Promise<void> {
           smartAccount: cfg.BRAIN_ONCHAIN_SMART_ACCOUNT,
         }),
       );
+      liveNames.push("escrow_base");
       log.info({ escrowAddress: cfg.BRAIN_ESCROW_ADDRESS }, "escrow Base rail registered");
     }
     if (configured.length === 0) {
       log.warn("no real payment rails configured — falling back to dev stubs");
-      return defaultRails();
+      // Default stubs (see defaultRails()) — three keys.
+      return {
+        rails: defaultRails(),
+        entries: [
+          { name: "bank_ach", live: false },
+          { name: "erp_writeback", live: false },
+          { name: "onchain_base", live: false },
+        ],
+      };
     }
-    return new RailRegistry(configured);
+    return {
+      rails: new RailRegistry(configured),
+      entries: liveNames.map((name) => ({ name, live: true })),
+    };
   })();
+  const rails: RailRegistry = railsBuild.rails;
 
   const executionDeps: ExecutionDeps = {
     pool,
@@ -1779,6 +1800,30 @@ async function main(): Promise<void> {
     actor: "agent_router_worker",
   });
   log.info("agent-route worker started");
+
+  // -- capability snapshot (item 5) ------------------------------------
+  // One structured log line that answers "what's actually wired in this
+  // process?" so demo prelude / ops don't have to spelunk through this file.
+  logBootCapabilities(
+    {
+      nodeEnv: cfg.NODE_ENV,
+      rails: railsBuild.entries,
+      gateLoaders: {
+        // attestCounterpartyAgent + sumAgentWindowSpend are unconditionally wired
+        // above; resolveEscrowState is opt-in by BRAIN_ESCROW_ADDRESS. Mirror that.
+        resolveTenantFlags: resolveTenantFlags !== undefined,
+        attestCounterpartyAgent: true,
+        sumAgentWindowSpend: true,
+        resolveEscrowState: cfg.BRAIN_ESCROW_ADDRESS !== undefined,
+      },
+      liveAgentsCount: Object.keys(LIVE_AGENTS.liveAgents ?? {}).length,
+      webhookDispatchWorker: true,
+      auditAnchorBroadcaster: anchorBroadcaster !== undefined,
+      mcpProofBuilder: true,
+      sourceCredentialEncryption: sourceCredentialKey !== undefined,
+    },
+    log,
+  );
 
   // -- listen ---------------------------------------------------------
   await app.listen({ host: "0.0.0.0", port: cfg.PORT });

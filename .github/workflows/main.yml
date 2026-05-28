@@ -18,6 +18,37 @@ concurrency:
   cancel-in-progress: false # never cancel a deploy mid-flight
 
 jobs:
+  # Secret scan on every push to main. PR coverage runs in pr.yml; this is the
+  # belt to that suspender for direct pushes (merge commits, hotfix pushes)
+  # that never went through a PR. Pre-commit hooks are bypassable with
+  # --no-verify, so CI is the authoritative gate.
+  secrets:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: gitleaks (push diff)
+        # gitleaks detect against the push's commit range — `before..after` covers
+        # everything new on this push, including amended merge commits.
+        run: |
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            # First push to the ref — scan the full tree to baseline.
+            gitleaks detect --source . --redact --exit-code 1
+          else
+            gitleaks detect --source . --log-opts="${BEFORE}..${AFTER}" --redact --exit-code 1
+          fi
+
   unit_and_integration:
     name: unit + integration
     runs-on: ubuntu-latest
@@ -133,6 +164,12 @@ jobs:
     name: build + push container images
     runs-on: ubuntu-latest
     needs: unit_and_integration
+    # Deploy chain is gated behind the DEPLOY_ENABLED repo variable. Set
+    # `vars.DEPLOY_ENABLED == 'true'` once Azure OIDC secrets (AZURE_CLIENT_ID,
+    # AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, ACR_NAME, ACR_LOGIN_SERVER) are
+    # configured. Until then the quality gates (secrets/units/golden-path) stay
+    # the visible CI signal instead of a permanently-red build/push job.
+    if: vars.DEPLOY_ENABLED == 'true'
     # The root Dockerfile builds the all-in-one api boot binary (the current
     # deploy target). The per-service Dockerfiles (P1.5) validate each service's
     # build graph for the multi-process rollout; the api image stays the deploy
@@ -182,6 +219,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build_and_push_images
     environment: staging
+    if: vars.DEPLOY_ENABLED == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: azure/login@v2
@@ -205,6 +243,7 @@ jobs:
     name: E2E → staging
     runs-on: ubuntu-latest
     needs: deploy_staging
+    if: vars.DEPLOY_ENABLED == 'true'
     env:
       BRAIN_BASE_URL: https://api.sandbox.brain.fi/v1
     steps:
@@ -222,6 +261,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: e2e_staging
     environment: production # GitHub environment gate — manual approval
+    if: vars.DEPLOY_ENABLED == 'true'
     steps:
       - uses: azure/login@v2
         with:
