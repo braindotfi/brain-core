@@ -14,12 +14,12 @@ Brain does not need to build every agent. **It is the substrate they share.** Ex
 
 Each agent has four attributes registered on-chain or referenced from on-chain.
 
-| Attribute              | What It Is                                                                                                            |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **Identity**           | A `BrainMCPAgentRegistry` record on Base, keyed by an agent address (`agentId`/`tenantId`/`scopeHash`/`behaviorHash`) |
-| **Capability set**     | Declared at registration: `pay_invoice`, `rebalance_treasury`, `file_vat_return`, etc                                 |
-| **Reputation history** | _Planned (RFC 0001)_ — signed performance attestations aggregated as a Merkle root; not stored on-chain in the MVP    |
-| **Scope grants**       | Per-tenant EIP-712 attestations granting specific actions, limits, and durations                                      |
+| Attribute              | What It Is                                                                                                                                            |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Identity**           | A `BrainMCPAgentRegistry` record on Base, keyed by an agent address (`agentId`/`tenantId`/`scopeHash`/`behaviorHash`)                                 |
+| **Capability set**     | Declared at registration: `pay_invoice`, `rebalance_treasury`, `file_vat_return`, etc                                                                 |
+| **Reputation history** | A per-agent reputation pointer / Merkle root in `BrainReputationRegistry` (RFC 0001, **UNAUDITED testnet**); read by Policy as a threshold input only |
+| **Scope grants**       | Per-tenant EIP-712 attestations granting specific actions, limits, and durations                                                                      |
 
 ### Discovery and Routing
 
@@ -36,7 +36,7 @@ Brain selects based on:
    - capability match
    - policy compatibility
    - cost
-   - historical performance (on-chain reputation planned — RFC 0001)
+   - historical performance (on-chain reputation via BrainReputationRegistry — RFC 0001, testnet)
    ↓
 Selection itself is an audited event
 ```
@@ -66,14 +66,14 @@ Approved actions execute through one of three paths.
 
 ### Settlement: When Agents Are Paid
 
-Where an external agent is paid for its work, Brain coordinates settlement **without ever custodying funds**.
+Where an external agent is paid for its work, Brain coordinates settlement so that the operator never redirects funds.
 
-| Pattern                    | Standard | Use Case                                                            |
-| -------------------------- | -------- | ------------------------------------------------------------------- |
-| **Escrowed jobs**          | ERC-8183 | Multi-step work where payment depends on verified completion        |
-| **HTTP-native settlement** | x402     | Per-call pay-per-use (an agent paying for an API call or tool call) |
+| Pattern                    | Mechanism                         | Use Case                                                                 |
+| -------------------------- | --------------------------------- | ------------------------------------------------------------------------ |
+| **Escrowed jobs**          | `BrainEscrow` (UNAUDITED testnet) | Multi-step work where USDC releases incrementally as milestones complete |
+| **HTTP-native settlement** | x402                              | Per-call pay-per-use (an agent paying for an API call or tool call)      |
 
-The tenant's smart account or EOA pays. The agent's address receives. Brain records and proves the flow.
+For x402 the tenant's smart account / EOA pays and the agent's address receives. For conditional work, the immutable `BrainEscrow` contract escrows USDC against a hashed job commitment and releases/refunds incrementally — the arbiter can only ever pay the designated payee or refund the designated payer, never redirect. Brain records and proves the flow.
 
 **→ Escrow and x402 reference**
 
@@ -113,15 +113,15 @@ This signed attestation is enforced off-chain (its hash is anchored as the agent
 
 ### What Brain Provides vs What the Agent Provides
 
-| Concern                             | Brain Provides                                                      | Agent Provides |
-| ----------------------------------- | ------------------------------------------------------------------- | :------------: |
-| **Verified financial context**      | ✅ Wiki + Ledger + citations                                        |                |
-| **Policy enforcement**              | ✅ Off-chain + on-chain                                             |                |
-| **Identity and scope**              | ✅ `BrainMCPAgentRegistry` (on-chain reputation planned — RFC 0001) |                |
-| **Audit trail**                     | ✅ Hash chain + Merkle anchor                                       |                |
-| **Settlement infrastructure**       | ✅ Smart account, ERC-8183, x402                                    |                |
-| **Domain logic for the capability** |                                                                     |       ✅       |
-| **The actual work**                 |                                                                     |       ✅       |
+| Concern                             | Brain Provides                                                                          | Agent Provides |
+| ----------------------------------- | --------------------------------------------------------------------------------------- | :------------: |
+| **Verified financial context**      | ✅ Wiki + Ledger + citations                                                            |                |
+| **Policy enforcement**              | ✅ Off-chain + on-chain                                                                 |                |
+| **Identity and scope**              | ✅ `BrainMCPAgentRegistry`; reputation in `BrainReputationRegistry` (RFC 0001, testnet) |                |
+| **Audit trail**                     | ✅ Hash chain + Merkle anchor                                                           |                |
+| **Settlement infrastructure**       | ✅ Smart account, `BrainEscrow` (testnet), x402                                         |                |
+| **Domain logic for the capability** |                                                                                         |       ✅       |
+| **The actual work**                 |                                                                                         |       ✅       |
 
 {% hint style="success" %}
 This is why the Agent Layer is open. The substrate is general-purpose. The capabilities are pluggable.
