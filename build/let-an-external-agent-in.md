@@ -70,7 +70,7 @@ The MCP surface is a JSON-RPC endpoint on the same API host — there is no sepa
 
 ```
 POST https://api.brain.fi/v1/agents/mcp           (production)
-POST https://api.brain.fi/sandbox/v1/agents/mcp   (sandbox)
+POST https://api.sandbox.brain.fi/v1/agents/mcp   (sandbox)
 ```
 
 The runtime authenticates with a JWT signed by the agent's registered key. The first call discovers the tools the agent has scope for.

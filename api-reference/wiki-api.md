@@ -1,6 +1,20 @@
 # Wiki API
 
-Natural-language and structured access to the tenant's memory graph.
+Natural-language and structured access to the tenant's memory graph. The Wiki is downstream of the Ledger — narrative, evidence-cited recall — and is never the source of truth for balances, transactions, or permissions.
+
+| Operation                        | Endpoint                                    |
+| -------------------------------- | ------------------------------------------- |
+| Ask a natural-language question  | `POST /v1/wiki/question`                    |
+| Search entities                  | `GET  /v1/wiki/search`                      |
+| Get an entity                    | `GET  /v1/wiki/entity/{entity_id}`          |
+| Evidence chain for an entity     | `GET  /v1/wiki/entity/{entity_id}/evidence` |
+| Temporal history for an entity   | `GET  /v1/wiki/entity/{entity_id}/history`  |
+| Annotate (human correction)      | `POST /v1/wiki/annotate`                    |
+| Get the entity-kind JSON Schemas | `GET  /v1/wiki/schema`                      |
+| List memory pages                | `GET  /v1/memory/pages`                     |
+| Get a memory page                | `GET  /v1/memory/pages/{slug_or_id}`        |
+| Regenerate a memory page         | `POST /v1/memory/regenerate`                |
+| Search memory pages              | `GET  /v1/memory/search`                    |
 
 ### Ask a Question
 
@@ -10,135 +24,229 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "tenantId": "acme",
-  "question": "What did we spend on AWS last quarter, by environment?"
+  "question":             "What did we spend on AWS last quarter, by environment?",
+  "as_of":                "2026-03-31T23:59:59Z",
+  "max_evidence_depth":   3
 }
 ```
 
 ```json
 {
-  "data": {
-    "text": "Last quarter (2025-Q2), Acme spent $182,431 on AWS across three environments: production ($138,212), staging ($31,005), and dev ($13,214). Production spend grew 12% versus 2025-Q1...",
-    "citations": [
-      { "type": "ledger", "id": "tx_4127" },
-      { "type": "ledger", "id": "tx_4128" },
-      { "type": "raw", "id": "sha256:abc..." }
-    ],
-    "policy_version": "v3",
-    "audit_event_id": "evt_a1b2c3..."
+  "question": "What did we spend on AWS last quarter, by environment?",
+  "answer": "In 2026-Q1, Acme spent $182,431 on AWS across three environments: production ($138,212), staging ($31,005), and dev ($13,214)...",
+  "confidence": 0.94,
+  "evidence_path": [
+    { "raw_id": "raw_8231", "parser": "invoice_v2", "confidence": 0.98 },
+    { "ledger_id": "tx_4127" },
+    { "ledger_id": "tx_4128" }
+  ],
+  "llm_metadata": {
+    "model": "claude-...",
+    "tokens_input": 4123,
+    "tokens_output": 612,
+    "latency_ms": 1841
   }
 }
 ```
 
-{% hint style="info" %}
-Every Wiki answer carries provenance. Follow `citations[]` back to Ledger records and Raw artifacts. There is no claim Brain cannot back up with a source.
-{% endhint %}
+`question` is 1–2000 chars. `max_evidence_depth` defaults to 3 (max 5). This route puts an LLM in the hot path — per-call costs apply. Every answer carries `evidence_path` back to Ledger rows and Raw artifacts.
 
 ### Search Entities
 
 ```http
-POST /v1/wiki/search
+GET /v1/wiki/search?kind=counterparty&q=AWS&limit=10
 Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "tenantId": "acme",
-  "type":     "counterparty",
-  "query":    "AWS",
-  "limit":    10
-}
 ```
 
 ```json
 {
-  "data": [
+  "results": [
     {
       "id": "cp_aws",
-      "type": "counterparty",
-      "name": "Amazon Web Services",
-      "score": 0.97
+      "kind": "counterparty",
+      "attributes": { "name": "Amazon Web Services" },
+      "valid_from": "2025-01-15",
+      "valid_to": null,
+      "provenance": "extracted",
+      "confidence": 0.97,
+      "source_evidence": ["raw_8231"]
     }
-  ]
+  ],
+  "next_cursor": null
 }
 ```
+
+Query params: `kind` (`account | counterparty | transaction | obligation | policy | agent`), `q` (full-text), `semantic` (pgvector), `since`, `until`, `limit` (default 50, max 500), `cursor`. Pass `semantic=<string>` to run a pgvector similarity search instead of (or in addition to) full-text.
 
 ### Get an Entity
 
 ```http
-GET /v1/wiki/entities/{id}?tenantId=acme
+GET /v1/wiki/entity/{entity_id}?include_neighbors=true&as_of=2026-03-31T23:59:59Z
 Authorization: Bearer <token>
 ```
 
 ```json
 {
-  "data": {
+  "entity": {
     "id": "cp_aws",
-    "type": "counterparty",
-    "name": "Amazon Web Services",
-    "attributes": {
-      "tax_id": "...",
-      "primary_account_id": "acct_aws_main"
-    },
-    "relationships": [
-      { "to": "acct_aws_main", "type": "billed_via" },
-      { "to": "cc_engineering", "type": "charged_to" }
-    ],
-    "recent_ledger": [{ "id": "tx_4127", "date": "2025-08-01", "amount": "61404.12" }]
-  }
+    "kind": "counterparty",
+    "attributes": { "name": "Amazon Web Services", "tax_id": "..." },
+    "valid_from": "2025-01-15",
+    "valid_to": null,
+    "provenance": "extracted",
+    "confidence": 0.97,
+    "source_evidence": ["raw_8231"]
+  },
+  "neighbors": [
+    { "relation": { "type": "billed_via" }, "entity": { "id": "acct_aws_main", "kind": "account" } }
+  ]
 }
 ```
 
-### Walk Relationships
+`as_of` enables bitemporal reads — the entity as it was known at that moment.
+
+### Evidence Chain
+
+The full provenance trail behind a Wiki entity:
 
 ```http
-GET /v1/wiki/entities/{id}/relationships?tenantId=acme
+GET /v1/wiki/entity/{entity_id}/evidence
 Authorization: Bearer <token>
-```
-
-### Semantic Search
-
-For free-text queries that don't fit entity types:
-
-```http
-POST /v1/wiki/semantic_search
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "tenantId": "acme",
-  "query":    "unusual increase in cloud costs",
-  "k":        5
-}
 ```
 
 ```json
 {
-  "data": [
+  "entity_id": "cp_aws",
+  "chain": [
     {
-      "entity_id": "cp_aws",
-      "narrative_id": "narr_q2_summary",
-      "score": 0.91,
-      "snippet": "AWS spend grew 12% in Q2 versus Q1, driven by..."
+      "raw_parsed_id": "rp_001",
+      "parser": "invoice_v2",
+      "confidence": 0.98,
+      "extracted_fields": ["counterparty.name", "counterparty.tax_id"]
     }
   ]
 }
 ```
 
-### Subscribe to Updates
+### Temporal History
 
-```
-wss://api.brain.fi/v1/wiki/stream?tenantId=acme&token=<bearer>
+Every version of the entity, oldest first:
+
+```http
+GET /v1/wiki/entity/{entity_id}/history
+Authorization: Bearer <token>
 ```
 
-Events: `entity.updated`, `narrative.added`, `summary.refreshed`.
+```json
+{
+  "entity_id": "cp_aws",
+  "versions": [
+    { "id": "cp_aws", "valid_from": "2025-01-15", "valid_to": "2025-06-01", "attributes": {...} },
+    { "id": "cp_aws", "valid_from": "2025-06-01", "valid_to": null,         "attributes": {...} }
+  ]
+}
+```
+
+### Annotate (Human Correction)
+
+A human can correct a Wiki entity or relation; the annotation is applied as a **new temporal version** with `provenance: "human_confirmed"` rather than mutating the prior row.
+
+```http
+POST /v1/wiki/annotate
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "entity_id":   "cp_aws",
+  "corrections": { "name": "Amazon Web Services, Inc." },
+  "note":        "Updated to legal name from latest contract"
+}
+```
+
+The body is `oneOf`: an `EntityAnnotation` (above) or a `RelationAnnotation` (`relation_id` instead of `entity_id`).
+
+```json
+{ "annotation_id": "ann_001", "new_version_id": "cp_aws_v3" }
+```
+
+### Get the Entity-Kind Schemas
+
+The JSON Schema(s) describing every Wiki entity kind:
+
+```http
+GET /v1/wiki/schema?kind=counterparty
+Authorization: Bearer <token>
+```
+
+Returns `{ counterparty: <JSON Schema document>, ... }`. Omit `kind` for the full set.
+
+### Memory Pages
+
+Memory pages are pre-rendered narrative views (Markdown) over the Ledger graph — "the AWS page," "Q1 cash flow," "vendor X relationship." Browsable and searchable.
+
+```http
+GET /v1/memory/pages?page_type=counterparty&q=AWS
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "pages": [
+    {
+      "id": "wp_001",
+      "page_type": "counterparty",
+      "subject_id": "cp_aws",
+      "slug": "amazon-web-services",
+      "body_md": "# Amazon Web Services\n...",
+      "rendered_at": "2026-05-28T11:00:00Z",
+      "source_revision": "rev_4127"
+    }
+  ]
+}
+```
+
+`page_type` enum: `account | counterparty | obligation | invoice | agent | policy | monthly_summary | cash_flow`.
+
+Get one page by slug or id:
+
+```http
+GET /v1/memory/pages/{slug_or_id}
+Authorization: Bearer <token>
+```
+
+Regenerate a page (after the underlying Ledger has changed):
+
+```http
+POST /v1/memory/regenerate
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{ "slug_or_id": "amazon-web-services" }
+```
+
+Search memory pages by content:
+
+```http
+GET /v1/memory/search?q=cloud%20overspend&limit=20
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "results": [
+    { "page": { "id": "wp_001", "slug": "amazon-web-services", ... }, "score": 0.91 }
+  ]
+}
+```
 
 ### Provenance Fields
 
-| Field            | Description                                         |
-| ---------------- | --------------------------------------------------- |
-| `citations[]`    | IDs of Ledger and Raw records the answer depends on |
-| `policy_version` | Active policy version when the query ran            |
-| `audit_event_id` | Audit event under which the call was logged         |
+| Field             | Description                                         |
+| ----------------- | --------------------------------------------------- | -------- | --------- | --------------- | ------------------ |
+| `evidence_path`   | Ledger and Raw refs the answer depends on (Q&A)     |
+| `source_evidence` | Raw refs the entity was extracted from (entity get) |
+| `provenance`      | `extracted                                          | inferred | ambiguous | human_confirmed | agent_contributed` |
+| `confidence`      | Calibrated 0 to 1 score                             |
 
 ### What's Next
 

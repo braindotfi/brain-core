@@ -1,176 +1,197 @@
-# Actions API
+# Actions API (Payment Intents)
 
-Propose, approve, and execute actions. Every action passes through the policy engine and emits an audit trail.
+The canonical Brain HTTP surface for proposing, approving, and executing financial actions is the **PaymentIntent** family. The `agent_id`-keyed proposal route from earlier drafts (`POST /v1/agents/{agent_id}/propose`) and the `/v1/actions/*` paths are **not implemented** — both are documented as deprecated stubs in the spec and return 404. Use the routes below.
 
-### Propose an Action
+| Operation              | Endpoint                                             |
+| ---------------------- | ---------------------------------------------------- |
+| Create (propose)       | `POST /v1/payment-intents`                           |
+| Get                    | `GET  /v1/payment-intents/{id}`                      |
+| Approve (confirm-mode) | `POST /v1/payment-intents/{id}/approve`              |
+| Reject                 | `POST /v1/payment-intents/{id}/reject`               |
+| Execute (gated)        | `POST /v1/payment-intents/{id}/execute`              |
+| Pause / Resume         | `POST /v1/payment-intents/{id}/{pause,resume}`       |
+| Replay-investigation   | `GET  /v1/payment-intents/{id}/replay-investigation` |
+| Agent-driven full run  | `POST /v1/agents/run` (see Agents API)               |
+
+### Propose a Payment
 
 ```http
-POST /v1/agents/{agent_id}/propose
-Authorization: Bearer <agent or tenant token>
+POST /v1/payment-intents
+Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "tenantId": "acme",
-  "action": {
-    "type":      "pay_invoice",
-    "invoiceId": "inv_8231",
-    "amount":    "7800_000000",
-    "asset":     "USDC"
-  }
+  "action_type":                "ach_outbound",
+  "source_account_id":          "acct_ops",
+  "destination_counterparty_id": "cp_aws",
+  "amount":                     "7800.00",
+  "currency":                   "USD",
+  "invoice_id":                 "inv_8231",
+  "evidence_ids":               ["rp_001"]
 }
 ```
 
-Response:
+`action_type` is one of `ach_outbound | ach_inbound | wire | onchain_transfer | erp_writeback | card_payment | x402_settle | escrow_release`. `amount` is a decimal string. `currency` matches `^[A-Z]{3}$|^USDC$`.
+
+For the special invoice shortcut (resolves amount / currency / counterparty / source / evidence from a Ledger invoice):
+
+```json
+{ "type": "pay_invoice", "invoice_id": "inv_8231" }
+```
+
+Response (`201 Created`) is a full PaymentIntent with a PolicyDecision already attached:
 
 ```json
 {
-  "actionId": "act_...",
-  "decision": "ESCALATE",
-  "reason": "amount_above_threshold",
-  "policy_version": 3,
-  "approvers": ["role:cfo"],
-  "wiki_context": {
-    "vendor_history": "Vendor X: known, status=approved, 14 prior payments",
-    "ledger_refs": ["ledger_71022", "ledger_71023"]
-  },
-  "signed_verdict": null,
-  "audit_event_id": "audit_evt_..."
+  "id": "pi_a1b2c3",
+  "owner_id": "acme",
+  "created_by_agent_id": "ag_payment_v1",
+  "action_type": "ach_outbound",
+  "source_account_id": "acct_ops",
+  "destination_counterparty_id": "cp_aws",
+  "amount": "7800.00",
+  "currency": "USD",
+  "invoice_id": "inv_8231",
+  "status": "pending_approval",
+  "policy_decision_id": "pd_7331",
+  "approval_ids": [],
+  "execution_receipt_ids": []
 }
 ```
 
-### Decisions
+Errors: `400`, `403`, `404` (invoice not found / not accessible), `409` (invoice already paid / `agent_proposal_duplicate`), `422`.
 
-| Decision   | What Happens                                                                       |
-| ---------- | ---------------------------------------------------------------------------------- |
-| `ALLOW`    | A `signed_verdict` is included; the action can execute immediately (60-second TTL) |
-| `ESCALATE` | The action is in pending state; named approvers must sign                          |
-| `DENY`     | The action will not execute; `reason` carries the structured cause                 |
-
-### Get an Action
+### Get a PaymentIntent
 
 ```http
-GET /v1/actions/{action_id}
+GET /v1/payment-intents/{id}
 Authorization: Bearer <token>
 ```
 
-Response:
+Returns the same `PaymentIntent` shape as above. `404` if unknown or tenant-isolated.
 
-```json
-{
-  "id": "act_...",
-  "agent_id": "ag_...",
-  "tenantId": "acme",
-  "type": "pay_invoice",
-  "decision": "ESCALATE",
-  "approvers": ["role:cfo"],
-  "approvals": [],
-  "executed_at": null,
-  "audit_events": ["audit_evt_proposed_...", "audit_evt_evaluated_..."]
-}
-```
+### Status Lifecycle
 
-### Approve an Escalated Action
+| Status             | Meaning                                                       |
+| ------------------ | ------------------------------------------------------------- |
+| `proposed`         | Created; Policy is evaluating                                 |
+| `pending_approval` | Policy returned `confirm`; awaiting approver signatures       |
+| `approved`         | All required approvals collected (or Policy returned `allow`) |
+| `rejected`         | Policy returned `reject`, or an approver rejected             |
+| `executed`         | Rail dispatch succeeded                                       |
+| `failed`           | §6 gate failed or rail dispatch errored                       |
+| `cancelled`        | Cancelled before approval, or from `paused → cancelled`       |
 
-The named approver signs an EIP-712 approval and submits it.
+Plus three transient states surfaced only by the immediate `execute` response: `dispatching`, `dispatched`, `in_flight` (outbox-row states; settlement is async).
+
+### Approve a `pending_approval` Intent
 
 ```http
-POST /v1/actions/{action_id}/approve
-Authorization: Bearer <tenant token>
+POST /v1/payment-intents/{id}/approve
+Authorization: Bearer <approver token>
+```
+
+No request body. Returns `200` with the updated `PaymentIntent`. Approvers are determined by Policy (the `confirm` rule's `required_approvers` / quorum); each approver hits this endpoint independently and the intent flips to `approved` once the quorum is met.
+
+### Reject
+
+```http
+POST /v1/payment-intents/{id}/reject
+Authorization: Bearer <approver token>
 Content-Type: application/json
 
-{
-  "approver_role": "cfo",
-  "signature":     "0x..."
-}
+{ "reason": "Vendor on internal hold pending PO reconciliation" }
 ```
 
-Response:
+`reason` is optional (≤ 500 chars). Returns `200` with the rejected `PaymentIntent`.
+
+### Execute an Approved Intent
+
+```http
+POST /v1/payment-intents/{id}/execute
+Authorization: Bearer <token>
+```
+
+No request body. Runs the deterministic §6 pre-execution gate against live Ledger state, then atomically transitions the intent `approved → dispatching` and enqueues a `pending` outbox row. The outbox worker dispatches the rail and settles asynchronously.
+
+`202 Accepted`:
 
 ```json
 {
-  "actionId": "act_...",
-  "decision": "ALLOW",
-  "approvals": [{ "role": "cfo", "signed_at": "..." }],
-  "signed_verdict": "0x...",
-  "expires_at": "2025-09-01T12:01:00Z"
+  "payment_intent_id": "pi_a1b2c3",
+  "outbox_id": "ob_001",
+  "execution_id": null,
+  "rail": "bank_ach",
+  "status": "dispatching"
 }
 ```
 
-Multiple approvers may be required (`2-of-3` thresholds, etc). The action remains pending until all required approvals are collected.
+`execution_id` is `null` on this immediate response and populated when the worker picks the row up. Settlement notifications arrive via the rail-specific webhook (e.g. Plaid `TRANSFER_EVENTS_UPDATE`).
 
-### Execute an Approved Action
+A gate failure returns `409` with `payment_intent_gate_failed` and `details` naming the failing check (see Errors → Pre-execution gate failures).
 
-```http
-POST /v1/actions/{action_id}/execute
-Authorization: Bearer <token>
-```
+### Rails
 
-Response:
+The `rail` returned on `execute` is **not** the same vocabulary as the create-time `action_type`. The mapping:
 
-```json
-{
-  "actionId": "act_...",
-  "rail": "smart_account",
-  "tx_hash": "0xabc...",
-  "settled_at": "2025-09-01T...",
-  "audit_event_id": "audit_evt_executed_..."
-}
-```
+| `rail`          | Implementation                                                                               |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `bank_ach`      | Plaid Transfer (authorize → create; settled async via webhook)                               |
+| `onchain_base`  | `BrainSmartAccount.executeViaSessionKey` (Base)                                              |
+| `erp_writeback` | NetSuite SuiteTalk (fail-closed stub)                                                        |
+| `x402_base`     | USDC-on-Base settlement (mapped from `x402_settle`; unregistered at boot, fail-closed)       |
+| `escrow_base`   | `BrainEscrow` lock release (mapped from `escrow_release`; unregistered at boot, fail-closed) |
+| `notification`  | Surface-to-human (no money path)                                                             |
 
-| Rail            | Description                                           |
-| --------------- | ----------------------------------------------------- |
-| `bank_api`      | Off-chain rail (bank API or processor)                |
-| `smart_account` | On-chain via `BrainSmartAccount.executeViaSessionKey` |
-| `x402`          | HTTP-native machine settlement                        |
+The `x402_base` and `escrow_base` rails are **shadow-first**: they throw rather than fake-settle until promoted.
 
-### Subscribe to Action Events
+### Pause / Resume (Kill-Switch)
 
-```
-WSS /v1/actions/{action_id}/events
-Authorization: Bearer <token>
-```
-
-Event types: `proposed`, `policy.evaluated`, `escalated`, `approved`, `denied`, `executing`, `executed`, `failed`.
-
-### List Actions
+An `approved` intent can be held without a terminal transition, then released:
 
 ```http
-GET /v1/actions?tenantId=acme&decision=ESCALATE&limit=50
-Authorization: Bearer <token>
+POST /v1/payment-intents/{id}/pause      # approved → paused
+POST /v1/payment-intents/{id}/resume     # paused → approved (re-runs the live §6 gate)
 ```
 
-Filters: `tenantId`, `agent_id`, `decision`, `type`, `from`, `to`, `cursor`, `limit`.
+No request body for either. Resume re-evaluates the §6 gate against the **current** Ledger state — defending against drift while paused — and returns `409` if any check now fails.
 
-### Cancel a Pending Action
-
-If an action is in ESCALATE state and has not yet been approved or denied:
-
-```http
-DELETE /v1/actions/{action_id}
-Authorization: Bearer <tenant token>
-```
-
-The action is marked `cancelled`. An audit event records the cancellation.
-
-### Kill-Switch: Pause / Resume
-
-An `approved` action can be held without a terminal transition, then released:
-
-```http
-POST /v1/actions/{action_id}/pause     # approved → paused
-POST /v1/actions/{action_id}/resume    # paused → approved (re-runs the live §6 gate)
-```
-
-`pause`/`resume` also accept the deprecated `/v1/payment-intents/{id}/...` aliases. A halted agent (`POST /v1/agents/{agent_id}/halt`) pauses all of its in-flight actions at once.
+A halted agent (`POST /v1/agents/{agent_id}/halt`) pauses every one of its in-flight intents at once.
 
 ### Replay Investigation
 
 ```http
-GET /v1/actions/{action_id}/replay-investigation
+GET /v1/payment-intents/{id}/replay-investigation
+Authorization: Bearer <token>
 ```
 
-Returns a typed forensic record — the action, its executions (each with its typed rail receipt), and the linking ids (`policy_decision_id`, `evidence_ids`). The policy decision, reservation, and audit chain are referenced by id and joined via their owning service APIs.
+Typed forensic record — the intent, each execution (with its typed rail receipt), and the linking ids you'd join to reconstruct exactly what happened:
+
+```json
+{
+  "payment_intent":     { "id": "pi_a1b2c3", "status": "executed", ... },
+  "executions":         [ { "id": "ex_4711", "rail": "bank_ach", "rail_receipt": {...} } ],
+  "policy_decision_id": "pd_7331",
+  "evidence_ids":       ["rp_001"]
+}
+```
+
+The policy decision and the audit chain are referenced by id and joined via their owning service APIs (Policy + Audit).
+
+### Agent-Driven Runs
+
+Most agent activity goes through the higher-level run endpoint, which routes → resolves an action → dry-runs the §6 gate → persists an `agent_runs` row → proposes through this same gated path:
+
+```http
+POST /v1/agents/run
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{ "event": "invoice.overdue", "context": { "invoice_id": "inv_8231" } }
+```
+
+See the Agents API for the full run / routing / kill-switch surface.
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📜 Audit API</strong></td><td>Pull proofs for executed actions.</td><td><a href="audit-api.md">audit-api.md</a></td><td></td></tr><tr><td><strong>🤖 Agents API</strong></td><td>Register agents and grant scope.</td><td><a href="agents-api.md">agents-api.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📜 Audit API</strong></td><td>Pull proofs for executed PaymentIntents.</td><td><a href="audit-api.md">audit-api.md</a></td><td></td></tr><tr><td><strong>🤖 Agents API</strong></td><td>Register agents, route events, run agents.</td><td><a href="agents-api.md">agents-api.md</a></td><td></td></tr></tbody></table>

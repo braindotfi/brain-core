@@ -1,153 +1,288 @@
 # Policy API
 
-Create policies, register them on-chain, evaluate proposed actions, and query active policy state.
+Compose a policy, sign it, activate it, evaluate proposed actions against it, and lint or simulate before signing. Every Policy route is tenant-scoped: the `{tenant_id}` (UUID) appears in the path, and your token's tenant must match.
 
-### Create a Policy
+| Operation                  | Endpoint                                          |
+| -------------------------- | ------------------------------------------------- |
+| Get the active policy      | `GET  /v1/policy/{tenant_id}`                     |
+| Compose a candidate policy | `POST /v1/policy/{tenant_id}/compose`             |
+| Sign + activate            | `POST /v1/policy/{tenant_id}/sign`                |
+| List versions              | `GET  /v1/policy/{tenant_id}/versions`            |
+| Evaluate an action         | `POST /v1/policy/{tenant_id}/evaluate`            |
+| Lint a draft               | `POST /v1/policy/{tenant_id}/lint`                |
+| Simulate against a version | `POST /v1/policy/{tenant_id}/simulate`            |
+| Replay a period            | `POST /v1/policy/{tenant_id}/simulate-historical` |
+| Diff two versions          | `POST /v1/policy/{tenant_id}/diff`                |
+
+There is no separate `register` or `revoke` endpoint — activation happens at `sign`, and superseding a version means signing a new one. The previous active version is recorded in `versions` history.
+
+### Compose a Candidate Policy
+
+The DSL is structured JSON, not prose. The compose route validates it and returns the canonical hash plus the EIP-712 typed-data payload the tenant signers will sign.
 
 ```http
-POST /v1/policy
+POST /v1/policy/{tenant_id}/compose
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "tenantId": "acme",
-  "text": "Allow invoice payments under $5,000 to approved vendors, require approval above $5,000, and block payments to new counterparties without review."
+  "rules": [
+    {
+      "id": "rule_invoice_under_5k",
+      "applies_to": ["outbound_payment"],
+      "when": {
+        "amount_lte": { "currency": "USD", "value": "5000" },
+        "counterparty_in": ["cp_aws", "cp_gcp"]
+      },
+      "execute": "auto"
+    },
+    {
+      "id": "rule_invoice_above_5k",
+      "applies_to": ["outbound_payment"],
+      "when": { "amount_gt": { "currency": "USD", "value": "5000" } },
+      "require": ["role:cfo"],
+      "execute": "confirm"
+    }
+  ]
 }
 ```
+
+Response:
 
 ```json
 {
-  "data": {
-    "policy_id":   "pol_8231",
-    "version":     4,
-    "policy_hash": "0xabc...",
-    "compiled":    { "subject": {...}, "rules": [...] },
-    "explanation": "This policy will...",
-    "status":      "draft"
-  }
+  "content_hash":     "0xabc123...",
+  "typed_data":       { "domain": {...}, "types": {...}, "message": {...} },
+  "required_signers": ["0xCFO...", "0xCTO..."]
 }
 ```
 
-{% hint style="warning" %}
-The compiled JSON and a human-readable explanation are returned together. The tenant signs the **compiled hash**, not the prose. Verify the explanation matches your intent before signing.
-{% endhint %}
+`execute` is one of `auto | confirm | reject` — these are the rule-level outcomes that produce the policy decision (`allow | confirm | reject`).
 
-### Sign and Register
+### Sign and Activate
 
-After review, the tenant signs an EIP-712 `PolicyRegistration` and registers on-chain.
+Each required signer signs the typed-data payload from `compose`, then someone (any caller with `policy:write`) submits all signatures together:
 
 ```http
-POST /v1/policy/{policy_id}/register
+POST /v1/policy/{tenant_id}/sign
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "signature": "0x..."
+  "content_hash": "0xabc123...",
+  "signatures": [
+    { "signer": "0xCFO...", "signature": "0x..." },
+    { "signer": "0xCTO...", "signature": "0x..." }
+  ]
 }
 ```
 
+`201 Created` with the activated `Policy`:
+
 ```json
 {
-  "data": {
-    "policy_id": "pol_8231",
-    "version": 4,
-    "policy_hash": "0xabc...",
-    "tx_hash": "0xdef...",
-    "block": 9583122,
-    "status": "active"
-  }
+  "id":             "pol_8231",
+  "tenant_id":      "acme",
+  "version":        4,
+  "content":        { "rules": [...] },
+  "content_hash":   "0xabc123...",
+  "signers":        [...],
+  "activated_at":   "2026-05-28T12:00:00Z",
+  "deactivated_at": null,
+  "onchain_tx_hash": "0xdef..."
 }
 ```
+
+Returns `409` if the supplied signatures don't satisfy the required-signers list from `compose`.
 
 ### Get the Active Policy
 
 ```http
-GET /v1/policy/active?tenantId=acme
+GET /v1/policy/{tenant_id}
+Authorization: Bearer <token>
+```
+
+Returns the currently active `Policy` for the tenant (`404` if none has been activated). For a specific historical version, use `/versions`.
+
+### List Versions
+
+```http
+GET /v1/policy/{tenant_id}/versions
 Authorization: Bearer <token>
 ```
 
 ```json
 {
-  "data": {
-    "version":     4,
-    "policy_hash": "0xabc...",
-    "compiled":    { ... },
-    "active_since": "2025-09-01T12:00:00Z"
-  }
+  "versions": [
+    {
+      "id": "pol_8231",
+      "version": 4,
+      "content_hash": "0xabc...",
+      "activated_at": "2026-05-28T...",
+      "deactivated_at": null
+    },
+    {
+      "id": "pol_5417",
+      "version": 3,
+      "content_hash": "0x111...",
+      "activated_at": "2026-03-01T...",
+      "deactivated_at": "2026-05-28T..."
+    }
+  ]
 }
 ```
 
-### Evaluate a Hypothetical Action
+### Evaluate an Action
 
-Dry-run an action against the active policy without proposing it.
+Dry-run an action against the active policy. This is the same evaluator the §6 pre-execution gate uses internally; it does **not** propose, reserve, or audit — it just returns the decision.
 
 ```http
-POST /v1/policy/evaluate
+POST /v1/policy/{tenant_id}/evaluate
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "tenantId": "acme",
-  "action":   {
-    "type":       "pay_invoice",
-    "amount":     7800,
-    "currency":   "USD",
-    "counterparty_id": "cp_vendor_x"
-  }
+  "type":         "outbound_payment",
+  "counterparty": "cp_aws",
+  "amount":       { "currency": "USD", "value": "7800" },
+  "rail":         "bank_ach"
 }
 ```
 
 ```json
 {
-  "data": {
-    "decision": "ESCALATE",
-    "approvers": ["role:cfo"],
-    "policy_version": 4,
-    "matched_rule": "amount >= 5000 && counterparty.known",
-    "audit_event_id": "evt_..."
-  }
+  "decision": "confirm",
+  "trace": [
+    { "rule_id": "rule_invoice_under_5k", "matched": false, "explanation": "amount_lte violated" },
+    {
+      "rule_id": "rule_invoice_above_5k",
+      "matched": true,
+      "explanation": "amount > 5000 and approver(s) required"
+    }
+  ],
+  "required_approvers": ["role:cfo"],
+  "policy_version": 4
 }
 ```
 
 ### Three Possible Decisions
 
-| Decision   | Meaning                                                                              |
-| ---------- | ------------------------------------------------------------------------------------ |
-| `ALLOW`    | Action proceeds; signed policy verdict attached to the resulting UserOp or rail call |
-| `DENY`     | Action blocked; structured `reason` in the response                                  |
-| `ESCALATE` | Human approval required; `approvers` lists required signers                          |
+| Decision  | Meaning                                                                               |
+| --------- | ------------------------------------------------------------------------------------- |
+| `allow`   | Rule matched with `execute: "auto"`; action can proceed straight to the §6 gate       |
+| `confirm` | Rule matched with `execute: "confirm"`; named `required_approvers` must sign first    |
+| `reject`  | Rule matched with `execute: "reject"`, or no rule matched the default-deny vocabulary |
 
-### Revoke a Policy Version
+Casing is **lowercase** — `allow | confirm | reject`. The historical-simulation counters mirror it (`would_allow`, `would_confirm`, `would_reject`).
+
+### Action Vocabulary
+
+| `type`             | Domain                                            |
+| ------------------ | ------------------------------------------------- |
+| `outbound_payment` | Money leaving (ACH, wire, on-chain, x402, escrow) |
+| `inbound_payment`  | Money arriving                                    |
+| `ledger_write`     | A Ledger-row mutation (e.g. agent normalization)  |
+| `onchain_tx`       | A non-payment on-chain transaction                |
+| `any`              | Match everything (typically in catch-all rules)   |
+
+| `rail` (optional) | Settlement Channel               |
+| ----------------- | -------------------------------- |
+| `bank_ach`        | Bank ACH via Plaid Transfer      |
+| `erp_writeback`   | NetSuite (and similar) writeback |
+| `onchain_base`    | `BrainSmartAccount` on Base      |
+| `notification`    | No money — surface to a human    |
+
+These are the vocabularies the spec's `ProposedAction` accepts. (The PaymentIntent layer uses a separate, broader `action_type` set — `ach_outbound`, `wire`, `x402_settle`, etc. — that maps onto these rails internally.)
+
+### Lint a Draft
+
+Before composing, run a linter against a policy-content blob to catch shape / semantic problems:
 
 ```http
-POST /v1/policy/{policy_id}/revoke
+POST /v1/policy/{tenant_id}/lint
 Authorization: Bearer <token>
 Content-Type: application/json
 
-{
-  "signature": "0x..."   // EIP-712 by tenant
-}
-```
-
-The tenant must register a new active version before further policy-gated actions can run.
-
-### List Policy History
-
-```http
-GET /v1/policy/history?tenantId=acme
-Authorization: Bearer <token>
+{ "policy_content": { "rules": [...] } }
 ```
 
 ```json
 {
-  "data": [
-    { "version": 4, "policy_hash": "0xabc...", "active_since": "2025-09-01T12:00:00Z" },
+  "tenant_id": "acme",
+  "errors": 0,
+  "warnings": 2,
+  "findings": [
     {
-      "version": 3,
-      "policy_hash": "0x123...",
-      "active_from": "2025-06-01",
-      "revoked_at": "2025-09-01T12:00:00Z"
+      "code": "rule_amount_currency_missing",
+      "severity": "WARN",
+      "rule_id": "rule_3",
+      "message": "amount_gt without explicit currency"
     }
+  ]
+}
+```
+
+### Simulate Against a Version
+
+Replay a single action against a specific historical policy version:
+
+```http
+POST /v1/policy/{tenant_id}/simulate
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "action":  { "type": "outbound_payment", "counterparty": "cp_aws", "amount": { "currency": "USD", "value": "7800" } },
+  "version": 3
+}
+```
+
+Returns the same `PolicyDecision` shape as `/evaluate`.
+
+### Replay a Period
+
+Replay every action in a time window against a candidate (unsigned) policy. Useful for asking "would version 5 have changed anything?":
+
+```http
+POST /v1/policy/{tenant_id}/simulate-historical
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "policy_content": { "rules": [...] },
+  "period_start":   "2026-01-01",
+  "period_end":     "2026-04-30"
+}
+```
+
+```json
+{
+  "total": 4127,
+  "would_allow": 3902,
+  "would_confirm": 201,
+  "would_reject": 24,
+  "diff_vs_active": { "newly_rejected": 7, "newly_confirmed": 14, "loosened": 0 }
+}
+```
+
+### Diff Two Versions
+
+```http
+POST /v1/policy/{tenant_id}/diff
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{ "from_version": 3, "to_version": 4 }
+```
+
+```json
+{
+  "from_version": 3,
+  "to_version": 4,
+  "added": ["rule_x402_micropayment_cap"],
+  "removed": [],
+  "modified": [
+    { "rule_id": "rule_invoice_above_5k", "field": "require", "before": [], "after": ["role:cfo"] }
   ]
 }
 ```

@@ -7,7 +7,7 @@ Brain exposes a **REST + JSON-RPC HTTP surface** and an **MCP server surface**. 
 | Environment    | URL                            |
 | -------------- | ------------------------------ |
 | **Production** | `https://api.brain.fi`         |
-| **Sandbox**    | `https://api.brain.fi/sandbox` |
+| **Sandbox**    | `https://api.sandbox.brain.fi` |
 
 ### Authentication
 
@@ -21,42 +21,46 @@ Brain exposes a **REST + JSON-RPC HTTP surface** and an **MCP server surface**. 
 ### Representative Endpoints
 
 ```
-POST   /v1/sources                  // connect a financial source
-POST   /v1/raw/ingest               // submit raw artifacts directly
-GET    /v1/ledger/transactions      // structured records
-POST   /v1/wiki/question            // NL query over memory
-POST   /v1/policy                   // create or update a policy
-POST   /v1/agents                   // register an external agent
-POST   /v1/agents/{id}/propose      // propose an action
-POST   /v1/actions/{id}/approve     // human approval
-POST   /v1/actions/{id}/execute     // execute approved action
-GET    /v1/audit/{id}               // audit trail with Merkle proof
+POST   /v1/raw/ingest                       // ingest a Raw artifact
+GET    /v1/ledger/transactions              // query structured Ledger records
+POST   /v1/wiki/question                    // NL query over memory
+POST   /v1/policy/{tenant_id}/compose       // compose a candidate policy
+POST   /v1/policy/{tenant_id}/sign          // sign + activate
+POST   /v1/execution/agents/register        // register an external agent
+POST   /v1/agents/run                       // route -> resolve -> propose (gated)
+POST   /v1/payment-intents                  // propose a payment
+POST   /v1/payment-intents/{id}/approve     // approver signs
+POST   /v1/payment-intents/{id}/execute     // run §6 gate; returns 202
+GET    /v1/audit/event/{event_id}           // event + Merkle inclusion proof
+GET    /v1/proof/{action_id}                // canonical Proof for an action
 ```
 
 ### Endpoint Reference
 
-| Section                   | What's Covered                                         |
-| ------------------------- | ------------------------------------------------------ |
-| Authentication            | Email + password, SIWX, sessions, scopes               |
-| Sources and Raw Ingestion | Connect Plaid, banks, ERPs, wallets, files             |
-| Ledger                    | Query transactions, balances, counterparties, invoices |
-| Wiki                      | NL questions, entity browsing, semantic search         |
-| Policy                    | Create, sign, simulate, evaluate, revoke               |
-| Agents                    | Register, scope, list                                  |
-| Actions                   | Propose, approve, execute                              |
-| Audit                     | Events, Merkle proofs, exports                         |
-| MCP Surface               | Tool list, namespacing, MCP-specific patterns          |
+| Section                   | What's Covered                                                            |
+| ------------------------- | ------------------------------------------------------------------------- |
+| Authentication            | Email + password, SIWX, sessions, scopes                                  |
+| Sources & Raw Ingestion   | Ingest artifacts directly, provider webhooks, inspect & tombstone         |
+| Ledger                    | Query transactions, balances, counterparties, invoices, reconcile         |
+| Wiki                      | NL questions, entity browsing, evidence chains, memory pages              |
+| Policy                    | Compose, sign, evaluate, lint, simulate, diff (tenant-scoped)             |
+| Agents                    | Register, list catalog, route, run, halt, runs / why / gate-trace / proof |
+| Actions (Payment Intents) | Propose, approve / reject, execute (runs §6 gate), pause / resume         |
+| Audit                     | Events, entity history, Merkle proofs, verify, export, Proof artifact     |
+| MCP Surface               | JSON-RPC tools, resources, prompts, on-chain scope check                  |
 
 ### Provenance on Every Response
 
 Every response from Wiki, Policy, and Agent endpoints carries provenance.
 
-| Field            | Description                                   |
-| ---------------- | --------------------------------------------- |
-| `ledger_refs`    | Ledger record IDs the answer depends on       |
-| `raw_refs`       | Raw artifact hashes those records derive from |
-| `policy_version` | Policy version evaluated, if any              |
-| `audit_event_id` | Event ID under which the call was logged      |
+| Field                | Description                                                                  |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `source_ids`         | Raw artifact ids that produced a Ledger row                                  |
+| `evidence_ids`       | Raw-parsed row ids the extractor consulted                                   |
+| `evidence_path`      | Returned by Wiki Q&A: the chain of Raw / Ledger refs the answer rests on     |
+| `provenance`         | `extracted`, `inferred`, `ambiguous`, `human_confirmed`, `agent_contributed` |
+| `confidence`         | Calibrated 0–1 score on every derived row                                    |
+| `policy_decision_id` | Policy decision row joined to a PaymentIntent                                |
 
 ### Versioning
 
