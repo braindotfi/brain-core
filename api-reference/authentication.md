@@ -1,40 +1,71 @@
 # Authentication
 
-Brain authenticates three caller types: humans, internal agents, and external agents. The same API endpoints serve all three. Only the credential differs.
+Brain authenticates three caller types: humans, internal agents, and external agents. The same API endpoints serve all three — only the credential differs.
 
-| Caller             | Mode                       | Credential                       |
-| ------------------ | -------------------------- | -------------------------------- |
-| **Human**          | OAuth/SSO via Auth0        | Bearer access token              |
-| **Internal agent** | Brain-issued service token | Bearer service token             |
-| **External agent** | SIWX (EIP-4361 over Base)  | `agent_token` from SIWX exchange |
+| Caller             | Mode                                                | Credential                            |
+| ------------------ | --------------------------------------------------- | ------------------------------------- |
+| **Human**          | Self-serve email + password, **or** a linked wallet | Bearer owner JWT                      |
+| **Internal agent** | Brain-issued service token                          | Bearer service token                  |
+| **External agent** | SIWX (EIP-4361 over Base) + on-chain scope          | `access_token` from the SIWX exchange |
 
-### Human Authentication (OAuth/SSO)
+{% hint style="info" %}
+Self-serve signup is gated by the `BRAIN_SELF_SERVE_SIGNUP` flag and is **sandbox-only** (RFC 0002): a new tenant can read and _propose_, but moves no money until the existing promotion + external-audit gates clear. Hosted SSO (Auth0/SAML) is **planned (roadmap)**, not in the MVP.
+{% endhint %}
 
-Brain integrates with Auth0 for OAuth and SAML SSO. The flow follows the standard authorization-code grant with PKCE.
+### Human Authentication (self-serve email + password)
 
+A developer self-provisions a sandbox tenant, verifies their email, then logs in for a short-lived **owner JWT** carrying management/read/approve scopes only — never `payment_intent:propose` / `payment_intent:execute` / `execution:propose` (money movement is an agent + §6-gate concern, never a human-login capability).
+
+**1. Sign up** — provisions a sandbox tenant + owner.
+
+```http
+POST /v1/signup
+Content-Type: application/json
+
+{ "email": "founder@example.com", "password": "a-strong-passphrase-12+" }
+
+→ 201 { "tenant_id": "tnt_…", "user_id": "user_…", "status": "pending",
+        "verification_token": "…" }   // returned outside production; emailed in prod
 ```
-Browser              Brain                 Auth0
-   │   GET /v1/auth/login                    │
-   │ ─────────────────────► redirect ──────► │
-   │                                         │
-   │  authorization code from Auth0          │
-   │ ◄─────────────────────────────────────  │
-   │   POST /v1/auth/oauth/exchange          │
-   │ ─────────────►                          │
-   │   { access_token, expires_at }          │
-   │ ◄─────────────                          │
+
+**2. Verify the email** — single-use, short-TTL token, scoped to the tenant.
+
+```http
+POST /v1/auth/verify-email
+{ "tenant_id": "tnt_…", "token": "<verification_token>" }
+
+→ 200 { "verified": true, "user_id": "user_…", "status": "active" }
 ```
 
-Tokens are sent as bearer tokens.
+**3. Log in** — email + password → owner JWT.
+
+```http
+POST /v1/auth/login
+{ "email": "founder@example.com", "password": "a-strong-passphrase-12+" }
+
+→ 200 { "access_token": "eyJ…", "token_type": "Bearer", "expires_in": 900,
+        "principal": { "type": "user", "tenantId": "tnt_…",
+                       "scopes": ["ledger:read","wiki:read","policy:read","policy:write",
+                                  "audit:read","execution:read","payment_intent:approve"] } }
+```
+
+An unknown email and a wrong password return the **same** `401 auth_invalid_credentials` (no user enumeration); an unverified account returns `403 auth_email_unverified`.
 
 ```http
 GET /v1/ledger/transactions
 Authorization: Bearer <access_token>
 ```
 
-### External Agent Authentication (SIWX)
+### Wallet Authentication (SIWX) — agents and humans
 
-External agents authenticate using **Sign-In With X**, a generalization of EIP-4361 over Base.
+External agents — and humans who **link a wallet** — authenticate with **Sign-In With X** (EIP-4361 over Base). An owner can link a wallet to their tenant:
+
+```http
+POST /v1/tenants/{tenant_id}/wallets        (owner JWT)
+{ "address": "0x…", "principal_type": "human" }   // or "agent" + principal_id
+```
+
+At sign-in, SIWX resolves the wallet: one linked to a **human** mints an **owner JWT** (the same management scopes as email login); an **agent** wallet (registered + active in `BrainMCPAgentRegistry`) mints an **agent token**.
 
 #### Step 1: Construct the SIWX Message
 
@@ -50,38 +81,37 @@ Issued At: 2025-09-01T12:00:00Z
 Expiration Time: 2025-09-01T12:05:00Z
 ```
 
-#### Step 2: Sign with the Agent's Identity Key
+A nonce is obtained from `POST /v1/auth/siwx/challenge` (Redis-held, 5-minute TTL).
 
-The agent signs the message with the key registered in `BrainMCPAgentRegistry`.
+#### Step 2: Sign with the Identity Key
 
-#### Step 3: Exchange for an Agent Token
+The agent (or human's linked wallet) signs the message with the key registered in `BrainMCPAgentRegistry` / linked via `wallet_identities`.
+
+#### Step 3: Exchange for a Token
 
 ```http
 POST /v1/auth/siwx
 Content-Type: application/json
 
-{
-  "message": "...",
-  "signature": "0x..."
-}
+{ "message": "...", "signature": "0x...", "session_id": "..." }
 
 → {
-  "agent_token": "...",
-  "expires_at": "2025-09-01T13:00:00Z",
-  "scopes": ["pay_invoice", "rebalance_treasury"]
+  "access_token": "...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "principal": { "type": "agent", "tenantId": "tnt_…", "scopes": ["ledger:read", "payment_intent:propose"] }
 }
 ```
 
 #### Step 4: Use the Token
 
 ```http
-POST /v1/agents/payments-v1/propose
-Authorization: Bearer <agent_token>
-X-Brain-Scope: <EIP-712 ScopeAttestation>
+POST /v1/agents/mcp
+Authorization: Bearer <access_token>
 ```
 
 {% hint style="info" %}
-Every action-class call must include an `X-Brain-Scope` header carrying the EIP-712 ScopeAttestation signed by the tenant. Reading endpoints (Wiki, Ledger, Audit) only require the agent token.
+The MCP auth chain additionally verifies the agent record is `active` and that the JWT's `scope_hash` matches the on-chain hash in `BrainMCPAgentRegistry`. Agents can read, contribute evidence, and **propose** — never **execute** (there is no execute tool; every settlement passes the §6 gate).
 {% endhint %}
 
 ### ScopeAttestation EIP-712 Type
@@ -101,21 +131,21 @@ ScopeAttestation(
 
 ### Token Lifetimes
 
-| Token                  | Default TTL | Refreshable             |
-| ---------------------- | ----------- | ----------------------- |
-| **OAuth access token** | 1 hour      | Yes, via refresh token  |
-| **Service token**      | 90 days     | Rotated by tenant admin |
-| **Agent token (SIWX)** | 1 hour      | Yes, by re-signing SIWX |
-| **Policy verdict**     | 60 seconds  | No, single-use          |
+| Token                        | Default TTL | Refreshable                  |
+| ---------------------------- | ----------- | ---------------------------- |
+| **Owner JWT** (email/wallet) | 15 minutes  | Yes — log in / re-sign again |
+| **Agent token (SIWX)**       | 1 hour      | Yes, by re-signing SIWX      |
+| **Service token**            | 90 days     | Rotated by tenant admin      |
+| **Email-verification token** | 24 hours    | No, single-use               |
+| **Policy verdict**           | 60 seconds  | No, single-use               |
 
 ### Revocation
 
-| Type                     | How to Revoke                                            |
-| ------------------------ | -------------------------------------------------------- |
-| **API key**              | Console or `DELETE /v1/keys/{id}`                        |
-| **Active human session** | `POST /v1/auth/logout`                                   |
-| **Agent scope**          | `DELETE /v1/agents/{id}/scopes/{capability}`             |
-| **Agent registration**   | `POST /v1/agents/{id}/deactivate` (also called on-chain) |
+| Type                   | How to Revoke                                            |
+| ---------------------- | -------------------------------------------------------- |
+| **Agent scope**        | `DELETE /v1/agents/{id}/scopes/{capability}`             |
+| **Agent registration** | `POST /v1/agents/{id}/deactivate` (also called on-chain) |
+| **Token**              | Short-lived by design; tokens expire (15 min / 1 hour)   |
 
 ### What's Next
 
