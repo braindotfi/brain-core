@@ -24,8 +24,12 @@ describe("@brain/agent-router barrel", () => {
 });
 
 describe("LIVE_AGENTS promotion config", () => {
-  it("promotes exactly the payment agent to ach + onchain rails", () => {
-    expect(LIVE_AGENTS.liveAgents).toEqual({ payment: ["ach", "onchain"] });
+  it("promotes all 19 internal agents to ach + onchain rails", () => {
+    const agents = Object.keys(LIVE_AGENTS.liveAgents);
+    expect(agents).toHaveLength(19);
+    for (const rails of Object.values(LIVE_AGENTS.liveAgents)) {
+      expect(rails).toEqual(["ach", "onchain"]);
+    }
   });
 
   it("is consumable by StaticPromotionPolicy without throwing", () => {

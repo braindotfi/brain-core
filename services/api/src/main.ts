@@ -1379,6 +1379,7 @@ async function main(): Promise<void> {
           router: agentRouter,
           runService: agentRunService,
           reads: agentApiReads,
+          isShadowed,
           // H-25: run-history sub-resources (evidence / gate-trace / proof / why).
           runHistory: makeRunLoaders(pool, proofBuilder),
           // H-09: release an agent's contribution quarantine.
