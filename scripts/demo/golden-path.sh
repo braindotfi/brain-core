@@ -123,6 +123,22 @@ RECON_OK=$(echo "${RECON:-}" | jq -r '.run_id // .decision // empty')
 if [[ -n "$RECON_OK" ]]; then ok "reconciliation run $RECON_OK"; record "reconcile" ok "$RECON_OK"
 else note "reconcile route may differ — non-blocking"; record "reconcile" warn ""; fi
 
+# ── 6.5 Activate the demo policy ─────────────────────────────────────────────
+# The §6 gate evaluates the tenant's ACTIVE policy; a freshly-seeded tenant has
+# none, so the propose below would fail `policy_not_found`. Activate the built-in
+# demo policy first (the demo token carries policy:write). Required, not optional.
+header "6.5 Activate demo policy"
+start_step
+if curl -sf -X POST "$V1/demo/policy/activate" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' >/dev/null; then
+  ok "demo policy activated"
+  record "policy" ok ""
+else
+  fail "policy activation failed (POST /demo/policy/activate)"
+  record "policy" fail ""
+  exit 1
+fi
+
 # ── 7. Propose a PaymentIntent via the invoice shortcut (P0.5) ───────────────
 header "7. Invoice-shortcut propose"
 start_step
