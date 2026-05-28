@@ -1,15 +1,21 @@
 # Errors
 
-Every error Brain returns includes a structured `code`, a human-readable `message`, and a `traceId` for cross-system correlation. When opening a support ticket, include the trace ID and Brain can resolve the exact request.
+Every error Brain returns uses a single envelope: a stable snake*case `code`, a human-readable `message`, optional structured `details`, a `request_id` for cross-system correlation, and a `docs_url`. Codes are stable forever once shipped (format: `{domain}*{condition}`). The full registry lives in `shared/src/errors.ts`.
+
+{% hint style="warning" %}
+Brain **never** returns HTTP 200 with an error in the body. A non-2xx status always carries this envelope.
+{% endhint %}
 
 ### Shape
 
 ```json
 {
   "error": {
-    "code": "POLICY_DENIED",
-    "message": "Counterparty not in approved allowlist",
-    "traceId": "trc_8f3a92..."
+    "code": "policy_denied",
+    "message": "Counterparty not in the approved allowlist",
+    "details": { "counterparty_id": "cp_x", "policy_version": 3 },
+    "request_id": "req_8f3a92...",
+    "docs_url": "https://docs.brain.fi/errors/policy_denied"
   }
 }
 ```
@@ -21,105 +27,122 @@ try {
   await brain.pay("acme", { invoiceId: "inv_8231" });
 } catch (err) {
   if (err instanceof BrainError) {
-    console.log(err.code, err.message, err.traceId);
+    console.log(err.code, err.message, err.requestId);
   }
 }
 ```
 
-### Auth Errors
+### Auth (401) and Authorization (403)
 
-| Code                 | Meaning                                                     | Fix                                                                                      |
-| -------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `AUTH_INVALID_KEY`   | API key is malformed, revoked, or for the wrong environment | Check `.env`; sandbox keys start with `brain_sk_test_`, production with `brain_sk_live_` |
-| `AUTH_EXPIRED`       | OAuth or JWT token expired                                  | Refresh and retry                                                                        |
-| `AUTH_SIWX_INVALID`  | SIWX signature did not verify                               | Re-sign with the registered key                                                          |
-| `SCOPE_INSUFFICIENT` | Key or token lacks the required scope                       | Re-issue with the right scope, or use a different key                                    |
+| Code                       | Meaning                                                                                | Fix                                              |
+| -------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `auth_token_missing`       | No bearer token on a protected route                                                   | Send `Authorization: Bearer <token>`             |
+| `auth_token_invalid`       | Token malformed or signature failed                                                    | Re-issue the token                               |
+| `auth_token_expired`       | Access token past its expiry                                                           | Log in / re-sign and retry                       |
+| `auth_invalid_key`         | API key malformed, revoked, or for the wrong environment                               | Check `.env`; sandbox and production keys differ |
+| `auth_invalid_credentials` | Email/password login failed (also returned for an unknown email — no user enumeration) | Check the credentials                            |
+| `auth_email_unverified`    | The owner's email has not been verified                                                | Complete `POST /v1/auth/verify-email`            |
+| `auth_siwx_invalid`        | SIWX signature did not verify                                                          | Re-sign with the registered key                  |
+| `auth_scope_insufficient`  | Token lacks the required scope                                                         | Re-issue with the right scope                    |
 
-### Tenant Errors
+### Self-serve onboarding
 
-| Code                   | Meaning                                          | Fix                                                  |
-| ---------------------- | ------------------------------------------------ | ---------------------------------------------------- |
-| `TENANT_NOT_FOUND`     | The `tenantId` doesn't exist in this environment | Verify spelling; sandbox and production are separate |
-| `TENANT_SUSPENDED`     | The tenant is suspended                          | Contact support                                      |
-| `TENANT_ACCESS_DENIED` | The caller is authorized but not for this tenant | Check key scope                                      |
+| Code                    | Meaning                                                         | Fix                                     |
+| ----------------------- | --------------------------------------------------------------- | --------------------------------------- |
+| `signup_email_taken`    | An account with this email already exists (409)                 | Log in instead, or use another email    |
+| `signup_token_invalid`  | The email-verification token is invalid, expired, or used (400) | Request a new verification token        |
+| `wallet_already_linked` | The wallet is already linked to an account (409)                | Use a different wallet, or unlink first |
 
-### Source Errors
+### Tenant
 
-| Code                        | Meaning                                           | Fix                                   |
-| --------------------------- | ------------------------------------------------- | ------------------------------------- |
-| `SOURCE_NOT_FOUND`          | Source ID doesn't match a connected source        | List sources to find the right ID     |
-| `SOURCE_RATE_LIMIT`         | Upstream source returned 429                      | Wait and retry; check upstream status |
-| `SOURCE_CREDENTIAL_INVALID` | Credentials for the upstream source were rejected | Reconnect the source                  |
+| Code                   | Meaning                                           | Fix                                                |
+| ---------------------- | ------------------------------------------------- | -------------------------------------------------- |
+| `tenant_not_found`     | The `tenant_id` doesn't exist in this environment | Verify the id; sandbox and production are separate |
+| `tenant_suspended`     | The tenant is suspended (403)                     | Contact support                                    |
+| `tenant_access_denied` | Authenticated, but not for this tenant (403)      | Check the token's tenant                           |
 
-### Policy and Decision Errors
+### Source and Raw
 
-| Code                | Meaning                                       | Fix                                 |
-| ------------------- | --------------------------------------------- | ----------------------------------- |
-| `POLICY_NOT_ACTIVE` | The tenant has no active policy               | Create and activate a policy        |
-| `POLICY_DENIED`     | Action violates the active policy             | Read `details` for which rule fired |
-| `POLICY_ESCALATE`   | Action requires human approval before execute | Route to your approval UI           |
+| Code                            | Meaning                                         | Fix                               |
+| ------------------------------- | ----------------------------------------------- | --------------------------------- |
+| `source_not_found`              | Source id doesn't match a connected source      | List sources to find the right id |
+| `source_credential_invalid`     | Upstream-source credentials were rejected (401) | Reconnect the source              |
+| `raw_artifact_not_found`        | No raw artifact for that id (404)               | Check the id                      |
+| `raw_webhook_signature_invalid` | A provider webhook's HMAC didn't verify (401)   | Check the signing secret          |
 
-### Agent and Scope Errors
+### Policy
 
-| Code                  | Meaning                                      | Fix                                            |
-| --------------------- | -------------------------------------------- | ---------------------------------------------- |
-| `AGENT_NOT_FOUND`     | Agent ID doesn't match a registered agent    | List agents in the Console                     |
-| `AGENT_INACTIVE`      | Agent record is not active                   | Reactivate or re-register                      |
-| `SCOPE_HASH_MISMATCH` | JWT `scope_hash` doesn't match on-chain hash | Re-sign with current scope; could mean revoked |
-| `SCOPE_EXPIRED`       | Scope grant's `notAfter` window has passed   | Renew the grant                                |
+Policy **decisions** are `allow` / `confirm` / `reject` (returned on the decision, not as errors). These codes are the error conditions:
 
-### Action Errors
+| Code                       | Meaning                                                | Fix                                    |
+| -------------------------- | ------------------------------------------------------ | -------------------------------------- |
+| `policy_not_found`         | No policy for the tenant (404)                         | Create + activate a policy             |
+| `policy_not_active`        | The tenant has no active policy version (409)          | Activate a policy version              |
+| `policy_denied`            | The action violates the active policy (422)            | Read `details` for which rule fired    |
+| `policy_quorum_not_met`    | Required approver quorum not reached (409)             | Collect the remaining approvals        |
+| `policy_version_mismatch`  | The decision was for a superseded policy version (409) | Re-evaluate against the active version |
+| `policy_signature_invalid` | The signed policy attestation didn't verify (401)      | Re-sign the policy                     |
 
-| Code                       | Meaning                                                                                 | Fix                                      |
-| -------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `ACTION_NOT_FOUND`         | Action ID doesn't exist                                                                 | Check for typos; was it cancelled?       |
-| `ACTION_ALREADY_EXECUTED`  | Action already settled                                                                  | Read state; retry not needed             |
-| `INSUFFICIENT_BALANCE`     | Source account balance < amount                                                         | Top up or pick a different account       |
-| `LIMITS_EXCEEDED`          | Account-level per-tx or per-day limit exceeded                                          | Adjust limits in the Console             |
-| `IDEMPOTENCY_KEY_REUSED`   | The same idempotency key was used for a different request body                          | Generate a new key                       |
-| `AGENT_PROPOSAL_DUPLICATE` | Proposal-layer idempotency collision — this run already produced an equivalent proposal | Reuse the existing proposal; don't retry |
+### Agent and scope
 
-### Pre-Execution Gate Failures
+| Code                        | Meaning                                                | Fix                                          |
+| --------------------------- | ------------------------------------------------------ | -------------------------------------------- |
+| `agent_not_found`           | Agent id doesn't match a registered agent (404)        | List agents                                  |
+| `agent_not_registered`      | Agent has no on-chain registration (401)               | Register in `BrainMCPAgentRegistry`          |
+| `agent_inactive`            | Agent record is not `active` (409)                     | Reactivate / re-register                     |
+| `agent_scope_hash_mismatch` | JWT `scope_hash` ≠ the on-chain hash (401)             | Re-sign with current scope (or it's revoked) |
+| `scope_expired`             | The scope grant's window has passed (403)              | Renew the grant                              |
+| `agent_proposal_duplicate`  | This run already produced an equivalent proposal (409) | Reuse the existing proposal                  |
 
-| Code                           | Meaning                                                                                |
-| ------------------------------ | -------------------------------------------------------------------------------------- |
-| `GATE_BEHAVIOR_HASH_MISMATCH`  | Runtime agent `behaviorHash` ≠ the value registered on-chain (check 1.5) — hard reject |
-| `GATE_NO_POLICY_DECISION`      | No PolicyDecision linked to this action                                                |
-| `GATE_POLICY_VERSION_STALE`    | Active policy superseded the one Policy evaluated                                      |
-| `GATE_COUNTERPARTY_UNVERIFIED` | Counterparty's `verified_status` doesn't match policy requirement                      |
-| `GATE_COUNTERPARTY_SANCTIONED` | Counterparty is sanctioned per latest screening                                        |
-| `GATE_BALANCE_INSUFFICIENT`    | Source account balance < amount at gate time                                           |
-| `GATE_APPROVAL_INCOMPLETE`     | Required approver signatures missing or invalid                                        |
-| `GATE_SESSION_KEY_INVALID`     | On-chain session key is expired or out-of-scope                                        |
-| `GATE_AUDIT_CHAIN_STALE`       | Audit anchor too stale for the configured threshold                                    |
+### PaymentIntent / Action
+
+| Code                           | Meaning                                               | Fix                                 |
+| ------------------------------ | ----------------------------------------------------- | ----------------------------------- |
+| `payment_intent_not_found`     | No PaymentIntent for that id (404)                    | Check the id                        |
+| `payment_intent_invalid_state` | The intent isn't in a state that allows this op (409) | Read its current `status`           |
+| `payment_intent_gate_failed`   | The §6 pre-execution gate rejected the intent (409)   | Read `details` for the failed check |
+| `action_already_executed`      | Already settled (409)                                 | No retry needed                     |
+| `idempotency_key_reused`       | Same idempotency key, different request body (409)    | Generate a new key                  |
+
+### Pre-execution gate failures
+
+When the §6 gate rejects an intent it surfaces as `payment_intent_gate_failed`, with `details` naming the failed check (e.g. behavior-hash pinned 1.5, balance, counterparty, approval, escrow-state binding 6.6). Standalone gate codes:
+
+| Code                           | Meaning                                                |
+| ------------------------------ | ------------------------------------------------------ |
+| `gate_no_policy_decision`      | No PolicyDecision linked to the intent                 |
+| `gate_policy_version_stale`    | The active policy superseded the one Policy evaluated  |
+| `gate_counterparty_unverified` | Counterparty `verified_status` doesn't meet the policy |
+| `gate_counterparty_sanctioned` | Counterparty is sanctioned per latest screening        |
+| `gate_balance_insufficient`    | Source balance < amount at gate time                   |
+| `gate_approval_incomplete`     | Required approver signatures missing or invalid        |
+| `gate_session_key_invalid`     | On-chain session key expired or out-of-scope           |
+| `gate_audit_chain_stale`       | Audit anchor too stale for the configured threshold    |
 
 [**→ The pre-execution gate**](../protocol/the-pre-execution-gate.md)
 
-### Rate Limiting
+### Validation (400)
 
-| Code           | Detail                                          |
-| -------------- | ----------------------------------------------- |
-| `RATE_LIMITED` | You hit the per-minute limit for your plan tier |
+| Code                     | Meaning                                                    |
+| ------------------------ | ---------------------------------------------------------- |
+| `request_body_invalid`   | Request body failed validation; `details` lists the issues |
+| `request_params_invalid` | Path/query params failed validation                        |
+| `validation_failed`      | Generic schema validation failure                          |
+| `missing_required_field` | A required field is absent                                 |
+| `invalid_cursor`         | The pagination cursor is malformed or expired              |
 
-The response includes a `Retry-After` header (seconds). Sandbox limits are 60 rpm, developer 600 rpm, production 6,000 rpm, enterprise custom.
+### Rate limiting and server
 
-### Validation Errors
-
-| Code                     | Meaning                                                                 |
-| ------------------------ | ----------------------------------------------------------------------- |
-| `VALIDATION_FAILED`      | Request body failed schema validation; `details` lists each field error |
-| `MISSING_REQUIRED_FIELD` | A required field is absent                                              |
-| `INVALID_CURSOR`         | The pagination cursor is malformed or expired                           |
-
-### Server Errors
-
-| Code               | Meaning                           | Fix                                                       |
-| ------------------ | --------------------------------- | --------------------------------------------------------- |
-| `INTERNAL_ERROR`   | Brain hit an unexpected error     | Retry; if persistent, include `traceId` in support ticket |
-| `UPSTREAM_TIMEOUT` | A downstream source timed out     | Retry with backoff                                        |
-| `MAINTENANCE_MODE` | Brain is in scheduled maintenance | Check [status.brain.fi](https://status.brain.fi)          |
+| Code               | Status | Meaning                                                          |
+| ------------------ | ------ | ---------------------------------------------------------------- |
+| `rate_limited`     | 429    | Per-minute limit for your tier; honour the `Retry-After` header  |
+| `internal_error`   | 500    | Unexpected error; retry, and include the `request_id` in support |
+| `upstream_timeout` | 504    | A downstream source timed out; retry with backoff                |
+| `maintenance_mode` | 503    | Scheduled maintenance                                            |
 
 ### MCP-Specific JSON-RPC Codes
+
+The MCP surface (`POST /v1/agents/mcp`) returns JSON-RPC error codes:
 
 | Code     | Meaning                                   |
 | -------- | ----------------------------------------- |
@@ -135,7 +158,4 @@ The response includes a `Retry-After` header (seconds). Sandbox limits are 60 rp
 
 ### Getting Help
 
-| Channel                                        | Best for                                       |
-| ---------------------------------------------- | ---------------------------------------------- |
-| **Trace ID + email**                           | Specific failed requests; include the trace ID |
-| [**status.brain.fi**](https://status.brain.fi) | Is Brain having an outage?                     |
+Include the `request_id` from the error envelope when contacting support — Brain can resolve the exact request from it.

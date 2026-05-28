@@ -79,7 +79,7 @@ Same audit log, same Policy gating. Your server keys are scoped (you can issue n
 
 ### What "MCP-Compatible" Means
 
-[MCP](https://modelcontextprotocol.io) is the open standard for connecting agents to tools and data sources. Brain runs an MCP server at `mcp.brain.fi`. Any agent built on an MCP-compatible runtime can connect.
+[MCP](https://modelcontextprotocol.io) is the open standard for connecting agents to tools and data sources. Brain runs an MCP server at `POST /v1/agents/mcp`. Any agent built on an MCP-compatible runtime can connect.
 
 You don't have to know any of this if you're only building internal agents. The MCP server matters when you want to **be a destination** for third-party agents.
 

@@ -37,7 +37,7 @@ GET    /v1/audit/{id}               // audit trail with Merkle proof
 
 | Section                   | What's Covered                                         |
 | ------------------------- | ------------------------------------------------------ |
-| Authentication            | OAuth, SIWX, sessions, scopes                          |
+| Authentication            | Email + password, SIWX, sessions, scopes               |
 | Sources and Raw Ingestion | Connect Plaid, banks, ERPs, wallets, files             |
 | Ledger                    | Query transactions, balances, counterparties, invoices |
 | Wiki                      | NL questions, entity browsing, semantic search         |
@@ -125,4 +125,4 @@ All errors share a common shape.
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🪪 Authentication</strong></td><td>OAuth and SIWX in detail.</td><td><a href="authentication.md">authentication.md</a></td><td></td></tr><tr><td><strong>🌐 MCP Surface</strong></td><td>Same primitives, MCP shape.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🪪 Authentication</strong></td><td>Email, wallet, and SIWX in detail.</td><td><a href="authentication.md">authentication.md</a></td><td></td></tr><tr><td><strong>🌐 MCP Surface</strong></td><td>Same primitives, MCP shape.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr></tbody></table>

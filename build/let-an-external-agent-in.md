@@ -13,7 +13,7 @@ External agents speak [MCP](https://modelcontextprotocol.io). Brain ships an MCP
 ```
 1. Agent owner registers their agent with Brain.
 2. Tenant grants the agent specific scopes (read, propose, etc.).
-3. Agent connects to mcp.brain.fi with a JWT.
+3. Agent connects to the MCP endpoint (POST /v1/agents/mcp) with a JWT.
 4. Brain enforces scope on every call.
 5. Every read and propose lands in the tenant's audit log.
 ```
@@ -66,11 +66,11 @@ External agents can **propose** but cannot **execute**. Execution is reserved fo
 
 ### Step 3: the Agent Connects
 
-The agent owner points their MCP runtime at:
+The MCP surface is a JSON-RPC endpoint on the same API host — there is no separate MCP hostname. The agent owner points their MCP runtime at:
 
 ```
-mcp.brain.fi   (production)
-mcp.brain.dev  (sandbox)
+POST https://api.brain.fi/v1/agents/mcp           (production)
+POST https://api.brain.fi/sandbox/v1/agents/mcp   (sandbox)
 ```
 
 The runtime authenticates with a JWT signed by the agent's registered key. The first call discovers the tools the agent has scope for.
