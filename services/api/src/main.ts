@@ -1528,6 +1528,10 @@ async function main(): Promise<void> {
         attestCounterpartyAgent: true,
         sumAgentWindowSpend: true,
         resolveEscrowState: cfg.BRAIN_ESCROW_ADDRESS !== undefined,
+        // P1 set: §6 checks 8 / 11 / 11.5 — unconditionally wired (see line 581).
+        sumActiveReservations: true,
+        resolveEvidence: true,
+        detectDuplicates: true,
       },
       liveAgentsCount: Object.keys(LIVE_AGENTS.liveAgents ?? {}).length,
       webhookDispatchWorker: true,
@@ -1535,6 +1539,15 @@ async function main(): Promise<void> {
       mcpProofBuilder: true,
       sourceCredentialEncryption: sourceCredential !== undefined,
       sourceCredentialKeyProvider: credentialKeyProvider.source,
+      // Storage isolation: BRAIN_WIKI_DB_URL / DATABASE_PRIVILEGED_URL set ⇒
+      // dedicated roles in front of Wiki + cross-tenant operations. Required
+      // true in production by assertDbIsolationFences (above, ~line 244).
+      wikiDbIsolation: cfg.BRAIN_WIKI_DB_URL !== undefined,
+      privilegedDbIsolation: cfg.DATABASE_PRIVILEGED_URL !== undefined,
+      // Python brain-agents inbound auth (peer-review batch 2, P1+P2).
+      // The Python side fails closed in production; this flag surfaces whether
+      // we're signing on the way out.
+      pythonAgentSigning: cfg.BRAIN_AGENTS_INBOUND_SECRET !== undefined,
     },
     log,
   );

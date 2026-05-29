@@ -31,6 +31,12 @@ export interface GateLoaderState {
   sumAgentWindowSpend: boolean;
   /** RFC 0001 §7.6 (check 6.6) — on-chain escrow lock read. */
   resolveEscrowState: boolean;
+  /** §6 check 8 (balance) — sum of active reservations against source account. */
+  sumActiveReservations: boolean;
+  /** §6 check 11 (evidence present) — pulls evidence records by id. */
+  resolveEvidence: boolean;
+  /** §6 check 11.5 (duplicate-payment protection) — scans for prior settlements. */
+  detectDuplicates: boolean;
 }
 
 export interface BootCapabilities {
@@ -57,6 +63,27 @@ export interface BootCapabilities {
    *   "none"            — no key configured (forbidden in production)
    */
   sourceCredentialKeyProvider: "azure-key-vault" | "env-var" | "none";
+  /**
+   * Whether Wiki uses an isolated Postgres role (BRAIN_WIKI_DB_URL set).
+   * False ⇒ Wiki shares the main pool, an accidental ledger write from a
+   * Wiki path would NOT trigger a Postgres permission error. Required true
+   * in production by assertDbIsolationFences().
+   */
+  wikiDbIsolation: boolean;
+  /**
+   * Whether cross-tenant operations use the BYPASSRLS privileged role
+   * (DATABASE_PRIVILEGED_URL set). False ⇒ outbox/tenant-deletion/Plaid
+   * resolvers run as the same app role and silently match zero rows in any
+   * RLS-armed table. Required true in production.
+   */
+  privilegedDbIsolation: boolean;
+  /**
+   * Whether outbound calls to the Python brain-agents service are HMAC-signed
+   * (BRAIN_AGENTS_INBOUND_SECRET present). False ⇒ the Python verifier (which
+   * fails closed in production) rejects every request. Required true whenever
+   * RECONCILIATION_AGENT_URL is set in production (enforced at boot).
+   */
+  pythonAgentSigning: boolean;
 }
 
 /**
@@ -88,6 +115,9 @@ export function logBootCapabilities(c: BootCapabilities, log: Logger): void {
       mcp_proof_builder: c.mcpProofBuilder,
       source_credential_encryption: c.sourceCredentialEncryption,
       source_credential_key_provider: c.sourceCredentialKeyProvider,
+      wiki_db_isolation: c.wikiDbIsolation,
+      privileged_db_isolation: c.privilegedDbIsolation,
+      python_agent_signing: c.pythonAgentSigning,
     },
     "brain.runtime.capabilities",
   );

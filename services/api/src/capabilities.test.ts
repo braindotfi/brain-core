@@ -25,6 +25,9 @@ function base(): BootCapabilities {
       attestCounterpartyAgent: false,
       sumAgentWindowSpend: false,
       resolveEscrowState: false,
+      sumActiveReservations: true,
+      resolveEvidence: true,
+      detectDuplicates: true,
     },
     liveAgentsCount: 19,
     webhookDispatchWorker: true,
@@ -32,6 +35,9 @@ function base(): BootCapabilities {
     mcpProofBuilder: true,
     sourceCredentialEncryption: false,
     sourceCredentialKeyProvider: "none",
+    wikiDbIsolation: false,
+    privilegedDbIsolation: false,
+    pythonAgentSigning: false,
   };
 }
 
@@ -53,12 +59,43 @@ describe("logBootCapabilities", () => {
   it("splits gate loaders into wired + dormant — surfaces the M2M dormancy story", () => {
     const { log, calls } = fakeLog();
     logBootCapabilities(base(), log);
-    expect(calls[0]![0].gate_loaders_wired).toEqual(["resolveTenantFlags"]);
+    expect(calls[0]![0].gate_loaders_wired).toEqual([
+      "resolveTenantFlags",
+      "sumActiveReservations",
+      "resolveEvidence",
+      "detectDuplicates",
+    ]);
     expect(calls[0]![0].gate_loaders_dormant).toEqual([
       "attestCounterpartyAgent",
       "sumAgentWindowSpend",
       "resolveEscrowState",
     ]);
+  });
+
+  it("emits the new safety-wiring flags (wiki/privileged DB isolation, python agent signing)", () => {
+    const { log, calls } = fakeLog();
+    logBootCapabilities(
+      {
+        ...base(),
+        wikiDbIsolation: true,
+        privilegedDbIsolation: true,
+        pythonAgentSigning: true,
+      },
+      log,
+    );
+    const payload = calls[0]![0];
+    expect(payload.wiki_db_isolation).toBe(true);
+    expect(payload.privileged_db_isolation).toBe(true);
+    expect(payload.python_agent_signing).toBe(true);
+  });
+
+  it("flags storage isolation + python signing as false when unset (default base)", () => {
+    const { log, calls } = fakeLog();
+    logBootCapabilities(base(), log);
+    const payload = calls[0]![0];
+    expect(payload.wiki_db_isolation).toBe(false);
+    expect(payload.privileged_db_isolation).toBe(false);
+    expect(payload.python_agent_signing).toBe(false);
   });
 
   it("emits the booleans + counts verbatim", () => {
