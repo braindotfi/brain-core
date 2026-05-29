@@ -72,7 +72,11 @@ BEGIN
     v_old_hash,
     v_new_hash,
     NULL,                      -- source_id wiring is the writer's choice
-    current_setting('app.actor', true),  -- ServiceCallContext stamps app.actor when set
+    -- app.actor is populated only inside a withServiceScope(pool, ctx, fn)
+    -- transaction (shared/src/db/tenant-scoped.ts). A plain withTenantScope
+    -- caller leaves it unset and the column lands NULL — acceptable, since
+    -- the row is still forensically useful (changed_at + prior/current hash).
+    current_setting('app.actor', true),
     now()
   );
 

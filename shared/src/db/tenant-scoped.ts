@@ -104,3 +104,51 @@ export async function currentTenantScope(client: TenantScopedClient): Promise<st
   const tid = rows[0]?.tid ?? null;
   return tid === "" ? null : tid;
 }
+
+/**
+ * Tenant-scoped transaction that ALSO sets `app.actor`. Used when a SQL
+ * trigger or function needs to stamp the calling principal id on a row
+ * (e.g. ledger_counterparty_payment_instructions writer trigger). Strict
+ * superset of `withTenantScope`; the two cannot mix-and-match within a
+ * single transaction.
+ */
+export async function withServiceScope<T>(
+  pool: Pool,
+  ctx: { tenantId: string; actor: string },
+  fn: (client: TenantScopedClient) => Promise<T>,
+): Promise<T> {
+  if (!isBrainId(ctx.tenantId, "tnt")) {
+    throw brainError("auth_tenant_mismatch", "invalid tenant id shape", {
+      details: { tenantId: ctx.tenantId },
+    });
+  }
+  const client: PoolClient = await pool.connect();
+  let committed = false;
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [ctx.tenantId]);
+    await client.query("SELECT set_config('app.actor', $1, true)", [ctx.actor]);
+    const scoped: TenantScopedClient = {
+      query: (text, values) =>
+        client.query(text, values as unknown as unknown[]) as Promise<{
+          rows: never[];
+          rowCount: number | null;
+        }>,
+    };
+    const result = await fn(scoped);
+    await client.query("COMMIT");
+    committed = true;
+    return result;
+  } catch (err) {
+    if (!committed) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        /* swallow */
+      }
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}

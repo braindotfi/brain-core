@@ -1,8 +1,8 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { isBrainError } from "../errors.js";
-import { newTenantId } from "../ids.js";
-import { withTenantScope } from "./tenant-scoped.js";
+import { newTenantId, newUserId } from "../ids.js";
+import { withServiceScope, withTenantScope } from "./tenant-scoped.js";
 
 /**
  * Build a minimal pg.Pool double that records the SQL statements issued
@@ -12,7 +12,11 @@ import { withTenantScope } from "./tenant-scoped.js";
 function makeFakePool(): {
   pool: { connect: () => Promise<unknown> };
   log: string[];
-  client: { released: boolean };
+  client: {
+    released: boolean;
+    query: ReturnType<typeof vi.fn>;
+    release: ReturnType<typeof vi.fn>;
+  };
 } {
   const log: string[] = [];
   const client = {
@@ -109,6 +113,59 @@ describe("withTenantScope", () => {
       }),
     ).rejects.toBe(boom);
 
+    expect(log).toContain("ROLLBACK");
+    expect(client.released).toBe(true);
+  });
+});
+
+describe("withServiceScope — sets app.tenant_id AND app.actor", () => {
+  it("issues set_config for both app.tenant_id and app.actor in the txn", async () => {
+    const { pool, log, client } = makeFakePool();
+    const tenantId = newTenantId();
+    const actorId = newUserId();
+    await withServiceScope(pool as unknown as Pool, { tenantId, actor: actorId }, async () => {
+      /* no-op */
+    });
+    expect(log[0]).toBe("BEGIN");
+    expect(log[1]).toContain("set_config('app.tenant_id'");
+    expect(log[2]).toContain("set_config('app.actor'");
+    expect(log).toContain("COMMIT");
+    // Both values were passed positionally; spy on the query mock to confirm.
+    const calls = vi.mocked(client.query).mock.calls as Array<[string, unknown[]?]>;
+    const tenantCall = calls.find((c) => c[0].includes("app.tenant_id"));
+    const actorCall = calls.find((c) => c[0].includes("app.actor"));
+    expect((tenantCall?.[1] ?? [])[0]).toBe(tenantId);
+    expect((actorCall?.[1] ?? [])[0]).toBe(actorId);
+  });
+
+  it("rejects an invalid tenant id (shared validation with withTenantScope)", async () => {
+    const { pool } = makeFakePool();
+    try {
+      await withServiceScope(
+        pool as unknown as Pool,
+        { tenantId: "not_a_tenant", actor: newUserId() },
+        async () => {
+          /* unreachable */
+        },
+      );
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(isBrainError(err) && err.code).toBe("auth_tenant_mismatch");
+    }
+  });
+
+  it("rolls back when the body throws", async () => {
+    const { pool, log, client } = makeFakePool();
+    const boom = new Error("inner failure");
+    await expect(
+      withServiceScope(
+        pool as unknown as Pool,
+        { tenantId: newTenantId(), actor: newUserId() },
+        async () => {
+          throw boom;
+        },
+      ),
+    ).rejects.toBe(boom);
     expect(log).toContain("ROLLBACK");
     expect(client.released).toBe(true);
   });
