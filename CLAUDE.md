@@ -62,13 +62,35 @@ corepack enable && pnpm install   # first-time setup
 pnpm run dev:up                   # start pg+pgvector :5432, redis :6379, localstack :4566
 pnpm run dev:down
 
-pnpm run lint                     # eslint + prettier --check
+pnpm run lint                     # eslint + prettier --check + 8 CI guard scripts (see below)
 pnpm run lint:fix
+pnpm run lint:openapi             # Redocly lint of Brain_API_Specification.yaml (also in lint)
 pnpm run typecheck                # tsc -b across all TS services
-pnpm run test                     # vitest run per service
+pnpm run test                     # vitest run per service + test:scripts
 pnpm run test:coverage            # 80/80/75/80 gate (lines/functions/statements/branches)
+pnpm run test:scripts             # node --test scripts/__tests__/*.test.mjs
 pnpm run build
+
+pnpm run demo:golden-path         # run the full golden-path demo flow
+pnpm run demo:reset               # reset demo state (alias for tools/demo-reset)
+pnpm run plaid:sandbox            # start the Plaid sandbox tool
 ```
+
+`pnpm run lint` bundles 8 individually runnable CI guard scripts — each can be called standalone:
+
+```bash
+pnpm run check-scope-vocab
+pnpm run check-gate-bypass
+pnpm run check-payment-intent-loaders
+pnpm run check-no-em-dashes
+pnpm run check-wiki-no-ledger-write
+pnpm run check-policy-no-wiki-read
+pnpm run check-no-onchain-pii
+pnpm run check-docs-drift
+```
+
+> `check-promotion-readiness` also exists (`scripts/check-promotion-readiness.mjs`) but is **not**
+> wired into `lint` — run it manually before promoting a branch.
 
 Per-workspace:
 
@@ -77,8 +99,17 @@ pnpm -C services/<name> run typecheck
 pnpm -C services/<name> run test
 pnpm -C services/<name> run test:watch
 pnpm -C services/<name> run test:integration   # where present
+pnpm -C services/<name> run clean              # rm -rf dist *.tsbuildinfo (every workspace)
 pnpm -C services/<name> exec vitest run src/foo.test.ts
 pnpm -C services/<name> exec vitest run -t "pattern"
+
+# API gateway dev server
+pnpm -C services/api run dev    # tsx watch src/main.ts
+pnpm -C services/api run start  # node dist/main.js (production build)
+
+# SDK regen (clients/sdk/ is generated from Brain_API_Specification.yaml)
+pnpm -C clients/sdk run codegen        # regenerate from OpenAPI spec
+pnpm -C clients/sdk run codegen:check  # verify generated files are up-to-date
 ```
 
 ### Python (`services/agents/`, Uv + Python 3.12)
@@ -99,9 +130,12 @@ pnpm run contracts:test     # forge test
 ### Tooling Binaries
 
 ```bash
-pnpm run build                            # build tools first (produces the dist/ below)
-node tools/migrate/dist/cli.js up         # discover & apply services/*/migrations/*.sql
-pnpm -C tools/seed-golden-path run seed   # seed golden-path demo dataset
+pnpm run build                              # build tools first (produces the dist/ below)
+node tools/migrate/dist/cli.js up           # discover & apply services/*/migrations/*.sql
+pnpm -C tools/seed-golden-path run seed     # seed golden-path demo dataset
+pnpm -C tools/demo-reset run reset          # wipe and re-seed demo state
+pnpm -C tools/dev-token run start           # mint a short-lived dev JWT for local testing
+pnpm -C tools/plaid-sandbox run start       # drive Plaid sandbox flows (fire webhooks, etc.)
 ```
 
 ## Toolchain Prerequisites & First-Time Setup
@@ -159,14 +193,37 @@ clients/          Generated typed clients (from OpenAPI)
 tests/
   e2e/            @brain/e2e, Series A proof-points against staging
   invariants/     @brain/invariants, 15 cross-layer invariants
+  adversarial/    @brain/adversarial, security/adversarial property tests
 tools/
   migrate/        brain-migrate bin, forward-compatible SQL migrations
   seed-golden-path/  brain-seed-golden-path bin, 2-bank/1-card/5-sub demo dataset
-scripts/          dev-up.sh, install-hooks.sh, pre-commit.sh
-docs/             mcp-architecture.md, v0.3-deliverables.md, boot-binary-spec.md, rollback.md
+  demo-reset/     brain-demo-reset bin, wipe + re-seed demo state
+  dev-token/      dev JWT minter for local testing
+  plaid-sandbox/  Plaid sandbox driver (fire webhooks, simulate transfers)
+  postgres-init/  Postgres role/extension init scripts (no package.json)
+scripts/          dev-up.sh, install-hooks.sh, pre-commit.sh, demo/golden-path.sh, check-*.mjs
+docs/             Internal engineering docs (mcp-architecture.md, boot-binary-spec.md, rollback.md,
+                  plus audits, RFCs, scaling notes, v0.4 runbooks — list is illustrative)
 ```
 
 Shared primitives all live in the top-level `shared/` package (`@brain/shared`): auth, errors, gate, idempotency, audit, db, blob, queue, http, llm, logger, metrics, tracing, webhooks, hashing, ids, contracts, config. (`services/api` is a thin gateway that consumes them, not their host.)
+
+### Documentation-site tree (Markdown only, not runtime code)
+
+The repo also contains a GitBook-style published docs tree. These directories are **Markdown
+documentation only** — they hold no TypeScript/Python/Solidity source:
+
+`protocol/`, `concepts/`, `build/`, `api-reference/`, `architecture/`, `introduction/`,
+`legal/`, `resources/`
+
+**Naming-collision hazard** — two doc dirs share a name prefix with runtime source dirs:
+
+| Directory          | What it actually is                     |
+| ------------------ | --------------------------------------- |
+| `smart-contracts/` | Markdown docs per contract              |
+| `contracts/`       | Solidity source (`contracts/src/*.sol`) |
+| `mcp-server/`      | Markdown docs for the MCP surface       |
+| `services/mcp`     | The actual `@brain/mcp` runtime service |
 
 New v0.3 routes live under `/agents/*`, `/payment-intents/*`, `/agents/mcp`. The `services/execution/` dir retains v0.2 `/execution/*` routes for back-compat.
 
@@ -192,7 +249,7 @@ New v0.3 routes live under `/agents/*`, `/payment-intents/*`, `/agents/mcp`. The
 | true   | `execute`        | `confirm`        | **confirm**     |
 | true   | `execute`        | `allow`          | **live**        |
 
-`live` is the only mode that permits unattended execution. Every mode (including `live`) still passes the deterministic §6 gate. The four modes label *operator expectations*, not safety bypasses.
+`live` is the only mode that permits unattended execution. Every mode (including `live`) still passes the deterministic §6 gate. The four modes label _operator expectations_, not safety bypasses.
 
 ## Per-Layer "Must Not" Rules
 
