@@ -183,6 +183,7 @@ import {
 } from "./gate-loaders/index.js";
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
+import { assertEscrowAuditApproved } from "./composition/escrow-audit-gate.js";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps, PolicyReader, AgentReader, PolicyView } from "@brain/wiki";
@@ -245,6 +246,16 @@ async function main(): Promise<void> {
     nodeEnv: cfg.NODE_ENV,
     wikiDbUrl: cfg.BRAIN_WIKI_DB_URL,
     privilegedDbUrl: cfg.DATABASE_PRIVILEGED_URL,
+  });
+
+  // Refuse to boot against Base mainnet (chainId=8453) with BRAIN_ESCROW_ADDRESS
+  // configured unless the operator has explicitly attested that the address is
+  // the audited bytecode (Task #37). Silent on Base Sepolia + when no escrow
+  // is wired. Logic + tests live in composition/escrow-audit-gate.ts.
+  assertEscrowAuditApproved({
+    chainId: cfg.BRAIN_BASE_CHAIN_ID,
+    escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
+    auditApproved: cfg.BRAIN_ESCROW_AUDIT_APPROVED,
   });
 
   let wikiPool = pool;

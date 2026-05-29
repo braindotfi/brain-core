@@ -245,6 +245,14 @@ const envSchema = z.object({
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
     .optional(),
+  /**
+   * Explicit operator attestation that the configured BRAIN_ESCROW_ADDRESS has
+   * passed the external smart-contract audit (Task #37). Without "true" the api
+   * refuses to boot when chainId === 8453 (Base mainnet) AND BRAIN_ESCROW_ADDRESS
+   * is set. Set this only after the audit signs off and the address on chain is
+   * the audited bytecode. Has no effect on Base Sepolia (84_532).
+   */
+  BRAIN_ESCROW_AUDIT_APPROVED: z.enum(["true", "false"]).default("false"),
 
   // ---- Reputation registry (BrainReputationRegistry) ----
   /** BrainReputationRegistry contract address. Presence wires resolveReputation into PolicyService. */
