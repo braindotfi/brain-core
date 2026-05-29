@@ -32,14 +32,13 @@ export interface TenantDeletionResult {
 }
 
 /**
- * Tables to wipe. The shape is (table, tenant-column). Order matters where
- * foreign keys exist; the simplest safe order is "leaf rows first." In this
- * MVP every cross-table FK either uses ON DELETE CASCADE or is a same-layer
- * link, so a single-pass DELETE inside one transaction is safe.
- *
- * audit_events and audit_anchors are deliberately ABSENT: see file header.
+ * Tables to wipe, in deletion order. Children before parents where a foreign
+ * key exists. The registry-derived test in service.test.ts scans every
+ * migration in services/*​/migrations and asserts each tenant-scoped table
+ * is either listed here OR in PRESERVED_TABLES — so a new migration that
+ * adds a tenant-scoped table without updating this list fails CI.
  */
-const TENANT_SCOPED_TABLES: ReadonlyArray<{
+export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   table: string;
   column: "owner_id" | "tenant_id";
 }> = [
@@ -76,13 +75,45 @@ const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "policies", column: "tenant_id" },
 
   // ---- Layer 5: Agent / Execution ----
+  // Children before parents (saga_steps→sagas, run_steps→runs, finding_overrides→findings).
+  { table: "agent_saga_steps", column: "tenant_id" },
+  { table: "agent_action_sagas", column: "tenant_id" },
+  { table: "agent_finding_overrides", column: "tenant_id" },
+  { table: "agent_findings", column: "tenant_id" },
+  { table: "agent_run_steps", column: "tenant_id" },
+  { table: "agent_reasoning_traces", column: "tenant_id" },
+  { table: "agent_evidence_refs", column: "tenant_id" },
+  { table: "agent_runs", column: "tenant_id" },
+  { table: "agent_routing_decisions", column: "tenant_id" },
+  { table: "agent_idempotency_keys", column: "tenant_id" },
+  { table: "execution_outbox", column: "tenant_id" },
+  { table: "executions", column: "tenant_id" },
   { table: "approvals", column: "tenant_id" },
+  { table: "proposals", column: "tenant_id" },
   { table: "agents", column: "tenant_id" },
 
   // ---- Layer 6: Audit (metadata only; events + anchors preserved) ----
+  { table: "webhook_dead_letters", column: "tenant_id" },
   { table: "webhook_endpoints", column: "tenant_id" },
   { table: "domain_events", column: "tenant_id" },
+
+  // ---- Onboarding / identity (tenants registry last) ----
+  { table: "email_verifications", column: "tenant_id" },
+  { table: "wallet_identities", column: "tenant_id" },
+  { table: "users", column: "tenant_id" },
+  // tenants itself uses `id` as the tenant key, not tenant_id/owner_id.
+  // Handled separately below to preserve the column-shape invariant.
 ];
+
+/**
+ * Tables intentionally NOT deleted. The audit chain backs the
+ * verify-without-trusting-Brain promise; GDPR Article 17(3)(b) permits
+ * retention for the establishment or defence of legal claims.
+ */
+export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
+  "audit_events",
+  "audit_anchors",
+]);
 
 export interface TenantDeletionDeps {
   /** A privileged Pool (BYPASSRLS) so cross-tenant rows are reachable. */
@@ -110,6 +141,14 @@ export class TenantDeletionService {
         deletedRows[table] = count;
         totalRows += count;
       }
+      // tenants is keyed by `id` (it IS the tenant registry), not tenant_id.
+      // Delete it last so children referencing tenants don't FK-violate.
+      const tenantsRes = await client.query(`DELETE FROM tenants WHERE id = $1`, [
+        targetTenantId,
+      ]);
+      const tenantsCount = tenantsRes.rowCount ?? 0;
+      deletedRows.tenants = tenantsCount;
+      totalRows += tenantsCount;
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");
