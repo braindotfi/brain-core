@@ -63,6 +63,25 @@ describe("parseConfig", () => {
     expect(() => parseConfig({ ...MIN_ENV, NODE_ENV: "staging-v2" })).toThrowError(/NODE_ENV/);
   });
 
+  it("treats empty-string values for optional secrets as absent", () => {
+    // Shells routinely export `ANTHROPIC_API_KEY=` (no value); that should be
+    // equivalent to unset, not a parse error. Same for OPENAI_API_KEY,
+    // PLAID_*, and the Key Vault secret name.
+    const cfg = parseConfig({
+      ...MIN_ENV,
+      ANTHROPIC_API_KEY: "",
+      OPENAI_API_KEY: "",
+      PLAID_CLIENT_ID: "",
+      PLAID_SECRET: "",
+      BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME: "",
+    });
+    expect(cfg.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(cfg.OPENAI_API_KEY).toBeUndefined();
+    expect(cfg.PLAID_CLIENT_ID).toBeUndefined();
+    expect(cfg.PLAID_SECRET).toBeUndefined();
+    expect(cfg.BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME).toBeUndefined();
+  });
+
   it("accepts optional OTLP endpoint and omits when absent", () => {
     const with_otlp = parseConfig({
       ...MIN_ENV,

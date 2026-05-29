@@ -99,8 +99,10 @@ describe("buildCredentialKeyProvider", () => {
         properties: { version: "abc123" },
       });
       const ck = await provider().load();
-      expect(ck.key.equals(raw)).toBe(true);
-      expect(ck.keyId).toBe("abc123");
+      // Interface return type is CredentialKey | undefined; mock guarantees a
+      // value, so assert non-null here for the typecheck.
+      expect(ck!.key.equals(raw)).toBe(true);
+      expect(ck!.keyId).toBe("abc123");
       expect(getSecret).toHaveBeenLastCalledWith("brain-source-credential-key");
     });
 
@@ -124,7 +126,7 @@ describe("buildCredentialKeyProvider", () => {
         properties: {},
       });
       const ck = await provider().load();
-      expect(ck.keyId).toBe("brain-source-credential-key");
+      expect(ck!.keyId).toBe("brain-source-credential-key");
     });
   });
 

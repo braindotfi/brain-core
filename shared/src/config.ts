@@ -12,6 +12,22 @@
 
 import { z } from "zod";
 
+/**
+ * Optional non-empty string env var that tolerates empty values as "absent".
+ *
+ * `optionalNonEmptyString()` rejects an empty string because the optional
+ * check only fires for `undefined`. Shells routinely export env vars as empty
+ * strings (e.g. `export ANTHROPIC_API_KEY=` in a script that doesn't have the
+ * secret). Treating empty as undefined matches the operator intuition and
+ * keeps `loadConfig()` stable across shell states.
+ */
+function optionalNonEmptyString() {
+  return z.preprocess(
+    (v) => (typeof v === "string" && v.length === 0 ? undefined : v),
+    z.string().min(1).optional(),
+  );
+}
+
 const envSchema = z.object({
   // ---- Identity & environment ----
   NODE_ENV: z.enum(["development", "test", "staging", "production"]).default("development"),
@@ -71,14 +87,14 @@ const envSchema = z.object({
   CORS_ALLOWED_ORIGINS: z.string().default("http://localhost:5173,http://localhost:3000"),
 
   // ---- LLM (OpenAI) ----
-  OPENAI_API_KEY: z.string().min(1).optional(),
+  OPENAI_API_KEY: optionalNonEmptyString(),
   WIKI_LLM_MODEL: z.string().default("gpt-4o-mini"),
   WIKI_EMBED_MODEL: z.string().default("text-embedding-3-small"),
   // P0.3: per-(tenant, principal) wiki annotation rate limit, events/hour.
   WIKI_ANNOTATION_RATE_PER_HOUR: z.coerce.number().int().positive().default(60),
 
   // ---- LLM (Anthropic — legacy / tests only) ----
-  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_API_KEY: optionalNonEmptyString(),
 
   // ---- Sandbox / demo mode ----
   /** Set to "true" to enable sandbox-friendly stub overrides (no live credentials required). */
@@ -99,8 +115,8 @@ const envSchema = z.object({
     .default("false"),
 
   // ---- Plaid (consumed by tools/plaid-sandbox and Raw webhook verifier) ----
-  PLAID_CLIENT_ID: z.string().min(1).optional(),
-  PLAID_SECRET: z.string().min(1).optional(),
+  PLAID_CLIENT_ID: optionalNonEmptyString(),
+  PLAID_SECRET: optionalNonEmptyString(),
   PLAID_ENV: z.enum(["sandbox", "development", "production"]).default("sandbox"),
 
   // ---- MCP / on-chain ----
@@ -187,7 +203,7 @@ const envSchema = z.object({
    * base64-encoded credential key. When set alongside BRAIN_AZURE_KEY_VAULT_URL,
    * the boot path selects the Key Vault provider over the env-var path.
    */
-  BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME: z.string().min(1).optional(),
+  BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME: optionalNonEmptyString(),
 
   // ---- x402 settlement rail ----
   /** Coinbase/facilitator URL for the x402 HTTP settlement protocol. Presence enables X402BaseRail at boot. */
