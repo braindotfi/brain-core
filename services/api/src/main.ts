@@ -1124,6 +1124,12 @@ async function main(): Promise<void> {
       await v1.register(async (child) =>
         registerMcpRoute(child, mcpServer, {
           skipPrincipalTypeCheck: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,
+          // Per-tenant rate limit so a single misbehaving agent cannot crowd
+          // out other tenants on the shared MCP surface (peer review).
+          tenantRateLimiter: new RedisSlidingWindowRateLimiter(redis, {
+            windowSeconds: cfg.BRAIN_MCP_TENANT_RATE_WINDOW_SECONDS,
+            limit: cfg.BRAIN_MCP_TENANT_RATE_LIMIT,
+          }),
         }),
       );
       // /v1/agents/* — unified agent API surface (Agent Autonomy v3, 1a.6):

@@ -130,6 +130,13 @@ const envSchema = z.object({
     .regex(/^0x[0-9a-fA-F]{40}$/)
     .default("0x683893ccd84d9a3487095d09fed324b6b8ea2501"),
   BRAIN_MCP_DEV_AUTH_BYPASS: z.coerce.boolean().default(false),
+  /**
+   * Per-tenant MCP rate limit: how many tool calls one tenant may make in a
+   * sliding window before further calls are rejected with rate_limited.
+   * Defaults aim at ~10 req/s per tenant; tune per launch.
+   */
+  BRAIN_MCP_TENANT_RATE_LIMIT: z.coerce.number().int().positive().default(600),
+  BRAIN_MCP_TENANT_RATE_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
 
   // ---- On-chain rails (Base) ----
   // NOTE: `BASE_RPC_URL` is the rail RPC (spec called it BRAIN_BASE_RPC_URL;

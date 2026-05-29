@@ -7,7 +7,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError } from "@brain/shared";
+import { brainError, type SlidingWindowRateLimiter } from "@brain/shared";
 import type { BrainMcpServer } from "../server.js";
 
 export interface McpRouteOptions {
@@ -15,6 +15,16 @@ export interface McpRouteOptions {
   path?: string;
   /** Skip principal_type=agent enforcement. Set to true only in dev-bypass mode. */
   skipPrincipalTypeCheck?: boolean;
+  /**
+   * Per-tenant sliding-window rate limiter. When supplied, every MCP request
+   * is keyed by `tenantId` and rejected with `rate_limited` (HTTP 429) once
+   * the configured window cap is exceeded. Prevents a single misbehaving
+   * agent from crowding out other tenants on the shared MCP surface.
+   *
+   * The Fastify global rate limiter is still in front of this and caps total
+   * QPS to the api process; this limiter adds tenant fairness on top.
+   */
+  tenantRateLimiter?: SlidingWindowRateLimiter;
 }
 
 /**
@@ -36,6 +46,23 @@ export async function registerMcpRoute(
     }
     if (!opts.skipPrincipalTypeCheck && request.principal.type !== "agent") {
       throw brainError("auth_scope_insufficient", "MCP requires principal_type=agent");
+    }
+    // Per-tenant rate limit (must run AFTER auth so an unauthenticated flood
+    // can't poison the limiter, and AFTER the principal_type check so user
+    // tokens hit the global limiter rather than the tenant bucket).
+    if (opts.tenantRateLimiter !== undefined) {
+      const decision = await opts.tenantRateLimiter.hit(
+        `mcp:tenant:${request.principal.tenantId}`,
+      );
+      if (!decision.allowed) {
+        throw brainError("rate_limited", "tenant MCP quota exceeded", {
+          details: {
+            tenant_id: request.principal.tenantId,
+            limit: decision.limit,
+            window_count: decision.count,
+          },
+        });
+      }
     }
     const response = await server.handle(request.body, request.principal);
     // JSON-RPC always returns 200 even on error; the error is in the
