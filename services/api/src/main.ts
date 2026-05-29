@@ -412,7 +412,7 @@ async function main(): Promise<void> {
   };
 
   const wikiPageService = new WikiPageService({ pool, audit, embed, policyReader, agentReader });
-  const wikiService = buildWikiMemoryService(wikiPageService, wikiDeps);
+  const wikiService = buildWikiMemoryService(wikiPageService, wikiDeps, rawDeps);
 
   const policyDeps: PolicyDeps = {
     pool,

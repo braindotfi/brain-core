@@ -68,6 +68,9 @@ export const ID_PREFIX = {
   executionOutbox: "exo",
   // H-20 — outbound webhook dead-letter (Layer 6 audit / webhook infra).
   webhookDeadLetter: "wdl",
+  // Wiki annotations (HITL corrections). Each annotation lands as a Raw
+  // artifact for the provenance trail; the annotation id is its own handle.
+  wikiAnnotation: "ann",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];
@@ -93,6 +96,7 @@ export const newExecutionId = (): string => brainId(ID_PREFIX.execution);
 export const newPolicyId = (): string => brainId(ID_PREFIX.policy);
 export const newRawArtifactId = (): string => brainId(ID_PREFIX.rawArtifact);
 export const newRawParsedId = (): string => brainId(ID_PREFIX.rawParsed);
+export const newWikiAnnotationId = (): string => brainId(ID_PREFIX.wikiAnnotation);
 export const newWikiEntityId = (): string => brainId(ID_PREFIX.wikiEntity);
 export const newWikiRelationId = (): string => brainId(ID_PREFIX.wikiRelation);
 export const newWikiPageId = (): string => brainId(ID_PREFIX.wikiPage);

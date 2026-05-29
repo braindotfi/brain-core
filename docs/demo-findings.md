@@ -200,7 +200,7 @@ Merkle chain: each event's prev_event_hash links to the prior event's hash ✓
 |----------|---------|----------|
 | P0 | Wiki pages are empty on a fresh local instance. `normalizeWorker` uses `setInterval` polling and must run at least one cycle before Wiki has data; E2E tests fail because of this | `services/api/src/main.ts` (normalizeWorker) |
 | P1 | 4 of 8 Wiki page generators stubbed. `source_revision: "stub"` for invoice, agent, policy, cash_flow generators | `src/pages/stubs.ts:39,89` (confirmed-existing) |
-| P1 | `POST /v1/wiki/annotate` throws `internal_server_error` in production (no LLM wired for annotate path) | `src/routes/annotate.ts:86` (confirmed-existing) |
+| ~~P1~~ | ~~`POST /v1/wiki/annotate` throws `internal_server_error`~~ Fixed: writes through to Raw as `sourceType=wiki_annotation` artifacts. `services/api/src/adapters/wiki-memory-adapter.ts` |
 | P2 | `confidence` field returns `null` on question answers (provenance not propagated through `RecordedLlmAdapter`) | observed at runtime |
 
 ---
