@@ -35,11 +35,47 @@ export interface RoutingDecision {
   readonly reason: string;
 }
 
-/** Per-candidate reputation + cost signals. Phase 1 uses neutral defaults;
- *  ERC-8004 reputation + a real cost model wire in later. */
+/**
+ * Per-candidate reputation + cost signals.
+ *
+ * `reputation` is a normalized 0..1 blend of operational data
+ * (success rate, policy rejection rate, dispute rate, agent state,
+ * on-chain reputation pointer). `components` exposes the individual
+ * inputs so a routing-decision audit event can explain why an agent
+ * was preferred or downgraded.
+ *
+ * Architectural note: the router uses reputation as a TIGHTEN-ONLY
+ * signal. The score is `0.6 * matchQuality + 0.25 * completeness +
+ * 0.15 * reputation`, so a perfect reputation contributes at most
+ * 0.15 and cannot override low evidence completeness. This mirrors
+ * the Policy DSL rule (reputation can only tighten an outcome).
+ */
 export interface CandidateSignals {
   /** Normalized reputation, 0..1 (higher is better). */
   readonly reputation: number;
   /** Normalized cost, 0..1 (lower is better). */
   readonly cost: number;
+  /** Per-component breakdown; omitted by trivial providers. */
+  readonly components?: SignalsComponents;
+}
+
+/**
+ * The five reputation inputs the PostgresSignalsProvider mixes.
+ * All values are 0..1. `successRate` and `onchainReputation` are
+ * higher-is-better; the others are higher-is-worse and are inverted
+ * before mixing.
+ */
+export interface SignalsComponents {
+  /** Completed PaymentIntents / total proposed for this agent. */
+  readonly successRate: number;
+  /** Policy decisions with outcome=reject for this agent. */
+  readonly policyRejectionRate: number;
+  /** Disputed releases when escrow is live (placeholder today). */
+  readonly disputeRate: number;
+  /** 0 when agent is active; 1 when revoked/quarantined/failed. */
+  readonly agentStatePenalty: number;
+  /** On-chain BrainReputationRegistry pointer (0.5 when no pointer). */
+  readonly onchainReputation: number;
+  /** Total number of PaymentIntents the rates were computed over. */
+  readonly sampleSize: number;
 }

@@ -2,17 +2,18 @@
 
 For third-party developers connecting an agent to the Brain MCP surface.
 The internal-agent path (Brain-shipped agents under `services/internal-agents/`
-+ `services/agents/`) is documented separately in
-[agent-autonomy-v3.md](./agent-autonomy-v3.md).
+
+- `services/agents/`) is documented separately in
+  [agent-autonomy-v3.md](./agent-autonomy-v3.md).
 
 ## What Brain exposes to external agents
 
-| Surface | Mount | Shape |
-|---|---|---|
-| MCP server | `POST /v1/agents/mcp` | JSON-RPC 2.0, single-shot HTTP, no SSE, no session state |
-| HTTP API | `/v1/...` | OpenAPI 3.1, full spec at `Brain_API_Specification.yaml` |
-| Audit verification | `POST /v1/audit/verify` | Pure function, no auth, verifies a Merkle proof |
-| Proof view | `GET /v1/proof/{action_id}/view` | Human-readable HTML for any executed action |
+| Surface            | Mount                            | Shape                                                    |
+| ------------------ | -------------------------------- | -------------------------------------------------------- |
+| MCP server         | `POST /v1/agents/mcp`            | JSON-RPC 2.0, single-shot HTTP, no SSE, no session state |
+| HTTP API           | `/v1/...`                        | OpenAPI 3.1, full spec at `Brain_API_Specification.yaml` |
+| Audit verification | `POST /v1/audit/verify`          | Pure function, no auth, verifies a Merkle proof          |
+| Proof view         | `GET /v1/proof/{action_id}/view` | Human-readable HTML for any executed action              |
 
 12 tools, 7 resources, 5 prompts on the MCP surface today. The full inventory
 lives in [mcp-architecture.md](./mcp-architecture.md).
@@ -141,16 +142,16 @@ Every failure returns a JSON-RPC error envelope with a stable `code`. The
 inner `details` carry just enough context to act without leaking other tenants'
 data. The most common codes during onboarding:
 
-| Code | Means | Fix |
-|---|---|---|
-| `auth_token_invalid` | JWT signature / audience / expiry failed | Re-acquire from SIWX |
-| `auth_scope_insufficient` | Principal type is not `agent` | Use the agent JWT, not a user JWT |
-| `agent_not_registered` | Off-chain `agents` row missing or `state != 'active'` | Finish SIWX, wait for `pending_onchain → active` |
-| `agent_scope_hash_missing` | Off-chain row has no `scope_hash` | SIWX wasn't completed; redo step 3 |
-| `agent_scope_hash_mismatch` | On-chain hash differs from off-chain hash | Either the on-chain registration is stale or you've rotated scopes; re-register on-chain |
-| `auth_tenant_mismatch` | JWT tenant != agent's tenant | Look at the JWT claims; the SIWX flow set the wrong tenant |
-| `payment_intent_gate_failed` | The §6 gate hard-rejected | `details.failed_check` identifies the numbered check; read the policy decision via `policy_decision_id` |
-| `payment_intent_invalid_state` | Tool requires `proposed`/`pending_approval` (cancel) or other state | Re-read the intent and only act when state matches |
+| Code                           | Means                                                               | Fix                                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `auth_token_invalid`           | JWT signature / audience / expiry failed                            | Re-acquire from SIWX                                                                                    |
+| `auth_scope_insufficient`      | Principal type is not `agent`                                       | Use the agent JWT, not a user JWT                                                                       |
+| `agent_not_registered`         | Off-chain `agents` row missing or `state != 'active'`               | Finish SIWX, wait for `pending_onchain → active`                                                        |
+| `agent_scope_hash_missing`     | Off-chain row has no `scope_hash`                                   | SIWX wasn't completed; redo step 3                                                                      |
+| `agent_scope_hash_mismatch`    | On-chain hash differs from off-chain hash                           | Either the on-chain registration is stale or you've rotated scopes; re-register on-chain                |
+| `auth_tenant_mismatch`         | JWT tenant != agent's tenant                                        | Look at the JWT claims; the SIWX flow set the wrong tenant                                              |
+| `payment_intent_gate_failed`   | The §6 gate hard-rejected                                           | `details.failed_check` identifies the numbered check; read the policy decision via `policy_decision_id` |
+| `payment_intent_invalid_state` | Tool requires `proposed`/`pending_approval` (cancel) or other state | Re-read the intent and only act when state matches                                                      |
 
 ## What an agent CAN do via MCP
 

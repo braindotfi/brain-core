@@ -44,8 +44,24 @@ export interface AgentRouterDeps {
     tenantId: string,
   ) => ReadonlySet<string> | Promise<ReadonlySet<string>>;
   readonly audit: AuditEmitter;
-  /** Per-candidate reputation + cost. Defaults to neutral signals. */
-  readonly signals?: (agentKey: string) => CandidateSignals;
+  /**
+   * Per-candidate reputation + cost, scoped to the requesting tenant. The
+   * provider returns a `CandidateSignals` shape; the optional `components`
+   * field is propagated into the routing-decision audit event so operators
+   * can debug a selection.
+   *
+   * Tenant scoping matters: success rate and rejection rate are per-tenant
+   * facts. An agent reliable for tenant A can be wrong for tenant B.
+   *
+   * Async because real providers hit the DB; the previous neutral-constant
+   * hook was synchronous, but score() is already async so the change is
+   * boundary-only for callers that supplied a sync hook (they now wrap their
+   * return in Promise.resolve).
+   */
+  readonly signals?: (
+    agentKey: string,
+    tenantId: string,
+  ) => CandidateSignals | Promise<CandidateSignals>;
   /**
    * Resolve the tenant's category (business | consumer). When provided, a
    * candidate whose category mismatches is downgraded (not rejected), so a
@@ -62,6 +78,7 @@ interface Scored {
   readonly confidence: number;
   readonly selectionScore: number;
   readonly completeness: number;
+  readonly signals: CandidateSignals;
 }
 
 function clamp01(n: number): number {
@@ -140,6 +157,15 @@ export class AgentRouter {
         confidence: decision.confidence,
         evidence_score: decision.evidence_score,
         execution_mode: decision.execution_mode,
+        // Reputation inputs for the winner, so an operator can reproduce
+        // why this agent was preferred without re-running the router.
+        signals: {
+          reputation: winner.signals.reputation,
+          cost: winner.signals.cost,
+          ...(winner.signals.components !== undefined
+            ? { components: winner.signals.components }
+            : {}),
+        },
       },
     });
 
@@ -172,9 +198,14 @@ export class AgentRouter {
       ...(input.context !== undefined ? { context: input.context } : {}),
       requiredEvidence: def.required_evidence,
     });
-    const { reputation, cost } = this.deps.signals?.(def.agent_key) ?? DEFAULT_SIGNALS;
+    const signals = (await this.deps.signals?.(def.agent_key, input.tenant_id)) ?? DEFAULT_SIGNALS;
+    const { reputation, cost } = signals;
 
     const matchQuality = Math.max(triggerMatch, intentScore);
+    // Reputation is a tighten-only signal: weight 0.15 means even a perfect
+    // reputation cannot rescue a candidate with low evidence completeness
+    // (weight 0.25) or no match (weight 0.6). This matches the Policy DSL
+    // rule that reputation never overrides a structural disqualification.
     const confidence = clamp01(0.6 * matchQuality + 0.25 * bundle.completeness + 0.15 * reputation);
     // Category alignment: downgrade (never reject) a candidate whose category
     // mismatches the tenant. `agnostic` agents serve both, so no penalty.
@@ -184,7 +215,7 @@ export class AgentRouter {
       def.category !== tenantCategory;
     const selectionScore =
       confidence - COST_PENALTY * cost - (categoryMismatch ? CATEGORY_MISMATCH_PENALTY : 0);
-    return { def, confidence, selectionScore, completeness: bundle.completeness };
+    return { def, confidence, selectionScore, completeness: bundle.completeness, signals };
   }
 
   private async noMatch(

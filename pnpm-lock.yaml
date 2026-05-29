@@ -88,6 +88,9 @@ importers:
       fastify:
         specifier: ^5.0.0
         version: 5.8.5
+      pg:
+        specifier: ^8.13.0
+        version: 8.20.0
     devDependencies:
       '@brain/policy':
         specifier: workspace:*
@@ -95,6 +98,9 @@ importers:
       '@types/node':
         specifier: ^22.7.0
         version: 22.19.19
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
       '@vitest/coverage-v8':
         specifier: ^3.2.0
         version: 3.2.4(vitest@3.2.4(@types/node@22.19.19)(tsx@4.22.0))

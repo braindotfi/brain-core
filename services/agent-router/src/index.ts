@@ -13,6 +13,11 @@ export * from "./intent-decomposer.js";
 export * from "./evidence-gatherer.js";
 export { AgentRouter, type AgentRouterDeps } from "./router.js";
 export {
+  PostgresSignalsProvider,
+  type PostgresSignalsProviderOptions,
+  type OnchainReputationReader,
+} from "./signals/postgres.js";
+export {
   ActionResolver,
   REQUESTED_ACTION_KEY,
   type ActionResolverDeps,

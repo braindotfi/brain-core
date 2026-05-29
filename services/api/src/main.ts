@@ -109,11 +109,7 @@ import {
   transitionAgent,
   releaseAgentQuarantine,
 } from "@brain/execution";
-import type {
-  ExecutionDeps,
-  OnchainDispatchParams,
-  Rail,
-} from "@brain/execution";
+import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
 import { parseEther } from "viem";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
@@ -152,6 +148,7 @@ import {
   registerAgentApiRoutes,
   StaticPromotionPolicy,
   LIVE_AGENTS,
+  PostgresSignalsProvider,
   type AgentRunStore,
   type AgentApiReadStore,
   type IntentClassifier,
@@ -849,6 +846,13 @@ async function main(): Promise<void> {
     void reindexIntentClassifier(embeddingClassifier, internalAgentCatalog);
     agentClassifier = new FallbackIntentClassifier(embeddingClassifier, rulesClassifier);
   }
+  // Peer review #15: back the router's signals() with real operational data.
+  // Mixes success rate, policy rejection rate, agent state, and an optional
+  // on-chain reputation pointer into a single 0..1 reputation per
+  // (tenant, agent). The router weights reputation at 0.15, so this is a
+  // tighten-only signal that never overrides match quality or evidence
+  // completeness — same posture as the Policy DSL reputation rule.
+  const signalsProvider = new PostgresSignalsProvider({ pool });
   const agentRouter = new AgentRouter({
     catalog: () => internalAgentCatalog,
     classifier: agentClassifier,
@@ -860,6 +864,7 @@ async function main(): Promise<void> {
     // agent deterministically; consumer routing activates once a real source
     // is wired.
     getTenantCategory: () => "business",
+    signals: (agentKey, tenantId) => signalsProvider.load(agentKey, tenantId),
     audit,
   });
 

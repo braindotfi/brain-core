@@ -76,7 +76,7 @@ pnpm run demo:reset               # reset demo state (alias for tools/demo-reset
 pnpm run plaid:sandbox            # start the Plaid sandbox tool
 ```
 
-`pnpm run lint` bundles 8 individually runnable CI guard scripts — each can be called standalone:
+`pnpm run lint` bundles 8 individually runnable CI guard scripts. Each can be called standalone:
 
 ```bash
 pnpm run check-scope-vocab
@@ -90,7 +90,7 @@ pnpm run check-docs-drift
 ```
 
 > `check-promotion-readiness` also exists (`scripts/check-promotion-readiness.mjs`) but is **not**
-> wired into `lint` — run it manually before promoting a branch.
+> wired into `lint`. Run it manually before promoting a branch.
 
 Per-workspace:
 
@@ -203,7 +203,7 @@ tools/
   postgres-init/  Postgres role/extension init scripts (no package.json)
 scripts/          dev-up.sh, install-hooks.sh, pre-commit.sh, demo/golden-path.sh, check-*.mjs
 docs/             Internal engineering docs (mcp-architecture.md, boot-binary-spec.md, rollback.md,
-                  plus audits, RFCs, scaling notes, v0.4 runbooks — list is illustrative)
+                  plus audits, RFCs, scaling notes, v0.4 runbooks. List is illustrative)
 ```
 
 Shared primitives all live in the top-level `shared/` package (`@brain/shared`): auth, errors, gate, idempotency, audit, db, blob, queue, http, llm, logger, metrics, tracing, webhooks, hashing, ids, contracts, config. (`services/api` is a thin gateway that consumes them, not their host.)
@@ -211,12 +211,12 @@ Shared primitives all live in the top-level `shared/` package (`@brain/shared`):
 ### Documentation-site tree (Markdown only, not runtime code)
 
 The repo also contains a GitBook-style published docs tree. These directories are **Markdown
-documentation only** — they hold no TypeScript/Python/Solidity source:
+documentation only**. They hold no TypeScript/Python/Solidity source:
 
 `protocol/`, `concepts/`, `build/`, `api-reference/`, `architecture/`, `introduction/`,
 `legal/`, `resources/`
 
-**Naming-collision hazard** — two doc dirs share a name prefix with runtime source dirs:
+**Naming-collision hazard**. Two doc dirs share a name prefix with runtime source dirs:
 
 | Directory          | What it actually is                     |
 | ------------------ | --------------------------------------- |
