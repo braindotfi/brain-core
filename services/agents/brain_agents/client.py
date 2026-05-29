@@ -43,7 +43,14 @@ class BrainApiClient:
             )
             resp.raise_for_status()
             payload: dict[str, Any] = resp.json()
-            items = payload.get("items", payload.get("data", []))
+            # GET /v1/ledger/transactions returns { transactions: [...] }
+            # (services/ledger/src/routes/index.ts). Older / alternate handlers
+            # used `items` or `data`; keep both as fallbacks so a future route
+            # rename does not silently turn the scheduler into a no-op.
+            items = payload.get(
+                "transactions",
+                payload.get("items", payload.get("data", [])),
+            )
             return list(items) if isinstance(items, list) else []
 
     async def raw_ingest(self, envelope: dict[str, Any]) -> dict[str, Any]:
