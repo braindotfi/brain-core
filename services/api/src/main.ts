@@ -58,6 +58,8 @@ import {
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 import { logBootCapabilities } from "./capabilities.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
+import { TenantDeletionService } from "./tenant-deletion/service.js";
+import { registerTenantDeletionRoute } from "./tenant-deletion/route.js";
 import { registerProofViewRoute } from "./proof/view.js";
 import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
@@ -1120,6 +1122,16 @@ async function main(): Promise<void> {
       // P0.7 human-readable proof viewer — GET /v1/proof/{id}/view → text/html.
       await v1.register(async (child) =>
         registerProofViewRoute(child, { buildProof: proofBuilder }),
+      );
+      // GDPR right-to-erasure. The privileged pool BYPASSes RLS so cross-
+      // tenant rows are reachable for cleanup; auth + tenant-match are
+      // enforced at the route boundary.
+      const tenantDeletionService = new TenantDeletionService({
+        privilegedPool,
+        audit,
+      });
+      await v1.register(async (child) =>
+        registerTenantDeletionRoute(child, { service: tenantDeletionService }),
       );
       await v1.register(async (child) =>
         registerMcpRoute(child, mcpServer, {
