@@ -2,6 +2,8 @@ import type {
   AgentAttestationInput,
   AgentAttestationResult,
   AuditEmitter,
+  DuplicateCheckInput,
+  DuplicateCheckResult,
   EscrowStateInput,
   GateAccount,
   GateAgent,
@@ -12,6 +14,7 @@ import type {
   GateTenantFlags,
   MetricsEmitter,
   ResolvedEscrowState,
+  ResolvedEvidence,
   ServiceCallContext,
 } from "@brain/shared";
 import type { Pool } from "pg";
@@ -114,6 +117,28 @@ export interface ExecutionDeps {
     ctx: ServiceCallContext,
     input: EscrowStateInput,
   ) => Promise<ResolvedEscrowState | null>;
+
+  // -- Core safety loaders (§6 gate checks 8 / 9.5 / 11.5) -----------------
+  // Mandatory in production. When absent the gate degrades to `not_applicable`
+  // for the corresponding check (acceptable for dev/test only). The
+  // composition-root parity lint (scripts/check-payment-intent-loaders.mjs)
+  // requires every production root to thread all three.
+
+  /** §6 check 8 — sum of active reservations on the source account. */
+  sumActiveReservations?: (
+    ctx: ServiceCallContext,
+    accountId: string,
+  ) => Promise<string>;
+  /** §6 check 9.5 (H-21) — semantic evidence validation against policy. */
+  resolveEvidence?: (
+    ctx: ServiceCallContext,
+    intent: GatePaymentIntent,
+  ) => Promise<ResolvedEvidence[]>;
+  /** §6 check 11.5 (H-22) — duplicate-payment / fraud-pattern detector. */
+  detectDuplicates?: (
+    ctx: ServiceCallContext,
+    input: DuplicateCheckInput,
+  ) => Promise<DuplicateCheckResult>;
 
   /** Item 11 — §6 gate metrics emission (per-check, outcome, duration). */
   metrics?: MetricsEmitter;

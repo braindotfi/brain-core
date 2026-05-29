@@ -119,6 +119,17 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     ...(opts.deps.resolveEscrowState !== undefined
       ? { resolveEscrowState: opts.deps.resolveEscrowState }
       : {}),
+    // Core safety loaders (§6 checks 8 / 9.5 / 11.5). MANDATORY in production;
+    // the composition-root parity lint requires them.
+    ...(opts.deps.sumActiveReservations !== undefined
+      ? { sumActiveReservations: opts.deps.sumActiveReservations }
+      : {}),
+    ...(opts.deps.resolveEvidence !== undefined
+      ? { resolveEvidence: opts.deps.resolveEvidence }
+      : {}),
+    ...(opts.deps.detectDuplicates !== undefined
+      ? { detectDuplicates: opts.deps.detectDuplicates }
+      : {}),
     ...(opts.deps.metrics !== undefined ? { metrics: opts.deps.metrics } : {}),
   });
   // Legacy /payment-intents/* routes (deprecated in v0.3) — every reply

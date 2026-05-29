@@ -1,42 +1,55 @@
 #!/usr/bin/env node
 /**
- * §6 composition-root invariant — every production construction of
- * PaymentIntentService MUST thread the M2M gate loaders through the deps
- * object so checks 5.5 (agent_counterparty_attested) and 8.5
- * (micropayment_cap_within_window) enforce instead of degrading to
- * `not_applicable`.
+ * §6 composition-root invariant. Every production construction of
+ * PaymentIntentService MUST thread the gate-loader deps the §6 gate needs to
+ * enforce its full check set. A missing loader silently degrades the
+ * corresponding check to `not_applicable`, audit-before fires normally, and
+ * dispatch proceeds. The runtime audit-before guard at
+ * services/execution/src/outbox/worker.ts:130 cannot catch this — its
+ * concern is the lint-bypass case where dispatch happens without the gate
+ * running at all.
  *
- * WHY THIS GUARD EXISTS
+ * REQUIRED LOADERS (must appear in the constructor arg)
  *
- * The runtime §6 invariant at services/execution/src/outbox/worker.ts:130
- * refuses to dispatch a row whose `audit_before_id` is empty — i.e. it catches
- * the lint-bypass case where a rail dispatch happens without the gate running
- * at all. It does NOT catch the loader-drift case: if a loader is absent, the
- * gate runs successfully, the check records `not_applicable`, audit-before
- * fires normally, and dispatch proceeds. The row reaches the rail with a
- * perfectly valid `audit_before_id`.
+ *   - attestCounterpartyAgent   →  check 5.5   →  RFC 0001 §6.3
+ *   - sumAgentWindowSpend       →  check 8.5   →  RFC 0001 §6.4
+ *   - resolveTenantFlags        →  check 1.5   →  P0.1 behavior-hash pinning
+ *   - sumActiveReservations     →  check 8     →  reservation-aware balance
+ *   - resolveEvidence           →  check 9.5   →  H-21 semantic evidence
+ *   - detectDuplicates          →  check 11.5  →  H-22 duplicate / fraud
  *
- * That's the gap this lint catches: a code path that constructs
- * PaymentIntentService without threading the M2M loaders silently weakens the
- * gate. The all-in-one api boot (services/api/src/main.ts) is the canonical
- * site; this script checks that every other production-eligible composition
- * root (notably services/execution/src/server.ts, which is built + pushed to
- * ACR on every main push) matches.
+ * Opt-in (env-gated, not required): resolveEscrowState (escrow rail),
+ * metrics (observability sink), resolveOnchainParams (on-chain rails),
+ * sourceCredentialResolver (Plaid/Stripe).
  *
- * REQUIRED LOADERS (must appear in the PaymentIntentService constructor arg)
- *   - attestCounterpartyAgent  →  check 5.5  →  RFC 0001 §6.3
- *   - sumAgentWindowSpend      →  check 8.5  →  RFC 0001 §6.4
+ * CONSTRUCTION-FACTORY EXEMPTION
  *
- * Two more loaders (`resolveEscrowState`, `metrics`) are opt-in even in
- * production (escrow is env-gated; metrics is a sink) — not required by this
- * lint.
+ * The canonical composition path is buildPaymentIntentService() in
+ * services/api/src/composition/payment-intent-service.ts. That factory
+ * type-requires every mandatory loader, so its single `new PaymentIntentService(`
+ * call site is allowed without re-listing every loader (the type system is
+ * the check). All OTHER production roots must list the loaders explicitly.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const REQUIRED_LOADERS = ["attestCounterpartyAgent", "sumAgentWindowSpend"];
+export const REQUIRED_LOADERS = [
+  "attestCounterpartyAgent",
+  "sumAgentWindowSpend",
+  "resolveTenantFlags",
+  "sumActiveReservations",
+  "resolveEvidence",
+  "detectDuplicates",
+];
+
+/**
+ * Files exempted from the loader-presence check because they ARE the
+ * canonical factory whose type signature already enforces the full set.
+ */
+const FACTORY_FILES = new Set(["services/api/src/composition/payment-intent-service.ts"]);
+
 const DEFAULT_ROOTS = ["services"];
 const SKIP_DIRS = new Set(["node_modules", "dist", "__snapshots__", "coverage", ".turbo"]);
 const NEEDLE = "new PaymentIntentService(";
@@ -114,6 +127,9 @@ export function findViolations(rootDirs = DEFAULT_ROOTS) {
         if (ctor === null) continue;
         const line = src.slice(0, idx).split("\n").length;
         sites.push({ file, line });
+        // Skip the canonical factory — its type signature enforces the set.
+        const relFile = file.replace(/^.*?\/(services\/)/, "$1");
+        if (FACTORY_FILES.has(relFile)) continue;
         const code = stripLineComments(ctor);
         const missing = REQUIRED_LOADERS.filter((k) => !code.includes(k));
         if (missing.length > 0) violations.push({ file, line, missing });

@@ -178,7 +178,11 @@ import {
   makeResolveSubjectOwnerTenant,
   makeResolveActivePolicyVersion,
   makeInvoiceShortcutResolver,
+  makeSumActiveReservations,
+  makeResolveEvidence,
+  makeDetectDuplicates,
 } from "./gate-loaders/index.js";
+import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps, PolicyReader, AgentReader, PolicyView } from "@brain/wiki";
@@ -569,11 +573,15 @@ async function main(): Promise<void> {
         })
       : undefined;
 
-  const paymentIntentService = new PaymentIntentService({
+  // §6 core safety loaders (checks 8 / 9.5 / 11.5). Production-mandatory;
+  // composition-root parity lint enforces presence at every PI service site.
+  const sumActiveReservations = makeSumActiveReservations(pool);
+  const resolveEvidence = makeResolveEvidence(pool);
+  const detectDuplicates = makeDetectDuplicates(pool);
+
+  const paymentIntentService = buildPaymentIntentService({
     pool,
     audit,
-    // H-04: execute enqueues to the durable outbox; the rail moved to the worker.
-    outbox: new OutboxService(),
     approvals: approvalService,
     resolveAgent,
     resolveTenantFlags,
@@ -581,12 +589,15 @@ async function main(): Promise<void> {
     resolveCounterparty,
     evaluatePolicy: evaluatePaymentIntent,
     resolvePrincipal,
+    attestCounterpartyAgent,
+    sumAgentWindowSpend,
+    sumActiveReservations,
+    resolveEvidence,
+    detectDuplicates,
+    ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
     ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
     sourceCredentialResolver,
     metrics,
-    attestCounterpartyAgent,
-    sumAgentWindowSpend,
-    ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
   });
 
   // Build the live rail registry. When credentials are present the real rails
@@ -1087,26 +1098,25 @@ async function main(): Promise<void> {
           resolveSubjectOwnerTenant,
           resolveActivePolicyVersion,
         });
-        const piService = new PaymentIntentService({
+        const piService = buildPaymentIntentService({
           pool,
           audit,
-          // H-04: execute enqueues to the durable outbox; rail moved to the worker.
-          outbox: new OutboxService(),
           approvals: piApprovals,
           resolveAgent,
+          resolveTenantFlags,
           resolveAccount,
           resolveCounterparty,
           evaluatePolicy: evaluatePaymentIntent,
           resolvePrincipal,
-          ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
-          sourceCredentialResolver,
-          // Item 11: forwarded into the §6 gate so check + outcome + duration emit.
-          metrics,
-          // Composition-root parity — same M2M loaders the canonical site uses
-          // above. Required by scripts/check-payment-intent-loaders.mjs.
           attestCounterpartyAgent,
           sumAgentWindowSpend,
+          sumActiveReservations,
+          resolveEvidence,
+          detectDuplicates,
           ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
+          ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
+          sourceCredentialResolver,
+          metrics,
         });
         await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
       });

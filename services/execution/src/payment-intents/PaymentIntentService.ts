@@ -39,6 +39,9 @@ import {
   type AgentAttestationResult,
   type EscrowStateInput,
   type ResolvedEscrowState,
+  type ResolvedEvidence,
+  type DuplicateCheckInput,
+  type DuplicateCheckResult,
   type MetricsEmitter,
 } from "@brain/shared";
 import { LedgerPaymentIntents, type PaymentIntentRow } from "@brain/ledger";
@@ -126,6 +129,36 @@ export interface PaymentIntentServiceDeps {
     ctx: ServiceCallContext,
     input: EscrowStateInput,
   ) => Promise<ResolvedEscrowState | null>;
+  /**
+   * §6 gate check 8: sum of active (not-yet-applied) reservations on the
+   * source account. The gate subtracts this from `available_balance` so a
+   * concurrent intent cannot double-spend committed but un-applied funds.
+   * Absent ⇒ check 8 records `not_applicable`; for live money the loader
+   * is mandatory.
+   */
+  sumActiveReservations?: (
+    ctx: ServiceCallContext,
+    accountId: string,
+  ) => Promise<string>;
+  /**
+   * §6 gate check 9.5 (H-21): resolves the evidence semantically against
+   * the policy's `required_evidence_kinds`. Absent ⇒ check 9.5 records
+   * `not_applicable`; for live money the loader is mandatory.
+   */
+  resolveEvidence?: (
+    ctx: ServiceCallContext,
+    intent: GatePaymentIntent,
+  ) => Promise<ResolvedEvidence[]>;
+  /**
+   * §6 gate check 11.5 (H-22): duplicate-payment / fraud-pattern detector.
+   * Returns collisions per rule (invoice already paid, vendor account swap,
+   * etc.). Absent ⇒ check 11.5 records `not_applicable`; for live money
+   * the loader is mandatory.
+   */
+  detectDuplicates?: (
+    ctx: ServiceCallContext,
+    input: DuplicateCheckInput,
+  ) => Promise<DuplicateCheckResult>;
   /** Resolves the source account by id. */
   resolveAccount: (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null>;
   /** Resolves the destination counterparty by id. */
@@ -421,6 +454,9 @@ export class PaymentIntentService implements IPaymentIntentService {
     const attestCounterpartyAgent = this.deps.attestCounterpartyAgent;
     const sumAgentWindowSpend = this.deps.sumAgentWindowSpend;
     const resolveEscrowState = this.deps.resolveEscrowState;
+    const sumActiveReservations = this.deps.sumActiveReservations;
+    const resolveEvidence = this.deps.resolveEvidence;
+    const detectDuplicates = this.deps.detectDuplicates;
     return {
       audit: this.deps.audit,
       resolveAgent: (agentId) => this.deps.resolveAgent(ctx, agentId),
@@ -452,6 +488,19 @@ export class PaymentIntentService implements IPaymentIntentService {
         : {}),
       ...(resolveEscrowState !== undefined
         ? { resolveEscrowState: (input) => resolveEscrowState(ctx, input) }
+        : {}),
+      // Core safety loaders (§6 gate checks 8 / 9.5 / 11.5). When absent the
+      // gate degrades to `not_applicable` — fine for dev/test, MANDATORY for
+      // production. The composition-root parity lint
+      // (scripts/check-payment-intent-loaders.mjs) catches missing wiring.
+      ...(sumActiveReservations !== undefined
+        ? { sumActiveReservations: (accountId) => sumActiveReservations(ctx, accountId) }
+        : {}),
+      ...(resolveEvidence !== undefined
+        ? { resolveEvidence: (intent) => resolveEvidence(ctx, intent) }
+        : {}),
+      ...(detectDuplicates !== undefined
+        ? { detectDuplicates: (input) => detectDuplicates(ctx, input) }
         : {}),
       ...(this.deps.metrics !== undefined ? { metrics: this.deps.metrics } : {}),
     };

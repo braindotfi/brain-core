@@ -26,12 +26,16 @@ const svc = new PaymentIntentService({
   resolveCounterparty,
   evaluatePolicy,
   resolvePrincipal,
+  resolveTenantFlags,
   attestCounterpartyAgent,
   sumAgentWindowSpend,
+  sumActiveReservations,
+  resolveEvidence,
+  detectDuplicates,
 });
 `;
 
-const MISSING_BOTH = `
+const MISSING_ALL = `
 const svc = new PaymentIntentService({
   pool, audit, outbox, approvals,
   resolveAgent, resolveAccount, resolveCounterparty,
@@ -44,20 +48,38 @@ const svc = new PaymentIntentService({
   pool, audit, outbox, approvals,
   resolveAgent, resolveAccount, resolveCounterparty,
   evaluatePolicy, resolvePrincipal,
+  resolveTenantFlags,
   attestCounterpartyAgent,
-  // sumAgentWindowSpend intentionally absent
+  sumAgentWindowSpend,
+  sumActiveReservations,
+  resolveEvidence,
+  // detectDuplicates intentionally absent
 });
 `;
 
-test("passes when both required loaders are threaded", () => {
+const MISSING_TENANT_FLAGS = `
+const svc = new PaymentIntentService({
+  pool, audit, outbox, approvals,
+  resolveAgent, resolveAccount, resolveCounterparty,
+  evaluatePolicy, resolvePrincipal,
+  // resolveTenantFlags intentionally absent — the regression the peer review flagged
+  attestCounterpartyAgent,
+  sumAgentWindowSpend,
+  sumActiveReservations,
+  resolveEvidence,
+  detectDuplicates,
+});
+`;
+
+test("passes when all required loaders are threaded", () => {
   const dir = fixture({ "boot.ts": FULL_CTOR });
   const { violations } = findViolations(dir);
   assert.deepEqual(violations, []);
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("flags a site missing both M2M loaders", () => {
-  const dir = fixture({ "boot.ts": MISSING_BOTH });
+test("flags a site missing every required loader", () => {
+  const dir = fixture({ "boot.ts": MISSING_ALL });
   const { violations } = findViolations(dir);
   assert.equal(violations.length, 1);
   assert.deepEqual([...violations[0].missing].sort(), [...REQUIRED_LOADERS].sort());
@@ -68,12 +90,32 @@ test("flags a site missing only one loader", () => {
   const dir = fixture({ "boot.ts": MISSING_ONE });
   const { violations } = findViolations(dir);
   assert.equal(violations.length, 1);
-  assert.deepEqual(violations[0].missing, ["sumAgentWindowSpend"]);
+  assert.deepEqual(violations[0].missing, ["detectDuplicates"]);
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("flags the resolveTenantFlags drift specifically (peer review regression)", () => {
+  const dir = fixture({ "boot.ts": MISSING_TENANT_FLAGS });
+  const { violations } = findViolations(dir);
+  assert.equal(violations.length, 1);
+  assert.deepEqual(violations[0].missing, ["resolveTenantFlags"]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("REQUIRED_LOADERS covers all six gate-loader names", () => {
+  // Make any future addition/rename intentional rather than silent.
+  assert.deepEqual([...REQUIRED_LOADERS].sort(), [
+    "attestCounterpartyAgent",
+    "detectDuplicates",
+    "resolveEvidence",
+    "resolveTenantFlags",
+    "sumActiveReservations",
+    "sumAgentWindowSpend",
+  ]);
+});
+
 test("ignores test files", () => {
-  const dir = fixture({ "boot.test.ts": MISSING_BOTH });
+  const dir = fixture({ "boot.test.ts": MISSING_ALL });
   const { violations } = findViolations(dir);
   assert.deepEqual(violations, []);
   rmSync(dir, { recursive: true, force: true });
@@ -81,8 +123,8 @@ test("ignores test files", () => {
 
 test("ignores __fixtures__ and __mocks__ files", () => {
   const dir = fixture({
-    "__fixtures__/x.ts": MISSING_BOTH,
-    "__mocks__/y.ts": MISSING_BOTH,
+    "__fixtures__/x.ts": MISSING_ALL,
+    "__mocks__/y.ts": MISSING_ALL,
   });
   const { violations } = findViolations(dir);
   assert.deepEqual(violations, []);
@@ -98,9 +140,13 @@ const svc = new PaymentIntentService({
   pool, audit, outbox, approvals,
   resolveAgent, resolveAccount, resolveCounterparty,
   evaluatePolicy, resolvePrincipal,
+  resolveTenantFlags,
   ...(escrow !== undefined ? { resolveEscrowState: makeEscrow({ url, chain: 8453 }) } : {}),
   attestCounterpartyAgent,
   sumAgentWindowSpend,
+  sumActiveReservations,
+  resolveEvidence,
+  detectDuplicates,
 });
 `;
   const dir = fixture({ "boot.ts": src });
@@ -111,9 +157,7 @@ const svc = new PaymentIntentService({
 });
 
 test("detects multiple construction sites in the same file", () => {
-  // E.g. the all-in-one api + the legacy /payment-intents/* compat route, both
-  // in services/api/src/main.ts. Each is checked independently.
-  const src = `${FULL_CTOR}\n\n${MISSING_BOTH}`;
+  const src = `${FULL_CTOR}\n\n${MISSING_ALL}`;
   const dir = fixture({ "boot.ts": src });
   const { violations, sites } = findViolations(dir);
   assert.equal(sites.length, 2);

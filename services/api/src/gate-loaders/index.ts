@@ -16,14 +16,22 @@ import {
   type GatePrincipal,
   type GateTenantFlags,
 } from "@brain/shared";
-import { getActive as policyGetActive } from "@brain/policy";
+import { getActive as policyGetActive, detectDuplicates as policyDetectDuplicates } from "@brain/policy";
 import {
   findAgent,
   findUser,
   resolveInvoiceShortcut as resolveInvoiceShortcutFn,
 } from "@brain/execution";
+import { sumActiveReservations as ledgerSumActiveReservations } from "@brain/ledger";
 import type { LedgerService } from "@brain/ledger";
 import type { InvoiceShortcutInvoice, ResolvedInvoiceShortcut } from "@brain/execution";
+import type {
+  GatePaymentIntent,
+  ResolvedEvidence,
+  DuplicateCheckInput,
+  DuplicateCheckResult,
+  TrustLevel,
+} from "@brain/shared";
 import type { Pool } from "pg";
 
 // ---------------------------------------------------------------------------
@@ -212,4 +220,83 @@ export function makeInvoiceShortcutResolver(
       ctx,
       invoiceId,
     );
+}
+
+// ---------------------------------------------------------------------------
+// Core §6 safety loaders (checks 8 / 9.5 / 11.5)
+//
+// These three loaders are MANDATORY in production. When unwired the
+// corresponding gate check records `not_applicable`, which is silent —
+// scripts/check-payment-intent-loaders.mjs enforces presence at every
+// production PaymentIntentService construction site.
+// ---------------------------------------------------------------------------
+
+/**
+ * §6 gate check 8 — sum of active reservations on the source account.
+ * The gate subtracts this from `available_balance` so a concurrent intent
+ * cannot double-spend committed-but-un-applied funds.
+ */
+export function makeSumActiveReservations(
+  pool: Pool,
+): (ctx: ServiceCallContext, accountId: string) => Promise<string> {
+  return (ctx, accountId) =>
+    withTenantScope(pool, ctx.tenantId, (c) => ledgerSumActiveReservations(c, accountId));
+}
+
+/**
+ * §6 gate check 9.5 (H-21) — resolve the intent's `evidence_ids` to
+ * `ResolvedEvidence` rows for semantic validation. Projects raw_parsed
+ * payloads into the shape the gate's pure validator expects.
+ *
+ * Trust level today is a parser-name heuristic (plaid + stripe = high,
+ * others = medium). A richer model lives in the @brain/policy evidence
+ * spec; this is the gate's read-side shim until that lands as a service.
+ */
+export function makeResolveEvidence(
+  pool: Pool,
+): (ctx: ServiceCallContext, intent: GatePaymentIntent) => Promise<ResolvedEvidence[]> {
+  return (ctx, intent) =>
+    withTenantScope(pool, ctx.tenantId, async (c) => {
+      if (intent.evidence_ids.length === 0) return [];
+      const { rows } = await c.query<{
+        id: string;
+        raw_artifact_id: string;
+        parser: string;
+        extracted: Record<string, unknown>;
+        extracted_at: Date;
+      }>(
+        `SELECT id, raw_artifact_id, parser, extracted, extracted_at
+           FROM raw_parsed
+          WHERE id = ANY($1::text[])`,
+        [[...intent.evidence_ids]],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        kind: r.parser,
+        extracted: r.extracted,
+        sourceArtifactId: r.raw_artifact_id,
+        capturedAt: r.extracted_at,
+        trustLevel: parserTrust(r.parser),
+      }));
+    });
+}
+
+function parserTrust(parser: string): TrustLevel {
+  // Bank/card extractors are signed-from-source; treat as high. The
+  // catch-all (custom / agent-contributed extractors) is medium.
+  if (parser === "plaid" || parser === "stripe") return "high";
+  return "medium";
+}
+
+/**
+ * §6 gate check 11.5 (H-22) — duplicate-payment / fraud-pattern detector.
+ * Delegates to the policy-layer implementation, which queries 6 rules
+ * (invoice already paid, vendor-account-swap window, etc.) and returns
+ * any collisions.
+ */
+export function makeDetectDuplicates(
+  pool: Pool,
+): (ctx: ServiceCallContext, input: DuplicateCheckInput) => Promise<DuplicateCheckResult> {
+  return (ctx, input) =>
+    withTenantScope(pool, ctx.tenantId, (c) => policyDetectDuplicates(c, input));
 }

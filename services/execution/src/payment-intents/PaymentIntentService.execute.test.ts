@@ -589,3 +589,149 @@ describe("PaymentIntentService.execute — escrow gate-loader pass-through (3E-2
     expect(calls).toEqual([ESCROW_ID]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Peer review: prove the core safety loaders (checks 8 / 9.5 / 11.5) actually
+// reach the §6 gate when wired through PaymentIntentService.gateDeps(). Each
+// test spies on one loader and asserts it was invoked at least once during
+// execute(); a hard rejection from that loader is the cleanest end-to-end
+// signal that the threading reaches the gate.
+// ---------------------------------------------------------------------------
+
+describe("PaymentIntentService.execute — core safety loader pass-through (checks 8, 9.5, 11.5)", () => {
+  function corePool(): Pool {
+    return makeFakePool((sql) =>
+      sql.includes("FROM ledger_payment_intents WHERE id")
+        ? { rows: [APPROVED_INTENT_ROW], rowCount: 1 }
+        : { rows: [], rowCount: 0 },
+    );
+  }
+
+  it("forwards sumActiveReservations → reservation amount is subtracted from balance (check 8)", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const pool = corePool();
+    // available_balance is 5000; APPROVED_INTENT_ROW amount is 100. Reserve
+    // 4950, leaving 50 free → 50 < 100 → check 8 hard-rejects.
+    const reservationCalls: string[] = [];
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals: new ApprovalService({ pool, audit, resolveRole: async () => null }),
+      resolveAgent: async () => GATE_AGENT,
+      resolveAccount: async () => GATE_ACCOUNT,
+      resolveCounterparty: async () => GATE_CP,
+      evaluatePolicy: async () => POLICY_DECISION,
+      resolvePrincipal: async () => GATE_PRINCIPAL,
+      sumActiveReservations: async (_ctx, accountId) => {
+        reservationCalls.push(accountId);
+        return "4950.00";
+      },
+    });
+
+    await expect(service.execute(ctx, PI_ID)).rejects.toMatchObject({
+      code: "payment_intent_gate_failed",
+    });
+    expect(reservationCalls).toEqual([ACCT_ID]);
+  });
+
+  it("forwards resolveEvidence → loader is invoked with the intent (check 9.5 reachable)", async () => {
+    // Proves the loader is threaded through to the §6 gate. The pure
+    // validateEvidence() rejection logic is covered exhaustively in
+    // shared/src/gate/evidence-validator.test.ts; this test's purpose is
+    // narrower: prove deps.resolveEvidence is called during execute().
+    //
+    // Intent must carry an evidence_id so check 9 (required_evidence_present)
+    // passes and the gate advances to 9.5 where the loader fires.
+    const audit = new InMemoryAuditEmitter();
+    const WITH_EVIDENCE: PaymentIntentRow = {
+      ...APPROVED_INTENT_ROW,
+      evidence_ids: ["prs_test_evidence"],
+    };
+    const pool = makeFakePool((sql) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [WITH_EVIDENCE], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [{ ...WITH_EVIDENCE, status: "dispatching" }], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO execution_outbox")) {
+        return { rows: [{ id: "exo_evid" }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const evidenceCalls: string[] = [];
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals: new ApprovalService({ pool, audit, resolveRole: async () => null }),
+      resolveAgent: async () => GATE_AGENT,
+      resolveAccount: async () => GATE_ACCOUNT,
+      resolveCounterparty: async () => GATE_CP,
+      evaluatePolicy: async () => ({
+        ...POLICY_DECISION,
+        required_evidence_kinds: ["invoice"],
+      }),
+      resolvePrincipal: async () => GATE_PRINCIPAL,
+      resolveEvidence: async (_ctx, intent) => {
+        evidenceCalls.push(intent.id);
+        // Return one piece of evidence so the validator sees it.
+        return [
+          {
+            id: "prs_test_receipt",
+            kind: "invoice",
+            extracted: {},
+            sourceArtifactId: "raw_x",
+            capturedAt: new Date("2026-01-01"),
+            trustLevel: "high",
+          },
+        ];
+      },
+    });
+
+    // The intent's action_type is ach_outbound, which has no validator
+    // registered, so validateEvidence returns passed=true and the gate
+    // advances past 9.5. The threading check is the spy call list.
+    await service.execute(ctx, PI_ID);
+    expect(evidenceCalls).toEqual([PI_ID]);
+  });
+
+  it("forwards detectDuplicates → reported collision hard-rejects at 11.5", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const pool = corePool();
+    const duplicateCalls: Array<{ counterpartyId: string; amount: string }> = [];
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals: new ApprovalService({ pool, audit, resolveRole: async () => null }),
+      resolveAgent: async () => GATE_AGENT,
+      resolveAccount: async () => GATE_ACCOUNT,
+      resolveCounterparty: async () => GATE_CP,
+      evaluatePolicy: async () => POLICY_DECISION,
+      resolvePrincipal: async () => GATE_PRINCIPAL,
+      detectDuplicates: async (_ctx, input) => {
+        duplicateCalls.push({
+          counterpartyId: input.paymentIntent.counterpartyId,
+          amount: input.paymentIntent.amount,
+        });
+        return {
+          passed: false,
+          collisions: [
+            {
+              rule: "vendor_amount_invoice_match",
+              detail: "same counterparty+amount executed within 30 days",
+              conflicting_payment_intent_id: "pi_prior",
+            },
+          ],
+        };
+      },
+    });
+
+    await expect(service.execute(ctx, PI_ID)).rejects.toMatchObject({
+      code: "payment_intent_gate_failed",
+    });
+    expect(duplicateCalls).toEqual([{ counterpartyId: CP_ID, amount: "100.00" }]);
+  });
+});
