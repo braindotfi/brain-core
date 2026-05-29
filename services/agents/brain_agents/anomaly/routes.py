@@ -12,9 +12,10 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from brain_agents.auth import require_inbound_auth
 from brain_agents.deps import AppDeps, get_deps
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_inbound_auth)])
 _get_deps = Depends(get_deps)
 
 
