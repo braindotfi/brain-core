@@ -96,9 +96,7 @@ export interface BootCapabilities {
 export function logBootCapabilities(c: BootCapabilities, log: Logger): void {
   const railsLive = c.rails.filter((r) => r.live).map((r) => r.name);
   const railsStub = c.rails.filter((r) => !r.live).map((r) => r.name);
-  const loaderEntries = Object.entries(c.gateLoaders) as Array<
-    [keyof GateLoaderState, boolean]
-  >;
+  const loaderEntries = Object.entries(c.gateLoaders) as Array<[keyof GateLoaderState, boolean]>;
   const wired = loaderEntries.filter(([, v]) => v).map(([k]) => k);
   const dormant = loaderEntries.filter(([, v]) => !v).map(([k]) => k);
 

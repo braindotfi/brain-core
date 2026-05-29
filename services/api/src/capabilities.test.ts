@@ -114,7 +114,11 @@ describe("logBootCapabilities", () => {
   it("surfaces the active credential-key provider source", () => {
     const { log, calls } = fakeLog();
     logBootCapabilities(
-      { ...base(), sourceCredentialEncryption: true, sourceCredentialKeyProvider: "azure-key-vault" },
+      {
+        ...base(),
+        sourceCredentialEncryption: true,
+        sourceCredentialKeyProvider: "azure-key-vault",
+      },
       log,
     );
     expect(calls[0]![0].source_credential_key_provider).toBe("azure-key-vault");
