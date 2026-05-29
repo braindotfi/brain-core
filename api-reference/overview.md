@@ -33,6 +33,7 @@ POST   /v1/payment-intents/{id}/approve     // approver signs
 POST   /v1/payment-intents/{id}/execute     // run §6 gate; returns 202
 GET    /v1/audit/event/{event_id}           // event + Merkle inclusion proof
 GET    /v1/proof/{action_id}                // canonical Proof for an action
+DELETE /v1/tenants/{id}                     // GDPR right-to-erasure (self-tenant only)
 ```
 
 ### Endpoint Reference

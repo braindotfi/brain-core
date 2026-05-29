@@ -1,6 +1,6 @@
 # The Pre-Execution Gate
 
-Before any PaymentIntent can execute, it must pass a **deterministic pre-execution gate**: **13 numbered checks plus 4 hardening additions (checks 1.5, 7.5, 9.5, 11.5) = 17 entries total**; the canonical happy path is the 13 numbered checks. The gate is the only path to financial execution. The gate is non-overridable.
+Before any PaymentIntent can execute, it must pass a **deterministic pre-execution gate**: **13 numbered checks plus 9 hardening additions (checks 1.5, 3.5, 5.5, 6.5, 6.6, 7.5, 8.5, 9.5, 11.5) = 22 entries total**; the canonical happy path is the 13 numbered checks (several additions record `not_applicable` for non-M2M flows). The gate is the only path to financial execution. The gate is non-overridable.
 
 | Property       | Value                                                        |
 | -------------- | ------------------------------------------------------------ |
@@ -20,7 +20,7 @@ Think of Policy as the **standing rule** and the gate as the **flight check**. B
 
 ### The Core Steps
 
-The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol. These are the 13 numbered checks of the canonical happy path; 4 hardening additions are inserted at their correct positions (checks 1.5, 7.5, 9.5, 11.5. See **Hardening Additions** below) for 17 entries total.
+The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol. These are the 13 numbered checks of the canonical happy path; 9 hardening additions are inserted at their correct positions (checks 1.5, 3.5, 5.5, 6.5, 6.6, 7.5, 8.5, 9.5, 11.5. See **Hardening Additions** below) for 22 entries total. The M2M / x402 / escrow additions (3.5, 5.5, 6.5, 6.6, 8.5) record `not_applicable` for non-M2M flows so the canonical happy path is unchanged.
 
 | #   | Step                                                                                           | Reads From                              |
 | --- | ---------------------------------------------------------------------------------------------- | --------------------------------------- |

@@ -62,6 +62,7 @@
 * [Payment Intents API](api-reference/payment-intents-api.md)
 * [Audit API](api-reference/audit-api.md)
 * [Proof API](api-reference/proof-api.md)
+* [Tenants API (GDPR deletion)](api-reference/tenants-api.md)
 * [Webhooks](api-reference/webhooks-api.md)
 * [MCP Server (API Reference)](api-reference/mcp-server-api-reference.md)
 

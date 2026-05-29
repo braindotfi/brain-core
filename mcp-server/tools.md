@@ -1,6 +1,6 @@
 # Tools
 
-Brain's MCP surface exposes **10 tools** across four capability groups. Each tool requires a specific scope, granted to the agent via on-chain registration in `BrainMCPAgentRegistry`.
+Brain's MCP surface exposes **12 tools** across four capability groups. Each tool requires a specific scope, granted to the agent via on-chain registration in `BrainMCPAgentRegistry`.
 
 ### At a Glance
 
@@ -15,6 +15,8 @@ Brain's MCP surface exposes **10 tools** across four capability groups. Each too
 | `wiki.page.get`              | Wiki read      | `wiki:read`              | No                                   |
 | `raw.contribute`             | Raw contribute | `raw:write`              | Yes (writes Raw artifact)            |
 | `payment_intent.propose`     | PaymentIntent  | `payment_intent:propose` | Yes (writes PaymentIntent in Ledger) |
+| `payment_intent.cancel`      | PaymentIntent  | `payment_intent:propose` | Yes (cancels own proposal)           |
+| `payment_intent.list`        | PaymentIntent  | `payment_intent:propose` | No                                   |
 | `agent.action.propose`       | Agent action   | `execution:propose`      | Yes (writes Proposal)                |
 
 {% hint style="warning" %}
