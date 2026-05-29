@@ -4,9 +4,11 @@ Periodic background task that invokes the anomaly agent on a recent
 transaction batch per configured tenant. Completes the "autonomous finance"
 narrative: the anomaly agent runs on a cadence, not only when invoked.
 
-Findings are logged with structured output today. A follow-up wires them as
-Wiki annotations + a policy-evaluable signal (per the agent's contract: never
-auto-proposes, advisory only).
+Findings are now posted to the Brain Raw layer as
+`sourceType=anomaly_finding` artifacts (one per finding). Once in Raw they are:
+  - audit-emitted (Layer 6 picks them up automatically)
+  - queryable via /v1/raw/* (operators can list per-tenant findings)
+  - eligible inputs for downstream Wiki annotation + Policy signals
 
 Configuration:
   BRAIN_ANOMALY_SCAN_INTERVAL_SECONDS  default 3600 (1h)
@@ -17,11 +19,15 @@ Configuration:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from brain_agents.anomaly.agent import AnomalyAgent
 from brain_agents.client import BrainApiClient
+
+ANOMALY_SOURCE_TYPE = "anomaly_finding"
 
 logger = logging.getLogger("brain_agents.anomaly.scheduler")
 
@@ -122,5 +128,41 @@ class AnomalyScheduler:
                     len(findings),
                     result.get("summary", ""),
                 )
+                await self._post_findings(tenant_id, findings)
             except Exception:
                 logger.exception("anomaly scan failed tenant=%s", tenant_id)
+
+    async def _post_findings(self, tenant_id: str, findings: list[dict[str, Any]]) -> None:
+        """Post each finding to /v1/raw/ingest as a typed evidence artifact.
+
+        One transaction may produce zero findings (the agent's contract says
+        empty when nothing is anomalous), so a normal scan often emits
+        nothing. Per-finding failures are logged but never abort the scan;
+        the next interval retries the whole batch.
+        """
+        posted = 0
+        skipped = 0
+        for finding in findings:
+            txid = finding.get("transaction_id")
+            if not isinstance(txid, str):
+                skipped += 1
+                continue
+            envelope = {
+                "sourceType": ANOMALY_SOURCE_TYPE,
+                "sourceRef": f"{tenant_id}:{txid}",
+                "mimeType": "application/json",
+                "body": json.dumps({**finding, "tenant_id": tenant_id}).encode("utf-8"),
+            }
+            try:
+                await self._client.raw_ingest(envelope)
+                posted += 1
+            except Exception:
+                logger.exception("anomaly finding ingest failed tenant=%s tx=%s", tenant_id, txid)
+                skipped += 1
+        if posted > 0 or skipped > 0:
+            logger.info(
+                "anomaly findings ingested tenant=%s posted=%d skipped=%d",
+                tenant_id,
+                posted,
+                skipped,
+            )

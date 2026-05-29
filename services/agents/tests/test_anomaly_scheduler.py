@@ -1,6 +1,7 @@
 """Unit tests for the anomaly scheduler."""
 
 import asyncio
+import json
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -127,6 +128,116 @@ async def test_stop_is_idempotent_and_safe_without_start() -> None:
     # Never started. stop() must not raise.
     await scheduler.stop()
     await scheduler.stop()
+
+
+async def test_scan_posts_each_finding_to_raw_ingest() -> None:
+    """Anomaly findings are durable evidence: each finding becomes a Raw
+    artifact (sourceType=anomaly_finding) so it shows up in audit logs and
+    is queryable per tenant."""
+    txs = {"tnt_a": [{"id": "tx_1"}, {"id": "tx_2"}]}
+    client = _make_client(txs)
+    client.raw_ingest = AsyncMock(return_value={"rawId": "raw_1"})
+
+    agent = _make_agent(
+        {
+            "kind": "anomaly_scan",
+            "scanned": 2,
+            "findings": [
+                {
+                    "transaction_id": "tx_1",
+                    "category": "outlier_amount",
+                    "severity": "high",
+                    "rationale": "5x larger than vendor avg",
+                    "confidence": 0.9,
+                },
+                {
+                    "transaction_id": "tx_2",
+                    "category": "duplicate_suspect",
+                    "severity": "medium",
+                    "rationale": "amount matches tx_1",
+                    "confidence": 0.7,
+                },
+            ],
+            "summary": "2 flagged",
+        }
+    )
+
+    scheduler = AnomalyScheduler(agent, client, SchedulerConfig(tenants=("tnt_a",)))
+    await scheduler._scan_all_tenants()
+
+    assert client.raw_ingest.await_count == 2
+    # sourceRef carries tenant + tx id so the lookup is unambiguous.
+    refs = [c.args[0]["sourceRef"] for c in client.raw_ingest.await_args_list]
+    assert refs == ["tnt_a:tx_1", "tnt_a:tx_2"]
+    # body is JSON-encoded with tenant_id preserved.
+    payloads = [json.loads(c.args[0]["body"]) for c in client.raw_ingest.await_args_list]
+    assert payloads[0]["transaction_id"] == "tx_1"
+    assert payloads[0]["tenant_id"] == "tnt_a"
+    assert payloads[1]["category"] == "duplicate_suspect"
+
+
+async def test_scan_does_not_call_ingest_when_findings_are_empty() -> None:
+    """Empty findings ⇒ no raw_ingest calls (no noise into the audit chain)."""
+    txs = {"tnt_a": [{"id": "tx_1"}]}
+    client = _make_client(txs)
+    client.raw_ingest = AsyncMock(return_value={"rawId": "raw_1"})
+    agent = _make_agent(_scan_result(scanned=1, findings=0))
+
+    scheduler = AnomalyScheduler(agent, client, SchedulerConfig(tenants=("tnt_a",)))
+    await scheduler._scan_all_tenants()
+    client.raw_ingest.assert_not_awaited()
+
+
+async def test_per_finding_ingest_failure_does_not_abort_the_batch() -> None:
+    """A raw_ingest exception for one finding must not skip the rest."""
+    txs = {"tnt_a": [{"id": "tx_1"}, {"id": "tx_2"}, {"id": "tx_3"}]}
+    client = _make_client(txs)
+    posted_ids: list[str] = []
+
+    async def flaky_ingest(env: dict[str, Any]) -> dict[str, Any]:
+        ref = env["sourceRef"]
+        if "tx_2" in ref:
+            raise RuntimeError("transient")
+        posted_ids.append(ref)
+        return {"rawId": "raw_" + ref}
+
+    client.raw_ingest = AsyncMock(side_effect=flaky_ingest)
+    agent = _make_agent(
+        {
+            "kind": "anomaly_scan",
+            "scanned": 3,
+            "findings": [
+                {
+                    "transaction_id": "tx_1",
+                    "category": "outlier_amount",
+                    "severity": "low",
+                    "rationale": "",
+                    "confidence": 0.5,
+                },
+                {
+                    "transaction_id": "tx_2",
+                    "category": "outlier_amount",
+                    "severity": "low",
+                    "rationale": "",
+                    "confidence": 0.5,
+                },
+                {
+                    "transaction_id": "tx_3",
+                    "category": "outlier_amount",
+                    "severity": "low",
+                    "rationale": "",
+                    "confidence": 0.5,
+                },
+            ],
+            "summary": "3 flagged",
+        }
+    )
+
+    scheduler = AnomalyScheduler(agent, client, SchedulerConfig(tenants=("tnt_a",)))
+    await scheduler._scan_all_tenants()
+
+    # tx_1 and tx_3 still posted; tx_2 was skipped silently.
+    assert posted_ids == ["tnt_a:tx_1", "tnt_a:tx_3"]
 
 
 async def test_start_then_stop_wakes_the_sleeping_loop_promptly() -> None:
