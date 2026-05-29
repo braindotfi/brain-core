@@ -13,9 +13,8 @@
  *   - rules 1, 2, 3, 4 → migration 0010 + 0018 (ledger_payment_intents, indexes)
  *   - rule 5           → migration 0010 (evidence_ids text[] column)
  *   - rule 6           → migration 0026 (ledger_counterparty_payment_instructions)
- *                        Until that history table is populated by the Ledger
- *                        writer, rule 6 returns no rows for any counterparty,
- *                        which is the correct fail-open behavior (no signal).
+ *                        populated by migration 0027 (Postgres AFTER UPDATE
+ *                        trigger on linked_accounts / onchain_address).
  */
 
 import type { TenantScopedClient } from "@brain/shared";
@@ -127,9 +126,9 @@ export async function detectDuplicates(
   }
 
   // 6 — destination_recently_changed (strongest fraud signal: vendor account
-  // swap). Reads the append-only payment-instruction history (migration 0026).
-  // Empty until the Ledger writer populates rows on instruction change; in the
-  // meantime the rule produces no signal, which is the correct fail-open.
+  // swap). Reads the append-only payment-instruction history populated by the
+  // trigger in migration 0027 (writer fires AFTER UPDATE OF linked_accounts,
+  // onchain_address on ledger_counterparties).
   {
     const { rows } = await client.query<{ changed_at: Date }>(
       `SELECT changed_at FROM ledger_counterparty_payment_instructions
