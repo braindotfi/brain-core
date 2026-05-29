@@ -34,7 +34,7 @@ export interface TenantDeletionResult {
 /**
  * Tables to wipe, in deletion order. Children before parents where a foreign
  * key exists. The registry-derived test in service.test.ts scans every
- * migration in services/*​/migrations and asserts each tenant-scoped table
+ * migration in services/{layer}/migrations and asserts each tenant-scoped table
  * is either listed here OR in PRESERVED_TABLES — so a new migration that
  * adds a tenant-scoped table without updating this list fails CI.
  */

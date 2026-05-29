@@ -92,7 +92,6 @@ import {
   registerExecutionRoutes,
   registerPaymentIntentRoutes,
   ApprovalService,
-  PaymentIntentService,
   OutboxService,
   AgentService,
   AchPlaidRail,
@@ -896,10 +895,33 @@ async function main(): Promise<void> {
   // Delegate the reconciliation agent to the Python reconciliation service when
   // RECONCILIATION_AGENT_URL is set; otherwise reconciliation uses the default
   // AgentService. ReconciliationAgentClient is itself an IAgentService.
-  const reconciliationAgentUrl = process.env.RECONCILIATION_AGENT_URL;
+  //
+  // When wired, every request is HMAC-signed via X-Brain-Auth so the Python
+  // service can authenticate the caller. In production we refuse to boot if
+  // the URL is set without the matching secret — otherwise every reconciliation
+  // call would 401 at the Python verifier with the failure invisible until
+  // the first request lands.
+  const reconciliationAgentUrl = cfg.RECONCILIATION_AGENT_URL;
+  if (
+    reconciliationAgentUrl !== undefined &&
+    cfg.BRAIN_AGENTS_INBOUND_SECRET === undefined &&
+    cfg.NODE_ENV === "production"
+  ) {
+    throw new Error(
+      "BRAIN_AGENTS_INBOUND_SECRET is required when RECONCILIATION_AGENT_URL is set in " +
+        "NODE_ENV=production. The Python service requires X-Brain-Auth on every request.",
+    );
+  }
   const agentOverrides =
     reconciliationAgentUrl !== undefined
-      ? { reconciliation: new ReconciliationAgentClient(reconciliationAgentUrl) }
+      ? {
+          reconciliation: new ReconciliationAgentClient(
+            reconciliationAgentUrl,
+            cfg.BRAIN_AGENTS_INBOUND_SECRET !== undefined
+              ? { signingSecret: cfg.BRAIN_AGENTS_INBOUND_SECRET }
+              : {},
+          ),
+        }
       : {};
 
   // -- Agent run persistence + run service (Agent Autonomy v3, 1a.3/1a.6) ---

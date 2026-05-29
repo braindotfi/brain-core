@@ -138,6 +138,22 @@ const envSchema = z.object({
   BRAIN_MCP_TENANT_RATE_LIMIT: z.coerce.number().int().positive().default(600),
   BRAIN_MCP_TENANT_RATE_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
 
+  // ---- Python agents service (brain-agents) ----
+  /**
+   * URL of the brain-agents service hosting the four Python reasoners. When
+   * unset, the api uses the in-process default agent service. When set, every
+   * call is HMAC-signed via the X-Brain-Auth header — boot fails closed in
+   * production if BRAIN_AGENTS_INBOUND_SECRET is also unset.
+   */
+  RECONCILIATION_AGENT_URL: optionalNonEmptyString(),
+  /**
+   * Shared secret for the X-Brain-Auth HMAC sent to the brain-agents service.
+   * The Python side verifies with the same secret (BRAIN_AGENTS_INBOUND_SECRET
+   * env var on that service). Required in production when RECONCILIATION_AGENT_URL
+   * is set; absence triggers a boot-time throw.
+   */
+  BRAIN_AGENTS_INBOUND_SECRET: optionalNonEmptyString(),
+
   // ---- On-chain rails (Base) ----
   // NOTE: `BASE_RPC_URL` is the rail RPC (spec called it BRAIN_BASE_RPC_URL;
   // the repo already had BASE_RPC_URL for the audit-anchor broadcaster, so the

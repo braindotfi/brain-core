@@ -117,7 +117,7 @@ describe("TenantDeletionService", () => {
 // ---------------------------------------------------------------------------
 // Registry-derived coverage test.
 //
-// Scans every migration in services/*​/migrations and asserts each
+// Scans every migration in services/*/migrations and asserts each
 // tenant-scoped table (one whose CREATE TABLE includes a `tenant_id` or
 // `owner_id` column) is either in TENANT_SCOPED_TABLES (to be deleted) or
 // in PRESERVED_TABLES (intentionally retained). A new migration that adds
