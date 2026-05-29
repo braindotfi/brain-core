@@ -183,6 +183,7 @@ import {
   makeDetectDuplicates,
 } from "./gate-loaders/index.js";
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
+import { assertDbIsolationFences } from "./composition/db-isolation.js";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps, PolicyReader, AgentReader, PolicyView } from "@brain/wiki";
@@ -239,6 +240,14 @@ async function main(): Promise<void> {
   // `brain_wiki_reader` role (SELECT anywhere; write only wiki_* tables) so an
   // accidental ledger_* write from a Wiki path raises a Postgres permission
   // error. Falls back to the main pool in dev/test with a warning.
+  // Fail-closed in NODE_ENV=production for both DB-isolation URLs; warn
+  // in dev/test. Logic + tests live in composition/db-isolation.ts.
+  assertDbIsolationFences({
+    nodeEnv: cfg.NODE_ENV,
+    wikiDbUrl: cfg.BRAIN_WIKI_DB_URL,
+    privilegedDbUrl: cfg.DATABASE_PRIVILEGED_URL,
+  });
+
   let wikiPool = pool;
   if (cfg.BRAIN_WIKI_DB_URL !== undefined) {
     wikiPool = createPool({
@@ -247,11 +256,6 @@ async function main(): Promise<void> {
       statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
       applicationName: `${cfg.SERVICE_NAME}-wiki`,
     });
-  } else {
-    console.warn(
-      "[boot] BRAIN_WIKI_DB_URL unset — Wiki shares the main DATABASE_URL (full privileges). " +
-        "Set it to the brain_wiki_reader role in production (H-14).",
-    );
   }
 
   const redis = new Redis(cfg.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
@@ -698,9 +702,9 @@ async function main(): Promise<void> {
     resolveInvoiceShortcut: invoiceShortcut,
   };
 
-  // Outbox worker: privileged (BYPASSRLS) pool for cross-tenant claim/mark.
-  // Production: set DATABASE_PRIVILEGED_URL to the brain_privileged role.
-  // Dev/testnet: falls back to DATABASE_URL with a warning.
+  // Outbox worker + tenant-deletion service use the privileged (BYPASSRLS)
+  // pool for cross-tenant claim/mark/delete. Production fence is enforced
+  // up at boot by assertDbIsolationFences (composition/db-isolation.ts).
   let privilegedPool = pool;
   if (cfg.DATABASE_PRIVILEGED_URL !== undefined) {
     privilegedPool = createPool({
@@ -709,10 +713,6 @@ async function main(): Promise<void> {
       statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
       applicationName: `${cfg.SERVICE_NAME}-privileged`,
     });
-  } else {
-    console.warn(
-      "[boot] DATABASE_PRIVILEGED_URL unset — outbox worker uses DATABASE_URL (dev/testnet only).",
-    );
   }
 
   const withPrivileged = async <T>(
