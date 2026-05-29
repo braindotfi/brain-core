@@ -126,26 +126,36 @@ async def test_health_route_is_not_gated(app_client: httpx.AsyncClient) -> None:
     assert resp.status_code == 200
 
 
-async def test_missing_secret_in_production_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_secret_in_production_fails_at_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """create_app() refuses to construct the FastAPI app when the secret
+    is unset in production. The orchestrator (k8s, ECS, etc.) will surface
+    this as a CrashLoopBackoff rather than a quiet wave of 503s."""
     monkeypatch.delenv("BRAIN_AGENTS_INBOUND_SECRET", raising=False)
     monkeypatch.setenv("BRAIN_ENV", "production")
     monkeypatch.delenv("BRAIN_AGENTS_ALLOW_UNAUTHENTICATED", raising=False)
+    with pytest.raises(RuntimeError, match="BRAIN_AGENTS_INBOUND_SECRET is required"):
+        create_app(deps=_deps())
+
+
+def test_boot_succeeds_in_production_when_secret_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BRAIN_AGENTS_INBOUND_SECRET", SECRET)
+    monkeypatch.setenv("BRAIN_ENV", "production")
+    # Should NOT raise.
     app = create_app(deps=_deps())
-    app.state.deps = _deps()
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),  # type: ignore[arg-type]
-        base_url="http://test",
-    ) as c:
-        resp = await c.post(
-            "/run/reconciliation",
-            json={"agent_id": "agent_x", "action": {}, "tenant_id": "tnt_x"},
-        )
-    assert resp.status_code == 503
-    body = resp.json()
-    assert body["detail"]["code"] == "agents_auth_unconfigured"
+    assert app is not None
+
+
+def test_dev_override_ignored_in_production_at_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BRAIN_AGENTS_ALLOW_UNAUTHENTICATED must NOT bypass the boot fence."""
+    monkeypatch.delenv("BRAIN_AGENTS_INBOUND_SECRET", raising=False)
+    monkeypatch.setenv("BRAIN_ENV", "production")
+    monkeypatch.setenv("BRAIN_AGENTS_ALLOW_UNAUTHENTICATED", "true")
+    with pytest.raises(RuntimeError, match="BRAIN_AGENTS_INBOUND_SECRET is required"):
+        create_app(deps=_deps())
 
 
 async def test_dev_override_allows_unauthenticated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Outside production, no secret + override=true ⇒ open routes (dev path)."""
     monkeypatch.delenv("BRAIN_AGENTS_INBOUND_SECRET", raising=False)
     monkeypatch.setenv("BRAIN_ENV", "development")
     monkeypatch.setenv("BRAIN_AGENTS_ALLOW_UNAUTHENTICATED", "true")
@@ -160,25 +170,6 @@ async def test_dev_override_allows_unauthenticated(monkeypatch: pytest.MonkeyPat
             json={"agent_id": "agent_x", "action": {}, "tenant_id": "tnt_x"},
         )
     assert resp.status_code == 200
-
-
-async def test_dev_override_ignored_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
-    """BRAIN_AGENTS_ALLOW_UNAUTHENTICATED must NOT open prod."""
-    monkeypatch.delenv("BRAIN_AGENTS_INBOUND_SECRET", raising=False)
-    monkeypatch.setenv("BRAIN_ENV", "production")
-    monkeypatch.setenv("BRAIN_AGENTS_ALLOW_UNAUTHENTICATED", "true")
-    app = create_app(deps=_deps())
-    app.state.deps = _deps()
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),  # type: ignore[arg-type]
-        base_url="http://test",
-    ) as c:
-        resp = await c.post(
-            "/run/reconciliation",
-            json={"agent_id": "agent_x", "action": {}, "tenant_id": "tnt_x"},
-        )
-    # Should still 503 (no secret) — dev override is ignored.
-    assert resp.status_code == 503
 
 
 async def test_every_run_route_is_gated(app_client: httpx.AsyncClient) -> None:

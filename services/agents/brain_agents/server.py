@@ -1,5 +1,6 @@
 """FastAPI application factory for brain-agents."""
 
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -21,8 +22,34 @@ from brain_agents.reconciliation.agent import ReconciliationAgent
 from brain_agents.reconciliation.routes import router as recon_router
 
 
+def _assert_inbound_auth_configured() -> None:
+    """Fail at boot in production when BRAIN_AGENTS_INBOUND_SECRET is unset.
+
+    Without this, the misconfigured deploy 503's every request — operationally
+    much noisier than failing fast at process start (k8s won't roll the new
+    pod over the old one if the new one cannot start). Honors the same dev
+    override the per-request check honors.
+    """
+    is_production = (
+        os.environ.get("BRAIN_ENV", "").lower() == "production"
+        or os.environ.get("NODE_ENV", "").lower() == "production"
+    )
+    if not is_production:
+        return
+    if os.environ.get("BRAIN_AGENTS_INBOUND_SECRET", "") == "":
+        raise RuntimeError(
+            "BRAIN_AGENTS_INBOUND_SECRET is required in BRAIN_ENV=production. "
+            "The api side computes the same HMAC over the request body before "
+            "calling /run/* endpoints; without the secret every request 401's. "
+            "Refusing to start so the orchestrator surfaces the misconfiguration."
+        )
+
+
 def create_app(deps: AppDeps | None = None) -> FastAPI:
     """Return a configured FastAPI app. Pass `deps` to skip live wiring (tests)."""
+    # Fail-fast boot fence — must run BEFORE FastAPI is constructed so a
+    # misconfigured deploy never serves a single request, not even /health.
+    _assert_inbound_auth_configured()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
