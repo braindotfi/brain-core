@@ -147,10 +147,31 @@ describe("PostgresSourceRepository — insert / encryption", () => {
     expect(insert.params[4]).toBeNull();
   });
 
-  it("does NOT encrypt when no credential key is configured", async () => {
+  it("fails closed when credentials are supplied for plaid but no credential key is configured", async () => {
+    // Previously silently wrote NULL into encrypted_credentials, leaving the
+    // source unusable at execution time. Peer review caught it; this test
+    // pins the fail-closed behavior so the regression cannot recur.
+    const { pool } = fakePool(insertReturning());
+    const repo = new PostgresSourceRepository({ pool }); // no key
+    await expect(
+      repo.insertWithCredentials(record({ type: "plaid" }), { access_token: "x" }),
+    ).rejects.toThrow(/refusing to insert plaid source with NULL encrypted_credentials/);
+  });
+
+  it("fails closed for stripe with credentials + no key", async () => {
+    const { pool } = fakePool(insertReturning());
+    const repo = new PostgresSourceRepository({ pool });
+    await expect(
+      repo.insertWithCredentials(record({ type: "stripe" }), { sk_test: "y" }),
+    ).rejects.toThrow(/refusing to insert stripe source/);
+  });
+
+  it("permits a non-credential source type with no key (eth_address)", async () => {
+    // Non-credential types (wallets) intentionally store NULL — they have no
+    // server-side secret to encrypt. The fail-closed guard does not apply.
     const { pool, calls } = fakePool(insertReturning());
     const repo = new PostgresSourceRepository({ pool }); // no key
-    await repo.insertWithCredentials(record({ type: "plaid" }), { access_token: "x" });
+    await repo.insertWithCredentials(record({ type: "eth_address" }), { pub: "0xabc" });
     const insert = calls.find((c) => c.sql.includes("INSERT INTO raw_sources"))!;
     expect(insert.params[4]).toBeNull();
   });

@@ -63,6 +63,24 @@ export class PostgresSourceRepository implements SourceRepository, SourceCredent
     let encCreds: Buffer | null = null;
     let keyId: string | null = null;
 
+    // Fail-closed: if the caller passed credentials for a credential-bearing
+    // source type (plaid / stripe / ...) and no key is loaded, refuse the
+    // insert. Without this, the row lands with encrypted_credentials = NULL
+    // and a later getCredentials() call returns null — the source becomes
+    // silently unusable. Peer review caught the silent-NULL path.
+    if (
+      credentials !== undefined &&
+      CREDENTIAL_SOURCE_TYPES.has(record.type) &&
+      (this.deps.credentialKey === undefined || this.deps.credentialKeyId === undefined)
+    ) {
+      throw new Error(
+        `PostgresSourceRepository: refusing to insert ${record.type} source with NULL ` +
+          "encrypted_credentials. Credentials were provided but no credentialKey / " +
+          "credentialKeyId is configured. Wire BRAIN_SOURCE_CREDENTIAL_KEY or the Azure " +
+          "Key Vault provider in the api boot (shared/src/crypto/credential-key-provider.ts).",
+      );
+    }
+
     if (
       credentials !== undefined &&
       this.deps.credentialKey !== undefined &&
