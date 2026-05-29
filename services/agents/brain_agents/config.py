@@ -15,5 +15,10 @@ class Settings(BaseSettings):
     brain_api_base_url: str = "http://localhost:3001"
     brain_api_token: str = ""
 
+    # Anomaly scheduler (autopilot). Off by default; provide tenant ids to enable.
+    brain_anomaly_scan_interval_seconds: int = 3600
+    brain_anomaly_scan_tenants: str = ""  # comma-separated
+    brain_anomaly_scan_batch_size: int = 100
+
 
 settings = Settings()

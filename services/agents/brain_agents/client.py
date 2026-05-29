@@ -23,6 +23,29 @@ class BrainApiClient:
             result: dict[str, Any] = resp.json()
             return result
 
+    async def list_recent_transactions(
+        self, tenant_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """GET /v1/ledger/transactions filtered to the most recent batch.
+
+        Used by the anomaly scheduler to assemble a scan window. The endpoint
+        is tenant-scoped through the JWT; tenant_id here is informational
+        (logged with the scan result).
+        """
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._base_url}/v1/ledger/transactions",
+                params={"limit": limit},
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "X-Brain-Tenant": tenant_id,
+                },
+            )
+            resp.raise_for_status()
+            payload: dict[str, Any] = resp.json()
+            items = payload.get("items", payload.get("data", []))
+            return list(items) if isinstance(items, list) else []
+
     async def raw_ingest(self, envelope: dict[str, Any]) -> dict[str, Any]:
         """POST one RawIngestRequest envelope to /v1/raw/ingest.
 
