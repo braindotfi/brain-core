@@ -14,15 +14,27 @@
 #   ./scripts/demo/golden-path.sh [BASE_URL]
 #
 # Env:
-#   BRAIN_BASE_URL   default http://localhost:3000
-#   BRAIN_DEMO_RAIL  plaid_sandbox (default) | onchain_base_sepolia
+#   BRAIN_BASE_URL              default http://localhost:3000
+#   BRAIN_DEMO_RAIL             plaid_sandbox (default) | onchain_base_sepolia
+#   BRAIN_DEMO_STRICT_PROOF     "true" ⇒ steps 9/10/11 BLOCK until proof
+#                               materializes + verifies. Used by investor
+#                               diligence runs that must prove the full chain
+#                               end-to-end, not just "we ran the propose."
+#                               Default false (smoke runs stay fast).
+#   BRAIN_DEMO_STRICT_TIMEOUT   seconds to wait for each blocking step in
+#                               strict mode (default 90). Increase for slow
+#                               testnet anchoring; decrease for tight CI.
 #
 # Exit code is non-zero if any REQUIRED step fails (used by the smoke test).
+# In strict mode, steps 9 / 10 / 11 are ALL required (the whole pipeline must
+# settle, anchor, and produce a verifiable Merkle proof) — not "fast" smoke.
 
 set -euo pipefail
 
 BASE="${BRAIN_BASE_URL:-${1:-http://localhost:3000}}"
 RAIL="${BRAIN_DEMO_RAIL:-plaid_sandbox}"
+STRICT="${BRAIN_DEMO_STRICT_PROOF:-false}"
+STRICT_TIMEOUT="${BRAIN_DEMO_STRICT_TIMEOUT:-90}"
 V1="$BASE/v1"
 
 # The seed CLI requires BRAIN_TENANT_ID + BRAIN_ACTOR. Default to the demo
@@ -60,6 +72,29 @@ req() {
   else
     curl -sf -X "$method" "$V1$path" -H "Authorization: Bearer $TOKEN"
   fi
+}
+
+# poll_until <description> <body_cmd> <success_jq_expr>
+#   Used only in BRAIN_DEMO_STRICT_PROOF=true mode. Re-runs `body_cmd` (a shell
+#   snippet that fetches a JSON response and prints it on stdout) every 2s
+#   until `success_jq_expr` returns a non-empty / non-null value, or until
+#   STRICT_TIMEOUT seconds elapse. Echoes the matched value on success.
+#   Returns 1 (the script will exit under set -e) on timeout.
+poll_until() {
+  local description="$1" body_cmd="$2" success_expr="$3"
+  local deadline=$(( SECONDS + STRICT_TIMEOUT ))
+  local resp matched
+  while (( SECONDS < deadline )); do
+    resp=$(eval "$body_cmd" || true)
+    matched=$(echo "${resp:-}" | jq -r "$success_expr // empty" 2>/dev/null || true)
+    if [[ -n "$matched" && "$matched" != "null" ]]; then
+      echo "$matched"
+      return 0
+    fi
+    sleep 2
+  done
+  fail "strict mode: $description did not materialize within ${STRICT_TIMEOUT}s"
+  return 1
 }
 
 # ── 1. Seed a fresh demo tenant ──────────────────────────────────────────────
@@ -169,28 +204,94 @@ EXEC=$(req POST "/payment-intents/$PI_ID/execute" '{}')
 EXEC_STATUS=$(echo "$EXEC" | jq -r '.status // .outcome // "unknown"')
 ok "execute → $EXEC_STATUS"; record "execute" ok "$PI_ID"
 
+# Strict mode: the execute response status (202 + dispatching) doesn't prove
+# the rail dispatched and the audit-after event landed. Poll the PI detail
+# until it reaches a terminal state (executed / failed / cancelled). Anything
+# else → diligence claim fails.
+if [[ "$STRICT" == "true" ]]; then
+  start_step
+  if FINAL_STATUS=$(poll_until \
+        "PaymentIntent terminal status" \
+        "req GET /payment-intents/$PI_ID" \
+        '.status | select(. == "executed" or . == "failed" or . == "cancelled")'); then
+    if [[ "$FINAL_STATUS" == "executed" ]]; then
+      ok "strict: PaymentIntent reached terminal status $FINAL_STATUS"
+      record "execute_strict" ok "$FINAL_STATUS"
+    else
+      fail "strict: PaymentIntent ended in non-executed terminal status: $FINAL_STATUS"
+      record "execute_strict" fail "$FINAL_STATUS"
+      exit 1
+    fi
+  else
+    record "execute_strict" fail "timeout"
+    exit 1
+  fi
+fi
+
 # ── 10. Anchor the audit window ──────────────────────────────────────────────
 header "10. Anchor audit window"
 start_step
 ANCHOR=$(req POST "/audit/anchor" '{}' || true)
 ANCHOR_ROOT=$(echo "${ANCHOR:-}" | jq -r '.merkle_root // .root // empty')
 if [[ -n "$ANCHOR_ROOT" ]]; then ok "anchored root ${ANCHOR_ROOT:0:18}…"; record "anchor" ok "$ANCHOR_ROOT"
-else note "anchor publisher is a background worker — may anchor async"; record "anchor" warn ""; fi
+elif [[ "$STRICT" == "true" ]]; then
+  # The publisher worker may not have run yet on the first POST. Poll it.
+  start_step
+  if ANCHOR_ROOT=$(poll_until \
+        "audit anchor merkle root" \
+        "req POST /audit/anchor '{}'" \
+        '.merkle_root // .root'); then
+    ok "strict: anchored root ${ANCHOR_ROOT:0:18}…"
+    record "anchor_strict" ok "$ANCHOR_ROOT"
+  else
+    record "anchor_strict" fail "timeout"
+    exit 1
+  fi
+else
+  note "anchor publisher is a background worker — may anchor async"
+  record "anchor" warn ""
+fi
 
 # ── 11. Fetch + verify the proof ─────────────────────────────────────────────
-# Non-blocking: the PI settles through the rail asynchronously (→ dispatching)
-# and the audit anchor publisher is a background worker (step 10), so in a fast
-# smoke the proof may not be materialized yet. Verify it when present; otherwise
-# note it and move on — the pipeline itself (seed → … → execute) has run.
+# Default behavior is non-blocking: the PI settles through the rail
+# asynchronously (→ dispatching) and the audit anchor publisher is a background
+# worker (step 10), so in a fast smoke the proof may not be materialized yet.
+# Verify it when present; otherwise note it and move on so the smoke is fast.
+#
+# Strict mode (BRAIN_DEMO_STRICT_PROOF=true) blocks: it polls the Proof API
+# until merkle_root is non-empty (or STRICT_TIMEOUT elapses), then REQUIRES
+# verification to succeed. Used by investor-diligence runs where the whole
+# point is to prove the full chain end-to-end, not just "we ran the propose."
 header "11. Fetch + verify proof"
 start_step
-PROOF=$(req GET "/proof/$PI_ID" || true)
-ROOT=$(echo "${PROOF:-}" | jq -r '.merkle_root // empty')
+PROOF=""
+ROOT=""
+if [[ "$STRICT" == "true" ]]; then
+  if PROOF_BODY=$(poll_until \
+        "proof materialization for $PI_ID" \
+        "req GET /proof/$PI_ID" \
+        '.merkle_root // empty'); then
+    PROOF=$(req GET "/proof/$PI_ID" || true)
+    ROOT="$PROOF_BODY"
+  else
+    record "verify" fail "timeout"
+    exit 1
+  fi
+else
+  PROOF=$(req GET "/proof/$PI_ID" || true)
+  ROOT=$(echo "${PROOF:-}" | jq -r '.merkle_root // empty')
+fi
+
 if [[ -n "$ROOT" ]]; then
   LEAF=$(echo "$PROOF" | jq -r '.audit_events[0].event_hash // empty')
   VERIFY=$(req POST "/audit/verify" "$(jq -n --arg r "$ROOT" --arg l "$LEAF" \
     --argjson p "$(echo "$PROOF" | jq '.merkle_proof')" '{merkle_root:$r, leaf:$l, proof:$p}')" || true)
   VERIFIED=$(echo "${VERIFY:-}" | jq -r '.verified // .valid // "unknown"')
+  if [[ "$STRICT" == "true" && "$VERIFIED" != "true" ]]; then
+    fail "strict: proof verification did not succeed (verified=$VERIFIED)"
+    record "verify" fail "$VERIFIED"
+    exit 1
+  fi
   ok "proof verify → $VERIFIED"; record "verify" ok "$VERIFIED"
 else
   note "proof not materialized yet (PI dispatching / anchor async) — non-blocking"
