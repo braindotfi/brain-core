@@ -2,13 +2,32 @@
 pragma solidity 0.8.24;
 
 /// @title BrainSmartAccount
-/// @notice ERC-4337-style smart account for the payment-agent's on-chain
-///         rail. The tenant's root key owns the account; Brain receives a
-///         scoped, revocable session key. §4 of Brain_MVP_Architecture.md.
-/// @dev    Session keys are per-holder with policy-version binding, target
+/// @notice Smart account with directly-called session keys for the
+///         payment-agent's on-chain rail. The tenant's root key owns the
+///         account; Brain receives a scoped, revocable session key.
+///         §4 of Brain_MVP_Architecture.md.
+/// @dev    Not ERC-4337: there is no EntryPoint, no UserOperation, no
+///         paymaster. Holders call executeViaSessionKey directly and the
+///         account enforces scope on every call.
+///
+///         Session keys are per-holder with policy-version binding, target
 ///         + selector allowlists, per-tx amount cap, and per-period
-///         cumulative cap. Scope is enforced in executeViaSessionKey —
+///         cumulative cap. Scope is enforced in executeViaSessionKey;
 ///         the holder cannot call anything outside it.
+///
+///         Two cap modes:
+///           NATIVE  (capToken == address(0)). Caps denominated in wei;
+///                   they apply to msg.value. Non-value calls (value=0)
+///                   pass caps un-metered. Use for ETH transfers and
+///                   for non-ERC20 contract calls the operator wants
+///                   to scope by target+selector allowlist but does NOT
+///                   need to amount-cap.
+///           ERC20   (capToken != address(0)). Caps denominated in the
+///                   token's raw units (USDC=6dp, DAI=18dp). All calls
+///                   MUST target capToken with a decodable selector
+///                   (transfer / approve / transferFrom); value MUST be 0.
+///                   grantSessionKey enforces these constraints at grant
+///                   time so caps are always meterable.
 contract BrainSmartAccount {
     struct SessionKey {
         address holder;
@@ -16,11 +35,23 @@ contract BrainSmartAccount {
         uint256 validUntil;
         address[] allowedTargets;
         bytes4[] allowedSelectors;
-        uint256 maxPerTx;       // per call value cap (wei)
-        uint256 maxPerPeriod;   // cumulative cap per periodSeconds window (wei)
+        /// @dev When non-zero, ERC20-mode: caps denominated in capToken's raw
+        ///      units, calls must target capToken with transfer/approve/
+        ///      transferFrom and value=0. When zero, NATIVE-mode: caps apply
+        ///      to msg.value in wei; non-value calls pass un-metered.
+        address capToken;
+        uint256 maxPerTx;       // per-call cap in capToken units (or wei in NATIVE mode)
+        uint256 maxPerPeriod;   // cumulative cap per periodSeconds window (same units)
         uint256 periodSeconds;  // e.g. 86400 for daily; 0 disables period accounting
         bytes32 policyVersion;  // must equal the expected policy digest at exec
     }
+
+    /// @dev ERC20 selector constants for cap-decode and grant-time validation.
+    ///      Centralised so adding a new decodable selector requires updating
+    ///      both grantSessionKey and executeViaSessionKey together.
+    bytes4 private constant _SELECTOR_TRANSFER = 0xa9059cbb;     // transfer(address,uint256)
+    bytes4 private constant _SELECTOR_APPROVE = 0x095ea7b3;      // approve(address,uint256)
+    bytes4 private constant _SELECTOR_TRANSFER_FROM = 0x23b872dd; // transferFrom(address,address,uint256)
 
     event SessionKeyGranted(address indexed holder, bytes32 policyVersion, uint256 validUntil);
     event SessionKeyRevoked(address indexed holder);
@@ -91,6 +122,11 @@ contract BrainSmartAccount {
     // Two-step ownership + account-wide pause hardening.
     error NotPendingOwner();
     error AccountIsPaused();
+    // R-06 / R-07: per-token cap mode (F-3 + F-4 from Opus 4.8 review).
+    error CapTokenAllowlistMismatch();
+    error NonDecodableSelectorInErc20Mode(bytes4 selector);
+    error ValueNotAllowedInErc20Mode();
+    error TargetMustEqualCapTokenInErc20Mode();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -129,12 +165,34 @@ contract BrainSmartAccount {
     /// @dev H-03: an empty target/selector allowlist is a footgun ("any" was
     ///      previously allowed), so require both non-empty, and require a real
     ///      policyVersion at grant time (moved here from executeViaSessionKey).
+    ///
+    ///      R-06 / R-07 (F-3 + F-4 from Opus 4.8 review): when capToken is
+    ///      non-zero (ERC20 mode), enforce that the target/selector allowlists
+    ///      are consistent with that token, so caps are always meterable in
+    ///      the token's native units. This prevents unit-blind ERC20 caps and
+    ///      blocks the "non-decodable selector silently bypasses caps" hole.
     function grantSessionKey(SessionKey calldata key) external onlyOwner {
         if (key.holder == address(0)) revert ZeroAddress();
         if (key.validUntil <= block.timestamp) revert KeyExpired();
         if (key.allowedTargets.length == 0) revert TargetsRequired();
         if (key.allowedSelectors.length == 0) revert SelectorsRequired();
         if (key.policyVersion == bytes32(0)) revert PolicyVersionMismatch();
+
+        if (key.capToken != address(0)) {
+            // ERC20 mode: target allowlist must be exactly [capToken] so caps
+            // always apply to a known token. Selector allowlist must be a
+            // subset of the decodable set so capAmount is always meterable.
+            if (key.allowedTargets.length != 1 || key.allowedTargets[0] != key.capToken) {
+                revert CapTokenAllowlistMismatch();
+            }
+            for (uint256 i = 0; i < key.allowedSelectors.length; ++i) {
+                bytes4 s = key.allowedSelectors[i];
+                if (s != _SELECTOR_TRANSFER && s != _SELECTOR_APPROVE && s != _SELECTOR_TRANSFER_FROM) {
+                    revert NonDecodableSelectorInErc20Mode(s);
+                }
+            }
+        }
+
         _keys[key.holder] = key;
         emit SessionKeyGranted(key.holder, key.policyVersion, key.validUntil);
     }
@@ -243,18 +301,31 @@ contract BrainSmartAccount {
         }
 
         // Determine the effective amount subject to caps.
-        // When value == 0 and the call targets a standard ERC20 method,
-        // decode the token quantity from calldata. Without this, an agent
-        // can bypass maxPerTx/maxPerPeriod by routing large token transfers
-        // through calls with value=0.
-        uint256 capAmount = value;
-        if (value == 0 && data.length >= 4) {
-            if ((selector == 0xa9059cbb || selector == 0x095ea7b3) && data.length >= 68) {
+        // Two modes (validated at grant time so the dispatch is straight-line):
+        //   NATIVE (capToken == 0): caps apply to msg.value. value==0 calls
+        //     to non-token targets pass un-metered. Operator is responsible
+        //     for keeping the target/selector allowlist tight in this mode.
+        //   ERC20 (capToken != 0): target MUST equal capToken, value MUST be
+        //     0, and the selector MUST be decodable. Caps apply to the
+        //     decoded token amount in capToken's raw units.
+        uint256 capAmount;
+        if (key.capToken == address(0)) {
+            capAmount = value;
+        } else {
+            if (value != 0) revert ValueNotAllowedInErc20Mode();
+            if (target != key.capToken) revert TargetMustEqualCapTokenInErc20Mode();
+            // Selector decodability guaranteed by grantSessionKey; one of these
+            // branches MUST hit. Lengths still checked defensively.
+            if ((selector == _SELECTOR_TRANSFER || selector == _SELECTOR_APPROVE) && data.length >= 68) {
                 // transfer(address,uint256) / approve(address,uint256): amount at [36,68)
                 capAmount = uint256(bytes32(data[36:68]));
-            } else if (selector == 0x23b872dd && data.length >= 100) {
+            } else if (selector == _SELECTOR_TRANSFER_FROM && data.length >= 100) {
                 // transferFrom(address,address,uint256): amount at [68,100)
                 capAmount = uint256(bytes32(data[68:100]));
+            } else {
+                // Grant validation already rejected non-decodable selectors,
+                // so this branch is unreachable in practice; revert defensively.
+                revert NonDecodableSelectorInErc20Mode(selector);
             }
         }
 

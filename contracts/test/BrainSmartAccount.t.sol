@@ -41,6 +41,28 @@ contract MockERC20 {
     }
 }
 
+/// @dev USDC stub: 6-decimal token to prove R-06 caps enforce in native units.
+contract MockUSDC {
+    mapping(address => uint256) public balanceOf;
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    /// @dev Non-standard selector used to prove R-07 rejects non-decodable
+    ///      selectors at grant time when capToken is set.
+    function donateToCharity(uint256 amount) external {
+        balanceOf[address(0xDEAD)] += amount;
+        balanceOf[msg.sender] -= amount;
+    }
+}
+
 /// @dev H-03 re-entrancy probe. Acts as both holder AND target: when the account
 ///      calls back into `reenter()`, this contract tries to re-enter
 ///      executeViaSessionKey as itself (msg.sender == holder), which must be
@@ -93,6 +115,7 @@ contract BrainSmartAccountTest is Test {
             validUntil: block.timestamp + 3600,
             allowedTargets: targets,
             allowedSelectors: selectors,
+            capToken: address(0),
             maxPerTx: 1 ether,
             maxPerPeriod: 5 ether,
             periodSeconds: 86_400,
@@ -115,6 +138,7 @@ contract BrainSmartAccountTest is Test {
             validUntil: block.timestamp + 1,
             allowedTargets: targets,
             allowedSelectors: selectors,
+            capToken: address(0),
             maxPerTx: 1 ether,
             maxPerPeriod: 1 ether,
             periodSeconds: 0,
@@ -167,6 +191,7 @@ contract BrainSmartAccountTest is Test {
             validUntil: block.timestamp + 3600,
             allowedTargets: targets,
             allowedSelectors: selectors,
+            capToken: address(0),
             maxPerTx: 1 ether,
             maxPerPeriod: 1 ether,
             periodSeconds: 0,
@@ -311,6 +336,7 @@ contract BrainSmartAccountTest is Test {
             validUntil: block.timestamp + 3600,
             allowedTargets: targets,
             allowedSelectors: selectors,
+            capToken: address(0),
             maxPerTx: 1 ether,
             maxPerPeriod: 5 ether,
             periodSeconds: 86_400,
@@ -386,6 +412,8 @@ contract BrainSmartAccountTest is Test {
             validUntil: block.timestamp + 3600,
             allowedTargets: targets,
             allowedSelectors: selectors,
+            // R-06: ERC20 mode binds caps to this token's raw units (here 18dp).
+            capToken: tokenTarget,
             maxPerTx: 100e18,
             maxPerPeriod: 500e18,
             periodSeconds: 86_400,
@@ -538,6 +566,7 @@ contract BrainSmartAccountTest is Test {
             validUntil: block.timestamp + 600,
             allowedTargets: targets,
             allowedSelectors: selectors,
+            capToken: address(0),
             maxPerTx: amount,
             maxPerPeriod: amount,
             periodSeconds: 600,
@@ -590,6 +619,7 @@ contract BrainSmartAccountTest is Test {
             validUntil: block.timestamp + 3600,
             allowedTargets: targets,
             allowedSelectors: selectors,
+            capToken: address(0),
             maxPerTx: 1 ether,
             maxPerPeriod: 5 ether,
             periodSeconds: 86_400,
@@ -717,5 +747,177 @@ contract BrainSmartAccountTest is Test {
         vm.prank(holder2);
         acct.executeViaSessionKey(0, address(target), 0.5 ether, data);
         assertEq(target.counter(), 1);
+    }
+
+    // --- R-06 / R-07 (F-3 + F-4 from Opus 4.8): per-token caps + lockdown -----
+
+    /// @dev Helper: grant an ERC20-mode key bound to `token`, single-selector.
+    function _grantErc20ModeKey(address token, bytes4 sel, uint256 cap) internal {
+        address[] memory targets = new address[](1);
+        targets[0] = token;
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = sel;
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: 0,
+            validUntil: block.timestamp + 3600,
+            allowedTargets: targets,
+            allowedSelectors: selectors,
+            capToken: token,
+            maxPerTx: cap,
+            maxPerPeriod: cap * 10,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+    }
+
+    /// @dev R-06: caps denominated in USDC (6dp) enforce in USDC raw units.
+    ///      A cap of 100 USDC (= 100_000_000 raw) admits a 100 USDC transfer
+    ///      and rejects a 101 USDC transfer.
+    function test_R06_usdc6dp_capEnforcesInTokenUnits() public {
+        MockUSDC usdc = new MockUSDC();
+        usdc.mint(address(acct), 1_000 * 1e6); // 1000 USDC
+        _grantErc20ModeKey(address(usdc), 0xa9059cbb, 100 * 1e6); // 100 USDC
+
+        // Exact-at-cap transfer succeeds.
+        bytes memory ok = abi.encodeCall(MockUSDC.transfer, (address(0xBEEF), 100 * 1e6));
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(usdc), 0, ok);
+        assertEq(usdc.balanceOf(address(0xBEEF)), 100 * 1e6);
+
+        // One USDC unit over cap reverts.
+        bytes memory over = abi.encodeCall(MockUSDC.transfer, (address(0xBEEF), 100 * 1e6 + 1));
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
+        acct.executeViaSessionKey(1, address(usdc), 0, over);
+    }
+
+    /// @dev R-06: caps denominated in an 18-decimal ERC20 enforce in those
+    ///      units. Same test shape as USDC but with the existing MockERC20.
+    function test_R06_dai18dp_capEnforcesInTokenUnits() public {
+        MockERC20 dai = new MockERC20();
+        dai.mint(address(acct), 1_000 ether);
+        _grantErc20ModeKey(address(dai), 0xa9059cbb, 100 ether);
+
+        bytes memory ok = abi.encodeCall(MockERC20.transfer, (address(0xBEEF), 100 ether));
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(dai), 0, ok);
+
+        bytes memory over = abi.encodeCall(MockERC20.transfer, (address(0xBEEF), 100 ether + 1));
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
+        acct.executeViaSessionKey(1, address(dai), 0, over);
+    }
+
+    /// @dev R-07: grantSessionKey rejects a non-decodable selector when
+    ///      capToken is set (ERC20 mode). The MockUSDC.donateToCharity
+    ///      function is not one of {transfer, approve, transferFrom}.
+    function test_R07_grant_rejectsNonDecodableSelectorInErc20Mode() public {
+        MockUSDC usdc = new MockUSDC();
+        address[] memory targets = new address[](1);
+        targets[0] = address(usdc);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = MockUSDC.donateToCharity.selector;
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: 0,
+            validUntil: block.timestamp + 3600,
+            allowedTargets: targets,
+            allowedSelectors: selectors,
+            capToken: address(usdc),
+            maxPerTx: 100 * 1e6,
+            maxPerPeriod: 1_000 * 1e6,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BrainSmartAccount.NonDecodableSelectorInErc20Mode.selector,
+                MockUSDC.donateToCharity.selector
+            )
+        );
+        acct.grantSessionKey(key);
+    }
+
+    /// @dev R-07: grantSessionKey rejects allowedTargets that don't include
+    ///      exactly the capToken in ERC20 mode. Prevents "session can call
+    ///      USDC AND something else; caps only meter USDC" footgun.
+    function test_R07_grant_rejectsTargetMismatchInErc20Mode() public {
+        MockUSDC usdc = new MockUSDC();
+        // allowedTargets includes USDC + some other contract.
+        address[] memory targets = new address[](2);
+        targets[0] = address(usdc);
+        targets[1] = address(target);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = 0xa9059cbb;
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: 0,
+            validUntil: block.timestamp + 3600,
+            allowedTargets: targets,
+            allowedSelectors: selectors,
+            capToken: address(usdc),
+            maxPerTx: 100 * 1e6,
+            maxPerPeriod: 1_000 * 1e6,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        vm.expectRevert(BrainSmartAccount.CapTokenAllowlistMismatch.selector);
+        acct.grantSessionKey(key);
+    }
+
+    /// @dev R-06: executeViaSessionKey rejects value > 0 in ERC20 mode.
+    ///      An agent can't sneak ETH alongside a token call.
+    function test_R06_execute_rejectsValueInErc20Mode() public {
+        MockERC20 dai = new MockERC20();
+        dai.mint(address(acct), 1_000 ether);
+        _grantErc20ModeKey(address(dai), 0xa9059cbb, 100 ether);
+
+        bytes memory data = abi.encodeCall(MockERC20.transfer, (address(0xBEEF), 10 ether));
+        vm.deal(address(acct), 1 ether);
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ValueNotAllowedInErc20Mode.selector);
+        acct.executeViaSessionKey(0, address(dai), 1 wei, data);
+    }
+
+    /// @dev R-06: executeViaSessionKey rejects target != capToken in ERC20
+    ///      mode. Belt-and-braces against the target allowlist being widened
+    ///      through some future bug.
+    function test_R06_execute_rejectsWrongTargetInErc20Mode() public {
+        MockERC20 dai = new MockERC20();
+        MockERC20 other = new MockERC20();
+        dai.mint(address(acct), 1_000 ether);
+        _grantErc20ModeKey(address(dai), 0xa9059cbb, 100 ether);
+
+        // grantSessionKey would already reject if allowedTargets included
+        // `other`, so this scenario is reachable only via storage mutation
+        // (which is impossible from the holder). The defense is here in
+        // executeViaSessionKey anyway as a belt to the brace. We exercise
+        // it by calling the right selector but at the wrong target — the
+        // target allowlist rejects first, but the test documents the order.
+        bytes memory data = abi.encodeCall(MockERC20.transfer, (address(0xBEEF), 10 ether));
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.TargetNotAllowed.selector, address(other)));
+        acct.executeViaSessionKey(0, address(other), 0, data);
+    }
+
+    /// @dev R-06 / R-07 closure proof: in native mode (capToken=0) the
+    ///      existing target/selector allowlist plus per-tx ETH cap apply.
+    ///      A value-bearing call respects the cap as before; a value=0
+    ///      call to a non-token target passes un-metered, by design (
+    ///      documented in the NatSpec).
+    function test_nativeMode_capAppliesToValue() public {
+        _grantBasicKey(address(target));
+        // Within cap.
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(target), 1 ether, abi.encodeCall(Target.ping, (1)));
+        // Over cap.
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
+        acct.executeViaSessionKey(1, address(target), 1.1 ether, abi.encodeCall(Target.ping, (1)));
     }
 }

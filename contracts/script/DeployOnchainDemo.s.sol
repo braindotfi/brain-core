@@ -43,6 +43,7 @@ contract DeployOnchainDemo is Script {
             validUntil: block.timestamp + 30 days,
             allowedTargets: targets,
             allowedSelectors: selectors,
+            capToken: address(0),
             maxPerTx: 0.05 ether,
             maxPerPeriod: 0.5 ether,
             periodSeconds: 86_400,

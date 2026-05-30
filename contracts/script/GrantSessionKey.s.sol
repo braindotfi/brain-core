@@ -46,6 +46,7 @@ contract GrantSessionKey is Script {
             validUntil: block.timestamp + 30 days,
             allowedTargets: targets,
             allowedSelectors: selectors,
+            capToken: address(0),
             maxPerTx: 1_000e6,
             maxPerPeriod: 10_000e6,
             periodSeconds: 86_400,

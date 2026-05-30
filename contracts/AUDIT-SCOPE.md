@@ -130,8 +130,10 @@ carry a content hash matching the stored policy."
 
 ## BrainSmartAccount (256 LoC)
 
-ERC-4337-style smart account; the payment agent executes on-chain via a session
-key under a deterministic gate.
+Smart account with directly-called session keys; the payment agent executes
+on-chain via a session key under a deterministic gate. NOT ERC-4337: no
+EntryPoint, no UserOperation, no paymaster. The simpler executor is the
+attack surface to audit.
 
 **Critical invariants (H-03 hardening):**
 
@@ -141,10 +143,24 @@ key under a deterministic gate.
 - A revoked session key cannot execute.
 - Owner rotation is access-controlled (hardware-wallet swap path).
 
-**Hardening:** H-03 added the per-holder replay nonce + re-entrancy guard.
+**Hardening:**
+
+- H-03 added the per-holder replay nonce + re-entrancy guard.
+- R-06 / R-07 (Opus 4.8 peer review F-3 + F-4, batch 8): the `SessionKey` struct
+  now carries an explicit `capToken` field. When non-zero (ERC20 mode), caps
+  are denominated in the token's raw units (USDC=6dp, DAI=18dp), the target
+  allowlist must be exactly `[capToken]`, the selector allowlist must be a
+  subset of {transfer, approve, transferFrom}, and `value` must be 0. When
+  zero (NATIVE mode), caps apply to `msg.value` in wei, preserving the prior
+  behavior. `grantSessionKey` enforces all the ERC20-mode constraints at
+  grant time so caps are always meterable. Closes the "unit-blind ERC20 cap"
+  and "non-decodable selector bypasses caps" findings.
 
 **Coverage:** unit (execute happy path, owner rotation, session-key revoke) +
-fuzz + invariant "a revoked session key cannot execute."
+fuzz + invariant "a revoked session key cannot execute." Plus R-06 / R-07 tests:
+USDC 6dp cap enforces in token units, DAI 18dp cap same, grant rejects
+non-decodable selector in ERC20 mode, grant rejects target/capToken mismatch,
+execute rejects value > 0 in ERC20 mode, native mode preserved.
 
 ## BrainMCPAgentRegistry (287 LoC)
 
