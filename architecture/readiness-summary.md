@@ -24,7 +24,7 @@ Suitable for controlled-pilot use under SLA, not yet for unrestricted production
 * **Payment rails** on Base **Sepolia**: `bank_ach` (Plaid sandbox or production), `onchain_base`, `x402_base`, `escrow_base`. All four register at boot when env is present.
 * **Internal AI agents**: reconciliation, payment, anomaly. Run under inbound HMAC + the §6 gate on every proposal.
 * **Investor-grade demo**: `pnpm run demo:golden-path` with `BRAIN_DEMO_STRICT_PROOF=true` proves the full chain end-to-end (propose → gate → execute → anchor → verify) in one command.
-* **Operator readiness tools**: `pnpm run production-readiness` aggregates per-rail + per-fence + per-guard status into a single go/no-go readout.
+* **Operator readiness tools**: `pnpm run production-readiness` aggregates per-rail + per-fence + per-guard status (and reads `docs/risk-register.json`) into a single go/no-go readout. Open `P0` risks pin the result to red. The PR CI workflow uploads the JSON as a per-commit artifact; `pnpm run readiness-trend` prints the per-release trajectory from `docs/readiness-history/`.
 
 ## What's testnet-only
 
@@ -40,7 +40,7 @@ Suitable for controlled-pilot use under SLA, not yet for unrestricted production
 
 * Applying `infra/db-roles.sql` to the production Postgres instance (separates `brain_app` from `brain_privileged`).
 * Configuring Azure Key Vault credentials for `BRAIN_SOURCE_CREDENTIAL_KEY` and the session key.
-* Setting `BRAIN_ESCROW_AUDIT_APPROVED="true"` once the audit completes and bytecode is verified.
+* Setting `BRAIN_ESCROW_AUDIT_RECEIPT` to the audit report URL/hash (or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"`) once the audit completes and bytecode is verified.
 * Running the existing `pnpm run production-readiness` check against the customer env before promotion.
 
 ## How to verify any claim on this page

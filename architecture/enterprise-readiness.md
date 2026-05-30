@@ -94,7 +94,7 @@ Until phase B lands, operators run a separate cleanup pass against the URI list 
 Five fail-closed boot fences. A misconfigured production deploy fails to start (CrashLoopBackoff in k8s) rather than running degraded:
 
 1. **DB isolation** (`composition/db-isolation.ts`). Wiki + privileged DB URLs required.
-2. **Escrow audit** (`composition/escrow-audit-gate.ts`). Mainnet escrow requires `BRAIN_ESCROW_AUDIT_APPROVED="true"`.
+2. **Escrow audit** (`composition/escrow-audit-gate.ts`). Mainnet escrow requires `BRAIN_ESCROW_AUDIT_RECEIPT` (preferred. URL/filepath/hash pointing at the audit report) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` boolean.
 3. **Live rails** (`composition/rails-prod-fence.ts`). At least one production rail must register.
 4. **AES-256-GCM**. Source-credential KMS provider must be configured.
 5. **Inbound agent secret**. `BRAIN_AGENTS_INBOUND_SECRET` required when `RECONCILIATION_AGENT_URL` is set.
@@ -113,6 +113,17 @@ A release-manager-facing per-rail support table lives in the repo at `docs/rails
 brain.runtime.capabilities { ..., rails: [ {name, live, production_allowed,
   required_env_present, chain_id, audit_required, audit_approved}, ... ] }
 ```
+
+## Diligence machinery (peer-review batch 7)
+
+Beyond the runtime guarantees above, Brain ships repeatable operator and reviewer tooling that turns "is this safe to promote?" into a runnable check:
+
+* **`pnpm run production-readiness`** evaluates the current env against every boot fence, every rail's `required_env_present`, every CI guard's wiring, and every open risk in the register. Exit 1 (red) when any P0 risk is open or any fence would fail. Add `--json` for machine output.
+* **Machine-readable risk register** at `docs/risk-register.json` (mirrors `docs/risk-register.md`). The aggregator reads it directly; an open `P0` risk in the register automatically pins promotion to red.
+* **CI artifact** uploaded per commit on the PR workflow (`production-readiness-${sha}`, 90-day retention). Diligence reviewers can pull any commit's readiness JSON without rebuilding.
+* **Git-native trend tracking** at `docs/readiness-history/<tag>.json`. Per-release snapshots committed to the repo; `pnpm run readiness-trend` prints the trajectory (open P0 count, red/yellow/green counts, ΔP0 vs prior). No external dashboard required.
+
+This is how the readiness story stays falsifiable: every claim has a code anchor, every claim has a runtime check, and every release has a snapshot you can compare against.
 
 ## Blockers for unrestricted mainnet production
 

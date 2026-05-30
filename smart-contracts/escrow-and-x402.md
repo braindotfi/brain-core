@@ -5,7 +5,7 @@ For agent-to-agent (M2M) commerce where a payment must be **conditioned on job c
 {% hint style="warning" %}
 **`BrainEscrow` is UNAUDITED and Base Sepolia testnet only.** It is a pre-audit reference implementation (RFC 0001 §7.6). Immutable (no admin, no upgrade, no pause), and it must clear an external security audit before any mainnet address is funded.
 
-The api enforces this in code: at boot, if `BRAIN_BASE_CHAIN_ID === 8453` (Base mainnet) and `BRAIN_ESCROW_ADDRESS` is set, the api refuses to start unless `BRAIN_ESCROW_AUDIT_APPROVED="true"` is explicitly set by an operator. The flag must only be flipped after the external audit signs off and the deployed bytecode is verified to match the audited bytecode. See `services/api/src/composition/escrow-audit-gate.ts`.
+The api enforces this in code: at boot, if `BRAIN_BASE_CHAIN_ID === 8453` (Base mainnet) and `BRAIN_ESCROW_ADDRESS` is set, the api refuses to start unless an explicit operator attestation is in place. Two forms are accepted: `BRAIN_ESCROW_AUDIT_RECEIPT="<url/filepath/hash pointing at the audit report>"` (preferred. Carries the diligence metadata) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` bare-boolean. Either must only be set after the external audit signs off and the deployed bytecode is verified to match the audited bytecode. See `services/api/src/composition/escrow-audit-gate.ts`.
 {% endhint %}
 
 | Mechanism       | Use case                                                                |
