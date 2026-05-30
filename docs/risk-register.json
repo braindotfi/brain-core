@@ -95,34 +95,31 @@
       "id": "R-06",
       "title": "BrainSmartAccount session-key caps are unit-blind to ERC20 decimals",
       "priority": "P1",
-      "status": "open",
-      "mitigation_summary": "Caps (maxPerTx / maxPerPeriod) are uint256 with no token-unit context. Comment says wei (18dp) but executor decodes raw ERC20 amounts (USDC=6dp) and compares directly. Sepolia-only, no mainnet exposure; external audit (R-01) would surface this, but fixing pre-audit is cheaper. Flagged by Opus 4.8 peer review at commit 1985f68 (finding F-3).",
-      "exit_criteria": [
-        "SessionKey struct carries an explicit token + decimals (or a canonical wei-denomination invariant)",
-        "executeViaSessionKey verifies the call target equals the configured token when value=0",
-        "Foundry tests cover a 6-decimal USDC cap AND an 18-decimal ERC20 cap, proving caps enforce in the token's native units",
-        "Audit scope updated: contracts/AUDIT-SCOPE.md notes the fix"
-      ],
-      "owner": "engineering",
+      "status": "closed",
+      "closed_at": "2026-05-30",
+      "closed_by": "batch 8 P2 (commit 6190ffe)",
+      "mitigation_summary": "Closed in code: SessionKey now carries an explicit capToken field. In ERC20 mode (capToken != 0), caps are denominated in capToken's raw units; grantSessionKey enforces allowedTargets == [capToken] and selector subset constraints; executeViaSessionKey verifies target == capToken AND value == 0. Caps are always meterable in the token's native units. Foundry tests test_R06_usdc6dp_capEnforcesInTokenUnits + test_R06_dai18dp_capEnforcesInTokenUnits + test_R06_execute_rejectsValueInErc20Mode + test_R06_execute_rejectsWrongTargetInErc20Mode prove enforcement. Mainnet enablement still gated on R-01 (external audit).",
       "evidence": [
-        "contracts/src/BrainSmartAccount.sol:19-20",
-        "contracts/src/BrainSmartAccount.sol:250-258"
+        "contracts/src/BrainSmartAccount.sol:13-50 (SessionKey + selector constants)",
+        "contracts/src/BrainSmartAccount.sol:140-179 (grantSessionKey ERC20-mode validation)",
+        "contracts/src/BrainSmartAccount.sol:266-302 (executeViaSessionKey dual mode)",
+        "contracts/test/BrainSmartAccount.t.sol (R-06 / R-07 tests, 7 new cases)",
+        "contracts/AUDIT-SCOPE.md:131-145 (R-06 / R-07 closure noted)"
       ]
     },
     {
       "id": "R-07",
       "title": "BrainSmartAccount selector decode covers only three ERC20 selectors; non-decodable selectors bypass caps",
       "priority": "P1",
-      "status": "open",
-      "mitigation_summary": "Only transfer/approve/transferFrom selectors are decoded; any other allowlisted selector leaves capAmount=0 and passes every cap unmetered. Mitigated today because grantSessionKey is gated by the operator and the allowlist is opt-in. But the contract should refuse to grant a session key with non-decodable selectors, not silently disable metering. Flagged by Opus 4.8 peer review at commit 1985f68 (finding F-4).",
-      "exit_criteria": [
-        "grantSessionKey() rejects any selector outside the decodable set, OR adds an explicit per-selector decoder + cap-enforcement path",
-        "Foundry test proves a grant containing a non-decodable selector reverts",
-        "Foundry test proves a granted key cannot bypass maxPerTx via a non-decodable call",
-        "Audit scope updated: contracts/AUDIT-SCOPE.md notes the fix"
-      ],
-      "owner": "engineering",
-      "evidence": ["contracts/src/BrainSmartAccount.sol:251-259"]
+      "status": "closed",
+      "closed_at": "2026-05-30",
+      "closed_by": "batch 8 P2 (commit 6190ffe)",
+      "mitigation_summary": "Closed in code: grantSessionKey now rejects any selector outside {transfer, approve, transferFrom} when capToken is set (new error NonDecodableSelectorInErc20Mode). The contract refuses to grant a session key whose caps would silently be bypassed. Foundry test test_R07_grant_rejectsNonDecodableSelectorInErc20Mode proves the rejection; test_R07_grant_rejectsTargetMismatchInErc20Mode catches the related allowlist footgun. Mainnet enablement still gated on R-01.",
+      "evidence": [
+        "contracts/src/BrainSmartAccount.sol:148-179 (grant-time selector lockdown)",
+        "contracts/test/BrainSmartAccount.t.sol (test_R07_* cases)",
+        "contracts/AUDIT-SCOPE.md:131-145"
+      ]
     },
     {
       "id": "R-08",
