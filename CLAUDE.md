@@ -204,8 +204,9 @@ tools/
 scripts/          dev-up.sh, install-hooks.sh, pre-commit.sh, demo/golden-path.sh, check-*.mjs
 docs/             Internal engineering docs (mcp-architecture.md, boot-binary-spec.md, rollback.md,
                   rails-matrix.md (release-manager rail support table),
-                  enterprise-readiness.md (diligence index for fintech/bank buyers),
-                  plus audits, RFCs, scaling notes, v0.4 runbooks. List is illustrative)
+                  plus audits, RFCs, scaling notes, v0.4 runbooks. List is illustrative.
+                  Diligence-facing enterprise readiness page lives in the published
+                  GitBook tree at `architecture/enterprise-readiness.md`)
 ```
 
 Shared primitives all live in the top-level `shared/` package (`@brain/shared`): auth, errors, gate, idempotency, audit, db, blob, queue, http, llm, logger, metrics, tracing, webhooks, hashing, ids, contracts, config. (`services/api` is a thin gateway that consumes them, not their host.)
