@@ -184,6 +184,7 @@ import {
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
 import { assertEscrowAuditApproved } from "./composition/escrow-audit-gate.js";
+import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps, PolicyReader, AgentReader, PolicyView } from "@brain/wiki";
@@ -676,6 +677,14 @@ async function main(): Promise<void> {
       log.info({ escrowAddress: cfg.BRAIN_ESCROW_ADDRESS }, "escrow Base rail registered");
     }
     if (configured.length === 0) {
+      // Fail-closed in production: stubs refuse to settle at dispatch (item 20),
+      // but the orchestrator only sees that as a quiet 500 wave. Boot-fail
+      // instead so the misconfiguration surfaces as CrashLoopBackoff. In
+      // dev/test, fall through to stubs as before.
+      assertAtLeastOneLiveRailInProduction({
+        nodeEnv: cfg.NODE_ENV,
+        liveRailCount: 0,
+      });
       log.warn("no real payment rails configured — falling back to dev stubs");
       // Default stubs (see defaultRails()) — three keys.
       return {
