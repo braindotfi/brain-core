@@ -128,18 +128,18 @@
       "id": "R-08",
       "title": "Money-touching rail-adapter test coverage gap",
       "priority": "P2",
-      "status": "open",
-      "mitigation_summary": "onchainExecutor (viem), plaidClient (Plaid SDK), and PostgresSourceRepository have near-zero test coverage. The §6 gate ahead of them is well-tested, but the adapters themselves are thinly exercised. Surfaced by Opus 4.8 peer review (F-9).",
+      "status": "mitigating",
+      "mitigation_summary": "Batch 8 P5: error-path coverage added to onchainExecutor (read/write error propagation, receipt-hash sourcing), plaidClient (Plaid API error verbatim), and x402Client (full lifecycle: decimals read, transfer revert, receipt timeout, facilitator 5xx + network error, idempotency-key forwarding, chain selection). PostgresSourceRepository was already at 16-test coverage (reviewer's claim of near-zero was stale). 23 rail-adapter unit tests now pass (was 6).",
       "exit_criteria": [
-        "Adapter test files exist with happy-path, error-path, and idempotency-path coverage",
-        "Mock the underlying client (viem PublicClient, Plaid Transfer SDK, pg Pool) at the seam",
-        "Coverage parity with the §6 gate (≥80% lines)"
+        "Coverage parity with the §6 gate measured at >=80% line coverage on the adapter files (next step: wire coverage gates into test:coverage)",
+        "Integration tests on testnet for at least the onchain executor end-to-end"
       ],
       "owner": "engineering",
       "evidence": [
-        "services/api/src/rails/onchain.ts",
-        "services/api/src/rails/ach-plaid.ts",
-        "services/raw/src/repository/sources.ts"
+        "services/api/src/rails/onchainExecutor.test.ts (9 tests)",
+        "services/api/src/rails/plaidClient.test.ts (6 tests)",
+        "services/api/src/rails/x402Client.test.ts (8 tests, new)",
+        "services/raw/src/sources/PostgresSourceRepository.test.ts (16 tests, pre-existing)"
       ]
     },
     {
