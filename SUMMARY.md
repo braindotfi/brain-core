@@ -48,6 +48,7 @@
 * [Tenant Isolation](architecture/tenant-isolation.md)
 * [Security and Compliance](architecture/security-and-compliance.md)
 * [Risks and Mitigations](architecture/risks-and-mitigations.md)
+* [Readiness Summary](architecture/readiness-summary.md)
 * [Enterprise Readiness](architecture/enterprise-readiness.md)
 
 ## API Reference
