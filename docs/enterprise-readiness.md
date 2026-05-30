@@ -106,11 +106,11 @@ deletion is **deferred** to the privileged purge worker).
 
 ### Blob purge (deferred)
 
-§3 Layer-1 immutability ("Raw is the source of truth, never mutated")
-blocks an in-band `BlobAdapter.purge()` today. The architectural carveout
-that reconciles §3 with Article 17 is in RFC at
-`docs/rfcs/0007-blob-purge-article-17.md`. Once signed off, phase B
-implements:
+Layer-1 immutability ("Raw is the source of truth, never mutated", per
+`Brain_MVP_Architecture.md` Layer 1) blocks an in-band `BlobAdapter.purge()`
+today. The architectural carveout that reconciles Layer-1 immutability with
+GDPR Article 17 is at `docs/rfcs/0003-blob-purge-article-17.md`. Once signed
+off, phase B implements:
 - `tenant_blob_purge_jobs` durable queue table
 - background worker that calls `BlobAdapter.purge(uri)` per row
 - audit events `tenant_blob.purge_requested / completed / failed / retried`
