@@ -26,23 +26,35 @@ function runWithEnv(env, args = ["--json"]) {
 
 test("--json mode emits parseable JSON with the expected top-level shape", () => {
   const r = runWithEnv({ NODE_ENV: "development" });
-  assert.equal(r.code, 0);
+  // Code may be 0 or 1 depending on whether any open P0 risks exist in
+  // the register at the time. Shape check is what matters here.
   assert.equal(typeof r.parsed.node_env, "string");
   assert.ok(["green", "yellow", "red"].includes(r.parsed.overall_status));
   assert.ok(Array.isArray(r.parsed.sections.rails));
   assert.ok(Array.isArray(r.parsed.sections.fences));
   assert.ok(Array.isArray(r.parsed.sections.ci_guards));
   assert.ok(Array.isArray(r.parsed.sections.deferred));
+  assert.ok(Array.isArray(r.parsed.sections.risks));
 });
 
-test("dev with no env: rails yellow, no reds, exit 0", () => {
+test("dev with no env: only open P0 risks are red (everything else yellow)", () => {
   const r = runWithEnv({ NODE_ENV: "development" });
-  assert.equal(r.code, 0);
-  // No red rows under a dev evaluation — everything that's missing is
-  // yellow ("env not set"), not red ("fence would fail").
-  for (const section of Object.values(r.parsed.sections)) {
-    for (const row of section) {
-      assert.notEqual(row.status, "red", `unexpected red: ${row.name} (${row.note})`);
+  // The aggregator surfaces open P0 risks from docs/risk-register.json as
+  // red rows. Non-risk sections should never have reds under a dev
+  // evaluation (no boot fence is being tested).
+  for (const sectionName of ["rails", "fences", "ci_guards", "deferred"]) {
+    for (const row of r.parsed.sections[sectionName]) {
+      assert.notEqual(
+        row.status,
+        "red",
+        `unexpected red in section ${sectionName}: ${row.name} (${row.note})`,
+      );
+    }
+  }
+  // Any red MUST come from an open + P0 risk.
+  for (const row of r.parsed.sections.risks) {
+    if (row.status === "red") {
+      assert.match(row.note, /\[P0 open\]/, `red risk must be open + P0, got: ${row.note}`);
     }
   }
 });
@@ -61,7 +73,7 @@ test("production with no env: multiple boot fences go red, exit 1", () => {
   );
 });
 
-test("production with all baseline env set: every fence green except deferred", () => {
+test("production with all baseline env set: every fence green (non-risk sections)", () => {
   const r = runWithEnv({
     NODE_ENV: "production",
     BRAIN_WIKI_DB_URL: "postgres://x",
@@ -71,14 +83,15 @@ test("production with all baseline env set: every fence green except deferred", 
     PLAID_CLIENT_ID: "id",
     PLAID_SECRET: "secret",
   });
-  // No red rows — production-allowed bank_ach has its env, all fences pass.
+  // Production-allowed bank_ach has its env; all fences + guards pass.
+  // The risks section may still surface open P0 risks from the register;
+  // those are the substantive blockers the boot env alone can't fix.
   const reds = [
     ...r.parsed.sections.fences,
     ...r.parsed.sections.rails,
     ...r.parsed.sections.ci_guards,
   ].filter((row) => row.status === "red");
-  assert.deepEqual(reds, [], `unexpected reds: ${JSON.stringify(reds)}`);
-  assert.equal(r.code, 0);
+  assert.deepEqual(reds, [], `unexpected reds outside risks: ${JSON.stringify(reds)}`);
 });
 
 test("production + mainnet escrow without audit flag: fence red", () => {
@@ -141,10 +154,50 @@ test("CI guards section reports all 10 expected guards", () => {
 });
 
 test("colored terminal output prints overall summary line", () => {
-  const r = execFileSync("node", [SCRIPT], {
-    env: { ...process.env, NODE_ENV: "development" },
-    encoding: "utf8",
-  });
-  assert.match(r, /Brain production readiness/);
-  assert.match(r, /Overall: (GREEN|YELLOW|RED)/);
+  // The script may exit 1 (an open P0 risk in the real register puts the
+  // aggregator in red); the human-readable output is what we assert on,
+  // so we capture stdout regardless of exit code.
+  let out = "";
+  try {
+    out = execFileSync("node", [SCRIPT], {
+      env: { ...process.env, NODE_ENV: "development" },
+      encoding: "utf8",
+    }).toString();
+  } catch (err) {
+    out = err.stdout?.toString() ?? "";
+  }
+  assert.match(out, /Brain production readiness/);
+  assert.match(out, /Overall: (GREEN|YELLOW|RED)/);
+  assert.match(out, /Open risks \(from docs\/risk-register\.json\)/);
+});
+
+test("risk section is populated from docs/risk-register.json", () => {
+  const r = runWithEnv({ NODE_ENV: "development" });
+  const risks = r.parsed.sections.risks;
+  assert.ok(risks.length > 0, "risks section should not be empty");
+  // Every row carries the [PRIO status] prefix in note.
+  for (const row of risks) {
+    assert.match(row.note, /\[(P0|P1|P2) (open|mitigating)\]/);
+  }
+});
+
+test("closed risks (status=closed) are NOT surfaced in the live register section", () => {
+  const r = runWithEnv({ NODE_ENV: "development" });
+  // R-05 is closed in the fixture; it should not appear as a row here.
+  // (Closed risks remain documented in the .md for history.)
+  const closed = r.parsed.sections.risks.find((row) => row.name.startsWith("R-05"));
+  assert.equal(closed, undefined, `closed risk leaked into live section: ${JSON.stringify(closed)}`);
+});
+
+test("any open + P0 risk turns overall_status red and exits 1", () => {
+  // Sanity check against the real register: at the time of writing R-01
+  // (escrow audit) is open + P0, so the overall MUST be red until the
+  // audit closes. If this assertion ever flips to green, R-01 was closed
+  // by intention and this test should be updated alongside.
+  const r = runWithEnv({ NODE_ENV: "development" });
+  const openP0 = r.parsed.sections.risks.filter((row) => /\[P0 open\]/.test(row.note));
+  if (openP0.length > 0) {
+    assert.equal(r.parsed.overall_status, "red");
+    assert.equal(r.code, 1);
+  }
 });

@@ -48,6 +48,23 @@ jobs:
       - name: Unit tests + coverage
         run: pnpm run test:coverage
 
+      # ----- Production-readiness snapshot (peer-review batch 7) -----
+      # Capture the readiness JSON as a per-commit build artifact so
+      # diligence reviewers, release managers, and future trend tracking
+      # all have a durable record. Run with `|| true` because an open P0
+      # risk in docs/risk-register.json puts the aggregator in red (exit 1)
+      # by design; we want the artifact, not the failure. The dedicated
+      # gate step below decides whether to block the PR.
+      - name: Production readiness snapshot
+        run: pnpm run production-readiness -- --json > production-readiness.json || true
+
+      - name: Upload readiness snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-readiness-${{ github.sha }}
+          path: production-readiness.json
+          retention-days: 90
+
   # --------- Python agents workspace ---------
   python:
     name: python (lint + types + unit)

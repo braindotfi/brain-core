@@ -1,0 +1,95 @@
+{
+  "$schema": "https://docs.brain.fi/schemas/risk-register-v1.json",
+  "schema_version": "v1",
+  "comment": "Machine-readable mirror of docs/risk-register.md. Read by scripts/production-readiness.mjs. Open + P0 → red row in the aggregator; open + P1 → yellow; mitigating + P0 → yellow; closed → not surfaced. When this file changes, update the .md mirror in the same PR.",
+  "risks": [
+    {
+      "id": "R-01",
+      "title": "External smart-contract audit not yet complete (BrainEscrow)",
+      "priority": "P0",
+      "status": "open",
+      "mitigation_summary": "Mainnet boot-fenced (escrow-audit-gate.ts) + CI guard (check-escrow-audit-marker) + 4 Foundry invariants on the contract.",
+      "exit_criteria": [
+        "external audit completes with no critical or high findings",
+        "audited commit SHA + tag pinned in contracts/AUDIT-SCOPE.md",
+        "deployed mainnet bytecode verified to match audited bytecode",
+        "BRAIN_ESCROW_AUDIT_APPROVED=\"true\" enabled in production env"
+      ],
+      "owner": "engineering+external-auditor",
+      "evidence": [
+        "contracts/AUDIT-SCOPE.md",
+        "services/api/src/composition/escrow-audit-gate.ts",
+        "scripts/check-escrow-audit-marker.mjs"
+      ]
+    },
+    {
+      "id": "R-02",
+      "title": "Tenant blob purge not implemented (GDPR Article 17 gap)",
+      "priority": "P0",
+      "status": "mitigating",
+      "mitigation_summary": "DELETE /v1/tenants/{id} surfaces blob URIs pending purge; RFC 0003 phase A landed, phase B awaits signoff.",
+      "exit_criteria": [
+        "tenant_blob_purge_jobs migration",
+        "BlobAdapter.purge() on memory/s3/azure",
+        "tenant-blob-purge-worker.ts",
+        "check-blob-purge-callsites.mjs lint guard",
+        "integration test proving end-to-end erasure"
+      ],
+      "owner": "engineering",
+      "evidence": [
+        "docs/rfcs/0003-blob-purge-article-17.md",
+        "services/api/src/tenant-deletion/service.ts"
+      ]
+    },
+    {
+      "id": "R-03",
+      "title": "Azure production deploy chain not yet exercised",
+      "priority": "P1",
+      "status": "open",
+      "mitigation_summary": "All safety controls (boot fences, gate, RLS) are deploy-substrate-independent. Disclosure explicit in architecture/enterprise-readiness.md.",
+      "exit_criteria": [
+        "Azure OIDC secrets provisioned",
+        "build push deploy staging-validation chain runs cleanly end-to-end",
+        "production deploy logs show all 5 boot fences armed via brain.runtime.capabilities",
+        "rollback procedure exercised against staging"
+      ],
+      "owner": "operations",
+      "evidence": [
+        ".github/workflows/main.yml",
+        "architecture/enterprise-readiness.md",
+        "docs/rollback.md"
+      ]
+    },
+    {
+      "id": "R-04",
+      "title": "Full money-movement E2E not yet enforced in CI",
+      "priority": "P1",
+      "status": "mitigating",
+      "mitigation_summary": "Strict-mode demo (BRAIN_DEMO_STRICT_PROOF) runs the full chain locally; e2e probe asserts gate dormancy from staging history. CI-enforced full E2E pending deterministic stack-in-CI.",
+      "exit_criteria": [
+        "deterministic local-stack-in-CI (pg+redis+localstack+boot binary in GH Actions)",
+        "golden-path demo runs in strict mode on every PR",
+        "any §6 check 8 / 9.5 / 11.5 going not_applicable fails the build",
+        "audit-before → audit-after linkage asserted"
+      ],
+      "owner": "engineering+infra",
+      "evidence": [
+        "tests/e2e/signed-agent-gated-payment.e2e.test.ts",
+        "scripts/demo/golden-path.sh"
+      ]
+    },
+    {
+      "id": "R-05",
+      "title": "Rail catalog vs docs drift",
+      "priority": "P2",
+      "status": "closed",
+      "closed_at": "2026-05-30",
+      "closed_by": "batch 6 P1",
+      "mitigation_summary": "check-rails-catalog-drift CI guard wired into pnpm run lint compares both files; drift is now structurally impossible at PR merge time.",
+      "evidence": [
+        "scripts/check-rails-catalog-drift.mjs",
+        "scripts/__tests__/check-rails-catalog-drift.test.mjs"
+      ]
+    }
+  ]
+}

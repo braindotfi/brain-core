@@ -292,6 +292,54 @@ function checkDeferredItems() {
   return rows;
 }
 
+/**
+ * Read the machine-readable risk register and convert open + P0/P1 risks
+ * into rows. The bridge from docs/risk-register.json to this aggregator is
+ * what makes "open P0 risk" automatically a red row, so CI gates that
+ * call `production-readiness --json` block promotion when a P0 is open.
+ *
+ *   open + P0          → red
+ *   open + P1          → yellow
+ *   mitigating + P0    → yellow (partial mitigation; gap not closed)
+ *   mitigating + P1    → yellow
+ *   closed             → not shown (covered in the .md history section)
+ *   anything else      → yellow (defensive)
+ */
+function checkRiskRegister() {
+  const path = join(ROOT, "docs/risk-register.json");
+  if (!existsSync(path)) {
+    return [
+      {
+        name: "Risk register",
+        status: "red",
+        note: "docs/risk-register.json missing; aggregator cannot evaluate risk posture",
+      },
+    ];
+  }
+  const register = JSON.parse(readFileSync(path, "utf8"));
+  const risks = register.risks ?? [];
+  const rows = [];
+  for (const r of risks) {
+    if (r.status === "closed") continue;
+    let status;
+    if (r.status === "open" && r.priority === "P0") status = "red";
+    else status = "yellow";
+    rows.push({
+      name: `${r.id} ${r.title}`,
+      status,
+      note: `[${r.priority} ${r.status}] ${r.mitigation_summary}`,
+    });
+  }
+  if (rows.length === 0) {
+    rows.push({
+      name: "Risk register",
+      status: "green",
+      note: "no open risks in register",
+    });
+  }
+  return rows;
+}
+
 // ---- render ---------------------------------------------------------------
 
 function renderSection(title, rows) {
@@ -312,12 +360,14 @@ function main() {
   const fences = checkBootFences(catalog);
   const guards = checkCiGuards();
   const deferred = checkDeferredItems();
+  const risks = checkRiskRegister();
 
   const allRows = [
     ...railResult.rows.map((r) => ({ ...r, section: "rails" })),
     ...fences.map((r) => ({ ...r, section: "fences" })),
     ...guards.map((r) => ({ ...r, section: "guards" })),
     ...deferred.map((r) => ({ ...r, section: "deferred" })),
+    ...risks.map((r) => ({ ...r, section: "risks" })),
   ];
 
   if (JSON_MODE) {
@@ -333,6 +383,7 @@ function main() {
         fences,
         ci_guards: guards,
         deferred,
+        risks,
       },
     };
     console.log(JSON.stringify(summary, null, 2));
@@ -343,6 +394,7 @@ function main() {
     console.log(renderSection("Boot fences (would a fresh boot pass?)", fences));
     console.log(renderSection("CI guards", guards));
     console.log(renderSection("Deferred / external blockers", deferred));
+    console.log(renderSection("Open risks (from docs/risk-register.json)", risks));
     const overall = allRows.some((r) => r.status === "red")
       ? "RED"
       : allRows.some((r) => r.status === "yellow")
