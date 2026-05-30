@@ -17,9 +17,24 @@
  *   - require principal.tenantId === target tenant
  *   - reject if either check fails
  *
- * Blob cleanup (Raw artifact storage) is intentionally NOT done here. Raw
- * artifacts that were tombstoned during the row deletion will be reaped by
- * the existing blob-retention worker on its own schedule.
+ * Blob cleanup (Raw artifact storage). The §3 Layer-1 immutability promise
+ * forbids in-band hard-delete via the BlobAdapter (no `purge` method exists).
+ * Tenant deletion therefore CANNOT, on its own, remove the bytes a user
+ * uploaded into Azure Blob storage. To stay honest with the GDPR Article 17
+ * claim, this service:
+ *   1. Selects every `raw_artifacts.blob_uri` for the tenant BEFORE the DELETE.
+ *   2. Includes the URI list in the response payload AND in the
+ *      `tenant.deleted` audit event under `blob_uris_pending_purge`.
+ *   3. Returns `blob_artifact_count` alongside the row counts.
+ * An operator (or a future scheduled purge job) must run a separate pass
+ * against those URIs to satisfy Article 17 fully. The runbook for this is
+ * tracked in docs/rollback.md.
+ *
+ * TODO(brain-gdpr): wire a privileged hard-delete path on BlobAdapter that
+ * is callable only from this service. The architectural tension between §3
+ * Layer-1 immutability ("Raw is the source of truth, never mutated") and
+ * Article 17 ("the user can demand erasure") needs an explicit carveout in
+ * Brain_Engineering_Standards.md §3 before that ships.
  */
 
 import type { Pool } from "pg";
@@ -29,6 +44,12 @@ export interface TenantDeletionResult {
   tenantId: string;
   deletedRows: Record<string, number>;
   totalRows: number;
+  /** Count of `raw_artifacts` rows that referenced a blob — the number of
+   *  Azure Blob objects an operator must purge out-of-band. */
+  blobArtifactCount: number;
+  /** Every `blob_uri` from the deleted `raw_artifacts` rows. Operators run
+   *  the purge job against this list to satisfy GDPR Article 17 fully. */
+  blobUrisPendingPurge: ReadonlyArray<string>;
 }
 
 /**
@@ -131,8 +152,17 @@ export class TenantDeletionService {
     const client = await this.deps.privilegedPool.connect();
     const deletedRows: Record<string, number> = {};
     let totalRows = 0;
+    let blobUrisPendingPurge: string[] = [];
     try {
       await client.query("BEGIN");
+      // Snapshot the blob_uri list BEFORE the DELETE wipes the rows. These
+      // URIs are what an operator must purge out-of-band to satisfy GDPR
+      // Article 17 fully (Layer-1 immutability blocks in-band hard delete).
+      const blobRes = await client.query(
+        `SELECT blob_uri FROM raw_artifacts WHERE tenant_id = $1 AND blob_uri IS NOT NULL`,
+        [targetTenantId],
+      );
+      blobUrisPendingPurge = (blobRes.rows as Array<{ blob_uri: string }>).map((r) => r.blob_uri);
       for (const { table, column } of TENANT_SCOPED_TABLES) {
         const res = await client.query(`DELETE FROM ${table} WHERE ${column} = $1`, [
           targetTenantId,
@@ -171,6 +201,11 @@ export class TenantDeletionService {
         // Explicit non-deletion: audit_events + audit_anchors preserved
         // under GDPR legitimate-interest carveout (financial integrity).
         preserved: ["audit_events", "audit_anchors"],
+        // Blob bytes are NOT removed by this transaction (§3 Layer-1
+        // immutability). Operators run a separate purge against these URIs
+        // to satisfy Article 17 fully.
+        blob_artifact_count: blobUrisPendingPurge.length,
+        blob_uris_pending_purge: blobUrisPendingPurge,
       },
     });
 
@@ -178,6 +213,8 @@ export class TenantDeletionService {
       tenantId: targetTenantId,
       deletedRows,
       totalRows,
+      blobArtifactCount: blobUrisPendingPurge.length,
+      blobUrisPendingPurge,
     };
   }
 }

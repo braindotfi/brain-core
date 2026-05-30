@@ -12,11 +12,21 @@ import {
 const TENANT = newTenantId();
 const USER = newUserId();
 
-function fakePool(deletePerTable: Record<string, number>): Pool {
+function fakePool(
+  deletePerTable: Record<string, number>,
+  blobUris: string[] = [],
+): Pool {
   const client = {
     query: vi.fn((sql: string) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return Promise.resolve({ rows: [], rowCount: 0 });
+      }
+      // Pre-DELETE snapshot of raw_artifacts blob URIs.
+      if (sql.startsWith("SELECT blob_uri FROM raw_artifacts")) {
+        return Promise.resolve({
+          rows: blobUris.map((u) => ({ blob_uri: u })),
+          rowCount: blobUris.length,
+        });
       }
       const match = sql.match(/DELETE FROM (\w+)/);
       const table = match?.[1];
@@ -85,6 +95,61 @@ describe("TenantDeletionService", () => {
     expect(outputs.per_table_counts.ledger_accounts).toBe(3);
     expect(outputs.preserved).toContain("audit_events");
     expect(outputs.preserved).toContain("audit_anchors");
+  });
+
+  it("surfaces the blob URIs that operators must purge out-of-band (GDPR Art 17)", async () => {
+    const uris = [
+      "tnt_x/2026/05/29/aaaa1111",
+      "tnt_x/2026/05/30/bbbb2222",
+      "tnt_x/2026/05/30/cccc3333",
+    ];
+    const pool = fakePool({ raw_artifacts: 3 }, uris);
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+    const result = await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+
+    // Return shape: caller (route + operator) sees the orphan list.
+    expect(result.blobArtifactCount).toBe(3);
+    expect(result.blobUrisPendingPurge).toEqual(uris);
+
+    // Audit chain: the same list is on the tenant.deleted event so the
+    // verify-without-trusting-Brain promise still surfaces what's NOT yet
+    // gone.
+    const outputs = audit.events[0]!.outputs as {
+      blob_artifact_count: number;
+      blob_uris_pending_purge: string[];
+    };
+    expect(outputs.blob_artifact_count).toBe(3);
+    expect(outputs.blob_uris_pending_purge).toEqual(uris);
+  });
+
+  it("reports 0 blob artifacts when the tenant uploaded nothing", async () => {
+    const pool = fakePool({ raw_artifacts: 0 }, []);
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+    const result = await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+
+    expect(result.blobArtifactCount).toBe(0);
+    expect(result.blobUrisPendingPurge).toEqual([]);
+    const outputs = audit.events[0]!.outputs as { blob_artifact_count: number };
+    expect(outputs.blob_artifact_count).toBe(0);
+  });
+
+  it("selects blob URIs BEFORE the DELETE wipes raw_artifacts rows", async () => {
+    // Critical ordering: if the SELECT happens after the DELETE, the URI
+    // list is always empty and the GDPR honesty story collapses silently.
+    const pool = fakePool({ raw_artifacts: 1 }, ["tnt_x/2026/05/30/abc"]);
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+    await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+
+    const client = await pool.connect();
+    const sqlCalls = vi.mocked(client.query).mock.calls.map((c) => c[0] as string);
+    const selectIdx = sqlCalls.findIndex((s) => s.startsWith("SELECT blob_uri FROM raw_artifacts"));
+    const deleteIdx = sqlCalls.findIndex((s) => /^DELETE FROM raw_artifacts/.test(s));
+    expect(selectIdx).toBeGreaterThan(-1);
+    expect(deleteIdx).toBeGreaterThan(-1);
+    expect(selectIdx).toBeLessThan(deleteIdx);
   });
 
   it("rolls back on a DELETE failure and does not emit the tombstone event", async () => {
