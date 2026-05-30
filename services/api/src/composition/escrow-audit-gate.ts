@@ -28,25 +28,43 @@ export interface EscrowAuditGateInput {
   chainId: number;
   /** cfg.BRAIN_ESCROW_ADDRESS — undefined ⇒ EscrowBaseRail not configured. */
   escrowAddress: string | undefined;
-  /** cfg.BRAIN_ESCROW_AUDIT_APPROVED — defaults to "false". */
+  /** cfg.BRAIN_ESCROW_AUDIT_APPROVED — defaults to "false". Legacy boolean. */
   auditApproved: "true" | "false";
+  /**
+   * cfg.BRAIN_ESCROW_AUDIT_RECEIPT — non-empty URL/filepath/hash pointing
+   * at the audit report. Preferred over the legacy boolean because it
+   * carries diligence metadata (which report? which audited commit?).
+   * Either signal currently satisfies the fence.
+   */
+  auditReceipt?: string;
 }
 
 /**
  * Throws when the configured escrow address would be wired against Base
- * mainnet without an explicit audit-approved attestation. Silent on all
- * non-mainnet chains, and silent on mainnet when no escrow address is set.
+ * mainnet without an explicit audit attestation. Silent on all non-mainnet
+ * chains, and silent on mainnet when no escrow address is set.
+ *
+ * Mainnet attestation is satisfied by EITHER:
+ *   - `BRAIN_ESCROW_AUDIT_RECEIPT` set to a non-empty value (preferred — the
+ *     receipt itself names what was audited), OR
+ *   - `BRAIN_ESCROW_AUDIT_APPROVED` = "true" (legacy bare-boolean form,
+ *     kept for backwards compatibility during the transition).
  */
 export function assertEscrowAuditApproved(input: EscrowAuditGateInput): void {
   if (input.chainId !== BASE_MAINNET_CHAIN_ID) return;
   if (input.escrowAddress === undefined) return;
-  if (input.auditApproved === "true") return;
+  const hasReceipt =
+    typeof input.auditReceipt === "string" && input.auditReceipt.length > 0;
+  if (input.auditApproved === "true" || hasReceipt) return;
   throw new Error(
     `BRAIN_ESCROW_ADDRESS is set on Base mainnet (chainId=${String(
       BASE_MAINNET_CHAIN_ID,
-    )}) but BRAIN_ESCROW_AUDIT_APPROVED is not "true". The external ` +
-      "smart-contract audit (Task #37) must complete and the audited bytecode " +
-      "must be the deployed contract before the api will boot against mainnet. " +
-      "Refusing to start so the orchestrator surfaces the misconfiguration.",
+    )}) but neither BRAIN_ESCROW_AUDIT_RECEIPT nor BRAIN_ESCROW_AUDIT_APPROVED="true" ` +
+      'is set. The external smart-contract audit (Task #37) must complete and the ' +
+      "audited bytecode must be the deployed contract before the api will boot " +
+      "against mainnet. Set BRAIN_ESCROW_AUDIT_RECEIPT to a URL/filepath pointing " +
+      "at the audit report (preferred), or BRAIN_ESCROW_AUDIT_APPROVED=\"true\" " +
+      "as a legacy bare-boolean attestation. Refusing to start so the orchestrator " +
+      "surfaces the misconfiguration.",
   );
 }

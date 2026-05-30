@@ -72,8 +72,8 @@ rail with all required env vars set; otherwise the boot fence at
 | Required env            | `BRAIN_ESCROW_ADDRESS`, `BRAIN_ONCHAIN_SMART_ACCOUNT`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL`                            |
 | Production allowed      | yes                                                                                                                   |
 | Audit required          | **yes**                                                                                                               |
-| Mainnet boot fence      | `composition/escrow-audit-gate.ts`: throws on boot if `chainId === 8453` && address set && `BRAIN_ESCROW_AUDIT_APPROVED !== "true"` |
-| Audit approval flag     | `BRAIN_ESCROW_AUDIT_APPROVED`. Operator must explicitly attest audit completion before mainnet                       |
+| Mainnet boot fence      | `composition/escrow-audit-gate.ts`: throws on boot if `chainId === 8453` && address set && neither `BRAIN_ESCROW_AUDIT_RECEIPT` nor `BRAIN_ESCROW_AUDIT_APPROVED="true"` is set |
+| Audit attestation       | Either `BRAIN_ESCROW_AUDIT_RECEIPT` (preferred. URL/filepath/hash pointing at the audit report) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` boolean. The receipt is preferred because it carries diligence metadata. |
 | Failure mode            | `release()` revert → audit-after `ok: false`                                                                          |
 
 ### `erp_writeback`

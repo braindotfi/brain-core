@@ -138,17 +138,22 @@ function checkBootFences(catalog) {
   const chainId = env.BRAIN_BASE_CHAIN_ID ?? "84532";
   const escrowAddr = envSet("BRAIN_ESCROW_ADDRESS");
   const auditApproved = env.BRAIN_ESCROW_AUDIT_APPROVED === "true";
-  if (chainId === "8453" && escrowAddr && !auditApproved) {
+  const auditReceipt = env.BRAIN_ESCROW_AUDIT_RECEIPT;
+  const hasReceipt = typeof auditReceipt === "string" && auditReceipt.length > 0;
+  const attested = auditApproved || hasReceipt;
+  if (chainId === "8453" && escrowAddr && !attested) {
     fences.push({
       name: "Escrow audit (mainnet)",
       status: "red",
-      note: "would FAIL boot — mainnet escrow set without BRAIN_ESCROW_AUDIT_APPROVED=true",
+      note: "would FAIL boot — mainnet escrow set without BRAIN_ESCROW_AUDIT_RECEIPT or BRAIN_ESCROW_AUDIT_APPROVED=true",
     });
-  } else if (chainId === "8453" && escrowAddr && auditApproved) {
+  } else if (chainId === "8453" && escrowAddr && attested) {
     fences.push({
       name: "Escrow audit (mainnet)",
       status: "green",
-      note: "audit explicitly attested",
+      note: hasReceipt
+        ? `audit receipt: ${auditReceipt}`
+        : "audit explicitly attested (legacy boolean)",
     });
   } else {
     fences.push({

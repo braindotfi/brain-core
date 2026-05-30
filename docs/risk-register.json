@@ -13,7 +13,7 @@
         "external audit completes with no critical or high findings",
         "audited commit SHA + tag pinned in contracts/AUDIT-SCOPE.md",
         "deployed mainnet bytecode verified to match audited bytecode",
-        "BRAIN_ESCROW_AUDIT_APPROVED=\"true\" enabled in production env"
+        "BRAIN_ESCROW_AUDIT_RECEIPT set to the audit report URL/hash (or legacy BRAIN_ESCROW_AUDIT_APPROVED=\"true\") in production env"
       ],
       "owner": "engineering+external-auditor",
       "evidence": [

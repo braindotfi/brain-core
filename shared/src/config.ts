@@ -251,8 +251,26 @@ const envSchema = z.object({
    * refuses to boot when chainId === 8453 (Base mainnet) AND BRAIN_ESCROW_ADDRESS
    * is set. Set this only after the audit signs off and the address on chain is
    * the audited bytecode. Has no effect on Base Sepolia (84_532).
+   *
+   * DEPRECATED in favour of BRAIN_ESCROW_AUDIT_RECEIPT (a URL/filepath/hash
+   * pointing at the audit report). Either signal currently satisfies the boot
+   * fence; the receipt is preferred because it carries diligence metadata
+   * (which report? which audited commit?) rather than a bare boolean.
    */
   BRAIN_ESCROW_AUDIT_APPROVED: z.enum(["true", "false"]).default("false"),
+  /**
+   * Audit receipt: URL, filepath, IPFS hash, or any non-empty identifier that
+   * points at the external audit report for the configured BRAIN_ESCROW_ADDRESS.
+   * Recommended format: an https URL to the audit report PDF + a `#commit=<sha>`
+   * fragment identifying the audited commit. Format is operator-defined;
+   * the boot fence only checks non-empty. The capability log surfaces the
+   * receipt verbatim so the running process records what was attested.
+   *
+   * EITHER this OR BRAIN_ESCROW_AUDIT_APPROVED="true" satisfies the mainnet
+   * boot fence. Set this in preference to the boolean; the boolean exists
+   * for backwards compatibility during the transition.
+   */
+  BRAIN_ESCROW_AUDIT_RECEIPT: optionalNonEmptyString(),
 
   // ---- Reputation registry (BrainReputationRegistry) ----
   /** BrainReputationRegistry contract address. Presence wires resolveReputation into PolicyService. */

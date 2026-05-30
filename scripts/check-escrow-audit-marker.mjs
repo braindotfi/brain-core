@@ -142,14 +142,20 @@ function inspect(path) {
   const chainId = assignments.get("BRAIN_BASE_CHAIN_ID");
   const escrowAddr = assignments.get("BRAIN_ESCROW_ADDRESS");
   const auditApproved = assignments.get("BRAIN_ESCROW_AUDIT_APPROVED");
+  const auditReceipt = assignments.get("BRAIN_ESCROW_AUDIT_RECEIPT");
   if (chainId !== "8453") return null;
   if (escrowAddr === undefined || escrowAddr.length === 0 || escrowAddr === "null") return null;
+  // Mainnet attestation is satisfied by EITHER:
+  //   - BRAIN_ESCROW_AUDIT_APPROVED=true (legacy bare-boolean), OR
+  //   - BRAIN_ESCROW_AUDIT_RECEIPT non-empty (preferred, metadata-rich)
   if (auditApproved === "true") return null;
+  if (auditReceipt !== undefined && auditReceipt.length > 0) return null;
   return {
     path: relative(ROOT, path),
     chainId,
     escrowAddr,
     auditApproved: auditApproved ?? "(unset)",
+    auditReceipt: auditReceipt ?? "(unset)",
   };
 }
 
@@ -164,17 +170,19 @@ function main() {
     console.error("escrow-audit-marker guard: FAIL");
     for (const v of violations) {
       console.error(
-        `  ${v.path}: BRAIN_BASE_CHAIN_ID=${v.chainId} (mainnet) + BRAIN_ESCROW_ADDRESS=${v.escrowAddr} but BRAIN_ESCROW_AUDIT_APPROVED=${v.auditApproved}`,
+        `  ${v.path}: BRAIN_BASE_CHAIN_ID=${v.chainId} (mainnet) + BRAIN_ESCROW_ADDRESS=${v.escrowAddr} but BRAIN_ESCROW_AUDIT_APPROVED=${v.auditApproved} AND BRAIN_ESCROW_AUDIT_RECEIPT=${v.auditReceipt}`,
       );
     }
     console.error(
       "\nMainnet escrow boot is gated on the external smart-contract audit\n" +
         "(see contracts/AUDIT-SCOPE.md + composition/escrow-audit-gate.ts).\n" +
-        "Either:\n" +
-        "  - flip BRAIN_ESCROW_AUDIT_APPROVED=\"true\" in the same file (only\n" +
-        "    after the audit has signed off and the deployed bytecode is verified), or\n" +
-        "  - remove BRAIN_ESCROW_ADDRESS from this config until audit clears, or\n" +
-        "  - target Sepolia (BRAIN_BASE_CHAIN_ID=84532) for now.",
+        "Set ONE of these in the same file (only after the audit has signed off\n" +
+        "and the deployed bytecode is verified):\n" +
+        "  - BRAIN_ESCROW_AUDIT_RECEIPT=\"<url/filepath/hash>\" (preferred — carries\n" +
+        "    diligence metadata pointing at the audit report), or\n" +
+        "  - BRAIN_ESCROW_AUDIT_APPROVED=\"true\" (legacy bare-boolean attestation)\n" +
+        "Or, until audit clears, either remove BRAIN_ESCROW_ADDRESS or target\n" +
+        "Sepolia (BRAIN_BASE_CHAIN_ID=84532).",
     );
     process.exit(1);
   }

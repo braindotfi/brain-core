@@ -133,6 +133,37 @@ test("export-prefixed shell assignment detected", () => {
   assert.equal(r.code, 1);
 });
 
+test("mainnet + escrow address + AUDIT_RECEIPT set: silent (preferred path)", () => {
+  const r = runGuard({
+    ".env":
+      `BRAIN_BASE_CHAIN_ID=8453\n` +
+      `BRAIN_ESCROW_ADDRESS=${ADDR}\n` +
+      `BRAIN_ESCROW_AUDIT_RECEIPT="https://audits.brain.fi/escrow.pdf#commit=abc"\n`,
+  });
+  assert.equal(r.code, 0, r.stderr);
+});
+
+test("mainnet + escrow address + empty AUDIT_RECEIPT: FAIL", () => {
+  const r = runGuard({
+    ".env":
+      `BRAIN_BASE_CHAIN_ID=8453\n` +
+      `BRAIN_ESCROW_ADDRESS=${ADDR}\n` +
+      `BRAIN_ESCROW_AUDIT_RECEIPT=""\n`,
+  });
+  assert.equal(r.code, 1);
+});
+
+test("AUDIT_RECEIPT takes precedence over AUDIT_APPROVED=false", () => {
+  const r = runGuard({
+    ".env":
+      `BRAIN_BASE_CHAIN_ID=8453\n` +
+      `BRAIN_ESCROW_ADDRESS=${ADDR}\n` +
+      `BRAIN_ESCROW_AUDIT_APPROVED=false\n` +
+      `BRAIN_ESCROW_AUDIT_RECEIPT="https://audits.brain.fi/escrow.pdf"\n`,
+  });
+  assert.equal(r.code, 0);
+});
+
 test("the real repo is currently OK (sanity guard)", () => {
   const stdout = execFileSync("node", [SCRIPT], { encoding: "utf8" });
   assert.match(stdout, /escrow-audit-marker guard: OK/);

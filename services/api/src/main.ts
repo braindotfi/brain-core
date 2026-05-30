@@ -258,6 +258,9 @@ async function main(): Promise<void> {
     chainId: cfg.BRAIN_BASE_CHAIN_ID,
     escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
     auditApproved: cfg.BRAIN_ESCROW_AUDIT_APPROVED,
+    ...(cfg.BRAIN_ESCROW_AUDIT_RECEIPT !== undefined
+      ? { auditReceipt: cfg.BRAIN_ESCROW_AUDIT_RECEIPT }
+      : {}),
   });
 
   let wikiPool = pool;
