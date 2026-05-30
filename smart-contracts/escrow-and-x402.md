@@ -29,8 +29,8 @@ lock(escrowId, payee, USDC, amount, jobTermsHash, deadline)   ← payer deposits
      Settled (terminal)
 ```
 
-| Action      | Who                                                                                                                        |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Action      | Who                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------- |
 | **lock**    | The payer (buyer/agent). Deposits USDC against the job commitment                                                         |
 | **release** | The payer (confirming delivery, incl. per-milestone) **or** the arbiter (attesting / resolving a dispute). Pays the payee |
 | **refund**  | The **arbiter** any time (dispute), **or** the payer once the `deadline` passes (job not delivered). Returns to the payer |

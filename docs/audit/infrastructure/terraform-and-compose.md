@@ -10,6 +10,7 @@
 ## 1. Scope
 
 This audit covers:
+
 - `docker-compose.yml`. Local dev stack (Postgres, Redis, LocalStack, agents)
 - Root `Dockerfile`. Production container (Node monolith)
 - `infra/main.tf`. Azure Terraform resources (Container Apps, Postgres, Redis, Blob, Key Vault, ACR, Front Door)
@@ -26,12 +27,12 @@ Out of scope: live Terraform state (no Azure credentials), live Docker builds, F
 
 ### Services
 
-| Container | Image | Port | Role |
-|-----------|-------|------|------|
-| `brain-postgres` | `pgvector/pgvector:pg16` | 5432 | Primary DB (pgvector bundled) |
-| `brain-redis` | `redis:7-alpine` | 6379 | BullMQ queues + idempotency cache |
-| `brain-localstack` | `localstack/localstack:3` | 4566 | S3 emulation (Azure Blob equivalent in dev) |
-| `brain-agents` | Built from `services/agents/Dockerfile` | 8001 | Python agents container |
+| Container          | Image                                   | Port | Role                                        |
+| ------------------ | --------------------------------------- | ---- | ------------------------------------------- |
+| `brain-postgres`   | `pgvector/pgvector:pg16`                | 5432 | Primary DB (pgvector bundled)               |
+| `brain-redis`      | `redis:7-alpine`                        | 6379 | BullMQ queues + idempotency cache           |
+| `brain-localstack` | `localstack/localstack:3`               | 4566 | S3 emulation (Azure Blob equivalent in dev) |
+| `brain-agents`     | Built from `services/agents/Dockerfile` | 8001 | Python agents container                     |
 
 ### Assessment
 
@@ -42,6 +43,7 @@ Out of scope: live Terraform state (no Azure credentials), live Docker builds, F
 **LocalStack**: S3 only (`SERVICES: s3`), persistence enabled. Models Azure Blob Storage via LocalStack S3 compatibility. The `BlobAdapter` wraps S3-compatible client, so the abstraction holds in dev. Clean.
 
 **Agents**: Two confirmed gaps from Audit #12 are visible here:
+
 - `BRAIN_API_BASE_URL: ${BRAIN_API_BASE_URL:-http://host.docker.internal:3001}`. Default port 3001; TS API listens on 3000 (F-12-C)
 - `healthcheck: CMD ["curl", "-f", "http://localhost:8001/health"]`. `curl` absent in `python:3.12-slim` (F-12-A)
 
@@ -88,24 +90,24 @@ Clean multi-stage build with layer caching. The `--prod` install in the runtime 
 
 ### What is provisioned
 
-| Resource | Type | Notes |
-|----------|------|-------|
-| Resource group (primary) | `azurerm_resource_group` | `eastus` default |
-| Resource group (backup) | `azurerm_resource_group` (prod only) | `westus3`, cross-region |
-| Managed identity | `azurerm_user_assigned_identity` | Pulls secrets + images |
-| Key Vault | `azurerm_key_vault` | RBAC mode, purge protection (prod only) |
-| Postgres Flexible Server | `azurerm_postgresql_flexible_server` | PG 16, pgvector extension allowlisted, no public network |
-| Postgres DB | `azurerm_postgresql_flexible_server_database` | `brain`, UTF8 |
-| Postgres extensions | `azurerm_postgresql_flexible_server_configuration` | `VECTOR,PGCRYPTO,UUID-OSSP` |
-| Redis | `azurerm_redis_cache` | SSL-only, TLS 1.2+, Premium (prod) / Basic (staging) |
-| Blob storage | `azurerm_storage_account` | GRS (prod) / LRS (staging), immutable blob policy |
-| Blob containers | `azurerm_storage_container` | `raw-artifacts` (7yr immutable prod), `audit-exports` |
-| Container Registry | `azurerm_container_registry` | Premium (prod) / Standard (staging), admin disabled |
-| Log Analytics workspace | `azurerm_log_analytics_workspace` | 90d (prod) / 30d (staging) retention |
-| Container Apps environment | `azurerm_container_app_environment` | wired to Log Analytics |
-| Container Apps (×N) | `azurerm_container_app` | `for_each = var.services` |
-| Front Door profile | `azurerm_cdn_frontdoor_profile` | Premium (prod) / Standard (staging) |
-| KV secrets | `azurerm_key_vault_secret` | `database-url`, `redis-url`, `postgres-admin-password` |
+| Resource                   | Type                                               | Notes                                                    |
+| -------------------------- | -------------------------------------------------- | -------------------------------------------------------- |
+| Resource group (primary)   | `azurerm_resource_group`                           | `eastus` default                                         |
+| Resource group (backup)    | `azurerm_resource_group` (prod only)               | `westus3`, cross-region                                  |
+| Managed identity           | `azurerm_user_assigned_identity`                   | Pulls secrets + images                                   |
+| Key Vault                  | `azurerm_key_vault`                                | RBAC mode, purge protection (prod only)                  |
+| Postgres Flexible Server   | `azurerm_postgresql_flexible_server`               | PG 16, pgvector extension allowlisted, no public network |
+| Postgres DB                | `azurerm_postgresql_flexible_server_database`      | `brain`, UTF8                                            |
+| Postgres extensions        | `azurerm_postgresql_flexible_server_configuration` | `VECTOR,PGCRYPTO,UUID-OSSP`                              |
+| Redis                      | `azurerm_redis_cache`                              | SSL-only, TLS 1.2+, Premium (prod) / Basic (staging)     |
+| Blob storage               | `azurerm_storage_account`                          | GRS (prod) / LRS (staging), immutable blob policy        |
+| Blob containers            | `azurerm_storage_container`                        | `raw-artifacts` (7yr immutable prod), `audit-exports`    |
+| Container Registry         | `azurerm_container_registry`                       | Premium (prod) / Standard (staging), admin disabled      |
+| Log Analytics workspace    | `azurerm_log_analytics_workspace`                  | 90d (prod) / 30d (staging) retention                     |
+| Container Apps environment | `azurerm_container_app_environment`                | wired to Log Analytics                                   |
+| Container Apps (×N)        | `azurerm_container_app`                            | `for_each = var.services`                                |
+| Front Door profile         | `azurerm_cdn_frontdoor_profile`                    | Premium (prod) / Standard (staging)                      |
+| KV secrets                 | `azurerm_key_vault_secret`                         | `database-url`, `redis-url`, `postgres-admin-password`   |
 
 ### What is NOT provisioned
 
@@ -136,6 +138,7 @@ Azure Container Apps routes inbound traffic to `target_port`. With `target_port 
 ### Gap 2: Terraform injects only 4 of ~20 required env vars (SEVERITY: Critical)
 
 The Container App template injects:
+
 - `NODE_ENV` (from `var.environment`)
 - `SERVICE_NAME` (hardcoded pattern)
 - `DATABASE_URL` (from Key Vault secret)
@@ -143,25 +146,26 @@ The Container App template injects:
 
 Missing from Terraform (full list from `.env.example`):
 
-| Variable | Impact if missing |
-|----------|------------------|
-| `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE` | JWT auth fails. Every authenticated request rejected |
-| `OPENAI_API_KEY` | Wiki Q&A and Python agents fail |
-| `ANTHROPIC_API_KEY` | Any Claude-backed feature fails |
-| `PLAID_CLIENT_ID`, `PLAID_SECRET` | ACH rails fail at dispatch |
-| `RPC_URL`, `AUDIT_ANCHOR_ADDRESS` | On-chain anchor broadcasts fail |
-| `MCP_AGENT_REGISTRY_ADDRESS`, `POLICY_REGISTRY_ADDRESS` | On-chain scope check and policy signer fail |
-| `BRAIN_DEMO_MODE` | Demo mode toggle absent |
-| `WIKI_LLM_MODEL`, `WIKI_EMBED_MODEL` | Wiki uses defaults (gpt-4o-mini). Tolerable |
-| `PLAID_ENV` | Plaid uses wrong environment |
-| `AUDIT_ANCHOR_INTERVAL_MS` | Anchor cadence uses hardcoded default |
-| `PRIVILEGED_DATABASE_URL` | All BYPASSRLS paths use the single DATABASE_URL (not split yet) |
+| Variable                                                | Impact if missing                                               |
+| ------------------------------------------------------- | --------------------------------------------------------------- |
+| `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`         | JWT auth fails. Every authenticated request rejected            |
+| `OPENAI_API_KEY`                                        | Wiki Q&A and Python agents fail                                 |
+| `ANTHROPIC_API_KEY`                                     | Any Claude-backed feature fails                                 |
+| `PLAID_CLIENT_ID`, `PLAID_SECRET`                       | ACH rails fail at dispatch                                      |
+| `RPC_URL`, `AUDIT_ANCHOR_ADDRESS`                       | On-chain anchor broadcasts fail                                 |
+| `MCP_AGENT_REGISTRY_ADDRESS`, `POLICY_REGISTRY_ADDRESS` | On-chain scope check and policy signer fail                     |
+| `BRAIN_DEMO_MODE`                                       | Demo mode toggle absent                                         |
+| `WIKI_LLM_MODEL`, `WIKI_EMBED_MODEL`                    | Wiki uses defaults (gpt-4o-mini). Tolerable                     |
+| `PLAID_ENV`                                             | Plaid uses wrong environment                                    |
+| `AUDIT_ANCHOR_INTERVAL_MS`                              | Anchor cadence uses hardcoded default                           |
+| `PRIVILEGED_DATABASE_URL`                               | All BYPASSRLS paths use the single DATABASE_URL (not split yet) |
 
 A staging deployment with only these 4 variables will boot but all authentication will fail immediately.
 
 ### Gap 3: Terraform remote state is commented out (SEVERITY: High)
 
 `infra/versions.tf:22–28`:
+
 ```hcl
 # Remote state wired in stage-8. Using local backend during scaffolding only.
 # backend "azurerm" {
@@ -186,6 +190,7 @@ The Front Door profile is provisioned but has no origins, origin groups, routes,
 `variables.tf` default: `services = ["api", "raw", "wiki", "policy", "execution", "audit", "agents"]`
 
 The deploy pipeline (`main.yml:197`) only updates `api`:
+
 ```bash
 for svc in api; do
   az containerapp update --name "brain-staging-$svc" ...
@@ -199,6 +204,7 @@ Seven Container Apps are provisioned; only one is updated on each deploy. The ot
 ### Gap 7: `db-roles.sql` has no automation path (SEVERITY: Medium)
 
 `infra/db-roles.sql` is a critical security artifact (defines `brain_app` / `brain_privileged` roles, applies FORCE RLS). It must be run once as superuser. There is no:
+
 - Terraform `null_resource` or `postgresql_*` provider resource to apply it
 - CI pipeline step
 - `tools/migrate` integration (the file explicitly notes it is NOT a migration)
@@ -242,18 +248,18 @@ push to main:
 
 ## 7. Functional Status
 
-| Component | Status |
-|-----------|--------|
-| docker-compose (postgres, redis, localstack) | Working. Used in development |
-| docker-compose agents | Broken (curl healthcheck, port mismatch). From Audit #12 |
-| Root Dockerfile | Structurally correct; NODE_ENV/PORT alignment with Terraform needs fix |
-| Terraform resource definitions | Structurally correct for declared resources |
-| Terraform env var injection | Critical gap. 4 of ~20 required vars |
-| Container App target port | **Broken**. 8080 vs API 3000 |
-| Front Door routing | **Non-functional**. Frontdoor.tf missing |
-| Private networking | **Incomplete**. No private endpoint for Postgres |
-| Remote state | **Local only**. Commented out |
-| db-roles.sql automation | **Manual only**. No CI or Terraform path |
+| Component                                    | Status                                                                 |
+| -------------------------------------------- | ---------------------------------------------------------------------- |
+| docker-compose (postgres, redis, localstack) | Working. Used in development                                           |
+| docker-compose agents                        | Broken (curl healthcheck, port mismatch). From Audit #12               |
+| Root Dockerfile                              | Structurally correct; NODE_ENV/PORT alignment with Terraform needs fix |
+| Terraform resource definitions               | Structurally correct for declared resources                            |
+| Terraform env var injection                  | Critical gap. 4 of ~20 required vars                                   |
+| Container App target port                    | **Broken**. 8080 vs API 3000                                           |
+| Front Door routing                           | **Non-functional**. Frontdoor.tf missing                               |
+| Private networking                           | **Incomplete**. No private endpoint for Postgres                       |
+| Remote state                                 | **Local only**. Commented out                                          |
+| db-roles.sql automation                      | **Manual only**. No CI or Terraform path                               |
 
 ---
 
@@ -263,30 +269,30 @@ push to main:
 
 The Terraform covers the right resources for a cloud-native Azure deployment. The architectural decisions (managed identity, Key Vault secrets, immutable blob, Redis TLS, private Postgres) are correct. The implementation gaps are numerous and collectively block a working staging deployment.
 
-| Dimension | Assessment |
-|-----------|-----------|
-| Resource coverage | Good. All required Azure resources modeled |
-| Security posture | Good. Managed identity, Key Vault, no admin, TLS enforced |
+| Dimension         | Assessment                                                |
+| ----------------- | --------------------------------------------------------- |
+| Resource coverage | Good. All required Azure resources modeled                |
+| Security posture  | Good. Managed identity, Key Vault, no admin, TLS enforced |
 | Runtime alignment | **Critical gaps**. Port 8080 vs 3000, 16 missing env vars |
-| Networking | Incomplete. No private endpoints |
-| Remote state | Not configured. Local only |
-| Front Door | Non-functional. No routes |
-| CI/CD | Deploy partial (api only) |
+| Networking        | Incomplete. No private endpoints                          |
+| Remote state      | Not configured. Local only                                |
+| Front Door        | Non-functional. No routes                                 |
+| CI/CD             | Deploy partial (api only)                                 |
 
 ---
 
 ## 9. Confidence
 
-| Area | Confidence | Reason |
-|------|-----------|--------|
-| Terraform resource list | High | Full `main.tf` read |
-| Missing env vars | High | Cross-referenced `.env.example` vs Terraform env blocks |
-| Port mismatch | High | `target_port = 8080` vs `EXPOSE 3000` in Dockerfile |
-| frontdoor.tf missing | High | `ls infra/`. File not present |
-| Private endpoint missing | High | No `azurerm_private_endpoint` resource in main.tf |
-| Remote state status | High | Commented-out backend block confirmed |
-| CI build matrix | Medium | Inferred from comment; full matrix YAML not fully quoted |
-| Live Azure state | None | No credentials available |
+| Area                     | Confidence | Reason                                                   |
+| ------------------------ | ---------- | -------------------------------------------------------- |
+| Terraform resource list  | High       | Full `main.tf` read                                      |
+| Missing env vars         | High       | Cross-referenced `.env.example` vs Terraform env blocks  |
+| Port mismatch            | High       | `target_port = 8080` vs `EXPOSE 3000` in Dockerfile      |
+| frontdoor.tf missing     | High       | `ls infra/`. File not present                            |
+| Private endpoint missing | High       | No `azurerm_private_endpoint` resource in main.tf        |
+| Remote state status      | High       | Commented-out backend block confirmed                    |
+| CI build matrix          | Medium     | Inferred from comment; full matrix YAML not fully quoted |
+| Live Azure state         | None       | No credentials available                                 |
 
 ---
 
@@ -332,13 +338,13 @@ The Terraform covers the right resources for a cloud-native Azure deployment. Th
 
 ## 11. Recommended Next Steps
 
-| Priority | Action |
-|----------|--------|
-| P0 | Fix `target_port = 3000` in `main.tf` |
-| P0 | Add all required env vars to Terraform Container App template (auth, API keys, contract addresses) |
-| P0 | Add Postgres private endpoint + VNET injection for Container App environment |
-| P1 | Create `infra/frontdoor.tf` with origin, route, and WAF policy |
-| P1 | Uncomment remote backend, provision tfstate storage, migrate local state |
-| P1 | Automate `db-roles.sql` application in the deploy pipeline |
-| P2 | Narrow default `var.services` to `["api"]` (matching `poc.tfvars`), add separate `staging.tfvars` |
-| P2 | Add `terraform plan` to `pr.yml` for infrastructure change visibility |
+| Priority | Action                                                                                             |
+| -------- | -------------------------------------------------------------------------------------------------- |
+| P0       | Fix `target_port = 3000` in `main.tf`                                                              |
+| P0       | Add all required env vars to Terraform Container App template (auth, API keys, contract addresses) |
+| P0       | Add Postgres private endpoint + VNET injection for Container App environment                       |
+| P1       | Create `infra/frontdoor.tf` with origin, route, and WAF policy                                     |
+| P1       | Uncomment remote backend, provision tfstate storage, migrate local state                           |
+| P1       | Automate `db-roles.sql` application in the deploy pipeline                                         |
+| P2       | Narrow default `var.services` to `["api"]` (matching `poc.tfvars`), add separate `staging.tfvars`  |
+| P2       | Add `terraform plan` to `pr.yml` for infrastructure change visibility                              |

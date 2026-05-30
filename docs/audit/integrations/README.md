@@ -3,6 +3,7 @@
 **Scope:** Third-party service integrations. Plaid, Anthropic, OpenAI, S3/Azure Blob, viem/Base RPC. Determines which integrations are real, which are stubbed, and which have live-vs-test-mode gaps.
 
 **Reports planned:**
+
 - `external-integrations.md`. For each integration:
   - **Plaid** (`plaid@^42` in api, `plaid@^27` in raw. 15-major-version skew): `AchPlaidRail` implementation status, encrypted credential store (AES-256-GCM, new `shared/src/crypto/aes-gcm.ts`), Plaid sandbox round-trip status (CLAUDE.md: "integration verification remaining follow-up").
   - **Anthropic / OpenAI** (wiki LLM Q&A, Python agents): real call paths vs mock-only.

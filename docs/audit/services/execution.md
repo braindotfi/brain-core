@@ -2,6 +2,7 @@
 
 **Audited:** 2026-05-26
 **Files examined:**
+
 - `services/execution/src/payment-intents/PaymentIntentService.ts`
 - `services/execution/src/payment-intents/state-machine.ts`
 - `services/execution/src/payment-intents/PaymentIntentService.execute.test.ts`
@@ -22,6 +23,7 @@
 - `services/api/src/main.ts` (lines 860–972, 1283–1309)
 
 **Commands run:**
+
 - `pnpm --filter @brain/execution run typecheck`
 - `pnpm --filter @brain/execution run test`
 - `grep -rn "runSaga|SagaStep" services/ --include="*.ts" | grep -v test | grep -v sagas.ts`
@@ -34,6 +36,7 @@
 ## 1. Scope
 
 This report covers:
+
 - `PaymentIntentService`: full lifecycle from create through the §6 gate to the outbox hand-off, plus callbacks from the outbox worker (`completeExecution`, `failExecution`).
 - `OutboxService` + `worker.ts`: the durable transactional-outbox pattern (H-04), claim/dispatch/settle/reclaim cycle.
 - `ApprovalService`: quorum logic, P0.4 hardening (revoked signer, cross-tenant, duplicate, policy-version staleness).
@@ -80,27 +83,34 @@ Verified transitions: `approved → dispatching` (H-04 outbox path, no direct `a
 ### Outbox (H-04)
 
 `OutboxService` is a thin SQL layer with no owned pool. Accepts explicit query clients. Key guarantees:
+
 - `enqueue()`: `ON CONFLICT (tenant_id, idempotency_key) DO NOTHING RETURNING id`. Idempotent on re-retry.
 - `claimNext()`: `FOR UPDATE SKIP LOCKED`. Concurrent workers claim disjoint row sets without blocking.
 - `reclaimStale()`: returns `dispatching | dispatched` rows whose lock is older than `staleSeconds` (default 300s) to `pending`. Handles both "died before receipt persist" and "died before settle" crash cases.
 - `markFailed()`: bumps `attempt_count`; at `MAX_DISPATCH_ATTEMPTS` (3) → `reconciling`. Ambiguous failures (receipt validation fail, settle DB error) always go straight to `reconciling`.
 
 Worker wiring at `main.ts:961`:
+
 ```ts
-const outboxWorker = startOutboxWorker({
-  outbox: new OutboxService(),
-  rails,
-  executor: paymentIntentService,   // the correct service instance
-  audit,
-  withPrivileged,
-  workerId: `outbox-worker-${process.pid}`,
-}, { intervalMs: 1_000 });
+const outboxWorker = startOutboxWorker(
+  {
+    outbox: new OutboxService(),
+    rails,
+    executor: paymentIntentService, // the correct service instance
+    audit,
+    withPrivileged,
+    workerId: `outbox-worker-${process.pid}`,
+  },
+  { intervalMs: 1_000 },
+);
 ```
+
 `withPrivileged` uses `DATABASE_PRIVILEGED_URL` if set, falling back to `DATABASE_URL` with a `console.warn`. The `privilegedPool` is never closed in `shutdown()` (R-15, confirmed previously in `runtime/boot.md`).
 
 ### ApprovalService (P0.4)
 
 All four guards in `sign()`:
+
 1. Revoked signer: `isApproverActive(ctx, ctx.actor) → false` → `approval_signer_revoked`.
 2. Cross-tenant: `resolveSubjectOwnerTenant` ≠ `ctx.tenantId` → `approval_cross_tenant`.
 3. Duplicate signer: `findApprovalForSigner` non-null → `approval_duplicate_signer` (hard reject, not silent no-op).
@@ -169,6 +179,7 @@ $ grep -rn "applyPlaidTransferEvent|TRANSFER_EVENTS_UPDATE" services/ --include=
 The core execute path. §6 gate → durable outbox hand-off → worker drain → settle. Is correctly implemented and well-tested. The ApprovalService quorum logic with P0.4 hardening is correct. The state machine is sound. Rails are real implementations that fail closed in production without credentials.
 
 Two production gaps prevent full production-readiness:
+
 1. ACH payments dispatched via the real `AchPlaidRail` cannot auto-settle (webhook handler missing).
 2. Saga compensation exists as a library but is never called in production code.
 
@@ -201,6 +212,7 @@ One R-20 wiring mismatch: the HTTP-path `piService` at `main.ts:1294` omits `res
 ## 8. Evidence
 
 **Atomic hand-off (`PaymentIntentService.ts:602–617`):**
+
 ```ts
 const handoff = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
   assertPaymentIntentTransition("approved", "dispatching");
@@ -213,9 +225,11 @@ const handoff = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) =>
   return { ok: true as const, outboxId: enq.id };
 });
 ```
+
 One transaction: the conditional UPDATE and the outbox INSERT are atomic. A crash between gate and hand-off leaves no row in the outbox.
 
 **Stale reclaim (`OutboxService.ts:236–246`):**
+
 ```ts
 UPDATE execution_outbox
    SET status = 'pending', locked_at = NULL, locked_by = NULL
@@ -223,30 +237,36 @@ UPDATE execution_outbox
    AND locked_at IS NOT NULL
    AND locked_at < now() - ($1 * interval '1 second')
 ```
+
 Handles both "receipt not persisted" and "settle not completed" crash cases.
 
 **ApprovalService duplicate signer reject (`ApprovalService.ts:100–104`):**
+
 ```ts
 const existing = await findApprovalForSigner(c, subject.type, subject.id, ctx.actor);
 if (existing !== null) {
   throw brainError("approval_duplicate_signer", "principal has already signed this subject", ...);
 }
 ```
+
 Changed from silent no-op in pre-P0.4 to hard reject.
 
 **`runSaga` call-site evidence:**
+
 ```
 grep -rn "runSaga" services/ --include="*.ts" | grep -v test | grep -v sagas.ts
 → only index.ts:98 (export), no production invocation
 ```
 
 **`applyPlaidTransferEvent` call-site evidence:**
+
 ```
 grep -rn "applyPlaidTransferEvent" services/ --include="*.ts" | grep -v test
 → only index.ts:47 (export), no webhook handler
 ```
 
 **Rail fail-closed guard (`stubs.ts:24–30`):**
+
 ```ts
 function assertStubRailsAllowed(): void {
   if (process.env.NODE_ENV === "production") {

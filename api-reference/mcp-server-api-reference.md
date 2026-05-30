@@ -83,7 +83,7 @@ Brain-specific JSON-RPC error codes (`-32001..-32005`) and the standard JSON-RPC
 | `-32001` | Auth token missing, invalid, or expired (`auth_token_missing/invalid/expired`)                 |
 | `-32002` | Scope insufficient (also tenant mismatch) (`auth_scope_insufficient` / `auth_tenant_mismatch`) |
 | `-32003` | Agent not registered or inactive (`agent_not_registered`)                                      |
-| `-32004` | Pre-execution gate failed. Covers every `gate_*` sub-code (`payment_intent_gate_failed`)      |
+| `-32004` | Pre-execution gate failed. Covers every `gate_*` sub-code (`payment_intent_gate_failed`)       |
 | `-32005` | Agent `scope_hash` mismatch against on-chain registration (`agent_scope_hash_mismatch`)        |
 | `-32600` | Invalid request (standard JSON-RPC)                                                            |
 | `-32601` | Method not found                                                                               |

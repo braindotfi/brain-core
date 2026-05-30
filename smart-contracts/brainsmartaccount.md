@@ -134,10 +134,10 @@ Even if the off-chain backend is compromised, on-chain enforcement rejects any c
 
 ## Kill-Switch: Pause vs Revoke
 
-| Function                    | Effect                                                                                                                                                                                                            |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Function                    | Effect                                                                                                                                                                                                           |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pauseSessionKey(holder)`   | Immediately disables execution by this session key **without** deleting its record, window spend, limits, or metadata. So `unpauseSessionKey(holder)` resumes with no fresh attestation. Idempotent, owner-only. |
-| `unpauseSessionKey(holder)` | Re-enables execution under the key's existing scope and accumulated window spend.                                                                                                                                 |
+| `unpauseSessionKey(holder)` | Re-enables execution under the key's existing scope and accumulated window spend.                                                                                                                                |
 | `revokeSessionKey(holder)`  | **Permanent** removal. Deletes the key record entirely (and clears any pause flag).                                                                                                                              |
 
 `executeViaSessionKey` reverts with `KeyPaused` while a key is paused. This backs the off-chain `/v1/agents/{id}/halt` and `/v1/payment-intents/{id}/pause` flows.
@@ -150,12 +150,12 @@ A one-time child key is granted per approved PaymentIntent, bounded to the **exa
 
 `executeViaSessionKey` carries three defenses closing pre-audit weaknesses:
 
-| Defense                   | Mechanism                                                                                                                                                                             |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Defense                   | Mechanism                                                                                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Non-empty scope**       | `grantSessionKey` reverts (`TargetsRequired` / `SelectorsRequired`) on an empty target or selector allowlist. An empty list no longer means "any"                                    |
-| **Policy bound at grant** | A zero `policyVersion` is rejected at grant (`PolicyVersionMismatch`), so a stored key can never have a missing policy binding                                                        |
+| **Policy bound at grant** | A zero `policyVersion` is rejected at grant (`PolicyVersionMismatch`), so a stored key can never have a missing policy binding                                                       |
 | **Replay nonce**          | `executeViaSessionKey(nonceSupplied, target, value, data)` reverts `BadNonce(expected, supplied)` unless `nonceSupplied == nonce(holder)`, then increments. Every call is single-use |
-| **Re-entrancy guard**     | A per-holder `_locked` flag is set before the external call and cleared after; a target that calls back in reverts `ReentrantCall`                                                    |
+| **Re-entrancy guard**     | A per-holder `_locked` flag is set before the external call and cleared after; a target that calls back in reverts `ReentrantCall`                                                   |
 
 The off-chain rail reads the current `nonce(holder)` and threads it into the call (see the on-chain Base rail). Caps and allowlists are still enforced on every call as before.
 

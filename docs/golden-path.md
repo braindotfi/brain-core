@@ -76,7 +76,7 @@ compliance-/investor-facing screen (see `services/api/src/proof/view.ts`).
 | `seed failed`                        | See `/tmp/gp_seed.log`; ensure migrations ran (`migrate up`). |
 | `no normalized invoice`              | The normalize worker isn't running; start it or re-run seed.  |
 | `propose failed`                     | Confirm `BRAIN_DEMO_MODE=true` and the API is on `:3000`.     |
-| `anchor` shows `warn`                | Expected. Anchoring is async. Re-fetch the proof shortly.    |
+| `anchor` shows `warn`                | Expected. Anchoring is async. Re-fetch the proof shortly.     |
 | endpoint shape mismatch (warn steps) | Some calls are best-effort; align paths on first live run.    |
 
 > **Note (CI parity):** `docker-compose.smoke.yml` runs this exact script against

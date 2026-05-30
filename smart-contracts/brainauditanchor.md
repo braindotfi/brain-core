@@ -2,12 +2,12 @@
 
 `BrainAuditAnchor` stores Merkle roots of per-tenant audit batches. Anchors are immutable after submission.
 
-| Property          | Value                                                                 |
-| ----------------- | --------------------------------------------------------------------- |
-| **Network**       | Base L2                                                               |
-| **Solidity**      | 0.8.x                                                                 |
+| Property          | Value                                                                |
+| ----------------- | -------------------------------------------------------------------- |
+| **Network**       | Base L2                                                              |
+| **Solidity**      | 0.8.x                                                                |
 | **Pattern**       | Immutable. No upgrade path in MVP; changes ship as audited redeploys |
-| **Anchorer keys** | HSM-protected, rotated on a fixed schedule                            |
+| **Anchorer keys** | HSM-protected, rotated on a fixed schedule                           |
 
 ### Interface
 

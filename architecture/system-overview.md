@@ -35,17 +35,17 @@ Brain is a layered protocol where information flows up and control flows down. E
 
 ### What Lives Where
 
-| Component                     | Location                                 | Notes                                                                                           |
-| ----------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| **Raw Artifacts**             | Azure Blob                               | Content-addressed, encrypted, tenant-scoped DEKs                                                |
-| **Ledger Records**            | Postgres                                 | Immutable, append-only with supersedence                                                        |
-| **Wiki Graph and Embeddings** | Postgres + pgvector                      | Updated incrementally                                                                           |
-| **Policy Compiled Form**      | Postgres                                 | Hash-anchored on-chain                                                                          |
-| **Audit Hash Chain**          | Postgres                                 | Merkle roots batched on-chain                                                                   |
+| Component                     | Location                                 | Notes                                                                                          |
+| ----------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Raw Artifacts**             | Azure Blob                               | Content-addressed, encrypted, tenant-scoped DEKs                                               |
+| **Ledger Records**            | Postgres                                 | Immutable, append-only with supersedence                                                       |
+| **Wiki Graph and Embeddings** | Postgres + pgvector                      | Updated incrementally                                                                          |
+| **Policy Compiled Form**      | Postgres                                 | Hash-anchored on-chain                                                                         |
+| **Audit Hash Chain**          | Postgres                                 | Merkle roots batched on-chain                                                                  |
 | **Agent Identity**            | `BrainMCPAgentRegistry` (Base L2)        | Stores `agentId`/`tenantId`/`scopeHash`/`behaviorHash` (ERC-8004 reputation planned. RFC 0001) |
-| **Smart Account State**       | `BrainSmartAccount` per tenant (Base L2) | Session-key account (scope, spend caps, bound `policyVersion`)                                  |
-| **Policy Hashes**             | `BrainPolicyRegistry` (Base L2)          | EIP-712 signed by tenant                                                                        |
-| **Audit Anchors**             | `BrainAuditAnchor` (Base L2)             | EIP-712 signed by Brain anchorer                                                                |
+| **Smart Account State**       | `BrainSmartAccount` per tenant (Base L2) | Session-key account (scope, spend caps, bound `policyVersion`)                                 |
+| **Policy Hashes**             | `BrainPolicyRegistry` (Base L2)          | EIP-712 signed by tenant                                                                       |
+| **Audit Anchors**             | `BrainAuditAnchor` (Base L2)             | EIP-712 signed by Brain anchorer                                                               |
 
 ### On-Chain Surface Is Intentionally Small
 

@@ -45,7 +45,7 @@ piece fails closed until explicitly promoted; no money can move.
   remains deferred wiring.
 - **Phase 5 (ERC-8004 reputation, §7.7 / D-6):** `BrainReputationRegistry`
   reference contract (**UNAUDITED / testnet-only**, **non-custodial**, hash-only)
- . Per-agent reputation pointer / Merkle root with a monotonic epoch,
+  . Per-agent reputation pointer / Merkle root with a monotonic epoch,
   attestor-written, read by Policy as a threshold input only (never a money gate,
   never a §6 precondition) + Foundry unit/fuzz/invariant tests. Shipped. The live
   on-chain `ReputationResolver` reader is deferred wiring.
@@ -100,12 +100,12 @@ off-chain in Postgres under RLS (and per-tenant blob prefixes).
 | -------------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------- |
 | Balances, transactions, invoices, **counterparty names**, line items | Postgres, RLS per-tenant   | ❌ never                                                        |
 | Wiki memory / narrative, reasoning traces, evidence                  | Postgres, RLS              | ❌ never                                                        |
-| **Audit event payloads** (the who/what/why)                          | Postgres, RLS              | ❌. Only the **Merkle root** is anchored (`BrainAuditAnchor`)  |
-| Policy specifics, spend envelopes                                    | Postgres + signed template | ❌. Only a **policy-version hash** (`BrainPolicyRegistry`)     |
-| Agent identity / scope / behavior                                    | Registry                   | ❌. Only `bytes32 agentId/scopeHash/behaviorHash` + address    |
-| **Escrow job terms**                                                 | Postgres                   | ❌. Only a **hash/commitment** on-chain                        |
-| **Reputation history** (ERC-8004)                                    | Postgres                   | ❌. Only a **pointer / Merkle root** on-chain                  |
-| x402/USDC **settlement: amount + payee address**                     |.                          | ✅ **intrinsic to any on-chain payment** (pseudonymous, no PII) |
+| **Audit event payloads** (the who/what/why)                          | Postgres, RLS              | ❌. Only the **Merkle root** is anchored (`BrainAuditAnchor`)   |
+| Policy specifics, spend envelopes                                    | Postgres + signed template | ❌. Only a **policy-version hash** (`BrainPolicyRegistry`)      |
+| Agent identity / scope / behavior                                    | Registry                   | ❌. Only `bytes32 agentId/scopeHash/behaviorHash` + address     |
+| **Escrow job terms**                                                 | Postgres                   | ❌. Only a **hash/commitment** on-chain                         |
+| **Reputation history** (ERC-8004)                                    | Postgres                   | ❌. Only a **pointer / Merkle root** on-chain                   |
+| x402/USDC **settlement: amount + payee address**                     | .                          | ✅ **intrinsic to any on-chain payment** (pseudonymous, no PII) |
 
 ### 3.3 Why this matters most (compliance)
 
@@ -173,7 +173,7 @@ not greenfield:
 | **Policy**       | **Micropayment spend envelopes** + per-agent rate limits in the signed policy template; **on-chain-settlement-allowed** flag per payment class; attestation/reputation as policy _inputs_ (informing thresholds, never replacing the gate). |
 | **Agent**        | x402/commerce agents promoted through the **same** shadow→readiness→live model; **ERC-8004**-style reputation as an additive `BrainMCPAgentRegistry` extension (pointer/root only).                                                         |
 | **Execution**    | **New `x402` rail + action type** (§7.3); **Coinbase Smart Wallet / 4337 + CDP Paymaster** interop for gasless agent UX (§7.5); **escrow settlement** contract + rail (job terms hashed).                                                   |
-| **Audit**        | The headline M2M feature. Every machine payment provable on Base **via Merkle inclusion against an anchored root** (data stays off-chain). Expose via the proof viewer + a settlement-proof resource.                                      |
+| **Audit**        | The headline M2M feature. Every machine payment provable on Base **via Merkle inclusion against an anchored root** (data stays off-chain). Expose via the proof viewer + a settlement-proof resource.                                       |
 
 ## 6. New §6 gate checks (determinism preserved)
 

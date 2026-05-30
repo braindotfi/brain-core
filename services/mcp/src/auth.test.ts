@@ -120,9 +120,7 @@ describe("McpAuthVerifier", () => {
           query: vi.fn(async (_sql: string, params: unknown[] = []) => {
             const agentId = params[0] as string;
             const row =
-              agentId === AGENT_A || agentId === AGENT_B
-                ? activeAgent({ id: agentId })
-                : null;
+              agentId === AGENT_A || agentId === AGENT_B ? activeAgent({ id: agentId }) : null;
             return { rows: row !== null ? [row] : [] };
           }),
         };

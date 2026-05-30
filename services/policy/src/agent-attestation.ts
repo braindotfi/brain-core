@@ -13,7 +13,11 @@
 
 import { createPublicClient, http, parseAbi } from "viem";
 import { baseSepolia, base } from "viem/chains";
-import type { AgentAttestationInput, AgentAttestationResult, ServiceCallContext } from "@brain/shared";
+import type {
+  AgentAttestationInput,
+  AgentAttestationResult,
+  ServiceCallContext,
+} from "@brain/shared";
 
 const REGISTRY_ABI = parseAbi([
   "function getAgent(bytes32 agentId) external view returns (bytes32 agentId, address agentAddress, bytes32 tenantId, bytes32 scopeHash, bytes32 behaviorHash, uint256 registeredAt, uint256 revokedAt)",

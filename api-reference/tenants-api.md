@@ -18,12 +18,12 @@ row counts so the erasure is itself verifiable.
 
 #### Authorization Posture
 
-| Caller | Result |
-| --- | --- |
-| User principal where `tenantId === :id` | Permitted |
-| User principal where `tenantId !== :id` | `auth_tenant_mismatch` (HTTP 403) |
-| Agent principal | `auth_scope_insufficient` (HTTP 403) |
-| Unauthenticated | `auth_token_missing` (HTTP 401) |
+| Caller                                  | Result                               |
+| --------------------------------------- | ------------------------------------ |
+| User principal where `tenantId === :id` | Permitted                            |
+| User principal where `tenantId !== :id` | `auth_tenant_mismatch` (HTTP 403)    |
+| Agent principal                         | `auth_scope_insufficient` (HTTP 403) |
+| Unauthenticated                         | `auth_token_missing` (HTTP 401)      |
 
 Self-tenant only by design: the data subject (or their representative
 user) is the authorized agent of the erasure request. No machine
@@ -57,8 +57,8 @@ chain.
 
 #### Error Codes
 
-| Code | HTTP | Meaning |
-| --- | --- | --- |
-| `auth_token_missing` | 401 | No JWT presented |
-| `auth_scope_insufficient` | 403 | Principal type is not `user` |
-| `auth_tenant_mismatch` | 403 | JWT tenant differs from target tenant |
+| Code                      | HTTP | Meaning                               |
+| ------------------------- | ---- | ------------------------------------- |
+| `auth_token_missing`      | 401  | No JWT presented                      |
+| `auth_scope_insufficient` | 403  | Principal type is not `user`          |
+| `auth_tenant_mismatch`    | 403  | JWT tenant differs from target tenant |

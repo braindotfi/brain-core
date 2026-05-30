@@ -347,7 +347,7 @@ occupy so the gate trace shape is stable. Like the other additions, each records
 | ------------- | -------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `2.7`         | `tenant_kyb_verified`      | The tenant's KYB status is `verified` (business onboarding complete).                     | Planned. Provider mocked.                                              |
 | `4.5`         | `source_account_kyc`       | The source account's owner KYC status is cleared.                                         | Planned. Provider mocked.                                              |
-| `5`           | `counterparty_allowed`     | Counterparty not sanctioned. **already live** via Chainalysis at check 5.                | **Implemented** (documented here explicitly).                          |
+| `5`           | `counterparty_allowed`     | Counterparty not sanctioned. **already live** via Chainalysis at check 5.                 | **Implemented** (documented here explicitly).                          |
 | `4.6`         | `rail_allowlisted`         | The action's rail is on the tenant's allowlist (e.g. ACH-only tenants can't go on-chain). | Planned. Tenant rail-allowlist config TBD.                             |
 | `11.6`        | `velocity_within_envelope` | Cumulative spend/count to this counterparty within a rolling window is under the cap.     | Planned. Builds on the existing spend/tx-count window reads (§Policy). |
 

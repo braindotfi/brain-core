@@ -9,13 +9,13 @@
 
 ## Executive Summary
 
-| Question                                         | Answer                                                                                                                                                                                                                            |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Can any agent move money right now?              | **No.** All execution paths fail before money leaves the system. Evidence below.                                                                                                                                                  |
-| Can the payment agent directly execute?          | **No.** Execute requires a separate HTTP call + `payment_intent:execute` scope. The agent only proposes.                                                                                                                          |
+| Question                                         | Answer                                                                                                                                                                                                                           |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Can any agent move money right now?              | **No.** All execution paths fail before money leaves the system. Evidence below.                                                                                                                                                 |
+| Can the payment agent directly execute?          | **No.** Execute requires a separate HTTP call + `payment_intent:execute` scope. The agent only proposes.                                                                                                                         |
 | Does the on-chain rail work?                     | **No. Not operational.** `BRAIN_SESSION_KEY` is absent from the local `.env`; no `X402Client` implementation exists for x402.                                                                                                    |
 | Does the Plaid transfer rail work?               | **No. Not operational.** Rail IS registered (from `.env` Plaid creds), but dispatch fails: no source credential (Plaid access_token) mapped to any demo account, and `Products.Transfer` was never requested at Plaid link time. |
-| Does the system fail closed without credentials? | **Yes, with caveats.** Stub rails throw in `NODE_ENV=production`. But the `BRAIN_DEMO_MODE=true` flag in `.env` prevents the server from starting in production at all.                                                           |
+| Does the system fail closed without credentials? | **Yes, with caveats.** Stub rails throw in `NODE_ENV=production`. But the `BRAIN_DEMO_MODE=true` flag in `.env` prevents the server from starting in production at all.                                                          |
 
 **The system is a proposal-only system in its current deployment state.** No real money can move.
 
@@ -35,16 +35,16 @@
 | Payment proposal (MCP)                       | ✓           | ✓ (auth-gated)      | `payment_intent.propose` tool, `payment-intent.ts:93`                                                  |
 | Payment proposal (BullMQ worker)             | ✓           | ✓ (no shadow check) | Treasury bypassed gate; `pi_01KSKWABH6RPA6YECTMM7PXTRG` created                                        |
 | Shadow gate (LIVE_AGENTS) on `/agents/run`   | ✓           | ✓                   | `agent-run-service.ts:223-262` enforced                                                                |
-| Shadow gate on `/agents/events` / BullMQ     | ✗           |.                   | `worker.ts:125` calls `proposeAction` without `isShadowed`                                             |
+| Shadow gate on `/agents/events` / BullMQ     | ✗           | .                   | `worker.ts:125` calls `proposeAction` without `isShadowed`                                             |
 | Execute requires approval                    | ✓           | ✓                   | Probe: status check at `PaymentIntentService.ts:509-513`                                               |
-| Execute via MCP                              | ✗           |.                   | Locked by `registry.no-execute.test.ts:22`                                                             |
+| Execute via MCP                              | ✗           | .                   | Locked by `registry.no-execute.test.ts:22`                                                             |
 | ACH Plaid rail registered                    | ✓           | ✓ (registered)      | Boot log: "ACH Plaid rail registered" from `.env` creds                                                |
 | ACH Plaid rail dispatches money              | ✓ (code)    | ✗                   | Probe: `last_error = "ACH action requires a string access_token"`                                      |
 | On-chain rail (`OnchainBaseRail`) registered | ✓           | ✗                   | `BRAIN_SESSION_KEY` absent from `.env` → rail not registered                                           |
 | On-chain rail dispatches (`writeContract`)   | ✓ (code)    | ✗                   | `onchainExecutor.ts:47` exists but unreachable without key                                             |
 | x402 rail (`X402BaseRail`) registered        | ✓ (code)    | ✗                   | No `new X402BaseRail` anywhere in boot; `X402Client` interface has no concrete impl                    |
 | x402_settle action type accepted             | ✗           | ✗                   | DB CHECK CONSTRAINT blocks it; HTTP + MCP ACTION_TYPES also reject it                                  |
-| Stub rails in production                     | ✗           |.                   | `assertStubRailsAllowed()` at `stubs.ts:24-30` throws                                                  |
+| Stub rails in production                     | ✗           | .                   | `assertStubRailsAllowed()` at `stubs.ts:24-30` throws                                                  |
 | Policy evaluation before execute             | ✓           | ✓                   | Probe: treasury PI `rejected` by policy before it could reach execute                                  |
 | §6 gate blocks unqualified execute           | ✓           | ✓                   | `PaymentIntentService.execute:519`, 13 checks + 4 hardening additions                                  |
 | Plaid `Products.Transfer` configured         | ✗           | ✗                   | Only `Products.Transactions` in `tools/plaid-sandbox/src/index.ts:81`; no `Products.Transfer` anywhere |
@@ -340,18 +340,18 @@ Result: pi_01KSKWABH6RPA6YECTMM7PXTRG
 
 ### Code vs Operational Reality Table
 
-| Area                                | Exists In Code | Operational In Runtime                              |
-| ----------------------------------- | -------------- | --------------------------------------------------- |
-| Payment proposal                    | ✓              | ✓                                                   |
+| Area                                | Exists In Code | Operational In Runtime                             |
+| ----------------------------------- | -------------- | -------------------------------------------------- |
+| Payment proposal                    | ✓              | ✓                                                  |
 | Payment execution                   | ✓              | ✗. Fails at rail dispatch                          |
 | On-chain transfer (OnchainBaseRail) | ✓              | ✗. Key absent from `.env`                          |
 | Plaid ACH transfer                  | ✓              | ✗. No source creds, wrong Plaid products           |
 | x402 settlement                     | ✓ (shape only) | ✗. No client, DB constraint blocks intent creation |
-| Approval gates                      | ✓              | ✓                                                   |
-| Policy evaluation                   | ✓              | ✓                                                   |
-| §6 pre-execution gate               | ✓              | ✓                                                   |
-| Shadow gate on `/agents/run`        | ✓              | ✓                                                   |
-| Shadow gate on `/agents/events`     | ✗              |.                                                   |
+| Approval gates                      | ✓              | ✓                                                  |
+| Policy evaluation                   | ✓              | ✓                                                  |
+| §6 pre-execution gate               | ✓              | ✓                                                  |
+| Shadow gate on `/agents/run`        | ✓              | ✓                                                  |
+| Shadow gate on `/agents/events`     | ✗              | .                                                  |
 | ACH settlement (webhook)            | ✓              | ✗. Never reached                                   |
 | On-chain Key Vault signing          | ✗              | ✗. Documented but unimplemented                    |
 
@@ -361,20 +361,20 @@ Result: pi_01KSKWABH6RPA6YECTMM7PXTRG
 
 | Finding                          | File                                                             | Lines   | Runtime Evidence                   |
 | -------------------------------- | ---------------------------------------------------------------- | ------- | ---------------------------------- |
-| LIVE_AGENTS definition           | `services/agent-router/src/promotion-config.ts`                  | 22–26   |.                                  |
-| Shadow gate enforcement          | `services/agent-router/src/agent-run-service.ts`                 | 223–262 |.                                  |
+| LIVE_AGENTS definition           | `services/agent-router/src/promotion-config.ts`                  | 22–26   | .                                  |
+| Shadow gate enforcement          | `services/agent-router/src/agent-run-service.ts`                 | 223–262 | .                                  |
 | BullMQ worker no shadow check    | `services/agent-router/src/worker.ts`                            | 61–133  | Treasury PI created                |
-| execute() approval gate          | `services/execution/src/payment-intents/PaymentIntentService.ts` | 507–514 |.                                  |
-| MCP no-execute lock              | `services/mcp/src/tools/registry.no-execute.test.ts`             | 22      |.                                  |
+| execute() approval gate          | `services/execution/src/payment-intents/PaymentIntentService.ts` | 507–514 | .                                  |
+| MCP no-execute lock              | `services/mcp/src/tools/registry.no-execute.test.ts`             | 22      | .                                  |
 | Rail boot registration           | `services/api/src/main.ts`                                       | 888–913 | Boot log shows Plaid registered    |
-| Stub rail production fence       | `services/execution/src/rails/stubs.ts`                          | 24–30   |.                                  |
+| Stub rail production fence       | `services/execution/src/rails/stubs.ts`                          | 24–30   | .                                  |
 | .env auto-loader                 | `services/api/src/main.ts`                                       | 188–200 | Plaid creds loaded from `.env`     |
 | DEMO_MODE prod fence             | `services/api/src/main.ts`                                       | 597–598 | Boot error captured                |
-| x402 no concrete client          | `services/execution/src/rails/x402-base.ts`                      | 48–50   |.                                  |
-| x402 DB constraint blocks        | DB CHECK CONSTRAINT                                              |.       | Insert failed                      |
+| x402 no concrete client          | `services/execution/src/rails/x402-base.ts`                      | 48–50   | .                                  |
+| x402 DB constraint blocks        | DB CHECK CONSTRAINT                                              | .       | Insert failed                      |
 | ACH dispatch failure             | `services/execution/src/rails/ach-plaid.ts`                      | 88–92   | `last_error` in `execution_outbox` |
 | Plaid Products.Transactions only | `tools/plaid-sandbox/src/index.ts`                               | 81      | grep exhaustive                    |
-| On-chain real broadcast          | `services/api/src/rails/onchainExecutor.ts`                      | 47–54   |. (key absent)                     |
+| On-chain real broadcast          | `services/api/src/rails/onchainExecutor.ts`                      | 47–54   | . (key absent)                     |
 | Azure Key Vault unimplemented    | `services/api/src/rails/onchainExecutor.ts`                      | 1–9     | comment only                       |
 
 ---

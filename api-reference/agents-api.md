@@ -191,7 +191,7 @@ Content-Type: application/json
 | Endpoint                          | Purpose                                                                       |
 | --------------------------------- | ----------------------------------------------------------------------------- |
 | `POST /v1/agents/{agent_id}/halt` | Pause every in-flight intent for the agent and set its state to `quarantined` |
-| `POST /v1/agents/halt-category`   | Emergency-stop every agent in a category. Body `{ "category": "business" }`  |
+| `POST /v1/agents/halt-category`   | Emergency-stop every agent in a category. Body `{ "category": "business" }`   |
 
 Both routes are tenant-root and emit audit events. Halting an agent atomically pauses its in-flight PaymentIntents (the rail dispatcher re-reads state immediately before submission and aborts cleanly if the intent was paused).
 

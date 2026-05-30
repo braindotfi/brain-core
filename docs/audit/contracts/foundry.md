@@ -46,23 +46,24 @@ Encountered 1 failing test in test/BrainMCPAgentRegistry.t.sol:BrainMCPAgentRegi
 ```
 
 Configuration (`foundry.toml`):
+
 - `fuzz.runs = 1000`, `invariant.runs = 256`
 - `bytecode_hash = "none"` (deterministic builds)
 - Solidity 0.8.24
 
 ### Key files read
 
-| File | Purpose |
-|------|---------|
-| `contracts/src/BrainAuditAnchor.sol` (136 lines) | Merkle root publisher |
-| `contracts/src/BrainSmartAccount.sol` (257 lines) | ERC-4337 session keys |
-| `contracts/src/BrainPolicyRegistry.sol` (255 lines) | Policy hash registry |
-| `contracts/src/BrainMCPAgentRegistry.sol` (287 lines) | Agent scope attestation |
-| `contracts/test/BrainMCPAgentRegistry.t.sol` (176 lines) | Failing test. Full read |
-| `services/api/src/anchorBroadcaster.ts` | TS → BrainAuditAnchor ABI |
-| `services/api/src/mcp/viemScopeChecker.ts` | TS → BrainMCPAgentRegistry ABI |
-| `services/api/src/rails/onchainExecutor.ts` | TS → BrainSmartAccount ABI |
-| `services/api/src/policy/viemPolicySignerChecker.ts` | TS → BrainPolicyRegistry ABI |
+| File                                                     | Purpose                        |
+| -------------------------------------------------------- | ------------------------------ |
+| `contracts/src/BrainAuditAnchor.sol` (136 lines)         | Merkle root publisher          |
+| `contracts/src/BrainSmartAccount.sol` (257 lines)        | ERC-4337 session keys          |
+| `contracts/src/BrainPolicyRegistry.sol` (255 lines)      | Policy hash registry           |
+| `contracts/src/BrainMCPAgentRegistry.sol` (287 lines)    | Agent scope attestation        |
+| `contracts/test/BrainMCPAgentRegistry.t.sol` (176 lines) | Failing test. Full read        |
+| `services/api/src/anchorBroadcaster.ts`                  | TS → BrainAuditAnchor ABI      |
+| `services/api/src/mcp/viemScopeChecker.ts`               | TS → BrainMCPAgentRegistry ABI |
+| `services/api/src/rails/onchainExecutor.ts`              | TS → BrainSmartAccount ABI     |
+| `services/api/src/policy/viemPolicySignerChecker.ts`     | TS → BrainPolicyRegistry ABI   |
 
 ---
 
@@ -78,10 +79,12 @@ Configuration (`foundry.toml`):
 - Idempotency invariant: re-anchoring the same root reverts with `AlreadyPublished`.
 
 **ABI alignment** (`anchorBroadcaster.ts` line 19–33):
+
 ```ts
 { name: "anchor", inputs: [tenantId:bytes32, root:bytes32, eventCount:uint256,
                             periodStart:uint256, periodEnd:uint256] }
 ```
+
 Matches Solidity exactly. No drift.
 
 **Chain**: hardcoded `baseSepolia` in `anchorBroadcaster.ts` lines 3 and 47. Mainnet anchoring requires a code change. This is R-30 (already logged in index.md).
@@ -93,6 +96,7 @@ Matches Solidity exactly. No drift.
 **Status: Clean.**
 
 Session key struct:
+
 ```solidity
 struct SessionKey {
     address holder;
@@ -108,6 +112,7 @@ struct SessionKey {
 ```
 
 `executeViaSessionKey(uint256 nonceSupplied, address target, uint256 value, bytes calldata data)`:
+
 - H-03 nonce replay guard: requires `nonceSupplied == _nonces[holder]`, increments before external call.
 - Re-entrancy guard: sets `_locked = true` before external call, clears in `finally` equivalent.
 - `allowedTargets` / `allowedSelectors` enforcement. Unknown targets or selectors revert.
@@ -116,10 +121,12 @@ struct SessionKey {
 - ERC-20 amount decoding: reads token amount from calldata for `transfer`, `approve`, `transferFrom` when `value == 0`.
 
 **ABI alignment** (`onchainExecutor.ts` line 17–20):
+
 ```ts
-"function nonce(address holder) external view returns (uint256)"
-"function executeViaSessionKey(uint256 nonceSupplied, address target, uint256 value, bytes calldata data) external"
+"function nonce(address holder) external view returns (uint256)";
+"function executeViaSessionKey(uint256 nonceSupplied, address target, uint256 value, bytes calldata data) external";
 ```
+
 Both function signatures match Solidity exactly. No drift.
 
 **Chain**: `onchainExecutor.ts` is chain-aware. Uses `base` (mainnet 8453) when `chainId === 8453`, `baseSepolia` otherwise (line 32). This is the correct pattern; this caller does not have the hardcoded-chain issue.
@@ -142,6 +149,7 @@ Both function signatures match Solidity exactly. No drift.
   - Re-bootstrap allowed after all signers are removed (lockout prevention).
 
 **ABI alignment** (`viemPolicySignerChecker.ts`):
+
 - `isTenantSigner(bytes32 tenantId, address signer)`. Matches Solidity. No drift.
 
 ---
@@ -151,6 +159,7 @@ Both function signatures match Solidity exactly. No drift.
 **Status: 1 failing test. Potential access control regression.**
 
 Contract design is correct per static analysis:
+
 - EIP-712 signed registration, revocation, and behavior update.
 - Tenant signer management with bootstrap/re-bootstrap pattern (mirrors `BrainPolicyRegistry`).
 - `updateBehaviorHash(agentId, behaviorHash, tenantSignature)`:
@@ -209,13 +218,16 @@ The TS ABI in `viemScopeChecker.ts` (line 8–29) defines only 6 components:
 ```
 
 ABI tuple decoding is positional. With the missing field, the TS decoder reads:
+
 - `registration.registeredAt` ← actual `behaviorHash` value (bytes32 as uint256, always non-zero for registered agents)
 - `registration.revokedAt` ← actual `registeredAt` (block timestamp, always non-zero)
 
 The consequence: `getOnchainScopeHash` at line 53 checks:
+
 ```ts
 if (registration.registeredAt === 0n || registration.revokedAt !== 0n) return null;
 ```
+
 `revokedAt` (actually `registeredAt`) is always non-zero → **always returns `null`** for all registered agents.
 
 This makes on-chain scope verification fail for 100% of agents when the real scope checker is activated.
@@ -226,12 +238,12 @@ This makes on-chain scope verification fail for 100% of agents when the real sco
 
 ## 4. Functional Status
 
-| Contract | Build | Tests | Access Control | ABI Aligned |
-|----------|-------|-------|---------------|-------------|
-| `BrainAuditAnchor` | Pass | All pass | Clean | Yes |
-| `BrainSmartAccount` | Pass | All pass | Clean (H-03 replay guard) | Yes |
-| `BrainPolicyRegistry` | Pass | All pass | Clean | Yes |
-| `BrainMCPAgentRegistry` | Pass | **1 FAILING** | **Regression suspected** | **No (TS ABI missing behaviorHash)** |
+| Contract                | Build | Tests         | Access Control            | ABI Aligned                          |
+| ----------------------- | ----- | ------------- | ------------------------- | ------------------------------------ |
+| `BrainAuditAnchor`      | Pass  | All pass      | Clean                     | Yes                                  |
+| `BrainSmartAccount`     | Pass  | All pass      | Clean (H-03 replay guard) | Yes                                  |
+| `BrainPolicyRegistry`   | Pass  | All pass      | Clean                     | Yes                                  |
+| `BrainMCPAgentRegistry` | Pass  | **1 FAILING** | **Regression suspected**  | **No (TS ABI missing behaviorHash)** |
 
 ---
 
@@ -239,16 +251,17 @@ This makes on-chain scope verification fail for 100% of agents when the real sco
 
 **Score: 5 / 10**
 
-| Dimension | Assessment |
-|-----------|-----------|
-| Build integrity | Pass. No compilation errors |
-| Test coverage | 67/68 tests pass. 1 access control regression unresolved |
-| ABI alignment | 3/4 callers aligned; `viemScopeChecker` has critical structural mismatch |
-| Chain targeting | Anchor broadcaster hardcoded to `baseSepolia` (R-30); scope checker same; executor is chain-aware |
-| Security model | EIP-712 multi-sig, replay nonces, write-once invariants. Correct in design; implementation gap in MCPAgentRegistry |
-| Idempotency | Anchor and policy registry enforce write-once; MCPAgentRegistry revocation is non-reversible |
+| Dimension       | Assessment                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Build integrity | Pass. No compilation errors                                                                                        |
+| Test coverage   | 67/68 tests pass. 1 access control regression unresolved                                                           |
+| ABI alignment   | 3/4 callers aligned; `viemScopeChecker` has critical structural mismatch                                           |
+| Chain targeting | Anchor broadcaster hardcoded to `baseSepolia` (R-30); scope checker same; executor is chain-aware                  |
+| Security model  | EIP-712 multi-sig, replay nonces, write-once invariants. Correct in design; implementation gap in MCPAgentRegistry |
+| Idempotency     | Anchor and policy registry enforce write-once; MCPAgentRegistry revocation is non-reversible                       |
 
 **Blockers before mainnet activation:**
+
 1. Diagnose and fix `test_updateBehaviorHash_rejectsNonSigner`. Potential behavior hash bypass.
 2. Add `behaviorHash` to `BRAIN_MCP_AGENT_REGISTRY_ABI` in `viemScopeChecker.ts`.
 3. Parameterize `chain` in `anchorBroadcaster.ts` and `viemScopeChecker.ts` (mirrors R-30).
@@ -257,14 +270,14 @@ This makes on-chain scope verification fail for 100% of agents when the real sco
 
 ## 6. Confidence
 
-| Area | Confidence | Reason |
-|------|-----------|--------|
-| Build correctness | High | `forge build` executed; no errors |
-| Test results | High | `forge test` executed; exact failure captured |
-| Contract logic (3 of 4) | High | Full source read; logic matches design docs |
-| MCPAgentRegistry access control | **Low** | Test fails; root cause not confirmed without `forge test -vvvv` trace |
-| ABI mismatch impact | High | Positional decoding with 6 vs 7 fields is deterministic |
-| Deployed contract state | Low | No live chain access; deploy addresses from `.env.example` not verified |
+| Area                            | Confidence | Reason                                                                  |
+| ------------------------------- | ---------- | ----------------------------------------------------------------------- |
+| Build correctness               | High       | `forge build` executed; no errors                                       |
+| Test results                    | High       | `forge test` executed; exact failure captured                           |
+| Contract logic (3 of 4)         | High       | Full source read; logic matches design docs                             |
+| MCPAgentRegistry access control | **Low**    | Test fails; root cause not confirmed without `forge test -vvvv` trace   |
+| ABI mismatch impact             | High       | Positional decoding with 6 vs 7 fields is deterministic                 |
+| Deployed contract state         | Low        | No live chain access; deploy addresses from `.env.example` not verified |
 
 ---
 
@@ -293,10 +306,10 @@ This makes on-chain scope verification fail for 100% of agents when the real sco
 
 ## 8. Cross-Cutting Risks Added to Register
 
-| ID | Finding | Severity | Status |
-|----|---------|----------|--------|
-| R-31 | `updateBehaviorHash` access control regression. Forge test fails; potential behavior hash bypass | High | Open |
-| R-32 | `viemScopeChecker` ABI missing `behaviorHash`. MCP on-chain scope verification structurally broken when activated | Critical (latent) | Open |
+| ID   | Finding                                                                                                           | Severity          | Status |
+| ---- | ----------------------------------------------------------------------------------------------------------------- | ----------------- | ------ |
+| R-31 | `updateBehaviorHash` access control regression. Forge test fails; potential behavior hash bypass                  | High              | Open   |
+| R-32 | `viemScopeChecker` ABI missing `behaviorHash`. MCP on-chain scope verification structurally broken when activated | Critical (latent) | Open   |
 
 (R-30. Hardcoded `baseSepolia`. Previously logged; no new entry.)
 
@@ -304,18 +317,19 @@ This makes on-chain scope verification fail for 100% of agents when the real sco
 
 ## 9. Refactor Priority
 
-| Priority | Item |
-|----------|------|
-| P0 | Fix `viemScopeChecker.ts` ABI (add `behaviorHash` field). Pre-activation blocker |
-| P0 | Diagnose `test_updateBehaviorHash_rejectsNonSigner`. Run `forge test -vvvv`, fix root cause |
-| P1 | Parameterize chain in `anchorBroadcaster.ts` and `viemScopeChecker.ts` via `BRAIN_BASE_CHAIN_ID` (already in `onchainExecutor.ts`) |
-| P2 | Generate canonical ABI JSON from Foundry artifacts (`out/`) and import them in TS callers instead of inline definitions. Eliminates this class of drift |
+| Priority | Item                                                                                                                                                    |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0       | Fix `viemScopeChecker.ts` ABI (add `behaviorHash` field). Pre-activation blocker                                                                        |
+| P0       | Diagnose `test_updateBehaviorHash_rejectsNonSigner`. Run `forge test -vvvv`, fix root cause                                                             |
+| P1       | Parameterize chain in `anchorBroadcaster.ts` and `viemScopeChecker.ts` via `BRAIN_BASE_CHAIN_ID` (already in `onchainExecutor.ts`)                      |
+| P2       | Generate canonical ABI JSON from Foundry artifacts (`out/`) and import them in TS callers instead of inline definitions. Eliminates this class of drift |
 
 ---
 
 ## 10. Comparison to Prior Audit
 
 The 2026-05-25 monolithic audit did not cover contract-level testing or TS ABI alignment in detail. Two new findings emerge from this evidence-driven audit:
+
 - `viemScopeChecker` ABI mismatch was undetected (F-11-B, R-32).
 - The Forge test failure was undetected (F-11-A, R-31).
 

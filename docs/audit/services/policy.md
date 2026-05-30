@@ -2,6 +2,7 @@
 
 **Audited:** 2026-05-26
 **Files examined:**
+
 - `services/policy/src/vm.ts`
 - `services/policy/src/dsl.ts`
 - `services/policy/src/signing.ts`
@@ -28,6 +29,7 @@
 - `scripts/check-policy-no-wiki-read.mjs` (run live)
 
 **Commands run:**
+
 - `pnpm -C services/policy run test` → 89 tests, 12 files, all pass
 - `pnpm -C services/policy run typecheck` → 0 errors
 - `node scripts/check-policy-no-wiki-read.mjs` → `policy-no-wiki-read guard: OK`
@@ -84,6 +86,7 @@ Full EIP-712 implementation in ~230 lines using `@noble/hashes/sha3`. Does not d
 3. **Authorized tenant signer**. `deps.isAuthorizedSigner(tenant, sig.address)` (`routes.ts:193`).
 
 In `main.ts:757-762`:
+
 - Demo mode: `() => Promise.resolve(true)` (any signer accepted in sandbox).
 - Production mode: `createViemPolicySignerChecker` reads `BrainPolicyRegistry.isTenantSigner` on-chain. **Fail-closed**: any RPC error returns `false` (`viemPolicySignerChecker.ts:46`).
 
@@ -117,18 +120,18 @@ In `service.ts:163`, `evaluateForGate` sets `tenant_category: "business"` uncond
 
 9 lint rules:
 
-| Code | Severity | Checks |
-|------|----------|--------|
-| `auto_no_amount_cap` | ERROR | Auto money-mover has no `amount.lte` / `approval_required_above` |
-| `auto_no_counterparty_constraint` | ERROR | Auto money-mover has no counterparty constraint |
-| `auto_no_verified_counterparty` | ERROR | Auto money-mover missing `counterparty.in` allowlist |
-| `no_approval_path_high_value` | ERROR | Can auto-execute above high-value threshold with no approval path |
-| `unsupported_currency` | ERROR | References a non-supported currency |
-| `invalid_approval_role` | ERROR | `require` references an unknown approver role |
-| `auto_no_risk_bound` | ERROR | Auto money-mover has no `agent.risk_level.lte` |
-| `broad_any_auto` | ERROR | `applies_to: any` with `execute: auto` |
-| `unreachable_rule` | WARN | Rule after a catch-all (first match semantics) |
-| `zero_recent_matches` | WARN | Data-dependent; only when `recentMatchCounts` is supplied |
+| Code                              | Severity | Checks                                                            |
+| --------------------------------- | -------- | ----------------------------------------------------------------- |
+| `auto_no_amount_cap`              | ERROR    | Auto money-mover has no `amount.lte` / `approval_required_above`  |
+| `auto_no_counterparty_constraint` | ERROR    | Auto money-mover has no counterparty constraint                   |
+| `auto_no_verified_counterparty`   | ERROR    | Auto money-mover missing `counterparty.in` allowlist              |
+| `no_approval_path_high_value`     | ERROR    | Can auto-execute above high-value threshold with no approval path |
+| `unsupported_currency`            | ERROR    | References a non-supported currency                               |
+| `invalid_approval_role`           | ERROR    | `require` references an unknown approver role                     |
+| `auto_no_risk_bound`              | ERROR    | Auto money-mover has no `agent.risk_level.lte`                    |
+| `broad_any_auto`                  | ERROR    | `applies_to: any` with `execute: auto`                            |
+| `unreachable_rule`                | WARN     | Rule after a catch-all (first match semantics)                    |
+| `zero_recent_matches`             | WARN     | Data-dependent; only when `recentMatchCounts` is supplied         |
 
 The linter is pure over a `PolicyDocument`; it is exposed at `POST /policy/:tenant_id/lint`. There is no enforcement that a policy must pass the linter before activation. A policy with lint ERRORs can be signed and activated.
 
@@ -185,6 +188,7 @@ services/policy/src/spend-counters.ts:65: export async function incrementSpendCo
 ```
 
 **`routes.sign-quorum.test.ts` coverage:**
+
 - `it("rejects forged quorum from signers absent from the on-chain allowlist")` → 400 `policy_signature_invalid`
 - `it("rejects a duplicate signer padding quorum with the same key twice")` → 400 `policy_signature_invalid`
 - `it("activates when quorum-many distinct authorized signers sign")` → 200 `{ activated: true }`
@@ -233,6 +237,7 @@ No Wiki imports found in policy source. No circular deps.
 **`compareDecimal` correctness**. `vm.ts:251-263`: uses `normalizeDecimal` (string ops only) and `compareBigNumeric` (string length then lexicographic). Negative-zero guard at line 261. Fast-check property test at `vm.test.ts:31-44` hammers over integers ±1M.
 
 **Quorum enforcement**. `routes.ts:165-200`:
+
 ```ts
 // 1. EIP-712 verify
 const ok = await verifyTypedData({ address, domain, types, primaryType, message, signature });
@@ -248,6 +253,7 @@ if (!(await deps.isAuthorizedSigner(tenant, sig.address)))
 ```
 
 **H-23 not wired**. `main.ts:1092`:
+
 ```ts
 const actionResolver = new ActionResolver({ classifier: agentClassifier });
 // isActionAllowed is not supplied → any offered action is accepted
@@ -258,6 +264,7 @@ Comment at `main.ts:1085-1091` confirms this is intentional-but-deferred.
 **Spend counter increment absent**. Global grep result shows `incrementSpendCounter` appears only in `spend-counters.ts` (definition) and `index.ts` (export). Zero callers across the entire codebase.
 
 **FORCE RLS**. `0004_force_rls.sql`:
+
 ```sql
 ALTER TABLE policies               FORCE ROW LEVEL SECURITY;
 ALTER TABLE policy_decisions       FORCE ROW LEVEL SECURITY;
@@ -283,6 +290,7 @@ The VM, signing, and quorum path are fully readable and well-covered by tests in
 **Score: 7/10**
 
 **Working:**
+
 - Rule VM: correct, deterministic, property-tested, default-deny
 - EIP-712 signing: sound, no floating-point, deterministic across identical inputs
 - Quorum signing: on-chain signer allowlist enforced, duplicate-signer rejected, fail-closed on RPC error

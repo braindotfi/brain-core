@@ -4,9 +4,9 @@ Per-tag snapshots of `pnpm run production-readiness --json` output, committed at
 
 ## How it works
 
-* `scripts/readiness-snapshot.mjs` captures the current aggregator JSON to `docs/readiness-history/<tag>.json`.
-* `scripts/readiness-trend.mjs` reads every snapshot in this directory and prints a trend table: open P0 count, open P1 count, red/yellow/green counts per snapshot, delta from prior snapshot.
-* The CI workflow runs the snapshot script on release tag push so the history is durable in git.
+- `scripts/readiness-snapshot.mjs` captures the current aggregator JSON to `docs/readiness-history/<tag>.json`.
+- `scripts/readiness-trend.mjs` reads every snapshot in this directory and prints a trend table: open P0 count, open P1 count, red/yellow/green counts per snapshot, delta from prior snapshot.
+- The CI workflow runs the snapshot script on release tag push so the history is durable in git.
 
 ## Why git-native
 

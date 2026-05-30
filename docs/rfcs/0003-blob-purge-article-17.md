@@ -116,6 +116,7 @@ Even after Article 17 erasure:
 ### 2.3 Implementation shape (phase B, NOT this RFC)
 
 **Migration.**
+
 ```sql
 CREATE TABLE tenant_blob_purge_jobs (
   id                  TEXT PRIMARY KEY,             -- tbpj_<ulid>
@@ -134,6 +135,7 @@ CREATE INDEX ON tenant_blob_purge_jobs (status, requested_at);
 ```
 
 **Adapter.** Add to `BlobAdapter`:
+
 ```ts
 /** Hard-delete bytes. RESTRICTED to the tenant-deletion blob-purge worker.
  *  Bypasses the Layer-1 immutability rule under the Article-17 carveout
@@ -146,6 +148,7 @@ Implement on memory + s3 + azure. A new CI guard
 the call site isn't `services/api/src/workers/tenant-blob-purge-worker.ts`.
 
 **Worker.** `tenant-blob-purge-worker.ts`:
+
 - Polls `tenant_blob_purge_jobs` where `status='pending'`.
 - For each row: emit `tenant_blob.purge_requested`, call
   `BlobAdapter.purge(uri, by)`, transition to `completed` and emit
@@ -165,14 +168,14 @@ deferred-without-handle.
 
 A signed-off RFC must answer: does this erode the audit story?
 
-| Claim                                          | Before erasure | After erasure |
-| ---------------------------------------------- | -------------- | ------------- |
-| The audit chain is append-only                 | yes            | yes           |
-| Merkle roots are anchored on Base              | yes            | yes           |
-| `/v1/audit/verify` reproduces the proof        | yes            | yes           |
-| Every ledger row references source evidence    | yes            | yes (evidence hash + URI; bytes gone) |
-| Re-derivation from Raw is possible             | yes            | **no** for the erased tenant |
-| The fact of erasure is itself on-chain         | n/a            | **yes** (via `tenant_blob.purge_*` events) |
+| Claim                                       | Before erasure | After erasure                              |
+| ------------------------------------------- | -------------- | ------------------------------------------ |
+| The audit chain is append-only              | yes            | yes                                        |
+| Merkle roots are anchored on Base           | yes            | yes                                        |
+| `/v1/audit/verify` reproduces the proof     | yes            | yes                                        |
+| Every ledger row references source evidence | yes            | yes (evidence hash + URI; bytes gone)      |
+| Re-derivation from Raw is possible          | yes            | **no** for the erased tenant               |
+| The fact of erasure is itself on-chain      | n/a            | **yes** (via `tenant_blob.purge_*` events) |
 
 The audit chain remains complete and verifiable. What changes is that
 **re-extraction is no longer possible** for the erased tenant's data,

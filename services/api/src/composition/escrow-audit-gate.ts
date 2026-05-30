@@ -53,17 +53,16 @@ export interface EscrowAuditGateInput {
 export function assertEscrowAuditApproved(input: EscrowAuditGateInput): void {
   if (input.chainId !== BASE_MAINNET_CHAIN_ID) return;
   if (input.escrowAddress === undefined) return;
-  const hasReceipt =
-    typeof input.auditReceipt === "string" && input.auditReceipt.length > 0;
+  const hasReceipt = typeof input.auditReceipt === "string" && input.auditReceipt.length > 0;
   if (input.auditApproved === "true" || hasReceipt) return;
   throw new Error(
     `BRAIN_ESCROW_ADDRESS is set on Base mainnet (chainId=${String(
       BASE_MAINNET_CHAIN_ID,
     )}) but neither BRAIN_ESCROW_AUDIT_RECEIPT nor BRAIN_ESCROW_AUDIT_APPROVED="true" ` +
-      'is set. The external smart-contract audit (Task #37) must complete and the ' +
+      "is set. The external smart-contract audit (Task #37) must complete and the " +
       "audited bytecode must be the deployed contract before the api will boot " +
       "against mainnet. Set BRAIN_ESCROW_AUDIT_RECEIPT to a URL/filepath pointing " +
-      "at the audit report (preferred), or BRAIN_ESCROW_AUDIT_APPROVED=\"true\" " +
+      'at the audit report (preferred), or BRAIN_ESCROW_AUDIT_APPROVED="true" ' +
       "as a legacy bare-boolean attestation. Refusing to start so the orchestrator " +
       "surfaces the misconfiguration.",
   );

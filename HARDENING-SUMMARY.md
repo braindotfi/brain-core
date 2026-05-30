@@ -8,7 +8,7 @@ Autonomous hardening pass (P0/P1/P2). Three stacked branches:
 | Task                                     | Status | Commit                        | Tests added (local-run unless noted) |
 | ---------------------------------------- | ------ | ----------------------------- | ------------------------------------ |
 | P0.1 mandatory behavior-hash pinning     | done   | `0df3ae8`                     | 5 (gate)                             |
-| P0.2 DB-integration invariants           | done   | `d355549`                     | 5 (CI-only. DATABASE_URL)           |
+| P0.2 DB-integration invariants           | done   | `d355549`                     | 5 (CI-only. DATABASE_URL)            |
 | P0.3 wiki annotation rate limiting       | done   | `7fc4227`                     | 5 (3 limiter + 2 route)              |
 | P0.4 approver/quorum hardening           | done   | `4c1a236`                     | 9 (7 ApprovalService + 2 gate)       |
 | P0.5 invoice shortcut resolution         | done   | `cce4c3a`                     | 10 (resolver)                        |

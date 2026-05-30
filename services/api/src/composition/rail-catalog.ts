@@ -14,12 +14,7 @@
 import type { BrainConfig } from "@brain/shared";
 
 /** The canonical rail key set Brain ships with. */
-export type RailName =
-  | "bank_ach"
-  | "onchain_base"
-  | "x402_base"
-  | "escrow_base"
-  | "erp_writeback";
+export type RailName = "bank_ach" | "onchain_base" | "x402_base" | "escrow_base" | "erp_writeback";
 
 export interface RailDescriptor {
   name: RailName;
@@ -95,8 +90,7 @@ export const RAIL_CATALOG: ReadonlyArray<RailDescriptor> = [
   },
   {
     name: "erp_writeback",
-    description:
-      "ERP system-of-record writeback. Stub-only in MVP; no production implementation.",
+    description: "ERP system-of-record writeback. Stub-only in MVP; no production implementation.",
     productionAllowed: false,
     requiredEnv: [],
     evmChain: false,

@@ -164,12 +164,12 @@ Ten tools across four capability groups. Each tool name is an
 
 ### `payment_intent:propose` And `agent:propose` Capabilities
 
-| Tool                     | Maps to                       | Notes                                                                                                |
-| ------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `payment_intent.propose` | `PaymentIntentService.create` | Returns intent + PolicyDecision. **Never `.execute`.**                                               |
+| Tool                     | Maps to                       | Notes                                                                                                            |
+| ------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `payment_intent.propose` | `PaymentIntentService.create` | Returns intent + PolicyDecision. **Never `.execute`.**                                                           |
 | `payment_intent.cancel`  | `PaymentIntentService.cancel` | Only the proposing agent; allowed from `proposed` / `pending_approval`. Item 17. Needs `payment_intent:propose`. |
-| `payment_intent.list`    | `PaymentIntentService.list`   | Lists the calling agent's own intents (tenant- and agent-scoped). Item 17. Needs `ledger:read`.       |
-| `agent.action.propose`   | `IAgentService.propose`       | Non-financial proposal.                                                                              |
+| `payment_intent.list`    | `PaymentIntentService.list`   | Lists the calling agent's own intents (tenant- and agent-scoped). Item 17. Needs `ledger:read`.                  |
+| `agent.action.propose`   | `IAgentService.propose`       | Non-financial proposal.                                                                                          |
 
 A tool that the agent isn't scoped for is still **listed** (`tools/list`
 returns the full registry); attempting to **call** it returns

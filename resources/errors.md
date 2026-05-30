@@ -34,16 +34,16 @@ try {
 
 ### Auth (401) and Authorization (403)
 
-| Code                       | Meaning                                                                                | Fix                                              |
-| -------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `auth_token_missing`       | No bearer token on a protected route                                                   | Send `Authorization: Bearer <token>`             |
-| `auth_token_invalid`       | Token malformed or signature failed                                                    | Re-issue the token                               |
-| `auth_token_expired`       | Access token past its expiry                                                           | Log in / re-sign and retry                       |
-| `auth_invalid_key`         | API key malformed, revoked, or for the wrong environment                               | Check `.env`; sandbox and production keys differ |
+| Code                       | Meaning                                                                               | Fix                                              |
+| -------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `auth_token_missing`       | No bearer token on a protected route                                                  | Send `Authorization: Bearer <token>`             |
+| `auth_token_invalid`       | Token malformed or signature failed                                                   | Re-issue the token                               |
+| `auth_token_expired`       | Access token past its expiry                                                          | Log in / re-sign and retry                       |
+| `auth_invalid_key`         | API key malformed, revoked, or for the wrong environment                              | Check `.env`; sandbox and production keys differ |
 | `auth_invalid_credentials` | Email/password login failed (also returned for an unknown email. No user enumeration) | Check the credentials                            |
-| `auth_email_unverified`    | The owner's email has not been verified                                                | Complete `POST /v1/auth/verify-email`            |
-| `auth_siwx_invalid`        | SIWX signature did not verify                                                          | Re-sign with the registered key                  |
-| `auth_scope_insufficient`  | Token lacks the required scope                                                         | Re-issue with the right scope                    |
+| `auth_email_unverified`    | The owner's email has not been verified                                               | Complete `POST /v1/auth/verify-email`            |
+| `auth_siwx_invalid`        | SIWX signature did not verify                                                         | Re-sign with the registered key                  |
+| `auth_scope_insufficient`  | Token lacks the required scope                                                        | Re-issue with the right scope                    |
 
 ### Self-serve onboarding
 
@@ -144,17 +144,17 @@ When the §6 gate rejects an intent it surfaces as `payment_intent_gate_failed`,
 
 The MCP surface (`POST /v1/agents/mcp`) returns JSON-RPC error codes:
 
-| Code     | Meaning                                                                                               |
-| -------- | ----------------------------------------------------------------------------------------------------- |
-| `-32001` | Auth token missing, invalid, or expired (covers `auth_token_missing/invalid/expired`)                 |
+| Code     | Meaning                                                                                              |
+| -------- | ---------------------------------------------------------------------------------------------------- |
+| `-32001` | Auth token missing, invalid, or expired (covers `auth_token_missing/invalid/expired`)                |
 | `-32002` | Scope insufficient. Also tenant mismatch (covers `auth_scope_insufficient` / `auth_tenant_mismatch`) |
-| `-32003` | Agent not registered or inactive (`agent_not_registered`)                                             |
+| `-32003` | Agent not registered or inactive (`agent_not_registered`)                                            |
 | `-32004` | Pre-execution gate failed. Covers every `gate_*` sub-code (`payment_intent_gate_failed`)             |
-| `-32005` | Agent `scope_hash` does not match on-chain registration (`agent_scope_hash_mismatch`)                 |
-| `-32600` | Invalid request (standard JSON-RPC)                                                                   |
-| `-32601` | Method not found                                                                                      |
-| `-32602` | Invalid params                                                                                        |
-| `-32603` | Internal error                                                                                        |
+| `-32005` | Agent `scope_hash` does not match on-chain registration (`agent_scope_hash_mismatch`)                |
+| `-32600` | Invalid request (standard JSON-RPC)                                                                  |
+| `-32601` | Method not found                                                                                     |
+| `-32602` | Invalid params                                                                                       |
+| `-32603` | Internal error                                                                                       |
 
 ### Getting Help
 

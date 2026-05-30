@@ -670,10 +670,7 @@ export async function runPreExecutionGate(
   // so the same check holds in dry-run.
   // x402_settle and escrow_release settle from on-chain wallet / locked funds,
   // not a ledger account — balance enforcement is at the rail layer.
-  if (
-    input.intent.action_type === "x402_settle" ||
-    input.intent.action_type === "escrow_release"
-  ) {
+  if (input.intent.action_type === "x402_settle" || input.intent.action_type === "escrow_release") {
     pass(checks, 8, "available_balance_sufficient", { not_applicable: true });
   } else if (account.available_balance !== null) {
     if (account.currency !== input.intent.currency) {

@@ -2,6 +2,7 @@
 
 **Audited:** 2026-05-26
 **Files examined:**
+
 - `services/raw/src/services/ingest.ts`
 - `services/raw/src/routes/ingest.ts`
 - `services/raw/src/routes/webhook.ts`
@@ -22,6 +23,7 @@
 - `services/api/src/main.ts` lines 643–660 (SourceService wiring), 861 (credential resolution)
 
 **Commands run:**
+
 - `pnpm --filter @brain/raw run test` → 63 tests, 11 files. All pass
 - `pnpm --filter @brain/ledger run test` → 148 tests, 12 files. All pass
 - `grep -rn "from 'plaid'" services/raw/src/` → no results (dead dep confirmed)
@@ -33,11 +35,13 @@
 ## 1. Scope
 
 What this report covers:
+
 - `services/raw` (`@brain/raw`). Artifact ingestion (blob + DB), webhook fan-out, source connection lifecycle, credential encryption
 - `services/ledger` (`@brain/ledger`). Ledger entity reads/writes, the normalizeWorker, the raw→ledger extraction pipeline, the ReconciliationService
 - The cross-service boundary between them: `raw_parsed` table ownership, the normalizeWorker cross-tenant poll
 
 What this report does NOT cover:
+
 - MCP route `/ledger/*` tool invocations (covered in `mcp/runtime.md`)
 - ReconciliationService scheduling (BullMQ wiring. Covered in `queues/` and `orchestration/`)
 - Blob storage adapter internals (covered in `integrations/`)
@@ -62,13 +66,14 @@ Per `Brain_MVP_Architecture.md §3 Layer 1` (Raw) and `§3 Layer 2` (Ledger):
 
 Two ingestion entry points, both through `ingestOne`:
 
-| Path | Handler | Auth |
-|------|---------|------|
-| `POST /raw/ingest` (multipart) | `handleMultipart` | Bearer JWT, scope `raw:write` |
-| `POST /raw/ingest` (JSON + URL) | `handleJson` | Bearer JWT, scope `raw:write` |
-| `POST /raw/webhooks/:provider` | `registerWebhook` | Skips JWT; HMAC verification |
+| Path                            | Handler           | Auth                          |
+| ------------------------------- | ----------------- | ----------------------------- |
+| `POST /raw/ingest` (multipart)  | `handleMultipart` | Bearer JWT, scope `raw:write` |
+| `POST /raw/ingest` (JSON + URL) | `handleJson`      | Bearer JWT, scope `raw:write` |
+| `POST /raw/webhooks/:provider`  | `registerWebhook` | Skips JWT; HMAC verification  |
 
 `ingestOne` (`services/raw/src/services/ingest.ts`):
+
 1. sha256 hash the body.
 2. `blob.put(path, body, { immutable: true })`.
 3. `withTenantScope → insertOrReuseArtifact`. `ON CONFLICT (tenant_id, sha256) DO UPDATE SET source_ref = raw_artifacts.source_ref`. Returns existing row if already seen; `deduplicated` flag is set when `row.id !== requested_id`.
@@ -101,15 +106,15 @@ const sourceService = new SourceService(postgresSourceRepo, postgresSourceRepo);
 
 Seven adapters registered:
 
-| `source_type` | Webhook handler | Status |
-|---|---|---|
-| `upload` | None (direct POST only) | Concrete |
-| `plaid` | `PlaidAdapter.handleWebhook` | Concrete (webhook only; `transactions/sync` is stage-3) |
-| `stripe` | 501 stub | Stub |
-| `erp_netsuite` | 501 stub | Stub |
-| `email` | 501 stub | Stub |
-| `chain_evm` | 501 stub | Stub |
-| `agent_contributed` | None | Concrete (upload only) |
+| `source_type`       | Webhook handler              | Status                                                  |
+| ------------------- | ---------------------------- | ------------------------------------------------------- |
+| `upload`            | None (direct POST only)      | Concrete                                                |
+| `plaid`             | `PlaidAdapter.handleWebhook` | Concrete (webhook only; `transactions/sync` is stage-3) |
+| `stripe`            | 501 stub                     | Stub                                                    |
+| `erp_netsuite`      | 501 stub                     | Stub                                                    |
+| `email`             | 501 stub                     | Stub                                                    |
+| `chain_evm`         | 501 stub                     | Stub                                                    |
+| `agent_contributed` | None                         | Concrete (upload only)                                  |
 
 `PlaidAdapter.handleWebhook` stores the full raw JSON body as one artifact per webhook delivery. It does not call `transactions/sync` to fetch incremental data. That is a stage-3 feature.
 
@@ -117,17 +122,17 @@ Seven adapters registered:
 
 `LedgerService` implements `ILedgerService` (shared contract). All nine entity types have working read paths:
 
-| Entity | Read | Write | Route |
-|--------|------|-------|-------|
-| Account | ✓ | ✓ (`upsertAccount`) | `GET /ledger/accounts`, `GET /ledger/accounts/:id` |
-| Balance | ✓ | via normalizer | `GET /ledger/balances` |
-| Transaction | ✓ | ✓ (`recordTransaction`) | `GET /ledger/transactions`, `GET /ledger/transactions/:id` |
-| Counterparty | ✓ | ✓ (`upsertCounterparty`) | `GET /ledger/counterparties`, `GET /ledger/counterparties/:id` |
-| Obligation | ✓ | No | `GET /ledger/obligations`, `GET /ledger/obligations/:id` |
-| Invoice | ✓ | No | `GET /ledger/invoices`, `GET /ledger/invoices/:id` |
-| Document | ✓ | No | `GET /ledger/documents`, `GET /ledger/documents/:id` |
-| Cash Flow | ✓ (aggregate) | N/A | `GET /ledger/cash-flows` |
-| Recon Match | ✓ | via `ReconciliationService` | `GET /ledger/reconciliation/matches` |
+| Entity       | Read          | Write                       | Route                                                          |
+| ------------ | ------------- | --------------------------- | -------------------------------------------------------------- |
+| Account      | ✓             | ✓ (`upsertAccount`)         | `GET /ledger/accounts`, `GET /ledger/accounts/:id`             |
+| Balance      | ✓             | via normalizer              | `GET /ledger/balances`                                         |
+| Transaction  | ✓             | ✓ (`recordTransaction`)     | `GET /ledger/transactions`, `GET /ledger/transactions/:id`     |
+| Counterparty | ✓             | ✓ (`upsertCounterparty`)    | `GET /ledger/counterparties`, `GET /ledger/counterparties/:id` |
+| Obligation   | ✓             | No                          | `GET /ledger/obligations`, `GET /ledger/obligations/:id`       |
+| Invoice      | ✓             | No                          | `GET /ledger/invoices`, `GET /ledger/invoices/:id`             |
+| Document     | ✓             | No                          | `GET /ledger/documents`, `GET /ledger/documents/:id`           |
+| Cash Flow    | ✓ (aggregate) | N/A                         | `GET /ledger/cash-flows`                                       |
+| Recon Match  | ✓             | via `ReconciliationService` | `GET /ledger/reconciliation/matches`                           |
 
 Write paths (`upsertAccountRow`, `recordTransactionRow`, `upsertCounterpartyRow`) all use `INSERT ... ON CONFLICT DO NOTHING / UPDATE` for natural idempotency. Agent-contributed rows are confidence-capped at 0.5 (`AGENT_CONTRIBUTED_CONFIDENCE_CEILING`).
 
@@ -161,12 +166,13 @@ All matchers run in separate DB transactions; the advisory lock holds across the
 
 ## 4. Test Coverage Assessment
 
-| Suite | Files | Tests | Pass |
-|---|---|---|---|
-| `@brain/raw` | 11 | 63 | ✓ |
-| `@brain/ledger` | 12 | 148 | ✓ |
+| Suite           | Files | Tests | Pass |
+| --------------- | ----- | ----- | ---- |
+| `@brain/raw`    | 11    | 63    | ✓    |
+| `@brain/ledger` | 12    | 148   | ✓    |
 
 Notable coverage:
+
 - `services/raw/src/__integration__/raw.integration.test.ts`. Skipped unless `DATABASE_URL` is set; no CI evidence available. Tests content-type rejection, artifact dedup, and source lifecycle.
 - `services/ledger/src/workers/normalizeWorker.test.ts`. 1 test, uses pool mock. Verifies `set_config('app.tenant_id')` is called before `INSERT INTO normalization_log` (correct tenant scoping on write). Does **not** test the cross-tenant poll path or the happy-path end-to-end normalize.
 - Reconciliation: All 7 matcher test files pass. `harness.ts` uses in-memory pool mock with fake rows. No live-DB tests.
@@ -190,6 +196,7 @@ Notable coverage:
 ### R-18 (Low). Duplicate `0004` sequence number in raw migrations
 
 Two migration files share the `0004` prefix:
+
 - `services/raw/migrations/0004_force_rls.sql`. Applies `FORCE ROW LEVEL SECURITY` to `raw_artifacts`, `raw_parsed`, `raw_plaid_items`
 - `services/raw/migrations/0004_raw_plaid_items_rls.sql`. `ENABLE ROW LEVEL SECURITY` + policies on `raw_plaid_items`
 
@@ -250,34 +257,34 @@ const result = await deps.pool.query<{ id: string; tenant_id: string }>(
 
 ## 6. Architecture Compliance
 
-| Invariant | Status |
-|---|---|
-| Layer 1 immutability (`raw_artifacts` never mutated) | ✓. `tombstoneArtifact` adds `tombstoned_at`; no UPDATE on content columns |
-| Content-addressed dedup by sha256 | ✓. `UNIQUE (tenant_id, sha256)` + ON CONFLICT |
-| Tenant isolation (RLS on all tables) | ✓. `raw_artifacts`, `raw_parsed`, `raw_plaid_items`, `raw_sources` all have ENABLE + FORCE RLS |
-| `raw_sources` credential encryption | ✓. AES-256-GCM via `encryptCredentials` for `plaid` and `stripe` |
-| Ledger writes are idempotent | ✓. `upsertAccountRow`, `recordTransactionRow` use ON CONFLICT |
-| No PII in audit event bodies | ✓. Audit events carry hashes, ids, and byte counts only |
-| Cross-service read only (Ledger reads raw_parsed) | ✓. Read-only; writes never cross layer |
-| Agent-contributed confidence cap | ✓. 0.5 ceiling enforced in `cappedConfidence` |
-| Webhook dedup | ✓. Redis idempotency key + release-on-failure pattern |
+| Invariant                                            | Status                                                                                         |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Layer 1 immutability (`raw_artifacts` never mutated) | ✓. `tombstoneArtifact` adds `tombstoned_at`; no UPDATE on content columns                      |
+| Content-addressed dedup by sha256                    | ✓. `UNIQUE (tenant_id, sha256)` + ON CONFLICT                                                  |
+| Tenant isolation (RLS on all tables)                 | ✓. `raw_artifacts`, `raw_parsed`, `raw_plaid_items`, `raw_sources` all have ENABLE + FORCE RLS |
+| `raw_sources` credential encryption                  | ✓. AES-256-GCM via `encryptCredentials` for `plaid` and `stripe`                               |
+| Ledger writes are idempotent                         | ✓. `upsertAccountRow`, `recordTransactionRow` use ON CONFLICT                                  |
+| No PII in audit event bodies                         | ✓. Audit events carry hashes, ids, and byte counts only                                        |
+| Cross-service read only (Ledger reads raw_parsed)    | ✓. Read-only; writes never cross layer                                                         |
+| Agent-contributed confidence cap                     | ✓. 0.5 ceiling enforced in `cappedConfidence`                                                  |
+| Webhook dedup                                        | ✓. Redis idempotency key + release-on-failure pattern                                          |
 
 ---
 
 ## 7. Functional Status
 
-| Component | Status | Notes |
-|---|---|---|
-| `/raw/ingest` (multipart + JSON) | Functional ✓ | All dedup and audit paths wired |
-| `/raw/webhooks/plaid` | Functional ✓ | Signature verified; artifact stored; dedup via Redis |
-| `/raw/webhooks/{other}` | Stub ✗ | Returns 501 by design |
-| `/raw/sources/*` lifecycle | Functional ✓ | Postgres-backed; AES-256-GCM encryption |
-| Ledger reads (all entities) | Functional ✓ | Tenant-scoped, paginated |
-| Ledger writes (account/tx/cp) | Functional ✓ | Idempotent upserts |
-| `POST /ledger/normalize` | Wired but unreachable ⚠ | No `raw_parsed` rows exist (R-19) |
-| normalizeWorker | Perpetual no-op ⚠ | Correct code, empty input (R-19) |
-| ReconciliationService (7 matchers) | Functional ✓ | Advisory lock, all tests pass |
-| `POST /ledger/reconcile` | Stub 501 ✗ | Docs: "Phase 5"; ReconciliationService.run exists but isn't exposed via POST |
+| Component                          | Status                  | Notes                                                                        |
+| ---------------------------------- | ----------------------- | ---------------------------------------------------------------------------- |
+| `/raw/ingest` (multipart + JSON)   | Functional ✓            | All dedup and audit paths wired                                              |
+| `/raw/webhooks/plaid`              | Functional ✓            | Signature verified; artifact stored; dedup via Redis                         |
+| `/raw/webhooks/{other}`            | Stub ✗                  | Returns 501 by design                                                        |
+| `/raw/sources/*` lifecycle         | Functional ✓            | Postgres-backed; AES-256-GCM encryption                                      |
+| Ledger reads (all entities)        | Functional ✓            | Tenant-scoped, paginated                                                     |
+| Ledger writes (account/tx/cp)      | Functional ✓            | Idempotent upserts                                                           |
+| `POST /ledger/normalize`           | Wired but unreachable ⚠ | No `raw_parsed` rows exist (R-19)                                            |
+| normalizeWorker                    | Perpetual no-op ⚠       | Correct code, empty input (R-19)                                             |
+| ReconciliationService (7 matchers) | Functional ✓            | Advisory lock, all tests pass                                                |
+| `POST /ledger/reconcile`           | Stub 501 ✗              | Docs: "Phase 5"; ReconciliationService.run exists but isn't exposed via POST |
 
 ---
 
@@ -286,6 +293,7 @@ const result = await deps.pool.query<{ id: string; tenant_id: string }>(
 **Score: 7/10**
 
 **Strengths:**
+
 - Both test suites pass (63 + 148 tests).
 - Dedup, idempotency, and audit patterns are correct throughout.
 - AES-256-GCM credential encryption for Plaid/Stripe sources is implemented and wired.
@@ -294,10 +302,12 @@ const result = await deps.pool.query<{ id: string; tenant_id: string }>(
 - Cross-service read boundary is documented and intentional.
 
 **Blockers for "Plaid data flows to Ledger":**
+
 - R-19 (stage-3 parser not implemented) is the single missing piece. The rest of the pipeline is ready.
 - R-20 (BYPASSRLS for normalizeWorker) must be confirmed before activating the pipeline.
 
 **Acceptable debt:**
+
 - R-17 (dead plaid dep). Minor cleanup.
 - R-18 (duplicate 0004 seq). Should be renumbered before next raw migration.
 - R-21 (optimistic Plaid token validation). Acceptable for v0.3.
@@ -306,27 +316,27 @@ const result = await deps.pool.query<{ id: string; tenant_id: string }>(
 
 ## 9. Refactor Priorities
 
-| Priority | Action | Location |
-|---|---|---|
-| P1 | Implement stage-3 Plaid parser: reads `raw_artifacts` blob, writes `raw_parsed` row with `plaid_tx_v1` | New file: `services/raw/src/parsers/plaid.ts` |
-| P2 | Verify/document production DB role has BYPASSRLS for normalizeWorker | `database/` audit turn, DB role config |
-| P3 | Remove `"plaid": "^27.0.0"` from `services/raw/package.json` | `services/raw/package.json:34` |
-| P4 | Renumber `0004_raw_plaid_items_rls.sql` to avoid duplicate prefix | `services/raw/migrations/` |
-| P5 | Add live Plaid API probe in `plaidConnector.validateCredentials` | `services/raw/src/sources/connectors.ts` |
+| Priority | Action                                                                                                 | Location                                      |
+| -------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
+| P1       | Implement stage-3 Plaid parser: reads `raw_artifacts` blob, writes `raw_parsed` row with `plaid_tx_v1` | New file: `services/raw/src/parsers/plaid.ts` |
+| P2       | Verify/document production DB role has BYPASSRLS for normalizeWorker                                   | `database/` audit turn, DB role config        |
+| P3       | Remove `"plaid": "^27.0.0"` from `services/raw/package.json`                                           | `services/raw/package.json:34`                |
+| P4       | Renumber `0004_raw_plaid_items_rls.sql` to avoid duplicate prefix                                      | `services/raw/migrations/`                    |
+| P5       | Add live Plaid API probe in `plaidConnector.validateCredentials`                                       | `services/raw/src/sources/connectors.ts`      |
 
 ---
 
 ## 10. Confidence
 
-| Area | Confidence | Reason |
-|---|---|---|
-| Raw ingestion correctness | High | All paths traced, tests pass, dedup constraint confirmed |
-| Ledger entity reads/writes | High | Full code trace, 148 tests pass |
-| Normalize pipeline state | High | Confirmed no writer to `raw_parsed` via grep + code trace |
-| ReconciliationService matchers | High | 7 matcher tests all pass; advisory lock pattern verified |
-| Production DB role for BYPASSRLS | Low | Not verified against live DB; database audit turn must confirm |
-| Plaid webhook signature correctness | Medium | `verifyPlaidWebhook` from shared. Implementation not traced in this turn |
-| Integration path (blob → artifact → parsed → ledger) | Medium | Schema correct; live run not possible without stage-3 parser |
+| Area                                                 | Confidence | Reason                                                                   |
+| ---------------------------------------------------- | ---------- | ------------------------------------------------------------------------ |
+| Raw ingestion correctness                            | High       | All paths traced, tests pass, dedup constraint confirmed                 |
+| Ledger entity reads/writes                           | High       | Full code trace, 148 tests pass                                          |
+| Normalize pipeline state                             | High       | Confirmed no writer to `raw_parsed` via grep + code trace                |
+| ReconciliationService matchers                       | High       | 7 matcher tests all pass; advisory lock pattern verified                 |
+| Production DB role for BYPASSRLS                     | Low        | Not verified against live DB; database audit turn must confirm           |
+| Plaid webhook signature correctness                  | Medium     | `verifyPlaidWebhook` from shared. Implementation not traced in this turn |
+| Integration path (blob → artifact → parsed → ledger) | Medium     | Schema correct; live run not possible without stage-3 parser             |
 
 ---
 

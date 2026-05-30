@@ -2,6 +2,7 @@
 
 **Audited:** 2026-05-26
 **Files examined:**
+
 - `services/mcp/src/auth.ts`
 - `services/mcp/src/server.ts`
 - `services/mcp/src/dispatcher.ts`
@@ -20,6 +21,7 @@
 - `shared/src/contracts/ILedgerService.ts`
 
 **Commands run:**
+
 ```
 pnpm --filter @brain/mcp run typecheck
 pnpm --filter @brain/mcp run test
@@ -35,6 +37,7 @@ cat services/mcp/src/tools/__snapshots__/registry.no-execute.test.ts.snap
 ## 1. Scope
 
 This report covers:
+
 - `@brain/mcp`. JSON-RPC 2.0 MCP server: auth chain, all 10 tools, 5 resources, 5 prompts, dispatcher
 - The cross-service DB access question flagged in the prior audit (`auth.ts` querying execution's `agents` table directly)
 - Boot wiring in `services/api/src/main.ts`. Whether all services are correctly injected
@@ -63,6 +66,7 @@ The server is designed to be stateless: agent identity is verified on every requ
 ### Tool count. 10 confirmed
 
 Registry snapshot (`tools/__snapshots__/registry.no-execute.test.ts.snap`):
+
 ```
 agent.action.propose
 ledger.account.get
@@ -81,6 +85,7 @@ Breakdown matches the spec: ledger reads ×5, wiki reads ×2, `raw.contribute` �
 ### Auth chain. All 4 checks implemented
 
 `McpAuthVerifier.verify()` (`auth.ts:67–113`) checks in order:
+
 1. `principal.type === "agent"`. Rejects non-agent principals
 2. Agent row exists in `agents` table and `state === "active"`. Rejects unknown or inactive agents
 3. `agent.tenant_id === principal.tenantId`. Tenant equality (defense in depth)
@@ -120,6 +125,7 @@ private async loadAgent(principal: Principal): Promise<AgentRecord | null> {
 ### Services injected at boot. All present
 
 `main.ts:1033–1041`:
+
 ```ts
 const mcpServer = new BrainMcpServer({
   auth: mcpAuthVerifier,
@@ -127,7 +133,7 @@ const mcpServer = new BrainMcpServer({
   wiki: wikiService,
   raw: rawEvidenceService,
   paymentIntents: paymentIntentService,
-  agentService,         // ← wired
+  agentService, // ← wired
   audit,
 });
 ```
@@ -137,6 +143,7 @@ const mcpServer = new BrainMcpServer({
 ### `brain://ledger/obligations/{id}` resource. BROKEN
 
 `resources.ts:96–100`:
+
 ```ts
 case "ledger.obligation": {
   const list = await ctx.ledger.listObligations(ctx.ctx, { limit: 1 });
@@ -150,17 +157,18 @@ Root cause: `ILedgerService` has no `getObligation(ctx, id)` method. Only `listO
 
 ### 5 resources. Correct except obligation
 
-| Resource URI | Handler | Correct? |
-|---|---|---|
-| `brain://ledger/accounts/{account_id}` | `ctx.ledger.getAccount()` | Yes |
-| `brain://ledger/transactions/{transaction_id}` | `ctx.ledger.getTransaction()` | Yes |
-| `brain://ledger/obligations/{obligation_id}` | `listObligations({ limit: 1 }).find(id)` | **BROKEN** |
-| `brain://ledger/payment-intents/{id}` | `ctx.paymentIntents.get()` | Yes |
-| `brain://wiki/pages/{slug}` | `ctx.wiki.getPage()` | Yes |
+| Resource URI                                   | Handler                                  | Correct?   |
+| ---------------------------------------------- | ---------------------------------------- | ---------- |
+| `brain://ledger/accounts/{account_id}`         | `ctx.ledger.getAccount()`                | Yes        |
+| `brain://ledger/transactions/{transaction_id}` | `ctx.ledger.getTransaction()`            | Yes        |
+| `brain://ledger/obligations/{obligation_id}`   | `listObligations({ limit: 1 }).find(id)` | **BROKEN** |
+| `brain://ledger/payment-intents/{id}`          | `ctx.paymentIntents.get()`               | Yes        |
+| `brain://wiki/pages/{slug}`                    | `ctx.wiki.getPage()`                     | Yes        |
 
 ### 5 prompts. Correct
 
 All 5 prompts render to `wiki.question` calls via `render()`:
+
 - `wiki.question.cash_flow_summary` (required: `period`)
 - `wiki.question.bills_due` (optional: `days`, defaults to 7)
 - `wiki.question.spending_change` (required: `period`)
@@ -176,11 +184,13 @@ All 5 prompts render to `wiki.question` calls via `render()`:
 ## 4. Runtime Validation
 
 **Typecheck:**
+
 ```
 pnpm --filter @brain/mcp run typecheck → 0 errors
 ```
 
 **Tests:**
+
 ```
 pnpm --filter @brain/mcp run test
 → 5 test files, 56 tests passed
@@ -192,20 +202,24 @@ pnpm --filter @brain/mcp run test
 ```
 
 **Tool count assertion (server.test.ts:155):**
+
 ```ts
 expect(r.tools.length).toBe(10);
 ```
+
 Passes. Snapshot test (`registry.no-execute.test.ts`) freezes the surface. Any new tool requires explicit snapshot update (P1.2 enforcement).
 
 **Obligation resource. No integration test:**
 `resources.test.ts` tests `parseBrainUri` and `listResources` only. It does not call `readResource`. The obligation bug has no test catching it.
 
 **Cross-service DB query confirmed:**
+
 ```
 services/mcp/src/auth.ts:117
 SELECT id, tenant_id, state, scope_hash, onchain_address, role
   FROM agents WHERE id = $1 LIMIT 1
 ```
+
 Uses `withTenantScope(this.pool, ...)`. RLS active, tenant-scoped read.
 
 ---
@@ -234,7 +248,7 @@ Mitigations present: `withTenantScope` (RLS active), read-only SELECT, hot-path 
 
 2. **`readResource` not tested**. `resources.test.ts` covers `parseBrainUri` and `listResources` only. The end-to-end resource resolution path (`readResource`, which calls service methods) has zero test coverage. The obligation bug is invisible to CI.
 
-3. **On-chain `BrainMCPAgentRegistry` unreachable without `MCP_AGENT_REGISTRY_ADDRESS`**. If `cfg.MCP_AGENT_REGISTRY_ADDRESS` is unset or falsy, `createViemScopeChecker` receives `undefined as \`0x${string}\``. Likely a runtime type error on the first MCP request. The `FakeAuthVerifier` path avoids this in dev; production requires the env var. No boot-time guard asserts it is present when `BRAIN_MCP_DEV_AUTH_BYPASS` is false.
+3. **On-chain `BrainMCPAgentRegistry` unreachable without `MCP_AGENT_REGISTRY_ADDRESS`**. If `cfg.MCP_AGENT_REGISTRY_ADDRESS` is unset or falsy, `createViemScopeChecker` receives `undefined as \`0x${string}\``. Likely a runtime type error on the first MCP request. The `FakeAuthVerifier`path avoids this in dev; production requires the env var. No boot-time guard asserts it is present when`BRAIN_MCP_DEV_AUTH_BYPASS` is false.
 
 4. **`agent_scope_hash_missing` error for agents with no on-chain attestation**. Any agent registered off-chain without `scope_hash` throws at step 4 of auth. This is intentional per the design but means that until `BrainMCPAgentRegistry` deployment is complete, all MCP agents are effectively blocked.
 
@@ -243,6 +257,7 @@ Mitigations present: `withTenantScope` (RLS active), read-only SELECT, hot-path 
 ## 8. Evidence
 
 **10 tools confirmed via snapshot:**
+
 ```
 services/mcp/src/tools/__snapshots__/registry.no-execute.test.ts.snap
 exports[`MCP tool registry. No execution surface (P1.2) > snapshots ...`]
@@ -252,6 +267,7 @@ exports[`MCP tool registry. No execution surface (P1.2) > snapshots ...`]
 ```
 
 **Obligation bug. `limit: 1` then `find(id)`:**
+
 ```
 services/mcp/src/resources.ts:96-100
 case "ledger.obligation": {
@@ -259,15 +275,18 @@ case "ledger.obligation": {
   const match = list.items.find((o) => o.id === parsed.id);
   if (match === undefined) throw brainError("ledger_row_not_found", "obligation not found");
 ```
+
 `ILedgerService` has no `getObligation(ctx, id)` method (confirmed `shared/src/contracts/ILedgerService.ts`).
 
 **`agentService` wired. `agent.action.propose` functional:**
+
 ```
 services/api/src/main.ts:1039
 agentService,   // injected. Tool will not 500
 ```
 
 **Auth chain cross-service read:**
+
 ```
 services/mcp/src/auth.ts:116-122
 return withTenantScope(this.pool, principal.tenantId, async (c) => {
@@ -278,6 +297,7 @@ return withTenantScope(this.pool, principal.tenantId, async (c) => {
   return rows[0] ?? null;
 });
 ```
+
 `@brain/mcp/package.json`: `"@brain/execution": "workspace:*"`. Workspace dep exists, API bypass confirmed.
 
 **`payment_intent.execute` absent:**
@@ -295,25 +315,27 @@ The snapshot has 10 entries; none is `payment_intent.execute`. The `registry.no-
 
 **Score: 7/10. Mostly Working**
 
-| Dimension | Status |
-|---|---|
-| Tool surface (10 tools) | Correct and tested |
-| Auth chain (4 checks) | Correct; on-chain registry enforced |
-| Scope enforcement | Correct per-tool |
-| Resources. 4 of 5 | Correct |
-| Resource `brain://ledger/obligations/{id}` | Broken. Always 404 |
-| Prompts (5) | Correct |
-| `agent.action.propose` wiring | Wired. Functional |
-| Audit emission | Emitted on every tool/resource call |
-| Cross-service DB read | Violation present, RLS-mitigated |
-| `readResource` test coverage | Zero. Obligation bug invisible to CI |
-| `MCP_AGENT_REGISTRY_ADDRESS` guard | No boot-time assertion; silent failure path |
+| Dimension                                  | Status                                      |
+| ------------------------------------------ | ------------------------------------------- |
+| Tool surface (10 tools)                    | Correct and tested                          |
+| Auth chain (4 checks)                      | Correct; on-chain registry enforced         |
+| Scope enforcement                          | Correct per-tool                            |
+| Resources. 4 of 5                          | Correct                                     |
+| Resource `brain://ledger/obligations/{id}` | Broken. Always 404                          |
+| Prompts (5)                                | Correct                                     |
+| `agent.action.propose` wiring              | Wired. Functional                           |
+| Audit emission                             | Emitted on every tool/resource call         |
+| Cross-service DB read                      | Violation present, RLS-mitigated            |
+| `readResource` test coverage               | Zero. Obligation bug invisible to CI        |
+| `MCP_AGENT_REGISTRY_ADDRESS` guard         | No boot-time assertion; silent failure path |
 
 **Production blockers:**
+
 - `MCP_AGENT_REGISTRY_ADDRESS` must be set. No boot guard enforces this; missing it causes a runtime type error on first MCP request.
 - All MCP agents need an on-chain `scope_hash` in `BrainMCPAgentRegistry`. Without deployment, every agent is blocked at auth step 4.
 
 **Non-blocking issues:**
+
 - Obligation resource bug (R-29). Affects any MCP client using `brain://ledger/obligations/{id}` URIs. Medium severity: the tool `ledger.obligations.list` works correctly; only the resource URI is broken.
 
 ---

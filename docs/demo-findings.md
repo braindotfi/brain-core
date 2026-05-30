@@ -18,9 +18,9 @@
 | Python agents                    | ✅ 9 pass, 90.82% coverage                                                                                |
 | E2E proof-points                 | ❌ 2 of 2 fail (wiki unpopulated); 1 skipped (no ext-agent token)                                         |
 | Golden-path payment (end-to-end) | ✅ Create → §6 gate (13 checks) → Execute → Audit chain with Merkle proof                                 |
-| Policy VM (real evaluation)      | ✅ 3-rule policy: auto-allow / confirm / reject. All three outcomes live against the gate                |
+| Policy VM (real evaluation)      | ✅ 3-rule policy: auto-allow / confirm / reject. All three outcomes live against the gate                 |
 | MCP surface                      | ✅ 10 tools live; full payment proposal flow (approved / pending_approval / rejected) driven via JSON-RPC |
-| On-chain audit anchor            | ✅ 17 events anchored to Base Sepolia. Tx `0x96d0b81d…`, block 41834398, Merkle root `2a0c5508…`         |
+| On-chain audit anchor            | ✅ 17 events anchored to Base Sepolia. Tx `0x96d0b81d…`, block 41834398, Merkle root `2a0c5508…`          |
 
 **Three-bullet headline:**
 
@@ -376,15 +376,15 @@ No gaps found in contracts.
 
 ## 4. Doc Drift / Spec Violations
 
-| Severity | Finding                                                                                                                                                                                                                       |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Severity | Finding                                                                                                                                                                                                                      |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | P1       | **`services/api/src/main.ts:126`**. `.env` path set to `../../../../.env` (resolves to `brain.inc/.env`); correct is `../../../.env` (`brain-core/.env`). Server fails to boot without manual fix.                           |
 | P1       | **Demo golden IDs** (`tnt_01GOLDEN00000000000000000`, `usr_01GOLDEN00000000000000000`) contain `O` and `L`. Invalid Crockford Base32 characters. Seed tool fails ULID validation. `main.ts` bypasses this in demo mode only. |
 | P1       | **Demo user prefix `usr_`** vs. JWT `expectedSubPrefix("user") = "user"`. Token auth fails with `sub prefix does not match principal_type`.                                                                                  |
 | P1       | **Demo token missing `payment_intent:execute` scope**. Execute route requires it; demo quickstart cannot complete without patching `main.ts:732`.                                                                            |
 | P2       | **`CLAUDE.md` §6 gate path**. Says `services/api/src/shared/gate/`; actual location is `shared/src/gate/`.                                                                                                                   |
 | P2       | **Parent `brain.inc/CLAUDE.md`** says "five-layer". Brain-core is six layers as of v0.3 (already noted in `brain-core/CLAUDE.md`).                                                                                           |
-| P2       | **E2E README** says `BRAIN_BASE_URL=https://api.sandbox.brain.fi/v1`; E2E test paths already include `/v1` prefix → double `/v1` when set per README. Correct value is `https://api.sandbox.brain.fi` (no trailing `/v1`).    |
+| P2       | **E2E README** says `BRAIN_BASE_URL=https://api.sandbox.brain.fi/v1`; E2E test paths already include `/v1` prefix → double `/v1` when set per README. Correct value is `https://api.sandbox.brain.fi` (no trailing `/v1`).   |
 | P2       | **`POLICY_REGISTRY_ADDRESS` missing** from `.env` and `.env.example`. Silently skipped; on-chain policy lookup degraded.                                                                                                     |
 
 ---
@@ -445,22 +445,22 @@ pnpm run contracts:test
 
 ### Patches applied to source during this session
 
-| File                                                             | Change                                                                                                      | Rationale                                                            |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `services/api/src/main.ts:126`                                   | `../../../../.env` → `../../../.env`                                                                        | Wrong directory level; server couldn't load env                      |
-| `services/api/src/main.ts:411`                                   | `tnt_01GOLDEN...` → `tnt_00000000010000000000000000`                                                        | Invalid ULID (O, L not in Crockford Base32)                          |
-| `services/api/src/main.ts:411`                                   | `usr_00000000020000000000000001` → `user_00000000020000000000000001`                                        | JWT prefix must be `user_` not `usr_`                                |
-| `services/api/src/main.ts:732`                                   | Added `"payment_intent:execute"` to demo token scopes                                                       | Execute route gated on this scope                                    |
-| `.env:40`                                                        | `ANTHROPIC_API_KEY=` → commented out                                                                        | Empty string fails Zod `.string().min(1).optional()`                 |
-| `services/execution/migrations/0006_executions_soft_pi_ref.sql`  | New migration: drop `executions_proposal_id_fkey`                                                           | v0.3 PIs in `ledger.payment_intents`; FK caused every execute to 500 |
-| `services/execution/src/payment-intents/PaymentIntentService.ts` | Wrap persist block in try/catch; always emit `execute.after`                                                | §6 mandatory close event was missing on DB failure                   |
-| `services/mcp/src/auth.ts`                                       | Remove `principal.type !== "agent"` check from `FakeAuthVerifier`                                           | Dev bypass was blocking user principals from calling MCP tools       |
-| `services/mcp/src/transport/http.ts`                             | Add `skipPrincipalTypeCheck` option; wire via `BRAIN_MCP_DEV_AUTH_BYPASS`                                   | MCP tools/list returned 0 tools in demo mode                         |
-| `services/api/src/main.ts`                                       | Remove sandbox bypass from `evaluatePaymentIntent`; always call `policyService.evaluateForGate`             | Real policy VM now evaluates every payment intent                    |
-| `services/api/src/main.ts`                                       | Add `POST /v1/demo/policy/activate` route (demo mode only)                                                  | Seeds a 3-rule active policy without EIP-712 signing ceremony        |
-| `services/api/src/main.ts`                                       | Add `"policy:write"` to demo token scopes                                                                   | Required for demo policy activate endpoint                           |
-| `services/api/src/main.ts`                                       | Add `POST /v1/demo/anchor/trigger`; wire `triggerAnchor` closure; first run at 10s in demo mode             | On-demand on-chain anchor publication for demos                      |
-| `.env`                                                           | Added `0x` prefix to `AUDIT_PUBLISHER_KEY` (64-char hex key was missing prefix)                             | Zod regex `/^0x[0-9a-fA-F]{64}$/` rejected the key                   |
+| File                                                             | Change                                                                                                     | Rationale                                                            |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `services/api/src/main.ts:126`                                   | `../../../../.env` → `../../../.env`                                                                       | Wrong directory level; server couldn't load env                      |
+| `services/api/src/main.ts:411`                                   | `tnt_01GOLDEN...` → `tnt_00000000010000000000000000`                                                       | Invalid ULID (O, L not in Crockford Base32)                          |
+| `services/api/src/main.ts:411`                                   | `usr_00000000020000000000000001` → `user_00000000020000000000000001`                                       | JWT prefix must be `user_` not `usr_`                                |
+| `services/api/src/main.ts:732`                                   | Added `"payment_intent:execute"` to demo token scopes                                                      | Execute route gated on this scope                                    |
+| `.env:40`                                                        | `ANTHROPIC_API_KEY=` → commented out                                                                       | Empty string fails Zod `.string().min(1).optional()`                 |
+| `services/execution/migrations/0006_executions_soft_pi_ref.sql`  | New migration: drop `executions_proposal_id_fkey`                                                          | v0.3 PIs in `ledger.payment_intents`; FK caused every execute to 500 |
+| `services/execution/src/payment-intents/PaymentIntentService.ts` | Wrap persist block in try/catch; always emit `execute.after`                                               | §6 mandatory close event was missing on DB failure                   |
+| `services/mcp/src/auth.ts`                                       | Remove `principal.type !== "agent"` check from `FakeAuthVerifier`                                          | Dev bypass was blocking user principals from calling MCP tools       |
+| `services/mcp/src/transport/http.ts`                             | Add `skipPrincipalTypeCheck` option; wire via `BRAIN_MCP_DEV_AUTH_BYPASS`                                  | MCP tools/list returned 0 tools in demo mode                         |
+| `services/api/src/main.ts`                                       | Remove sandbox bypass from `evaluatePaymentIntent`; always call `policyService.evaluateForGate`            | Real policy VM now evaluates every payment intent                    |
+| `services/api/src/main.ts`                                       | Add `POST /v1/demo/policy/activate` route (demo mode only)                                                 | Seeds a 3-rule active policy without EIP-712 signing ceremony        |
+| `services/api/src/main.ts`                                       | Add `"policy:write"` to demo token scopes                                                                  | Required for demo policy activate endpoint                           |
+| `services/api/src/main.ts`                                       | Add `POST /v1/demo/anchor/trigger`; wire `triggerAnchor` closure; first run at 10s in demo mode            | On-demand on-chain anchor publication for demos                      |
+| `.env`                                                           | Added `0x` prefix to `AUDIT_PUBLISHER_KEY` (64-char hex key was missing prefix)                            | Zod regex `/^0x[0-9a-fA-F]{64}$/` rejected the key                   |
 | `scripts/demo/mcp-demo.sh`                                       | New script. Drives full payment proposal flow via MCP JSON-RPC (tools/list, ledger reads, three proposals) | Demonstrates MCP surface end-to-end                                  |
 
 ### Golden-path demo IDs
@@ -491,7 +491,7 @@ All three P0 blocks are resolved and all 457 unit tests pass with no regressions
 
 | P0                                                    | Fix                                                                                                                                                                          | Files changed                                                                                |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Execution FK mismatch (`executions_proposal_id_fkey`) | Added migration `0006_executions_soft_pi_ref.sql`. `ALTER TABLE executions DROP CONSTRAINT IF EXISTS executions_proposal_id_fkey`                                           | `services/execution/migrations/0006_executions_soft_pi_ref.sql`                              |
+| Execution FK mismatch (`executions_proposal_id_fkey`) | Added migration `0006_executions_soft_pi_ref.sql`. `ALTER TABLE executions DROP CONSTRAINT IF EXISTS executions_proposal_id_fkey`                                            | `services/execution/migrations/0006_executions_soft_pi_ref.sql`                              |
 | Missing `execute.after` on gate-pass-DB-fail          | Wrapped `insertExecution` + transitions in try/catch; always emit `execute.after` with `ok: false` if persist fails                                                          | `services/execution/src/payment-intents/PaymentIntentService.ts:410-437`                     |
 | MCP `tools/list` returns 0 tools                      | Removed duplicate `principal.type !== "agent"` check from `FakeAuthVerifier`; added `skipPrincipalTypeCheck` option to `registerMcpRoute`; wired `BRAIN_MCP_DEV_AUTH_BYPASS` | `services/mcp/src/auth.ts`, `services/mcp/src/transport/http.ts`, `services/api/src/main.ts` |
 

@@ -28,7 +28,13 @@ function setOf(...names: RailName[]): ReadonlySet<RailName> {
 describe("RAIL_CATALOG", () => {
   it("declares the five canonical rail names exactly once each", () => {
     const names = RAIL_CATALOG.map((d) => d.name).sort();
-    expect(names).toEqual(["bank_ach", "erp_writeback", "escrow_base", "onchain_base", "x402_base"]);
+    expect(names).toEqual([
+      "bank_ach",
+      "erp_writeback",
+      "escrow_base",
+      "onchain_base",
+      "x402_base",
+    ]);
     expect(new Set(names).size).toBe(names.length);
   });
 

@@ -137,9 +137,7 @@ DESCRIBE("signed-agent → gated-payment (peer-review batch 2, P5)", () => {
     const events = await agent.get<{ events: AuditEventMin[] }>(
       "/v1/audit/events?layer=agent&limit=100",
     );
-    const beforeEvents = events.events.filter(
-      (e) => e.action === "payment_intent.execute.before",
-    );
+    const beforeEvents = events.events.filter((e) => e.action === "payment_intent.execute.before");
     if (beforeEvents.length === 0) {
       // No execution history on this tenant in the visible window. Skip
       // rather than false-positive: the absence of executions is not a gate
@@ -158,7 +156,10 @@ DESCRIBE("signed-agent → gated-payment (peer-review batch 2, P5)", () => {
     ];
     for (const { index, name } of required) {
       const row = checks.find((c) => c.index === index);
-      expect(row, `gate check ${String(index)} (${name}) missing from execute.before`).toBeDefined();
+      expect(
+        row,
+        `gate check ${String(index)} (${name}) missing from execute.before`,
+      ).toBeDefined();
       expect(row!.passed, `gate check ${String(index)} (${name}) did not pass`).toBe(true);
       expect(
         row!.detail?.not_applicable === true,

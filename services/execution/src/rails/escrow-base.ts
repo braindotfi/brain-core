@@ -102,14 +102,10 @@ export class EscrowBaseRail implements Rail {
       });
       txHash = result.txHash;
     } catch (err) {
-      throw brainError(
-        "execution_rail_declined",
-        `escrow release reverted: ${revertReason(err)}`,
-        {
-          details: { escrow_id: action.escrow_id, amount_units: action.amount_units },
-          cause: err,
-        },
-      );
+      throw brainError("execution_rail_declined", `escrow release reverted: ${revertReason(err)}`, {
+        details: { escrow_id: action.escrow_id, amount_units: action.amount_units },
+        cause: err,
+      });
     }
 
     return {

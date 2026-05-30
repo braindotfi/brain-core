@@ -2,6 +2,7 @@
 
 **Audited:** 2026-05-26
 **Files examined:**
+
 - `services/agent-router/src/router.ts`
 - `services/agent-router/src/types.ts`
 - `services/agent-router/src/worker.ts`
@@ -27,6 +28,7 @@
 - `services/execution/migrations/0008_agent_runs.sql`
 
 **Commands run:**
+
 ```
 pnpm --filter @brain/agent-router run typecheck
 pnpm --filter @brain/agent-router run test
@@ -43,6 +45,7 @@ grep -rn "agent_runs|insertRoutingDecision|insertAgentRun" services/execution/sr
 ## 1. Scope
 
 This report covers:
+
 - `@brain/agent-router`. The routing engine, `AgentRunService`, `POST /agents/route`, `POST /agents/run`, and the BullMQ `brain.agent.route` queue worker
 - `@brain/internal-agents`. The 19 first-party agent catalog (definitions + handlers)
 - The domain-event vocabulary and producer-consumer wiring in `shared/src/events/`
@@ -76,6 +79,7 @@ The design is:
 ### AgentRouter. Fully implemented
 
 `router.ts:74–146` implements the described pipeline exactly:
+
 - `catalog()` → `filter(enabled_by_default)` → parallel `matches()` calls → `getScopedCapabilities` filter → parallel scoring → sort → `resolveExecutionMode()` → audit emit before and after
 - Scoring weights: `confidence = 0.6 * matchQuality + 0.25 * bundle.completeness + 0.15 * reputation`; category mismatch is a `-0.2` downgrade (never reject)
 - `noMatch()` covers both `no_match` and `unscoped` terminal paths with audit events
@@ -83,6 +87,7 @@ The design is:
 ### ActionResolver. Fully implemented
 
 `action-resolver.ts:61–123` implements all four resolution steps in priority order. Importantly:
+
 - Explicit action check: validates against `offered` set, then against `isActionAllowed` hook if present
 - `event_action_map` match uses the definition's map (e.g. `payment` maps `bill.due_soon → propose_payment`)
 - `intent_action_map` uses the classifier (score ≥ threshold per rule, picks best)
@@ -92,6 +97,7 @@ The design is:
 ### AgentRunService. Fully implemented
 
 `agent-run-service.ts:110–344` implements the full shadow-aware orchestration:
+
 - Records `agent_routing_decisions` row via the injected `AgentRunStore` (DB-backed at boot)
 - Shadow gate: `isShadowed(agentId)` → terminates financial proposals as `shadow_completed`
 - Graduated rollout (Phase 1b): `checkRail(agentId, actionType)` provides per-rail restriction even for live agents
@@ -106,10 +112,10 @@ The design is:
 
 `registry.ts:52–113` registers 19 agents. All 19 have a paired handler. Breakdown:
 
-| Category | Agents |
-|---|---|
-| Business. Financial (money-mover) | payment, treasury, savings, debt_optimization |
-| Business. Non-financial (advisory) | collections, reconciliation, subscription, vendor_risk, cash_forecast, dispute, compliance, revenue_intel |
+| Category                           | Agents                                                                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Business. Financial (money-mover)  | payment, treasury, savings, debt_optimization                                                                 |
+| Business. Non-financial (advisory) | collections, reconciliation, subscription, vendor_risk, cash_forecast, dispute, compliance, revenue_intel     |
 | Consumer. Non-financial (advisory) | personal_budget, bill_management, fraud_anomaly, tax_prep, travel_finance, financial_health, purchase_advisor |
 
 All non-financial handlers call the `agentProposal()` helper. Non-financial advisory proposals with no I/O in `build()`. The `payment` handler is the reference money-mover: it detects `FINANCIAL_ACTIONS`, shapes a `CreatePaymentIntentInput`, and returns `channel: "payment_intent"`.
@@ -117,6 +123,7 @@ All non-financial handlers call the `agentProposal()` helper. Non-financial advi
 ### Promotion policy. Payment agent live, all others shadowed
 
 `promotion-config.ts:22–26`:
+
 ```ts
 export const LIVE_AGENTS: PromotionConfig = {
   liveAgents: {
@@ -140,6 +147,7 @@ Default (and current production): `RulesIntentClassifier`. Token-overlap scoring
 ### Domain event producers. INTEGRATION MARKERS ONLY
 
 `emitDomainEvent` is defined in `shared/src/events/triggers.ts:74`. Searching for actual call sites across all services:
+
 - `services/execution/src/payment-intents/PaymentIntentService.ts:323-326`. Comment: "INTEGRATION POINT (agent-router, Phase 1): a `payment.failed` domain event would be emitted … Wiring the enqueue dep into this service is a follow-up."
 - `services/ledger/src/reconciliation/ReconciliationService.ts:112-115`. Comment: "INTEGRATION POINT (agent-router, Phase 1): a `reconciliation.candidate_found` event would be emitted … Wiring the enqueue dep is a follow-up."
 
@@ -148,9 +156,11 @@ Default (and current production): `RulesIntentClassifier`. Token-overlap scoring
 ### H-23 action allowlist. Still unwired
 
 `main.ts:1092`:
+
 ```ts
 const actionResolver = new ActionResolver({ classifier: agentClassifier });
 ```
+
 The `isActionAllowed` hook is `undefined`. The comment explicitly acknowledges: "Until wired, an explicit action is accepted if the agent offers it (pre-H-23 behavior)." The signed policy's per-agent action restrictions (R-22) remain unenforced at the routing layer.
 
 ### getScopedCapabilities. Hardcoded full set
@@ -166,12 +176,14 @@ The `isActionAllowed` hook is `undefined`. The comment explicitly acknowledges: 
 ## 4. Runtime Validation
 
 **Typecheck. Both workspaces pass:**
+
 ```
 pnpm --filter @brain/agent-router run typecheck   → 0 errors
 pnpm --filter @brain/internal-agents run typecheck → 0 errors
 ```
 
 **Tests. All pass:**
+
 ```
 @brain/agent-router:   18 test files, 166 tests passed
 @brain/internal-agents: 11 test files, 135 tests passed
@@ -179,6 +191,7 @@ Total: 301 tests
 ```
 
 Notable test files:
+
 - `business-routing.test.ts`: 59 tests. Covers trigger matching, intent matching, scope filtering, category penalties, evidence scoring, `no_match`/`unscoped` paths
 - `adversarial.test.ts`: 3 tests. Injection attempts in intent strings
 - `action-resolver.test.ts`: 13 tests. All four resolution paths plus `missing_action`
@@ -187,23 +200,29 @@ Notable test files:
 - `business-agents.test.ts`: 19 tests. Business agent definitions (triggers, capabilities, required_evidence)
 
 **Domain event producer grep:**
+
 ```
 grep -rn "emitDomainEvent" services/ --include="*.ts" (excl. tests)
 → services/execution/src/payment-intents/PaymentIntentService.ts:325 (comment)
 → services/ledger/src/reconciliation/ReconciliationService.ts:114 (comment)
 ```
+
 Zero actual `emitDomainEvent(...)` call sites found in service code.
 
 **Promotion config:**
+
 ```
 LIVE_AGENTS = { liveAgents: { payment: ["ach", "onchain"] } }
 ```
+
 All other 18 agents shadowed.
 
 **Evidence gatherer at boot:**
+
 ```
 agentEvidence = new StaticEvidenceGatherer()  // empty set, main.ts:1048
 ```
+
 TODO comment present; no wiring to Wiki or Ledger evidence.
 
 ---
@@ -253,6 +272,7 @@ The signed-policy per-agent action allowlist defined in `@brain/policy` is bypas
 ## 8. Evidence
 
 **Catalog has 19 real agents with real handlers:**
+
 ```
 services/internal-agents/src/registry.ts:52–113
 internalAgentCatalog: 19 entries
@@ -260,13 +280,16 @@ internalAgentHandlers: 19 entries (matching keys)
 ```
 
 **Payment agent is promoted live:**
+
 ```
 services/agent-router/src/promotion-config.ts:22–26
 LIVE_AGENTS = { liveAgents: { payment: ["ach", "onchain"] } }
 ```
+
 `AgentRunService.isShadowed("payment")` returns `false`. Financial proposals from the payment agent reach `proposeAction()` → `IPaymentIntentService.create()`.
 
 **Evidence gatherer is empty at boot:**
+
 ```
 services/api/src/main.ts:1048
 const agentEvidence = new StaticEvidenceGatherer();
@@ -274,6 +297,7 @@ const agentEvidence = new StaticEvidenceGatherer();
 ```
 
 **Domain event producers are comments, not calls:**
+
 ```
 services/execution/src/payment-intents/PaymentIntentService.ts:323–326
 // INTEGRATION POINT (agent-router, Phase 1): a failed/rejected payment is
@@ -283,6 +307,7 @@ services/execution/src/payment-intents/PaymentIntentService.ts:323–326
 ```
 
 **H-23 gap. `isActionAllowed` absent:**
+
 ```
 services/api/src/main.ts:1092
 const actionResolver = new ActionResolver({ classifier: agentClassifier });
@@ -290,19 +315,24 @@ const actionResolver = new ActionResolver({ classifier: agentClassifier });
 ```
 
 **Worker persistence gap. `routeAndPropose` vs `AgentRunService`:**
+
 ```
 services/api/src/main.ts:1616  → createAgentRouteWorker → calls routeAndPropose (worker.ts)
 services/api/src/main.ts:1179  → AgentRunService (HTTP path) → calls store.recordRoutingDecision + store.recordRun
 ```
+
 `routeAndPropose` has no `store` parameter; the BullMQ worker path records no DB rows.
 
 **Scoring formula (router.ts:178):**
+
 ```ts
 const confidence = clamp01(0.6 * matchQuality + 0.25 * bundle.completeness + 0.15 * reputation);
 ```
+
 With `bundle.completeness = 0` (no evidence) and `reputation = 0.5` (default neutral), max confidence from a trigger match is `0.6 * 1 + 0.25 * 0 + 0.15 * 0.5 = 0.675`. Below the payment agent's `minimum_confidence: 0.85`. So even promoted-live payment agent proposals triggered by a domain event will resolve to `notify_only`, not `autonomy`.
 
 **BullMQ shutdown wiring confirmed:**
+
 ```
 services/api/src/main.ts:1641–1644
 await agentRouteWorker.close()  // graceful drain
@@ -324,19 +354,19 @@ The "Medium" qualifier applies only to runtime: without a running DB and live ev
 
 **Score: 6/10. Mostly Working (routing engine), Partial (end-to-end pipeline)**
 
-| Dimension | Status |
-|---|---|
-| Routing engine correctness | Ready (evidence-backed scoring, deterministic classifier, audited) |
-| Internal agent catalog | Ready (19 agents, 135 handler tests, correct proposal shaping) |
-| Shadow gate | Ready (all 18 non-payment agents shadowed by default) |
-| Run persistence (HTTP path) | Ready (routing_decisions + agent_runs tables, RLS-covered) |
-| Domain event producers | Not wired. Queue perpetually idle (R-25) |
-| Evidence gathering | Not wired. Zero evidence, confidence suppressed (R-26) |
-| Per-tenant scope grants | Not wired. All tenants have all capabilities |
-| Per-tenant category | Hardcoded "business". Consumer agents deprioritized |
-| H-23 action allowlist | Not wired. Explicit actions bypass policy restrictions (R-22) |
-| Worker run persistence | Missing. Event-driven path leaves no DB audit trail (R-27) |
-| Payment agent confidence | Structurally below `minimum_confidence` without evidence wiring |
+| Dimension                   | Status                                                             |
+| --------------------------- | ------------------------------------------------------------------ |
+| Routing engine correctness  | Ready (evidence-backed scoring, deterministic classifier, audited) |
+| Internal agent catalog      | Ready (19 agents, 135 handler tests, correct proposal shaping)     |
+| Shadow gate                 | Ready (all 18 non-payment agents shadowed by default)              |
+| Run persistence (HTTP path) | Ready (routing_decisions + agent_runs tables, RLS-covered)         |
+| Domain event producers      | Not wired. Queue perpetually idle (R-25)                           |
+| Evidence gathering          | Not wired. Zero evidence, confidence suppressed (R-26)             |
+| Per-tenant scope grants     | Not wired. All tenants have all capabilities                       |
+| Per-tenant category         | Hardcoded "business". Consumer agents deprioritized                |
+| H-23 action allowlist       | Not wired. Explicit actions bypass policy restrictions (R-22)      |
+| Worker run persistence      | Missing. Event-driven path leaves no DB audit trail (R-27)         |
+| Payment agent confidence    | Structurally below `minimum_confidence` without evidence wiring    |
 
 **Blockers before production (agent-router specifically):**
 
@@ -345,6 +375,7 @@ The "Medium" qualifier applies only to runtime: without a running DB and live ev
 3. **R-27. Worker path missing run persistence.** Event-driven routing produces no `agent_runs` or `agent_routing_decisions` DB rows. The audit trail is incomplete for the async path.
 
 **Non-blocking gaps (acceptable tech debt for current phase):**
+
 - Per-tenant scope and category resolution (Phase 3 gates)
 - H-23 injection (Medium risk, not exploitable without active adversarial clients)
 - Embedding classifier is opt-in and gracefully falls back

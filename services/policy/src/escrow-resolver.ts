@@ -36,10 +36,7 @@ export function makeResolveEscrowState(opts: {
   escrowAddress: string;
   rpcUrl: string;
   chainId?: number;
-}): (
-  ctx: ServiceCallContext,
-  input: EscrowStateInput,
-) => Promise<ResolvedEscrowState | null> {
+}): (ctx: ServiceCallContext, input: EscrowStateInput) => Promise<ResolvedEscrowState | null> {
   const chain = opts.chainId === 8453 ? base : baseSepolia;
   const client = createPublicClient({ chain, transport: http(opts.rpcUrl) });
 

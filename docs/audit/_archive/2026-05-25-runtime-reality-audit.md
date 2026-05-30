@@ -117,37 +117,39 @@ MCP path → POST /agents/mcp
 
 ## 3. Claimed vs Actual Architecture
 
-| Claim | Source | Reality | Status |
-|-------|--------|---------|--------|
-| Six-layer architecture | CLAUDE.md, Brain_MVP_Architecture.md | Layers exist, boundaries respected by code | REAL |
-| Monolithic boot binary | docs/boot-binary-spec.md | Designed correctly but main.ts excluded from build | PARTIAL |
-| 16 gate checks | CLAUDE.md | 17 check positions (13 base + 4 .5 variants); 3 critical checks unwired | PARTIAL |
-| Policy VM + EIP-712 signing | CLAUDE.md | VM real; EIP-712 signing in services/policy/src/signing.ts | REAL |
-| Merkle-chained audit log + on-chain anchor | CLAUDE.md | Merkle real (keccak256, matches contract); anchor broadcaster real | REAL |
-| 10 MCP tools | CLAUDE.md | Exactly 10 (5 ledger + 2 wiki + 1 raw + 1 PI + 1 agent) | REAL |
-| On-chain scope hash verification | CLAUDE.md | McpAuthVerifier.verify() calls getOnchainScopeHash() (60s cache) | REAL |
-| ACH + on-chain payment rails | CLAUDE.md | Code exists (ach-plaid.ts, onchain-base.ts) but stubs used in defaultRails() | PARTIAL |
-| Three Python MVP agents | CLAUDE.md | 1 implemented (reconciliation); payment + anomaly = future work | PARTIAL |
-| Tenant isolation via RLS | All docs | RLS armed but NOT enforced (FORCE RLS not applied) | PARTIAL |
-| Agent autonomy (autonomous agents) | docs/agent-autonomy-v3.md | 19 handlers, 16–39 LOC each, pure routing functions | MISLEADING |
-| Spend window rate-limiting | CLAUDE.md, policy VM | Migration broken (reserved keyword `window`), table missing | BROKEN |
-| E2E tests (3 Series A proof-points) | CLAUDE.md | 3 .e2e.test.ts files exist but require live staging | PARTIAL |
-| 15 cross-layer invariants | CLAUDE.md | 5 invariant test files, covers ~15 invariants (DB-level tests separate) | REAL |
-| JSON Schemas for 11 Ledger entities | CLAUDE.md | 6 schemas (account, agent, counterparty, obligation, policy, transaction) | PARTIAL |
-| Outbound webhook retries | CLAUDE.md | "fire-and-forget, no retry queue". Explicitly marked as follow-up | DEAD |
-| @brain/sdk published to npm | CLAUDE.md | Exists but "not yet published" | PARTIAL |
+| Claim                                      | Source                               | Reality                                                                      | Status     |
+| ------------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------- | ---------- |
+| Six-layer architecture                     | CLAUDE.md, Brain_MVP_Architecture.md | Layers exist, boundaries respected by code                                   | REAL       |
+| Monolithic boot binary                     | docs/boot-binary-spec.md             | Designed correctly but main.ts excluded from build                           | PARTIAL    |
+| 16 gate checks                             | CLAUDE.md                            | 17 check positions (13 base + 4 .5 variants); 3 critical checks unwired      | PARTIAL    |
+| Policy VM + EIP-712 signing                | CLAUDE.md                            | VM real; EIP-712 signing in services/policy/src/signing.ts                   | REAL       |
+| Merkle-chained audit log + on-chain anchor | CLAUDE.md                            | Merkle real (keccak256, matches contract); anchor broadcaster real           | REAL       |
+| 10 MCP tools                               | CLAUDE.md                            | Exactly 10 (5 ledger + 2 wiki + 1 raw + 1 PI + 1 agent)                      | REAL       |
+| On-chain scope hash verification           | CLAUDE.md                            | McpAuthVerifier.verify() calls getOnchainScopeHash() (60s cache)             | REAL       |
+| ACH + on-chain payment rails               | CLAUDE.md                            | Code exists (ach-plaid.ts, onchain-base.ts) but stubs used in defaultRails() | PARTIAL    |
+| Three Python MVP agents                    | CLAUDE.md                            | 1 implemented (reconciliation); payment + anomaly = future work              | PARTIAL    |
+| Tenant isolation via RLS                   | All docs                             | RLS armed but NOT enforced (FORCE RLS not applied)                           | PARTIAL    |
+| Agent autonomy (autonomous agents)         | docs/agent-autonomy-v3.md            | 19 handlers, 16–39 LOC each, pure routing functions                          | MISLEADING |
+| Spend window rate-limiting                 | CLAUDE.md, policy VM                 | Migration broken (reserved keyword `window`), table missing                  | BROKEN     |
+| E2E tests (3 Series A proof-points)        | CLAUDE.md                            | 3 .e2e.test.ts files exist but require live staging                          | PARTIAL    |
+| 15 cross-layer invariants                  | CLAUDE.md                            | 5 invariant test files, covers ~15 invariants (DB-level tests separate)      | REAL       |
+| JSON Schemas for 11 Ledger entities        | CLAUDE.md                            | 6 schemas (account, agent, counterparty, obligation, policy, transaction)    | PARTIAL    |
+| Outbound webhook retries                   | CLAUDE.md                            | "fire-and-forget, no retry queue". Explicitly marked as follow-up            | DEAD       |
+| @brain/sdk published to npm                | CLAUDE.md                            | Exists but "not yet published"                                               | PARTIAL    |
 
 ---
 
 ## 4. Six-Layer Architecture Audit
 
 ### Layer 1. Raw (`services/raw`, `@brain/raw`)
+
 - **Intended:** Source evidence ingestion, immutable payloads
 - **Reality:** Real. `registerRawPlugin` mounts under `/raw/*`. Plaid webhook handling, artifact storage (Azure Blob / LocalStack), raw_artifacts/raw_parsed/raw_plaid_items tables all exist.
 - **Violations:** None found
 - **Status:** MOSTLY COMPLETE. Plaid extraction code exists; live Plaid sandbox wiring is pending
 
 ### Layer 2. Ledger (`services/ledger`, `@brain/ledger`)
+
 - **Intended:** Machine-readable financial truth, 11 typed entities
 - **Reality:** Real and comprehensive. 10 ledger entity tables with RLS-armed migrations. `LedgerPaymentIntents` facade properly used by execution layer.
 - **Entity count discrepancy:** Docs say "11 entities" but 12 ledger tables exist (categories, counterparties, accounts, balances, documents, transactions, obligations, invoices, transfers, payment_intents, reconciliation_matches, reservations). Docs likely don't count `reservations` as an entity.
@@ -156,18 +158,21 @@ MCP path → POST /agents/mcp
 - **Status:** REAL. Schema mature; JSON Schema coverage incomplete
 
 ### Layer 3. Wiki (`services/wiki`, `@brain/wiki`)
+
 - **Intended:** Human-readable memory + narrative Q&A, pgvector
 - **Reality:** Real. wiki_entities, wiki_pages, wiki_relations tables exist. pgvector integration present. Reads Ledger tables READ-ONLY via `TenantScopedClient` (sanctioned exception).
 - **Violations:** The `check-wiki-no-ledger-write.mjs` guard confirms no write violations. A comment in `wiki/src/index.ts:7` references a stale migration note. Cosmetic only.
 - **Status:** REAL
 
 ### Layer 4. Policy (`services/policy`, `@brain/policy`)
+
 - **Intended:** Deterministic rule VM, EIP-712 signing
 - **Reality:** Real. `vm.ts` is a pure function over 6 primitives with no external I/O. `signing.ts` uses viem for EIP-712. Policy DSL compiled and tested. `check-policy-no-wiki-read.mjs` confirms no wiki reads.
 - **Spend counter BROKEN:** `policy_spend_counters` table missing due to migration failure. The VM accepts `spend_in_window` / `tx_count_in_window` from the caller. But the caller cannot populate them without this table. Agent rate-limiting (1b.2) is non-functional.
 - **Status:** MOSTLY COMPLETE. VM real; spend counter feature broken
 
 ### Layer 5. Execution (`services/execution`, `@brain/execution`)
+
 - **Intended:** PaymentIntent lifecycle, approval, orchestration
 - **Reality:** Mostly real. `PaymentIntentService` is complete (create, approve, reject, cancel, pause, resume, pauseByAgent, execute, completeExecution, failExecution, replayInvestigation). State machine enforced. Outbox worker real (269 LOC). Saga executor real. `check-gate-bypass.mjs` confirms only worker.ts dispatches rails.
 - **Critical gap:** `gateDeps()` in PaymentIntentService omits `resolveEvidence`, `detectDuplicates`, `sumActiveReservations`. Gate checks 9.5, 11.5, and the reservation sub-check of 8 are always "not-applicable".
@@ -175,17 +180,20 @@ MCP path → POST /agents/mcp
 - **Status:** MOSTLY COMPLETE. Execution chain real; three gate sub-checks unwired; one cross-service violation
 
 ### Layer 5′. MCP (`services/mcp`, `@brain/mcp`)
+
 - **Intended:** JSON-RPC 2.0 server, external agent surface
 - **Reality:** Real. 10 tools, 5 resources, 5 prompts, single-shot HTTP transport, proper scope enforcement, audit emission.
 - **`agentService` optional:** `McpServerDeps.agentService` is optional. If absent at boot, `agent.action.propose` returns 500. Risk: boot wiring may skip this.
 - **Status:** REAL (with caveats. See §6)
 
 ### Layer 6. Audit (`services/audit`, `@brain/audit`)
+
 - **Intended:** Append-only Merkle-chained log + on-chain anchor
 - **Reality:** Real. Merkle tree uses keccak256 matching the Solidity contract exactly. `publishAnchor` function is complete. Anchor broadcaster wired to Base Sepolia via viem. Reconciler exists for verifying on-chain anchors.
 - **Status:** REAL
 
 ### Boundary violations
+
 - **Policy ← Wiki:** CLEAN (lint guard + grep confirm zero violations)
 - **Execution ← Wiki:** CLEAN
 - **Wiki → Ledger writes:** CLEAN (lint guard confirms)
@@ -201,11 +209,13 @@ MCP path → POST /agents/mcp
 All 19 handlers are classified as **WORKFLOW_ROUTER** (not autonomous agents).
 
 **Pattern distribution:**
+
 - 12 handlers (collections, reconciliation, subscription, dispute, compliance, revenue_intel, personal_budget, fraud_anomaly, tax_prep, travel_finance, financial_health, purchase_advisor): pure delegation. `return agentProposal(input)`. 16–21 LOC
 - 5 handlers (treasury, payment, bill_management, savings, debt_optimization): conditional routing. `if FINANCIAL_ACTION → payment_intent channel, else → agent channel`. 30–39 LOC
 - 2 handlers (vendor_risk, cash_forecast): evidence/type-gated. `if hasRiskEvidence / if REPORT_ACTIONS → structured output`. 34 LOC
 
 **What these agents do NOT have:**
+
 - No LLM calls (no `@brain/shared` LLM adapter usage in any handler)
 - No planning loop or step decomposition
 - No memory read or write
@@ -216,6 +226,7 @@ All 19 handlers are classified as **WORKFLOW_ROUTER** (not autonomous agents).
 - No dynamic tool selection
 
 **What these agents DO:**
+
 - Receive an `AgentInput` (action type + context)
 - Route to one of two channels: `payment_intent.create` or `agent.propose`
 - Return a `ProposedAction` in a single synchronous function call
@@ -223,6 +234,7 @@ All 19 handlers are classified as **WORKFLOW_ROUTER** (not autonomous agents).
 The `AgentRun` table (`execution/migrations/0008_agent_runs.sql`) exists with columns for reasoning_trace, evidence_refs, sagas. So the **infrastructure** for autonomous behavior exists in the schema, but is not populated by any current handler.
 
 **The agent router:**
+
 - `services/agent-router/src/` → routes domain events/intents to internal agent handlers
 - Real infrastructure. `AgentRunService` persists run records. `AgentRouter` dispatches via Redis queue.
 - The promotion policy, intent classifier, embedding classifier, and intent decomposer all exist as modules.
@@ -231,11 +243,11 @@ The `AgentRun` table (`execution/migrations/0008_agent_runs.sql`) exists with co
 
 ### Python Agents (`services/agents/`)
 
-| Agent | Claimed | Reality | Status |
-|-------|---------|---------|--------|
-| Reconciliation | ✓ | ReconciliationAgent (41 LOC) calls OpenAI GPT-4o-mini, routes to brain API propose endpoint | REAL (but unhealthy in live env) |
-| Payment agent | ✓ | Not implemented (`__init__.py:5`: "later stages") | DEAD |
-| Anomaly/Plaid extractor | ✓ | Not implemented | DEAD |
+| Agent                   | Claimed | Reality                                                                                     | Status                           |
+| ----------------------- | ------- | ------------------------------------------------------------------------------------------- | -------------------------------- |
+| Reconciliation          | ✓       | ReconciliationAgent (41 LOC) calls OpenAI GPT-4o-mini, routes to brain API propose endpoint | REAL (but unhealthy in live env) |
+| Payment agent           | ✓       | Not implemented (`__init__.py:5`: "later stages")                                           | DEAD                             |
+| Anomaly/Plaid extractor | ✓       | Not implemented                                                                             | DEAD                             |
 
 **Live environment:** `brain-agents` container is UNHEALTHY. The FastAPI service starts and immediately crashes (likely missing `OPENAI_API_KEY` or `brain_api_token`). The crash is a lifespan failure. The container restart loop is visible in Docker logs.
 
@@ -247,26 +259,28 @@ The `AgentRun` table (`execution/migrations/0008_agent_runs.sql`) exists with co
 
 ### Implementation Status
 
-| Component | Claimed | Reality |
-|-----------|---------|---------|
-| 10 tools | ✓ | Exactly 10: ledger.account.get, ledger.accounts.list, ledger.transactions.list, ledger.obligations.list, ledger.counterparties.list, wiki.question, wiki.page.get, raw.contribute, payment_intent.propose, agent.action.propose |
-| 5 resource URIs | ✓ | `resources.ts` exists. Not read in this audit; claimed by server |
-| 5 prompts | ✓ | `prompts.ts` exists |
-| Single-shot HTTP, no SSE | ✓ | `transport/http.ts:32`: one POST → one response, no streaming |
-| On-chain scope hash check | ✓ | `auth.ts:94–103`: `McpAuthVerifier.onchainScopeHashCached()` calls `OnchainScopeChecker.getOnchainScopeHash()` |
-| 60s cache | ✓ | `auth.ts:52`: `CACHE_TTL_MS = 60_000` |
-| RPC fallback | Not verified | Interface `OnchainScopeChecker` injected. Concrete impl depends on boot wiring |
-| No `payment_intent.execute` tool | ✓ | Confirmed absent from registry |
-| `agent.mcp.tool_called` audit event | ✓ | `server.ts:182–189`: emits on every tool call |
-| `agentService` optional | UNDOCUMENTED | `McpServerDeps.agentService?`. If absent, `agent.action.propose` returns 500 |
+| Component                           | Claimed      | Reality                                                                                                                                                                                                                         |
+| ----------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 10 tools                            | ✓            | Exactly 10: ledger.account.get, ledger.accounts.list, ledger.transactions.list, ledger.obligations.list, ledger.counterparties.list, wiki.question, wiki.page.get, raw.contribute, payment_intent.propose, agent.action.propose |
+| 5 resource URIs                     | ✓            | `resources.ts` exists. Not read in this audit; claimed by server                                                                                                                                                                |
+| 5 prompts                           | ✓            | `prompts.ts` exists                                                                                                                                                                                                             |
+| Single-shot HTTP, no SSE            | ✓            | `transport/http.ts:32`: one POST → one response, no streaming                                                                                                                                                                   |
+| On-chain scope hash check           | ✓            | `auth.ts:94–103`: `McpAuthVerifier.onchainScopeHashCached()` calls `OnchainScopeChecker.getOnchainScopeHash()`                                                                                                                  |
+| 60s cache                           | ✓            | `auth.ts:52`: `CACHE_TTL_MS = 60_000`                                                                                                                                                                                           |
+| RPC fallback                        | Not verified | Interface `OnchainScopeChecker` injected. Concrete impl depends on boot wiring                                                                                                                                                  |
+| No `payment_intent.execute` tool    | ✓            | Confirmed absent from registry                                                                                                                                                                                                  |
+| `agent.mcp.tool_called` audit event | ✓            | `server.ts:182–189`: emits on every tool call                                                                                                                                                                                   |
+| `agentService` optional             | UNDOCUMENTED | `McpServerDeps.agentService?`. If absent, `agent.action.propose` returns 500                                                                                                                                                    |
 
 ### Auth Chain Vulnerability
 
 `McpAuthVerifier.loadAgent()` (`auth.ts:115–124`) runs:
+
 ```sql
 SELECT id, tenant_id, state, scope_hash, onchain_address, role
 FROM agents WHERE id = $1 LIMIT 1
 ```
+
 directly against the `agents` table. Which belongs to `services/execution` (migration 0003_agents.sql). This is a direct cross-service DB read, violating the architectural principle. The execution service's agent management API is bypassed.
 
 ### Dev Bypass
@@ -277,36 +291,36 @@ directly against the `agents` table. Which belongs to `services/execution` (migr
 
 ## 7. Subsystem Reality Matrix
 
-| Subsystem | Claimed Purpose | Runtime Reality | Status | Severity | Evidence |
-|-----------|----------------|-----------------|--------|----------|---------|
-| Boot binary | Single-process deployable | `main.ts` excluded from tsconfig; `dist/main.js` never produced | BROKEN | CRITICAL | `services/api/tsconfig.json:exclude`, `dist/` listing |
-| Pre-execution gate | 16 deterministic checks | 13 base + 4 .5-variant checks; 3 not wired (9.5, 11.5, 8-reservation) | PARTIAL | HIGH | `shared/src/gate/gate.ts`, `PaymentIntentService.gateDeps()` |
-| Policy VM | Deterministic rule evaluation | Real 6-primitive VM; property-tested | COMPLETE |. | `services/policy/src/vm.ts:50` |
-| EIP-712 signing | Policy proof signing | Real viem implementation | COMPLETE |. | `services/policy/src/signing.ts` |
-| Spend window counters | Agent rate limiting (1b.2) | `policy_spend_counters` table missing: migration syntax error (`window` reserved keyword) | BROKEN | HIGH | `services/policy/migrations/0003_policy_spend_counters.sql` |
-| Merkle audit chain | Append-only tamper-evident log | Real keccak256, matches Solidity contract | COMPLETE |. | `services/audit/src/merkle.ts` |
-| On-chain anchor | Merkle root → Base Sepolia | Real viem write to BrainAuditAnchor; hourly timer wired | COMPLETE |. | `services/api/src/anchorBroadcaster.ts`, `services/audit/src/publisher.ts` |
-| Tenant isolation (RLS) | Row-level tenant separation | Migrations arm RLS; FORCE ROW LEVEL SECURITY never applied | PARTIAL | CRITICAL | `psql: relforcerowsecurity = f` on all 43 tables; `infra/db-roles.sql` note |
-| Bank ACH rail | Real ACH money movement | `AchPlaidRail` code exists; `defaultRails()` uses `BankAchStubRail` (throws in prod) | PARTIAL | HIGH | `services/execution/src/rails/stubs.ts:99–104` |
-| On-chain rail | Base Sepolia transfers | `OnchainBaseRail` code exists; `defaultRails()` uses stub | PARTIAL | HIGH | Same |
-| Outbox worker | Durable async rail dispatch | Real implementation; integration tests blocked in sandbox | MOSTLY COMPLETE | MEDIUM | `services/execution/src/outbox/worker.ts:269 lines` |
-| Internal agents (19) | Autonomous financial agents | 16–39 LOC routing functions; no LLM, no memory, no planning | MISLEADING | HIGH | `services/internal-agents/src/` agent handlers |
-| Python reconciliation | LLM-based reconciliation | Real OpenAI call; container UNHEALTHY in live env | PARTIAL | HIGH | `services/agents/brain_agents/reconciliation/agent.py` |
-| Python payment agent | Autonomous payment agent | Not implemented | DEAD | HIGH | `brain_agents/__init__.py:5` |
-| Python anomaly agent | Plaid extraction/anomaly | Not implemented | DEAD | MEDIUM | Same |
-| MCP server | 10-tool JSON-RPC surface | Real 10 tools, proper auth, audit | COMPLETE |. | `services/mcp/src/` |
-| MCP on-chain auth | BrainMCPAgentRegistry check | Real; 60s cache; dev bypass properly guarded | COMPLETE |. | `services/mcp/src/auth.ts` |
-| MCP cross-service DB | (should not exist) | `McpAuthVerifier` directly queries execution's `agents` table | VIOLATION | MEDIUM | `auth.ts:117` |
-| PaymentIntent state machine | Legal state transitions | Real; all transitions validated via `assertPaymentIntentTransition` | COMPLETE |. | `services/execution/src/payment-intents/state-machine.ts` |
-| Saga executor | Multi-step compensation | Real; audit events per compensation step | COMPLETE |. | `services/execution/src/sagas.ts` |
-| Idempotency | 24h Redis dedup | Real; `shared/src/idempotency/` + Redis store | COMPLETE |. | `main.ts` plugin registration |
-| Wiki pgvector | Semantic search | Tables and schema exist; retrieval implementation in wiki service | MOSTLY COMPLETE |. | `wiki_pages` table + wiki service |
-| LLM abstraction | Provider-neutral LLM client | Real adapters: OpenAI, Anthropic, RecordedAdapter | COMPLETE |. | `shared/src/llm/` |
-| E2E tests | 3 Series A proof-points | 3 `.e2e.test.ts` files exist; require staging env | PARTIAL | MEDIUM | `tests/e2e/` |
-| Invariants tests | 15 cross-layer invariants | 5 test files, 15 invariants covered (DB-level separately) | REAL |. | `tests/invariants/src/` |
-| JSON Schemas | 11 entity schemas | 6 schemas; 5–6 entity types unschematized | PARTIAL | MEDIUM | `schemas/entity/` (6 files) |
-| Smart contracts | 4 Solidity contracts | Build artifacts in `contracts/`; not verified in this audit | NOT VERIFIED |. | |
-| @brain/sdk | Published typed client | Generated from OpenAPI; not published to npm | PARTIAL | LOW | `clients/sdk` |
+| Subsystem                   | Claimed Purpose                | Runtime Reality                                                                           | Status          | Severity | Evidence                                                                    |
+| --------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------- | --------------- | -------- | --------------------------------------------------------------------------- |
+| Boot binary                 | Single-process deployable      | `main.ts` excluded from tsconfig; `dist/main.js` never produced                           | BROKEN          | CRITICAL | `services/api/tsconfig.json:exclude`, `dist/` listing                       |
+| Pre-execution gate          | 16 deterministic checks        | 13 base + 4 .5-variant checks; 3 not wired (9.5, 11.5, 8-reservation)                     | PARTIAL         | HIGH     | `shared/src/gate/gate.ts`, `PaymentIntentService.gateDeps()`                |
+| Policy VM                   | Deterministic rule evaluation  | Real 6-primitive VM; property-tested                                                      | COMPLETE        | .        | `services/policy/src/vm.ts:50`                                              |
+| EIP-712 signing             | Policy proof signing           | Real viem implementation                                                                  | COMPLETE        | .        | `services/policy/src/signing.ts`                                            |
+| Spend window counters       | Agent rate limiting (1b.2)     | `policy_spend_counters` table missing: migration syntax error (`window` reserved keyword) | BROKEN          | HIGH     | `services/policy/migrations/0003_policy_spend_counters.sql`                 |
+| Merkle audit chain          | Append-only tamper-evident log | Real keccak256, matches Solidity contract                                                 | COMPLETE        | .        | `services/audit/src/merkle.ts`                                              |
+| On-chain anchor             | Merkle root → Base Sepolia     | Real viem write to BrainAuditAnchor; hourly timer wired                                   | COMPLETE        | .        | `services/api/src/anchorBroadcaster.ts`, `services/audit/src/publisher.ts`  |
+| Tenant isolation (RLS)      | Row-level tenant separation    | Migrations arm RLS; FORCE ROW LEVEL SECURITY never applied                                | PARTIAL         | CRITICAL | `psql: relforcerowsecurity = f` on all 43 tables; `infra/db-roles.sql` note |
+| Bank ACH rail               | Real ACH money movement        | `AchPlaidRail` code exists; `defaultRails()` uses `BankAchStubRail` (throws in prod)      | PARTIAL         | HIGH     | `services/execution/src/rails/stubs.ts:99–104`                              |
+| On-chain rail               | Base Sepolia transfers         | `OnchainBaseRail` code exists; `defaultRails()` uses stub                                 | PARTIAL         | HIGH     | Same                                                                        |
+| Outbox worker               | Durable async rail dispatch    | Real implementation; integration tests blocked in sandbox                                 | MOSTLY COMPLETE | MEDIUM   | `services/execution/src/outbox/worker.ts:269 lines`                         |
+| Internal agents (19)        | Autonomous financial agents    | 16–39 LOC routing functions; no LLM, no memory, no planning                               | MISLEADING      | HIGH     | `services/internal-agents/src/` agent handlers                              |
+| Python reconciliation       | LLM-based reconciliation       | Real OpenAI call; container UNHEALTHY in live env                                         | PARTIAL         | HIGH     | `services/agents/brain_agents/reconciliation/agent.py`                      |
+| Python payment agent        | Autonomous payment agent       | Not implemented                                                                           | DEAD            | HIGH     | `brain_agents/__init__.py:5`                                                |
+| Python anomaly agent        | Plaid extraction/anomaly       | Not implemented                                                                           | DEAD            | MEDIUM   | Same                                                                        |
+| MCP server                  | 10-tool JSON-RPC surface       | Real 10 tools, proper auth, audit                                                         | COMPLETE        | .        | `services/mcp/src/`                                                         |
+| MCP on-chain auth           | BrainMCPAgentRegistry check    | Real; 60s cache; dev bypass properly guarded                                              | COMPLETE        | .        | `services/mcp/src/auth.ts`                                                  |
+| MCP cross-service DB        | (should not exist)             | `McpAuthVerifier` directly queries execution's `agents` table                             | VIOLATION       | MEDIUM   | `auth.ts:117`                                                               |
+| PaymentIntent state machine | Legal state transitions        | Real; all transitions validated via `assertPaymentIntentTransition`                       | COMPLETE        | .        | `services/execution/src/payment-intents/state-machine.ts`                   |
+| Saga executor               | Multi-step compensation        | Real; audit events per compensation step                                                  | COMPLETE        | .        | `services/execution/src/sagas.ts`                                           |
+| Idempotency                 | 24h Redis dedup                | Real; `shared/src/idempotency/` + Redis store                                             | COMPLETE        | .        | `main.ts` plugin registration                                               |
+| Wiki pgvector               | Semantic search                | Tables and schema exist; retrieval implementation in wiki service                         | MOSTLY COMPLETE | .        | `wiki_pages` table + wiki service                                           |
+| LLM abstraction             | Provider-neutral LLM client    | Real adapters: OpenAI, Anthropic, RecordedAdapter                                         | COMPLETE        | .        | `shared/src/llm/`                                                           |
+| E2E tests                   | 3 Series A proof-points        | 3 `.e2e.test.ts` files exist; require staging env                                         | PARTIAL         | MEDIUM   | `tests/e2e/`                                                                |
+| Invariants tests            | 15 cross-layer invariants      | 5 test files, 15 invariants covered (DB-level separately)                                 | REAL            | .        | `tests/invariants/src/`                                                     |
+| JSON Schemas                | 11 entity schemas              | 6 schemas; 5–6 entity types unschematized                                                 | PARTIAL         | MEDIUM   | `schemas/entity/` (6 files)                                                 |
+| Smart contracts             | 4 Solidity contracts           | Build artifacts in `contracts/`; not verified in this audit                               | NOT VERIFIED    | .        |                                                                             |
+| @brain/sdk                  | Published typed client         | Generated from OpenAPI; not published to npm                                              | PARTIAL         | LOW      | `clients/sdk`                                                               |
 
 ---
 
@@ -385,6 +399,7 @@ directly against the `agents` table. Which belongs to `services/execution` (migr
 ### Changes since prior audit (`a6ed66e`, 2026-05-19)
 
 The prior audit was on `feat/poc-investor-demo` at commit `a6ed66e`. Key changes in main:
+
 - 3 new ledger migrations (0017_normalization_log_rls, 0018_payment_intents_dedup, 0019_payment_intents_dispatching_status). Reflecting gate check improvements and the `dispatching` status for H-04
 - `policy/0003_policy_spend_counters.sql` appears to be new (the prior audit did not flag it as broken). This is a **regression introduced since the prior audit**
 - `ledger_reservations` table now exists (0015); the reservation sub-check remains unwired
@@ -406,17 +421,20 @@ The three P0s closed in the prior audit (Dockerfile, SDK auth, anchor broadcaste
 ### 11.1 Immediate Stabilization (P0. Blocks all deployments)
 
 **P0-1: Fix main.ts compilation**
+
 - Remove `"src/main.ts"` from `services/api/tsconfig.json:exclude`
 - `main.ts` references instrumentation which initializes OTLP before other imports. A separate `tsconfig.main.json` with `"module": "NodeNext"` or bundler step may be needed.
 - Alternatively, change the Dockerfile to use `tsx` as the runtime: `ENTRYPOINT ["tsx", "src/main.ts"]` (already works in dev).
 - **Verify:** `node services/api/dist/main.js` starts without MODULE_NOT_FOUND.
 
 **P0-2: Fix migration `policy/0003_policy_spend_counters.sql`**
+
 - Rename column `window` → `period_window` (or `bucket_window`) throughout the SQL, the TypeScript `policy_spend_counters` service code, and the policy VM
 - `window` is a PostgreSQL reserved keyword; it cannot be used as a bare column name without quoting
 - **Verify:** `node tools/migrate/dist/cli.js up` completes without errors; `\d policy_spend_counters` shows the table
 
 **P0-3: Apply RLS enforcement (production pre-deploy)**
+
 - Run `infra/db-roles.sql` against the production database as a superuser
 - Create `brain_app` (NOBYPASSRLS) and `brain_privileged` (BYPASSRLS) roles
 - Update `DATABASE_URL` to use `brain_app`; create `PRIVILEGED_DATABASE_URL` for `brain_privileged`
@@ -426,6 +444,7 @@ The three P0s closed in the prior audit (Dockerfile, SDK auth, anchor broadcaste
 ### 11.2 Structural Fixes (P1. Correctness blockers)
 
 **P1-1: Wire missing gate dependencies**
+
 - In `PaymentIntentService.gateDeps()` (`PaymentIntentService.ts:316–329`), add:
   - `resolveEvidence`: load from policy service's evidence validator
   - `detectDuplicates`: load from policy service's `DuplicateDetector` (service already exists: `services/policy/src/duplicate-detector.ts`)
@@ -433,17 +452,20 @@ The three P0s closed in the prior audit (Dockerfile, SDK auth, anchor broadcaste
 - **Verify:** A payment with duplicate fingerprint is rejected (check 11.5 fails); a payment against insufficient reserved balance is rejected (check 8 accounting); evidence-unsupported payments fail check 9.5
 
 **P1-2: Fix MCP cross-service DB violation**
+
 - `McpAuthVerifier.loadAgent()` must go through the execution/agent service API, not a direct SQL query
 - Option: expose `GET /internal/agents/{id}` on the execution service; call it from MCP auth
 - Option: move agent registration/lookup to a shared mechanism in `@brain/shared`
 - **Verify:** Removing the `pool` from `McpAuthVerifier` constructor forces an API-based lookup
 
 **P1-3: Fix Python agent `brain_api_base_url` default**
+
 - `services/agents/brain_agents/config.py`: change default from `localhost:3001` → `localhost:3000`
 - Requires env var `BRAIN_API_BASE_URL` to be documented in docker-compose
 - **Verify:** Python reconciliation agent can POST to `/v1/execution/propose` and get a response
 
 **P1-4: Fix Python agent container crash**
+
 - Diagnose why the lifespan fails (likely `OPENAI_API_KEY` or `BRAIN_API_TOKEN` not set)
 - Add required env vars to docker-compose.yml and document required secrets
 - Add startup exception handling that logs the missing var name before crashing
@@ -452,17 +474,21 @@ The three P0s closed in the prior audit (Dockerfile, SDK auth, anchor broadcaste
 ### 11.3 Layer Repairs (P2. Architecture integrity)
 
 **P2-1: Complete JSON Schema coverage**
+
 - Add JSON Schemas for the 6 missing entity types: balance, document, invoice, transfer, reconciliation_match, reservation (and payment_intent)
 - Enforce schema validation in Ledger write helpers (currently only 6 of 12 entity types are schema-validated)
 
 **P2-2: Wire `agentService` into MCP boot**
+
 - Confirm `McpServerDeps.agentService` is injected at boot in `main.ts`. If it is currently absent in some boot paths, make it a required dependency.
 
 **P2-3: Separate anchor broadcaster to a background process**
+
 - Move the `setInterval` anchor broadcaster out of `main.ts` into a standalone worker
 - This prevents anchor RPC latency from affecting the request-serving event loop
 
 **P2-4: Decommission v0.2 execution routes (or document clearly)**
+
 - Decide whether `/execution/*` routes are still supported
 - If yes: document the mapping from `proposals` table to `ledger_payment_intents`
 - If no: add deprecation sunset date, redirect to v0.3
@@ -487,4 +513,4 @@ The `services/api/src/main.ts` (51KB, 1,319+ lines) warrants modularization. Not
 
 ---
 
-*Audit completed: 2026-05-25. Next recommended review after P0 blockers are resolved.*
+_Audit completed: 2026-05-25. Next recommended review after P0 blockers are resolved._

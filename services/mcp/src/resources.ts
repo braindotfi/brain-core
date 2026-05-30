@@ -174,7 +174,11 @@ export async function readResource(
         requiredScopes: ["payment_intent:propose"],
         result: {
           contents: [
-            { uri, mimeType: "application/json", text: JSON.stringify(ACTION_TYPE_CATALOG, null, 2) },
+            {
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(ACTION_TYPE_CATALOG, null, 2),
+            },
           ],
         },
       };

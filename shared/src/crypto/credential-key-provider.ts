@@ -83,7 +83,10 @@ class NoneCredentialKeyProvider implements CredentialKeyProvider {
 class AzureKeyVaultCredentialKeyProvider implements CredentialKeyProvider {
   public readonly source = "azure-key-vault" as const;
   private readonly client: SecretClient;
-  public constructor(vaultUrl: string, private readonly secretName: string) {
+  public constructor(
+    vaultUrl: string,
+    private readonly secretName: string,
+  ) {
     this.client = new SecretClient(vaultUrl, new DefaultAzureCredential());
   }
   public async load(): Promise<CredentialKey> {

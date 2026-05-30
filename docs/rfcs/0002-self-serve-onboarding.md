@@ -216,7 +216,7 @@ Each phase is additive, flag-gated, fails closed, and lands green
 | **O-2** | Identity model              | **Two principals, linked:** email (+password) for the human owner/management; SIWX wallet + on-chain attestation for the agent. A human may also link a wallet login. |
 | **O-3** | On-chain agent registration | **Off-chain `pending_onchain` + async KMS relayer** (fail-closed; deferred signer). Swappable to gasless-at-signup / user-submits later.                              |
 | **O-4** | New tenant default posture  | **`sandbox = TRUE`**; existing/seeded tenants stay non-sandbox (column defaults FALSE).                                                                               |
-| **O-5** | Human login scopes          | Management/read + approve only. **never** `*:execute` or `payment_intent:propose` by default (those belong to agents).                                               |
+| **O-5** | Human login scopes          | Management/read + approve only. **never** `*:execute` or `payment_intent:propose` by default (those belong to agents).                                                |
 
 ## 12. Non-goals (this RFC)
 

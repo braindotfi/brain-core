@@ -15,12 +15,7 @@ import {
   type RawIngestResult,
   type ParsedOutput,
 } from "@brain/shared";
-import {
-  ingestOne,
-  findArtifactById,
-  tombstoneArtifact,
-  listParsedByArtifact,
-} from "@brain/raw";
+import { ingestOne, findArtifactById, tombstoneArtifact, listParsedByArtifact } from "@brain/raw";
 import type { RawDeps } from "@brain/raw";
 
 export function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {

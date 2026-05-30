@@ -125,10 +125,7 @@ export interface ExecutionDeps {
   // requires every production root to thread all three.
 
   /** §6 check 8 — sum of active reservations on the source account. */
-  sumActiveReservations?: (
-    ctx: ServiceCallContext,
-    accountId: string,
-  ) => Promise<string>;
+  sumActiveReservations?: (ctx: ServiceCallContext, accountId: string) => Promise<string>;
   /** §6 check 9.5 (H-21) — semantic evidence validation against policy. */
   resolveEvidence?: (
     ctx: ServiceCallContext,

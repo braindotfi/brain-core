@@ -10,6 +10,7 @@
 ## 1. Scope
 
 This audit covers:
+
 - Build, typecheck, and test results
 - Sync state between `src/generated/openapi.d.ts` and `Brain_API_Specification.yaml`
 - Whether `codegen:check` runs in CI
@@ -107,16 +108,17 @@ clients/sdk/
 
 The committed `openapi.d.ts` was generated from an earlier snapshot of `Brain_API_Specification.yaml`. The current spec differs in 27 hunks. Categories:
 
-| Category | Direction | Impact |
-|----------|-----------|--------|
-| `@deprecated` markers on `proposeAgentAction` + `registerAgent` | In spec now, not in committed | Low. Doc-only in generated types |
-| Expanded description blocks for `listAgents`, `getAgent`, `getAgentRunWhy`, proof endpoints | In spec now, not in committed | Low. Doc-only |
-| `parameters: { ... }` formatting change (inline → multiline) | In spec now, not in committed | None. Structurally identical |
-| Response type changes for deprecated endpoints (Agent/AgentRun → Error) | In spec now, not in committed | **Medium**. TS types diverge from runtime |
+| Category                                                                                    | Direction                     | Impact                                    |
+| ------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------- |
+| `@deprecated` markers on `proposeAgentAction` + `registerAgent`                             | In spec now, not in committed | Low. Doc-only in generated types          |
+| Expanded description blocks for `listAgents`, `getAgent`, `getAgentRunWhy`, proof endpoints | In spec now, not in committed | Low. Doc-only                             |
+| `parameters: { ... }` formatting change (inline → multiline)                                | In spec now, not in committed | None. Structurally identical              |
+| Response type changes for deprecated endpoints (Agent/AgentRun → Error)                     | In spec now, not in committed | **Medium**. TS types diverge from runtime |
 
 ### Severity of drift
 
 The type changes for deprecated endpoints are the only structurally meaningful divergence. Specifically:
+
 - `POST /agents/{id}/actions` (`proposeAgentAction`): spec now marks as `@deprecated` and returns 404. The committed type still shows the old response schema.
 - `POST /agents/register` (`registerAgent`): same. Spec deprecated it to document the still-live legacy route.
 
@@ -130,25 +132,25 @@ The `agents?: components["schemas"]["Agent"][]` field visible in the committed `
 
 The SDK wraps these route groups:
 
-| Resource class | Routes covered | Notes |
-|---------------|---------------|-------|
-| `AccountsResource` | `GET /ledger/accounts`, `GET /ledger/accounts/{id}` | Ledger L2 |
-| `TransactionsResource` | `GET /ledger/transactions`, `GET /ledger/transactions/{id}` | Ledger L2 |
-| `CounterpartiesResource` | `GET /ledger/counterparties`, `GET /ledger/counterparties/{id}` | Ledger L2 |
-| `ObligationsResource` | `GET /ledger/obligations`, `GET /ledger/obligations/{id}` | Ledger L2 |
-| `InvoicesResource` | `GET /ledger/invoices` | Ledger L2 |
-| `BalancesResource` | `GET /ledger/balances` | Ledger L2 |
-| `AuditResource` + `AnchorResource` | `GET /audit/events`, `GET /audit/events/{id}`, export, verify, anchors | Audit L6 |
-| `ProofResource` | `GET /proof/{id}` | H-07 canonical proof |
-| `AgentRunsResource` | `GET /agents/runs/{id}`, why, proof | Agent-run history |
-| `PaymentsResource` | Full payment-intent lifecycle (create, execute, approve, reject, cancel) | L5 |
-| `ActionsResource` | propose, approve, execute, escalate | L5 |
-| `AgentsResource` | list, get, register, proposeFromAgent | L5 catalog |
-| `RawResource` | ingest, get, getParsed | L1 |
-| `WikiResource` | search, getEntity, question, annotate | L3 |
-| `PolicyResource` | get, sign, simulate, lint, diff, history | L4 |
-| `CompoundsResource` | `snapshot`, `trace` client-side aggregates | Client-side |
-| `CashFlowResource` | `summarize` | Client-side |
+| Resource class                     | Routes covered                                                           | Notes                |
+| ---------------------------------- | ------------------------------------------------------------------------ | -------------------- |
+| `AccountsResource`                 | `GET /ledger/accounts`, `GET /ledger/accounts/{id}`                      | Ledger L2            |
+| `TransactionsResource`             | `GET /ledger/transactions`, `GET /ledger/transactions/{id}`              | Ledger L2            |
+| `CounterpartiesResource`           | `GET /ledger/counterparties`, `GET /ledger/counterparties/{id}`          | Ledger L2            |
+| `ObligationsResource`              | `GET /ledger/obligations`, `GET /ledger/obligations/{id}`                | Ledger L2            |
+| `InvoicesResource`                 | `GET /ledger/invoices`                                                   | Ledger L2            |
+| `BalancesResource`                 | `GET /ledger/balances`                                                   | Ledger L2            |
+| `AuditResource` + `AnchorResource` | `GET /audit/events`, `GET /audit/events/{id}`, export, verify, anchors   | Audit L6             |
+| `ProofResource`                    | `GET /proof/{id}`                                                        | H-07 canonical proof |
+| `AgentRunsResource`                | `GET /agents/runs/{id}`, why, proof                                      | Agent-run history    |
+| `PaymentsResource`                 | Full payment-intent lifecycle (create, execute, approve, reject, cancel) | L5                   |
+| `ActionsResource`                  | propose, approve, execute, escalate                                      | L5                   |
+| `AgentsResource`                   | list, get, register, proposeFromAgent                                    | L5 catalog           |
+| `RawResource`                      | ingest, get, getParsed                                                   | L1                   |
+| `WikiResource`                     | search, getEntity, question, annotate                                    | L3                   |
+| `PolicyResource`                   | get, sign, simulate, lint, diff, history                                 | L4                   |
+| `CompoundsResource`                | `snapshot`, `trace` client-side aggregates                               | Client-side          |
+| `CashFlowResource`                 | `summarize`                                                              | Client-side          |
 
 **Compound helpers on `Brain`**: `pay`, `approve`, `reject`, `ask`, `snapshot`, `trace`, `proof`. These are the "homepage" developer-facing shortcuts.
 
@@ -159,6 +161,7 @@ Coverage is broad. All six layers plus the agent, audit, proof surfaces. No obvi
 ## 6. Consumer Reality
 
 `@brain/sdk` has **zero internal consumers**. It is:
+
 - `private: true` in `package.json`. Not publishable to npm in current state
 - Explicitly noted as unpublished in CLAUDE.md (R-10)
 - Not imported by any service, test, or script in the monorepo
@@ -184,14 +187,14 @@ The root `package.json` wires `clients/**` into `build`, `lint`, `typecheck`, `t
 
 ## 8. Functional Status
 
-| Dimension | Status |
-|-----------|--------|
-| Tests | 120 / 120 passing |
-| Typecheck | Clean |
-| Codegen sync | **Stale**. 479 line drift from current spec |
-| CI gate on codegen sync | **Missing** |
-| Internal consumers | None |
-| npm publication | Blocked (`private: true`, R-10) |
+| Dimension               | Status                                      |
+| ----------------------- | ------------------------------------------- |
+| Tests                   | 120 / 120 passing                           |
+| Typecheck               | Clean                                       |
+| Codegen sync            | **Stale**. 479 line drift from current spec |
+| CI gate on codegen sync | **Missing**                                 |
+| Internal consumers      | None                                        |
+| npm publication         | Blocked (`private: true`, R-10)             |
 
 ---
 
@@ -201,13 +204,13 @@ The root `package.json` wires `clients/**` into `build`, `lint`, `typecheck`, `t
 
 The SDK is well-engineered. Broad coverage, 120 tests, strict types. The gaps are operational:
 
-| Dimension | Assessment |
-|-----------|-----------|
-| Code quality | High. 120 tests, typecheck clean |
-| Spec sync | Medium risk. 27 hunks of drift, one response-type divergence |
-| CI enforcement | Missing `codegen:check` in pipeline |
-| Internal adoption | Zero. E2e tests use a handwritten client |
-| External availability | Not published (private) |
+| Dimension             | Assessment                                                   |
+| --------------------- | ------------------------------------------------------------ |
+| Code quality          | High. 120 tests, typecheck clean                             |
+| Spec sync             | Medium risk. 27 hunks of drift, one response-type divergence |
+| CI enforcement        | Missing `codegen:check` in pipeline                          |
+| Internal adoption     | Zero. E2e tests use a handwritten client                     |
+| External availability | Not published (private)                                      |
 
 The SDK will not be useful to external integrators (Series A proof-point requirement) until it is published and the codegen drift is resolved. The e2e test suite not using the SDK means drift goes undetected until it breaks an external caller.
 
@@ -215,13 +218,13 @@ The SDK will not be useful to external integrators (Series A proof-point require
 
 ## 10. Confidence
 
-| Area | Confidence | Reason |
-|------|-----------|--------|
-| Test results | High | Ran `pnpm -C clients/sdk run test` directly |
-| Codegen drift | High | `codegen:check` ran, diff measured |
-| Nature of drift | Medium | Diff examined; docstring/deprecation dominant; one type-level change noted |
-| Zero internal consumers | High | grep across services/, tests/. Zero hits |
-| CI gate absent | High | Confirmed by reading pr.yml and package.json root scripts |
+| Area                    | Confidence | Reason                                                                     |
+| ----------------------- | ---------- | -------------------------------------------------------------------------- |
+| Test results            | High       | Ran `pnpm -C clients/sdk run test` directly                                |
+| Codegen drift           | High       | `codegen:check` ran, diff measured                                         |
+| Nature of drift         | Medium     | Diff examined; docstring/deprecation dominant; one type-level change noted |
+| Zero internal consumers | High       | grep across services/, tests/. Zero hits                                   |
+| CI gate absent          | High       | Confirmed by reading pr.yml and package.json root scripts                  |
 
 ---
 
@@ -247,8 +250,8 @@ The SDK will not be useful to external integrators (Series A proof-point require
 
 ## 12. Cross-Cutting Risks Updated
 
-| ID | Update |
-|----|--------|
+| ID   | Update                                                                                         |
+| ---- | ---------------------------------------------------------------------------------------------- |
 | R-10 | **Confirmed**: `@brain/sdk` is `private: true`, not published to npm. Zero internal consumers. |
 
 No new risk register entries.
@@ -257,9 +260,9 @@ No new risk register entries.
 
 ## 13. Recommended Next Steps
 
-| Priority | Action |
-|----------|--------|
-| P0 | Add `pnpm -C clients/sdk run codegen:check` to `pr.yml` CI pipeline |
-| P1 | Regenerate `openapi.d.ts` from current spec (`pnpm -C clients/sdk run codegen`), review type changes, update SDK resource classes if response shapes changed |
-| P1 | Use `@brain/sdk` in `tests/e2e/` instead of the handwritten `BrainClient`. Makes codegen drift a CI-breaking change |
-| P2 | Set `private: false`, add a `prepublishOnly` script (`build && codegen:check`), publish `0.1.0-rc.0` to npm before Series A demos |
+| Priority | Action                                                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| P0       | Add `pnpm -C clients/sdk run codegen:check` to `pr.yml` CI pipeline                                                                                          |
+| P1       | Regenerate `openapi.d.ts` from current spec (`pnpm -C clients/sdk run codegen`), review type changes, update SDK resource classes if response shapes changed |
+| P1       | Use `@brain/sdk` in `tests/e2e/` instead of the handwritten `BrainClient`. Makes codegen drift a CI-breaking change                                          |
+| P2       | Set `private: false`, add a `prepublishOnly` script (`build && codegen:check`), publish `0.1.0-rc.0` to npm before Series A demos                            |

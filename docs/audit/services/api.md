@@ -2,6 +2,7 @@
 
 **Audited:** 2026-05-26
 **Files examined:**
+
 - `services/api/src/main.ts` (1676 lines)
 - `services/api/src/index.ts`
 - `services/api/src/auth/siwx.ts`
@@ -27,6 +28,7 @@
 - `Brain_API_Specification.yaml` (80 operationIds, 3494 lines)
 
 **Commands run:**
+
 - `pnpm --filter @brain/api run test` → 84 tests pass (15 files)
 - `pnpm --filter @brain/execution run test` → 168 tests pass (22 files)
 - `grep -rn "operationId:" Brain_API_Specification.yaml | wc -l` → 80
@@ -37,6 +39,7 @@
 ## 1. Scope
 
 What this report covers:
+
 - `services/api/src/main.ts`. The single composition root for the entire Node runtime
 - Route registration order and prefix mapping to `Brain_API_Specification.yaml`
 - Auth plugin wiring: JWT, SIWX, demo mode guards
@@ -47,6 +50,7 @@ What this report covers:
 - Proof API route and view
 
 What this report does NOT cover:
+
 - Per-route business logic (covered in their respective service audits)
 - The outbox worker and anchor broadcaster lifecycle (covered in `runtime/boot.md`)
 - OpenAPI schema validation (covered in `sdk/clients-sdk.md`)
@@ -72,23 +76,23 @@ Per `docs/boot-binary-spec.md` (referenced from `main.ts:8`) and CLAUDE.md §MCP
 
 All 80 spec operationIds are wired. Route composition order (within `/v1`):
 
-| Plugin | Spec paths | Route function |
-|--------|-----------|----------------|
-| Raw | `/raw/*`, `/raw/webhooks/{provider}` | `registerRawPlugin` |
-| Ledger | `/ledger/*` | `registerLedgerPlugin` (includes ReconciliationService) |
-| Wiki | `/memory/*`, `/wiki/*` | `registerWikiPlugin` |
-| Policy | `/policy/*` | `registerPolicyRoutes` |
-| Execution (legacy) | `/execution/*`, `/proposals/*` | `registerExecutionRoutes` |
-| PaymentIntent | `/payment-intents/*`, `/actions/*` | `registerPaymentIntentRoutes` (see §3.2) |
-| Audit | `/audit/*` | `registerAuditRoutes` |
-| Webhooks | `/webhooks/*` | `registerWebhookRoutes` |
-| Proof | `/proof/:action_id` | `registerProofRoutes` |
-| Proof view | `/proof/:id/view` | `registerProofViewRoute` |
-| MCP | `/agents/mcp` | `registerMcpRoute` |
-| Agent API | `/agents/*` | `registerAgentApiRoutes` |
-| SIWX | `/auth/siwx/challenge`, `/auth/siwx` | `registerSiwxRoutes` |
-| Demo (cond.) | `/demo/token`, `/demo/policy/activate`, `/demo/anchor/trigger` | inline, BRAIN_DEMO_MODE only |
-| Health | `/health` | inline |
+| Plugin             | Spec paths                                                     | Route function                                          |
+| ------------------ | -------------------------------------------------------------- | ------------------------------------------------------- |
+| Raw                | `/raw/*`, `/raw/webhooks/{provider}`                           | `registerRawPlugin`                                     |
+| Ledger             | `/ledger/*`                                                    | `registerLedgerPlugin` (includes ReconciliationService) |
+| Wiki               | `/memory/*`, `/wiki/*`                                         | `registerWikiPlugin`                                    |
+| Policy             | `/policy/*`                                                    | `registerPolicyRoutes`                                  |
+| Execution (legacy) | `/execution/*`, `/proposals/*`                                 | `registerExecutionRoutes`                               |
+| PaymentIntent      | `/payment-intents/*`, `/actions/*`                             | `registerPaymentIntentRoutes` (see §3.2)                |
+| Audit              | `/audit/*`                                                     | `registerAuditRoutes`                                   |
+| Webhooks           | `/webhooks/*`                                                  | `registerWebhookRoutes`                                 |
+| Proof              | `/proof/:action_id`                                            | `registerProofRoutes`                                   |
+| Proof view         | `/proof/:id/view`                                              | `registerProofViewRoute`                                |
+| MCP                | `/agents/mcp`                                                  | `registerMcpRoute`                                      |
+| Agent API          | `/agents/*`                                                    | `registerAgentApiRoutes`                                |
+| SIWX               | `/auth/siwx/challenge`, `/auth/siwx`                           | `registerSiwxRoutes`                                    |
+| Demo (cond.)       | `/demo/token`, `/demo/policy/activate`, `/demo/anchor/trigger` | inline, BRAIN_DEMO_MODE only                            |
+| Health             | `/health`                                                      | inline                                                  |
 
 Cross-cutting plugins registered on root app before all routes: `fastifyCors`, `fastifyHelmet` (CSP + HSTS), `fastifyRateLimit` (300 req/min), `requestIdPlugin`, `errorHandlerPlugin`, `authPlugin`, `idempotencyPlugin`.
 
@@ -97,15 +101,18 @@ Cross-cutting plugins registered on root app before all routes: `fastifyCors`, `
 Two `PaymentIntentService` instances exist in `main()`:
 
 **Instance 1** (`paymentIntentService`, `main.ts:870`):
+
 ```
 new PaymentIntentService({ pool, audit, outbox, approvals: approvalService,
   resolveAgent, resolveTenantFlags,   // ← resolveTenantFlags PRESENT
   resolveAccount, resolveCounterparty, evaluatePolicy, resolvePrincipal,
   resolveOnchainParams?, sourceCredentialResolver })
 ```
+
 Used by: `outboxWorker.executor`, `mcpServer.paymentIntents`, `agentRunService.propose.paymentIntents`, `agentRouteWorker.propose.paymentIntents`, `haltAgent` closure.
 
 **Instance 2** (`piService`, `main.ts:1294`):
+
 ```
 new PaymentIntentService({ pool, audit, outbox: new OutboxService(),
   approvals: piApprovals,             // separate ApprovalService instance
@@ -114,13 +121,15 @@ new PaymentIntentService({ pool, audit, outbox: new OutboxService(),
   resolveOnchainParams?, sourceCredentialResolver })
   // ← resolveTenantFlags ABSENT
 ```
+
 Used by: `registerPaymentIntentRoutes` → HTTP `/v1/payment-intents/*` and `/v1/actions/*`.
 
-The comment justifying the second instance: *"PaymentIntentService has its own approval sub-service; create a fresh instance scoped to this plugin so it doesn't share mutable state."* The concern is about `ApprovalService`; the developer correctly creates a fresh `piApprovals` but simultaneously and silently drops `resolveTenantFlags`.
+The comment justifying the second instance: _"PaymentIntentService has its own approval sub-service; create a fresh instance scoped to this plugin so it doesn't share mutable state."_ The concern is about `ApprovalService`; the developer correctly creates a fresh `piApprovals` but simultaneously and silently drops `resolveTenantFlags`.
 
 ### 3.3 Gate check 1.5 (behavior hash) is skipped on HTTP payment-intent routes
 
 `shared/src/gate/gate.ts:283-309`:
+
 ```typescript
 const tenantFlags = deps.resolveTenantFlags
   ? await deps.resolveTenantFlags(input.ctx.tenantId)
@@ -135,6 +144,7 @@ const requireBehaviorHash = tenantFlags?.requireBehaviorHash ?? false;
 ```
 
 When `resolveTenantFlags` is `undefined` (all HTTP `/v1/payment-intents/{id}/execute` calls via `piService`):
+
 - Gate check 1.5 is **not run**. No gate_checks row emitted for 1.5
 - `require_behavior_hash` is treated as `false` regardless of what the tenant's row in `tenants` says
 - Behavior hash pinning is effectively opt-out for HTTP API callers even for tenants where `tenants.require_behavior_hash = true`
@@ -144,6 +154,7 @@ Agent-initiated executions through the outbox worker, MCP server, or agent run s
 ### 3.4 Auth wiring
 
 `authPlugin` registered once on root app with `JwtVerifier`. Routes opt out via `{ config: { skipAuth: true } }`:
+
 - `GET /v1/health`
 - `POST /v1/auth/siwx/challenge`
 - `POST /v1/auth/siwx`
@@ -157,6 +168,7 @@ Production boot guard at `main.ts:1377-1381`: throws if `NODE_ENV=production && 
 ### 3.5 `wiki.annotate`. HTTP route vs MCP tool
 
 Two separate code paths:
+
 1. **HTTP `POST /v1/wiki/annotate`**: Implemented in `services/wiki/src/routes/annotate.ts`. Rate-limited (Redis sliding window, 60/hr default). For `policy` and `agent` entity kinds: fully functional → inserts entity row + emits audit event. For Ledger-type annotations (`account`, `counterparty`, `transaction`, `obligation`): returns `400 request_body_invalid` with explicit "refactor-4" message.
 2. **MCP `wiki.annotate` tool**: Routed through `buildWikiMemoryService` adapter in `main.ts:348-355`. Unconditionally throws `brainError("internal_server_error", "wiki.annotate not yet wired in boot binary")`. This is a different code path from the HTTP route (F-10, R-16).
 
@@ -199,6 +211,7 @@ Route coverage static check: 80 OpenAPI operationIds confirmed registered by tra
 The gateway correctly routes all 80 spec endpoints. Auth, idempotency, CORS, security headers, and rate limiting are wired at the correct layer. Demo mode guards are properly enforced. The routing composition is correct; each service layer's plugin is mounted under `/v1`.
 
 Two known gaps:
+
 1. Gate check 1.5 silently skipped for all HTTP `/v1/payment-intents/*` callers due to missing `resolveTenantFlags` on `piService`.
 2. MCP `wiki.annotate` tool unconditionally throws 500 (F-10).
 
@@ -236,27 +249,32 @@ The API gateway does not read or write service-owned DB tables directly (all rea
 ## 8. Evidence
 
 **Dual PaymentIntentService:**
+
 - `main.ts:870`: `new PaymentIntentService({ ..., resolveTenantFlags, ... })`
 - `main.ts:1294`: `new PaymentIntentService({ ..., /* resolveTenantFlags absent */ })`
-- `main.ts:1285`: comment: *"create a fresh instance scoped to this plugin so it doesn't share mutable state"*
+- `main.ts:1285`: comment: _"create a fresh instance scoped to this plugin so it doesn't share mutable state"_
 - `shared/src/gate/gate.ts:283-286`: `tenantFlags = deps.resolveTenantFlags ? await deps.resolveTenantFlags(...) : null`; `requireBehaviorHash = tenantFlags?.requireBehaviorHash ?? false`
 - `shared/src/gate/gate.ts:304-309`: explicit `pass(..., { not_applicable: true })` only when `deps.resolveTenantFlags !== undefined`
 
 **Route coverage:**
+
 - `Brain_API_Specification.yaml`: 80 `operationId:` entries
 - All 13 `register*` calls in `main.ts` traced to their source files and route definitions
 - `registerLedgerPlugin` (`services/ledger/src/server.ts:50-53`): always passes `ReconciliationService` to routes
 
 **Auth:**
+
 - `main.ts:1215`: `await app.register(authPlugin, { verifier: jwtVerifier })`. Once, on root app
 - `main.ts:1392-1394`: `cfg.BRAIN_DEMO_MODE ? new StubAgentRegistry() : new PostgresAgentRegistry(pool)`
 - `siwx.ts:232-252`: `StubAgentRegistry` accepts any `0x[a-f0-9]{40}` address
 
 **`wiki.annotate` split:**
+
 - `services/wiki/src/routes/annotate.ts:66-99`: HTTP route functional for `policy`/`agent` kinds; 400 for Ledger kinds
 - `main.ts:348-355`: MCP adapter `annotate()` throws `brainError("internal_server_error", ...)`
 
 **`RECONCILIATION_AGENT_URL` bypass:**
+
 - `main.ts:1097`: `const reconciliationAgentUrl = process.env.RECONCILIATION_AGENT_URL;`
 - Not in `shared/src/config.ts` zod schema (confirmed in Report #1, F-8)
 
@@ -277,6 +295,7 @@ One area remains Medium confidence: whether there are any routes registered insi
 **Score: 7/10**
 
 **What works:**
+
 - All 80 API spec endpoints are wired; route coverage is complete
 - Auth plugin correctly applied once; JWT + SIWX + Plaid HMAC all wired
 - Idempotency, CORS, security headers, rate limiting correctly layered
@@ -285,13 +304,14 @@ One area remains Medium confidence: whether there are any routes registered insi
 
 **Blockers before production:**
 
-| Issue | Severity | Fix |
-|-------|----------|-----|
-| Gate check 1.5 bypassed on HTTP `/payment-intents/{id}/execute` callers | Medium | Add `resolveTenantFlags` to `piService` at `main.ts:1294` |
-| MCP `wiki.annotate` always 500 | Medium | Deferred to refactor-4 (documented); MCP clients are blocked from using this tool |
-| `RECONCILIATION_AGENT_URL` bypasses config validation | Low | Add to zod config schema; read via `cfg` |
+| Issue                                                                   | Severity | Fix                                                                               |
+| ----------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
+| Gate check 1.5 bypassed on HTTP `/payment-intents/{id}/execute` callers | Medium   | Add `resolveTenantFlags` to `piService` at `main.ts:1294`                         |
+| MCP `wiki.annotate` always 500                                          | Medium   | Deferred to refactor-4 (documented); MCP clients are blocked from using this tool |
+| `RECONCILIATION_AGENT_URL` bypasses config validation                   | Low      | Add to zod config schema; read via `cfg`                                          |
 
 **Not blockers but debt:**
+
 - `main()` 1130-line god function: not a runtime risk, but future feature additions increase tangling
 - No behavior-hash-specific integration test for HTTP path
 

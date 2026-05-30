@@ -7,7 +7,7 @@ Brain's on-chain surface is intentionally small. Most logic lives off-chain. On-
 | **Network**         | Base L2                                                                                                                                                               |
 | **Language**        | Solidity 0.8.x                                                                                                                                                        |
 | **Toolchain**       | Foundry                                                                                                                                                               |
-| **Upgrade pattern** | Immutable. No upgrade path in MVP; changes ship as audited redeploys                                                                                                 |
+| **Upgrade pattern** | Immutable. No upgrade path in MVP; changes ship as audited redeploys                                                                                                  |
 | **Audits**          | External security audit required before mainnet. The escrow + reputation contracts are **UNAUDITED** and run on **Base Sepolia testnet** only until that audit clears |
 | **Bug bounty**      | Public coverage                                                                                                                                                       |
 
@@ -23,15 +23,15 @@ The four core contracts. (The escrow + reputation contracts below are newer **UN
 
 ### Standards Composed
 
-| Standard                      | Role in Brain                                                                                                                                                        |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Session-key smart account** | Owner-granted scoped, spend-capped, policyVersion-bound keys; `executeViaSessionKey` enforces the bounds on-chain                                                    |
+| Standard                      | Role in Brain                                                                                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Session-key smart account** | Owner-granted scoped, spend-capped, policyVersion-bound keys; `executeViaSessionKey` enforces the bounds on-chain                                                   |
 | **EIP-7702**                  | _Planned (RFC 0001)_. Delegated execution for EOAs (single-session lifetime); not shipped in MVP                                                                    |
 | **ERC-8004**                  | _ERC-8004-style_. `BrainReputationRegistry` (RFC 0001, **UNAUDITED testnet**): a per-agent reputation pointer/Merkle root, read by Policy as a threshold input only |
 | **BrainEscrow**               | Custodial USDC escrow for conditional M2M settlement. Incremental release/refund (RFC 0001, **UNAUDITED testnet**). A custom hash-only contract, not ERC-8183.      |
-| **EIP-712**                   | Typed-data signatures for policies, scopes, approvals                                                                                                                |
-| **EIP-4361 (SIWX)**           | Sign-In With X for agent authentication                                                                                                                              |
-| **x402**                      | HTTP-native machine settlement                                                                                                                                       |
+| **EIP-712**                   | Typed-data signatures for policies, scopes, approvals                                                                                                               |
+| **EIP-4361 (SIWX)**           | Sign-In With X for agent authentication                                                                                                                             |
+| **x402**                      | HTTP-native machine settlement                                                                                                                                      |
 
 ### Operational Safety
 

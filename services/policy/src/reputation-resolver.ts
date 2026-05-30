@@ -40,7 +40,10 @@ export function makeResolveReputation(opts: {
         args: [counterpartyId as `0x${string}`],
       });
 
-      if (epoch === 0n || scoreRoot === "0x0000000000000000000000000000000000000000000000000000000000000000") {
+      if (
+        epoch === 0n ||
+        scoreRoot === "0x0000000000000000000000000000000000000000000000000000000000000000"
+      ) {
         return null;
       }
 

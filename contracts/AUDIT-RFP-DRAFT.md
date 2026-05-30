@@ -16,14 +16,14 @@ security audit of the six MVP smart contracts ahead of Base mainnet deployment.
 
 Six contracts, ~1,300 LoC total (Foundry, Solidity ≥0.8.24, non-upgradeable):
 
-| Contract                                    | LoC | Focus                                                                                                                |
-| ------------------------------------------- | --- | -------------------------------------------------------------------------------------------------------------------- |
+| Contract                                    | LoC | Focus                                                                                                               |
+| ------------------------------------------- | --- | ------------------------------------------------------------------------------------------------------------------- |
 | **`BrainEscrow`** _(priority)_              | 132 | **Funds custody**. Partial release/refund; solvency; reentrancy; arbiter can't redirect. (+ 56-LoC `IBrainEscrow`.) |
-| `BrainAuditAnchor`                          | 135 | Append-only Merkle anchor; `verifyInclusion` parity.                                                                 |
-| `BrainPolicyRegistry`                       | 255 | Signed policy versions; EIP-712; no downgrade.                                                                       |
-| `BrainSmartAccount`                         | 256 | Session-key execution; H-03 replay + re-entrancy.                                                                    |
-| `BrainMCPAgentRegistry`                     | 287 | Agent scope-hash attestation; revocation.                                                                            |
-| `BrainReputationRegistry` _(non-custodial)_ | 51  | ERC-8004 reputation pointer; monotonic epoch; attestor-only; **no value path**. (+ 32-LoC interface.)                |
+| `BrainAuditAnchor`                          | 135 | Append-only Merkle anchor; `verifyInclusion` parity.                                                                |
+| `BrainPolicyRegistry`                       | 255 | Signed policy versions; EIP-712; no downgrade.                                                                      |
+| `BrainSmartAccount`                         | 256 | Session-key execution; H-03 replay + re-entrancy.                                                                   |
+| `BrainMCPAgentRegistry`                     | 287 | Agent scope-hash attestation; revocation.                                                                           |
+| `BrainReputationRegistry` _(non-custodial)_ | 51  | ERC-8004 reputation pointer; monotonic epoch; attestor-only; **no value path**. (+ 32-LoC interface.)               |
 
 **`BrainEscrow` is the priority**. It is the only contract that custodies user
 funds (USDC) and gates the first real mainnet payment; it is currently UNAUDITED

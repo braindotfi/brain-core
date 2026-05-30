@@ -3,6 +3,7 @@
 **Audited:** 2026-05-26
 **Branch:** `audit/full-system-audit`
 **Files examined:**
+
 - `services/api/migrations/0001_tenants.sql`, `0002_tenants_default_ap_account.sql`
 - `services/audit/migrations/0007_force_rls.sql`
 - `services/execution/migrations/0019_force_rls.sql`, `0020_approvals_hardening.sql`
@@ -17,6 +18,7 @@
 - `tests/invariants/integration/db-invariants.integration.test.ts`
 
 **Commands run:**
+
 - `find services -name "*.sql" | sort`. Enumerated all migration files
 - Node script static scan: counted tables with `tenant_id`, ENABLE, FORCE
 - `pnpm --filter @brain/invariants run test`. Invariants test suite
@@ -28,6 +30,7 @@
 ## 1. Scope
 
 This report covers:
+
 - P0 #2: `period_window` rename in `services/policy/migrations/0003_policy_spend_counters.sql`. Code-level confirmation
 - P0 #3: Force-RLS on 6 service schemas. Migration coverage, role model (`infra/db-roles.sql`), static invariant tests
 - R-14: Duplicate `0004_*` migration prefix in `services/raw`. Ordering analysis, runner key collision check
@@ -35,6 +38,7 @@ This report covers:
 - DB-free invariant test results; integration tests are CI-only (BLOCKERS.md B-1)
 
 Does NOT cover:
+
 - Live Postgres verification of `pg_class.relrowsecurity` / `relforcerowsecurity`. Requires DATABASE_URL (BLOCKERS.md B-1)
 - Migration apply correctness against a real DB (ditto)
 - Per-table RLS policy correctness (predicate logic). That is a security audit concern; see `security/auth-rls-crypto-secrets.md`
@@ -45,9 +49,10 @@ Does NOT cover:
 
 From CLAUDE.md §1 Principle 2:
 
-> Tenant isolation at the storage layer: Postgres RLS on every table. Migrations *arm* RLS (`ENABLE ROW LEVEL SECURITY`), but it is only *enforced* under the role model in `infra/db-roles.sql`. A non-owner `brain_app` role plus `FORCE ROW LEVEL SECURITY`. Legitimate cross-tenant readers use the `brain_privileged` BYPASSRLS role.
+> Tenant isolation at the storage layer: Postgres RLS on every table. Migrations _arm_ RLS (`ENABLE ROW LEVEL SECURITY`), but it is only _enforced_ under the role model in `infra/db-roles.sql`. A non-owner `brain_app` role plus `FORCE ROW LEVEL SECURITY`. Legitimate cross-tenant readers use the `brain_privileged` BYPASSRLS role.
 
 The design splits enforcement into two layers:
+
 1. **Migration layer**. `ENABLE ROW LEVEL SECURITY` + tenant_isolation policies authored per-table in `services/*/migrations/*.sql`. Also `FORCE ROW LEVEL SECURITY` in dedicated hardening migrations. Applied by `tools/migrate` CLI.
 2. **Role model layer**. `infra/db-roles.sql` creates `brain_app` (NOBYPASSRLS, non-owner) and `brain_privileged` (BYPASSRLS). A DO $$ loop applies FORCE to all RLS-enabled tables as defense-in-depth. Applied once at DB deploy time by an operator.
 
@@ -74,11 +79,13 @@ The runner tracks applied migrations in `brain_migrations.key` (a `TEXT PRIMARY 
 ### P0 #2. `period_window` rename
 
 `services/policy/migrations/0003_policy_spend_counters.sql:15`:
+
 ```sql
 period_window TEXT NOT NULL,  -- '1h' | '24h' | '7d' | '30d'
 ```
 
 Lines 6–7 document the reason:
+
 ```sql
 -- Column renamed: 'window' → 'period_window' ('window' is a PostgreSQL reserved keyword
 -- and caused a syntax error at CREATE TABLE time).
@@ -90,15 +97,15 @@ The column is consistently named `period_window` throughout the migration. The `
 
 Static scan of all service migration SQL (verified by node script, 2026-05-26):
 
-| Service | ENABLE tables | FORCE migration | Tables FORCEd |
-|---------|---------------|-----------------|---------------|
-| api | tenants | *none* |. |
-| audit | audit_events, audit_anchors, webhook_endpoints, webhook_dead_letters, domain_events | `0007_force_rls.sql` | 4 (not domain_events) |
-| execution | agents, approvals, executions, proposals, users, and 12 more | `0019_force_rls.sql` | 17 (includes domain_events cross-service) |
-| ledger | ledger_accounts, ledger_balances, … (13 tables using owner_id isolation) | `0020_force_rls.sql` | 13 |
-| policy | policies, policy_decisions, policy_spend_counters | `0004_force_rls.sql` | 3 |
-| raw | raw_artifacts, raw_parsed, raw_plaid_items, raw_sources | `0004_force_rls.sql` + `0006_force_rls_sources.sql` | 4 |
-| wiki | wiki_entities, wiki_pages, wiki_relations | `0006_force_rls.sql` | 3 |
+| Service   | ENABLE tables                                                                       | FORCE migration                                     | Tables FORCEd                             |
+| --------- | ----------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------- |
+| api       | tenants                                                                             | _none_                                              | .                                         |
+| audit     | audit_events, audit_anchors, webhook_endpoints, webhook_dead_letters, domain_events | `0007_force_rls.sql`                                | 4 (not domain_events)                     |
+| execution | agents, approvals, executions, proposals, users, and 12 more                        | `0019_force_rls.sql`                                | 17 (includes domain_events cross-service) |
+| ledger    | ledger_accounts, ledger_balances, … (13 tables using owner_id isolation)            | `0020_force_rls.sql`                                | 13                                        |
+| policy    | policies, policy_decisions, policy_spend_counters                                   | `0004_force_rls.sql`                                | 3                                         |
+| raw       | raw_artifacts, raw_parsed, raw_plaid_items, raw_sources                             | `0004_force_rls.sql` + `0006_force_rls_sources.sql` | 4                                         |
+| wiki      | wiki_entities, wiki_pages, wiki_relations                                           | `0006_force_rls.sql`                                | 3                                         |
 
 **Total tables with ENABLE: 44. Tables with FORCE from migrations: 43.**
 
@@ -120,10 +127,12 @@ This loop applies FORCE to every RLS-enabled table. Including `tenants`. In prod
 ### R-14. Duplicate `0004_*` prefix in `services/raw`
 
 The two conflicting files:
+
 - `services/raw/migrations/0004_force_rls.sql`. `FORCE ROW LEVEL SECURITY` on `raw_artifacts`, `raw_parsed`, `raw_plaid_items`
 - `services/raw/migrations/0004_raw_plaid_items_rls.sql`. `ENABLE ROW LEVEL SECURITY` + 3 policies on `raw_plaid_items`
 
 Confirmed sort order (Node.js `Array.prototype.sort`):
+
 ```
 [ '0004_force_rls.sql', '0004_raw_plaid_items_rls.sql', '0005_raw_sources.sql' ]
 ```
@@ -131,6 +140,7 @@ Confirmed sort order (Node.js `Array.prototype.sort`):
 So `0004_force_rls.sql` always runs first. It applies `FORCE ROW LEVEL SECURITY` on `raw_plaid_items` before that table has ENABLE or policies. In Postgres, `ALTER TABLE ... FORCE ROW LEVEL SECURITY` is valid on a table without RLS enabled. It sets `relforcerowsecurity = true` but has no effect until ENABLE is also set. Then `0004_raw_plaid_items_rls.sql` runs: enables RLS and creates policies. End state: `relrowsecurity = true` AND `relforcerowsecurity = true`. This is correct.
 
 The `brain_migrations` bookkeeping records these as:
+
 - `key = raw/0004_force_rls.sql`
 - `key = raw/0004_raw_plaid_items_rls.sql`
 
@@ -240,16 +250,19 @@ No business logic in migration files. No cross-tenant policy bypasses in migrati
 ## 8. Evidence
 
 **P0 #2 confirmed:**
+
 - `services/policy/migrations/0003_policy_spend_counters.sql:15`. `period_window TEXT NOT NULL`
 - Lines 6–7. Comment documenting the rename from the reserved keyword `window`
 - `UNIQUE` constraint (line 20) and index (lines 23–24) both use `period_window`
 
 **P0 #3 confirmed (code):**
+
 - 7 force_rls migration files: `audit/0007`, `execution/0019`, `ledger/0020`, `policy/0004`, `raw/0004`, `raw/0006`, `wiki/0006`
 - `infra/db-roles.sql:44–57`. DO $$ loop applies FORCE to all `relrowsecurity` tables
 - Node static scan: 43 tables have FORCE from migrations; 1 (`tenants`) has ENABLE only
 
 **R-14 mitigated:**
+
 - `tools/migrate/src/discover.ts:43`. `(await readdir(mDir)).filter(...).sort()`
 - Node sort output: `['0004_force_rls.sql', '0004_raw_plaid_items_rls.sql', '0005_raw_sources.sql']`
 - `tools/migrate/src/runner.ts`. `key = service/filename`, no sequence uniqueness constraint
@@ -257,15 +270,18 @@ No business logic in migration files. No cross-tenant policy bypasses in migrati
 - `services/raw/migrations/0004_raw_plaid_items_rls.sql`. Applies ENABLE + policies
 
 **Invariant tests green (DB-free):**
+
 - `pnpm --filter @brain/invariants run test` → 5 files, 44 passed, 13 todo, duration 3.85s
 - `pnpm -C tools/migrate run test` → 2 files, 10 passed
 
 **`tenants` FORCE gap:**
+
 - `services/api/migrations/`. Only 2 files; no force_rls migration present
 - `infra/db-roles.sql:44–57`. Covers the gap in production
 - Node scan result: "Has ENABLE but NOT FORCE: tenants"
 
 **`rls-coverage.test.ts` scope:**
+
 - `tests/invariants/src/rls-coverage.test.ts:33–43`. Regex tests `\btenant_id\b` in CREATE TABLE body only
 - `services/ledger/migrations/0003_ledger_accounts.sql:9`. Column is `owner_id`, not `tenant_id`
 - RLS policy on ledger: `USING (owner_id = current_setting('app.tenant_id', true))`. Correct predicate
@@ -279,6 +295,7 @@ No business logic in migration files. No cross-tenant policy bypasses in migrati
 Code-level analysis is High confidence: all migration files were read, the static scan logic was replicated and verified, sort order was confirmed with Node.js. The runner's key-based tracking and the FORCE-before-ENABLE ordering are both unambiguous from source.
 
 Dropped from High to Medium-High because:
+
 - Live DB enforcement (`pg_class.relforcerowsecurity`) is unverified. CI-only
 - The `infra/db-roles.sql` must be applied by an operator; there is no automated verification that it has been applied in any environment
 - The `0020_approvals_hardening.sql` back-compat UPDATE runs a live data mutation; whether existing rows had the expected state at migration time cannot be verified from code alone
@@ -290,12 +307,14 @@ Dropped from High to Medium-High because:
 **Score: 7/10**
 
 **What works:**
+
 - P0 #2 fixed: `period_window` is present and consistent throughout the policy migration
 - P0 #3 largely fixed: 43/44 ENABLE'd tables have FORCE from migrations; the role model is well-designed
 - Migration runner is solid: deterministic discovery, content-hash immutability, transactional apply, no key collision on R-14
 - DB-free invariant tests pass: 44 tests across 5 files; the static RLS scan runs on every PR
 
 **Blockers and risks:**
+
 - **`tenants` FORCE gap (Medium risk)**: The most sensitive table in the system. A tenant row IS the tenant. Has ENABLE but no FORCE migration. In a dev environment without `db-roles.sql`, a table-owner connection bypasses RLS on `tenants`. Production is covered by the DO $$ loop, but developer environments are not, creating a potential source of "works in prod, not in dev" tenant-isolation bugs.
 - **Live enforcement unverified**: `pg_class.relforcerowsecurity` has never been read against an actual migrated DB in this audit. The integration tests that would verify this are CI-only.
 - **`rls-coverage.test.ts` blind spot**: All 13 ledger tables are unguarded by the static test. A new ledger table without ENABLE would pass the CI check. This is latent risk as the ledger schema grows.

@@ -16,7 +16,10 @@ import {
   type GatePrincipal,
   type GateTenantFlags,
 } from "@brain/shared";
-import { getActive as policyGetActive, detectDuplicates as policyDetectDuplicates } from "@brain/policy";
+import {
+  getActive as policyGetActive,
+  detectDuplicates as policyDetectDuplicates,
+} from "@brain/policy";
 import {
   findAgent,
   findUser,

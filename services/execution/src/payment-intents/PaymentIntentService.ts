@@ -136,10 +136,7 @@ export interface PaymentIntentServiceDeps {
    * Absent ⇒ check 8 records `not_applicable`; for live money the loader
    * is mandatory.
    */
-  sumActiveReservations?: (
-    ctx: ServiceCallContext,
-    accountId: string,
-  ) => Promise<string>;
+  sumActiveReservations?: (ctx: ServiceCallContext, accountId: string) => Promise<string>;
   /**
    * §6 gate check 9.5 (H-21): resolves the evidence semantically against
    * the policy's `required_evidence_kinds`. Absent ⇒ check 9.5 records
@@ -857,10 +854,7 @@ export class PaymentIntentService implements IPaymentIntentService {
       // races us to `dispatching` without that pointer, refuse to advance
       // rather than ship a row that violates the IPaymentIntentService contract
       // ("status = executed unreachable without policy_decision_id").
-      if (
-        current.policy_decision_id === null ||
-        current.policy_decision_id.length === 0
-      ) {
+      if (current.policy_decision_id === null || current.policy_decision_id.length === 0) {
         throw brainError(
           "payment_intent_invalid_state",
           `completeExecution: intent ${args.paymentIntentId} has no policy_decision_id; §6 gate did not run`,

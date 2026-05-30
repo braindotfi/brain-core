@@ -19,8 +19,8 @@ The §6 pre-execution gate still runs. The audit chain still anchors. Policy sti
 
 ### Two Settlement Patterns
 
-| Pattern         | When                                                                                     |
-| --------------- | ---------------------------------------------------------------------------------------- |
+| Pattern         | When                                                                                    |
+| --------------- | --------------------------------------------------------------------------------------- |
 | **x402**        | Atomic, single-shot machine settlement. "I've finished the work, pay me now in USDC."   |
 | **BrainEscrow** | Multi-step engagements. Fund up-front, release on milestones, dispute splits if needed. |
 
@@ -52,13 +52,13 @@ Agent reputation lives in a separate, ERC-8004-style contract. [`BrainReputation
 
 ### What Ships Today vs Later
 
-| Capability                                                               | Status                                                                            |
-| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| `x402_settle` / `escrow_release` action types on `POST /payment-intents` | Live in the spec; rails fail closed until promoted                                |
+| Capability                                                               | Status                                                                           |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `x402_settle` / `escrow_release` action types on `POST /payment-intents` | Live in the spec; rails fail closed until promoted                               |
 | The 5 M2M §6 gate checks (3.5, 5.5, 6.5, 6.6, 8.5)                       | Live but **dormant**. Each becomes active only when its on-chain loader is wired |
-| `BrainEscrow` (custodial; partial release; dispute splits)               | **UNAUDITED reference implementation** on testnet                                 |
-| `BrainReputationRegistry` (ERC-8004-style pointer; RFC 0001)             | **UNAUDITED testnet**                                                             |
-| Agent-counterparty schema, on-chain settlement reconciliation matcher    | Live                                                                              |
+| `BrainEscrow` (custodial; partial release; dispute splits)               | **UNAUDITED reference implementation** on testnet                                |
+| `BrainReputationRegistry` (ERC-8004-style pointer; RFC 0001)             | **UNAUDITED testnet**                                                            |
+| Agent-counterparty schema, on-chain settlement reconciliation matcher    | Live                                                                             |
 | Mainnet promotion of the new contracts                                   | **Requires external audit first**. Non-negotiable                                |
 
 ### Why M2M Belongs Inside the Same Gate

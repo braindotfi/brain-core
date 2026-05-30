@@ -90,9 +90,7 @@ describe("deriveAutonomyMode — truth table", () => {
     for (const isLive of isLives) {
       for (const defaultAuthority of auths) {
         for (const policyMaxOutcome of outcomes) {
-          if (
-            deriveAutonomyMode({ isLive, defaultAuthority, policyMaxOutcome }) === "live"
-          ) {
+          if (deriveAutonomyMode({ isLive, defaultAuthority, policyMaxOutcome }) === "live") {
             liveCount += 1;
             expect({ isLive, defaultAuthority, policyMaxOutcome }).toEqual({
               isLive: true,

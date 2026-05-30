@@ -3,19 +3,12 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { InMemoryAuditEmitter, newTenantId, newUserId } from "@brain/shared";
 import type { Pool } from "pg";
-import {
-  TenantDeletionService,
-  TENANT_SCOPED_TABLES,
-  PRESERVED_TABLES,
-} from "./service.js";
+import { TenantDeletionService, TENANT_SCOPED_TABLES, PRESERVED_TABLES } from "./service.js";
 
 const TENANT = newTenantId();
 const USER = newUserId();
 
-function fakePool(
-  deletePerTable: Record<string, number>,
-  blobUris: string[] = [],
-): Pool {
+function fakePool(deletePerTable: Record<string, number>, blobUris: string[] = []): Pool {
   const client = {
     query: vi.fn((sql: string) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {

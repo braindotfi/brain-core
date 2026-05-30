@@ -10,11 +10,11 @@ All money movement runs through `runPreExecutionGate` (the §6 16-check gate) an
 the durable outbox (H-04); a worker claims `pending` rows and dispatches the
 rail. Each rail implements the `Rail` interface (`src/rails/types.ts`).
 
-| Kind            | Implementation                              | Status                                  |
-| --------------- | ------------------------------------------- | --------------------------------------- |
+| Kind            | Implementation                              | Status                                 |
+| --------------- | ------------------------------------------- | -------------------------------------- |
 | `bank_ach`      | `rails/ach-plaid.ts` (`AchPlaidRail`)       | H-05. Real, injected Plaid client      |
 | `onchain_base`  | `rails/onchain-base.ts` (`OnchainBaseRail`) | H-06. Real, injected viem+KMS executor |
-| `erp_writeback` | `rails/stubs.ts` (`ErpWritebackStubRail`)   | stub (NetSuite deferred)                |
+| `erp_writeback` | `rails/stubs.ts` (`ErpWritebackStubRail`)   | stub (NetSuite deferred)               |
 
 The `*StubRail` classes in `rails/stubs.ts` fabricate receipts (`stub: true`) and
 **fail closed under `NODE_ENV=production`** (`assertStubRailsAllowed`). They are

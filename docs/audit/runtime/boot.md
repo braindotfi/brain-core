@@ -3,6 +3,7 @@
 **Audited:** 2026-05-26
 **Branch:** `audit/full-system-audit`
 **Files examined:**
+
 - `services/api/src/main.ts` (1677 lines)
 - `services/api/src/anchorBroadcaster.ts`
 - `services/api/tsconfig.json`
@@ -16,6 +17,7 @@
 - `services/wiki/src/deps.ts` (selected)
 
 **Commands run:**
+
 - `pnpm --filter @brain/api typecheck` (before root build)
 - `pnpm run build`
 - `pnpm --filter @brain/api typecheck` (after root build)
@@ -27,6 +29,7 @@
 ## 1. Scope
 
 This report covers:
+
 - The `services/api/src/main.ts` boot sequence as the single composition root for all TS services
 - Fastify plugin registration order (security → shared → routes)
 - Worker startup and ordering (normalize, outbox, agent-route, anchor broadcaster)
@@ -46,6 +49,7 @@ Out of scope: the correctness of individual service layer logic (covered in per-
 > "Composes all six service layers into a single-process Fastify app. Shared plugins (auth, error handler, request-id, idempotency) are registered ONCE on the root app; each service layer registers its routes as a Fastify plugin on top."
 
 Intended composition order per `docs/boot-binary-spec.md` reference:
+
 1. Tracing init (OTLP)
 2. Shared infra: connection pool, Redis, audit emitter, blob adapter
 3. Service layer deps objects (Raw, Ledger, Wiki, Policy, Execution, Audit)
@@ -60,6 +64,7 @@ Intended composition order per `docs/boot-binary-spec.md` reference:
 ### Boot sequence (line references are main.ts)
 
 **Phase 1. Infra (lines 547–680)**
+
 1. `loadConfig()`. Zod-validated env config (throws on missing required vars)
 2. `initTracing()`. OTLP setup; non-blocking, no connection required at boot
 3. `createLogger()`
@@ -73,6 +78,7 @@ Intended composition order per `docs/boot-binary-spec.md` reference:
 
 **Phase 2. Service layer deps (lines 638–1194)**
 All deps objects and service classes constructed synchronously. Key cross-service wiring:
+
 - `LedgerService` used inside `makeResolveAccount` and `makeResolveCounterparty` (adapters for execution gate)
 - `PolicyService.evaluateForGate` wired to `PaymentIntentService.evaluatePolicy`
 - `WikiPageService` + `buildWikiMemoryService` adapter wires `annotate` stub → throws `internal_server_error` (annotate write-through not implemented, deferred to refactor-4, line 348–355)
@@ -80,6 +86,7 @@ All deps objects and service classes constructed synchronously. Key cross-servic
 
 **Phase 3. Fastify app and plugin registration (lines 1196–1558)**
 Plugin registration order (inside `main()`):
+
 1. `fastifyCors` (origin allowlist from `CORS_ALLOWED_ORIGINS`)
 2. `registerSecurityHeaders`. CSP + security headers (P1.4 hardening)
 3. `fastifyRateLimit` (max 300 req/min global)
@@ -92,6 +99,7 @@ Plugin registration order (inside `main()`):
 
 **Phase 4. Workers and background jobs (lines 1561–1628)**
 Workers start **before** `app.listen()` (line 1630):
+
 1. `startNormalizeWorker({ pool, audit })` (line 1561). BullMQ worker consuming `brain.normalize` queue
 2. Anchor broadcaster setup (lines 1563–1608). Conditional on `AUDIT_ANCHOR_ADDRESS` and `AUDIT_PUBLISHER_KEY`; if configured, schedules periodic anchor publishing via `setTimeout` loop
 3. `createAgentRouteWorker(...)` (line 1616). BullMQ worker consuming `brain.agent.route` queue
@@ -99,6 +107,7 @@ Workers start **before** `app.listen()` (line 1630):
 `startOutboxWorker` is created earlier at line 961 (before Fastify app creation). This is the only worker that starts before app construction.
 
 **Phase 5. HTTP listen and shutdown handlers (lines 1630–1671)**
+
 - `app.listen({ host: "0.0.0.0", port: cfg.PORT })`
 - `process.on("SIGINT")` and `process.on("SIGTERM")` → `shutdown()`
 
@@ -231,6 +240,7 @@ async annotate(_ctx, _input): Promise<...> {
 ### M-1: `privilegedPool` not closed in shutdown handler (High)
 
 `privilegedPool` is created at line 937 when `DATABASE_PRIVILEGED_URL` is set:
+
 ```typescript
 privilegedPool = createPool({ connectionString: cfg.DATABASE_PRIVILEGED_URL, max: 3, ... });
 ```
@@ -270,33 +280,34 @@ The outer `paymentIntentService` (line 870, used by outbox worker and agent run 
 
 ### Plugin registration order (verified from main.ts line numbers)
 
-| Order | Plugin | Line | Note |
-|---|---|---|---|
-| 1 | `fastifyCors` | 1207 | CORS origin allowlist |
-| 2 | `registerSecurityHeaders` | 1209 | CSP + X-* headers (P1.4) |
-| 3 | `fastifyRateLimit` | 1210 | 300 req/min global |
-| 4 | `requestIdPlugin` | 1213 | Trace ID injection |
-| 5 | `errorHandlerPlugin` | 1214 | Centralized error mapping |
-| 6 | `authPlugin` | 1215 | JWT + SIWX verification |
-| 7 | `idempotencyPlugin` | 1217 | Redis-backed dedup |
-| 8 | `GET /health` | 1222 | `skipAuth: true` |
-| 9–21 | Service routes | 1276–1555 | All under `/v1` prefix |
+| Order | Plugin                    | Line      | Note                      |
+| ----- | ------------------------- | --------- | ------------------------- |
+| 1     | `fastifyCors`             | 1207      | CORS origin allowlist     |
+| 2     | `registerSecurityHeaders` | 1209      | CSP + X-\* headers (P1.4) |
+| 3     | `fastifyRateLimit`        | 1210      | 300 req/min global        |
+| 4     | `requestIdPlugin`         | 1213      | Trace ID injection        |
+| 5     | `errorHandlerPlugin`      | 1214      | Centralized error mapping |
+| 6     | `authPlugin`              | 1215      | JWT + SIWX verification   |
+| 7     | `idempotencyPlugin`       | 1217      | Redis-backed dedup        |
+| 8     | `GET /health`             | 1222      | `skipAuth: true`          |
+| 9–21  | Service routes            | 1276–1555 | All under `/v1` prefix    |
 
 ### Worker startup order (before `app.listen`)
 
-| Worker | Start line | Stop in shutdown? |
-|---|---|---|
-| `startOutboxWorker` | 961 | Yes (`outboxWorker.stop()` line 1639) |
-| `startNormalizeWorker` | 1561 | Yes (`normalizeWorker.stop()` line 1638) |
-| Anchor broadcaster (setTimeout loop) | 1607 | Yes (`clearTimeout(anchorTimer)`) |
-| `anchorReconciler` | 994 | Yes (`anchorReconciler?.stop()`) |
-| `createAgentRouteWorker` | 1616 | Yes (`agentRouteWorker.close()`) |
+| Worker                               | Start line | Stop in shutdown?                        |
+| ------------------------------------ | ---------- | ---------------------------------------- |
+| `startOutboxWorker`                  | 961        | Yes (`outboxWorker.stop()` line 1639)    |
+| `startNormalizeWorker`               | 1561       | Yes (`normalizeWorker.stop()` line 1638) |
+| Anchor broadcaster (setTimeout loop) | 1607       | Yes (`clearTimeout(anchorTimer)`)        |
+| `anchorReconciler`                   | 994        | Yes (`anchorReconciler?.stop()`)         |
+| `createAgentRouteWorker`             | 1616       | Yes (`agentRouteWorker.close()`)         |
 
 `app.listen()` at line 1630. **all workers registered before HTTP starts**.
 
 ### Shutdown pool leak evidence
 
 `shutdown()` function (lines 1634–1663):
+
 ```typescript
 const shutdown = async (signal: string): Promise<void> => {
   ...
@@ -357,6 +368,7 @@ The only unverified aspects are live runtime behaviors (Redis connectivity, actu
 **Score: 6 / 10**
 
 **What works:**
+
 - Build passes cleanly after root build
 - Fastify plugin order is correct (security before routes, auth before endpoints)
 - Workers start before HTTP listener
@@ -365,16 +377,17 @@ The only unverified aspects are live runtime behaviors (Redis connectivity, actu
 
 **Blockers:**
 
-| ID | Issue | Severity |
-|---|---|---|
-| M-1 | `privilegedPool` not closed on shutdown. Guaranteed connection leaks in production | High |
-| M-2 | `wikiPool` not closed on shutdown | Medium |
-| M-3 | `agent-router` + `internal-agents` missing from tsconfig references. Incremental build drift | Medium |
-| B-1 | `RECONCILIATION_AGENT_URL` bypasses validated config. Silently misbehaves on misconfiguration | Low |
-| B-3 | `wiki.annotate` MCP tool returns `internal_server_error` in production | Medium |
-| M-5 | `anchorBroadcaster` silently disabled with no boot warning when key is absent | Low |
+| ID  | Issue                                                                                         | Severity |
+| --- | --------------------------------------------------------------------------------------------- | -------- |
+| M-1 | `privilegedPool` not closed on shutdown. Guaranteed connection leaks in production            | High     |
+| M-2 | `wikiPool` not closed on shutdown                                                             | Medium   |
+| M-3 | `agent-router` + `internal-agents` missing from tsconfig references. Incremental build drift  | Medium   |
+| B-1 | `RECONCILIATION_AGENT_URL` bypasses validated config. Silently misbehaves on misconfiguration | Low      |
+| B-3 | `wiki.annotate` MCP tool returns `internal_server_error` in production                        | Medium   |
+| M-5 | `anchorBroadcaster` silently disabled with no boot warning when key is absent                 | Low      |
 
 **Runtime risks:**
+
 - Redis is a hard boot dependency. No Redis → no boot. No circuit breaker, no retry at boot time.
 - Per-service `pnpm --filter @brain/api typecheck` will return 16 errors on a fresh clone without root build. CI must run `pnpm run build` before any per-service typecheck step; if that ordering is not enforced, typecheck appears to pass (if the root build was previously cached) but is unreliable.
 - The `anchorBroadcaster` ABI is inlined in `services/api/src/anchorBroadcaster.ts`. If the on-chain contract is upgraded, the inline ABI must be manually updated. No type-safe link to the canonical ABI source.
@@ -395,10 +408,10 @@ The `anchorBroadcaster` ABI duplication is a maintenance debt item. Low refactor
 
 ## New Findings (Added to Cross-Cutting Register)
 
-| ID | Title | Severity | Status |
-|---|---|---|---|
-| F-7 | `privilegedPool` and `wikiPool` not closed in shutdown handler | High | Open |
-| F-8 | `RECONCILIATION_AGENT_URL` bypasses validated config | Low | Open |
-| F-9 | `anchorBroadcaster` ABI inlined in `services/api`. Divergence risk from Foundry source | Low | Open |
-| F-10 | `wiki.annotate` MCP tool returns 500 in all deployments | Medium | Open (deferred: refactor-4) |
-| F-11 | Per-service typecheck requires prior root build (stale dist/ issue) | Medium | Open |
+| ID   | Title                                                                                  | Severity | Status                      |
+| ---- | -------------------------------------------------------------------------------------- | -------- | --------------------------- |
+| F-7  | `privilegedPool` and `wikiPool` not closed in shutdown handler                         | High     | Open                        |
+| F-8  | `RECONCILIATION_AGENT_URL` bypasses validated config                                   | Low      | Open                        |
+| F-9  | `anchorBroadcaster` ABI inlined in `services/api`. Divergence risk from Foundry source | Low      | Open                        |
+| F-10 | `wiki.annotate` MCP tool returns 500 in all deployments                                | Medium   | Open (deferred: refactor-4) |
+| F-11 | Per-service typecheck requires prior root build (stale dist/ issue)                    | Medium   | Open                        |

@@ -10,6 +10,7 @@
 ## 1. Scope
 
 This audit covers:
+
 - Container structure, Dockerfile, and healthcheck
 - What is actually implemented vs the stated scope ("three MVP agents + Plaid extractor + reasoners")
 - Test suite, lint, typecheck results
@@ -67,12 +68,15 @@ docker-compose.yml:63–81   # agents service with healthcheck
 ## 3. Intended Architecture
 
 The `pyproject.toml` header describes:
+
 > "Hosts the extractor pipeline, /wiki/question reasoning, and the three MVP agents (reconciliation, payment, anomaly)."
 
 The `__init__.py` docstring is explicit:
+
 > "Extractors, reasoners, and the three MVP agents (reconciliation, payment, anomaly) land in later stages."
 
 Three MVP agents are named in CLAUDE.md (§ Known in-Progress Work):
+
 - **Reconciliation agent**. The working agent
 - **Plaid extractor**. Not yet implemented
 - **Payment agent**. Not yet implemented
@@ -95,29 +99,32 @@ POST /run/reconciliation
 ```
 
 `ReconciliationAgent.analyze()`:
+
 - Sends action dict to GPT-4o-mini with structured JSON output (`response_format: {"type": "json_object"}`)
 - Expects response fields: `matches`, `discrepancies`, `confidence`, `summary`
 - Merges response into input action dict preserving `kind`
 - `temperature=0` for determinism
 
 `BrainApiClient.propose()`:
+
 - `POST {brain_api_base_url}/v1/execution/propose`
 - Bearer token from `settings.brain_api_token`
 - 30-second timeout, `raise_for_status()`
 
 **Health endpoint** (`GET /health`):
+
 - Returns `{"ok": true, "service": "brain-agents"}`
 - No dependency on OpenAI or Brain API. Health is superficial
 
 ### What is not implemented
 
-| Component | Status | Files |
-|-----------|--------|-------|
-| Plaid extractor | Not implemented. No file, no stub |. |
-| Payment agent | Not implemented. No file, no stub |. |
-| Anomaly agent | Not implemented. No file, no stub |. |
-| Wiki/question reasoning endpoint | Not implemented. Mentioned in pyproject.toml comment only |. |
-| Agent-to-agent routing | Not implemented. No BullMQ consumer, no domain event subscription |. |
+| Component                        | Status                                                            | Files |
+| -------------------------------- | ----------------------------------------------------------------- | ----- |
+| Plaid extractor                  | Not implemented. No file, no stub                                 | .     |
+| Payment agent                    | Not implemented. No file, no stub                                 | .     |
+| Anomaly agent                    | Not implemented. No file, no stub                                 | .     |
+| Wiki/question reasoning endpoint | Not implemented. Mentioned in pyproject.toml comment only         | .     |
+| Agent-to-agent routing           | Not implemented. No BullMQ consumer, no domain event subscription | .     |
 
 The container ships exactly 1 of 3 MVP agents plus the infrastructure scaffolding.
 
@@ -130,6 +137,7 @@ The container ships exactly 1 of 3 MVP agents plus the infrastructure scaffoldin
 `config.py:13`: `openai_api_key: str = ""`. Default is empty string.
 
 At lifespan startup (`server.py:25`):
+
 ```python
 openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 ```
@@ -155,6 +163,7 @@ Without an explicit `BRAIN_API_BASE_URL=http://...:3000`, every `BrainApiClient.
 ### Gap 3: No authentication on `POST /run/reconciliation` (SEVERITY: Medium)
 
 The route has no JWT or API key check. Any caller that can reach port 8001 can:
+
 1. Trigger an OpenAI GPT-4o-mini call (burns API quota)
 2. Post a proposal to the Brain API using the embedded `brain_api_token` (creates real records)
 
@@ -207,17 +216,17 @@ With a valid `OPENAI_API_KEY`, the server starts, `/health` returns 200, contain
 
 ## 7. Functional Status
 
-| Component | Status |
-|-----------|--------|
-| `GET /health` | Functional (when server starts) |
-| `POST /run/reconciliation` | Functional (requires `OPENAI_API_KEY` + correct port) |
-| `ReconciliationAgent.analyze` | Functional (9 tests passing, 91% coverage) |
-| `BrainApiClient.propose` | Functional (points to legacy `/v1/execution/propose`) |
-| Plaid extractor | Not present |
-| Payment agent | Not present |
-| Anomaly agent | Not present |
-| Docker container healthcheck | **Broken** (`curl` not in base image) |
-| Container startup without `OPENAI_API_KEY` | **Crashes** (lifespan exception) |
+| Component                                  | Status                                                |
+| ------------------------------------------ | ----------------------------------------------------- |
+| `GET /health`                              | Functional (when server starts)                       |
+| `POST /run/reconciliation`                 | Functional (requires `OPENAI_API_KEY` + correct port) |
+| `ReconciliationAgent.analyze`              | Functional (9 tests passing, 91% coverage)            |
+| `BrainApiClient.propose`                   | Functional (points to legacy `/v1/execution/propose`) |
+| Plaid extractor                            | Not present                                           |
+| Payment agent                              | Not present                                           |
+| Anomaly agent                              | Not present                                           |
+| Docker container healthcheck               | **Broken** (`curl` not in base image)                 |
+| Container startup without `OPENAI_API_KEY` | **Crashes** (lifespan exception)                      |
 
 ---
 
@@ -225,28 +234,28 @@ With a valid `OPENAI_API_KEY`, the server starts, `/health` returns 200, contain
 
 **Score: 6 / 10**
 
-| Dimension | Assessment |
-|-----------|-----------|
-| Implemented scope | 1 of 3 MVP agents (reconciliation only) |
-| Code quality | Excellent. Mypy strict, ruff, black, 91% coverage |
-| Container health | Broken (`curl` absent); crashes without `OPENAI_API_KEY` |
-| Port alignment | Mismatch (3001 default vs TS API 3000) |
-| Authentication | None on the route |
-| API alignment | Legacy `/v1/execution/propose` (v0.2), not v0.3 surface |
-| CI toolchain | All three gates pass cleanly |
+| Dimension         | Assessment                                               |
+| ----------------- | -------------------------------------------------------- |
+| Implemented scope | 1 of 3 MVP agents (reconciliation only)                  |
+| Code quality      | Excellent. Mypy strict, ruff, black, 91% coverage        |
+| Container health  | Broken (`curl` absent); crashes without `OPENAI_API_KEY` |
+| Port alignment    | Mismatch (3001 default vs TS API 3000)                   |
+| Authentication    | None on the route                                        |
+| API alignment     | Legacy `/v1/execution/propose` (v0.2), not v0.3 surface  |
+| CI toolchain      | All three gates pass cleanly                             |
 
 ---
 
 ## 9. Confidence
 
-| Area | Confidence | Reason |
-|------|-----------|--------|
-| Reconciliation agent implementation | High | Full source read + 9 tests passing |
-| Missing agents (Plaid, payment, anomaly) | High | No files found in source tree |
-| `curl` healthcheck failure | High | `python:3.12-slim` has no `curl`; image manifest confirms |
-| OpenAI empty key crash | High | SDK behavior documented; lifespan code read directly |
-| Port mismatch | High | 3001 default vs `.env.example` PORT=3000 confirmed |
-| Prior audit UNHEALTHY root cause | Medium | Consistent with two confirmed gaps (key + maybe curl) |
+| Area                                     | Confidence | Reason                                                    |
+| ---------------------------------------- | ---------- | --------------------------------------------------------- |
+| Reconciliation agent implementation      | High       | Full source read + 9 tests passing                        |
+| Missing agents (Plaid, payment, anomaly) | High       | No files found in source tree                             |
+| `curl` healthcheck failure               | High       | `python:3.12-slim` has no `curl`; image manifest confirms |
+| OpenAI empty key crash                   | High       | SDK behavior documented; lifespan code read directly      |
+| Port mismatch                            | High       | 3001 default vs `.env.example` PORT=3000 confirmed        |
+| Prior audit UNHEALTHY root cause         | Medium     | Consistent with two confirmed gaps (key + maybe curl)     |
 
 ---
 
@@ -286,8 +295,8 @@ With a valid `OPENAI_API_KEY`, the server starts, `/health` returns 200, contain
 
 ## 11. Cross-Cutting Risks Updated
 
-| ID | Update |
-|----|--------|
+| ID  | Update                                                                                                                                                      |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | R-5 | **Resolved root cause**: UNHEALTHY due to (a) `curl` absent in `python:3.12-slim` and (b) `AsyncOpenAI(api_key="")` lifespan crash. Both confirmed by code. |
 
 No new risk register entries. F-12-A through F-12-D are container/config issues, not cross-layer architectural risks. F-12-E is already in CLAUDE.md Known In-Progress.
@@ -296,11 +305,11 @@ No new risk register entries. F-12-A through F-12-D are container/config issues,
 
 ## 12. Recommended Next Steps
 
-| Priority | Action |
-|----------|--------|
-| P0 | Fix `curl` in Dockerfile (or switch healthcheck to Python) |
-| P0 | Fix port default: 3001 → 3000 in `config.py` and docker-compose |
-| P1 | Add startup validation for `OPENAI_API_KEY` (clear error, not SDK exception) |
-| P1 | Add internal-token auth middleware to `POST /run/reconciliation` |
-| P2 | Update `BrainApiClient.propose()` to call the v0.3 route (`POST /v1/agents/{id}/actions` or equivalent) |
-| P3 | Implement payment agent and anomaly agent skeletons with the same pattern as reconciliation |
+| Priority | Action                                                                                                  |
+| -------- | ------------------------------------------------------------------------------------------------------- |
+| P0       | Fix `curl` in Dockerfile (or switch healthcheck to Python)                                              |
+| P0       | Fix port default: 3001 → 3000 in `config.py` and docker-compose                                         |
+| P1       | Add startup validation for `OPENAI_API_KEY` (clear error, not SDK exception)                            |
+| P1       | Add internal-token auth middleware to `POST /run/reconciliation`                                        |
+| P2       | Update `BrainApiClient.propose()` to call the v0.3 route (`POST /v1/agents/{id}/actions` or equivalent) |
+| P3       | Implement payment agent and anomaly agent skeletons with the same pattern as reconciliation             |

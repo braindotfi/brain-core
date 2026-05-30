@@ -151,7 +151,10 @@ export async function registerAgentApiRoutes(
       }
       // TODO(agent-autonomy-v3): join the on-chain BrainMCPAgentRegistry record
       // (scopeHash, execution address, ScopeAttestation) once a reader is wired.
-      return { definition: { ...def, shadow_mode: deps.isShadowed(def.agent_key) }, registration: null };
+      return {
+        definition: { ...def, shadow_mode: deps.isShadowed(def.agent_key) },
+        registration: null,
+      };
     },
   );
 

@@ -48,7 +48,9 @@ describe("decodeEnvCredentialKey — production fail-closed guard", () => {
 
   it("returns undefined when env-var is unset (any environment)", () => {
     expect(decodeEnvCredentialKey({ envVarKey: undefined, nodeEnv: "production" })).toBeUndefined();
-    expect(decodeEnvCredentialKey({ envVarKey: undefined, nodeEnv: "development" })).toBeUndefined();
+    expect(
+      decodeEnvCredentialKey({ envVarKey: undefined, nodeEnv: "development" }),
+    ).toBeUndefined();
   });
 
   it("decodes the env-var in non-production environments", () => {
@@ -58,12 +60,14 @@ describe("decodeEnvCredentialKey — production fail-closed guard", () => {
   });
 
   it("throws in production when the env-var path is used (Key Vault required)", () => {
-    expect(() =>
-      decodeEnvCredentialKey({ envVarKey: ENV_KEY_B64, nodeEnv: "production" }),
-    ).toThrow(/forbidden in NODE_ENV=production/);
+    expect(() => decodeEnvCredentialKey({ envVarKey: ENV_KEY_B64, nodeEnv: "production" })).toThrow(
+      /forbidden in NODE_ENV=production/,
+    );
   });
 
   it("does not throw in production when the env-var is unset (caller decides)", () => {
-    expect(() => decodeEnvCredentialKey({ envVarKey: undefined, nodeEnv: "production" })).not.toThrow();
+    expect(() =>
+      decodeEnvCredentialKey({ envVarKey: undefined, nodeEnv: "production" }),
+    ).not.toThrow();
   });
 });

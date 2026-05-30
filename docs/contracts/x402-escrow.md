@@ -43,7 +43,7 @@ On-chain we store **only** what is non-reversible-to-PII:
 | `escrowId`     | `bytes32` | Caller-chosen unique id (e.g. keccak of the x402 request). |
 | `payer`        | `address` | Funder (buyer/agent).                                      |
 | `payee`        | `address` | Beneficiary on release (seller/agent).                     |
-| `token`        | `address` | ERC-20 settled. USDC on Base (D-4).                       |
+| `token`        | `address` | ERC-20 settled. USDC on Base (D-4).                        |
 | `amount`       | `uint256` | Total locked amount (token base units).                    |
 | `released`     | `uint256` | Cumulative amount transferred to the payee.                |
 | `refunded`     | `uint256` | Cumulative amount returned to the payer.                   |

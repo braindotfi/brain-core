@@ -51,9 +51,7 @@ export async function registerMcpRoute(
     // can't poison the limiter, and AFTER the principal_type check so user
     // tokens hit the global limiter rather than the tenant bucket).
     if (opts.tenantRateLimiter !== undefined) {
-      const decision = await opts.tenantRateLimiter.hit(
-        `mcp:tenant:${request.principal.tenantId}`,
-      );
+      const decision = await opts.tenantRateLimiter.hit(`mcp:tenant:${request.principal.tenantId}`);
       if (!decision.allowed) {
         throw brainError("rate_limited", "tenant MCP quota exceeded", {
           details: {

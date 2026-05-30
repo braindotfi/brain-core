@@ -2,10 +2,10 @@
 
 `BrainMCPAgentRegistry` registers agents as a compact on-chain record: `agentId`, `agentAddress`, `tenantId`, `scopeHash`, and `behaviorHash`, each registration authorized by an EIP-712 signature from a tenant-allowlisted signer. On-chain reputation is planned, not yet implemented. See RFC 0001.
 
-| Property     | Value                                                                    |
-| ------------ | ------------------------------------------------------------------------ |
-| **Network**  | Base L2                                                                  |
-| **Solidity** | 0.8.x                                                                    |
+| Property     | Value                                                                   |
+| ------------ | ----------------------------------------------------------------------- |
+| **Network**  | Base L2                                                                 |
+| **Solidity** | 0.8.x                                                                   |
 | **Pattern**  | Immutable. No upgrade path in MVP; changes ship as audited redeploys    |
 | **Standard** | EIP-712 signed registration (ERC-8004 reputation planned. See RFC 0001) |
 
@@ -67,23 +67,23 @@ The fuller ERC-8004 identity record (identity Merkle root, `mcpEndpoint`, capabi
 
 The deployed `AgentRegistration` struct stores exactly these fields:
 
-| Field          | Purpose                                                                                                                 |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Field          | Purpose                                                                                                                |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `agentId`      | Global agent identifier. The registry's primary key                                                                    |
-| `agentAddress` | The agent's on-chain address                                                                                            |
-| `tenantId`     | The tenant this registration is bound to                                                                                |
-| `scopeHash`    | Hash of the agent's granted scope set; the agent's JWT `scope_hash` must equal this                                     |
+| `agentAddress` | The agent's on-chain address                                                                                           |
+| `tenantId`     | The tenant this registration is bound to                                                                               |
+| `scopeHash`    | Hash of the agent's granted scope set; the agent's JWT `scope_hash` must equal this                                    |
 | `behaviorHash` | `keccak256(model_id, model_version, prompt_template_hash, tool_manifest_hash)`. Pins model/prompt/tools (§6 check 1.5) |
-| `registeredAt` | Block timestamp at registration                                                                                         |
-| `revokedAt`    | Block timestamp at revocation; `0` while active (`isAuthorized` reads this)                                             |
+| `registeredAt` | Block timestamp at registration                                                                                        |
+| `revokedAt`    | Block timestamp at revocation; `0` while active (`isAuthorized` reads this)                                            |
 
 The fuller record below is the **planned** target. See RFC 0001. None of these fields exist in the deployed struct today:
 
-| Planned field (RFC 0001) | Purpose                                                                 |
-| ------------------------ | ----------------------------------------------------------------------- |
+| Planned field (RFC 0001) | Purpose                                                                |
+| ------------------------ | ---------------------------------------------------------------------- |
 | `identityRoot`           | ERC-8004 identity Merkle root (planned. RFC 0001)                      |
-| `mcpEndpoint`            | URL where Brain can reach the agent over MCP                            |
-| `capabilities[]`         | Hashes of capability identifiers (e.g., `keccak256("pay_invoice")`)     |
+| `mcpEndpoint`            | URL where Brain can reach the agent over MCP                           |
+| `capabilities[]`         | Hashes of capability identifiers (e.g., `keccak256("pay_invoice")`)    |
 | `reputationRoot`         | Reputation pointer. Now a separate contract, `BrainReputationRegistry` |
 
 ### Registration
@@ -136,8 +136,8 @@ On-chain, the deployed registry answers per-id queries. `getAgent(agentId)` and 
 
 | Query                | Result                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------ |
-| Authorization        | `isAuthorized(agentId, tenantId)`. Registered, not revoked, tenant matches                            |
-| Capability filter    | Active agents declaring a capability (resolved off-chain; on-chain index planned. RFC 0001)           |
+| Authorization        | `isAuthorized(agentId, tenantId)`. Registered, not revoked, tenant matches                             |
+| Capability filter    | Active agents declaring a capability (resolved off-chain; on-chain index planned. RFC 0001)            |
 | Reputation threshold | Resolved via `BrainReputationRegistry` (testnet); Policy maps the pointer to a minimum score off-chain |
 
 {% hint style="success" %}
@@ -150,12 +150,12 @@ Discovery is itself audited. Brain logs every selection event so a tenant can la
 The deployed registry stores identity + scope as `agentId`/`tenantId`/`scopeHash`/`behaviorHash` hashes. The _reputation_ half of ERC-8004 alignment is now a separate (RFC 0001, **UNAUDITED testnet**) contract, `BrainReputationRegistry`.
 {% endhint %}
 
-| ERC-8004 concept (RFC 0001) | Brain Implementation                                                            |
-| --------------------------- | ------------------------------------------------------------------------------- |
+| ERC-8004 concept (RFC 0001) | Brain Implementation                                                           |
+| --------------------------- | ------------------------------------------------------------------------------ |
 | **Identity record**         | `BrainMCPAgentRegistry`. `agentId` / `tenantId` / `scopeHash` / `behaviorHash` |
-| **Reputation root**         | `BrainReputationRegistry.scoreRoot` per agent (testnet)                         |
-| **Validation records**      | Committed off-chain under the reputation `scoreRoot` (testnet)                  |
-| **Discovery**               | View functions across both registries                                           |
+| **Reputation root**         | `BrainReputationRegistry.scoreRoot` per agent (testnet)                        |
+| **Validation records**      | Committed off-chain under the reputation `scoreRoot` (testnet)                 |
+| **Discovery**               | View functions across both registries                                          |
 
 ## behaviorHash Pinning
 

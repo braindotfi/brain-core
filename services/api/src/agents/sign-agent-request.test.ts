@@ -59,7 +59,10 @@ describe("ReconciliationAgentClient.propose — outbound HMAC", () => {
   } {
     const calls: Array<{ url: string; init: Parameters<typeof fetch>[1] & object }> = [];
     const realFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: string | URL | Request, init?: Parameters<typeof fetch>[1] & object) => {
+    globalThis.fetch = (async (
+      url: string | URL | Request,
+      init?: Parameters<typeof fetch>[1] & object,
+    ) => {
       calls.push({ url: String(url), init: init ?? {} });
       return new Response(
         JSON.stringify({
@@ -141,9 +144,9 @@ describe("ReconciliationAgentClient.propose — outbound HMAC", () => {
       const client = new ReconciliationAgentClient("http://agents.test", {
         signingSecret: SECRET,
       });
-      await expect(
-        client.propose(ctx(), "agent_01TEST", { action: {} }),
-      ).rejects.toMatchObject({ code: "internal_server_error" });
+      await expect(client.propose(ctx(), "agent_01TEST", { action: {} })).rejects.toMatchObject({
+        code: "internal_server_error",
+      });
     } finally {
       globalThis.fetch = realFetch;
     }

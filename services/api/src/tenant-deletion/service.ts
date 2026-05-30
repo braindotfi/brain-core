@@ -131,10 +131,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
  * verify-without-trusting-Brain promise; GDPR Article 17(3)(b) permits
  * retention for the establishment or defence of legal claims.
  */
-export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
-  "audit_events",
-  "audit_anchors",
-]);
+export const PRESERVED_TABLES: ReadonlySet<string> = new Set(["audit_events", "audit_anchors"]);
 
 export interface TenantDeletionDeps {
   /** A privileged Pool (BYPASSRLS) so cross-tenant rows are reachable. */
@@ -173,9 +170,7 @@ export class TenantDeletionService {
       }
       // tenants is keyed by `id` (it IS the tenant registry), not tenant_id.
       // Delete it last so children referencing tenants don't FK-violate.
-      const tenantsRes = await client.query(`DELETE FROM tenants WHERE id = $1`, [
-        targetTenantId,
-      ]);
+      const tenantsRes = await client.query(`DELETE FROM tenants WHERE id = $1`, [targetTenantId]);
       const tenantsCount = tenantsRes.rowCount ?? 0;
       deletedRows.tenants = tenantsCount;
       totalRows += tenantsCount;

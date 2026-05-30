@@ -7,7 +7,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
-import { InMemorySlidingWindowRateLimiter, errorHandlerPlugin, type Principal } from "@brain/shared";
+import {
+  InMemorySlidingWindowRateLimiter,
+  errorHandlerPlugin,
+  type Principal,
+} from "@brain/shared";
 import type { BrainMcpServer } from "../server.js";
 import { registerMcpRoute } from "./http.js";
 
@@ -57,9 +61,7 @@ async function buildApp(opts: {
   await app.register(errorHandlerPlugin);
   await withFakeAuth(app);
   await registerMcpRoute(app, mockServer(), {
-    ...(opts.tenantRateLimiter !== undefined
-      ? { tenantRateLimiter: opts.tenantRateLimiter }
-      : {}),
+    ...(opts.tenantRateLimiter !== undefined ? { tenantRateLimiter: opts.tenantRateLimiter } : {}),
   });
   return app;
 }

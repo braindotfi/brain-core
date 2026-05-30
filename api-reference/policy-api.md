@@ -190,7 +190,7 @@ Casing is **lowercase**. `allow | confirm | reject`. The historical-simulation c
 | `bank_ach`        | Bank ACH via Plaid Transfer      |
 | `erp_writeback`   | NetSuite (and similar) writeback |
 | `onchain_base`    | `BrainSmartAccount` on Base      |
-| `notification`    | No money. Surface to a human    |
+| `notification`    | No money. Surface to a human     |
 
 These are the vocabularies the spec's `ProposedAction` accepts. (The PaymentIntent layer uses a separate, broader `action_type` set. `ach_outbound`, `wire`, `x402_settle`, etc.. That maps onto these rails internally.)
 

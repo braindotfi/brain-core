@@ -49,7 +49,7 @@ Authorization: Bearer <token>
 | Field                            | Description                                                                                        |
 | -------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `outcome`                        | `allowed` \| `confirmed` \| `rejected` \| `executed` \| `failed` \| `shadow_completed`             |
-| `behavior_hash`                  | The agent's runtime `behaviorHash`. Must equal the value registered on-chain (§6 check 1.5)       |
+| `behavior_hash`                  | The agent's runtime `behaviorHash`. Must equal the value registered on-chain (§6 check 1.5)        |
 | `policy_version` / `policy_hash` | The policy version evaluated and its content hash                                                  |
 | `matched_rule_id`                | The DSL rule that fired                                                                            |
 | `gate_checks[]`                  | Every numbered + hardening check, in execution order, with `passed: boolean` and optional `reason` |
@@ -57,7 +57,7 @@ Authorization: Bearer <token>
 | `ledger_snapshot_hash`           | Hash of the Ledger state Policy decided against (the snapshot the §6 7.5 check re-validates)       |
 | `audit_events[]`                 | Every audit event id covering this action                                                          |
 | `merkle_root` / `merkle_proof`   | The Merkle inclusion proof for the audit-chain leaves                                              |
-| `chain_anchor`                   | The on-chain anchor for the containing batch. `null` until the batch lands on Base                |
+| `chain_anchor`                   | The on-chain anchor for the containing batch. `null` until the batch lands on Base                 |
 | `rail_receipt`                   | The typed rail receipt (`ach` / `wire` / `erp` / `onchain` schemas)                                |
 | `human_explanation`              | One-paragraph plain-English summary, deterministically generated                                   |
 
@@ -67,9 +67,9 @@ Three independent paths to the same conclusion:
 
 | Method                       | Description                                                                                   |
 | ---------------------------- | --------------------------------------------------------------------------------------------- |
-| **SDK helper**               | `verifyMerkleProof(...)` from `@brain/sdk`. No Brain account required                        |
+| **SDK helper**               | `verifyMerkleProof(...)` from `@brain/sdk`. No Brain account required                         |
 | **On-chain call**            | `BrainAuditAnchor.verify(tenantId, batchIndex, leaf, merkleProof)` from any Solidity contract |
-| **Public verifier endpoint** | `POST /v1/audit/verify`. Supply event hash, Merkle proof, and claimed root                   |
+| **Public verifier endpoint** | `POST /v1/audit/verify`. Supply event hash, Merkle proof, and claimed root                    |
 
 ### Human-Readable View
 

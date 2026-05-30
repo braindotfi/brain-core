@@ -26,7 +26,7 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 | Policy bound at grant                    | The session key carries the `policyVersion` digest it was authorized under; a stored key can never have a missing binding         |
 | `BrainSmartAccount` enforcement on-chain | Scope + spend caps are enforced inside `executeViaSessionKey` (bound to the policyVersion at grant time), not just in the backend |
 | Account-level limits (per-tx, per-day)   | Hard cap on blast radius regardless of policy                                                                                     |
-| On-chain reputation (planned. RFC 0001) | Misbehaving agents accumulate negative attestations and lose access; not stored on-chain in the MVP                               |
+| On-chain reputation (planned. RFC 0001)  | Misbehaving agents accumulate negative attestations and lose access; not stored on-chain in the MVP                               |
 
 ### Policy Ambiguity
 

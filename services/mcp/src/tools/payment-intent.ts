@@ -340,8 +340,7 @@ export const paymentIntentListTool: Tool<PaymentIntentListInput> = {
     const lines = items
       .slice(0, 10)
       .map(
-        (pi) =>
-          `- \`${pi.id}\` — ${pi.action_type} ${pi.amount} ${pi.currency} → **${pi.status}**`,
+        (pi) => `- \`${pi.id}\` — ${pi.action_type} ${pi.amount} ${pi.currency} → **${pi.status}**`,
       );
     const more = items.length > 10 ? `\n(${items.length - 10} more)` : "";
     return {

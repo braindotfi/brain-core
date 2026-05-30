@@ -2,6 +2,7 @@
 
 **Audited:** 2026-05-26
 **Files examined:**
+
 - `services/audit/src/merkle.ts`
 - `services/audit/src/publisher.ts`
 - `services/audit/src/reconciler.ts`
@@ -22,6 +23,7 @@
 - `shared/src/config.ts` (lines 96–145)
 
 **Commands run:**
+
 ```
 pnpm --filter @brain/audit run typecheck
 pnpm --filter @brain/audit run test
@@ -36,6 +38,7 @@ grep -n "sha256|hashEvent" shared/src/audit/emitter.ts
 ## 1. Scope
 
 This report covers:
+
 - `@brain/audit`. Merkle tree construction, inclusion proofs, anchor publisher, anchor reconciler, audit event repository, webhook endpoint CRUD, dead-letter replay routes
 - The `PostgresAuditEmitter` in `@brain/shared`. Hash chain computation, per-tenant serialization, append-only enforcement
 - `WebhookAuditEmitter` and `WebhookDispatcher` in `@brain/shared`. Outbound delivery, dead-letter persistence, SSRF guard
@@ -53,6 +56,7 @@ Per `CLAUDE.md` Layer 6:
 > Audit. Append-only, Merkle-chained log + on-chain anchor publisher.
 
 Per `Brain_MVP_Architecture.md §3`:
+
 - Every service emits audit events via `PostgresAuditEmitter`; each event is SHA-256 hashed and chained to the previous tenant event (`prev_event_hash`).
 - Hourly (configurable), the anchor broadcaster collects events in a time window, builds a Merkle tree (keccak256-based, matching the Solidity contract), and calls `BrainAuditAnchor.anchor()` on Base.
 - An orphan reconciler runs every 5 minutes to backfill `onchain_tx_hash` for anchors where the process crashed between broadcast and DB update.
@@ -65,6 +69,7 @@ Per `Brain_MVP_Architecture.md §3`:
 ### Hash chain. Correct
 
 `shared/src/audit/emitter.ts:80–134` (`PostgresAuditEmitter.emit()`):
+
 - Opens a DB transaction, sets `app.tenant_id`, then locks the latest tenant event with `FOR UPDATE` to serialize concurrent emits.
 - Computes `event_hash = sha256(canonical(event + id + createdAt + prevEventHash))` via `hashEvent()`.
 - Inserts the event with both `event_hash` and `prev_event_hash` as `BYTEA`.
@@ -80,6 +85,7 @@ Migration 0001 constrained `layer IN ('raw','wiki','policy','execution','audit')
 ### Merkle tree. Keccak256, correct, cross-verified with contract
 
 `merkle.ts` implements:
+
 - `hashLeafKeccak(leaf)` = keccak256(0x00 || leaf)
 - `hashInternalKeccak(a, b)` = keccak256(0x01 || min(a,b) || max(a,b)). Lexicographic sort prevents left/right ordering ambiguity
 - Odd-node duplication: when a layer has an odd number of nodes, the last node is paired with itself
@@ -89,6 +95,7 @@ The scheme matches `BrainAuditAnchor.sol::verifyInclusion` per the module commen
 ### Two-layer hash scheme
 
 `publisher.ts:67–68`:
+
 ```ts
 const leaves = events.map((e) => e.event_hash);
 const tree = buildTree(leaves);
@@ -101,6 +108,7 @@ Off-chain verification: `verifyInclusion(root, sha256_event_hash, proof)` applie
 ### `publishAnchor`. Correct and idempotent
 
 `publisher.ts:58–103`:
+
 1. Collects events in `[periodStart, periodEnd)` via `listEventsForAnchor`
 2. Empty window → returns `null` (no-op)
 3. Checks `findAnchorByRoot` before insert. No-op if root already exists (§5.3 idempotency)
@@ -113,9 +121,11 @@ The crash window between step 5 (broadcast) and step 6 (write-back) is correctly
 ### Anchor broadcaster. Hardcoded to `baseSepolia` (R-30, High)
 
 `services/api/src/anchorBroadcaster.ts:47,52,125`:
+
 ```ts
 chain: baseSepolia,
 ```
+
 All three client constructions (wallet, public, public for reader) hardcode `baseSepolia`. The `RPC_URL` default in `shared/src/config.ts:96` is also `https://sepolia.base.org`.
 
 **This means the production broadcaster will anchor on Base Sepolia, not Base Mainnet.** There is no configurable chain parameter. The chain is baked into the viem client at construction time, regardless of what `BASE_RPC_URL` is set to. A production deployment with a mainnet RPC URL will still route the transaction to Sepolia (viem uses the chain's hardcoded endpoint if the transport URL matches a known chain, but the `chain: baseSepolia` forces the transaction parameters. Chain ID 84532 instead of mainnet 8453). Any mainnet contract address will be unreachable on Sepolia.
@@ -123,6 +133,7 @@ All three client constructions (wallet, public, public for reader) hardcode `bas
 ### Orphan reconciler. Correct
 
 `reconciler.ts:49–105`:
+
 - Queries `audit_anchors WHERE onchain_tx_hash IS NULL` with `pool.query` (cross-tenant, requires `brain_privileged` or owner role. Same pattern as normalize worker)
 - For each orphan, calls `reader.findAnchorTx({ tenantId, merkleRoot })` (on-chain log scan)
 - If found: `setAnchorTxHash` (tenant-scoped)
@@ -134,6 +145,7 @@ All three client constructions (wallet, public, public for reader) hardcode `bas
 ### WebhookAuditEmitter. Fire-and-forget with dead-letter (R-9 partially addressed)
 
 `shared/src/webhooks/outbound.ts:174–189`:
+
 ```ts
 setImmediate(() => {
   this.dispatcher.dispatch(result).catch((err) => {
@@ -161,11 +173,13 @@ Delivery is fire-and-forget after `setImmediate`. The audit event is written bef
 ## 4. Runtime Validation
 
 **Typecheck:**
+
 ```
 pnpm --filter @brain/audit run typecheck → 0 errors
 ```
 
 **Tests:**
+
 ```
 pnpm --filter @brain/audit run test
 → 7 test files, 42 tests passed
@@ -179,12 +193,14 @@ pnpm --filter @brain/audit run test
 ```
 
 **Append-only enforcement confirmed:**
+
 ```
 services/audit/migrations/0001_audit_events.sql:57
 REVOKE UPDATE, DELETE ON audit_events FROM PUBLIC;
 ```
 
 **FORCE RLS confirmed:**
+
 ```
 services/audit/migrations/0007_force_rls.sql
 ALTER TABLE audit_anchors       FORCE ROW LEVEL SECURITY;
@@ -194,13 +210,16 @@ ALTER TABLE webhook_endpoints   FORCE ROW LEVEL SECURITY;
 ```
 
 **Anchor broadcaster chain hardcoded to Sepolia:**
+
 ```
 services/api/src/anchorBroadcaster.ts:47,52,125
 chain: baseSepolia   (three occurrences)
 ```
+
 No `chain` parameter accepted. `RPC_URL` default: `https://sepolia.base.org` (config.ts:96).
 
 **Hash scheme:**
+
 - `event_hash`: SHA-256 (Node crypto, `createHash("sha256")`) via `hashEvent()`
 - Merkle leaf nodes: keccak256(0x00 || sha256_event_hash) via `hashLeafKeccak()`
 - Merkle internal nodes: keccak256(0x01 || min(a,b) || max(a,b)) via `hashInternalKeccak()`
@@ -238,33 +257,38 @@ No `chain` parameter accepted. `RPC_URL` default: `https://sepolia.base.org` (co
 ## 8. Evidence
 
 **Merkle property test passes (every leaf verifies):**
+
 ```
 src/merkle.inclusion.property.test.ts (1 test). Fast-check, 100 runs
 ```
 
 **Two-layer hash confirmed (publisher.ts:67–68):**
+
 ```ts
-const leaves = events.map((e) => e.event_hash);  // sha256 buffers
-const tree = buildTree(leaves);                   // keccak256 Merkle over sha256 leaves
+const leaves = events.map((e) => e.event_hash); // sha256 buffers
+const tree = buildTree(leaves); // keccak256 Merkle over sha256 leaves
 ```
 
 **Anchor broadcaster. Sepolia hardcode:**
+
 ```ts
 // anchorBroadcaster.ts:47
 const walletClient = createWalletClient({
   account,
-  chain: baseSepolia,   // ← production blocker
+  chain: baseSepolia, // ← production blocker
   transport,
 });
 ```
 
 **RPC_URL config default:**
+
 ```ts
 // shared/src/config.ts:96
 RPC_URL: z.string().url().default("https://sepolia.base.org"),
 ```
 
 **Dead-letter persistence in WebhookDispatcher:**
+
 ```ts
 // shared/src/webhooks/outbound.ts:142–149
 await recordDeliveryFailure(scoped, {
@@ -278,6 +302,7 @@ await recordDeliveryFailure(scoped, {
 ```
 
 **Reconciler graceful stop wired:**
+
 ```ts
 // services/api/src/main.ts:1640
 anchorReconciler?.stop();
@@ -295,20 +320,21 @@ anchorReconciler?.stop();
 
 **Score: 6/10. Mostly Working (logic), Blocked (on-chain)**
 
-| Dimension | Status |
-|---|---|
-| Hash chain correctness | Correct. FOR UPDATE serialization, SHA-256, prev_event_hash |
-| Append-only DB enforcement | Correct. REVOKE UPDATE/DELETE + FORCE RLS |
-| Merkle tree | Correct. Keccak256, property-tested, matches contract scheme |
-| Publisher idempotency | Correct. ON CONFLICT DO NOTHING + pre-insert check |
-| Orphan reconciler | Correct. Crash recovery, grace window, audit emit |
-| On-chain anchor broadcast | **Blocked**. Hardcoded `baseSepolia`; mainnet anchoring will fail |
-| Webhook delivery | Fire-and-forget with dead-letter persistence; no auto-retry |
-| Dead-letter replay | Implemented. Operator-triggered |
-| SSRF guard | Implemented |
-| FORCE RLS | All 4 tables covered |
+| Dimension                  | Status                                                            |
+| -------------------------- | ----------------------------------------------------------------- |
+| Hash chain correctness     | Correct. FOR UPDATE serialization, SHA-256, prev_event_hash       |
+| Append-only DB enforcement | Correct. REVOKE UPDATE/DELETE + FORCE RLS                         |
+| Merkle tree                | Correct. Keccak256, property-tested, matches contract scheme      |
+| Publisher idempotency      | Correct. ON CONFLICT DO NOTHING + pre-insert check                |
+| Orphan reconciler          | Correct. Crash recovery, grace window, audit emit                 |
+| On-chain anchor broadcast  | **Blocked**. Hardcoded `baseSepolia`; mainnet anchoring will fail |
+| Webhook delivery           | Fire-and-forget with dead-letter persistence; no auto-retry       |
+| Dead-letter replay         | Implemented. Operator-triggered                                   |
+| SSRF guard                 | Implemented                                                       |
+| FORCE RLS                  | All 4 tables covered                                              |
 
 **Production blocker:**
+
 - **R-30**. `anchorBroadcaster.ts` hardcodes `chain: baseSepolia`. Any production deployment targeting Base Mainnet will submit anchor transactions to Sepolia (chain ID 84532), not mainnet (chain ID 8453). On-chain audit verification is not possible until this is corrected.
 
 **Fix:** Accept `chainId` or a viem `Chain` object as a parameter to `createViemAnchorBroadcaster` and `createViemAnchorEventReader`. Add a `AUDIT_ANCHOR_CHAIN` env var (`"base" | "base-sepolia"`, defaulting to `"base-sepolia"` for safety) and resolve the correct viem chain at boot.

@@ -2,6 +2,7 @@
 
 **Audited:** 2026-05-26
 **Files examined:**
+
 - `services/wiki/src/server.ts`, `deps.ts`, `index.ts`
 - `services/wiki/src/routes/annotate.ts`, `annotate.test.ts`, `entity.ts`, `search.ts`, `question.ts`, `memory.ts`, `schema.ts`
 - `services/wiki/src/question/orchestrator.ts`, `orchestrator.test.ts`
@@ -14,6 +15,7 @@
 - `scripts/check-wiki-no-ledger-write.mjs`
 
 **Commands run:**
+
 - `pnpm --filter @brain/wiki run test` → 36 tests pass
 - `pnpm --filter @brain/wiki run typecheck` → clean (no errors)
 - `node scripts/check-wiki-no-ledger-write.mjs services/wiki/src` → OK
@@ -45,6 +47,7 @@ Layer 3 in the six-layer model. Dual responsibility per `Brain_MVP_Architecture.
 2. **Narrative memory + Q&A**. `WikiPageService` renders markdown pages on demand from Ledger state; `askWiki` answers natural-language questions grounded in live Ledger rows (not Wiki text). `/memory/search` uses pgvector cosine similarity over `body_embedding`.
 
 Layer boundary invariants (per `CLAUDE.md`):
+
 - Wiki may read Ledger tables (sanctioned cross-service read via `TenantScopedClient`).
 - Wiki must **never write** Ledger tables (`check-wiki-no-ledger-write.mjs` enforces this).
 - Policy and Execution never read Wiki.
@@ -64,6 +67,7 @@ The source migration file (`0001_wiki_entities.sql`) still lists the broader set
 ### 3.2 Q&A orchestrator
 
 `askWiki` is implemented end-to-end:
+
 1. Checks Redis cache (5-minute TTL, SHA-256 dedup key over question + asOf + tenantId + model).
 2. Pulls bounded Ledger rows via three parameterized SELECTs (30 transactions, 15 obligations, 15 counterparties). All reads, never writes.
 3. Composes evidence context as a string of typed IDs.
@@ -89,7 +93,7 @@ queries. None write to Ledger.
 by calling `EmbeddingAdapter.embed(body_md)`. The embedding is stored in
 `body_embedding` (vector(1536)) for `/memory/search`.
 
-`search` uses cosine similarity: `ORDER BY body_embedding <=> $1::vector`. 
+`search` uses cosine similarity: `ORDER BY body_embedding <=> $1::vector`.
 **Gap:** `listPages`'s `q` filter uses `LOWER(body_md) LIKE $n` (lexical),
 and `wiki_pages` has no full-text search index. On a large corpus this will
 be a sequential scan.
@@ -97,6 +101,7 @@ be a sequential scan.
 ### 3.4 Annotation rate-limiter
 
 `registerAnnotate` builds a `SlidingWindowRateLimiter` once at route registration:
+
 - Default: `RedisSlidingWindowRateLimiter`, 60 hits/hour per `(tenant_id, actor)`.
 - Configurable via `WIKI_ANNOTATION_RATE_PER_HOUR` env variable or `deps.annotationRateLimiter` injection.
 - Rate check fires **before any DB write** (poison-pool test verifies this).
@@ -106,9 +111,9 @@ be a sequential scan.
 
 There are **two annotation concepts** with the same name:
 
-| Surface | Target | Status |
-|---------|--------|--------|
-| `POST /wiki/annotate` (HTTP route) | `{policy, agent}` wiki entities and relations | **Working**. Writes to `wiki_entities`/`wiki_relations`, rate-limited |
+| Surface                                           | Target                                                                          | Status                                                                       |
+| ------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `POST /wiki/annotate` (HTTP route)                | `{policy, agent}` wiki entities and relations                                   | **Working**. Writes to `wiki_entities`/`wiki_relations`, rate-limited        |
 | `IWikiMemoryService.annotate` (internal contract) | Ledger kinds (`ledger_account`, `ledger_transaction`, etc.). Write-through path | **Stubbed**. Throws `internal_server_error` unconditionally (R-16 confirmed) |
 
 The MCP `wiki.annotate` tool calls `IWikiMemoryService.annotate` (the stub), so the MCP path always returns 500. The HTTP `POST /wiki/annotate` route is unrelated and works for `policy`/`agent` kinds.
@@ -116,6 +121,7 @@ The MCP `wiki.annotate` tool calls `IWikiMemoryService.annotate` (the stub), so 
 ### 3.6 No-write invariant
 
 `check-wiki-no-ledger-write.mjs` runs against `services/wiki/src/` and exits 0. It checks:
+
 1. No import of a Ledger write-helper (`insert*`, `update*`, `delete*`, etc.) from `@brain/ledger`.
 2. No raw `INSERT INTO|UPDATE|DELETE FROM ledger_*` SQL.
 
@@ -165,6 +171,7 @@ The bitemporal graph, annotation rate-limiter, page rendering (8 generators), an
 **None found** for Wiki→Ledger write violations. The CI guard (`check-wiki-no-ledger-write.mjs`) passes cleanly. All Ledger table accesses in wiki source files are SELECT-only.
 
 **Sanctioned cross-service reads** are correctly scoped:
+
 - `orchestrator.ts` reads `ledger_transactions`, `ledger_obligations`, `ledger_counterparties` via `TenantScopedClient` (documented exception).
 - Page generators read Ledger tables via `TenantScopedClient` under `withTenantScope` (same sanctioned pattern).
 
@@ -193,6 +200,7 @@ The bitemporal graph, annotation rate-limiter, page rendering (8 generators), an
 ## 8. Evidence
 
 **Rate-limiter correctness (`annotate.test.ts:62–87`):**
+
 ```
 limiter set to limit=1; first hit saturates; POST /wiki/annotate → 429
 audit event wiki.annotation.rate_limited emitted with principal_id and limit
@@ -200,12 +208,14 @@ poison pool asserts DB not touched on the denied path
 ```
 
 **Q&A evidence filtering (`orchestrator.test.ts:152–179`):**
+
 ```
 LLM returns evidence_ids: ["tx_01HQ7K3BBBBBBBBBBBBBBBBBBBB", "tx_NOT_RETRIEVED"]
 result.evidence maps to only ["tx_01HQ7K3BBBBBBBBBBBBBBBBBBBB"]. NOT_RETRIEVED filtered
 ```
 
 **IWikiMemoryService.annotate stub (`services/api/src/main.ts:349–354`):**
+
 ```ts
 async annotate(_ctx, _input) {
   throw brainError("internal_server_error", "wiki.annotate not yet wired in boot binary");
@@ -213,6 +223,7 @@ async annotate(_ctx, _input) {
 ```
 
 **wiki-no-ledger-write guard:**
+
 ```
 $ node scripts/check-wiki-no-ledger-write.mjs services/wiki/src
 wiki-no-ledger-write guard: OK
@@ -227,14 +238,17 @@ Checks `LEDGER_IMPORT` (write-helper symbols from `@brain/ledger`) AND
 No write grant on any `ledger_*` table.
 
 **FORCE RLS (`migrations/0006_force_rls.sql`):**
+
 ```sql
 ALTER TABLE wiki_entities  FORCE ROW LEVEL SECURITY;
 ALTER TABLE wiki_pages     FORCE ROW LEVEL SECURITY;
 ALTER TABLE wiki_relations FORCE ROW LEVEL SECURITY;
 ```
+
 All three wiki-owned tables covered.
 
 **Zero integration tests:**
+
 ```
 vitest.integration.config.ts:
   passWithNoTests: true,
@@ -257,6 +271,7 @@ All source files read directly. CI guard executed against live source. Test suit
 **Score: 7/10**
 
 **Working correctly:**
+
 - Bitemporal entity/relation graph with confidence ceiling
 - Annotation rate-limiter (Redis-backed, env-configurable, audit-emitting)
 - Q&A orchestrator (Ledger-grounded, cached, evidence-filtered)
@@ -267,12 +282,14 @@ All source files read directly. CI guard executed against live source. Test suit
 - No ledger writes from wiki code (CI-guarded, grep-confirmed)
 
 **Blockers / risks:**
+
 - **R-16 (Medium):** `IWikiMemoryService.annotate` unconditionally throws 500. All MCP `wiki.annotate` calls fail. This is a stub, not a regression, but any MCP agent expecting annotation capability is broken.
 - **Zero integration tests (Medium):** No HTTP-layer integration coverage for any wiki route. A transport-layer regression (header parsing, serialization, auth hook) would go undetected until staging.
 - **`/memory/search` returns empty on fresh DB**. Not a bug but an operational surprise: pages must be regenerated before search is useful. No seed job exists.
 - **`listPages` `q` filter degrades at scale**. Sequential scan on `body_md ILIKE`.
 
 **Non-blockers:**
+
 - `brain_wiki_reader` role: code verified, live DB unverified (shared risk with all RLS claims).
 - ivfflat tuning is a follow-up, not a correctness issue.
 
