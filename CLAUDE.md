@@ -76,7 +76,7 @@ pnpm run demo:reset               # reset demo state (alias for tools/demo-reset
 pnpm run plaid:sandbox            # start the Plaid sandbox tool
 ```
 
-`pnpm run lint` bundles 9 individually runnable CI guard scripts. Each can be called standalone:
+`pnpm run lint` bundles 10 individually runnable CI guard scripts. Each can be called standalone:
 
 ```bash
 pnpm run check-scope-vocab
@@ -88,6 +88,7 @@ pnpm run check-policy-no-wiki-read
 pnpm run check-no-onchain-pii
 pnpm run check-docs-drift
 pnpm run check-rails-catalog-drift
+pnpm run check-escrow-audit-marker
 ```
 
 > `check-promotion-readiness` also exists (`scripts/check-promotion-readiness.mjs`) but is **not**
