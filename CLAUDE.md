@@ -96,8 +96,18 @@ pnpm run check-escrow-audit-marker
 
 `pnpm run production-readiness` is a separate aggregator. Given the
 current env, would the boot fences pass? Reports per-rail readiness,
-per-fence status, CI-guard wiring, and deferred items. Add `--json` for
-machine-readable output (CI / dashboards). Exit 1 on any red.
+per-fence status, CI-guard wiring, and deferred items. Reads
+`docs/risk-register.json` and turns any open + P0 risk into a red row.
+Add `--json` for machine-readable output (CI / dashboards). Exit 1 on
+any red. The PR CI workflow uploads the `--json` output as a per-commit
+build artifact (`production-readiness-${sha}`, 90-day retention).
+
+`pnpm run readiness-snapshot <tag>` captures a per-tag snapshot of the
+aggregator JSON to `docs/readiness-history/<tag>.json` (used at release
+tag push). `pnpm run readiness-trend` reads every snapshot and prints
+a per-release trend table (overall status, red/yellow/green counts,
+open P0/P1 risks, ΔP0 vs prior snapshot) for investor updates and
+release-readiness reviews.
 
 Per-workspace:
 

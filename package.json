@@ -23,6 +23,8 @@
     "check-rails-catalog-drift": "node scripts/check-rails-catalog-drift.mjs",
     "check-escrow-audit-marker": "node scripts/check-escrow-audit-marker.mjs",
     "production-readiness": "node scripts/production-readiness.mjs",
+    "readiness-snapshot": "node scripts/readiness-snapshot.mjs",
+    "readiness-trend": "node scripts/readiness-trend.mjs",
     "test:scripts": "node --test scripts/__tests__/*.test.mjs",
     "lint:openapi": "npx --yes @redocly/cli@latest lint Brain_API_Specification.yaml",
     "lint": "pnpm -r --filter './shared/**' --filter './services/**' --filter '!./services/agents' --filter './clients/**' run lint && pnpm run prettier:check && pnpm run check-scope-vocab && pnpm run check-gate-bypass && pnpm run check-payment-intent-loaders && pnpm run check-no-em-dashes && pnpm run check-wiki-no-ledger-write && pnpm run check-policy-no-wiki-read && pnpm run check-no-onchain-pii && pnpm run check-docs-drift && pnpm run check-rails-catalog-drift && pnpm run check-escrow-audit-marker && pnpm run lint:openapi",
