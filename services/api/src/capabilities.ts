@@ -14,12 +14,23 @@
  */
 
 import type { Logger } from "@brain/shared";
+import type { AuditApprovalState } from "./composition/rail-catalog.js";
 
 export interface RailEntry {
   /** Canonical rail key, e.g. "bank_ach" / "onchain_base" / "x402_base". */
   name: string;
   /** True when a real client/executor is wired; false when this slot is a dev stub. */
   live: boolean;
+  /** Rail has a real production implementation (catalog flag). erp_writeback=false. */
+  productionAllowed: boolean;
+  /** Every required env var for this rail is set; rail would attempt to register. */
+  requiredEnvPresent: boolean;
+  /** EVM chain id this rail dispatches against, or null for non-EVM rails. */
+  chainId: number | null;
+  /** External smart-contract audit is required before mainnet boot. */
+  auditRequired: boolean;
+  /** approved / pending / not_applicable — derived from BRAIN_ESCROW_AUDIT_APPROVED. */
+  auditApproved: AuditApprovalState;
 }
 
 export interface GateLoaderState {
@@ -103,8 +114,20 @@ export function logBootCapabilities(c: BootCapabilities, log: Logger): void {
   log.info(
     {
       node_env: c.nodeEnv ?? "unset",
+      // Legacy name lists (kept for log aggregators that already key off them).
       rails_live: railsLive,
       rails_stub: railsStub,
+      // Per-rail posture matrix. Reviewer rec #7 — single log line tells ops
+      // whether each rail is production-allowed AND env-present AND audited.
+      rails: c.rails.map((r) => ({
+        name: r.name,
+        live: r.live,
+        production_allowed: r.productionAllowed,
+        required_env_present: r.requiredEnvPresent,
+        chain_id: r.chainId,
+        audit_required: r.auditRequired,
+        audit_approved: r.auditApproved,
+      })),
       gate_loaders_wired: wired,
       gate_loaders_dormant: dormant,
       live_agents_count: c.liveAgentsCount,

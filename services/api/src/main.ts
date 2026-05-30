@@ -185,6 +185,7 @@ import { buildPaymentIntentService } from "./composition/payment-intent-service.
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
 import { assertEscrowAuditApproved } from "./composition/escrow-audit-gate.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
+import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps, PolicyReader, AgentReader, PolicyView } from "@brain/wiki";
@@ -1537,10 +1538,21 @@ async function main(): Promise<void> {
   // -- capability snapshot (item 5) ------------------------------------
   // One structured log line that answers "what's actually wired in this
   // process?" so demo prelude / ops don't have to spelunk through this file.
+  // Rail postures (rec #7) come from the static RAIL_CATALOG + boot config;
+  // the boot path supplies the set of names it actually registered live.
+  const liveRailNames = new Set<RailName>(
+    railsBuild.entries
+      .filter((e) => e.live)
+      .map((e) => e.name as RailName)
+      .filter((n): n is RailName =>
+        ["bank_ach", "onchain_base", "x402_base", "escrow_base", "erp_writeback"].includes(n),
+      ),
+  );
+  const railPostures = computeRailPostures(RAIL_CATALOG, cfg, liveRailNames);
   logBootCapabilities(
     {
       nodeEnv: cfg.NODE_ENV,
-      rails: railsBuild.entries,
+      rails: railPostures,
       gateLoaders: {
         // attestCounterpartyAgent + sumAgentWindowSpend are unconditionally wired
         // above; resolveEscrowState is opt-in by BRAIN_ESCROW_ADDRESS. Mirror that.

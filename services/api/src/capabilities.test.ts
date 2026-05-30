@@ -16,9 +16,33 @@ function base(): BootCapabilities {
   return {
     nodeEnv: "development",
     rails: [
-      { name: "bank_ach", live: true },
-      { name: "onchain_base", live: true },
-      { name: "erp_writeback", live: false },
+      {
+        name: "bank_ach",
+        live: true,
+        productionAllowed: true,
+        requiredEnvPresent: true,
+        chainId: null,
+        auditRequired: false,
+        auditApproved: "not_applicable",
+      },
+      {
+        name: "onchain_base",
+        live: true,
+        productionAllowed: true,
+        requiredEnvPresent: true,
+        chainId: 84_532,
+        auditRequired: false,
+        auditApproved: "not_applicable",
+      },
+      {
+        name: "erp_writeback",
+        live: false,
+        productionAllowed: false,
+        requiredEnvPresent: false,
+        chainId: null,
+        auditRequired: false,
+        auditApproved: "not_applicable",
+      },
     ],
     gateLoaders: {
       resolveTenantFlags: true,
@@ -129,5 +153,50 @@ describe("logBootCapabilities", () => {
     const { log, calls } = fakeLog();
     logBootCapabilities({ ...base(), nodeEnv: undefined }, log);
     expect(calls[0]![0].node_env).toBe("unset");
+  });
+
+  it("emits per-rail posture (rec #7): live + production_allowed + env + chain + audit", () => {
+    const { log, calls } = fakeLog();
+    logBootCapabilities(base(), log);
+    const rails = calls[0]![0].rails as Array<Record<string, unknown>>;
+    expect(rails).toHaveLength(3);
+    const ach = rails.find((r) => r.name === "bank_ach")!;
+    expect(ach.live).toBe(true);
+    expect(ach.production_allowed).toBe(true);
+    expect(ach.required_env_present).toBe(true);
+    expect(ach.chain_id).toBeNull();
+    expect(ach.audit_required).toBe(false);
+    expect(ach.audit_approved).toBe("not_applicable");
+    const onchain = rails.find((r) => r.name === "onchain_base")!;
+    expect(onchain.chain_id).toBe(84_532);
+    const erp = rails.find((r) => r.name === "erp_writeback")!;
+    expect(erp.production_allowed).toBe(false);
+    expect(erp.live).toBe(false);
+  });
+
+  it("surfaces escrow_base mainnet audit posture in the rail entry", () => {
+    const { log, calls } = fakeLog();
+    logBootCapabilities(
+      {
+        ...base(),
+        rails: [
+          {
+            name: "escrow_base",
+            live: true,
+            productionAllowed: true,
+            requiredEnvPresent: true,
+            chainId: 8453,
+            auditRequired: true,
+            auditApproved: "approved",
+          },
+        ],
+      },
+      log,
+    );
+    const rails = calls[0]![0].rails as Array<Record<string, unknown>>;
+    const escrow = rails[0]!;
+    expect(escrow.chain_id).toBe(8453);
+    expect(escrow.audit_required).toBe(true);
+    expect(escrow.audit_approved).toBe("approved");
   });
 });
