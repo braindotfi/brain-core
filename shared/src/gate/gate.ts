@@ -695,10 +695,13 @@ export async function runPreExecutionGate(
   // 8.5 — micropayment cumulative cap (RFC 0001 §6.4). Active ONLY when BOTH the
   // policy envelope (`micropayment_window_cap`) and the window-spend reader are
   // wired; otherwise add no row (canonical path preserved). Enforces
-  // `windowSpend + amount <= cap.value` over the rolling window, mirroring the
-  // on-chain session-key window cap so the off-chain gate and the on-chain
-  // contract agree. Currency mismatch or over-cap is a HARD reject. Read-only —
-  // the same check holds in dry-run.
+  // `windowSpend + amount <= cap.value` over a TUMBLING window keyed by the
+  // agent. Window semantics match `BrainSmartAccount._windowSpent` (same
+  // floor((ts / period) * period) formula) so the off-chain agent-budget check
+  // and the on-chain session-key budget never disagree at period boundaries.
+  // See services/policy/src/agent-window-spend.ts for the SQL and R-09 in
+  // docs/risk-register.md for the design decision. Currency mismatch or
+  // over-cap is a HARD reject. Read-only — the same check holds in dry-run.
   const windowCap = decision.micropayment_window_cap ?? null;
   if (windowCap !== null && deps.sumAgentWindowSpend !== undefined) {
     if (input.intent.currency !== windowCap.currency) {

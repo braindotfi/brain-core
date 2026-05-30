@@ -146,31 +146,28 @@
       "id": "R-09",
       "title": "On-chain tumbling vs off-chain rolling spend windows can diverge",
       "priority": "P2",
-      "status": "open",
-      "mitigation_summary": "BrainSmartAccount uses tumbling windows ((ts/period)*period); off-chain agent-window-spend may compute a trailing rolling window. The two can diverge at window boundaries; an off-chain budget check could permit a spend that the on-chain cap rejects (or vice versa). Reviewer (F-10) also notes counting approve as spend can double-count against transferFrom.",
+      "status": "mitigating",
+      "mitigation_summary": "Batch 8 P3: off-chain agent-window-spend loader switched from a trailing rolling window to a tumbling window using the same floor((ts/period)*period) formula as BrainSmartAccount._windowSpent. Off-chain (agent-budget, check 8.5) and on-chain (session-key budget) now agree at boundaries. The misleading 'mirror' comment in shared/src/gate/gate.ts was corrected. Approve-as-spend concern is structurally NA off-chain (only executed intents are summed; approve never reaches executed).",
       "exit_criteria": [
-        "On-chain and off-chain accounting documented as the same window semantics (likely both tumbling)",
-        "Decision recorded on whether approve counts as spend (and if so, how to avoid double-counting transferFrom)",
-        "Property tests for window-boundary edge cases"
+        "Property tests proving off-chain SQL window matches on-chain Solidity window at boundary T = floor(now/period)*period and T-1, T+1",
+        "Optional: rationalize approve-as-spend on-chain (defer; current is conservative)"
       ],
       "owner": "engineering",
       "evidence": [
-        "contracts/src/BrainSmartAccount.sol:265-270",
-        "services/policy/src/window-spend.ts"
+        "services/policy/src/agent-window-spend.ts (tumbling SQL)",
+        "shared/src/gate/gate.ts:696-702 (comment corrected)",
+        "contracts/src/BrainSmartAccount.sol:265-270 (on-chain reference)"
       ]
     },
     {
       "id": "R-10",
       "title": "BrainSmartAccount NatSpec framing claims 'ERC-4337-style' but no EntryPoint exists",
       "priority": "P2",
-      "status": "open",
-      "mitigation_summary": "Contract is a directly-called session-key executor with no EntryPoint, UserOperation, or paymaster. The simpler design is arguably safer than 4337, but the NatSpec framing misleads reviewers and integrators. Surfaced by Opus 4.8 peer review (F-11).",
-      "exit_criteria": [
-        "NatSpec describes the actual design (session-key executor; no AA bundling layer)",
-        "If a 4337 path is later added, framing returns to accurate"
-      ],
-      "owner": "engineering",
-      "evidence": ["contracts/src/BrainSmartAccount.sol:4-7"]
+      "status": "closed",
+      "closed_at": "2026-05-30",
+      "closed_by": "batch 8 P2",
+      "mitigation_summary": "BrainSmartAccount.sol contract NatSpec rewritten: now describes the actual design ('Smart account with directly-called session keys. Not ERC-4337: there is no EntryPoint, no UserOperation, no paymaster'). AUDIT-SCOPE.md mirror updated. Surfaced by Opus 4.8 (F-11).",
+      "evidence": ["contracts/src/BrainSmartAccount.sol:4-30", "contracts/AUDIT-SCOPE.md:131-145"]
     }
   ]
 }
