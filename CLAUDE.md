@@ -164,7 +164,7 @@ First-time setup order:
 
 1. `corepack enable && pnpm install`
 2. `cd services/agents && uv sync --extra dev && cd ../..`
-3. `cd contracts && forge install && cd ..`
+3. `git submodule update --init --recursive` (pulls `contracts/lib/forge-std` pinned to v1.16.1; not needed if you cloned with `--recursive`)
 4. `./scripts/install-hooks.sh`, installs secret-scanner pre-commit hook (mandatory)
 5. `./scripts/dev-up.sh`, starts infrastructure containers, waits for healthy
 

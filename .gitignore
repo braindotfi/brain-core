@@ -44,11 +44,11 @@ contracts/cache/
 contracts/broadcast/*/
 !contracts/broadcast/*/run-latest.json
 contracts/.forge-snapshots/
-# `forge install` artifacts — first-time setup is `cd contracts && forge install`
-# (per CLAUDE.md); each developer materializes lib/ locally.
-contracts/lib/
+# forge-std is tracked as a git submodule under contracts/lib/forge-std
+# (see .gitmodules). A cold `git clone --recursive` (or
+# `git submodule update --init`) materializes it so reviewers can run
+# `forge test` without a manual `forge install` step.
 contracts/foundry.lock
-.gitmodules
 
 # Terraform
 *.tfstate

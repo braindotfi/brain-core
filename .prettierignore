@@ -7,6 +7,7 @@ pnpm-lock.yaml
 services/agents/**
 contracts/out
 contracts/cache
+contracts/lib
 infra/**
 *.tfstate
 *.tfstate.*

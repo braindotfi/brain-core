@@ -2,5 +2,8 @@ cache/
 out/
 broadcast/*/
 !broadcast/*/run-latest.json
-lib/
+# forge-std is tracked as a git submodule under lib/forge-std (see top-level
+# .gitmodules). Other libs (forge-installed dependencies) stay ignored.
+lib/*
+!lib/forge-std
 .env
