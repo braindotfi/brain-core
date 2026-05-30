@@ -49,6 +49,13 @@ interface AuditEventMin {
   created_at: string;
 }
 
+interface GateCheckRow {
+  index: number;
+  name: string;
+  passed: boolean;
+  detail?: { not_applicable?: boolean } & Record<string, unknown>;
+}
+
 DESCRIBE("signed-agent → gated-payment (peer-review batch 2, P5)", () => {
   const agent = new BrainClient({
     baseUrl: process.env.BRAIN_BASE_URL!,
@@ -105,6 +112,59 @@ DESCRIBE("signed-agent → gated-payment (peer-review batch 2, P5)", () => {
     );
     const mcpCalls = events.events.filter((e) => e.action === "agent.mcp.tool_called");
     expect(mcpCalls.length).toBeGreaterThan(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Step 4a: §6 gate loaders are wired, NOT dormant
+  // ---------------------------------------------------------------------------
+
+  it("§6 gate runs critical loaders (checks 8 / 9.5 / 11.5) as PASS, not not_applicable", async () => {
+    // Peer-review batch 3 P3. The §6 gate records `not_applicable` on a check
+    // when its loader is unwired (`detail.not_applicable === true` on a row
+    // whose `passed` is true). That's intentional for genuinely-optional
+    // M2M/x402/escrow checks (3.5 / 5.5 / 6.5 / 6.6 / 8.5), but checks
+    // 8 (available_balance_sufficient), 9.5 (evidence_supports_action), and
+    // 11.5 (no_duplicate_payment) became unconditionally wired in
+    // peer-review batch 2 P1. A regression that drops one of those loaders
+    // would log "ok / passed" but degrade silently — exactly the trap this
+    // test catches.
+    //
+    // We probe via the audit log: pull recent payment_intent.execute.before
+    // events for the tenant and inspect outputs.gate_checks. If no event
+    // exists yet (the tenant has never executed an intent), the assertion
+    // is informational only — the test is a *staging health probe*, not a
+    // per-intent gate check.
+    const events = await agent.get<{ events: AuditEventMin[] }>(
+      "/v1/audit/events?layer=agent&limit=100",
+    );
+    const beforeEvents = events.events.filter(
+      (e) => e.action === "payment_intent.execute.before",
+    );
+    if (beforeEvents.length === 0) {
+      // No execution history on this tenant in the visible window. Skip
+      // rather than false-positive: the absence of executions is not a gate
+      // regression. Set up the staging fixture to execute at least one
+      // intent if you want this test to be strict here.
+      return;
+    }
+    const latest = beforeEvents[0]!;
+    const checks = ((latest.outputs ?? {}).gate_checks as GateCheckRow[] | undefined) ?? [];
+    expect(checks.length).toBeGreaterThan(0);
+
+    const required = [
+      { index: 8, name: "available_balance_sufficient" },
+      { index: 9.5, name: "evidence_supports_action" },
+      { index: 11.5, name: "no_duplicate_payment" },
+    ];
+    for (const { index, name } of required) {
+      const row = checks.find((c) => c.index === index);
+      expect(row, `gate check ${String(index)} (${name}) missing from execute.before`).toBeDefined();
+      expect(row!.passed, `gate check ${String(index)} (${name}) did not pass`).toBe(true);
+      expect(
+        row!.detail?.not_applicable === true,
+        `gate check ${String(index)} (${name}) recorded not_applicable. Its loader is dormant in this environment, which is a P0 regression for batch 2 P1.`,
+      ).toBe(false);
+    }
   });
 
   // ---------------------------------------------------------------------------
