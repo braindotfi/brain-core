@@ -94,6 +94,11 @@ pnpm run check-escrow-audit-marker
 > `check-promotion-readiness` also exists (`scripts/check-promotion-readiness.mjs`) but is **not**
 > wired into `lint`. Run it manually before promoting a branch.
 
+`pnpm run production-readiness` is a separate aggregator — given the
+current env, would the boot fences pass? Reports per-rail readiness,
+per-fence status, CI-guard wiring, and deferred items. Add `--json` for
+machine-readable output (CI / dashboards). Exit 1 on any red.
+
 Per-workspace:
 
 ```bash
