@@ -25,8 +25,9 @@ contract BrainSmartAccount {
         uint256 validUntil;
         address[] allowedTargets;
         bytes4[] allowedSelectors;
-        uint256 maxPerTx;       // per-call value cap (wei)
-        uint256 maxPerPeriod;   // cumulative cap per periodSeconds window (wei)
+        address capToken;       // address(0) = NATIVE (caps in wei); else ERC20-mode
+        uint256 maxPerTx;       // per-call cap in capToken units (or wei in NATIVE mode)
+        uint256 maxPerPeriod;   // cumulative cap per periodSeconds window (same units)
         uint256 periodSeconds;  // e.g. 86400 for daily; 0 disables period accounting
         bytes32 policyVersion;  // bound at grant; must be non-zero
     }
@@ -53,7 +54,21 @@ contract BrainSmartAccount {
 }
 ```
 
-`executeViaSessionKey` walks the target and selector allowlists, derives the cap-relevant amount (decoding ERC20 `transfer`/`approve`/`transferFrom` quantities so a `value == 0` token transfer cannot bypass the caps), enforces the per-tx and per-window caps, checks-effects-interactions the external call, increments the replay nonce, and emits `AgentActionExecuted`. There is no off-chain verdict signature on the call path; the policy decision is made off-chain and reflected in the key's `policyVersion` binding and scope.
+`executeViaSessionKey` walks the target and selector allowlists, derives the cap-relevant amount according to the key's **cap mode**, enforces the per-tx and per-window caps, checks-effects-interactions the external call, increments the replay nonce, and emits `AgentActionExecuted`. There is no off-chain verdict signature on the call path; the policy decision is made off-chain and reflected in the key's `policyVersion` binding and scope.
+
+### Cap modes
+
+A session key is denominated in exactly one of two modes, set at grant time via `capToken`:
+
+| Mode       | When                     | Caps mean                                          | Constraints                                                                                                                                                                 |
+| ---------- | ------------------------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **NATIVE** | `capToken == address(0)` | wei of ETH (or the chain's native gas token)       | Caps apply to `msg.value`. A `value == 0` call to a non-token target passes un-metered by design                                                                            |
+| **ERC20**  | `capToken != address(0)` | Raw units of `capToken` (USDC=6dp, DAI=18dp, etc.) | `allowedTargets` MUST be exactly `[capToken]`, `allowedSelectors` MUST be a subset of `{transfer, approve, transferFrom}`, `value` MUST be 0. Enforced in `grantSessionKey` |
+
+The ERC20 mode constraints close two finding classes the external audit would otherwise catch:
+
+- a USDC-denominated cap can't be misread against an 18-decimal token (unit-blindness, R-06)
+- a session key can't be granted with a non-decodable selector that silently bypasses caps (unmetered call, R-07)
 
 ### EIP-712 ScopeAttestation
 
