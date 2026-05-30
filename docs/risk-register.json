@@ -90,6 +90,87 @@
         "scripts/check-rails-catalog-drift.mjs",
         "scripts/__tests__/check-rails-catalog-drift.test.mjs"
       ]
+    },
+    {
+      "id": "R-06",
+      "title": "BrainSmartAccount session-key caps are unit-blind to ERC20 decimals",
+      "priority": "P1",
+      "status": "open",
+      "mitigation_summary": "Caps (maxPerTx / maxPerPeriod) are uint256 with no token-unit context. Comment says wei (18dp) but executor decodes raw ERC20 amounts (USDC=6dp) and compares directly. Sepolia-only, no mainnet exposure; external audit (R-01) would surface this, but fixing pre-audit is cheaper. Flagged by Opus 4.8 peer review at commit 1985f68 (finding F-3).",
+      "exit_criteria": [
+        "SessionKey struct carries an explicit token + decimals (or a canonical wei-denomination invariant)",
+        "executeViaSessionKey verifies the call target equals the configured token when value=0",
+        "Foundry tests cover a 6-decimal USDC cap AND an 18-decimal ERC20 cap, proving caps enforce in the token's native units",
+        "Audit scope updated: contracts/AUDIT-SCOPE.md notes the fix"
+      ],
+      "owner": "engineering",
+      "evidence": [
+        "contracts/src/BrainSmartAccount.sol:19-20",
+        "contracts/src/BrainSmartAccount.sol:250-258"
+      ]
+    },
+    {
+      "id": "R-07",
+      "title": "BrainSmartAccount selector decode covers only three ERC20 selectors; non-decodable selectors bypass caps",
+      "priority": "P1",
+      "status": "open",
+      "mitigation_summary": "Only transfer/approve/transferFrom selectors are decoded; any other allowlisted selector leaves capAmount=0 and passes every cap unmetered. Mitigated today because grantSessionKey is gated by the operator and the allowlist is opt-in. But the contract should refuse to grant a session key with non-decodable selectors, not silently disable metering. Flagged by Opus 4.8 peer review at commit 1985f68 (finding F-4).",
+      "exit_criteria": [
+        "grantSessionKey() rejects any selector outside the decodable set, OR adds an explicit per-selector decoder + cap-enforcement path",
+        "Foundry test proves a grant containing a non-decodable selector reverts",
+        "Foundry test proves a granted key cannot bypass maxPerTx via a non-decodable call",
+        "Audit scope updated: contracts/AUDIT-SCOPE.md notes the fix"
+      ],
+      "owner": "engineering",
+      "evidence": ["contracts/src/BrainSmartAccount.sol:251-259"]
+    },
+    {
+      "id": "R-08",
+      "title": "Money-touching rail-adapter test coverage gap",
+      "priority": "P2",
+      "status": "open",
+      "mitigation_summary": "onchainExecutor (viem), plaidClient (Plaid SDK), and PostgresSourceRepository have near-zero test coverage. The §6 gate ahead of them is well-tested, but the adapters themselves are thinly exercised. Surfaced by Opus 4.8 peer review (F-9).",
+      "exit_criteria": [
+        "Adapter test files exist with happy-path, error-path, and idempotency-path coverage",
+        "Mock the underlying client (viem PublicClient, Plaid Transfer SDK, pg Pool) at the seam",
+        "Coverage parity with the §6 gate (≥80% lines)"
+      ],
+      "owner": "engineering",
+      "evidence": [
+        "services/api/src/rails/onchain.ts",
+        "services/api/src/rails/ach-plaid.ts",
+        "services/raw/src/repository/sources.ts"
+      ]
+    },
+    {
+      "id": "R-09",
+      "title": "On-chain tumbling vs off-chain rolling spend windows can diverge",
+      "priority": "P2",
+      "status": "open",
+      "mitigation_summary": "BrainSmartAccount uses tumbling windows ((ts/period)*period); off-chain agent-window-spend may compute a trailing rolling window. The two can diverge at window boundaries; an off-chain budget check could permit a spend that the on-chain cap rejects (or vice versa). Reviewer (F-10) also notes counting approve as spend can double-count against transferFrom.",
+      "exit_criteria": [
+        "On-chain and off-chain accounting documented as the same window semantics (likely both tumbling)",
+        "Decision recorded on whether approve counts as spend (and if so, how to avoid double-counting transferFrom)",
+        "Property tests for window-boundary edge cases"
+      ],
+      "owner": "engineering",
+      "evidence": [
+        "contracts/src/BrainSmartAccount.sol:265-270",
+        "services/policy/src/window-spend.ts"
+      ]
+    },
+    {
+      "id": "R-10",
+      "title": "BrainSmartAccount NatSpec framing claims 'ERC-4337-style' but no EntryPoint exists",
+      "priority": "P2",
+      "status": "open",
+      "mitigation_summary": "Contract is a directly-called session-key executor with no EntryPoint, UserOperation, or paymaster. The simpler design is arguably safer than 4337, but the NatSpec framing misleads reviewers and integrators. Surfaced by Opus 4.8 peer review (F-11).",
+      "exit_criteria": [
+        "NatSpec describes the actual design (session-key executor; no AA bundling layer)",
+        "If a 4337 path is later added, framing returns to accurate"
+      ],
+      "owner": "engineering",
+      "evidence": ["contracts/src/BrainSmartAccount.sol:4-7"]
     }
   ]
 }
