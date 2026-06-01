@@ -1,0 +1,50 @@
+Golden-Path Demo — Base Sepolia On-Chain Run
+2026-06-01
+
+RAIL: onchain_base_sepolia
+MODE: BRAIN_DEMO_STRICT_PROOF=true  BRAIN_DEMO_STRICT_TIMEOUT=120
+
+STEP         STATUS  DURATION   OUTPUT
+----         ------  --------   ------
+seed         ok      1790ms
+token        ok      10ms
+ingest       warn    15ms       (endpoint shape mismatch — non-blocking)
+normalize    ok      44ms       inv_01KT1FBBNEVSFTTPD6SFWKQ0DK
+wiki         warn    15ms       (non-blocking)
+reconcile    warn    25ms       (non-blocking)
+policy       ok      23ms
+propose      ok      49ms       pi_01KT1FBBXAG7V0SMG4BR4WR7V2
+approve      ok      1ms
+execute      ok      59ms       pi_01KT1FBBXAG7V0SMG4BR4WR7V2
+execute_strict ok    4045ms     executed
+anchor       ok      13ms       d392982a51af4b7a2229ba71a309906ee48746798bcd769f37b81d4ee3a0f5ef
+verify       ok      47ms       true
+
+ON-CHAIN TRANSACTION
+  tx_hash      : 0xfa7b86e97a136fa45761b9910b58743b0689330544baa422a2cdbbf0ff714242
+  network      : Base Sepolia (chain 84532)
+  smart_account: 0x281FE6aea2286C69eA52EBaE0863171E9bD2Ed36
+  recipient    : 0x41D4ce9D9Fe968Ca1230bDc296B28fdc9AA6FF6E
+  amount       : 0.0001 ETH
+  rail         : onchain_base (BrainSmartAccount.executeViaSessionKey)
+  policy_version: 0x0000000000000000000000000000000000000000000000000000000000000001
+
+MERKLE PROOF
+  root         : d392982a51af4b7a2229ba71a309906ee48746798bcd769f37b81d4ee3a0f5ef
+  verified     : true
+  proof_url    : http://localhost:3000/v1/proof/pi_01KT1FBBXAG7V0SMG4BR4WR7V2/view
+
+DEPLOYED CONTRACTS (Base Sepolia)
+  BrainSmartAccount      : 0x281FE6aea2286C69eA52EBaE0863171E9bD2Ed36  (deployed 2026-06-01, batch-8 hardened)
+  BrainPolicyRegistry    : 0x92d1CC5c46eAE229C8A9dD95a334cec0cE33CAD9
+  BrainMCPAgentRegistry  : 0xd1558828ef31630164aa8942dd41bc63a4d8bed7
+  BrainEscrow            : 0x5924BD26Bc827FB3cAd6f3a0DBDC793562555Cc0
+  BrainAuditAnchor       : 0xb900add824064098342c869ff83efdeb05eb95ce
+  BrainReputationRegistry: 0xcEf6C25aE3DF9c5cfC0B3E11D031eAAa2c26026C
+
+BUGS FIXED (pre-existing, discovered during demo run)
+  - demo-reset: wrong table names (missing ledger_ prefix, wrong tenant column, missing policy tables)
+  - execution_outbox: brain_privileged role lacked table grants
+  - demo policy: missing onchain_tx rule (onchain_transfer was always rejected)
+  - golden-path step 10: called POST /audit/anchor (404) instead of GET /audit/anchor/latest
+  - golden-path step 11: verify body used leaf/proof instead of event_hash/merkle_proof

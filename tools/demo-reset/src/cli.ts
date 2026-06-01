@@ -21,16 +21,20 @@ import { seedGoldenPath } from "@brain/seed-golden-path";
 // audit_events and audit_anchors are intentionally excluded — the audit log is
 // append-only per the non-negotiable principles in CLAUDE.md. Demo resets
 // clear business-entity state only; the audit chain must survive resets.
-const DEMO_TABLES = [
-  "payment_intents",
-  "transactions",
-  "invoices",
-  "obligations",
-  "documents",
-  "wiki_pages",
-  "accounts",
-  "counterparties",
-] as const;
+// { table, tenantCol } — delete in dependency order so FK constraints don't fire.
+// ledger_* tables use owner_id; wiki_pages uses tenant_id.
+const DEMO_TABLES: ReadonlyArray<{ table: string; tenantCol: string }> = [
+  { table: "policy_decisions", tenantCol: "tenant_id" },
+  { table: "policies", tenantCol: "tenant_id" },
+  { table: "ledger_payment_intents", tenantCol: "owner_id" },
+  { table: "ledger_transactions", tenantCol: "owner_id" },
+  { table: "ledger_invoices", tenantCol: "owner_id" },
+  { table: "ledger_obligations", tenantCol: "owner_id" },
+  { table: "ledger_documents", tenantCol: "owner_id" },
+  { table: "wiki_pages", tenantCol: "tenant_id" },
+  { table: "ledger_accounts", tenantCol: "owner_id" },
+  { table: "ledger_counterparties", tenantCol: "owner_id" },
+];
 
 async function truncateTenant(pool: Pool, tenantId: string): Promise<void> {
   const client = await pool.connect();
@@ -38,8 +42,8 @@ async function truncateTenant(pool: Pool, tenantId: string): Promise<void> {
     await client.query("BEGIN");
     await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
     // Delete in dependency order so FK constraints don't fire.
-    for (const table of DEMO_TABLES) {
-      await client.query(`DELETE FROM ${table} WHERE tenant_id = $1`, [tenantId]);
+    for (const { table, tenantCol } of DEMO_TABLES) {
+      await client.query(`DELETE FROM ${table} WHERE ${tenantCol} = $1`, [tenantId]);
     }
     await client.query("COMMIT");
   } catch (err) {

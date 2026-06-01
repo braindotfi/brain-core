@@ -133,8 +133,14 @@ start_step
 # returns { counterparties: [...] } — not { items: [...] }.
 INVOICES=$(req GET "/ledger/invoices?status=sent&limit=5" || true)
 INVOICE_ID=$(echo "${INVOICES:-}" | jq -r '.invoices[0].id // empty')
-CPS=$(req GET "/ledger/counterparties?limit=5" || true)
+CPS=$(req GET "/ledger/counterparties?limit=20" || true)
 CP_ID=$(echo "${CPS:-}" | jq -r '.counterparties[0].id // empty')
+# AWS counterparty id — needed by the onchain_base_sepolia branch in step 7.
+AWS_CP_ID=$(echo "${CPS:-}" | jq -r '.counterparties[] | select(.name == "Amazon Web Services") | .id // empty' | head -1)
+# Checking account id — source for ACH intents; onchain account for ETH intents.
+ACCOUNTS=$(req GET "/ledger/accounts?limit=20" || true)
+CHECKING_ACCOUNT_ID=$(echo "${ACCOUNTS:-}" | jq -r '.accounts[] | select(.account_type == "bank_checking") | .id // empty' | head -1)
+ONCHAIN_ACCOUNT_ID=$(echo "${ACCOUNTS:-}" | jq -r '.accounts[] | select(.account_type == "onchain") | .id // empty' | head -1)
 if [[ -n "$INVOICE_ID" && -n "$CP_ID" ]]; then
   ok "invoice $INVOICE_ID, counterparty $CP_ID"; record "normalize" ok "$INVOICE_ID"
 else
@@ -174,14 +180,33 @@ else
   exit 1
 fi
 
-# ── 7. Propose a PaymentIntent via the invoice shortcut (P0.5) ───────────────
-header "7. Invoice-shortcut propose"
+# ── 7. Propose a PaymentIntent ───────────────────────────────────────────────
+# Default: invoice shortcut (pay_invoice → ach_outbound → bank_ach rail).
+# onchain_base_sepolia: direct onchain_transfer intent to the AWS counterparty.
+#   Requires BRAIN_DEMO_ONCHAIN_RECIPIENT to have been set at seed time so that
+#   the AWS counterparty carries an ETH address alias. Requires the API to be
+#   booted with BRAIN_SESSION_KEY + BRAIN_ONCHAIN_SMART_ACCOUNT configured.
+header "7. Propose payment (rail: $RAIL)"
 start_step
 # Use curl -s (not -sf) so a 4xx error envelope is captured and shown, rather
 # than failing the script under `set -e` with no diagnostic.
-PI=$(curl -s -X POST "$V1/payment-intents" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d "$(jq -n --arg id "$INVOICE_ID" '{type:"pay_invoice", invoice_id:$id}')")
+if [[ "$RAIL" == "onchain_base_sepolia" ]]; then
+  [[ -n "$AWS_CP_ID" ]] || { fail "AWS counterparty not found — reseed with BRAIN_DEMO_ONCHAIN_RECIPIENT set"; record "propose" fail ""; exit 1; }
+  [[ -n "$ONCHAIN_ACCOUNT_ID" ]] || { fail "onchain account not found — reseed with BRAIN_ONCHAIN_SMART_ACCOUNT set"; record "propose" fail ""; exit 1; }
+  PI=$(curl -s -X POST "$V1/payment-intents" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d "$(jq -n --arg cp "$AWS_CP_ID" --arg src "$ONCHAIN_ACCOUNT_ID" '{
+      action_type: "onchain_transfer",
+      source_account_id: $src,
+      destination_counterparty_id: $cp,
+      amount: "0.0001",
+      currency: "ETH"
+    }')")
+else
+  PI=$(curl -s -X POST "$V1/payment-intents" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d "$(jq -n --arg id "$INVOICE_ID" '{type:"pay_invoice", invoice_id:$id}')")
+fi
 PI_ID=$(echo "$PI" | jq -r '.id // empty')
 OUTCOME=$(echo "$PI" | jq -r '.policy_decision.outcome // .outcome // "unknown"')
 [[ -n "$PI_ID" && "$PI_ID" != "null" ]] || { fail "propose failed: $PI"; record "propose" fail ""; exit 1; }
@@ -229,18 +254,19 @@ if [[ "$STRICT" == "true" ]]; then
 fi
 
 # ── 10. Anchor the audit window ──────────────────────────────────────────────
+# The broadcaster worker publishes batches on an interval. Poll
+# GET /audit/anchor/latest until a merkle_root appears.
 header "10. Anchor audit window"
 start_step
-ANCHOR=$(req POST "/audit/anchor" '{}' || true)
-ANCHOR_ROOT=$(echo "${ANCHOR:-}" | jq -r '.merkle_root // .root // empty')
+ANCHOR=$(req GET "/audit/anchor/latest" || true)
+ANCHOR_ROOT=$(echo "${ANCHOR:-}" | jq -r '.merkle_root // empty')
 if [[ -n "$ANCHOR_ROOT" ]]; then ok "anchored root ${ANCHOR_ROOT:0:18}…"; record "anchor" ok "$ANCHOR_ROOT"
 elif [[ "$STRICT" == "true" ]]; then
-  # The publisher worker may not have run yet on the first POST. Poll it.
   start_step
   if ANCHOR_ROOT=$(poll_until \
         "audit anchor merkle root" \
-        "req POST /audit/anchor '{}'" \
-        '.merkle_root // .root'); then
+        "req GET /audit/anchor/latest" \
+        '.merkle_root // empty'); then
     ok "strict: anchored root ${ANCHOR_ROOT:0:18}…"
     record "anchor_strict" ok "$ANCHOR_ROOT"
   else
@@ -283,10 +309,10 @@ else
 fi
 
 if [[ -n "$ROOT" ]]; then
-  LEAF=$(echo "$PROOF" | jq -r '.audit_events[0].event_hash // empty')
-  VERIFY=$(req POST "/audit/verify" "$(jq -n --arg r "$ROOT" --arg l "$LEAF" \
-    --argjson p "$(echo "$PROOF" | jq '.merkle_proof')" '{merkle_root:$r, leaf:$l, proof:$p}')" || true)
-  VERIFIED=$(echo "${VERIFY:-}" | jq -r '.verified // .valid // "unknown"')
+  EVENT_HASH=$(echo "$PROOF" | jq -r '.audit_events[0].event_hash // empty')
+  VERIFY=$(req POST "/audit/verify" "$(jq -n --arg r "$ROOT" --arg h "$EVENT_HASH" \
+    --argjson p "$(echo "$PROOF" | jq '.merkle_proof')" '{merkle_root:$r, event_hash:$h, merkle_proof:$p}')" || true)
+  VERIFIED=$(echo "${VERIFY:-}" | jq -r '.valid // .verified // "unknown"')
   if [[ "$STRICT" == "true" && "$VERIFIED" != "true" ]]; then
     fail "strict: proof verification did not succeed (verified=$VERIFIED)"
     record "verify" fail "$VERIFIED"

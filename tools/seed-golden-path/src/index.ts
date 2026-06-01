@@ -46,7 +46,7 @@ import type { Pool } from "pg";
 export interface GoldenPathSeed {
   tenantId: string;
   actor: string;
-  accounts: { checking: AccountRow; savings: AccountRow; card: AccountRow };
+  accounts: { checking: AccountRow; savings: AccountRow; card: AccountRow; smartAccount: AccountRow | null };
   counterparties: {
     employer: CounterpartyRow;
     landlord: CounterpartyRow;
@@ -155,6 +155,20 @@ export async function seedGoldenPath(
     invoiceId: invoices.outstanding,
   });
 
+  // Backdate the AWS counterparty's payment instructions so the duplicate-
+  // detector's 24h destination_recently_changed rule doesn't block the demo's
+  // onchain_transfer intent. The aliases were just written by the seed, which
+  // triggers the instructions history writer; setting changed_at to 25h ago
+  // lets the gate treat them as pre-established.
+  if (process.env["BRAIN_DEMO_ONCHAIN_RECIPIENT"]) {
+    await pool.query(
+      `UPDATE ledger_counterparty_payment_instructions
+          SET changed_at = now() - interval '25 hours'
+        WHERE counterparty_id = $1`,
+      [counterparties.aws.id],
+    );
+  }
+
   return {
     tenantId,
     actor,
@@ -185,12 +199,14 @@ async function seedCounterparties(
     type: "employer" | "vendor" | "merchant";
     risk_level?: "low" | "medium" | "high" | "sanctioned";
     verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared";
+    aliases?: string[];
   }) {
     const { row } = await upsertCounterpartyRow(pool, audit, ctx, {
       name: args.name,
       type: args.type,
       ...(args.risk_level !== undefined ? { risk_level: args.risk_level } : {}),
       ...(args.verified_status !== undefined ? { verified_status: args.verified_status } : {}),
+      ...(args.aliases !== undefined && args.aliases.length > 0 ? { aliases: args.aliases } : {}),
       source_ids: sourceIds,
       evidence_ids: evidenceIds,
       provenance: "extracted",
@@ -222,6 +238,11 @@ async function seedCounterparties(
       type: "vendor",
       risk_level: "low",
       verified_status: "document_verified",
+      // When BRAIN_DEMO_ONCHAIN_RECIPIENT is set, the on-chain rail can resolve
+      // this counterparty as a target for onchain_transfer intents.
+      aliases: process.env["BRAIN_DEMO_ONCHAIN_RECIPIENT"]
+        ? [process.env["BRAIN_DEMO_ONCHAIN_RECIPIENT"]]
+        : [],
     }),
     stripe: await cp({
       name: "Stripe Inc.",
@@ -288,7 +309,31 @@ async function seedAccounts(
     provenance: "extracted",
     confidence: 0.95,
   });
-  return { checking: checking.row, savings: savings.row, card: card.row };
+  // When BRAIN_ONCHAIN_SMART_ACCOUNT is set, seed an onchain ETH account that
+  // represents the deployed BrainSmartAccount. Used as the source_account_id
+  // for onchain_transfer intents so gate check 8 sees the right currency.
+  const smartAccountAddr = process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"];
+  let smartAccount: AccountRow | null = null;
+  if (smartAccountAddr) {
+    smartAccount = (
+      await upsertAccountRow(pool, audit, ctx, {
+        external_account_id: smartAccountAddr,
+        institution: "Base Sepolia",
+        account_type: "onchain",
+        name: "Brain Smart Account (ETH)",
+        currency: "ETH",
+        current_balance: "0.005",
+        available_balance: "0.005",
+        status: "active",
+        source_ids: sourceIds,
+        evidence_ids: evidenceIds,
+        provenance: "extracted",
+        confidence: 0.99,
+      })
+    ).row;
+  }
+
+  return { checking: checking.row, savings: savings.row, card: card.row, smartAccount };
 }
 
 async function seedDocuments(

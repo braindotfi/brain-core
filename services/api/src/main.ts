@@ -1382,6 +1382,12 @@ async function main(): Promise<void> {
               when: {},
               execute: "auto",
             },
+            {
+              id: "auto-onchain-tx",
+              applies_to: ["onchain_tx"],
+              when: {},
+              execute: "auto",
+            },
           ],
         };
 
