@@ -40,9 +40,15 @@ export function createPool(opts: CreatePoolOptions): Pool {
     idleTimeoutMillis: idleTimeoutMs,
     application_name: applicationName,
     // §10 production runs on Azure Postgres which enforces TLS. Local dev
-    // against docker compose does not — hence "auto" based on host.
+    // against docker compose does not — hence "auto" based on host. When the app
+    // runs INSIDE a container it reaches Postgres by service name (not localhost),
+    // so "auto" would wrongly enable TLS against a non-TLS dev DB; DATABASE_SSL=disable
+    // opts out. This only relaxes the "auto" default — an explicit ssl:true still
+    // enforces TLS, so production fidelity is unchanged.
     ...(ssl === "auto"
-      ? isLocalHost(connectionString)
+      ? isLocalHost(connectionString) ||
+        process.env.DATABASE_SSL === "disable" ||
+        process.env.DATABASE_SSL === "false"
         ? {}
         : { ssl: { rejectUnauthorized: true } }
       : ssl === true
