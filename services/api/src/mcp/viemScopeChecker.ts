@@ -20,6 +20,12 @@ const BRAIN_MCP_AGENT_REGISTRY_ABI = [
           { name: "agentAddress", type: "address" },
           { name: "tenantId", type: "bytes32" },
           { name: "scopeHash", type: "bytes32" },
+          // Must mirror the on-chain `AgentRegistration` struct order exactly:
+          // `behaviorHash` sits BETWEEN `scopeHash` and `registeredAt`
+          // (contracts/src/BrainMCPAgentRegistry.sol). viem decodes tuples
+          // positionally, so omitting it shifts `registeredAt`/`revokedAt` onto
+          // the wrong slots and makes every registered agent read as null.
+          { name: "behaviorHash", type: "bytes32" },
           { name: "registeredAt", type: "uint256" },
           { name: "revokedAt", type: "uint256" },
         ],
