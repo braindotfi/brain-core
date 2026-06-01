@@ -29,6 +29,8 @@ COPY services/ledger/package.json services/ledger/tsconfig.json services/ledger/
 COPY services/wiki/package.json services/wiki/tsconfig.json services/wiki/
 COPY services/policy/package.json services/policy/tsconfig.json services/policy/
 COPY services/execution/package.json services/execution/tsconfig.json services/execution/
+COPY services/agent-router/package.json services/agent-router/tsconfig.json services/agent-router/
+COPY services/internal-agents/package.json services/internal-agents/tsconfig.json services/internal-agents/
 COPY services/mcp/package.json services/mcp/tsconfig.json services/mcp/
 COPY services/audit/package.json services/audit/tsconfig.json services/audit/
 COPY clients/sdk/package.json clients/sdk/tsconfig.json clients/sdk/
@@ -36,8 +38,10 @@ COPY tools/migrate/package.json tools/migrate/tsconfig.json tools/migrate/
 COPY tools/seed-golden-path/package.json tools/seed-golden-path/tsconfig.json tools/seed-golden-path/
 COPY tools/dev-token/package.json tools/dev-token/tsconfig.json tools/dev-token/
 COPY tools/plaid-sandbox/package.json tools/plaid-sandbox/tsconfig.json tools/plaid-sandbox/
+COPY tools/demo-reset/package.json tools/demo-reset/tsconfig.json tools/demo-reset/
 COPY tests/e2e/package.json tests/e2e/tsconfig.json tests/e2e/
 COPY tests/invariants/package.json tests/invariants/tsconfig.json tests/invariants/
+COPY tests/adversarial/package.json tests/adversarial/tsconfig.json tests/adversarial/
 
 RUN pnpm install --frozen-lockfile
 
@@ -62,6 +66,8 @@ COPY services/ledger/package.json services/ledger/
 COPY services/wiki/package.json services/wiki/
 COPY services/policy/package.json services/policy/
 COPY services/execution/package.json services/execution/
+COPY services/agent-router/package.json services/agent-router/
+COPY services/internal-agents/package.json services/internal-agents/
 COPY services/mcp/package.json services/mcp/
 COPY services/audit/package.json services/audit/
 COPY clients/sdk/package.json clients/sdk/
@@ -69,8 +75,10 @@ COPY tools/migrate/package.json tools/migrate/
 COPY tools/seed-golden-path/package.json tools/seed-golden-path/
 COPY tools/dev-token/package.json tools/dev-token/
 COPY tools/plaid-sandbox/package.json tools/plaid-sandbox/
+COPY tools/demo-reset/package.json tools/demo-reset/
 COPY tests/e2e/package.json tests/e2e/
 COPY tests/invariants/package.json tests/invariants/
+COPY tests/adversarial/package.json tests/adversarial/
 
 RUN pnpm install --frozen-lockfile --prod
 
@@ -83,6 +91,8 @@ COPY --from=builder /app/services/ledger/dist services/ledger/dist
 COPY --from=builder /app/services/wiki/dist services/wiki/dist
 COPY --from=builder /app/services/policy/dist services/policy/dist
 COPY --from=builder /app/services/execution/dist services/execution/dist
+COPY --from=builder /app/services/agent-router/dist services/agent-router/dist
+COPY --from=builder /app/services/internal-agents/dist services/internal-agents/dist
 COPY --from=builder /app/services/mcp/dist services/mcp/dist
 COPY --from=builder /app/services/audit/dist services/audit/dist
 COPY --from=builder /app/clients/sdk/dist clients/sdk/dist
