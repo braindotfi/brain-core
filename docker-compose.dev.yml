@@ -1,0 +1,137 @@
+# Brain full-docker local development overlay.
+#
+# Layer this ON TOP of docker-compose.yml (the infra-only base). It adds the
+# application tier — DB migrations + the API in tsx watch mode — so the entire
+# dev loop runs in containers with hot reload. The base infra services
+# (postgres, redis, localstack) are reused unchanged.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#   (or just: pnpm run dev)
+#
+# Optional tiers behind compose profiles (off by default):
+#   --profile agents   run the Python agents against the in-network API
+#   --profile libs     run tsc -b --watch so edits to @brain/shared & sibling
+#                      services hot-reload the API (workspace deps resolve to dist/)
+#
+# Hot reload relies on native inotify — keep the repo on the WSL2 native
+# filesystem (~/work/...), NOT /mnt/c, or file-change events won't fire.
+
+name: brain
+
+services:
+  # One-shot init (gates the API): install deps, build the workspace, apply every
+  # services/*/migrations/*.sql, then exit. The workspace build is required because
+  # @brain/* deps resolve to their dist/ (package "exports" point at dist/index.js),
+  # so the API's `tsx watch` can't import them until they're compiled. dist/ lands on
+  # the shared bind mount, so the api container sees it. (Edits to @brain/shared/src
+  # after boot need the optional `libs` profile to rebuild dist live.)
+  migrate:
+    build:
+      context: .
+      target: dev
+    container_name: brain-migrate
+    working_dir: /app
+    command: >-
+      sh -c "pnpm install --frozen-lockfile
+      && pnpm run build
+      && pnpm -C tools/migrate run build
+      && node tools/migrate/dist/cli.js up"
+    environment:
+      DATABASE_URL: postgres://brain:brain@postgres:5432/brain
+    volumes:
+      - .:/app
+      - bc_node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # The API gateway in watch mode (tsx watch src/main.ts). Demo mode keeps auth
+  # self-contained (static HS256 secret, no JWKS fetch) and relaxes the boot
+  # fences, which only fail-closed in NODE_ENV=production.
+  api:
+    build:
+      context: .
+      target: dev
+    container_name: brain-api
+    working_dir: /app
+    command: >-
+      sh -c "pnpm install --frozen-lockfile
+      && pnpm -C services/api run dev"
+    # host 3001 -> container 3000: avoids colliding with a host-run API on 3000
+    # and matches the agents service's default BRAIN_API_BASE_URL expectation.
+    ports:
+      - "3001:3000"
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      DATABASE_URL: postgres://brain:brain@postgres:5432/brain
+      # The app reaches Postgres by service name (not localhost), so the pool's
+      # "auto" TLS heuristic would try SSL against the no-TLS dev DB. Opt out.
+      DATABASE_SSL: disable
+      REDIS_URL: redis://redis:6379
+      # Placeholder URL — must parse as a URL but is never dereferenced in demo mode.
+      AUTH_JWKS_URL: https://auth.brain.fi/.well-known/jwks.json
+      BRAIN_DEMO_MODE: "true"
+      BRAIN_MCP_DEV_AUTH_BYPASS: "true"
+      BLOB_BACKEND: memory
+      # Optional real integrations — passed through from host env if present.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - .:/app
+      - bc_node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 10
+
+  # Python agents pointed at the in-network API. Off by default; needs an
+  # OpenAI key and a dev JWT. Enable with: --profile agents
+  agents:
+    profiles: ["agents"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      BRAIN_API_BASE_URL: http://api:3000
+      BRAIN_API_TOKEN: ${BRAIN_API_TOKEN}
+      BRAIN_AGENTS_INBOUND_SECRET: ${BRAIN_AGENTS_INBOUND_SECRET:-dev-inbound-secret}
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Optional cross-package hot reload: rebuild workspace dist on change so the
+  # API's tsx watch picks up edits to @brain/shared and sibling services.
+  # Off by default; enable with: --profile libs
+  libs-watch:
+    profiles: ["libs"]
+    build:
+      context: .
+      target: dev
+    container_name: brain-libs-watch
+    working_dir: /app
+    # No install here — `migrate` populates the shared bc_node_modules volume
+    # first (gated by depends_on), so running pnpm install again would race it.
+    command: ["pnpm", "exec", "tsc", "-b", "--watch", "--preserveWatchOutput"]
+    volumes:
+      - .:/app
+      - bc_node_modules:/app/node_modules
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  bc_node_modules:

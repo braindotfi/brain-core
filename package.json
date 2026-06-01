@@ -40,8 +40,9 @@
     "agents:test": "cd services/agents && uv run pytest",
     "contracts:build": "cd contracts && forge build",
     "contracts:test": "cd contracts && forge test",
+    "dev": "./scripts/dev.sh",
     "dev:up": "./scripts/dev-up.sh",
-    "dev:down": "docker compose down",
+    "dev:down": "docker compose -f docker-compose.yml -f docker-compose.dev.yml down",
     "plaid:sandbox": "pnpm -C tools/plaid-sandbox run start",
     "demo:reset": "pnpm -C tools/demo-reset run reset",
     "demo:golden-path": "./scripts/demo/golden-path.sh"

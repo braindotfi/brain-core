@@ -1,3 +1,17 @@
+# ---- dev stage ----
+# Used by docker-compose.dev.yml for the full-docker local dev loop. Provides the
+# Node 22 + pnpm 9.12 toolchain only; dependencies are installed at container start
+# against the bind-mounted source (and persisted in a named node_modules volume), so
+# the image stays generic and never carries a stale install. No build, no prod prune.
+FROM node:22-slim AS dev
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl \
+  && rm -rf /var/lib/apt/lists/*
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+WORKDIR /app
+# Overridden per-service by docker-compose.dev.yml; sane default = run the API in watch mode.
+CMD ["pnpm", "-C", "services/api", "run", "dev"]
+
 # ---- build stage ----
 FROM node:22-slim AS builder
 
