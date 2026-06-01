@@ -7,7 +7,13 @@
  */
 
 import Fastify, { type FastifyInstance } from "fastify";
-import { authPlugin, errorHandlerPlugin, requestIdPlugin, type JwtVerifier } from "@brain/shared";
+import {
+  authPlugin,
+  errorHandlerPlugin,
+  requestIdPlugin,
+  type JwtVerifier,
+  type RoutingEnqueue,
+} from "@brain/shared";
 import { LedgerService } from "./service/LedgerService.js";
 import { ReconciliationService } from "./reconciliation/ReconciliationService.js";
 import { registerLedgerRoutes } from "./routes/index.js";
@@ -18,6 +24,8 @@ export interface BuildLedgerAppOptions {
   deps: LedgerDeps;
   jwtVerifier: JwtVerifier;
   logger?: ReturnType<typeof Fastify>["log"];
+  /** Optional agent-router routing enqueue for reconciliation domain events. */
+  enqueue?: RoutingEnqueue;
 }
 
 export async function buildLedgerApp(opts: BuildLedgerAppOptions): Promise<FastifyInstance> {
@@ -35,6 +43,7 @@ export async function buildLedgerApp(opts: BuildLedgerAppOptions): Promise<Fasti
   const reconciliation = new ReconciliationService({
     pool: opts.deps.pool,
     audit: opts.deps.audit,
+    ...(opts.enqueue !== undefined ? { enqueue: opts.enqueue } : {}),
   });
   await registerLedgerRoutes(app, ledger, reconciliation);
   await registerCashFlowRoutes(app, ledger);
@@ -47,9 +56,17 @@ export async function buildLedgerApp(opts: BuildLedgerAppOptions): Promise<Fasti
  * Registers all Ledger routes on an already-configured Fastify app (shared
  * plugins registered once by main.ts). No standalone server setup.
  */
-export async function registerLedgerPlugin(app: FastifyInstance, deps: LedgerDeps): Promise<void> {
+export async function registerLedgerPlugin(
+  app: FastifyInstance,
+  deps: LedgerDeps,
+  opts?: { enqueue?: RoutingEnqueue },
+): Promise<void> {
   const service = new LedgerService(deps);
-  const reconciliation = new ReconciliationService({ pool: deps.pool, audit: deps.audit });
+  const reconciliation = new ReconciliationService({
+    pool: deps.pool,
+    audit: deps.audit,
+    ...(opts?.enqueue !== undefined ? { enqueue: opts.enqueue } : {}),
+  });
   await registerLedgerRoutes(app, service, reconciliation);
   await registerCashFlowRoutes(app, service);
 }

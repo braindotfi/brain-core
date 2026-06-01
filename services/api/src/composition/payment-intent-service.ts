@@ -30,6 +30,7 @@ import type {
   DuplicateCheckInput,
   DuplicateCheckResult,
   MetricsEmitter,
+  RoutingEnqueue,
 } from "@brain/shared";
 import type { Pool } from "pg";
 import type { PaymentIntentPolicyEvaluator } from "@brain/execution";
@@ -96,6 +97,11 @@ export interface BuildPaymentIntentServiceDeps {
     ): Promise<{ credentials: object; source_type: string } | null>;
   };
   metrics?: MetricsEmitter;
+  /**
+   * Optional: agent-router routing enqueue. When wired, a rejected payment
+   * emits `payment.failed` for the collections agent. Absent ⇒ no event.
+   */
+  enqueue?: RoutingEnqueue;
 }
 
 export function buildPaymentIntentService(
@@ -128,5 +134,6 @@ export function buildPaymentIntentService(
       ? { sourceCredentialResolver: deps.sourceCredentialResolver }
       : {}),
     ...(deps.metrics !== undefined ? { metrics: deps.metrics } : {}),
+    ...(deps.enqueue !== undefined ? { enqueue: deps.enqueue } : {}),
   });
 }

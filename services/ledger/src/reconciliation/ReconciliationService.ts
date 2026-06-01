@@ -14,11 +14,13 @@
 
 import {
   brainError,
+  emitDomainEvent,
   withTenantScope,
   type AuditEmitter,
   type IReconciliationService,
   type MatchType,
   type ReconciliationMatch,
+  type RoutingEnqueue,
   type RunReconciliationRequest,
   type ServiceCallContext,
 } from "@brain/shared";
@@ -39,6 +41,12 @@ export interface ReconciliationServiceDeps {
   audit: AuditEmitter;
   /** Hard cap on matches written per matcher per run. */
   maxMatchesPerMatcher?: number;
+  /**
+   * Optional: routing enqueue for agent-router domain events (Phase 1). When
+   * wired, a run that produces matches emits `reconciliation.candidate_found`
+   * so the router can route to the reconciliation agent. Absent ⇒ no event.
+   */
+  enqueue?: RoutingEnqueue;
 }
 
 const DEFAULT_MAX_MATCHES = 200;
@@ -111,10 +119,6 @@ export class ReconciliationService implements IReconciliationService {
       }
 
       const totalCreated = summary.reduce((acc, r) => acc + r.matchesProduced.length, 0);
-      // INTEGRATION POINT (agent-router, Phase 1): when matches are produced this
-      // is where a `reconciliation.candidate_found` domain event would be emitted
-      // via @brain/shared `emitDomainEvent`, so the router can route to the
-      // reconciliation agent. Wiring the enqueue dep into this service is a follow-up.
       await this.deps.audit.emit({
         tenantId: ctx.tenantId,
         layer: "ledger",
@@ -132,6 +136,19 @@ export class ReconciliationService implements IReconciliationService {
           })),
         },
       });
+
+      // Domain-event producer (agent-router Phase 1): when matches are found,
+      // emit `reconciliation.candidate_found` so the router can route to the
+      // reconciliation agent. Best-effort — the run is already audited; a queue
+      // hiccup must not fail reconciliation.
+      if (totalCreated > 0 && this.deps.enqueue !== undefined) {
+        void emitDomainEvent(this.deps.enqueue, {
+          tenantId: ctx.tenantId,
+          event: "reconciliation.candidate_found",
+          context: { matches_created: totalCreated, match_types: types },
+          ...(ctx.requestId !== undefined ? { requestId: ctx.requestId } : {}),
+        }).catch(() => undefined);
+      }
 
       // Phase 5 returns a synthetic job id; stage-8 wires this through BullMQ
       // and returns the actual job id from the queue.

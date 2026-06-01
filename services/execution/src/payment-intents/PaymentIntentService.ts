@@ -43,6 +43,8 @@ import {
   type DuplicateCheckInput,
   type DuplicateCheckResult,
   type MetricsEmitter,
+  emitDomainEvent,
+  type RoutingEnqueue,
 } from "@brain/shared";
 import { LedgerPaymentIntents, type PaymentIntentRow } from "@brain/ledger";
 import type { Pool } from "pg";
@@ -200,6 +202,13 @@ export interface PaymentIntentServiceDeps {
    * brain.gate.duration_ms on every evaluation. Absent ⇒ no emission.
    */
   metrics?: MetricsEmitter;
+  /**
+   * Optional: routing enqueue for agent-router domain events (Phase 1). When
+   * wired, a rejected payment emits `payment.failed` so the router can route to
+   * the collections agent. Absent ⇒ no event is emitted (pre-wiring behavior).
+   * Routing is advisory and never gates the financial operation.
+   */
+  enqueue?: RoutingEnqueue;
 }
 
 /** On-chain dispatch params merged into the outbox payload by PaymentIntentService.execute. */
@@ -410,10 +419,18 @@ export class PaymentIntentService implements IPaymentIntentService {
       inputs: { payment_intent_id: id, reason: reason ?? null },
       outputs: { status: "rejected" },
     });
-    // INTEGRATION POINT (agent-router, Phase 1): a failed/rejected payment is
-    // where a `payment.failed` domain event would be emitted via @brain/shared
-    // `emitDomainEvent`, so the router can route to the collections agent.
-    // Wiring the enqueue dep into this service is a follow-up.
+    // Domain-event producer (agent-router Phase 1): a rejected payment emits
+    // `payment.failed` so the router can route to the collections agent. Routing
+    // is advisory and must never fail the already-audited, durable rejection, so
+    // emit best-effort (fire-and-forget; a queue hiccup cannot roll this back).
+    if (this.deps.enqueue !== undefined) {
+      void emitDomainEvent(this.deps.enqueue, {
+        tenantId: ctx.tenantId,
+        event: "payment.failed",
+        context: { payment_intent_id: id, reason: reason ?? null },
+        ...(ctx.requestId !== undefined ? { requestId: ctx.requestId } : {}),
+      }).catch(() => undefined);
+    }
     return toRecord(updated);
   }
 

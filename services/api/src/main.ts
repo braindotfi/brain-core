@@ -43,9 +43,11 @@ import {
   withTenantScope,
   createRoutingEnqueue,
   isDomainEvent,
+  isTenantCategory,
   newTokenId,
   newPolicyId,
   type ServiceCallContext,
+  type TenantCategory,
 } from "@brain/shared";
 
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
@@ -599,6 +601,12 @@ async function main(): Promise<void> {
   const resolveEvidence = makeResolveEvidence(pool);
   const detectDuplicates = makeDetectDuplicates(pool);
 
+  // Agent-router routing enqueue (agent-router Phase 1). Shared by the
+  // PaymentIntent + reconciliation domain-event producers so events actually
+  // reach the brain.agent.route queue the worker drains. Declared before the
+  // first PaymentIntentService build so both route mounts share one enqueue.
+  const routingEnqueue = createRoutingEnqueue({ redisUrl: cfg.REDIS_URL });
+
   const paymentIntentService = buildPaymentIntentService({
     pool,
     audit,
@@ -618,6 +626,7 @@ async function main(): Promise<void> {
     ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
     sourceCredentialResolver,
     metrics,
+    enqueue: routingEnqueue,
   });
 
   // Build the live rail registry. When credentials are present the real rails
@@ -900,17 +909,44 @@ async function main(): Promise<void> {
   // tighten-only signal that never overrides match quality or evidence
   // completeness — same posture as the Policy DSL reputation rule.
   const signalsProvider = new PostgresSignalsProvider({ pool });
+
+  // Per-tenant routing category, read from tenants.category (migration 0005).
+  // Cached in-process to avoid a query per route; on a missing row/column or a
+  // read error it falls back to "business" so routing always has a
+  // deterministic category. A tenant's category changes rarely, so a
+  // process-lifetime cache (cleared on restart) is acceptable.
+  const tenantCategoryCache = new Map<string, TenantCategory>();
+  const resolveTenantCategory = async (tenantId: string): Promise<TenantCategory> => {
+    const cached = tenantCategoryCache.get(tenantId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    let value: TenantCategory = "business";
+    try {
+      const category = await withTenantScope(pool, tenantId, async (c) => {
+        const { rows } = await c.query<{ category: string }>(
+          `SELECT category FROM tenants WHERE id = $1 LIMIT 1`,
+          [tenantId],
+        );
+        return rows[0]?.category;
+      });
+      if (category !== undefined && isTenantCategory(category)) {
+        value = category;
+      }
+    } catch {
+      // Fall back to "business" — routing must never fail on a category read.
+      value = "business";
+    }
+    tenantCategoryCache.set(tenantId, value);
+    return value;
+  };
+
   const agentRouter = new AgentRouter({
     catalog: () => internalAgentCatalog,
     classifier: agentClassifier,
     evidence: agentEvidence,
     getScopedCapabilities: () => internalAgentCapabilities,
-    // TODO(phase-3): resolve the tenant category from a signed JWT claim or a
-    // tenant record. Until then every tenant is treated as "business", which
-    // keeps shared triggers (e.g. cash.balance_high) routing to the business
-    // agent deterministically; consumer routing activates once a real source
-    // is wired.
-    getTenantCategory: () => "business",
+    getTenantCategory: resolveTenantCategory,
     signals: (agentKey, tenantId) => signalsProvider.load(agentKey, tenantId),
     audit,
   });
@@ -1019,8 +1055,6 @@ async function main(): Promise<void> {
       withTenantScope(pool, readCtx.tenantId, (c) => findRoutingDecision(c, id)),
   };
 
-  const routingEnqueue = createRoutingEnqueue({ redisUrl: cfg.REDIS_URL });
-
   // Graduated money-movement promotion (Phase 1b). The live-agent allowlist
   // lives in services/agent-router/src/promotion-config.ts (LIVE_AGENTS) — the
   // single file a change to which CI gates via scripts/check-promotion-readiness
@@ -1049,7 +1083,7 @@ async function main(): Promise<void> {
     evidence: agentEvidence,
     propose: { agents: agentService, paymentIntents: paymentIntentService },
     store: agentRunStore,
-    getTenantCategory: () => "business",
+    getTenantCategory: resolveTenantCategory,
     isShadowed,
     checkRail,
     intentClassifierStrategy: cfg.AGENT_INTENT_CLASSIFIER === "embedding" ? "embedding" : "rules",
@@ -1140,7 +1174,9 @@ async function main(): Promise<void> {
   await app.register(
     async (v1) => {
       await v1.register(async (child) => registerRawPlugin(child, rawDeps, rawOpts));
-      await v1.register(async (child) => registerLedgerPlugin(child, ledgerDeps));
+      await v1.register(async (child) =>
+        registerLedgerPlugin(child, ledgerDeps, { enqueue: routingEnqueue }),
+      );
       await v1.register(async (child) => registerWikiPlugin(child, wikiDeps));
       await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
       await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
@@ -1174,6 +1210,7 @@ async function main(): Promise<void> {
           ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
           sourceCredentialResolver,
           metrics,
+          enqueue: routingEnqueue,
         });
         await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
       });

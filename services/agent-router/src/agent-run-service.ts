@@ -15,7 +15,12 @@
  * wires the execution agent_runs repository to the store.
  */
 
-import type { ExecutionMode, IAgentService, ServiceCallContext } from "@brain/shared";
+import type {
+  ExecutionMode,
+  IAgentService,
+  ServiceCallContext,
+  TenantCategory,
+} from "@brain/shared";
 import type { AgentPolicyStatus, AgentRunStatus, InternalAgentDefinition } from "@brain/schemas";
 import { proposeAction, type InternalAgentHandler, type ProposeDeps } from "@brain/internal-agents";
 import type { AgentRouter } from "./router.js";
@@ -87,7 +92,7 @@ export interface AgentRunServiceDeps {
   readonly propose: ProposeDeps;
   readonly store: AgentRunStore;
   /** Resolve the tenant's category for persistence + routing reasons. */
-  readonly getTenantCategory: (tenantId: string) => "business" | "consumer";
+  readonly getTenantCategory: (tenantId: string) => TenantCategory | Promise<TenantCategory>;
   /**
    * True when the agent must not move money yet. Default (Phase 1a + the 1b
    * pre-promotion state) is true for every agent, so any financial proposal
@@ -111,7 +116,7 @@ export class AgentRunService {
   constructor(private readonly deps: AgentRunServiceDeps) {}
 
   async run(ctx: ServiceCallContext, input: RoutingInput): Promise<AgentRunResult> {
-    const category = this.deps.getTenantCategory(ctx.tenantId);
+    const category = await this.deps.getTenantCategory(ctx.tenantId);
     const decision = await this.deps.router.route(ctx, input);
 
     const reason: Record<string, unknown> = {
