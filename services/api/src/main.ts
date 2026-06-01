@@ -114,6 +114,7 @@ import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/executio
 import { parseEther } from "viem";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
+import { buildPolicyRegistrar } from "./policyRegistrar.js";
 import { buildX402Client } from "./rails/x402Client.js";
 
 import {
@@ -811,6 +812,16 @@ async function main(): Promise<void> {
 
   // Exposed for POST /v1/demo/anchor/trigger — set when anchorBroadcaster is configured.
   let triggerAnchor: (() => Promise<void>) | undefined;
+  const policyRegistrar =
+    cfg.BRAIN_SESSION_KEY !== undefined &&
+    cfg.POLICY_REGISTRY_ADDRESS !== undefined &&
+    (cfg.BASE_RPC_URL ?? cfg.RPC_URL) !== undefined
+      ? buildPolicyRegistrar({
+          privateKey: cfg.BRAIN_SESSION_KEY as `0x${string}`,
+          rpcUrl: (cfg.BASE_RPC_URL ?? cfg.RPC_URL) as string,
+          registryAddress: cfg.POLICY_REGISTRY_ADDRESS as `0x${string}`,
+        })
+      : undefined;
 
   // -- MCP server -----------------------------------------------------
   const mcpAuthVerifier =
@@ -1413,6 +1424,11 @@ async function main(): Promise<void> {
             await c.query(
               `UPDATE policies SET state = 'deactivated', deactivated_at = now() WHERE state = 'active'`,
             );
+            const versionRes = await c.query<{ next_version: number }>(
+              `SELECT COALESCE(MAX(version) + 1, 1) AS next_version FROM policies WHERE tenant_id = $1`,
+              [req.principal!.tenantId],
+            );
+            const nextVersion = versionRes.rows[0]?.next_version ?? 1;
             await c.query(
               `INSERT INTO policies
                  (id, tenant_id, version, content, content_hash, quorum_required,
@@ -1421,13 +1437,29 @@ async function main(): Promise<void> {
               [
                 id,
                 req.principal!.tenantId,
-                content.version,
+                nextVersion,
                 JSON.stringify(content),
                 hash,
                 req.principal!.id,
               ],
             );
           });
+
+          // ── On-chain policy registration (best-effort) ─────────────────
+          let onchainPolicyTx: string | undefined;
+          let onchainPolicyVersion: number | undefined;
+          if (policyRegistrar !== undefined) {
+            try {
+              const reg = await policyRegistrar.registerPolicy(
+                req.principal.tenantId,
+                hash,
+              );
+              onchainPolicyTx = reg.tx_hash;
+              onchainPolicyVersion = reg.version;
+            } catch (err) {
+              log.warn({ err }, "on-chain policy registration failed — demo continues off-chain");
+            }
+          }
 
           await audit.emit({
             tenantId: req.principal.tenantId,
@@ -1438,12 +1470,23 @@ async function main(): Promise<void> {
               version: content.version,
               policy_hash: hash.toString("hex"),
               demo_bypass: true,
+              onchain_tx: onchainPolicyTx ?? null,
             },
             outputs: { policy_id: id, state: "active" },
           });
 
           reply.status(200);
-          return { policy_id: id, state: "active", version: content.version, rules: content.rules };
+          return {
+            policy_id: id,
+            state: "active",
+            version: content.version,
+            rules: content.rules,
+            ...(onchainPolicyTx !== undefined && {
+              onchain_policy_tx: onchainPolicyTx,
+              onchain_policy_version: onchainPolicyVersion,
+              chain: "base-sepolia",
+            }),
+          };
         });
 
         // POST /v1/demo/anchor/trigger — immediately publishes a Merkle anchor
