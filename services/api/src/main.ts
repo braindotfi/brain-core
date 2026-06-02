@@ -1417,8 +1417,34 @@ async function main(): Promise<void> {
             throw brainError("policy_rule_invalid", "content must be { version, rules[] }");
           }
 
-          const id = newPolicyId();
           const hash = contentHash(content);
+
+          // ── Idempotency: same content hash already active and on-chain ──
+          type ExistingRow = { id: string; version: number; onchain_tx: string; onchain_version: number };
+          const existingReg = await withTenantScope(pool, req.principal.tenantId, async (c) => {
+            const res = await c.query<ExistingRow>(
+              `SELECT id, version, onchain_tx, onchain_version FROM policies
+               WHERE state = 'active' AND content_hash = $1 AND onchain_tx IS NOT NULL
+               LIMIT 1`,
+              [hash],
+            );
+            return res.rows[0] ?? null;
+          });
+
+          if (existingReg !== null) {
+            reply.status(200);
+            return {
+              policy_id: existingReg.id,
+              state: "active",
+              version: content.version,
+              rules: content.rules,
+              onchain_policy_tx: existingReg.onchain_tx,
+              onchain_policy_version: existingReg.onchain_version,
+              chain: "base-sepolia",
+            };
+          }
+
+          const id = newPolicyId();
 
           await withTenantScope(pool, req.principal.tenantId, async (c) => {
             await c.query(
@@ -1456,6 +1482,12 @@ async function main(): Promise<void> {
               );
               onchainPolicyTx = reg.tx_hash;
               onchainPolicyVersion = reg.version;
+              await withTenantScope(pool, req.principal.tenantId, async (c) => {
+                await c.query(
+                  `UPDATE policies SET onchain_tx = $1, onchain_version = $2 WHERE id = $3`,
+                  [onchainPolicyTx, onchainPolicyVersion ?? null, id],
+                );
+              });
             } catch (err) {
               log.warn({ err }, "on-chain policy registration failed — demo continues off-chain");
             }
