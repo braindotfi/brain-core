@@ -19,7 +19,7 @@ packages:
 
 overrides:
   vite: "^6.4.2"
-  "ws@<8.20.1": "^8.20.1"
+  ws: ">=8.20.1"
   vitest: ">=4.1.0"
   "@vitest/coverage-v8": ">=4.1.0"
   "@vitest/ui": ">=4.1.0"
