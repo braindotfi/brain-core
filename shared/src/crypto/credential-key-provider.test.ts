@@ -5,10 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 // can be exercised without real Azure credentials / network access.
 const getSecret = vi.fn();
 vi.mock("@azure/keyvault-secrets", () => ({
-  SecretClient: vi.fn().mockImplementation(() => ({ getSecret })),
+  SecretClient: vi.fn(function () {
+    return { getSecret };
+  }),
 }));
 vi.mock("@azure/identity", () => ({
-  DefaultAzureCredential: vi.fn().mockImplementation(() => ({})),
+  DefaultAzureCredential: vi.fn(function () {
+    return {};
+  }),
 }));
 
 import { buildCredentialKeyProvider } from "./credential-key-provider.js";

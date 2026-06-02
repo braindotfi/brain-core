@@ -10,19 +10,27 @@ const mockProviderInstance = {
   register: mockRegister,
   shutdown: mockShutdown,
 };
-const MockNodeTracerProvider = vi.fn(() => mockProviderInstance);
+const MockNodeTracerProvider = vi.fn(function () {
+  return mockProviderInstance;
+});
 
 vi.mock("@opentelemetry/sdk-trace-node", () => ({
   NodeTracerProvider: MockNodeTracerProvider,
 }));
 vi.mock("@opentelemetry/sdk-trace-base", () => ({
-  BatchSpanProcessor: vi.fn(() => ({})),
+  BatchSpanProcessor: vi.fn(function () {
+    return {};
+  }),
 }));
 vi.mock("@opentelemetry/exporter-trace-otlp-http", () => ({
-  OTLPTraceExporter: vi.fn(() => ({})),
+  OTLPTraceExporter: vi.fn(function () {
+    return {};
+  }),
 }));
 vi.mock("@opentelemetry/resources", () => ({
-  Resource: vi.fn(() => ({})),
+  Resource: vi.fn(function () {
+    return {};
+  }),
 }));
 vi.mock("@opentelemetry/semantic-conventions", () => ({
   ATTR_SERVICE_NAME: "service.name",

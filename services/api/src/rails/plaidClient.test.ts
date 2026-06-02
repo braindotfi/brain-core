@@ -11,11 +11,13 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock("plaid", () => ({
-  PlaidApi: vi.fn(() => ({
-    transferAuthorizationCreate: m.transferAuthorizationCreate,
-    transferCreate: m.transferCreate,
-  })),
-  Configuration: vi.fn(),
+  PlaidApi: vi.fn(function () {
+    return {
+      transferAuthorizationCreate: m.transferAuthorizationCreate,
+      transferCreate: m.transferCreate,
+    };
+  }),
+  Configuration: vi.fn(function () {}),
   PlaidEnvironments: {
     sandbox: "https://sandbox.plaid.com",
     development: "https://development.plaid.com",
