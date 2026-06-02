@@ -58,6 +58,9 @@ export interface GoldenPathSeed {
     aws: CounterpartyRow;
     stripe: CounterpartyRow;
     duplicateMerchant: CounterpartyRow;
+    acmeCorp: CounterpartyRow;
+    globalTech: CounterpartyRow;
+    blueSkyMedia: CounterpartyRow;
   };
   obligations: {
     rent: string;
@@ -169,6 +172,9 @@ export async function seedGoldenPath(
     );
   }
 
+  // ---------- AR Invoices (receivables from customer counterparties) ----------
+  await seedArInvoices(pool, ctx, sourceIds, evidenceIds, counterparties);
+
   return {
     tenantId,
     actor,
@@ -196,7 +202,7 @@ async function seedCounterparties(
 ): Promise<GoldenPathSeed["counterparties"]> {
   async function cp(args: {
     name: string;
-    type: "employer" | "vendor" | "merchant";
+    type: "merchant" | "vendor" | "customer" | "employer" | "bank" | "wallet" | "exchange" | "tax_authority" | "agent" | "other";
     risk_level?: "low" | "medium" | "high" | "sanctioned";
     verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared";
     aliases?: string[];
@@ -257,6 +263,25 @@ async function seedCounterparties(
       type: "merchant",
       risk_level: "high",
       verified_status: "unverified",
+    }),
+    // Customer counterparties — used by the AR demo scenario for receivables.
+    acmeCorp: await cp({
+      name: "Acme Corp",
+      type: "customer",
+      risk_level: "low",
+      verified_status: "document_verified",
+    }),
+    globalTech: await cp({
+      name: "Global Tech Solutions",
+      type: "customer",
+      risk_level: "medium",
+      verified_status: "self_attested",
+    }),
+    blueSkyMedia: await cp({
+      name: "Blue Sky Media",
+      type: "customer",
+      risk_level: "low",
+      verified_status: "document_verified",
     }),
   };
 }
@@ -698,5 +723,56 @@ async function seedPaymentIntents(
         amount: "200.00",
       }),
     };
+  });
+}
+
+async function seedArInvoices(
+  pool: Pool,
+  ctx: ServiceCallContext,
+  sourceIds: string[],
+  evidenceIds: string[],
+  cps: GoldenPathSeed["counterparties"],
+): Promise<void> {
+  // AR invoices — money owed TO us by customers. Due dates spread across
+  // past and future so the AR scenario sees a mix of overdue and current.
+  await withTenantScope(pool, ctx.tenantId, async (c) => {
+    async function arInv(args: {
+      n: number;
+      counterpartyId: string;
+      due: string;
+      paid: string;
+      status: string;
+      dueDaysOffset: number;
+    }) {
+      const id = newInvoiceId();
+      await c.query(
+        `INSERT INTO ledger_invoices (
+           id, owner_id, invoice_number, counterparty_id,
+           amount_due, amount_paid, currency, issue_date, due_date, status,
+           source_ids, evidence_ids, linked_document_ids, provenance, confidence
+         ) VALUES ($1,$2,$3,$4,$5,$6,'USD',$7,$8,$9,$10,$11,ARRAY[]::TEXT[],'extracted',0.88)`,
+        [
+          id,
+          ctx.tenantId,
+          `AR-${args.n}`,
+          args.counterpartyId,
+          args.due,
+          args.paid,
+          daysAgo(30),
+          args.dueDaysOffset < 0 ? daysAgo(-args.dueDaysOffset) : daysFrom(args.dueDaysOffset),
+          args.status,
+          sourceIds,
+          evidenceIds,
+        ],
+      );
+      return id;
+    }
+
+    // Acme Corp: $4,200 overdue 14 days
+    await arInv({ n: 2001, counterpartyId: cps.acmeCorp.id, due: "4200.00", paid: "0.00", status: "sent", dueDaysOffset: -14 });
+    // Global Tech: $11,500 overdue 32 days (will trigger firm tone)
+    await arInv({ n: 2002, counterpartyId: cps.globalTech.id, due: "11500.00", paid: "2000.00", status: "partial", dueDaysOffset: -32 });
+    // Blue Sky Media: $2,800 current (not yet overdue)
+    await arInv({ n: 2003, counterpartyId: cps.blueSkyMedia.id, due: "2800.00", paid: "0.00", status: "sent", dueDaysOffset: 5 });
   });
 }
