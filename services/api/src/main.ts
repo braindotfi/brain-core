@@ -628,6 +628,7 @@ async function main(): Promise<void> {
     sourceCredentialResolver,
     metrics,
     enqueue: routingEnqueue,
+    recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
   });
 
   // Build the live rail registry. When credentials are present the real rails
@@ -1215,6 +1216,7 @@ async function main(): Promise<void> {
           sourceCredentialResolver,
           metrics,
           enqueue: routingEnqueue,
+          recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
         });
         await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
       });

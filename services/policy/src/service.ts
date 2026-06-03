@@ -9,17 +9,20 @@
 import { createHash } from "node:crypto";
 import {
   brainError,
+  brainId,
+  ID_PREFIX,
   newPolicyDecisionId,
   withTenantScope,
   type AuditEmitter,
   type GatePaymentIntent,
   type GatePolicyDecision,
   type ServiceCallContext,
+  type TenantScopedClient,
 } from "@brain/shared";
 import type { Pool } from "pg";
 import { getActive } from "./repository.js";
 import { evaluate, type Action } from "./vm.js";
-import { readSpendWindow, readTxCountWindow } from "./spend-counters.js";
+import { incrementSpendCounter, readSpendWindow, readTxCountWindow } from "./spend-counters.js";
 import type { ApplyTo, PolicyDocument, PolicyRule } from "./dsl.js";
 import {
   applyReputationAdjustment,
@@ -253,6 +256,52 @@ export class PolicyService {
     });
 
     return final;
+  }
+
+  /**
+   * Accumulate the agent's spend + tx-count counters for the windows the active
+   * policy references (R-21). The reader side (`agent.spend_in_window` /
+   * `agent.tx_count_in_window` in {@link evaluateForGate}) already existed; this
+   * is the writer that was never wired, so aggregate caps used to read a
+   * counter that stayed 0 forever.
+   *
+   * Runs on the CALLER's tenant-scoped client (PaymentIntentService.completeExecution),
+   * so the increment commits in the SAME transaction as the intent reaching
+   * `executed` — a settle records spend and advances state together, or rolls
+   * back together. Bumps one bucket per referenced window using the intent's
+   * own currency + amount (each `incrementSpendCounter` adds the amount and one
+   * tx to that window's bucket). The VM compares the cap fail-closed when the
+   * action currency differs from the cap currency, so tracking spend under the
+   * intent's actual currency stays consistent with what the reader reads back.
+   *
+   * No-op when the tenant has no active policy or the policy declares no spend /
+   * tx windows (so counters stay empty for tenants that don't use aggregate caps).
+   */
+  public async recordAgentSpend(
+    client: TenantScopedClient,
+    input: { tenantId: string; agentId: string; amount: string; currency: string },
+  ): Promise<void> {
+    const active = await getActive(client);
+    if (active === null) {
+      return;
+    }
+    const windows = new Set<string>();
+    for (const w of collectSpendWindows(active.content)) {
+      windows.add(w.window);
+    }
+    for (const w of collectTxWindows(active.content)) {
+      windows.add(w);
+    }
+    for (const window of windows) {
+      await incrementSpendCounter(client, {
+        id: brainId(ID_PREFIX.policySpendCounter),
+        tenantId: input.tenantId,
+        agentId: input.agentId,
+        window,
+        currency: input.currency,
+        amount: input.amount,
+      });
+    }
   }
 }
 

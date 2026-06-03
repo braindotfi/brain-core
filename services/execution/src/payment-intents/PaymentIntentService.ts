@@ -45,6 +45,7 @@ import {
   type MetricsEmitter,
   emitDomainEvent,
   type RoutingEnqueue,
+  type TenantScopedClient,
 } from "@brain/shared";
 import { LedgerPaymentIntents, type PaymentIntentRow } from "@brain/ledger";
 import type { Pool } from "pg";
@@ -209,6 +210,21 @@ export interface PaymentIntentServiceDeps {
    * Routing is advisory and never gates the financial operation.
    */
   enqueue?: RoutingEnqueue;
+  /**
+   * Optional: accumulate the agent's spend/tx-count counters for the windows
+   * the active policy references (R-21). Called inside completeExecution's
+   * transaction on the LIVE settle path only (an intent reaching `executed`),
+   * so the counter the gate/VM reads back via `agent.spend_in_window` /
+   * `agent.tx_count_in_window` reflects actually-settled spend and commits
+   * atomically with the `executed` transition. Absent ⇒ counters never
+   * accumulate (the pre-R-21 behaviour: aggregate spend caps read 0). The
+   * writer lives in the Policy layer (single source of window truth) and runs
+   * on the caller's tenant-scoped client.
+   */
+  recordAgentSpend?: (
+    client: TenantScopedClient,
+    input: { tenantId: string; agentId: string; amount: string; currency: string },
+  ) => Promise<void>;
 }
 
 /** On-chain dispatch params merged into the outbox payload by PaymentIntentService.execute. */
@@ -894,6 +910,18 @@ export class PaymentIntentService implements IPaymentIntentService {
         args.paymentIntentId,
         args.executionId,
       );
+      // R-21: accumulate the agent's window spend/tx counters in the SAME
+      // transaction as the executed transition, so a settle either records the
+      // spend and advances state together or rolls back together. Agent-less
+      // intents (human-initiated) have no per-agent counter to bump.
+      if (this.deps.recordAgentSpend !== undefined && current.created_by_agent_id !== null) {
+        await this.deps.recordAgentSpend(c, {
+          tenantId: ctx.tenantId,
+          agentId: current.created_by_agent_id,
+          amount: current.amount,
+          currency: current.currency,
+        });
+      }
     });
   }
 

@@ -31,6 +31,7 @@ import type {
   DuplicateCheckResult,
   MetricsEmitter,
   RoutingEnqueue,
+  TenantScopedClient,
 } from "@brain/shared";
 import type { Pool } from "pg";
 import type { PaymentIntentPolicyEvaluator } from "@brain/execution";
@@ -102,6 +103,15 @@ export interface BuildPaymentIntentServiceDeps {
    * emits `payment.failed` for the collections agent. Absent ⇒ no event.
    */
   enqueue?: RoutingEnqueue;
+  /**
+   * Optional: agent window spend/tx counter writer (R-21). When wired, a settled
+   * agent intent accumulates the counters the policy VM reads back for aggregate
+   * caps. Absent ⇒ counters never accumulate (aggregate caps read 0).
+   */
+  recordAgentSpend?: (
+    client: TenantScopedClient,
+    input: { tenantId: string; agentId: string; amount: string; currency: string },
+  ) => Promise<void>;
 }
 
 export function buildPaymentIntentService(
@@ -135,5 +145,6 @@ export function buildPaymentIntentService(
       : {}),
     ...(deps.metrics !== undefined ? { metrics: deps.metrics } : {}),
     ...(deps.enqueue !== undefined ? { enqueue: deps.enqueue } : {}),
+    ...(deps.recordAgentSpend !== undefined ? { recordAgentSpend: deps.recordAgentSpend } : {}),
   });
 }

@@ -24,6 +24,7 @@ import type {
   GatePrincipal,
   ServiceCallContext,
   AgentAttestationInput,
+  TenantScopedClient,
 } from "@brain/shared";
 import type { Pool } from "pg";
 import { PaymentIntentService } from "./PaymentIntentService.js";
@@ -151,7 +152,14 @@ const POLICY_DECISION: GatePolicyDecision = {
 // Service factory
 // ---------------------------------------------------------------------------
 
-function makeService(pool: Pool, audit: InMemoryAuditEmitter): PaymentIntentService {
+function makeService(
+  pool: Pool,
+  audit: InMemoryAuditEmitter,
+  recordAgentSpend?: (
+    client: TenantScopedClient,
+    input: { tenantId: string; agentId: string; amount: string; currency: string },
+  ) => Promise<void>,
+): PaymentIntentService {
   const approvals = new ApprovalService({
     pool,
     audit,
@@ -168,6 +176,7 @@ function makeService(pool: Pool, audit: InMemoryAuditEmitter): PaymentIntentServ
     resolveCounterparty: async (_ctx, _id) => GATE_CP,
     evaluatePolicy: async (_ctx, _intent) => POLICY_DECISION,
     resolvePrincipal: async (_ctx) => GATE_PRINCIPAL,
+    ...(recordAgentSpend !== undefined ? { recordAgentSpend } : {}),
   });
 }
 
@@ -344,6 +353,73 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
     });
     // Must reject BEFORE any execution row is inserted.
     expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it("completeExecution accumulates the agent spend counter on the executed path (R-21)", async () => {
+    const dispatchingRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "dispatching" };
+    const executedRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "executed" };
+    const pool = makeFakePool((sql) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [dispatchingRow], rowCount: 1 };
+      }
+      if (sql.includes("INTO executions")) {
+        return { rows: [{ id: "exec_1" }], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE executions") || sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [executedRow], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const recordAgentSpend = vi.fn(async () => undefined);
+    const service = makeService(pool, new InMemoryAuditEmitter(), recordAgentSpend);
+    await service.completeExecution(ctx, {
+      paymentIntentId: PI_ID,
+      executionId: "exec_1",
+      rail: "bank_ach",
+      railReceipt: { rail: "ach", ach_trace: "t" },
+      idempotencyKey: `pi:${PI_ID}:${PD_ID}`,
+    });
+    expect(recordAgentSpend).toHaveBeenCalledTimes(1);
+    expect(recordAgentSpend.mock.calls[0]?.[1]).toEqual({
+      tenantId: TENANT,
+      agentId: AGENT_ID,
+      amount: "100.00",
+      currency: "USD",
+    });
+  });
+
+  it("completeExecution skips the spend counter for an agent-less (human) intent", async () => {
+    const dispatchingRow: PaymentIntentRow = {
+      ...APPROVED_INTENT_ROW,
+      status: "dispatching",
+      created_by_agent_id: null,
+    };
+    const executedRow: PaymentIntentRow = {
+      ...dispatchingRow,
+      status: "executed",
+    };
+    const pool = makeFakePool((sql) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [dispatchingRow], rowCount: 1 };
+      }
+      if (sql.includes("INTO executions")) {
+        return { rows: [{ id: "exec_1" }], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE executions") || sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [executedRow], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const recordAgentSpend = vi.fn(async () => undefined);
+    const service = makeService(pool, new InMemoryAuditEmitter(), recordAgentSpend);
+    await service.completeExecution(ctx, {
+      paymentIntentId: PI_ID,
+      executionId: "exec_1",
+      rail: "bank_ach",
+      railReceipt: { rail: "ach", ach_trace: "t" },
+      idempotencyKey: `pi:${PI_ID}:${PD_ID}`,
+    });
+    expect(recordAgentSpend).not.toHaveBeenCalled();
   });
 
   it("failExecution moves dispatching → failed", async () => {
