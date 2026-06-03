@@ -154,6 +154,33 @@ def test_dev_override_ignored_in_production_at_boot(monkeypatch: pytest.MonkeyPa
         create_app(deps=_deps())
 
 
+def test_missing_runtime_credentials_fails_at_boot_when_live_wired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On the live-wiring path (deps=None) in production, missing outbound
+    credentials must crash at boot rather than fail every request at runtime."""
+    monkeypatch.setenv("BRAIN_AGENTS_INBOUND_SECRET", SECRET)
+    monkeypatch.setenv("BRAIN_ENV", "production")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("BRAIN_API_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+        create_app()
+
+
+def test_runtime_credentials_fence_skipped_when_deps_injected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tests inject deps and never build the live clients, so the outbound-
+    credential fence must NOT fire even in production with creds unset."""
+    monkeypatch.setenv("BRAIN_AGENTS_INBOUND_SECRET", SECRET)
+    monkeypatch.setenv("BRAIN_ENV", "production")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("BRAIN_API_TOKEN", raising=False)
+    # Should NOT raise — deps are injected.
+    app = create_app(deps=_deps())
+    assert app is not None
+
+
 async def test_dev_override_allows_unauthenticated(monkeypatch: pytest.MonkeyPatch) -> None:
     """Outside production, no secret + override=true ⇒ open routes (dev path)."""
     monkeypatch.delenv("BRAIN_AGENTS_INBOUND_SECRET", raising=False)

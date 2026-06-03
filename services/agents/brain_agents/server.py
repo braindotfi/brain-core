@@ -22,6 +22,13 @@ from brain_agents.reconciliation.agent import ReconciliationAgent
 from brain_agents.reconciliation.routes import router as recon_router
 
 
+def _is_production() -> bool:
+    return (
+        os.environ.get("BRAIN_ENV", "").lower() == "production"
+        or os.environ.get("NODE_ENV", "").lower() == "production"
+    )
+
+
 def _assert_inbound_auth_configured() -> None:
     """Fail at boot in production when BRAIN_AGENTS_INBOUND_SECRET is unset.
 
@@ -30,11 +37,7 @@ def _assert_inbound_auth_configured() -> None:
     pod over the old one if the new one cannot start). Honors the same dev
     override the per-request check honors.
     """
-    is_production = (
-        os.environ.get("BRAIN_ENV", "").lower() == "production"
-        or os.environ.get("NODE_ENV", "").lower() == "production"
-    )
-    if not is_production:
+    if not _is_production():
         return
     if os.environ.get("BRAIN_AGENTS_INBOUND_SECRET", "") == "":
         raise RuntimeError(
@@ -45,11 +48,42 @@ def _assert_inbound_auth_configured() -> None:
         )
 
 
+def _assert_runtime_credentials_configured() -> None:
+    """Fail at boot in production when the agents' outbound credentials are unset.
+
+    OPENAI_API_KEY backs every reasoning call and BRAIN_API_TOKEN authenticates
+    the agents to the Brain API. Both default to "" (see config.Settings); a
+    deploy that forgets them would boot, report healthy, then fail every actual
+    run. Surface the misconfiguration at process start instead. Honors the same
+    production gate as the inbound-secret fence (dev/test boot unaffected).
+    """
+    if not _is_production():
+        return
+    missing = [
+        name
+        for name in ("OPENAI_API_KEY", "BRAIN_API_TOKEN")
+        if os.environ.get(name, "") == ""
+    ]
+    if missing:
+        raise RuntimeError(
+            f"{', '.join(missing)} required in BRAIN_ENV=production. "
+            "OPENAI_API_KEY backs every reasoning call; BRAIN_API_TOKEN "
+            "authenticates the agents to the Brain API. Refusing to start so "
+            "the orchestrator surfaces the misconfiguration rather than failing "
+            "every request at runtime."
+        )
+
+
 def create_app(deps: AppDeps | None = None) -> FastAPI:
     """Return a configured FastAPI app. Pass `deps` to skip live wiring (tests)."""
-    # Fail-fast boot fence — must run BEFORE FastAPI is constructed so a
+    # Fail-fast boot fences — must run BEFORE FastAPI is constructed so a
     # misconfigured deploy never serves a single request, not even /health.
     _assert_inbound_auth_configured()
+    # Outbound credentials are only consumed on the live-wiring path (deps is
+    # None). Tests inject deps and never construct the OpenAI/Brain clients, so
+    # the fence would be a false positive there.
+    if deps is None:
+        _assert_runtime_credentials_configured()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
