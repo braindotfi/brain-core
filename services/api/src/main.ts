@@ -146,7 +146,7 @@ import {
   EmbeddingIntentClassifier,
   FallbackIntentClassifier,
   RulesIntentClassifier,
-  StaticEvidenceGatherer,
+  ServiceEvidenceGatherer,
   createAgentRouteWorker,
   reindexIntentClassifier,
   registerAgentApiRoutes,
@@ -169,6 +169,7 @@ import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
 import { buildRawEvidenceService } from "./adapters/raw-evidence-adapter.js";
 import { buildWikiMemoryService } from "./adapters/wiki-memory-adapter.js";
+import { buildEvidenceProviders } from "./agents/evidence-providers.js";
 import {
   makeResolveAgent,
   makeResolveTenantFlags,
@@ -878,11 +879,14 @@ async function main(): Promise<void> {
   });
 
   // -- Agent router (Phase 1) -----------------------------------------
-  // Shared StaticEvidenceGatherer for now.
-  // TODO(phase-1): wire Wiki citations + Ledger references into a
-  // ServiceEvidenceGatherer. Until then evidence is empty, so agents with
-  // required_evidence resolve to notify_only (the safe default).
-  const agentEvidence = new StaticEvidenceGatherer();
+  // Evidence is gathered from the real Ledger + Wiki services (plan A3 / R-26).
+  // Context-keyed: an agent's required_evidence is satisfied only when the
+  // routing context references concrete objects (account/transaction/
+  // counterparty/invoice/obligation ids) or a tenant-level balance — otherwise
+  // the bundle stays empty and the agent keeps the notify_only safe default.
+  const agentEvidence = new ServiceEvidenceGatherer(
+    buildEvidenceProviders({ ledger: ledgerService, wiki: wikiService }),
+  );
   // TODO(phase-1): enforce real per-tenant on-chain scope grants via the agent
   // registry. For now the Brain-shipped internal agents' capabilities are
   // treated as scoped (they are enabled_by_default).
