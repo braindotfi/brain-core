@@ -185,6 +185,7 @@ export class AgentRunService {
     const resolution = await this.deps.actionResolver.resolve({
       definition,
       actions: handler.actions,
+      tenantId: ctx.tenantId,
       ...(input.event !== undefined ? { event: input.event } : {}),
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
       ...(input.context !== undefined ? { context: input.context } : {}),

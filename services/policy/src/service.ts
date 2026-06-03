@@ -277,6 +277,17 @@ export class PolicyService {
    * No-op when the tenant has no active policy or the policy declares no spend /
    * tx windows (so counters stay empty for tenants that don't use aggregate caps).
    */
+  /**
+   * The tenant's active signed PolicyDocument, or null when none is active.
+   * Read-only accessor used by the agent-router's H-23 action allowlist
+   * (`allowedActionsFor`) so the resolver enforces the REQUESTING tenant's
+   * signed `agent_actions` per call.
+   */
+  public async getActiveDocument(ctx: ServiceCallContext): Promise<PolicyDocument | null> {
+    const active = await withTenantScope(this.deps.pool, ctx.tenantId, (c) => getActive(c));
+    return active === null ? null : active.content;
+  }
+
   public async recordAgentSpend(
     client: TenantScopedClient,
     input: { tenantId: string; agentId: string; amount: string; currency: string },

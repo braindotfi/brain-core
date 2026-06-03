@@ -37,6 +37,14 @@ export interface ActionResolutionInput {
   readonly event?: string;
   readonly intent?: string;
   readonly context?: Record<string, unknown>;
+  /**
+   * Tenant whose signed policy governs the per-agent action allowlist (H-23).
+   * The `isActionAllowed` hook is consulted only when this is present, so the
+   * allowlist always evaluates against the REQUESTING tenant's active policy
+   * (never a boot-time closure over one tenant's policy). Absent ⇒ no allowlist
+   * check (unit tests / callers that don't supply a tenant).
+   */
+  readonly tenantId?: string;
 }
 
 export interface ActionResolverDeps {
@@ -46,11 +54,16 @@ export interface ActionResolverDeps {
   /**
    * Authorization hook for an explicitly requested action — the signed policy's
    * per-agent allowlist (`PolicyDocument.agent_actions`; see `allowedActionsFor`
-   * in @brain/policy). Wired at the resolver construction site to the tenant's
-   * active signed policy (H-23). When absent (unit tests, or no active policy
-   * loaded), an explicit action is accepted as long as the agent offers it.
+   * in @brain/policy). Receives the requesting tenant's id so the wiring loads
+   * THAT tenant's active signed policy per call (H-23) rather than closing over
+   * one tenant's policy at boot. When absent (unit tests, or no tenant on the
+   * input), an explicit action is accepted as long as the agent offers it.
    */
-  readonly isActionAllowed?: (agentKey: string, action: string) => boolean;
+  readonly isActionAllowed?: (
+    tenantId: string,
+    agentKey: string,
+    action: string,
+  ) => boolean | Promise<boolean>;
 }
 
 function readRequestedAction(context: Record<string, unknown> | undefined): string | undefined {
@@ -74,14 +87,14 @@ export class ActionResolver {
           reason: `requested action "${requested}" is not offered by ${agentKey}`,
         };
       }
-      if (
-        this.deps.isActionAllowed !== undefined &&
-        !this.deps.isActionAllowed(agentKey, requested)
-      ) {
-        return {
-          status: "missing_action",
-          reason: `requested action "${requested}" is denied by policy for ${agentKey}`,
-        };
+      if (this.deps.isActionAllowed !== undefined && input.tenantId !== undefined) {
+        const allowed = await this.deps.isActionAllowed(input.tenantId, agentKey, requested);
+        if (!allowed) {
+          return {
+            status: "missing_action",
+            reason: `requested action "${requested}" is denied by policy for ${agentKey}`,
+          };
+        }
       }
       return { status: "resolved", action: requested, source: "explicit" };
     }

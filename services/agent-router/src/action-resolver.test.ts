@@ -47,14 +47,28 @@ describe("ActionResolver", () => {
   it("rejects an explicit action denied by the policy hook", async () => {
     const guarded = new ActionResolver({
       classifier: new RulesIntentClassifier(),
-      isActionAllowed: (_agent, action) => action !== "escalate",
+      isActionAllowed: (_tenant, _agent, action) => action !== "escalate",
     });
     const r = await guarded.resolve({
       definition: def({}),
       actions,
+      tenantId: "tnt_test",
       context: { [REQUESTED_ACTION_KEY]: "escalate" },
     });
     expect(r.status).toBe("missing_action");
+  });
+
+  it("skips the policy hook when no tenant is supplied (pre-H-23 callers)", async () => {
+    const guarded = new ActionResolver({
+      classifier: new RulesIntentClassifier(),
+      isActionAllowed: () => false, // would deny everything if consulted
+    });
+    const r = await guarded.resolve({
+      definition: def({}),
+      actions,
+      context: { [REQUESTED_ACTION_KEY]: "send" },
+    });
+    expect(r).toEqual({ status: "resolved", action: "send", source: "explicit" });
   });
 
   it("resolves via event_action_map", async () => {
@@ -121,13 +135,14 @@ describe("ActionResolver — H-23 signed-policy allowlist", () => {
   const agentActions: Record<string, readonly string[]> = { test_agent: ["draft", "send"] };
   const fromPolicy = new ActionResolver({
     classifier: new RulesIntentClassifier(),
-    isActionAllowed: (agent, action) => (agentActions[agent] ?? []).includes(action),
+    isActionAllowed: (_tenant, agent, action) => (agentActions[agent] ?? []).includes(action),
   });
 
   it("resolves an explicit action the signed policy lists for the agent", async () => {
     const r = await fromPolicy.resolve({
       definition: def({}),
       actions: ["draft", "send"],
+      tenantId: "tnt_test",
       context: { [REQUESTED_ACTION_KEY]: "send" },
     });
     expect(r).toEqual({ status: "resolved", action: "send", source: "explicit" });
@@ -137,6 +152,7 @@ describe("ActionResolver — H-23 signed-policy allowlist", () => {
     const r = await fromPolicy.resolve({
       definition: def({}),
       actions: ["draft", "send", "wire"],
+      tenantId: "tnt_test",
       context: { [REQUESTED_ACTION_KEY]: "wire" },
     });
     expect(r.status).toBe("missing_action");
@@ -149,6 +165,7 @@ describe("ActionResolver — H-23 signed-policy allowlist", () => {
     const r = await fromPolicy.resolve({
       definition: def({ event_action_map: { "invoice.overdue": "escalate" } }),
       actions: ["escalate"],
+      tenantId: "tnt_test",
       event: "invoice.overdue",
     });
     expect(r).toEqual({ status: "resolved", action: "escalate", source: "event_map" });
@@ -162,8 +179,31 @@ describe("ActionResolver — H-23 signed-policy allowlist", () => {
     const r = await empty.resolve({
       definition: def({}),
       actions: ["draft"],
+      tenantId: "tnt_test",
       context: { [REQUESTED_ACTION_KEY]: "draft" },
     });
     expect(r.status).toBe("missing_action");
+  });
+
+  it("supports an async (policy-loading) allowlist hook", async () => {
+    const asyncPolicy = new ActionResolver({
+      classifier: new RulesIntentClassifier(),
+      isActionAllowed: async (_tenant, agent, action) =>
+        Promise.resolve((agentActions[agent] ?? []).includes(action)),
+    });
+    const ok = await asyncPolicy.resolve({
+      definition: def({}),
+      actions: ["draft", "send"],
+      tenantId: "tnt_test",
+      context: { [REQUESTED_ACTION_KEY]: "send" },
+    });
+    expect(ok).toEqual({ status: "resolved", action: "send", source: "explicit" });
+    const denied = await asyncPolicy.resolve({
+      definition: def({}),
+      actions: ["draft", "send", "wire"],
+      tenantId: "tnt_test",
+      context: { [REQUESTED_ACTION_KEY]: "wire" },
+    });
+    expect(denied.status).toBe("missing_action");
   });
 });

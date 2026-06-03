@@ -80,6 +80,7 @@ import { WikiPageService, registerWikiPlugin, loadRegistry } from "@brain/wiki";
 import {
   registerPolicyRoutes,
   PolicyService,
+  allowedActionsFor,
   contentHash,
   getActive as policyGetActive,
   getById as policyGetById,
@@ -960,13 +961,28 @@ async function main(): Promise<void> {
   // using the same classifier the router uses for intent_action_map scoring.
   // H-23: the resolver enforces the signed policy's per-agent allowlist via the
   // `isActionAllowed` hook (PolicyDocument.agent_actions + allowedActionsFor in
-  // @brain/policy). Live injection is intentionally NOT a boot-time closure over
-  // a single policy — that would apply one tenant's allowlist to all tenants (a
-  // tenant-isolation bug). It must load the *requesting tenant's* active signed
-  // policy per call (policy service getActive → allowedActionsFor), which is a
-  // DB-backed path verified in a Postgres-capable environment. Until wired, an
-  // explicit action is accepted if the agent offers it (pre-H-23 behavior).
-  const actionResolver = new ActionResolver({ classifier: agentClassifier });
+  // @brain/policy). The hook loads the *requesting tenant's* active signed
+  // policy per call (never a boot closure over one tenant's policy — that would
+  // be a tenant-isolation bug). Opt-in / non-breaking: enforce only when the
+  // tenant's policy declares an `agent_actions` map; absent that map the tenant
+  // has not adopted H-23 and an explicit action is accepted if the agent offers
+  // it (pre-H-23 behaviour). Once the map is present its fail-closed semantics
+  // apply (an unlisted agent gets [] ⇒ every explicit action denied). The hook
+  // gates the explicit requested-action path only; event/intent/default
+  // resolution is unaffected.
+  const actionResolver = new ActionResolver({
+    classifier: agentClassifier,
+    isActionAllowed: async (tenantId, agentKey, action) => {
+      const doc = await policyService.getActiveDocument({
+        tenantId,
+        actor: "system:action-resolver",
+      });
+      if (doc === null || doc.agent_actions === undefined) {
+        return true; // tenant has not adopted the H-23 allowlist
+      }
+      return allowedActionsFor(doc, agentKey).includes(action);
+    },
+  });
 
   // Delegate the reconciliation agent to the Python reconciliation service when
   // RECONCILIATION_AGENT_URL is set; otherwise reconciliation uses the default
