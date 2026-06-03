@@ -199,7 +199,11 @@ const envSchema = z.object({
     .default(60 * 60 * 1000),
 
   // ---- Blob storage ----
-  /** Storage backend. Use "azure" in staging/production, "memory" in local dev only. */
+  /**
+   * Storage backend. Use "azure" or "s3" in staging/production, "memory" in
+   * local dev only. "s3" targets any S3-compatible store (AWS S3, MinIO,
+   * LocalStack) and keeps a single-VM deploy free of an Azure dependency.
+   */
   BLOB_BACKEND: z.enum(["azure", "s3", "memory"]).default("memory"),
   /** Azure container name or S3 bucket name. */
   BLOB_CONTAINER: z.string().default("brain-artifacts"),
@@ -207,6 +211,25 @@ const envSchema = z.object({
   AZURE_BLOB_ACCOUNT_NAME: z.string().optional(),
   /** Azure storage account key (required when BLOB_BACKEND=azure). */
   AZURE_BLOB_ACCOUNT_KEY: z.string().optional(),
+  /**
+   * S3 endpoint URL (required for non-AWS stores like MinIO/LocalStack, e.g.
+   * http://minio:9000). Omit to use the AWS SDK's default regional endpoint.
+   */
+  S3_ENDPOINT: z.string().url().optional(),
+  /** S3 region (e.g. us-east-1). MinIO ignores it but the SDK still requires one. */
+  S3_REGION: z.string().optional(),
+  /** S3 access key id (required when BLOB_BACKEND=s3 unless using an instance role). */
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  /** S3 secret access key (pairs with S3_ACCESS_KEY_ID). */
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  /**
+   * Force path-style addressing (bucket in the path, not the host). Required by
+   * MinIO and most non-AWS S3 stores; leave false for real AWS S3.
+   */
+  S3_FORCE_PATH_STYLE: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
 
   // ---- Source credential encryption ----
   /**

@@ -294,7 +294,7 @@ async function main(): Promise<void> {
   }
   if (cfg.BLOB_BACKEND === "memory" && cfg.NODE_ENV === "production") {
     throw new Error(
-      "BLOB_BACKEND=memory is not allowed in NODE_ENV=production — set BLOB_BACKEND=azure",
+      "BLOB_BACKEND=memory is not allowed in NODE_ENV=production — set BLOB_BACKEND=azure or BLOB_BACKEND=s3",
     );
   }
 
@@ -314,7 +314,7 @@ async function main(): Promise<void> {
     revocation: new RedisRevocationStore(redis),
   });
 
-  // -- blob adapter — azure in production, memory in local dev ---
+  // -- blob adapter — azure or s3 in production, memory in local dev ---
   const blob = createBlobAdapter({
     backend: cfg.BLOB_BACKEND,
     container: cfg.BLOB_CONTAINER,
@@ -324,6 +324,13 @@ async function main(): Promise<void> {
     ...(cfg.AZURE_BLOB_ACCOUNT_KEY !== undefined
       ? { azureAccountKey: cfg.AZURE_BLOB_ACCOUNT_KEY }
       : {}),
+    ...(cfg.S3_ENDPOINT !== undefined ? { s3Endpoint: cfg.S3_ENDPOINT } : {}),
+    ...(cfg.S3_REGION !== undefined ? { s3Region: cfg.S3_REGION } : {}),
+    ...(cfg.S3_ACCESS_KEY_ID !== undefined ? { s3AccessKeyId: cfg.S3_ACCESS_KEY_ID } : {}),
+    ...(cfg.S3_SECRET_ACCESS_KEY !== undefined
+      ? { s3SecretAccessKey: cfg.S3_SECRET_ACCESS_KEY }
+      : {}),
+    s3ForcePathStyle: cfg.S3_FORCE_PATH_STYLE,
   });
 
   // -- layer deps objects ---------------------------------------------
@@ -1479,7 +1486,12 @@ async function main(): Promise<void> {
           const hash = contentHash(content);
 
           // ── Idempotency: same content hash already active and on-chain ──
-          type ExistingRow = { id: string; version: number; onchain_tx: string; onchain_version: number };
+          type ExistingRow = {
+            id: string;
+            version: number;
+            onchain_tx: string;
+            onchain_version: number;
+          };
           const existingReg = await withTenantScope(pool, req.principal.tenantId, async (c) => {
             const res = await c.query<ExistingRow>(
               `SELECT id, version, onchain_tx, onchain_version FROM policies
@@ -1535,10 +1547,7 @@ async function main(): Promise<void> {
           let onchainPolicyVersion: number | undefined;
           if (policyRegistrar !== undefined) {
             try {
-              const reg = await policyRegistrar.registerPolicy(
-                req.principal.tenantId,
-                hash,
-              );
+              const reg = await policyRegistrar.registerPolicy(req.principal.tenantId, hash);
               onchainPolicyTx = reg.tx_hash;
               onchainPolicyVersion = reg.version;
               await withTenantScope(pool, req.principal.tenantId, async (c) => {
