@@ -75,6 +75,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+!.env.prod.example
 # Bare `env` / `env.*` reference files at the repo root — kept local; the
 # canonical pattern is `.env` / `.env.example` (above). A real Brain `env`
 # file holds live API + EVM keys and must NOT be committed even by accident.

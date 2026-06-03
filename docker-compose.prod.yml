@@ -1,0 +1,235 @@
+# Brain production-mode stack for a single VM (testnet dev-live, Base Sepolia).
+#
+# Boots the API in NODE_ENV=production with all four surfaces, real on-chain
+# settlement (BRAIN_BASE_CHAIN_ID=84532), an S3-compatible blob store (MinIO,
+# no Azure dependency), and the production role model (RLS enforced). Unlike
+# docker-compose.dev.yml this uses the built runtime image (no bind mounts, no
+# watch) and applies the brain_app / brain_privileged / brain_wiki_reader role
+# split that the production boot fences require.
+#
+#   1. cp .env.prod.example .env.prod   and fill it in (DB/MinIO passwords +
+#      the C-series secrets: AUTH_JWKS_URL, BRAIN_SESSION_KEY, BASE_RPC_URL, …)
+#   2. docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+#      (add `--profile agents` to also start the Python reasoning agents)
+#
+# IMPORTANT: pass `--env-file .env.prod`. Compose reads ${VAR} interpolation
+# (the DB/MinIO passwords woven into the connection URLs below) from the
+# --env-file / ./.env, NOT from a service's `env_file:` entry. Using one file
+# for both keeps the role passwords and the URLs that reference them in sync.
+# Every ${VAR:-default} has a testnet default, so the stack still boots with no
+# file — but override every password before exposing the host.
+#
+# Boot order is enforced by depends_on conditions:
+#   postgres healthy → migrate (owner role, creates tables) completed
+#                     → db-roles (creates the 3 app roles, FORCE RLS) completed
+#   minio up → minio-setup (creates the bucket) completed
+#   all of the above + redis healthy → api
+#
+# Connection URLs are composed from passwords supplied via compose interpolation
+# (the top-level ./.env file or the shell), with testnet-friendly defaults so the
+# stack boots out-of-the-box on a fresh VM. Override every *_DB_PASSWORD and the
+# MinIO root credentials before exposing the host.
+
+name: brain-prod
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: brain-prod-postgres
+    restart: unless-stopped
+    environment:
+      # The bootstrap superuser/owner. migrate connects as this role; the app
+      # connects as the lower-privilege roles created by the db-roles step.
+      POSTGRES_USER: brain
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-brain}
+      POSTGRES_DB: brain
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brain -d brain"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    container_name: brain-prod-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    # S3-compatible object store — keeps the blob backend off Azure for a
+    # self-contained single-VM deploy (BLOB_BACKEND=s3).
+    image: minio/minio:latest
+    container_name: brain-prod-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-brainminio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-brainminio}
+    volumes:
+      - minio-data:/data
+
+  # One-shot: wait for MinIO, then create the artifacts bucket. Doubles as the
+  # readiness gate for the api (minio's own image has no reliable healthcheck
+  # binary across releases, so we gate on this completing instead).
+  minio-setup:
+    image: minio/mc:latest
+    container_name: brain-prod-minio-setup
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-brainminio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-brainminio}
+      BLOB_CONTAINER: ${BLOB_CONTAINER:-brain-artifacts}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; do
+          echo "waiting for minio..."; sleep 2;
+        done
+        mc mb --ignore-existing "local/$$BLOB_CONTAINER"
+        echo "bucket $$BLOB_CONTAINER ready"
+    restart: "no"
+
+  # One-shot: apply every services/*/migrations/*.sql as the owner role. The
+  # runtime image carries both tools/migrate/dist and the migration SQL files
+  # (see Dockerfile), so it is self-contained — no bind mount needed.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brain-core:${BRAIN_IMAGE_TAG:-prod}
+    container_name: brain-prod-migrate
+    command: ["node", "tools/migrate/dist/cli.js", "up"]
+    environment:
+      DATABASE_URL: postgres://brain:${POSTGRES_PASSWORD:-brain}@postgres:5432/brain
+      DATABASE_SSL: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # One-shot: create the three application roles and FORCE RLS on tenant tables.
+  # Runs AFTER migrate (the FORCE-RLS sweep only sees tables that already exist)
+  # and uses the postgres image purely for its psql client. Idempotent — safe to
+  # re-run across restarts (see infra/db-roles.sql).
+  db-roles:
+    image: pgvector/pgvector:pg16
+    container_name: brain-prod-db-roles
+    volumes:
+      - ./infra/db-roles.sql:/db-roles.sql:ro
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-brain}
+    # Role passwords are interpolated by compose at parse time (the ${..} form),
+    # matching the URLs the api builds below so the credentials line up.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        psql -v ON_ERROR_STOP=1 \
+          -h postgres -U brain -d brain \
+          -v brain_app_password="${BRAIN_APP_DB_PASSWORD:-brain_app}" \
+          -v brain_privileged_password="${BRAIN_PRIVILEGED_DB_PASSWORD:-brain_privileged}" \
+          -v brain_wiki_reader_password="${BRAIN_WIKI_DB_PASSWORD:-brain_wiki_reader}" \
+          -f /db-roles.sql
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brain-core:${BRAIN_IMAGE_TAG:-prod}
+    container_name: brain-prod-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    # Operator-supplied secrets (C-series): AUTH_JWKS_URL/ISSUER/AUDIENCE,
+    # BRAIN_SOURCE_CREDENTIAL_KEY, BRAIN_SESSION_KEY, BASE_RPC_URL,
+    # BRAIN_ONCHAIN_SMART_ACCOUNT, AUDIT_PUBLISHER_KEY, AUDIT_ANCHOR_ADDRESS,
+    # contract addresses, OPENAI_API_KEY, etc. See .env.prod.example.
+    env_file:
+      - path: .env.prod
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Base Sepolia testnet (scope-defining).
+      BRAIN_BASE_CHAIN_ID: "84532"
+      # --- datastores (in-network; no TLS on the compose bridge) ---
+      DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:-brain_app}@postgres:5432/brain
+      DATABASE_PRIVILEGED_URL: postgres://brain_privileged:${BRAIN_PRIVILEGED_DB_PASSWORD:-brain_privileged}@postgres:5432/brain
+      BRAIN_WIKI_DB_URL: postgres://brain_wiki_reader:${BRAIN_WIKI_DB_PASSWORD:-brain_wiki_reader}@postgres:5432/brain
+      DATABASE_SSL: disable
+      REDIS_URL: redis://redis:6379
+      # --- blob store (S3 / MinIO) ---
+      BLOB_BACKEND: s3
+      BLOB_CONTAINER: ${BLOB_CONTAINER:-brain-artifacts}
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-brainminio}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-brainminio}
+      S3_FORCE_PATH_STYLE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      db-roles:
+        condition: service_completed_successfully
+      minio-setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+
+  # Python reasoning agents. Off by default — enable with `--profile agents`.
+  # Requires OPENAI_API_KEY, BRAIN_API_TOKEN, and BRAIN_AGENTS_INBOUND_SECRET
+  # in .env.prod (the image now fails fast at boot if these are unset, see
+  # services/agents/brain_agents/server.py).
+  agents:
+    profiles: ["agents"]
+    build:
+      context: services/agents
+      dockerfile: Dockerfile
+    container_name: brain-prod-agents
+    restart: unless-stopped
+    env_file:
+      - path: .env.prod
+        required: false
+    environment:
+      BRAIN_ENV: production
+      NODE_ENV: production
+      BRAIN_API_BASE_URL: http://api:3000
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pg-data:
+  redis-data:
+  minio-data:

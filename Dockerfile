@@ -102,6 +102,18 @@ COPY --from=builder /app/services/audit/dist services/audit/dist
 COPY --from=builder /app/clients/sdk/dist clients/sdk/dist
 COPY --from=builder /app/tools/migrate/dist tools/migrate/dist
 
+# Migration SQL files. The migrate CLI discovers services/<svc>/migrations/*.sql
+# relative to the repo root (cwd). Without these the same runtime image cannot
+# double as the one-shot `migrate` service (docker-compose.prod.yml), since the
+# build stage's `COPY . .` does not survive into this stage.
+COPY --from=builder /app/services/api/migrations services/api/migrations
+COPY --from=builder /app/services/audit/migrations services/audit/migrations
+COPY --from=builder /app/services/execution/migrations services/execution/migrations
+COPY --from=builder /app/services/ledger/migrations services/ledger/migrations
+COPY --from=builder /app/services/policy/migrations services/policy/migrations
+COPY --from=builder /app/services/raw/migrations services/raw/migrations
+COPY --from=builder /app/services/wiki/migrations services/wiki/migrations
+
 EXPOSE 3000
 
 USER node
