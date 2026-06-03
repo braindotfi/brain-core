@@ -58,17 +58,39 @@ describe("ActionResolver", () => {
     expect(r.status).toBe("missing_action");
   });
 
-  it("skips the policy hook when no tenant is supplied (pre-H-23 callers)", async () => {
+  it("consults the policy hook even when no tenant is supplied (no bypass)", async () => {
+    // Omitting the tenant must NOT skip the allowlist — that would let a caller
+    // bypass policy by leaving the tenant off. The hook is invoked with an
+    // undefined tenant; here it denies, so resolution fails closed. (The
+    // production wiring is what grants the pre-H-23 "no tenant ⇒ allow"
+    // allowance — see services/api/src/main.ts — not the resolver.)
     const guarded = new ActionResolver({
       classifier: new RulesIntentClassifier(),
-      isActionAllowed: () => false, // would deny everything if consulted
+      isActionAllowed: (tenantId) => tenantId !== undefined, // deny when no tenant
     });
     const r = await guarded.resolve({
       definition: def({}),
       actions,
       context: { [REQUESTED_ACTION_KEY]: "send" },
     });
-    expect(r).toEqual({ status: "resolved", action: "send", source: "explicit" });
+    expect(r.status).toBe("missing_action");
+  });
+
+  it("invokes the policy hook with the undefined tenant verbatim", async () => {
+    const seen: Array<string | undefined> = [];
+    const guarded = new ActionResolver({
+      classifier: new RulesIntentClassifier(),
+      isActionAllowed: (tenantId) => {
+        seen.push(tenantId);
+        return true;
+      },
+    });
+    await guarded.resolve({
+      definition: def({}),
+      actions,
+      context: { [REQUESTED_ACTION_KEY]: "send" },
+    });
+    expect(seen).toEqual([undefined]);
   });
 
   it("resolves via event_action_map", async () => {

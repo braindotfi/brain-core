@@ -980,6 +980,9 @@ async function main(): Promise<void> {
   const actionResolver = new ActionResolver({
     classifier: agentClassifier,
     isActionAllowed: async (tenantId, agentKey, action) => {
+      if (tenantId === undefined) {
+        return true; // no tenant ⇒ no signed policy to enforce (pre-H-23)
+      }
       const doc = await policyService.getActiveDocument({
         tenantId,
         actor: "system:action-resolver",

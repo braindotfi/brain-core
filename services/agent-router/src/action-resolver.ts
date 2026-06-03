@@ -39,10 +39,12 @@ export interface ActionResolutionInput {
   readonly context?: Record<string, unknown>;
   /**
    * Tenant whose signed policy governs the per-agent action allowlist (H-23).
-   * The `isActionAllowed` hook is consulted only when this is present, so the
-   * allowlist always evaluates against the REQUESTING tenant's active policy
-   * (never a boot-time closure over one tenant's policy). Absent ⇒ no allowlist
-   * check (unit tests / callers that don't supply a tenant).
+   * Threaded to the `isActionAllowed` hook so the allowlist always evaluates
+   * against the REQUESTING tenant's active policy (never a boot-time closure
+   * over one tenant's policy). The hook is consulted whenever it is configured
+   * — a missing tenant does NOT skip the check (that would let a caller bypass
+   * policy by omitting the tenant); instead the hook receives `undefined` and
+   * the wiring decides (no tenant ⇒ no policy ⇒ allow, same as pre-H-23).
    */
   readonly tenantId?: string;
 }
@@ -56,11 +58,14 @@ export interface ActionResolverDeps {
    * per-agent allowlist (`PolicyDocument.agent_actions`; see `allowedActionsFor`
    * in @brain/policy). Receives the requesting tenant's id so the wiring loads
    * THAT tenant's active signed policy per call (H-23) rather than closing over
-   * one tenant's policy at boot. When absent (unit tests, or no tenant on the
-   * input), an explicit action is accepted as long as the agent offers it.
+   * one tenant's policy at boot. Consulted whenever configured; when absent the
+   * resolver accepts an explicit action the agent offers. `tenantId` may be
+   * undefined (callers that don't supply one) — the wiring treats that as "no
+   * policy to enforce ⇒ allow", but a configured hook is still always invoked
+   * so a deny decision can never be skipped by omitting the tenant.
    */
   readonly isActionAllowed?: (
-    tenantId: string,
+    tenantId: string | undefined,
     agentKey: string,
     action: string,
   ) => boolean | Promise<boolean>;
@@ -87,7 +92,7 @@ export class ActionResolver {
           reason: `requested action "${requested}" is not offered by ${agentKey}`,
         };
       }
-      if (this.deps.isActionAllowed !== undefined && input.tenantId !== undefined) {
+      if (this.deps.isActionAllowed !== undefined) {
         const allowed = await this.deps.isActionAllowed(input.tenantId, agentKey, requested);
         if (!allowed) {
           return {
