@@ -7,7 +7,7 @@ FROM node:22-slim AS dev
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
 WORKDIR /app
 # Overridden per-service by docker-compose.dev.yml; sane default = run the API in watch mode.
 CMD ["pnpm", "-C", "services/api", "run", "dev"]
@@ -15,7 +15,7 @@ CMD ["pnpm", "-C", "services/api", "run", "dev"]
 # ---- build stage ----
 FROM node:22-slim AS builder
 
-RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
 
 WORKDIR /app
 
@@ -52,7 +52,7 @@ RUN pnpm run build
 # ---- runtime stage ----
 FROM node:22-slim AS runtime
 
-RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
 
 WORKDIR /app
 

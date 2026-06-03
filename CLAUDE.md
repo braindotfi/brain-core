@@ -158,7 +158,7 @@ pnpm -C tools/plaid-sandbox run start       # drive Plaid sandbox flows (fire we
 
 ## Toolchain Prerequisites & First-Time Setup
 
-- Node 22 LTS (`nvm use`), pnpm ≥9 (`corepack enable`), Python 3.12 via `uv`, Docker Compose v2, Foundry (`foundryup`), Terraform 1.9+.
+- Node 22 LTS (`nvm use`), pnpm ≥10 (`corepack enable`), Python 3.12 via `uv`, Docker Compose v2, Foundry (`foundryup`), Terraform 1.9+.
 
 First-time setup order:
 
