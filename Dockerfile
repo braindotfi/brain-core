@@ -49,6 +49,10 @@ COPY . .
 
 RUN pnpm run build
 
+# tools/migrate dist is copied into the runtime image (migration runner) but is
+# excluded from the `pnpm run build` service filter; build it so the COPY finds it.
+RUN pnpm -C tools/migrate run build
+
 # ---- runtime stage ----
 FROM node:22-slim AS runtime
 
