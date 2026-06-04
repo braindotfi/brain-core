@@ -94,6 +94,12 @@ RUN pnpm install --frozen-lockfile --prod
 
 # Built artifacts from builder
 COPY --from=builder /app/schemas/dist schemas/dist
+# Raw entity/relation JSON Schemas — the Wiki loadRegistry() reads these from
+# schemas/{entity,relation}/*.schema.json at boot (services/wiki/src/schemas.ts);
+# they live in the schemas package source, NOT in schemas/dist, so the runtime
+# image must carry them or the API crashes at startup.
+COPY --from=builder /app/schemas/entity schemas/entity
+COPY --from=builder /app/schemas/relation schemas/relation
 COPY --from=builder /app/shared/dist shared/dist
 COPY --from=builder /app/services/api/dist services/api/dist
 COPY --from=builder /app/services/raw/dist services/raw/dist
