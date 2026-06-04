@@ -206,6 +206,16 @@ const OPERATING_BALANCE = "1687200.00";
 const RESERVE_BALANCE = "1200000.00";
 const OPERATING_BUFFER_MIN = "250000.00";
 
+// Demo on-chain settlement recipient. Approved vendors carry this as an ETH
+// `aliases` entry so the onchain_base rail's param resolver (main.ts) finds a
+// transfer target; the AP "marquee" payment settles a tiny symbolic ETH amount
+// here on Base Sepolia (Phase D). It MUST equal the address the BrainSmartAccount
+// session key is granted to send to (allowedTargets), set via the
+// BRAIN_DEMO_ONCHAIN_RECIPIENT env var — otherwise executeViaSessionKey reverts
+// with TargetNotAllowed. The amount is symbolic (the USD figure is the business
+// amount; the tx is settlement-rail proof). Fallback is the testnet demo holder.
+const DEMO_SETTLEMENT_RECIPIENT_FALLBACK = "0x41D4ce9D9Fe968Ca1230bDc296B28fdc9AA6FF6E";
+
 // ---------------------------------------------------------------------------
 
 export interface BrainSaasSeed {
@@ -241,6 +251,8 @@ export async function seedBrainSaasDemo(
   const ctx: ServiceCallContext = { tenantId, actor };
   const sourceIds = [newRawArtifactId()];
   const evidenceIds = [newRawParsedId()];
+  const settlementRecipient =
+    process.env["BRAIN_DEMO_ONCHAIN_RECIPIENT"] ?? DEMO_SETTLEMENT_RECIPIENT_FALLBACK;
 
   // ---------- Counterparties (vendors + customers) ----------
   const vendors: Record<string, CounterpartyRow> = {};
@@ -250,6 +262,10 @@ export async function seedBrainSaasDemo(
       type: "vendor",
       risk_level: v.approved ? "low" : "high",
       verified_status: v.approved ? "document_verified" : "unverified",
+      // Approved vendors carry the demo ETH settlement target so the onchain_base
+      // rail can dispatch a real Base Sepolia transfer (Phase D). Unapproved
+      // vendors get none — they're rejected by policy and never settle.
+      aliases: v.approved ? [settlementRecipient] : [],
       // Non-native AP fields live on the counterparty (v0.3: truth in Ledger).
       metadata: { scenario: "ap", monthly_ceiling: v.monthly_ceiling, approved: v.approved },
       source_ids: sourceIds,
@@ -285,6 +301,21 @@ export async function seedBrainSaasDemo(
     });
     customers[c.key] = row;
   }
+
+  // The counterparty INSERT trigger (migration 0027) stamps a payment-instruction
+  // history row at now() for every counterparty, which the §6 gate check 11.5
+  // rule 6 (destination_recently_changed) reads as a 24h fraud signal. But these
+  // are long-established demo vendors (see the tenure metadata), not a recent
+  // account swap — so backdate the seed-time rows out of the fraud window. A real
+  // destination change during a run still stamps now() and is still flagged.
+  await withTenantScope(pool, tenantId, async (c) => {
+    await c.query(
+      `UPDATE ledger_counterparty_payment_instructions
+         SET changed_at = now() - interval '30 days'
+       WHERE owner_id = $1`,
+      [tenantId],
+    );
+  });
 
   // ---------- Accounts (operating + reserve, optional onchain) ----------
   const operating = (
