@@ -445,7 +445,8 @@ function parseAction(raw: unknown): Action {
     kind !== "outbound_payment" &&
     kind !== "inbound_payment" &&
     kind !== "ledger_write" &&
-    kind !== "onchain_tx"
+    kind !== "onchain_tx" &&
+    kind !== "agent_action"
   ) {
     throw brainError("request_body_invalid", "action.kind invalid");
   }
