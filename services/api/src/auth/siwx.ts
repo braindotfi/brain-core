@@ -319,12 +319,20 @@ function scopesForRole(role: string): Scope[] {
     case "anomaly":
       return ["ledger:read", "wiki:read"];
     case "partner":
+      // Integration/demo partner: the full propose→approve→execute payment
+      // lifecycle plus policy + audit reads, so an external app (e.g. the
+      // BrainSaaS Playground) can drive and prove a scenario end-to-end.
+      // Does NOT include audit:admin.
       return [
         "ledger:read",
         "wiki:read",
         "raw:write",
+        "policy:read",
         "payment_intent:propose",
+        "payment_intent:approve",
+        "payment_intent:execute",
         "execution:propose",
+        "audit:read",
       ];
     default:
       // dev / unknown — read-heavy, no execution
