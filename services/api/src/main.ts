@@ -46,6 +46,9 @@ import {
   isTenantCategory,
   newTokenId,
   newPolicyId,
+  newTenantId,
+  newUserId,
+  InMemoryAuditEmitter,
   type ServiceCallContext,
   type TenantCategory,
 } from "@brain/shared";
@@ -191,6 +194,8 @@ import { assertDbIsolationFences } from "./composition/db-isolation.js";
 import { assertEscrowAuditApproved } from "./composition/escrow-audit-gate.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
+import { seedBrainSaasDemo } from "./demo/brainsaas-seed.js";
+import { YIELD_VENUES } from "./demo/yield-venues.js";
 
 import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps, PolicyReader, AgentReader, PolicyView } from "@brain/wiki";
@@ -1612,6 +1617,91 @@ async function main(): Promise<void> {
             message: "anchor published — check GET /v1/audit/anchor/latest",
           };
         });
+      }
+
+      // ── GET /v1/reference/yield-venues ───────────────────────────────
+      // Public DeFi yield-venue catalog — same for every tenant, no truth or
+      // tenant coupling, so it is a static reference module served always-on
+      // (outside BRAIN_DEMO_MODE and the provisioning flag). Consumed by the
+      // BrainSaaS Treasury scenario to split idle cash across venues.
+      v1.get(
+        "/reference/yield-venues",
+        { config: { skipAuth: true, rateLimit: { max: 60, timeWindow: "1 minute" } } },
+        async (_req, reply) => {
+          reply.status(200);
+          return { venues: YIELD_VENUES, chain: "base-sepolia" };
+        },
+      );
+
+      // ── POST /v1/demo/provision-run ──────────────────────────────────
+      // The BrainSaaS "Brain Playground" fresh-tenant-per-run provisioner.
+      // Creates a brand-new tenant, seeds the 3-scenario business into it
+      // (tenant-scoped via the app role, RLS on → each run is isolated, so the
+      // §6 gate's no-duplicate-payment check never collides across runs), and
+      // returns a scoped agent JWT the demo runners use to drive one full
+      // policy → payment-intent → audit-anchor flow.
+      //
+      // Prod-capable: gated by BRAIN_DEMO_PROVISION_ENABLED, NOT BRAIN_DEMO_MODE
+      // (which throws in production). Enable only on the testnet prod stack.
+      if (cfg.BRAIN_DEMO_PROVISION_ENABLED) {
+        v1.post(
+          "/demo/provision-run",
+          { config: { skipAuth: true, rateLimit: { max: 10, timeWindow: "1 minute" } } },
+          async (_req, reply) => {
+            const PROVISION_TTL_S = 30 * 60; // 30 min — long enough for one run.
+            const tenantId = newTenantId();
+            const actor = newUserId();
+
+            // Off-the-record seed: provisioning must not pollute the tenant's
+            // audit chain — only the run's actions should anchor.
+            const seed = await seedBrainSaasDemo(pool, new InMemoryAuditEmitter(), tenantId, actor);
+
+            // The token acts AS the seeded payment agent (type "agent") so the
+            // §6 gate's agent-identity check passes for on-chain settlement
+            // (Phase D). Broad scope set incl. audit:admin for the anchor-publish
+            // path (B2 decision: SIWX `partner` stays least-privilege; this demo
+            // token carries the elevated scope instead).
+            const token = await siwxSigner.sign({
+              id: seed.agentId,
+              type: "agent",
+              tenantId,
+              tokenId: newTokenId(),
+              expiresAt: Math.floor(Date.now() / 1000) + PROVISION_TTL_S,
+              scopes: [
+                "ledger:read",
+                "wiki:read",
+                "raw:read",
+                "raw:write",
+                "policy:read",
+                "policy:write",
+                "execution:read",
+                "execution:propose",
+                "payment_intent:propose",
+                "payment_intent:approve",
+                "payment_intent:execute",
+                "audit:read",
+                "audit:admin",
+              ],
+            });
+
+            reply.status(201);
+            return {
+              tenant_id: tenantId,
+              agent_id: seed.agentId,
+              actor,
+              token,
+              expires_in: PROVISION_TTL_S,
+              scenario: {
+                vendors: seed.vendors,
+                customers: seed.customers,
+                accounts: seed.accounts,
+                ap_invoices: seed.apInvoices,
+                ar_invoices: seed.arInvoices,
+                policy_id: seed.policyId,
+              },
+            };
+          },
+        );
       }
     },
     { prefix: "/v1" },

@@ -103,6 +103,18 @@ const envSchema = z.object({
     .transform((v) => v === "true")
     .default("false"),
 
+  /**
+   * Set to "true" to expose POST /v1/demo/provision-run — the BrainSaaS
+   * "Brain Playground" fresh-tenant-per-run provisioner. Unlike BRAIN_DEMO_MODE
+   * (which throws in production), this flag is prod-capable: provisioning seeds
+   * real tenant-scoped data via the app role (RLS on) and mints a scoped JWT, so
+   * it is safe to enable on the testnet prod stack. Default OFF.
+   */
+  BRAIN_DEMO_PROVISION_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
+
   // ---- Self-serve onboarding (RFC 0002) ----
   /**
    * Set to "true" to expose the public self-serve signup surface
