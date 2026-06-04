@@ -45,6 +45,11 @@ services:
       POSTGRES_DB: brain
     volumes:
       - pg-data:/var/lib/postgresql/data
+      # Create required extensions (pgcrypto for digest()/content-addressing,
+      # vector for the Wiki index) on first init — runs before migrations. Only
+      # executes on an empty data dir, so existing volumes need the extensions
+      # created manually (CREATE EXTENSION IF NOT EXISTS ...).
+      - ./tools/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U brain -d brain"]
       interval: 3s
