@@ -166,6 +166,21 @@ export async function registerLedgerRoutes(
   );
 
   app.get(
+    "/ledger/counterparties/:counterparty_id",
+    async (request: FastifyRequest<{ Params: { counterparty_id: string } }>, reply) => {
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, READ);
+      if (!isBrainId(request.params.counterparty_id, "cp")) {
+        throw brainError("request_params_invalid", "malformed counterparty_id");
+      }
+      const result = await service.findCounterpartyById(ctx, request.params.counterparty_id);
+      if (result === null) throw brainError("ledger_row_not_found", "no such counterparty");
+      reply.status(200);
+      return result;
+    },
+  );
+
+  app.get(
     "/ledger/obligations",
     async (
       request: FastifyRequest<{
