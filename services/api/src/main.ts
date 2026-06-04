@@ -1633,13 +1633,18 @@ async function main(): Promise<void> {
       const now = new Date();
       const periodStart = new Date(now.getTime() - intervalMs);
       try {
-        const res = await pool.query<{ tenant_id: string }>(
+        // Cross-tenant sweep: MUST use the privileged (BYPASSRLS) pool. The
+        // main pool connects as brain_app under FORCE RLS, so without a tenant
+        // scope this DISTINCT returns zero rows and the scheduled anchor would
+        // silently never fire in production (the manual endpoint works because
+        // it is request-scoped to a tenant).
+        const res = await privilegedPool.query<{ tenant_id: string }>(
           "SELECT DISTINCT tenant_id FROM audit_events WHERE created_at >= $1",
           [periodStart],
         );
         for (const row of res.rows) {
           try {
-            await publishAnchor(pool, anchorBroadcaster, {
+            await publishAnchor(privilegedPool, anchorBroadcaster, {
               tenantId: row.tenant_id,
               periodStart,
               periodEnd: now,
