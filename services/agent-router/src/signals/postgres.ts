@@ -178,7 +178,14 @@ export class PostgresSignalsProvider {
            FROM ledger_payment_intents
            WHERE created_by_agent_id = $1
          ) AS pi
-         FULL OUTER JOIN (
+         -- pi and pd are COUNT aggregates (always exactly one row), so CROSS
+         -- JOIN gives the single combined counts row; LEFT JOIN attaches the
+         -- agent's state (NULL if unregistered). The previous FULL OUTER JOIN
+         -- ... ON true / ON a.id = $1 used constant (non-equi) conditions, which
+         -- Postgres rejects ("FULL JOIN is only supported with merge-joinable or
+         -- hash-joinable join conditions") — it broke every routing that reads
+         -- agent reputation.
+         CROSS JOIN (
            SELECT COUNT(*) AS rejected
            FROM policy_decisions
            WHERE outcome = 'reject'
@@ -187,8 +194,8 @@ export class PostgresSignalsProvider {
                SELECT id FROM ledger_payment_intents
                 WHERE created_by_agent_id = $1
              )
-         ) AS pd ON true
-         FULL OUTER JOIN agents a ON a.id = $1`,
+         ) AS pd
+         LEFT JOIN agents a ON a.id = $1`,
         [agentKey],
       );
       return rows[0] ?? { total: "0", executed: "0", rejected: "0", state: null };
