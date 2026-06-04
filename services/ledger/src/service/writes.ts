@@ -84,6 +84,8 @@ export interface UpsertCounterpartyArgs {
   risk_level?: "low" | "medium" | "high" | "sanctioned";
   verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared";
   aliases?: string[];
+  /** Off-chain structured context with no dedicated column (defaults to {}). */
+  metadata?: Record<string, unknown>;
   source_ids: string[];
   evidence_ids: string[];
   provenance: string;
@@ -120,8 +122,9 @@ export async function upsertCounterpartyRow(
                 evidence_ids = $3,
                 risk_level = COALESCE($4, risk_level),
                 verified_status = COALESCE($5, verified_status),
+                metadata = COALESCE($6::jsonb, metadata),
                 updated_at = now()
-          WHERE id = $6
+          WHERE id = $7
           RETURNING *`,
         [
           aliases,
@@ -129,6 +132,7 @@ export async function upsertCounterpartyRow(
           evidenceIds,
           args.risk_level ?? null,
           args.verified_status ?? null,
+          args.metadata !== undefined ? JSON.stringify(args.metadata) : null,
           existing.id,
         ],
       );
@@ -139,8 +143,8 @@ export async function upsertCounterpartyRow(
       `INSERT INTO ledger_counterparties
          (id, owner_id, name, normalized_name, type, risk_level, verified_status,
           aliases, linked_accounts, source_ids, evidence_ids, provenance, confidence, agent_id,
-          onchain_address)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,ARRAY[]::TEXT[],$9,$10,$11,$12,$13,$14)
+          onchain_address, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,ARRAY[]::TEXT[],$9,$10,$11,$12,$13,$14,$15::jsonb)
        RETURNING *`,
       [
         id,
@@ -157,6 +161,7 @@ export async function upsertCounterpartyRow(
         conf,
         args.agent_id ?? null,
         args.onchain_address ?? null,
+        JSON.stringify(args.metadata ?? {}),
       ],
     );
     return { row: rows[0]!, created: true };

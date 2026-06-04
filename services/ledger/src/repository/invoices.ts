@@ -12,6 +12,7 @@ export interface InvoiceRow extends LedgerRowCommon {
   status: string;
   linked_document_ids: string[];
   linked_transaction_ids: string[];
+  metadata: Record<string, unknown>;
 }
 
 export async function findInvoiceById(

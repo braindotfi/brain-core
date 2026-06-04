@@ -13,6 +13,9 @@ export interface CounterpartyRow extends LedgerRowCommon {
   agent_id: string | null;
   /** Payee on-chain (EVM) address for x402/on-chain settlement; null off-chain (RFC 0001 §6.1). */
   onchain_address: string | null;
+  /** Tenant-scoped, off-chain structured context with no dedicated column
+   *  (e.g. demo vendor ceiling / customer enrichment). Defaults to {}. */
+  metadata: Record<string, unknown>;
 }
 
 export interface CounterpartyListFilters {

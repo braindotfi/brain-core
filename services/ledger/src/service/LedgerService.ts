@@ -386,6 +386,7 @@ function serializeCounterparty(row: CounterpartyRow): Counterparty {
     linked_accounts: row.linked_accounts,
     agent_id: row.agent_id,
     onchain_address: row.onchain_address,
+    metadata: row.metadata,
   };
 }
 
@@ -417,6 +418,7 @@ function serializeInvoice(row: InvoiceRow): Invoice {
     status: row.status as Invoice["status"],
     linked_document_ids: row.linked_document_ids,
     linked_transaction_ids: row.linked_transaction_ids,
+    metadata: row.metadata,
   };
 }
 

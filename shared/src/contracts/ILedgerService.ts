@@ -92,6 +92,8 @@ export interface Counterparty extends LedgerCommonFields {
   agent_id: string | null;
   /** Payee on-chain (EVM) address for x402/on-chain settlement (RFC 0001 §6.1); null off-chain. */
   onchain_address: string | null;
+  /** Tenant-scoped, off-chain structured context with no dedicated column. Defaults to {}. */
+  metadata: Record<string, unknown>;
 }
 
 export interface Obligation extends LedgerCommonFields {
@@ -165,6 +167,8 @@ export interface Invoice extends LedgerCommonFields {
   status: "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled" | "disputed";
   linked_document_ids: string[];
   linked_transaction_ids: string[];
+  /** Tenant-scoped, off-chain structured context with no dedicated column. Defaults to {}. */
+  metadata: Record<string, unknown>;
 }
 
 // ---------- Filter types --------------------------------------------------
