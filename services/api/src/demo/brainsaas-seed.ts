@@ -342,11 +342,16 @@ export async function seedBrainSaasDemo(
   }
 
   // Default AP funding account — the P0.5 invoice-shortcut resolver needs one.
-  await pool.query(
-    `INSERT INTO tenants (id, default_ap_account_id) VALUES ($1, $2)
-       ON CONFLICT (id) DO UPDATE SET default_ap_account_id = EXCLUDED.default_ap_account_id`,
-    [tenantId, operating.id],
-  );
+  // Tenant-scoped: the `tenants` RLS write policy is WITH CHECK (id =
+  // app.tenant_id), so the row must be inserted inside the tenant's scope (the
+  // app role has RLS forced on — a raw pool.query would violate the policy).
+  await withTenantScope(pool, tenantId, async (c) => {
+    await c.query(
+      `INSERT INTO tenants (id, default_ap_account_id) VALUES ($1, $2)
+         ON CONFLICT (id) DO UPDATE SET default_ap_account_id = EXCLUDED.default_ap_account_id`,
+      [tenantId, operating.id],
+    );
+  });
 
   // ---------- Invoices (AP inbox + AR receivables) + per-AP-invoice docs ----------
   const apInvoices: Record<string, string> = {};
