@@ -7,5 +7,9 @@
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "src/**/*.test.ts"],
-  "references": [{ "path": "../../shared" }, { "path": "../../services/ledger" }]
+  "references": [
+    { "path": "../../shared" },
+    { "path": "../../services/ledger" },
+    { "path": "../../services/api" }
+  ]
 }

@@ -9,3 +9,8 @@
  */
 
 export const SERVICE_NAME = "brain-api" as const;
+
+// BrainSaaS "Brain Playground" demo seed — re-exported so the
+// `brain-seed-brainsaas` CLI (tools/seed-golden-path) and the
+// POST /v1/demo/provision-run handler share one implementation.
+export { seedBrainSaasDemo, type BrainSaasSeed } from "./demo/brainsaas-seed.js";

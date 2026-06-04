@@ -20,6 +20,7 @@
     "seed:brainsaas": "node dist/cli-brainsaas.js"
   },
   "dependencies": {
+    "@brain/api": "workspace:*",
     "@brain/shared": "workspace:*",
     "@brain/ledger": "workspace:*",
     "pg": "^8.13.0"

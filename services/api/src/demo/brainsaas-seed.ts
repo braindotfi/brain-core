@@ -7,27 +7,28 @@
  * `BrainSaaS/artifacts/api-server/src/lib/brain/seed.ts` (now being deleted),
  * mapped onto real brain-core layers:
  *
- *   Ledger  — 6 vendor + 4 customer counterparties, 2 bank accounts
- *             (operating + reserve), 3 AP invoices (the "inbox"), 3 AR
- *             invoices (overdue + current) that drive computed
- *             outstanding/days-overdue.
- *   Wiki    — the scenario fields with no native ledger column: per-vendor
- *             monthly ceiling + approved flag, per-customer relationship
- *             enrichment (tenure / MRR / late history / anomaly), per-AP-invoice
- *             flags + PO, and the Treasury config (buffer + yield-venue
- *             catalog). Each fact carries its ledger id so the API resolver
- *             (Phase B) can look it up by counterparty / invoice.
- *   Policy  — one active policy whose rules express the AP / Treasury / AR
- *             behaviour the demo proves (approved≤$50k auto, approved>$50k
- *             confirm, unapproved reject, onchain + agent_action auto).
- *   Agent   — a registered Demo Payment Agent (onchain_address = the shared
- *             BrainSmartAccount when BRAIN_ONCHAIN_SMART_ACCOUNT is set).
+ *   Ledger    — 6 vendor + 4 customer counterparties, 2 bank accounts
+ *               (operating + reserve), 3 AP invoices (the "inbox"), 3 AR
+ *               invoices (overdue + current) that drive computed
+ *               outstanding/days-overdue.
+ *   Metadata  — the scenario fields with no native ledger column live in the
+ *               Ledger `metadata` JSONB (v0.3: truth lives in Ledger): per-vendor
+ *               monthly ceiling + approved flag on the counterparty, per-customer
+ *               relationship enrichment (tenure / MRR / late history / anomaly)
+ *               on the counterparty, per-AP-invoice flags + PO on the invoice.
+ *               The operating buffer is a Treasury *policy* parameter; the
+ *               yield-venue catalog is a global reference endpoint, not seeded.
+ *   Policy    — one active policy whose rules express the AP / Treasury / AR
+ *               behaviour the demo proves (approved≤$50k auto, approved>$50k
+ *               confirm, unapproved reject, onchain + agent_action auto).
+ *   Agent     — a registered Demo Payment Agent (onchain_address = the shared
+ *               BrainSmartAccount when BRAIN_ONCHAIN_SMART_ACCOUNT is set).
  *
  * Off-chain only: on-chain policy registration + settlement are layered on in
  * later phases (the demo's provision-run endpoint / the onchain_base rail).
- * Ledger writes go through the v0.3 write helpers; invoices, documents, wiki
- * facts, the policy and the agent use tenant-scoped SQL (no helper exists yet),
- * exactly as the golden-path seed does.
+ * Ledger writes go through the v0.3 write helpers; invoices, documents, the
+ * policy and the agent use tenant-scoped SQL (no helper exists yet), exactly as
+ * the golden-path seed does.
  */
 
 import { createHash } from "node:crypto";
@@ -168,8 +169,8 @@ interface ApInvoiceSpec {
   flags: string[];
 }
 
-/** The AP "inbox". PO is encoded in invoice_number (no native column) and
- *  surfaced as a Wiki fact alongside the document-analysis flags. */
+/** The AP "inbox". PO has no native column, so it is carried in the invoice
+ *  `metadata` alongside the document-analysis flags. */
 const AP_INVOICES: ApInvoiceSpec[] = [
   {
     vendorKey: "cloudops",
@@ -534,8 +535,7 @@ async function seedPolicy(
 
 async function seedAgent(pool: Pool, tenantId: string): Promise<string> {
   const smartAccount =
-    process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ??
-    "0x0000000000000000000000000000000000000000";
+    process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ?? "0x0000000000000000000000000000000000000000";
   const scopeHash = createHash("sha256").update(`${tenantId}:payment`).digest();
   const agentId = newAgentId();
   await withTenantScope(pool, tenantId, async (c) => {

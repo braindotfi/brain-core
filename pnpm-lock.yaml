@@ -810,6 +810,9 @@ importers:
 
   tools/seed-golden-path:
     dependencies:
+      '@brain/api':
+        specifier: workspace:*
+        version: link:../../services/api
       '@brain/ledger':
         specifier: workspace:*
         version: link:../../services/ledger

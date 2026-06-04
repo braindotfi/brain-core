@@ -22,7 +22,7 @@
 
 import { Pool } from "pg";
 import { InMemoryAuditEmitter } from "@brain/shared";
-import { seedBrainSaasDemo } from "./brainsaas.js";
+import { seedBrainSaasDemo } from "@brain/api";
 
 async function main(): Promise<number> {
   const dbUrl = process.env.DATABASE_URL;

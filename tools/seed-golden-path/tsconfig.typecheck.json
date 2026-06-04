@@ -8,7 +8,9 @@
       "@brain/shared": ["../../shared/src/index.ts"],
       "@brain/shared/*": ["../../shared/src/*.ts"],
       "@brain/ledger": ["../../services/ledger/src/index.ts"],
-      "@brain/ledger/*": ["../../services/ledger/src/*.ts"]
+      "@brain/ledger/*": ["../../services/ledger/src/*.ts"],
+      "@brain/api": ["../../services/api/src/index.ts"],
+      "@brain/api/*": ["../../services/api/src/*.ts"]
     }
   },
   "include": ["src/**/*.ts"]
