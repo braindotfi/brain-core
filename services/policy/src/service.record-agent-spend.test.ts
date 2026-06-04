@@ -78,7 +78,7 @@ function rule(when: PolicyRule["when"]): PolicyRule {
   return { id: "r1", applies_to: ["outbound_payment"], when, execute: "auto" };
 }
 
-const SPEND: CapturedInsert["window"] = "24h";
+const SPEND = "24h";
 
 describe("PolicyService.recordAgentSpend", () => {
   it("increments the union of the policy's spend and tx windows", async () => {

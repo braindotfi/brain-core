@@ -28,7 +28,7 @@ describe("jwks helpers", () => {
   it("toPublicJwk strips every private member and keeps the public ones", async () => {
     const priv = await generateSignKeyJwk();
     expect(priv.d).toBeDefined(); // sanity: the generated key really is private
-    const pub = toPublicJwk(priv) as Record<string, unknown>;
+    const pub = toPublicJwk(priv) as unknown as Record<string, unknown>;
     for (const m of ["d", "p", "q", "dp", "dq", "qi", "k"]) {
       expect(pub[m]).toBeUndefined();
     }

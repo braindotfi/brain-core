@@ -370,7 +370,7 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
       }
       return { rows: [], rowCount: 0 };
     });
-    const recordAgentSpend = vi.fn(async () => undefined);
+    const recordAgentSpend = vi.fn(async (_client: unknown, _input: unknown) => undefined);
     const service = makeService(pool, new InMemoryAuditEmitter(), recordAgentSpend);
     await service.completeExecution(ctx, {
       paymentIntentId: PI_ID,
@@ -410,7 +410,7 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
       }
       return { rows: [], rowCount: 0 };
     });
-    const recordAgentSpend = vi.fn(async () => undefined);
+    const recordAgentSpend = vi.fn(async (_client: unknown, _input: unknown) => undefined);
     const service = makeService(pool, new InMemoryAuditEmitter(), recordAgentSpend);
     await service.completeExecution(ctx, {
       paymentIntentId: PI_ID,

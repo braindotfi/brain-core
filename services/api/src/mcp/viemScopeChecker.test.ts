@@ -77,7 +77,7 @@ describe("createViemScopeChecker", () => {
   // If behaviorHash is dropped from the ABI, registeredAt/revokedAt land on the
   // wrong slots and the checker returns null for a valid agent — caught here.
   it("decodes the on-chain 7-field tuple without field shift (R-32 regression)", async () => {
-    const scopeHashHex = "0x" + "cd".repeat(32);
+    const scopeHashHex: `0x${string}` = `0x${"cd".repeat(32)}`;
     const onchainAbi = [
       {
         name: "getAgent",
