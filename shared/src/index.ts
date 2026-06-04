@@ -32,6 +32,7 @@ export * from "./auth/principal.js";
 export * from "./auth/scopes.js";
 export { JwtVerifier, projectPrincipal, verifyWithKey, type VerifyOptions } from "./auth/jwt.js";
 export { JwtSigner, type SignOptions } from "./auth/signer.js";
+export { toPublicJwk, jwksFromPrivate, generateSignKeyJwk } from "./auth/jwks.js";
 export { hashPassword, verifyPassword, PasswordInputError } from "./auth/password.js";
 export {
   RedisRevocationStore,

@@ -11,8 +11,12 @@
  *   --scopes <csv>         Comma-separated scopes (default: all scopes)
  *   --ttl <seconds>        Token lifetime in seconds (default: 3600)
  *
- * Required env:
- *   AUTH_JWT_SECRET        HMAC-SHA256 secret (default: dev-secret-not-for-production)
+ * Signing key (one of):
+ *   AUTH_SIGN_KEY          Private signing JWK (JSON) → mints an RS256 token the
+ *                          production JWKS verifier accepts (same key the
+ *                          static-jwks sidecar publishes). Preferred for prod.
+ *   AUTH_JWT_SECRET        HMAC-SHA256 secret (default: dev-secret-not-for-production).
+ *                          HS256 fallback — only valid against a non-prod verifier.
  *
  * Optional env:
  *   AUTH_ISSUER            JWT iss claim (default: https://auth.brain.fi)
@@ -23,7 +27,7 @@
  *     --scopes 'execution:propose,execution:write,execution:read,execution:admin,wiki:read,raw:write,audit:read')
  */
 
-import { SignJWT } from "jose";
+import { SignJWT, importJWK, type JWK } from "jose";
 import { randomUUID } from "node:crypto";
 
 const ALL_SCOPES = [
@@ -74,11 +78,26 @@ async function main(): Promise<void> {
   const scopes = scopesArg ? scopesArg.split(",").map((s) => s.trim()) : ALL_SCOPES;
   const ttl = parseInt(args["ttl"] ?? "3600", 10);
 
-  const secret = process.env["AUTH_JWT_SECRET"] ?? "dev-secret-not-for-production";
   const issuer = process.env["AUTH_ISSUER"] ?? "https://auth.brain.fi";
   const audience = process.env["AUTH_AUDIENCE"] ?? "brain-api";
 
-  const key = new TextEncoder().encode(secret);
+  // Production verifies via JWKS (RS256). When AUTH_SIGN_KEY (a private JWK JSON
+  // string — the same key the static-jwks sidecar publishes) is set, mint an
+  // RS256 token the production verifier accepts. Otherwise fall back to the
+  // HS256 dev secret (only valid against a non-production verifier).
+  const signKeyJson = process.env["AUTH_SIGN_KEY"];
+  let signer: Parameters<SignJWT["sign"]>[0];
+  let header: { alg: string; kid?: string };
+  if (signKeyJson !== undefined && signKeyJson !== "") {
+    const jwk = JSON.parse(signKeyJson) as JWK;
+    const alg = jwk.alg ?? "RS256";
+    signer = await importJWK(jwk, alg);
+    header = jwk.kid !== undefined ? { alg, kid: jwk.kid } : { alg };
+  } else {
+    const secret = process.env["AUTH_JWT_SECRET"] ?? "dev-secret-not-for-production";
+    signer = new TextEncoder().encode(secret);
+    header = { alg: "HS256" };
+  }
 
   const now = Math.floor(Date.now() / 1000);
   const jti = randomUUID();
@@ -88,13 +107,13 @@ async function main(): Promise<void> {
     principal_type: principalType,
     scopes,
   })
-    .setProtectedHeader({ alg: "HS256" })
+    .setProtectedHeader(header)
     .setIssuer(issuer)
     .setAudience(audience)
     .setIssuedAt(now)
     .setExpirationTime(now + ttl)
     .setJti(jti)
-    .sign(key);
+    .sign(signer);
 
   process.stdout.write(token + "\n");
 }

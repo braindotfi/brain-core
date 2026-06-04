@@ -1,0 +1,22 @@
+{
+  "name": "@brain/static-jwks",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static JWKS sidecar — publishes the public half of AUTH_SIGN_KEY for the API's JWKS verifier.",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc -b --noEmit",
+    "start": "tsx src/server.ts",
+    "generate": "tsx src/generate.ts"
+  },
+  "dependencies": {
+    "@brain/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^5.6.2"
+  }
+}
