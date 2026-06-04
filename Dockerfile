@@ -57,6 +57,8 @@ RUN pnpm -C tools/migrate run build
 # excluded from the service-filtered build; build them for the runtime image.
 RUN pnpm -C tools/static-jwks run build
 RUN pnpm -C tools/dev-token run build
+# seed-golden-path: demo-data seeder for the `seed` profile (docker-compose.prod.yml).
+RUN pnpm -C tools/seed-golden-path run build
 
 # ---- runtime stage ----
 FROM node:22-slim AS runtime
@@ -115,6 +117,7 @@ COPY --from=builder /app/clients/sdk/dist clients/sdk/dist
 COPY --from=builder /app/tools/migrate/dist tools/migrate/dist
 COPY --from=builder /app/tools/static-jwks/dist tools/static-jwks/dist
 COPY --from=builder /app/tools/dev-token/dist tools/dev-token/dist
+COPY --from=builder /app/tools/seed-golden-path/dist tools/seed-golden-path/dist
 
 # Migration SQL files. The migrate CLI discovers services/<svc>/migrations/*.sql
 # relative to the repo root (cwd). Without these the same runtime image cannot

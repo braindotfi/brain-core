@@ -154,6 +154,32 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # Demo data seeder (profile "seed" — OFF by default; NOT for real production).
+  # Populates the golden-path tenant (accounts, counterparties, invoices) + an
+  # active demo policy + a registered payment agent, so the money path works
+  # out-of-the-box on a fresh deploy without the signed-policy / on-chain agent
+  # ceremonies. Run after the stack is up:
+  #   docker compose --env-file .env.prod -f docker-compose.prod.yml --profile seed run --rm seed
+  # Set BRAIN_SEED_DEMO_GOVERNANCE=false in .env.prod to seed data only.
+  seed:
+    profiles: ["seed"]
+    image: brain-core:${BRAIN_IMAGE_TAG:-prod}
+    container_name: brain-prod-seed
+    command: ["node", "tools/seed-golden-path/dist/cli.js"]
+    env_file:
+      - path: .env.prod
+        required: false
+    environment:
+      # brain_privileged (BYPASSRLS) so the seed can write across the tenant.
+      DATABASE_URL: postgres://brain_privileged:${BRAIN_PRIVILEGED_DB_PASSWORD:-brain_privileged}@postgres:5432/brain
+      DATABASE_SSL: disable
+      BRAIN_TENANT_ID: ${BRAIN_SEED_TENANT_ID:-tnt_00000000010000000000000000}
+      BRAIN_ACTOR: golden-path-seed
+    depends_on:
+      db-roles:
+        condition: service_completed_successfully
+    restart: "no"
+
   # Static JWKS sidecar (C1). Publishes the PUBLIC half of AUTH_SIGN_KEY at
   # /.well-known/jwks.json so the API's JWKS verifier has a key source without
   # an external IdP. The same AUTH_SIGN_KEY signs SIWX tokens and is what
