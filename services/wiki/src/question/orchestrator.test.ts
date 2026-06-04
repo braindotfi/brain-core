@@ -35,6 +35,7 @@ interface FakeRows {
     currency: string;
     due_date: Date;
     status: string;
+    counterparty_id: string;
   }>;
   counterparties: Array<{
     id: string;
@@ -89,7 +90,7 @@ function buildEvidenceContext(rows: FakeRows): string {
   }
   for (const r of rows.obligations) {
     lines.push(
-      `[${r.id}] (obligation) ${r.type} due ${r.due_date.toISOString().slice(0, 10)} amount ${r.amount_due} ${r.currency} status=${r.status}`,
+      `[${r.id}] (obligation) ${r.type} due ${r.due_date.toISOString().slice(0, 10)} amount ${r.amount_due} ${r.currency} status=${r.status} cp=${r.counterparty_id}`,
     );
   }
   for (const r of rows.counterparties) {
@@ -307,6 +308,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
           currency: "USD",
           due_date: new Date("2026-05-01T00:00:00Z"),
           status: "upcoming",
+          counterparty_id: "cp_SUB",
         },
       ],
       counterparties: [],
@@ -354,6 +356,74 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     );
     expect(result.evidence[0]!.entityId).toBe("obl_DUE1");
     expect(result.evidence[0]!.entityType).toBe("obligation");
+  });
+
+  it("links an extracted obligation to its counterparty (what do I owe, and to whom)", async () => {
+    // The document_extractor path (RFC 0004) writes an obligation + the vendor
+    // it is owed to. The obligation excerpt must carry cp= so the model can
+    // join the two and name the payee.
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [
+        {
+          id: "obl_BILL1",
+          type: "bill",
+          amount_due: "120.50",
+          currency: "USD",
+          due_date: new Date("2026-07-01T00:00:00Z"),
+          status: "upcoming",
+          counterparty_id: "cp_ACME",
+        },
+      ],
+      counterparties: [{ id: "cp_ACME", name: "Acme Utilities", type: "vendor", risk_level: null }],
+    };
+    const evidenceContext = buildEvidenceContext(rows);
+    // Assert the obligation excerpt actually carries the counterparty link.
+    expect(evidenceContext).toContain("(obligation) bill due 2026-07-01 amount 120.50 USD");
+    expect(evidenceContext).toContain("cp=cp_ACME");
+
+    const prompt = {
+      model: "m5",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        {
+          role: "user" as const,
+          content: `QUESTION:\nwhat do I owe and to whom\n\nEVIDENCE:\n${evidenceContext}`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: `{"answer":"You owe Acme Utilities $120.50, due July 1.","evidence_ids":["obl_BILL1","cp_ACME"]}`,
+          usage: { inputTokens: 14, outputTokens: 9 },
+          model: "m5",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "what do I owe and to whom",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m5",
+      },
+    );
+    expect(result.answer).toContain("Acme Utilities");
+    expect(result.evidence.map((e) => e.entityId).sort()).toEqual(["cp_ACME", "obl_BILL1"]);
   });
 
   it("falls back to raw text when LLM returns non-JSON", async () => {

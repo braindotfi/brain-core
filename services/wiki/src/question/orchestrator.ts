@@ -184,8 +184,9 @@ async function retrieveLedgerCandidates(
     currency: string;
     due_date: Date;
     status: string;
+    counterparty_id: string;
   }>(
-    `SELECT id, type, amount_due, currency, due_date, status
+    `SELECT id, type, amount_due, currency, due_date, status, counterparty_id
        FROM ledger_obligations
       WHERE status IN ('upcoming','due','overdue')
       ORDER BY due_date ASC
@@ -218,10 +219,12 @@ async function retrieveLedgerCandidates(
     });
   }
   for (const r of oblRes.rows) {
+    // Include the counterparty link (always present — NOT NULL FK) so the
+    // model can answer "what do I owe and to whom" by joining to the cp_ row.
     out.push({
       type: "obligation",
       id: r.id,
-      excerpt: `${r.type} due ${r.due_date.toISOString().slice(0, 10)} amount ${r.amount_due} ${r.currency} status=${r.status}`,
+      excerpt: `${r.type} due ${r.due_date.toISOString().slice(0, 10)} amount ${r.amount_due} ${r.currency} status=${r.status} cp=${r.counterparty_id}`,
     });
   }
   for (const r of cpRes.rows) {
