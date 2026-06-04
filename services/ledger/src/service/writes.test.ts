@@ -1,7 +1,8 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryAuditEmitter, newTenantId, newUserId } from "@brain/shared";
-import { recordTransactionRow, upsertCounterpartyRow } from "./writes.js";
+import { isBrainError } from "@brain/shared";
+import { recordTransactionRow, upsertCounterpartyRow, upsertObligationRow } from "./writes.js";
 
 /** Fake pool that captures each query's text + values; routes by substring. */
 function capturingPool(routes: Record<string, Array<Record<string, unknown>>> = {}): {
@@ -127,5 +128,86 @@ describe("recordTransactionRow — on-chain settlement hash (RFC 0001)", () => {
     });
     const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_transactions"))!;
     expect(insert.values[18]).toBeNull();
+  });
+});
+
+describe("upsertObligationRow (RFC 0004)", () => {
+  const baseArgs = {
+    type: "bill" as const,
+    counterparty_id: "cp_1",
+    amount_due: "120.50",
+    currency: "USD",
+    due_date: "2026-07-01T00:00:00Z",
+    status: "upcoming" as const,
+    source_ids: ["raw_1"],
+    evidence_ids: ["prs_1"],
+  };
+
+  it("inserts a new obligation and emits ledger.obligation.created", async () => {
+    const { pool, calls } = capturingPool({
+      "INSERT INTO ledger_obligations": [{ id: "obl_1", confidence: 0.5 }],
+    });
+    const audit = new InMemoryAuditEmitter();
+    const { row, created } = await upsertObligationRow(pool, audit, ctx, {
+      ...baseArgs,
+      provenance: "agent_contributed",
+      confidence: 0.4,
+    });
+    expect(created).toBe(true);
+    expect(row.id).toBe("obl_1");
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"))!;
+    expect(insert.values[3]).toBe("cp_1"); // counterparty_id
+    expect(insert.values[12]).toBe("agent_contributed"); // provenance
+    expect(audit.events[0]!.action).toBe("ledger.obligation.created");
+  });
+
+  it("caps agent_contributed confidence at the 0.5 ceiling", async () => {
+    const { pool, calls } = capturingPool({
+      "INSERT INTO ledger_obligations": [{ id: "obl_2", confidence: 0.5 }],
+    });
+    const audit = new InMemoryAuditEmitter();
+    await upsertObligationRow(pool, audit, ctx, {
+      ...baseArgs,
+      provenance: "agent_contributed",
+      confidence: 0.95,
+    });
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"))!;
+    expect(insert.values[13]).toBe(0.5); // confidence param, capped
+  });
+
+  it("returns the existing row (created=false) when the dedup key matches", async () => {
+    const { pool } = capturingPool({
+      "SELECT * FROM ledger_obligations": [{ id: "obl_existing", confidence: 0.5 }],
+    });
+    const audit = new InMemoryAuditEmitter();
+    const { row, created } = await upsertObligationRow(pool, audit, ctx, {
+      ...baseArgs,
+      provenance: "agent_contributed",
+      confidence: 0.4,
+    });
+    expect(created).toBe(false);
+    expect(row.id).toBe("obl_existing");
+    expect(audit.events[0]!.action).toBe("ledger.obligation.deduplicated");
+  });
+
+  it.each([
+    ["non-decimal amount_due", { amount_due: "free" }],
+    ["bad currency", { currency: "usd" }],
+    ["bad due_date", { due_date: "soon" }],
+  ])("rejects %s with ledger_row_invalid", async (_label, override) => {
+    const { pool } = capturingPool();
+    const audit = new InMemoryAuditEmitter();
+    try {
+      await upsertObligationRow(pool, audit, ctx, {
+        ...baseArgs,
+        ...override,
+        provenance: "agent_contributed",
+        confidence: 0.4,
+      });
+      throw new Error("expected upsertObligationRow to throw");
+    } catch (err) {
+      expect(isBrainError(err)).toBe(true);
+      if (isBrainError(err)) expect(err.code).toBe("ledger_row_invalid");
+    }
   });
 });

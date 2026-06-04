@@ -21,6 +21,7 @@ import {
   brainError,
   newAccountId,
   newCounterpartyId,
+  newObligationId,
   newTransactionId,
   withTenantScope,
   type AuditEmitter,
@@ -32,6 +33,7 @@ import {
 const AGENT_CONTRIBUTED_CONFIDENCE_CEILING = 0.5;
 import type { Pool } from "pg";
 import type { AccountRow, CounterpartyRow, TransactionRow } from "../repository/index.js";
+import type { ObligationRow } from "../repository/obligations.js";
 
 const PROVENANCE_VALUES = new Set([
   "extracted",
@@ -393,6 +395,128 @@ export async function recordTransactionRow(
       provenance: args.provenance,
     },
     outputs: { transaction_id: result.row.id },
+  });
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Obligation
+// ---------------------------------------------------------------------------
+
+export interface UpsertObligationArgs {
+  type:
+    | "bill"
+    | "invoice"
+    | "subscription"
+    | "loan"
+    | "rent"
+    | "payroll"
+    | "tax"
+    | "card_statement"
+    | "other";
+  counterparty_id: string;
+  amount_due: string; // non-negative decimal string
+  minimum_due?: string;
+  currency: string;
+  due_date: string; // ISO date-time
+  recurrence?: string;
+  status: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
+  source_ids: string[];
+  evidence_ids: string[];
+  provenance: string;
+  confidence: number;
+}
+
+/**
+ * Idempotent obligation insert. The table carries no external id, so the
+ * dedup key is (counterparty_id, type, amount_due, currency, due_date):
+ * re-extracting the same document is a no-op. Like every writer here, the
+ * agent-contributed confidence ceiling (§3.2) applies, so a document-derived
+ * obligation lands at confidence <= 0.5.
+ */
+export async function upsertObligationRow(
+  pool: Pool,
+  audit: AuditEmitter,
+  ctx: ServiceCallContext,
+  args: UpsertObligationArgs,
+): Promise<{ row: ObligationRow; created: boolean }> {
+  validateProvenance(args.provenance);
+  const conf = cappedConfidence(args.provenance, args.confidence);
+  if (!/^\d+(\.\d+)?$/.test(args.amount_due)) {
+    throw brainError("ledger_row_invalid", "amount_due must be a non-negative decimal string", {
+      details: { amount_due: args.amount_due },
+    });
+  }
+  if (args.minimum_due !== undefined && !/^\d+(\.\d+)?$/.test(args.minimum_due)) {
+    throw brainError("ledger_row_invalid", "minimum_due must be a non-negative decimal string", {
+      details: { minimum_due: args.minimum_due },
+    });
+  }
+  if (!/^[A-Z]{3}$/.test(args.currency)) {
+    throw brainError("ledger_row_invalid", "currency must be a 3-letter ISO 4217 code", {
+      details: { currency: args.currency },
+    });
+  }
+  const dueDateIso = new Date(args.due_date);
+  if (Number.isNaN(dueDateIso.getTime())) {
+    throw brainError("ledger_row_invalid", "due_date must be a valid date-time", {
+      details: { due_date: args.due_date },
+    });
+  }
+
+  const result = await withTenantScope(pool, ctx.tenantId, async (c) => {
+    const existing = await c.query<ObligationRow>(
+      `SELECT * FROM ledger_obligations
+        WHERE counterparty_id = $1 AND type = $2 AND amount_due = $3
+          AND currency = $4 AND due_date = $5
+        LIMIT 1`,
+      [args.counterparty_id, args.type, args.amount_due, args.currency, dueDateIso.toISOString()],
+    );
+    if (existing.rows[0] !== undefined) {
+      return { row: existing.rows[0], created: false };
+    }
+
+    const id = newObligationId();
+    const { rows } = await c.query<ObligationRow>(
+      `INSERT INTO ledger_obligations
+         (id, owner_id, type, counterparty_id, amount_due, minimum_due, currency,
+          due_date, recurrence, status, source_ids, evidence_ids, provenance, confidence)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       RETURNING *`,
+      [
+        id,
+        ctx.tenantId,
+        args.type,
+        args.counterparty_id,
+        args.amount_due,
+        args.minimum_due ?? null,
+        args.currency,
+        dueDateIso.toISOString(),
+        args.recurrence ?? null,
+        args.status,
+        args.source_ids,
+        args.evidence_ids,
+        args.provenance,
+        conf,
+      ],
+    );
+    return { row: rows[0]!, created: true };
+  });
+
+  await audit.emit({
+    tenantId: ctx.tenantId,
+    layer: "ledger",
+    actor: ctx.actor,
+    action: result.created ? "ledger.obligation.created" : "ledger.obligation.deduplicated",
+    inputs: {
+      counterparty_id: args.counterparty_id,
+      type: args.type,
+      amount_due: args.amount_due,
+      currency: args.currency,
+      provenance: args.provenance,
+    },
+    outputs: { obligation_id: result.row.id, confidence: result.row.confidence },
   });
 
   return result;
