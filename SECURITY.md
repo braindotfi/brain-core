@@ -58,7 +58,7 @@ blocked on the external smart-contract audit.
 | Contract                  | Base Sepolia (staging)                       | Base mainnet           |
 | ------------------------- | -------------------------------------------- | ---------------------- |
 | `BrainAuditAnchor`        | `0xb900add824064098342c869ff83efdeb05eb95ce` | pending external audit |
-| `BrainPolicyRegistry`     | `0x92d1CC5c46eAE229C8A9dD95a334cec0cE33CAD9` | pending external audit |
+| `BrainPolicyRegistry`     | `0x683893ccd84d9a3487095d09fed324b6b8ea2501` | pending external audit |
 | `BrainSmartAccount`       | `0x8cC094d03676d29c8cE0267480f58188E7F1E23D` | pending external audit |
 | `BrainMCPAgentRegistry`   | `0xd1558828ef31630164aa8942dd41bc63a4d8bed7` | pending external audit |
 | `BrainEscrow`             | `0x5924BD26Bc827FB3cAd6f3a0DBDC793562555Cc0` | pending external audit |

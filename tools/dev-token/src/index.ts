@@ -30,19 +30,33 @@
 import { SignJWT, importJWK, type JWK } from "jose";
 import { randomUUID } from "node:crypto";
 
+// Mirror the full VALID_SCOPES set (shared/src/auth/scopes.ts) so the default
+// token can exercise every surface — notably ledger:* and payment_intent:*,
+// which the money path requires and which were previously missing here.
 const ALL_SCOPES = [
   "execution:propose",
   "execution:write",
   "execution:read",
   "execution:admin",
+  "payment_intent:propose",
+  "payment_intent:approve",
+  "payment_intent:execute",
+  "ledger:read",
+  "ledger:write",
+  "ledger:admin",
   "wiki:read",
   "wiki:write",
-  "raw:write",
+  "wiki:admin",
   "raw:read",
+  "raw:write",
+  "raw:admin",
   "audit:read",
+  "audit:write",
+  "audit:admin",
   "policy:read",
   "policy:write",
   "policy:admin",
+  "policy:sign",
 ];
 
 function parseArgs(argv: string[]): Record<string, string> {
