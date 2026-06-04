@@ -49,18 +49,26 @@ export function createViemScopeChecker(opts: ViemScopeCheckerOptions): OnchainSc
     async getOnchainScopeHash(agentId: string): Promise<string | null> {
       const agentIdBytes = keccak256(toBytes(agentId)) as `0x${string}`;
 
-      const registration = await client.readContract({
-        address: opts.contractAddress,
-        abi: BRAIN_MCP_AGENT_REGISTRY_ABI,
-        functionName: "getAgent",
-        args: [agentIdBytes],
-      });
-
-      if (registration.registeredAt === 0n || registration.revokedAt !== 0n) {
+      try {
+        const registration = await client.readContract({
+          address: opts.contractAddress,
+          abi: BRAIN_MCP_AGENT_REGISTRY_ABI,
+          functionName: "getAgent",
+          args: [agentIdBytes],
+        });
+        if (registration.registeredAt === 0n || registration.revokedAt !== 0n) {
+          return null;
+        }
+        return registration.scopeHash.slice(2).toLowerCase();
+      } catch {
+        // Fail closed (deny) instead of throwing. The decode can fail when the
+        // deployed registry's AgentRegistration layout skews from this ABI —
+        // e.g. a registry deployed BEFORE `behaviorHash` was added to the struct
+        // (the field this ABI now includes) returns a 6-field tuple, and viem
+        // overruns decoding it as 7. An unverifiable scope must never crash the
+        // MCP auth path; treat it as "no on-chain scope".
         return null;
       }
-
-      return registration.scopeHash.slice(2).toLowerCase();
     },
   };
 }
