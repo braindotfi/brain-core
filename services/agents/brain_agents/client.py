@@ -53,6 +53,39 @@ class BrainApiClient:
             )
             return list(items) if isinstance(items, list) else []
 
+    async def post_parsed(
+        self,
+        raw_id: str,
+        parser: str,
+        parser_version: str,
+        extracted: dict[str, Any],
+        confidence: float | None = None,
+    ) -> dict[str, Any]:
+        """POST /v1/raw/{raw_id}/parsed — write one stage-3 parsed record.
+
+        The Raw service owns raw_parsed; this is how an extractor agent
+        contributes parsed evidence without touching the table directly.
+        Naturally idempotent on (raw_artifact_id, parser, parser_version).
+        Returns the RawParsed row.
+        """
+        json_body: dict[str, Any] = {
+            "parser": parser,
+            "parser_version": parser_version,
+            "extracted": extracted,
+        }
+        if confidence is not None:
+            json_body["confidence"] = confidence
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{self._base_url}/v1/raw/{raw_id}/parsed",
+                json=json_body,
+                headers={"Authorization": f"Bearer {self._token}"},
+            )
+            resp.raise_for_status()
+            result: dict[str, Any] = resp.json()
+            return result
+
     async def raw_ingest(self, envelope: dict[str, Any]) -> dict[str, Any]:
         """POST one RawIngestRequest envelope to /v1/raw/ingest.
 
