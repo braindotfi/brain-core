@@ -149,6 +149,33 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # Static JWKS sidecar (C1). Publishes the PUBLIC half of AUTH_SIGN_KEY at
+  # /.well-known/jwks.json so the API's JWKS verifier has a key source without
+  # an external IdP. The same AUTH_SIGN_KEY signs SIWX tokens and is what
+  # tools/dev-token mints test JWTs with. Generate a key with:
+  #   pnpm --filter @brain/static-jwks run generate   (→ set AUTH_SIGN_KEY in .env.prod)
+  jwks:
+    image: brain-core:${BRAIN_IMAGE_TAG:-prod}
+    container_name: brain-prod-jwks
+    restart: unless-stopped
+    command: ["node", "tools/static-jwks/dist/server.js"]
+    env_file:
+      - path: .env.prod
+        required: false
+    environment:
+      PORT: "8085"
+    # AUTH_SIGN_KEY (private signing JWK) comes from .env.prod; the server exits
+    # at boot if it is unset, so a misconfigured deploy fails fast.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:8085/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   api:
     build:
       context: .
@@ -158,10 +185,11 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    # Operator-supplied secrets (C-series): AUTH_JWKS_URL/ISSUER/AUDIENCE,
-    # BRAIN_SOURCE_CREDENTIAL_KEY, BRAIN_SESSION_KEY, BASE_RPC_URL,
-    # BRAIN_ONCHAIN_SMART_ACCOUNT, AUDIT_PUBLISHER_KEY, AUDIT_ANCHOR_ADDRESS,
-    # contract addresses, OPENAI_API_KEY, etc. See .env.prod.example.
+    # Operator-supplied secrets (C-series): AUTH_SIGN_KEY,
+    # BRAIN_SESSION_KEY, BASE_RPC_URL, BRAIN_ONCHAIN_SMART_ACCOUNT,
+    # AUDIT_PUBLISHER_KEY, AUDIT_ANCHOR_ADDRESS, contract addresses,
+    # OPENAI_API_KEY, etc. See .env.prod.example. (AUTH_JWKS_URL/ISSUER/AUDIENCE
+    # are set below — they point at the in-network jwks sidecar.)
     env_file:
       - path: .env.prod
         required: false
@@ -170,6 +198,10 @@ services:
       PORT: "3000"
       # Base Sepolia testnet (scope-defining).
       BRAIN_BASE_CHAIN_ID: "84532"
+      # --- auth (verify against the in-network JWKS sidecar) ---
+      AUTH_JWKS_URL: http://jwks:8085/.well-known/jwks.json
+      AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-brain-api}
       # --- datastores (in-network; no TLS on the compose bridge) ---
       DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:-brain_app}@postgres:5432/brain
       DATABASE_PRIVILEGED_URL: postgres://brain_privileged:${BRAIN_PRIVILEGED_DB_PASSWORD:-brain_privileged}@postgres:5432/brain
@@ -195,6 +227,8 @@ services:
         condition: service_completed_successfully
       minio-setup:
         condition: service_completed_successfully
+      jwks:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD

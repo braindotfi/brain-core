@@ -35,6 +35,7 @@ COPY services/mcp/package.json services/mcp/tsconfig.json services/mcp/
 COPY services/audit/package.json services/audit/tsconfig.json services/audit/
 COPY clients/sdk/package.json clients/sdk/tsconfig.json clients/sdk/
 COPY tools/migrate/package.json tools/migrate/tsconfig.json tools/migrate/
+COPY tools/static-jwks/package.json tools/static-jwks/tsconfig.json tools/static-jwks/
 COPY tools/seed-golden-path/package.json tools/seed-golden-path/tsconfig.json tools/seed-golden-path/
 COPY tools/dev-token/package.json tools/dev-token/tsconfig.json tools/dev-token/
 COPY tools/plaid-sandbox/package.json tools/plaid-sandbox/tsconfig.json tools/plaid-sandbox/
@@ -52,6 +53,10 @@ RUN pnpm run build
 # tools/migrate dist is copied into the runtime image (migration runner) but is
 # excluded from the `pnpm run build` service filter; build it so the COPY finds it.
 RUN pnpm -C tools/migrate run build
+# static-jwks (the JWKS sidecar) and dev-token (mint test JWTs) are likewise
+# excluded from the service-filtered build; build them for the runtime image.
+RUN pnpm -C tools/static-jwks run build
+RUN pnpm -C tools/dev-token run build
 
 # ---- runtime stage ----
 FROM node:22-slim AS runtime
@@ -76,6 +81,7 @@ COPY services/mcp/package.json services/mcp/
 COPY services/audit/package.json services/audit/
 COPY clients/sdk/package.json clients/sdk/
 COPY tools/migrate/package.json tools/migrate/
+COPY tools/static-jwks/package.json tools/static-jwks/
 COPY tools/seed-golden-path/package.json tools/seed-golden-path/
 COPY tools/dev-token/package.json tools/dev-token/
 COPY tools/plaid-sandbox/package.json tools/plaid-sandbox/
@@ -101,6 +107,8 @@ COPY --from=builder /app/services/mcp/dist services/mcp/dist
 COPY --from=builder /app/services/audit/dist services/audit/dist
 COPY --from=builder /app/clients/sdk/dist clients/sdk/dist
 COPY --from=builder /app/tools/migrate/dist tools/migrate/dist
+COPY --from=builder /app/tools/static-jwks/dist tools/static-jwks/dist
+COPY --from=builder /app/tools/dev-token/dist tools/dev-token/dist
 
 # Migration SQL files. The migrate CLI discovers services/<svc>/migrations/*.sql
 # relative to the repo root (cwd). Without these the same runtime image cannot
