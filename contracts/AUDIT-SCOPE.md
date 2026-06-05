@@ -16,7 +16,12 @@ additions, and existing test coverage.
 > testnet-only** and immutable; it must clear this audit before any mainnet
 > address is funded (RFC 0001 §9). Audit it first and most thoroughly.
 
-Commit under audit: **TODO(brain-hardening): pin the audited commit SHA + tag.**
+Commit under audit, auditor, report reference, and unresolved-findings counts
+are tracked in the machine-checked source of truth **`contracts/audit-status.json`**
+(validated by `scripts/check-audit-status.mjs`; the mainnet escrow boot fence in
+`composition/escrow-audit-gate.ts` requires its status to be `approved`). It is
+`pending` until the audit completes; update it ONLY from the auditor's final
+report.
 
 ---
 

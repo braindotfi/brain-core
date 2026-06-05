@@ -21,7 +21,36 @@
  * the full server.
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 const BASE_MAINNET_CHAIN_ID = 8453;
+
+/**
+ * Resolve and read contracts/audit-status.json, returning whether its status is
+ * "approved". Walks up from `startDir` (default process.cwd()) so it works
+ * whether the api is launched from the repo root or from services/api.
+ *
+ * Fail-closed: a missing file, a parse error, or any status other than
+ * "approved" yields `false`. A mainnet-escrow deploy must therefore SHIP the
+ * committed, audit-derived contracts/audit-status.json (status "approved") into
+ * the image, or this fence keeps the api from booting. check-audit-status.mjs
+ * guarantees the file cannot say "approved" without real audit evidence.
+ */
+export function readAuditStatusApproved(startDir: string = process.cwd()): boolean {
+  let dir = startDir;
+  for (let i = 0; i < 16; i += 1) {
+    try {
+      const raw = readFileSync(join(dir, "contracts", "audit-status.json"), "utf8");
+      return (JSON.parse(raw) as { status?: unknown }).status === "approved";
+    } catch {
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return false;
+}
 
 export interface EscrowAuditGateInput {
   /** cfg.BRAIN_BASE_CHAIN_ID. */
@@ -34,9 +63,19 @@ export interface EscrowAuditGateInput {
    * cfg.BRAIN_ESCROW_AUDIT_RECEIPT — non-empty URL/filepath/hash pointing
    * at the audit report. Preferred over the legacy boolean because it
    * carries diligence metadata (which report? which audited commit?).
-   * Either signal currently satisfies the fence.
+   * Either signal satisfies the operator-attestation half of the fence.
    */
   auditReceipt?: string;
+  /**
+   * Whether contracts/audit-status.json — the committed, reviewed source of
+   * truth for the external audit (R-01) — has status "approved". The env
+   * attestation above is NOT sufficient on its own: a bare env flag could be
+   * flipped to bypass a pending audit, so mainnet escrow ALSO requires the
+   * committed record to say approved (and check-audit-status.mjs forbids
+   * marking it approved without an auditor, audited commit, report, and zero
+   * open critical/high findings). Read from the file at the call site.
+   */
+  auditStatusApproved: boolean;
 }
 
 /**
@@ -44,26 +83,40 @@ export interface EscrowAuditGateInput {
  * mainnet without an explicit audit attestation. Silent on all non-mainnet
  * chains, and silent on mainnet when no escrow address is set.
  *
- * Mainnet attestation is satisfied by EITHER:
- *   - `BRAIN_ESCROW_AUDIT_RECEIPT` set to a non-empty value (preferred — the
- *     receipt itself names what was audited), OR
- *   - `BRAIN_ESCROW_AUDIT_APPROVED` = "true" (legacy bare-boolean form,
- *     kept for backwards compatibility during the transition).
+ * Mainnet boot requires BOTH halves:
+ *   1. the committed audit record — contracts/audit-status.json status
+ *      "approved" (input.auditStatusApproved) — which check-audit-status.mjs
+ *      will not let you set without an auditor, audited commit, report, and
+ *      zero open critical/high findings; AND
+ *   2. an operator attestation in the environment, satisfied by EITHER
+ *      `BRAIN_ESCROW_AUDIT_RECEIPT` (preferred — names what was audited) OR
+ *      `BRAIN_ESCROW_AUDIT_APPROVED="true"` (legacy bare-boolean).
+ *
+ * Requiring both means a bare env flag can no longer bypass a pending audit:
+ * the reviewed, committed file must also say approved.
  */
 export function assertEscrowAuditApproved(input: EscrowAuditGateInput): void {
   if (input.chainId !== BASE_MAINNET_CHAIN_ID) return;
   if (input.escrowAddress === undefined) return;
   const hasReceipt = typeof input.auditReceipt === "string" && input.auditReceipt.length > 0;
-  if (input.auditApproved === "true" || hasReceipt) return;
+  const hasEnvAttestation = input.auditApproved === "true" || hasReceipt;
+  if (input.auditStatusApproved && hasEnvAttestation) return;
+  const missing: string[] = [];
+  if (!input.auditStatusApproved) {
+    missing.push('contracts/audit-status.json status is not "approved" (R-01: audit not complete)');
+  }
+  if (!hasEnvAttestation) {
+    missing.push(
+      'neither BRAIN_ESCROW_AUDIT_RECEIPT nor BRAIN_ESCROW_AUDIT_APPROVED="true" is set',
+    );
+  }
   throw new Error(
     `BRAIN_ESCROW_ADDRESS is set on Base mainnet (chainId=${String(
       BASE_MAINNET_CHAIN_ID,
-    )}) but neither BRAIN_ESCROW_AUDIT_RECEIPT nor BRAIN_ESCROW_AUDIT_APPROVED="true" ` +
-      "is set. The external smart-contract audit (Task #37) must complete and the " +
-      "audited bytecode must be the deployed contract before the api will boot " +
-      "against mainnet. Set BRAIN_ESCROW_AUDIT_RECEIPT to a URL/filepath pointing " +
-      'at the audit report (preferred), or BRAIN_ESCROW_AUDIT_APPROVED="true" ' +
-      "as a legacy bare-boolean attestation. Refusing to start so the orchestrator " +
-      "surfaces the misconfiguration.",
+    )}) but mainnet escrow boot is not cleared: ${missing.join("; ")}. The external ` +
+      "smart-contract audit (R-01) must complete, contracts/audit-status.json must be " +
+      'updated to status "approved" from the final report, and the operator must set ' +
+      'BRAIN_ESCROW_AUDIT_RECEIPT (preferred) or BRAIN_ESCROW_AUDIT_APPROVED="true". ' +
+      "Refusing to start so the orchestrator surfaces the misconfiguration.",
   );
 }

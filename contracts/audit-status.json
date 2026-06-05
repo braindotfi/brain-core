@@ -1,0 +1,18 @@
+{
+  "contract": "BrainEscrow",
+  "scope_doc": "contracts/AUDIT-SCOPE.md",
+  "rfp_doc": "contracts/AUDIT-RFP-DRAFT.md",
+  "status": "pending",
+  "auditor": null,
+  "audited_commit": null,
+  "audited_tag": null,
+  "report_url": null,
+  "report_sha256": null,
+  "unresolved_findings": {
+    "critical": null,
+    "high": null,
+    "medium": null,
+    "low": null
+  },
+  "notes": "External smart-contract audit (R-01) not yet engaged. BrainEscrow is the only funds-custodying contract and is Base Sepolia testnet-only until this clears. Mainnet escrow boot is fenced by composition/escrow-audit-gate.ts (which now ALSO requires this file's status to be 'approved'), and check-audit-status.mjs forbids marking 'approved' without an auditor, an audited 40-hex commit, a report reference, and zero unresolved critical/high findings. Update this file ONLY from the auditor's final report."
+}

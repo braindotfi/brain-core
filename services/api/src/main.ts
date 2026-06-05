@@ -192,7 +192,10 @@ import {
 } from "./gate-loaders/index.js";
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
-import { assertEscrowAuditApproved } from "./composition/escrow-audit-gate.js";
+import {
+  assertEscrowAuditApproved,
+  readAuditStatusApproved,
+} from "./composition/escrow-audit-gate.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
 import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
@@ -264,13 +267,15 @@ async function main(): Promise<void> {
   });
 
   // Refuse to boot against Base mainnet (chainId=8453) with BRAIN_ESCROW_ADDRESS
-  // configured unless the operator has explicitly attested that the address is
-  // the audited bytecode (Task #37). Silent on Base Sepolia + when no escrow
-  // is wired. Logic + tests live in composition/escrow-audit-gate.ts.
+  // configured unless BOTH the committed audit record (contracts/audit-status.json
+  // status "approved", R-01) AND an operator env attestation are present. Silent
+  // on Base Sepolia + when no escrow is wired. Logic + tests live in
+  // composition/escrow-audit-gate.ts.
   assertEscrowAuditApproved({
     chainId: cfg.BRAIN_BASE_CHAIN_ID,
     escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
     auditApproved: cfg.BRAIN_ESCROW_AUDIT_APPROVED,
+    auditStatusApproved: readAuditStatusApproved(),
     ...(cfg.BRAIN_ESCROW_AUDIT_RECEIPT !== undefined
       ? { auditReceipt: cfg.BRAIN_ESCROW_AUDIT_RECEIPT }
       : {}),
