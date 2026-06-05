@@ -6,6 +6,25 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.1 (autonomy + provenance hardening)
+
+A safety-hardening batch. All changes are stricter (fail-closed), never more permissive.
+
+#### Changed. Tighter defaults + authorization
+
+- **Default confidence floor raised to `0.6`.** A freshly provisioned tenant's default policy now rejects auto-execution of an intent backed only by an uncorroborated, document-extracted obligation (capped at `0.5`); a corroborated obligation (reconciliation lifts it to ~`0.7`+) still passes. Tenants with their own signed policy are unaffected.
+- **Signed per-agent action allowlist (`PolicyDocument.agent_actions`) is now enforced on every action-resolution path** (explicit request, event map, intent-classifier match, and default action), not just explicit requests. A denied action can no longer be smuggled in via an event mapping or a default.
+- **Evidence trust derives from the raw artifact's `source_type`**, not the caller-chosen parser label, so a `raw:write` principal can no longer mint high-trust evidence by labelling its parser `plaid`/`stripe`.
+
+#### Added. Obligation-direction safety
+
+- **`obligation_direction_invalid` (422).** A new obligation-linked PaymentIntent must target a known `payable` obligation; a `null`/unknown or `receivable` (wrong-way) direction is refused at creation. The §6 gate's check 6.7 continues to reject `receivable` at execute for already-created intents.
+
+#### Added. Operational / diligence
+
+- **`contracts/audit-status.json`** is the committed source of truth for the external smart-contract audit; mainnet escrow now boots only when that record says `approved` (a bare env flag no longer bypasses a pending audit).
+- **`BlobAdapter.purgeTenant`** primitive for GDPR Art. 17 tenant erasure (deletes Raw bytes under a tenant prefix; WORM/legal-hold-protected blobs are surfaced, not force-deleted).
+
 ### v0.5 (M2M Commerce + Self-Serve Onboarding)
 
 Two additive tracks: **machine-to-machine (M2M) agent commerce** (RFC 0001) and **self-serve onboarding** (RFC 0002). Everything money-moving here is **shadow-first / fail-closed**. The new settlement rails are unregistered at boot and the new contracts are unaudited testnet/reference code. Self-serve signup is gated behind `BRAIN_SELF_SERVE_SIGNUP` (default off, sandbox-first).

@@ -96,13 +96,15 @@ Policy **decisions** are `allow` / `confirm` / `reject` (returned on the decisio
 
 ### PaymentIntent / Action
 
-| Code                           | Meaning                                               | Fix                                 |
-| ------------------------------ | ----------------------------------------------------- | ----------------------------------- |
-| `payment_intent_not_found`     | No PaymentIntent for that id (404)                    | Check the id                        |
-| `payment_intent_invalid_state` | The intent isn't in a state that allows this op (409) | Read its current `status`           |
-| `payment_intent_gate_failed`   | The §6 pre-execution gate rejected the intent (409)   | Read `details` for the failed check |
-| `action_already_executed`      | Already settled (409)                                 | No retry needed                     |
-| `idempotency_key_reused`       | Same idempotency key, different request body (409)    | Generate a new key                  |
+| Code                           | Meaning                                                                                                                        | Fix                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `payment_intent_not_found`     | No PaymentIntent for that id (404)                                                                                             | Check the id                                                                           |
+| `payment_intent_invalid_state` | The intent isn't in a state that allows this op (409)                                                                          | Read its current `status`                                                              |
+| `payment_intent_gate_failed`   | The §6 pre-execution gate rejected the intent (409)                                                                            | Read `details` for the failed check                                                    |
+| `obligation_not_found`         | The linked `obligation_id` doesn't resolve in the Ledger (404)                                                                 | Reference an existing obligation                                                       |
+| `obligation_direction_invalid` | A new obligation-linked intent must target a known `payable` obligation; its direction is `null`/unknown or `receivable` (422) | Pay a payable (vendor) obligation; classify the counterparty so its direction resolves |
+| `action_already_executed`      | Already settled (409)                                                                                                          | No retry needed                                                                        |
+| `idempotency_key_reused`       | Same idempotency key, different request body (409)                                                                             | Generate a new key                                                                     |
 
 ### Pre-execution gate failures
 
