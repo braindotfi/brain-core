@@ -193,7 +193,9 @@ export async function normalizeDocObligationArtifact(
   });
   created.push({ entity: "counterparty", id: counterparty.id });
 
-  // 2. Write the obligation referencing that counterparty.
+  // 2. Write the obligation referencing that counterparty. `direction` lands
+  // verbatim from the parsed payload so the §6 gate can reject an outflow
+  // targeting a receivable (batch 10 H-1).
   const { row: obligation } = await upsertObligationRow(pool, audit, ctx, {
     type: doc.type,
     counterparty_id: counterparty.id,
@@ -203,6 +205,7 @@ export async function normalizeDocObligationArtifact(
     due_date: doc.due_date,
     ...(doc.recurrence !== undefined ? { recurrence: doc.recurrence } : {}),
     status: doc.status,
+    direction: doc.direction,
     source_ids: sourceIds,
     evidence_ids: evidenceIds,
     provenance: "agent_contributed",

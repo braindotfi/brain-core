@@ -86,6 +86,14 @@ export interface BuildPaymentIntentServiceDeps {
     ctx: ServiceCallContext,
     obligationId: string,
   ) => Promise<number | null>;
+  // §6 gate check 6.7 (batch 10 H-1): direction of the linked obligation.
+  // Required at the factory (same posture as resolveObligationConfidence)
+  // so a missing wire is a compile error at every PI service mount, not a
+  // dormant runtime check. The production fence flags absence too.
+  resolveObligationDirection: (
+    ctx: ServiceCallContext,
+    obligationId: string,
+  ) => Promise<"payable" | "receivable" | null>;
   resolveEscrowState?: (
     ctx: ServiceCallContext,
     input: EscrowStateInput,
@@ -143,6 +151,7 @@ export function buildPaymentIntentService(
     resolveEvidence: deps.resolveEvidence,
     detectDuplicates: deps.detectDuplicates,
     resolveObligationConfidence: deps.resolveObligationConfidence,
+    resolveObligationDirection: deps.resolveObligationDirection,
     ...(deps.resolveEscrowState !== undefined
       ? { resolveEscrowState: deps.resolveEscrowState }
       : {}),

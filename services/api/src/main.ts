@@ -638,6 +638,19 @@ async function main(): Promise<void> {
   ): Promise<number | null> =>
     (await ledgerService.findObligationById(ctx, obligationId))?.confidence ?? null;
 
+  // Batch 10 H-1: §6 gate check 6.7 reads the linked obligation's direction.
+  // The closure narrows the row's direction column to the gate's enum and
+  // treats anything else (NULL backfill, malformed value) as "unknown",
+  // which the gate handles as a pass (no extra check fires).
+  const resolveObligationDirection = async (
+    ctx: ServiceCallContext,
+    obligationId: string,
+  ): Promise<"payable" | "receivable" | null> => {
+    const row = await ledgerService.findObligationById(ctx, obligationId);
+    const d = (row as { direction?: string | null } | null)?.direction ?? null;
+    return d === "payable" || d === "receivable" ? d : null;
+  };
+
   // Production fence: the always-applicable money-path safety loaders must be
   // wired in production. Same fail-closed posture as the rail/escrow fences.
   assertMoneyPathLoadersWiredInProduction({
@@ -645,6 +658,7 @@ async function main(): Promise<void> {
     hasResolveEvidence: resolveEvidence !== undefined,
     hasDetectDuplicates: detectDuplicates !== undefined,
     hasResolveObligationConfidence: resolveObligationConfidence !== undefined,
+    hasResolveObligationDirection: resolveObligationDirection !== undefined,
   });
 
   // Agent-router routing enqueue (agent-router Phase 1). Shared by the
@@ -669,6 +683,7 @@ async function main(): Promise<void> {
     resolveEvidence,
     detectDuplicates,
     resolveObligationConfidence,
+    resolveObligationDirection,
     ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
     ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
     sourceCredentialResolver,
@@ -1276,6 +1291,7 @@ async function main(): Promise<void> {
           resolveEvidence,
           detectDuplicates,
           resolveObligationConfidence,
+          resolveObligationDirection,
           ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
           ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
           sourceCredentialResolver,

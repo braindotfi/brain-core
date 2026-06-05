@@ -11,6 +11,13 @@ export interface ObligationRow extends LedgerRowCommon {
   recurrence: string | null;
   status: string;
   linked_transaction_ids: string[];
+  /**
+   * payable = we owe the counterparty (vendor side).
+   * receivable = the counterparty owes us (customer side).
+   * NULL for older rows whose backfill couldn't infer a direction; the §6
+   * gate treats NULL as "direction unknown" rather than guessing.
+   */
+  direction: "payable" | "receivable" | null;
 }
 
 export interface ObligationListFilters {

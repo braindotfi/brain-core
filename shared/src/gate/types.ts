@@ -32,6 +32,11 @@ export type GateCheckName =
   | "x402_payment_context_valid"
   // 6.6 — escrow lock state binds to the intent before release (RFC 0001 §6.2 / §7.6).
   | "escrow_state_bound"
+  // 6.7 — outflow payment-intent must not target an obligation we are OWED
+  // (a receivable). Batch 10 H-1: closes the "send money to a customer who
+  // owes us" footgun the doc_obligation_v1 direction field always knew about
+  // but the schema never persisted.
+  | "obligation_direction_matches_flow"
   | "amount_within_limit"
   | "ledger_state_bound"
   | "available_balance_sufficient"

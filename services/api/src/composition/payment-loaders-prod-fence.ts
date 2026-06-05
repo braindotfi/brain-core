@@ -6,11 +6,13 @@
  * attestation 5.5, x402 6.5, micropayment 8.5) that only apply when that rail
  * or action type is enabled. But three loaders apply to EVERY payment and must
  * never be silently absent in production:
- *   - resolveEvidence            (§6 check 9.5, evidence-semantic validation)
- *   - detectDuplicates           (§6 check 11.5, duplicate-payment rejection)
- *   - resolveObligationConfidence (RFC 0004 §5.2, caps intent confidence at the
- *                                  obligation it pays so document-extracted
- *                                  evidence is gateable by policy)
+ *   - resolveEvidence              (§6 check 9.5, evidence-semantic validation)
+ *   - detectDuplicates             (§6 check 11.5, duplicate-payment rejection)
+ *   - resolveObligationConfidence  (RFC 0004 §5.2, caps intent confidence at the
+ *                                   obligation it pays so document-extracted
+ *                                   evidence is gateable by policy)
+ *   - resolveObligationDirection   (batch 10 H-1, §6 check 6.7, rejects outflows
+ *                                   that target a receivable)
  *
  * Same fail-closed posture as the other boot fences (assertAtLeastOneLiveRail,
  * assertEscrowAuditApproved, assertDbIsolationFences):
@@ -32,6 +34,7 @@ export interface PaymentLoadersProdFenceInput {
   hasResolveEvidence: boolean;
   hasDetectDuplicates: boolean;
   hasResolveObligationConfidence: boolean;
+  hasResolveObligationDirection: boolean;
 }
 
 /**
@@ -45,6 +48,9 @@ export function assertMoneyPathLoadersWiredInProduction(input: PaymentLoadersPro
   if (!input.hasDetectDuplicates) missing.push("detectDuplicates (§6 check 11.5)");
   if (!input.hasResolveObligationConfidence) {
     missing.push("resolveObligationConfidence (RFC 0004 §5.2)");
+  }
+  if (!input.hasResolveObligationDirection) {
+    missing.push("resolveObligationDirection (§6 check 6.7, batch 10 H-1)");
   }
   if (missing.length === 0) return;
   throw new Error(

@@ -427,6 +427,14 @@ export interface UpsertObligationArgs {
   due_date: string; // ISO date-time
   recurrence?: string;
   status: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
+  /**
+   * payable = we owe the counterparty (vendor side).
+   * receivable = the counterparty owes us (customer side).
+   * Optional so existing call sites keep compiling; when omitted the row
+   * lands with direction = NULL and the §6 gate treats it as "direction
+   * unknown" (no outflow→receivable check). Batch 10 H-1.
+   */
+  direction?: "payable" | "receivable";
   source_ids: string[];
   evidence_ids: string[];
   provenance: string;
@@ -486,8 +494,9 @@ export async function upsertObligationRow(
     const { rows } = await c.query<ObligationRow>(
       `INSERT INTO ledger_obligations
          (id, owner_id, type, counterparty_id, amount_due, minimum_due, currency,
-          due_date, recurrence, status, source_ids, evidence_ids, provenance, confidence)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          due_date, recurrence, status, source_ids, evidence_ids, provenance, confidence,
+          direction)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [
         id,
@@ -504,6 +513,7 @@ export async function upsertObligationRow(
         args.evidence_ids,
         args.provenance,
         conf,
+        args.direction ?? null,
       ],
     );
     return { row: rows[0]!, created: true };

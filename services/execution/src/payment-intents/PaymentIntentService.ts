@@ -172,6 +172,17 @@ export interface PaymentIntentServiceDeps {
     ctx: ServiceCallContext,
     obligationId: string,
   ) => Promise<number | null>;
+  /**
+   * §6 gate check 6.7 (batch 10 H-1): reads the linked obligation's
+   * direction (`payable` | `receivable` | null). When wired and the intent
+   * references an obligation whose direction is `receivable`, the gate hard-
+   * rejects the intent. `payable` / null / absent loader ⇒ no rejection. The
+   * concrete reader is wired in main.ts via the ledger service.
+   */
+  resolveObligationDirection?: (
+    ctx: ServiceCallContext,
+    obligationId: string,
+  ) => Promise<"payable" | "receivable" | null>;
   /** Resolves the source account by id. */
   resolveAccount: (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null>;
   /** Resolves the destination counterparty by id. */
@@ -576,6 +587,19 @@ export class PaymentIntentService implements IPaymentIntentService {
         : {}),
       ...(detectDuplicates !== undefined
         ? { detectDuplicates: (input) => detectDuplicates(ctx, input) }
+        : {}),
+      // §6 gate check 6.7 (batch 10 H-1). Loader threaded through only when
+      // the intent carries an obligation_id; the inner closure short-circuits
+      // when the intent has no linked obligation, so we don't hit the loader
+      // for the (still-common) intents that move money without one.
+      ...(this.deps.resolveObligationDirection !== undefined
+        ? {
+            resolveObligationDirection: async (intent: GatePaymentIntent) => {
+              const obligationId = intent.obligation_id;
+              if (obligationId === null || obligationId === undefined) return null;
+              return this.deps.resolveObligationDirection!(ctx, obligationId);
+            },
+          }
         : {}),
       ...(this.deps.metrics !== undefined ? { metrics: this.deps.metrics } : {}),
     };

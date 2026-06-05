@@ -283,6 +283,21 @@ export interface GateDependencies {
    */
   resolveEscrowState?: (input: EscrowStateInput) => Promise<ResolvedEscrowState | null>;
   /**
+   * Reads the linked obligation's direction (`payable` | `receivable` | null)
+   * for check 6.7 (batch 10 H-1). DB-backed; lives in services/policy and is
+   * injected (the gate must not query the DB directly).
+   *
+   * Active only when the intent carries an `obligation_id` AND this loader is
+   * wired. Absent ⇒ check 6.7 adds no row (canonical happy path preserved for
+   * callers that have not wired it). null direction ⇒ pass (direction unknown,
+   * pre-H-1 rows and non-vendor/customer counterparties land here). `payable`
+   * ⇒ pass. `receivable` ⇒ HARD FAIL — outflow money-movement targets an
+   * obligation owed TO us, which is never correct.
+   */
+  resolveObligationDirection?: (
+    intent: GatePaymentIntent,
+  ) => Promise<"payable" | "receivable" | null>;
+  /**
    * Optional metrics sink (item 11). When wired, the gate emits at termination:
    *   - brain.gate.check.count   {check, outcome ∈ pass|fail|not_applicable, dry_run}
    *   - brain.gate.outcome.count {outcome ∈ ok|fail, dry_run}
@@ -642,6 +657,34 @@ export async function runPreExecutionGate(
       return failGate(6.6, "escrow_state_bound", { failures });
     }
     pass(checks, 6.6, "escrow_state_bound");
+  }
+
+  // 6.7 — obligation direction matches flow (batch 10 H-1). When the intent
+  // names an obligation_id and a direction loader is wired, the linked
+  // obligation must NOT be a receivable. An outflow payment-intent settling
+  // an obligation that we are OWED ("send money to the customer who owes
+  // us") is never correct money movement; it almost certainly indicates the
+  // doc_extractor flipped payable vs receivable, the agent used the wrong
+  // obligation id, or a prompt-injected document attempted a refund-style
+  // drain. NULL direction (older rows, non-vendor/customer counterparties)
+  // passes — the gate stays silent rather than guessing.
+  if (
+    input.intent.obligation_id !== null &&
+    input.intent.obligation_id !== undefined &&
+    deps.resolveObligationDirection !== undefined
+  ) {
+    const direction = await deps.resolveObligationDirection(input.intent);
+    if (direction === "receivable") {
+      return failGate(6.7, "obligation_direction_matches_flow", {
+        obligation_id: input.intent.obligation_id,
+        direction,
+        reason: "outflow targets a receivable (money owed to us); refusing",
+      });
+    }
+    pass(checks, 6.7, "obligation_direction_matches_flow", {
+      obligation_id: input.intent.obligation_id,
+      direction,
+    });
   }
 
   // 7 — amount within policy limit.

@@ -5,6 +5,7 @@ const allWired = {
   hasResolveEvidence: true,
   hasDetectDuplicates: true,
   hasResolveObligationConfidence: true,
+  hasResolveObligationDirection: true,
 };
 
 describe("assertMoneyPathLoadersWiredInProduction", () => {
@@ -15,6 +16,7 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasResolveObligationConfidence: false,
+        hasResolveObligationDirection: false,
       }),
     ).not.toThrow();
   });
@@ -26,6 +28,7 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasResolveObligationConfidence: false,
+        hasResolveObligationDirection: false,
       }),
     ).not.toThrow();
   });
@@ -37,6 +40,7 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasResolveObligationConfidence: false,
+        hasResolveObligationDirection: false,
       }),
     ).not.toThrow();
   });
@@ -77,6 +81,20 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
     ).toThrow(/detectDuplicates/);
   });
 
+  it("throws in production when resolveObligationDirection is missing (H-1)", () => {
+    // Batch 10 H-1 regression: the §6 gate's outflow-receivable rejection
+    // is silently dormant when this loader is absent. Production booting
+    // without it would let an "AR drain" intent (outflow targeting a
+    // receivable) skate through the gate as `not_applicable`.
+    expect(() =>
+      assertMoneyPathLoadersWiredInProduction({
+        nodeEnv: "production",
+        ...allWired,
+        hasResolveObligationDirection: false,
+      }),
+    ).toThrow(/resolveObligationDirection/);
+  });
+
   it("lists every missing loader in the error", () => {
     expect(() =>
       assertMoneyPathLoadersWiredInProduction({
@@ -84,7 +102,10 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasResolveObligationConfidence: false,
+        hasResolveObligationDirection: false,
       }),
-    ).toThrow(/resolveEvidence.*detectDuplicates.*resolveObligationConfidence/s);
+    ).toThrow(
+      /resolveEvidence.*detectDuplicates.*resolveObligationConfidence.*resolveObligationDirection/s,
+    );
   });
 });
