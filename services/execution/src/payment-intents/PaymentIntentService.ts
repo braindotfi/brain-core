@@ -156,6 +156,19 @@ export interface PaymentIntentServiceDeps {
     ctx: ServiceCallContext,
     input: DuplicateCheckInput,
   ) => Promise<DuplicateCheckResult>;
+  /**
+   * Optional (RFC 0004 §5.2): resolve the confidence of the Ledger obligation an
+   * intent is created against. When wired and the intent references an
+   * obligation, the intent's confidence is capped at the obligation's, so a
+   * payment proposed against a low-confidence (e.g. document-extracted, <= 0.5)
+   * obligation inherits that confidence and a tenant `agent.confidence.gte`
+   * policy can gate it. Absent ⇒ confidence falls back to the explicit input
+   * (or the 1.0 default), preserving prior behavior.
+   */
+  resolveObligationConfidence?: (
+    ctx: ServiceCallContext,
+    obligationId: string,
+  ) => Promise<number | null>;
   /** Resolves the source account by id. */
   resolveAccount: (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null>;
   /** Resolves the destination counterparty by id. */
@@ -219,6 +232,31 @@ export class PaymentIntentService implements IPaymentIntentService {
 
   // ---- create ----------------------------------------------------------
 
+  /**
+   * Effective confidence for a new intent (RFC 0004 §5.2): the minimum of any
+   * explicit input confidence and the referenced obligation's confidence.
+   * Returns undefined when neither is known, so the row keeps the 1.0 default.
+   */
+  private async resolveEffectiveConfidence(
+    ctx: ServiceCallContext,
+    input: CreatePaymentIntentInput,
+  ): Promise<number | undefined> {
+    let confidence = input.confidence;
+    if (input.obligation_id !== undefined && this.deps.resolveObligationConfidence !== undefined) {
+      const obligationConfidence = await this.deps.resolveObligationConfidence(
+        ctx,
+        input.obligation_id,
+      );
+      if (obligationConfidence !== null) {
+        confidence =
+          confidence === undefined
+            ? obligationConfidence
+            : Math.min(confidence, obligationConfidence);
+      }
+    }
+    return confidence;
+  }
+
   public async create(
     ctx: ServiceCallContext,
     input: CreatePaymentIntentInput,
@@ -227,13 +265,19 @@ export class PaymentIntentService implements IPaymentIntentService {
       throw brainError("request_body_invalid", "amount must be a positive decimal string");
     }
 
+    // RFC 0004 §5.2: an intent is no more confident than the Ledger evidence it
+    // cites. Cap its confidence at the referenced obligation's so a low-
+    // confidence (document-extracted) obligation gates the payment via policy.
+    const effectiveConfidence = await this.resolveEffectiveConfidence(ctx, input);
+
     // Evaluate policy at creation time so the row carries a fresh
     // PolicyDecision id. Re-evaluation happens at execute() to defend
     // against state changes between propose and execute.
     const stub = stubGateIntent({
       id: "pi_PENDING",
       ownerId: ctx.tenantId,
-      input,
+      input:
+        effectiveConfidence !== undefined ? { ...input, confidence: effectiveConfidence } : input,
     });
     const decision = await this.deps.evaluatePolicy(ctx, stub);
 
@@ -259,6 +303,7 @@ export class PaymentIntentService implements IPaymentIntentService {
         status,
         policyDecisionId: decision.id,
         evidenceIds: input.evidence_ids ?? [],
+        ...(effectiveConfidence !== undefined ? { confidence: effectiveConfidence } : {}),
         // x402 recipient — persisted only for x402_settle (DB CHECK enforces null
         // otherwise). The §6 gate re-validates it against the counterparty (6.5).
         ...(input.action_type === "x402_settle" && input.pay_to !== undefined
@@ -1024,6 +1069,7 @@ function intentToGate(row: PaymentIntentRow): GatePaymentIntent {
     status: row.status,
     policy_decision_id: row.policy_decision_id,
     evidence_ids: row.evidence_ids,
+    confidence: row.confidence,
     ...gateSettlement(row.action_type, row.currency, row.amount, row.settlement_pay_to),
     ...gateEscrow(row.action_type, row.escrow_id, row.job_terms_hash),
   };
@@ -1046,6 +1092,7 @@ function stubGateIntent(args: {
     status: "proposed",
     policy_decision_id: null,
     evidence_ids: args.input.evidence_ids ?? [],
+    ...(args.input.confidence !== undefined ? { confidence: args.input.confidence } : {}),
     ...gateSettlement(
       args.input.action_type,
       args.input.currency,

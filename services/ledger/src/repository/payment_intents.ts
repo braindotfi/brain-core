@@ -88,6 +88,14 @@ export interface InsertPaymentIntentInput {
   status: string;
   policyDecisionId: string | null;
   evidenceIds: string[];
+  /**
+   * Confidence of the backing evidence (RFC 0004 §5.2). Defaults to 1.0 when
+   * omitted, preserving prior behavior; the policy VM reads this via
+   * `agent.confidence.gte`. Not subject to the §3.2 agent-contributed ceiling:
+   * that caps Ledger entity rows (obligations etc.), not the intent's own
+   * confidence, which simply reflects the evidence it rests on.
+   */
+  confidence?: number;
   /** Proposal-layer idempotency key (1a.5); null means no dedup is enforced. */
   proposalDedupKey?: string | null;
   /** x402 settlement recipient (RFC 0001 §6.1); set only for action_type=x402_settle. */
@@ -111,7 +119,7 @@ export async function insertPaymentIntent(
        provenance, confidence, proposal_dedup_key, settlement_pay_to,
        escrow_id, job_terms_hash
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',1.0,$14,$15,$16,$17)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',$14,$15,$16,$17,$18)
      RETURNING *`,
     [
       input.id,
@@ -127,6 +135,7 @@ export async function insertPaymentIntent(
       input.status,
       input.policyDecisionId,
       input.evidenceIds,
+      input.confidence ?? 1.0,
       input.proposalDedupKey ?? null,
       input.settlementPayTo ?? null,
       input.escrowId ?? null,

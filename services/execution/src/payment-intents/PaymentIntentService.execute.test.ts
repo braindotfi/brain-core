@@ -20,6 +20,7 @@ import type {
   GateAccount,
   GateAgent,
   GateCounterparty,
+  GatePaymentIntent,
   GatePolicyDecision,
   GatePrincipal,
   ServiceCallContext,
@@ -222,6 +223,50 @@ describe("PaymentIntentService.execute — durable hand-off (approved → dispat
     expect(enq?.outputs.outbox_id).toBe("exo_test");
     expect(enq?.outputs.status).toBe("dispatching");
     expect(enq?.policyDecisionId).toBe(PD_ID);
+  });
+
+  it("threads the row confidence into the gate intent for policy (RFC 0004 §5.2)", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const lowConfRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, confidence: 0.4 };
+    const dispatchingRow: PaymentIntentRow = { ...lowConfRow, status: "dispatching" };
+
+    const pool = makeFakePool((sql) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [lowConfRow], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [dispatchingRow], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO execution_outbox")) {
+        return { rows: [{ id: "exo_test" }], rowCount: 1 };
+      }
+      if (sql.includes("approval_ids")) {
+        return { rows: [lowConfRow], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    let seen: GatePaymentIntent | undefined;
+    const approvals = new ApprovalService({ pool, audit, resolveRole: async () => null });
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals,
+      resolveAgent: async (_ctx, _id) => GATE_AGENT,
+      resolveAccount: async (_ctx, _id) => GATE_ACCOUNT,
+      resolveCounterparty: async (_ctx, _id) => GATE_CP,
+      evaluatePolicy: async (_ctx, intent) => {
+        seen = intent;
+        return POLICY_DECISION;
+      },
+      resolvePrincipal: async (_ctx) => GATE_PRINCIPAL,
+    });
+
+    await service.execute(ctx, PI_ID);
+    // The §6 gate re-evaluates policy on the intent built from the row; that
+    // intent must carry the row's confidence so `agent.confidence.gte` can gate.
+    expect(seen?.confidence).toBe(0.4);
   });
 
   it("aborts without enqueuing when the intent was paused between gate and hand-off", async () => {

@@ -49,6 +49,13 @@ export interface GatePaymentIntent {
   status: string;
   policy_decision_id: string | null;
   evidence_ids: string[];
+  /**
+   * Confidence of the intent's underlying evidence (RFC 0004 §5.2). Threaded
+   * into the policy VM as `Action.confidence` so a tenant policy rule
+   * `agent.confidence.gte` can gate low-confidence (e.g. document-extracted,
+   * <= 0.5) intents. The gate itself reads no confidence; policy does.
+   */
+  confidence?: number | null;
   /** Optional linkage used by evidence semantic validation (H-21, check 9.5). */
   invoice_id?: string | null;
   obligation_id?: string | null;
