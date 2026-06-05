@@ -14,7 +14,7 @@ Single diligence-facing index for fintech, bank, and platform buyers. For each e
 | Tenant isolation (blob)              | shipped      | Per-tenant path prefix `<tenantId>/yyyy/mm/dd/sha256` (`blobPath`)                        |
 | Wiki / Policy boundary               | shipped      | `check-policy-no-wiki-read` + `check-wiki-no-ledger-write`                                |
 | Credential encryption at rest        | shipped      | AES-256-GCM + KMS provider (`shared/src/crypto/aes-gcm.ts`)                               |
-| §6 deterministic payment gate        | shipped      | `shared/src/gate/gate.ts` (22 entries) + `check-gate-bypass`                              |
+| §6 deterministic payment gate        | shipped      | `shared/src/gate/gate.ts` (23 entries) + `check-gate-bypass`                              |
 | External-agent HMAC handshake        | shipped      | `services/api/src/agents/sign-agent-request.ts` (signs and verifies)                      |
 | MCP scope grants + per-tenant limits | shipped      | `BrainMCPAgentRegistry` + `services/mcp/src/server.ts`                                    |
 | Audit log immutability               | shipped      | Append-only DB + Merkle anchoring on Base                                                 |
@@ -50,7 +50,7 @@ Plaid bank credentials are encrypted with **AES-256-GCM** before insert into `ra
 
 ### The §6 deterministic pre-execution gate
 
-Every money-moving action runs 22 deterministic checks (13 numbered + 9 hardening additions). Identity, behavior pinning, policy DSL, ledger state binding, balance, evidence, approvals, duplicate detection, audit before and after.
+Every money-moving action runs 23 deterministic checks (13 numbered + 10 hardening additions). Identity, behavior pinning, policy DSL, ledger state binding, balance, evidence, approvals, duplicate detection, obligation direction (payable vs receivable), audit before and after.
 
 {% hint style="success" %}
 **No LLM. No Wiki text. No skip path.** The gate is pure code; the same inputs always produce the same outputs.

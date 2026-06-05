@@ -1,6 +1,6 @@
 # The Pre-Execution Gate
 
-Before any PaymentIntent can execute, it must pass a **deterministic pre-execution gate**: **13 numbered checks plus 9 hardening additions (checks 1.5, 3.5, 5.5, 6.5, 6.6, 7.5, 8.5, 9.5, 11.5) = 22 entries total**; the canonical happy path is the 13 numbered checks (several additions record `not_applicable` for non-M2M flows). The gate is the only path to financial execution. The gate is non-overridable.
+Before any PaymentIntent can execute, it must pass a **deterministic pre-execution gate**: **13 numbered checks plus 10 hardening additions (checks 1.5, 3.5, 5.5, 6.5, 6.6, 6.7, 7.5, 8.5, 9.5, 11.5) = 23 entries total**; the canonical happy path is the 13 numbered checks (several additions record `not_applicable` for non-M2M flows). The gate is the only path to financial execution. The gate is non-overridable.
 
 | Property       | Value                                                        |
 | -------------- | ------------------------------------------------------------ |
@@ -20,7 +20,7 @@ Think of Policy as the **standing rule** and the gate as the **flight check**. B
 
 ### The Core Steps
 
-The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol. These are the 13 numbered checks of the canonical happy path; 9 hardening additions are inserted at their correct positions (checks 1.5, 3.5, 5.5, 6.5, 6.6, 7.5, 8.5, 9.5, 11.5. See **Hardening Additions** below) for 22 entries total. The M2M / x402 / escrow additions (3.5, 5.5, 6.5, 6.6, 8.5) record `not_applicable` for non-M2M flows so the canonical happy path is unchanged.
+The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol. These are the 13 numbered checks of the canonical happy path; 10 hardening additions are inserted at their correct positions (checks 1.5, 3.5, 5.5, 6.5, 6.6, 6.7, 7.5, 8.5, 9.5, 11.5. See **Hardening Additions** below) for 23 entries total. The M2M / x402 / escrow additions (3.5, 5.5, 6.5, 6.6, 8.5) record `not_applicable` for non-M2M flows so the canonical happy path is unchanged. Check 6.7 (obligation direction) is dormant when the intent carries no `obligation_id`.
 
 | #   | Step                                                                                           | Reads From                              |
 | --- | ---------------------------------------------------------------------------------------------- | --------------------------------------- |
@@ -42,20 +42,21 @@ If **any** step fails, the PaymentIntent transitions to `failed` with a structur
 
 ### Hardening Additions
 
-Four further deterministic checks were added as hardening, each inserted at its correct position in the sequence (checks 1.5, 7.5, 9.5, 11.5), bringing the total to **17 entries**:
+Five further deterministic checks were added as hardening, each inserted at its correct position in the sequence (checks 1.5, 6.7, 7.5, 9.5, 11.5), bringing the non-M2M total to **18 entries**:
 
-| Check                                   | What It Enforces                                                                                                            | Reads From                          |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| **Agent behavior pinned** (1.5)         | The runtime agent `behaviorHash` equals the value registered on-chain; a silent model/prompt/tool swap is a hard reject     | `BrainMCPAgentRegistry`             |
-| **Ledger-state snapshot binding** (7.5) | The Ledger snapshot Policy decided against is captured and re-validated immediately before dispatch; drift is a hard reject | `computeLedgerSnapshot` over Ledger |
-| **Evidence semantic validation** (9.5)  | The supporting evidence actually substantiates _this_ action (amount, counterparty, obligation), not just that it exists    | `raw_parsed`, `evidence_ids`        |
-| **Duplicate-payment protection** (11.5) | No prior execution with the same counterparty + amount inside the configured window                                         | `executions`                        |
+| Check                                       | What It Enforces                                                                                                                                                                    | Reads From                          |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| **Agent behavior pinned** (1.5)             | The runtime agent `behaviorHash` equals the value registered on-chain; a silent model/prompt/tool swap is a hard reject                                                             | `BrainMCPAgentRegistry`             |
+| **Obligation direction matches flow** (6.7) | When the intent cites an `obligation_id`, the linked obligation is NOT a receivable. An outflow targeting an obligation owed TO us (e.g. a prompt-injected refund) is a hard reject | `ledger_obligations.direction`      |
+| **Ledger-state snapshot binding** (7.5)     | The Ledger snapshot Policy decided against is captured and re-validated immediately before dispatch; drift is a hard reject                                                         | `computeLedgerSnapshot` over Ledger |
+| **Evidence semantic validation** (9.5)      | The supporting evidence actually substantiates _this_ action (amount, counterparty, obligation), not just that it exists                                                            | `raw_parsed`, `evidence_ids`        |
+| **Duplicate-payment protection** (11.5)     | No prior execution with the same counterparty + amount inside the configured window                                                                                                 | `executions`                        |
 
-These persist into the `gate_checks` snapshot on the audit-before event, so the full 17-entry trace is part of the verifiable Proof artifact.
+These persist into the `gate_checks` snapshot on the audit-before event, so the full 18-entry trace is part of the verifiable Proof artifact.
 
 ### M2M / x402 settlement checks (dormant until wired)
 
-For agent-to-agent settlement (x402 USDC-on-Base and `BrainEscrow` releases), RFC 0001 adds five further deterministic checks at positions 3.5, 5.5, 6.5, 6.6, 8.5. Each is **dormant-until-wired**: it adds a row only when the PaymentIntent carries the relevant settlement/escrow context **and** its (deferred) on-chain loader is configured. Otherwise it records nothing and the canonical 13 + 4 path is unchanged. None is a money path of its own; each only tightens an already-gated settlement.
+For agent-to-agent settlement (x402 USDC-on-Base and `BrainEscrow` releases), RFC 0001 adds five further deterministic checks at positions 3.5, 5.5, 6.5, 6.6, 8.5. Each is **dormant-until-wired**: it adds a row only when the PaymentIntent carries the relevant settlement/escrow context **and** its (deferred) on-chain loader is configured. Otherwise it records nothing and the canonical 13 + 5 path is unchanged. None is a money path of its own; each only tightens an already-gated settlement.
 
 | Check                                    | What It Enforces                                                                                                                                            | Reads From                        |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
