@@ -1,7 +1,12 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { isBrainId, ID_PREFIX } from "@brain/shared";
-import { provisionTenant } from "./provision.js";
+import { contentHash } from "@brain/policy";
+import {
+  buildDefaultPolicyDocument,
+  DEFAULT_CONFIDENCE_FLOOR,
+  provisionTenant,
+} from "./provision.js";
 
 interface Captured {
   sql: string;
@@ -55,10 +60,12 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
     expect(sqls[0]).toBe("BEGIN");
     expect(sqls[1]).toBe("SELECT set_config('app.tenant_id', $1, true)");
     expect(sqls.at(-1)).toBe("COMMIT");
-    // The three domain inserts, in order.
+    // The four domain inserts, in order: tenant -> user -> verification ->
+    // policy (default agent.confidence.gte floor, batch 11).
     expect(sqls.some((s) => /INSERT INTO tenants/.test(s))).toBe(true);
     expect(sqls.some((s) => /INSERT INTO users/.test(s))).toBe(true);
     expect(sqls.some((s) => /INSERT INTO email_verifications/.test(s))).toBe(true);
+    expect(sqls.some((s) => /INSERT INTO policies/.test(s))).toBe(true);
   });
 
   it("scopes the whole transaction to the freshly-minted tenant id (isolation)", async () => {
@@ -80,6 +87,11 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
       if (/INSERT INTO email_verifications/.test(c.sql)) {
         expect(c.values[1]).toBe(userId);
         expect(c.values[2]).toBe(tenantId);
+      }
+      if (/INSERT INTO policies/.test(c.sql)) {
+        // [0]=policyId [1]=tenantId [2]=content json [3]=content_hash [4]=createdBy
+        expect(c.values[1]).toBe(tenantId);
+        expect(c.values[4]).toBe(userId);
       }
     }
   });
@@ -108,5 +120,42 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
     const { pool, calls } = makeFakePool({ failOn: /INSERT INTO tenants/, failCode: "08006" });
     await expect(provisionTenant(pool, INPUT)).rejects.toMatchObject({ code: "08006" });
     expect(calls.some((c) => c.sql === "ROLLBACK")).toBe(true);
+  });
+
+  it("seeds a default agent.confidence.gte floor policy active from request 1 (Opus P1-1)", async () => {
+    // Batch 11: a freshly provisioned tenant must arrive with the confidence
+    // floor enforced, not dormant. Otherwise document-extracted intents (with
+    // their <= 0.5 ceiling at write time) sail past the §6 gate's policy
+    // check until an operator hand-writes a rule -- which is exactly the
+    // "available but not enforced" pattern Opus' review flagged.
+    const { pool, calls } = makeFakePool();
+    const { tenantId, userId } = await provisionTenant(pool, INPUT);
+    const policyInsert = calls.find((c) => /INSERT INTO policies/.test(c.sql));
+    expect(policyInsert).toBeDefined();
+    expect(policyInsert?.sql).toContain("'active'");
+
+    // Schema:
+    //   [0] policy id  [1] tenant id  [2] content JSON  [3] content_hash buf
+    //   [4] created_by
+    const [policyId, capturedTenant, contentJson, capturedHash, createdBy] =
+      policyInsert!.values as [string, string, string, Buffer, string];
+    expect(isBrainId(policyId, ID_PREFIX.policy)).toBe(true);
+    expect(capturedTenant).toBe(tenantId);
+    expect(createdBy).toBe(userId);
+
+    // The persisted content is exactly the helper's output (so an operator
+    // signing a v2 starts from a known-stable v1 they can diff against).
+    const parsed = JSON.parse(contentJson);
+    expect(parsed).toEqual(buildDefaultPolicyDocument());
+    // The rule is the named floor at the configured constant (0.5 -- matches
+    // the agent_contributed write ceiling).
+    expect(parsed.rules[0].when["agent.confidence.gte"]).toBe(DEFAULT_CONFIDENCE_FLOOR);
+    expect(parsed.rules[0].applies_to).toEqual(["any"]);
+    expect(parsed.rules[0].execute).toBe("auto");
+
+    // content_hash is sha256 of the canonical document. Computed in code, not
+    // hard-coded -- otherwise a future DSL change to canonicalize() would
+    // silently break the on-disk policy without failing this test.
+    expect(Buffer.compare(capturedHash, contentHash(parsed))).toBe(0);
   });
 });

@@ -28,6 +28,46 @@ import {
   withTenantScope,
   type TenantScopedClient,
 } from "@brain/shared";
+import { contentHash, type PolicyDocument } from "@brain/policy";
+
+/**
+ * Batch 11: default agent-confidence floor for a freshly provisioned tenant.
+ *
+ * Confidence gating (RFC 0004 §5.2) is enforced mechanically in the §6 gate
+ * via the policy VM, but it has been DORMANT BY DEFAULT: a new tenant with no
+ * hand-written rules let document-extracted intents (capped at confidence
+ * <= 0.5 at the agent_contributed write boundary) flow through at the 1.0
+ * default. An operator who never ran `pnpm policy:bootstrap` was effectively
+ * running without earned-autonomy. Opus 4.8 review P1-1.
+ *
+ * Tenants opt OUT (by re-signing an updated policy without this rule), not
+ * in. The floor matches the agent-contributed write ceiling, so an intent
+ * cited against an agent-contributed obligation will reject under this rule
+ * until that obligation is corroborated upward (RFC 0004 §5.2 / persist.ts
+ * counter-side check, batch 10 C-2).
+ *
+ * Rule shape: `applies_to: [any]`, `when: {agent.confidence.gte: 0.5}`,
+ * `execute: auto`. The VM short-circuits on the FIRST matching rule (the
+ * default-deny tail still applies when no rule matches), so a tenant policy
+ * update that adds a more-permissive rule above this one supersedes the
+ * floor without removing it. The policy is stored at version 1 in state
+ * `active` so it is enforced from the first request.
+ */
+export const DEFAULT_CONFIDENCE_FLOOR = 0.5;
+
+export function buildDefaultPolicyDocument(floor = DEFAULT_CONFIDENCE_FLOOR): PolicyDocument {
+  return {
+    version: 1,
+    rules: [
+      {
+        id: "default-agent-confidence-floor",
+        applies_to: ["any"],
+        when: { "agent.confidence.gte": floor },
+        execute: "auto",
+      },
+    ],
+  };
+}
 
 export interface ProvisionTenantInput {
   /** Owner email (caller normalizes/validates; stored as given). */
@@ -67,6 +107,10 @@ export async function provisionTenant(
   const tenantId = brainId(ID_PREFIX.tenant);
   const userId = brainId(ID_PREFIX.user);
 
+  const policyId = brainId(ID_PREFIX.policy);
+  const defaultPolicy = buildDefaultPolicyDocument();
+  const defaultPolicyHash = contentHash(defaultPolicy);
+
   try {
     await withTenantScope(pool, tenantId, async (c: TenantScopedClient) => {
       await c.query(
@@ -82,6 +126,23 @@ export async function provisionTenant(
         `INSERT INTO email_verifications (token_hash, user_id, tenant_id, expires_at)
          VALUES ($1, $2, $3, $4)`,
         [input.emailVerificationTokenHash, userId, tenantId, input.emailVerificationExpiresAt],
+      );
+      // Batch 11: seed the default agent-confidence floor (Opus P1-1). State
+      // = `active` so the §6 gate enforces it from the very first request;
+      // version = 1 so a subsequent operator-signed policy increments cleanly.
+      // The owner user is the `created_by`, which is the only user that
+      // exists at this point in the tenant's lifecycle.
+      await c.query(
+        `INSERT INTO policies
+           (id, tenant_id, version, content, content_hash, quorum_required, state, created_by, activated_at)
+         VALUES ($1, $2, 1, $3, $4, 1, 'active', $5, now())`,
+        [
+          policyId,
+          tenantId,
+          JSON.stringify(defaultPolicy),
+          defaultPolicyHash,
+          userId,
+        ],
       );
     });
   } catch (err) {
