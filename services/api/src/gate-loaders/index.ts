@@ -251,9 +251,15 @@ export function makeSumActiveReservations(
  * `ResolvedEvidence` rows for semantic validation. Projects raw_parsed
  * payloads into the shape the gate's pure validator expects.
  *
- * Trust level today is a parser-name heuristic (plaid + stripe = high,
- * others = medium). A richer model lives in the @brain/policy evidence
- * spec; this is the gate's read-side shim until that lands as a service.
+ * Trust is anchored to the raw ARTIFACT's `source_type` (set server-side at the
+ * authenticated ingest boundary: an HMAC-verified Plaid/Stripe webhook, an
+ * authenticated upload, or `agent_contributed` for agent pushes), NOT to the
+ * `parser` label on the parsed row (Codex 2026-06-05 P1). A `raw:write`
+ * principal chooses the parser string freely, so deriving trust from it let an
+ * agent self-label `parser=plaid` to mint high-trust evidence; the source_type
+ * is fixed on the artifact at ingest and cannot be forged at parse time. A
+ * richer producer-registry model lives in the @brain/policy evidence spec; this
+ * is the gate's read-side shim until that lands as a service.
  */
 export function makeResolveEvidence(
   pool: Pool,
@@ -261,16 +267,21 @@ export function makeResolveEvidence(
   return (ctx, intent) =>
     withTenantScope(pool, ctx.tenantId, async (c) => {
       if (intent.evidence_ids.length === 0) return [];
+      // JOIN the owning artifact so trust comes from its server-set source_type.
+      // Both tables are tenant-scoped under RLS, so the join stays in-tenant.
       const { rows } = await c.query<{
         id: string;
         raw_artifact_id: string;
         parser: string;
+        source_type: string;
         extracted: Record<string, unknown>;
         extracted_at: Date;
       }>(
-        `SELECT id, raw_artifact_id, parser, extracted, extracted_at
-           FROM raw_parsed
-          WHERE id = ANY($1::text[])`,
+        `SELECT rp.id, rp.raw_artifact_id, rp.parser, ra.source_type,
+                rp.extracted, rp.extracted_at
+           FROM raw_parsed rp
+           JOIN raw_artifacts ra ON ra.id = rp.raw_artifact_id
+          WHERE rp.id = ANY($1::text[])`,
         [[...intent.evidence_ids]],
       );
       return rows.map((r) => ({
@@ -279,15 +290,19 @@ export function makeResolveEvidence(
         extracted: r.extracted,
         sourceArtifactId: r.raw_artifact_id,
         capturedAt: r.extracted_at,
-        trustLevel: parserTrust(r.parser),
+        trustLevel: sourceTrust(r.source_type),
       }));
     });
 }
 
-function parserTrust(parser: string): TrustLevel {
-  // Bank/card extractors are signed-from-source; treat as high. The
-  // catch-all (custom / agent-contributed extractors) is medium.
-  if (parser === "plaid" || parser === "stripe") return "high";
+function sourceTrust(sourceType: string): TrustLevel {
+  // Verified first-party financial sources (HMAC-authenticated webhooks) are
+  // signed-from-source ⇒ high. Agent-contributed artifacts are the lowest-trust
+  // input (an external principal pushed them) ⇒ low. Everything else (upload,
+  // email, ERP, on-chain, other) is medium. Trust never derives from the
+  // caller-chosen parser label.
+  if (sourceType === "plaid" || sourceType === "stripe") return "high";
+  if (sourceType === "agent_contributed") return "low";
   return "medium";
 }
 

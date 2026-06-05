@@ -399,27 +399,44 @@ describe("makeResolveEvidence", () => {
     expect(await makeResolveEvidence(POOL)(ctx(), intent)).toEqual([]);
   });
 
-  it("projects raw_parsed rows and maps trust level by parser", async () => {
+  it("derives trust from the artifact source_type, not the caller's parser label (Codex 2026-06-05 P1)", async () => {
     const capturedAt = new Date("2026-01-01T00:00:00Z");
     setScopedRows([
+      // First-party verified financial source ⇒ high.
       {
         id: "rp_1",
         raw_artifact_id: "raw_1",
         parser: "plaid",
+        source_type: "plaid",
         extracted: { a: 1 },
         extracted_at: capturedAt,
       },
+      // THE ATTACK: an agent contributes an artifact (source_type fixed at
+      // ingest = agent_contributed) and self-labels the parsed row parser=plaid
+      // to mint high trust. Trust must derive from the unforgeable source_type,
+      // so this is `low`, never `high`.
       {
         id: "rp_2",
         raw_artifact_id: "raw_2",
-        parser: "custom",
+        parser: "plaid",
+        source_type: "agent_contributed",
         extracted: { b: 2 },
         extracted_at: capturedAt,
       },
+      // Authenticated upload / other first-party source ⇒ medium.
+      {
+        id: "rp_3",
+        raw_artifact_id: "raw_3",
+        parser: "invoice",
+        source_type: "upload",
+        extracted: { c: 3 },
+        extracted_at: capturedAt,
+      },
     ]);
-    const intent = { evidence_ids: ["rp_1", "rp_2"] } as unknown as GatePaymentIntent;
+    const intent = { evidence_ids: ["rp_1", "rp_2", "rp_3"] } as unknown as GatePaymentIntent;
     const out = await makeResolveEvidence(POOL)(ctx(), intent);
-    expect(out).toHaveLength(2);
+    expect(out).toHaveLength(3);
+    // kind stays the parser (the semantic type the validator matches on)...
     expect(out[0]).toEqual({
       id: "rp_1",
       kind: "plaid",
@@ -428,7 +445,10 @@ describe("makeResolveEvidence", () => {
       capturedAt,
       trustLevel: "high",
     });
-    expect(out[1]?.trustLevel).toBe("medium");
+    // ...but trust is anchored to source_type: the spoofed parser=plaid on an
+    // agent_contributed artifact cannot reach high.
+    expect(out[1]?.trustLevel).toBe("low");
+    expect(out[2]?.trustLevel).toBe("medium");
   });
 });
 
