@@ -1,6 +1,6 @@
 ---
 description: >-
-  A financial brain in a single API. Brain is the financial intelligence layer
+  A financial brain in a single SDK. Brain is the financial intelligence layer
   for businesses, transforming financial activity into memory, intelligence, and
   autonomous execution.
 ---
@@ -15,14 +15,7 @@ Brain holds neither funds nor rail access. It sits between an account holder and
 
 Brain is a layered protocol; information flows up and control flows down.
 
-| Layer  | Job                                                        |
-| ------ | ---------------------------------------------------------- |
-| Raw    | Lossless ingestion from any authorized source              |
-| Ledger | Deterministic normalization into immutable financial truth |
-| Wiki   | Continuously updated memory and natural-language Q\&A      |
-| Policy | Plain-English rules compiled to deterministic guards       |
-| Agent  | Internal and external agents proposing actions in scope    |
-| Audit  | Per-tenant Merkle tree anchored on Base L2                 |
+<table><thead><tr><th width="200">Layer</th><th>Job</th></tr></thead><tbody><tr><td>Raw</td><td>Lossless ingestion from any authorized source</td></tr><tr><td>Ledger</td><td>Deterministic normalization into immutable financial truth</td></tr><tr><td>Wiki</td><td>Continuously updated memory and natural-language Q&#x26;A</td></tr><tr><td>Policy</td><td>Plain-English rules compiled to deterministic guards</td></tr><tr><td>Agent</td><td>Internal and external agents proposing actions in scope</td></tr><tr><td>Audit</td><td>Per-tenant Merkle tree anchored on Base L2</td></tr></tbody></table>
 
 Reads are grounded in evidence, writes emit audit events, and any financial action has to pass a deterministic pre-execution gate before it leaves the system. Nothing executes outside that gate.
 
@@ -111,8 +104,8 @@ The full SDK surface (`brain.accounts`, `brain.transactions`, `brain.payments`, 
 
 ## Next Steps
 
-- Build it: [Quickstart](introduction/quickstart.md), then the [task-shaped guides](build/overview.md).
-- Understand it: [Concepts](concepts/overview.md), then [Protocol](protocol/overview.md).
-- Integrate an external agent: [MCP server](mcp-server/overview.md).
-- Verify a payment on-chain: [Smart contracts](smart-contracts/overview.md) and [BrainAuditAnchor](smart-contracts/brainauditanchor.md).
-- Review the safety model: [SECURITY.md](SECURITY.md). The §6 gate, layer boundaries, audit verification, and threat model.
+* Build it: [Quickstart](introduction/quickstart.md), then the [task-shaped guides](build/overview.md).
+* Understand it: [Concepts](concepts/overview.md), then [Protocol](protocol/overview.md).
+* Integrate an external agent: [MCP server](mcp-server/overview.md).
+* Verify a payment on-chain: [Smart contracts](smart-contracts/overview.md) and [BrainAuditAnchor](smart-contracts/brainauditanchor.md).
+* Review the safety model: [SECURITY.md](SECURITY.md). The §6 gate, layer boundaries, audit verification, and threat model.
