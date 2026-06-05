@@ -12,7 +12,13 @@ import {
   StorageSharedKeyCredential,
   generateBlobSASQueryParameters,
 } from "@azure/storage-blob";
-import type { BlobAdapter, BlobObject, PutOptions, SignedUrlOptions } from "./types.js";
+import type {
+  BlobAdapter,
+  BlobObject,
+  BlobPurgeResult,
+  PutOptions,
+  SignedUrlOptions,
+} from "./types.js";
 import { sha256Hex } from "./types.js";
 
 export interface AzureAdapterOptions {
@@ -114,6 +120,30 @@ export class AzureBlobAdapter implements BlobAdapter {
       tombstoned_at: new Date().toISOString(),
       tombstoned_by: by,
     });
+  }
+
+  /**
+   * NOTE: exercised only against a live Azure Storage account (blocked in the
+   * unit sandbox). Lists every blob under `<tenantId>/` and deletes each; a
+   * blob under the container immutable policy / legal hold throws and is
+   * captured in `failed` rather than aborting the purge. The hold is NOT
+   * released here — GDPR erasure of WORM-protected blobs is a deliberate,
+   * audited legal-hold-release operation the worker routes from `failed`.
+   */
+  public async purgeTenant(tenantId: string): Promise<BlobPurgeResult> {
+    const prefix = `${tenantId}/`;
+    const container = this.containerClient();
+    let deleted = 0;
+    const failed: string[] = [];
+    for await (const blob of container.listBlobsFlat({ prefix })) {
+      try {
+        await container.getBlockBlobClient(blob.name).delete({ deleteSnapshots: "include" });
+        deleted += 1;
+      } catch {
+        failed.push(blob.name);
+      }
+    }
+    return { deleted, failed };
   }
 
   public async healthcheck(): Promise<boolean> {

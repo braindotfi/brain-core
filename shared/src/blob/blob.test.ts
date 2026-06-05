@@ -56,6 +56,38 @@ describe("MemoryBlobAdapter", () => {
   it("healthcheck returns true", async () => {
     expect(await new MemoryBlobAdapter().healthcheck()).toBe(true);
   });
+
+  it("purgeTenant deletes exactly the tenant's objects (GDPR erasure, R-02)", async () => {
+    const a = new MemoryBlobAdapter();
+    await a.put(blobPath("tnt_a", "s1", new Date("2026-01-01T00:00:00Z")), Buffer.from("1"), {});
+    await a.put(blobPath("tnt_a", "s2", new Date("2026-02-01T00:00:00Z")), Buffer.from("2"), {});
+    await a.put(blobPath("tnt_b", "s3", new Date("2026-01-01T00:00:00Z")), Buffer.from("3"), {});
+
+    const res = await a.purgeTenant("tnt_a");
+
+    expect(res).toEqual({ deleted: 2, failed: [] });
+    // tnt_a is gone, tnt_b untouched (no cross-tenant erasure).
+    expect([...a.objects.keys()].some((k) => k.startsWith("tnt_a/"))).toBe(false);
+    expect([...a.objects.keys()].some((k) => k.startsWith("tnt_b/"))).toBe(true);
+  });
+
+  it("purgeTenant is idempotent and a no-op for an unknown tenant", async () => {
+    const a = new MemoryBlobAdapter();
+    await a.put(blobPath("tnt_a", "s1"), Buffer.from("1"), {});
+    expect((await a.purgeTenant("tnt_a")).deleted).toBe(1);
+    // second run finds nothing left
+    expect(await a.purgeTenant("tnt_a")).toEqual({ deleted: 0, failed: [] });
+    expect(await a.purgeTenant("tnt_missing")).toEqual({ deleted: 0, failed: [] });
+  });
+
+  it("purgeTenant does not match a tenant id that is a prefix of another", async () => {
+    const a = new MemoryBlobAdapter();
+    await a.put(blobPath("tnt_a", "s1"), Buffer.from("1"), {});
+    await a.put(blobPath("tnt_ab", "s2"), Buffer.from("2"), {});
+    const res = await a.purgeTenant("tnt_a");
+    expect(res.deleted).toBe(1); // only tnt_a/, the trailing slash prevents tnt_ab/ matching
+    expect([...a.objects.keys()].some((k) => k.startsWith("tnt_ab/"))).toBe(true);
+  });
 });
 
 describe("createBlobAdapter factory", () => {

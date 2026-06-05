@@ -2,7 +2,13 @@
  * In-memory blob adapter. Test-only. Not exported beyond test utilities.
  */
 
-import type { BlobAdapter, BlobObject, PutOptions, SignedUrlOptions } from "./types.js";
+import type {
+  BlobAdapter,
+  BlobObject,
+  BlobPurgeResult,
+  PutOptions,
+  SignedUrlOptions,
+} from "./types.js";
 import { sha256Hex } from "./types.js";
 
 interface MemoryObject {
@@ -55,6 +61,18 @@ export class MemoryBlobAdapter implements BlobAdapter {
     obj.tombstoned = true;
     obj.metadata.tombstoned_at = new Date().toISOString();
     obj.metadata.tombstoned_by = by;
+  }
+
+  public async purgeTenant(tenantId: string): Promise<BlobPurgeResult> {
+    const prefix = `${tenantId}/`;
+    let deleted = 0;
+    for (const key of [...this.objects.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.objects.delete(key);
+        deleted += 1;
+      }
+    }
+    return { deleted, failed: [] };
   }
 
   public async healthcheck(): Promise<boolean> {

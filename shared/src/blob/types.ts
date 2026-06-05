@@ -30,6 +30,18 @@ export interface SignedUrlOptions {
   expiresInSeconds: number;
 }
 
+export interface BlobPurgeResult {
+  /** Number of objects actually deleted under the tenant prefix. */
+  deleted: number;
+  /**
+   * Paths that could NOT be deleted — typically WORM/legal-hold-protected
+   * blobs. They are surfaced (not force-deleted) so a deliberate, audited
+   * legal-hold-release runbook / dead-letter path handles them, rather than
+   * this primitive silently undermining the immutability guarantee.
+   */
+  failed: string[];
+}
+
 export interface BlobAdapter {
   put(
     path: string,
@@ -40,6 +52,16 @@ export interface BlobAdapter {
   signedUrl(path: string, opts: SignedUrlOptions): Promise<string>;
   /** Tombstone — never deletes bytes (§3 Layer 1 immutability). Attaches metadata flag. */
   tombstone(path: string, by: string): Promise<void>;
+  /**
+   * GDPR Art. 17 erasure (R-02): permanently delete every object under the
+   * `<tenantId>/` prefix. This is the ONLY sanctioned path that removes Raw
+   * bytes — distinct from {@link tombstone}, which preserves them — and runs
+   * only on tenant deletion, via a privileged worker. It does NOT force-release
+   * a legal hold / immutable policy (that would undermine WORM); such blobs are
+   * returned in {@link BlobPurgeResult.failed} for the legal-hold-release
+   * runbook. Idempotent: a re-run after partial success deletes the remainder.
+   */
+  purgeTenant(tenantId: string): Promise<BlobPurgeResult>;
   healthcheck(): Promise<boolean>;
 }
 

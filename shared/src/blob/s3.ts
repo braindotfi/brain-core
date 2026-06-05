@@ -4,8 +4,10 @@
  */
 
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   PutObjectTaggingCommand,
   S3Client,
@@ -13,7 +15,13 @@ import {
   type S3ClientConfig,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { BlobAdapter, BlobObject, PutOptions, SignedUrlOptions } from "./types.js";
+import type {
+  BlobAdapter,
+  BlobObject,
+  BlobPurgeResult,
+  PutOptions,
+  SignedUrlOptions,
+} from "./types.js";
 import { sha256Hex } from "./types.js";
 
 export interface S3AdapterOptions {
@@ -94,6 +102,42 @@ export class S3BlobAdapter implements BlobAdapter {
         },
       }),
     );
+  }
+
+  /**
+   * NOTE: exercised only against a live S3/LocalStack/MinIO bucket (blocked in
+   * the unit sandbox). Lists every key under `<tenantId>/` (paginated) and
+   * deletes them one by one so a per-object failure (object-lock / legal hold)
+   * is captured in `failed` instead of aborting the whole purge. Legal holds
+   * are NOT released here.
+   */
+  public async purgeTenant(tenantId: string): Promise<BlobPurgeResult> {
+    const prefix = `${tenantId}/`;
+    let deleted = 0;
+    const failed: string[] = [];
+    let continuationToken: string | undefined;
+    do {
+      const list = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.opts.bucket,
+          Prefix: prefix,
+          ...(continuationToken !== undefined ? { ContinuationToken: continuationToken } : {}),
+        }),
+      );
+      for (const obj of list.Contents ?? []) {
+        if (obj.Key === undefined) continue;
+        try {
+          await this.client.send(
+            new DeleteObjectCommand({ Bucket: this.opts.bucket, Key: obj.Key }),
+          );
+          deleted += 1;
+        } catch {
+          failed.push(obj.Key);
+        }
+      }
+      continuationToken = list.IsTruncated === true ? list.NextContinuationToken : undefined;
+    } while (continuationToken !== undefined);
+    return { deleted, failed };
   }
 
   public async healthcheck(): Promise<boolean> {
