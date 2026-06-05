@@ -144,9 +144,7 @@ describe("§6 -- check 6.7: obligation_direction_matches_flow (batch 10 H-1)", (
     const result = await run(deps, baseIntent({ obligation_id: "obl_AP" }));
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(
-        result.checks.some((c) => c.name === "obligation_direction_matches_flow"),
-      ).toBe(false);
+      expect(result.checks.some((c) => c.name === "obligation_direction_matches_flow")).toBe(false);
     }
   });
 
@@ -158,9 +156,7 @@ describe("§6 -- check 6.7: obligation_direction_matches_flow (batch 10 H-1)", (
     const result = await run(deps, baseIntent()); // no obligation_id
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(
-        result.checks.some((c) => c.name === "obligation_direction_matches_flow"),
-      ).toBe(false);
+      expect(result.checks.some((c) => c.name === "obligation_direction_matches_flow")).toBe(false);
     }
   });
 
@@ -171,9 +167,7 @@ describe("§6 -- check 6.7: obligation_direction_matches_flow (batch 10 H-1)", (
     const result = await run(deps, baseIntent({ obligation_id: null }));
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(
-        result.checks.some((c) => c.name === "obligation_direction_matches_flow"),
-      ).toBe(false);
+      expect(result.checks.some((c) => c.name === "obligation_direction_matches_flow")).toBe(false);
     }
   });
 });
