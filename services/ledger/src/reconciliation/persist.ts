@@ -35,12 +35,24 @@ export interface PersistMatchResult {
   created: boolean;
 }
 
+/**
+ * RFC 0004 §5.2 / §7.1: corroboration is the sanctioned path to raise an
+ * obligation's confidence past the agent-contributed 0.5 ceiling. A single
+ * match lifts confidence upward-only toward the match score, capped at 0.9
+ * (corroboration never asserts human-confirmed certainty), and promotes
+ * `agent_contributed` provenance to `extracted` since the row is now backed
+ * by independent Ledger evidence. The 0.9 ceiling and single-match lift are a
+ * calibration choice flagged in RFC 0004 §7.1, open to tuning.
+ */
+const CORROBORATION_CONFIDENCE_CEILING = 0.9;
+
 export async function persistMatch(
   pool: Pool,
   audit: AuditEmitter,
   ctx: ServiceCallContext,
   input: PersistMatchInput,
 ): Promise<PersistMatchResult> {
+  const promoted: Array<{ id: string; confidence: number }> = [];
   const result = await withTenantScope(pool, ctx.tenantId, async (c) => {
     const existing = await findExistingMatch(c, input);
     if (existing !== null) return { matchId: existing.id, created: false };
@@ -88,6 +100,27 @@ export async function persistMatch(
       );
     }
 
+    // Corroboration write-back: an obligation matched against independent
+    // evidence earns confidence (upward-only). See CORROBORATION_* above.
+    for (const entity of [
+      { type: input.leftEntityType, id: input.leftEntityId },
+      { type: input.rightEntityType, id: input.rightEntityId },
+    ]) {
+      if (entity.type !== "obligation") continue;
+      const { rows } = await c.query<{ id: string; confidence: number }>(
+        `UPDATE ledger_obligations
+            SET confidence = GREATEST(confidence, LEAST($2::real, $3::real)),
+                provenance = CASE WHEN provenance = 'agent_contributed' THEN 'extracted'
+                                  ELSE provenance END,
+                updated_at = now()
+          WHERE id = $1
+          RETURNING id, confidence`,
+        [entity.id, input.confidenceScore, CORROBORATION_CONFIDENCE_CEILING],
+      );
+      const row = rows[0];
+      if (row !== undefined) promoted.push(row);
+    }
+
     return { matchId: id, created: true };
   });
 
@@ -105,6 +138,18 @@ export async function persistMatch(
       },
       outputs: { match_id: result.matchId, explanation: input.explanation },
     });
+    // Audit each obligation whose confidence was corroborated, so the trail
+    // explains why an obligation later clears `agent.confidence.gte`.
+    for (const obligation of promoted) {
+      await audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "ledger",
+        actor: ctx.actor,
+        action: "ledger.obligation.corroborated",
+        inputs: { match_type: input.matchType, match_confidence: input.confidenceScore },
+        outputs: { obligation_id: obligation.id, confidence: obligation.confidence },
+      });
+    }
   }
 
   return result;

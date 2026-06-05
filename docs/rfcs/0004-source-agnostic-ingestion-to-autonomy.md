@@ -359,11 +359,19 @@ independent of this RFC.
   Python agents (`gpt-4o-mini`, vision via `gpt-4o`). The new agent reuses the
   wired `AsyncOpenAI` client with no new dependency. Revisit only if extraction
   quality on real documents proves insufficient.
-- **Threshold values.** What `agent.confidence.gte` value gates `confirm` vs
-  `live`, and how much a single reconciliation match lifts confidence and to what
-  ceiling. These are policy numbers, deferred to Stage 2 alongside the plumbing.
-- **Reconciliation write-back scope.** Confirm the upward-only confidence
-  write-back to `persistMatch` is in Stage 2 and not Stage 1.
+- **Threshold values. PARTIALLY DECIDED (Stage 2).** The per-tenant
+  `agent.confidence.gte` value for `confirm` vs `live` stays a tenant policy
+  knob (not hard-coded). For corroboration lift, the chosen default is: a single
+  reconciliation match raises the obligation's confidence upward-only toward the
+  match score, capped at **0.9** (corroboration never asserts human-confirmed
+  certainty); see `CORROBORATION_CONFIDENCE_CEILING` in
+  `services/ledger/src/reconciliation/persist.ts`. The 0.9 ceiling and
+  single-match step are open to calibration.
+- **Reconciliation write-back scope. DECIDED + DONE (Stage 2).** The upward-only
+  write-back landed in `persistMatch`: a match against an obligation raises its
+  confidence and promotes `agent_contributed -> extracted` (the sanctioned
+  promotion path, since the row is now backed by independent Ledger evidence),
+  emitting a `ledger.obligation.corroborated` audit event.
 
 ## 8. Layer-boundary compliance checklist
 
