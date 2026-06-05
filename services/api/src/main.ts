@@ -1424,7 +1424,12 @@ async function main(): Promise<void> {
           const hash = contentHash(content);
 
           // ── Idempotency: same content hash already active and on-chain ──
-          type ExistingRow = { id: string; version: number; onchain_tx: string; onchain_version: number };
+          type ExistingRow = {
+            id: string;
+            version: number;
+            onchain_tx: string;
+            onchain_version: number;
+          };
           const existingReg = await withTenantScope(pool, req.principal.tenantId, async (c) => {
             const res = await c.query<ExistingRow>(
               `SELECT id, version, onchain_tx, onchain_version FROM policies
@@ -1480,10 +1485,7 @@ async function main(): Promise<void> {
           let onchainPolicyVersion: number | undefined;
           if (policyRegistrar !== undefined) {
             try {
-              const reg = await policyRegistrar.registerPolicy(
-                req.principal.tenantId,
-                hash,
-              );
+              const reg = await policyRegistrar.registerPolicy(req.principal.tenantId, hash);
               onchainPolicyTx = reg.tx_hash;
               onchainPolicyVersion = reg.version;
               await withTenantScope(pool, req.principal.tenantId, async (c) => {
