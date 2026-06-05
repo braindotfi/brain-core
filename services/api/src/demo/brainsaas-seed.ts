@@ -10,11 +10,13 @@
  *   Ledger    — 6 vendor + 4 customer counterparties, 2 bank accounts
  *               (operating + reserve), 3 AP invoices (the "inbox"), 3 AR
  *               invoices (overdue + current) that drive computed
- *               outstanding/days-overdue.
+ *               outstanding/days-overdue, and a per-customer monthly inflow
+ *               history (cleared transactions) so the AR anomaly is derived from
+ *               real payment-timing drift, not a flag.
  *   Metadata  — the scenario fields with no native ledger column live in the
  *               Ledger `metadata` JSONB (v0.3: truth lives in Ledger): per-vendor
  *               monthly ceiling + approved flag on the counterparty, per-customer
- *               relationship enrichment (tenure / MRR / late history / anomaly)
+ *               relationship enrichment (tenure / MRR / late history)
  *               on the counterparty, per-AP-invoice flags + PO on the invoice.
  *               The operating buffer is a Treasury *policy* parameter; the
  *               yield-venue catalog is a global reference endpoint, not seeded.
@@ -33,6 +35,7 @@
 
 import { createHash } from "node:crypto";
 import {
+  recordTransactionRow,
   upsertAccountRow,
   upsertCounterpartyRow,
   type AccountRow,
@@ -87,9 +90,17 @@ interface CustomerSpec {
   usage_trend: "growing" | "stable" | "declining";
   last_contact_days_ago: number;
   notes: string;
-  has_anomaly: boolean;
   risk_level: "low" | "medium" | "high";
   verified_status: "document_verified" | "self_attested" | "unverified";
+  /**
+   * Day-of-month each monthly inflow settled, oldest→newest. When set, the seed
+   * inserts one `cleared` inflow ledger_transaction per entry so the AR anomaly
+   * check is data-derived (drift = the day-of-month creeping later) rather than a
+   * scripted flag. Omit for customers with no seeded payment history.
+   */
+  payment_days?: number[];
+  /** Per-cycle inflow amount; defaults to `mrr_usd`. */
+  monthly_payment?: number;
 }
 
 const CUSTOMERS: CustomerSpec[] = [
@@ -106,9 +117,10 @@ const CUSTOMERS: CustomerSpec[] = [
     last_contact_days_ago: 12,
     notes:
       "Strategic enterprise account. Pays on time historically. Procurement is slow but reliable.",
-    has_anomaly: true,
     risk_level: "low",
     verified_status: "document_verified",
+    // Payment window creeps later each cycle (day 10 → 26) — the live AR drift signal.
+    payment_days: [10, 13, 17, 21, 26],
   },
   {
     key: "midmarket",
@@ -122,7 +134,6 @@ const CUSTOMERS: CustomerSpec[] = [
     usage_trend: "stable",
     last_contact_days_ago: 21,
     notes: "Reliable mid-market. Occasional 2-3 week lag during quarter-end.",
-    has_anomaly: false,
     risk_level: "medium",
     verified_status: "self_attested",
   },
@@ -138,7 +149,6 @@ const CUSTOMERS: CustomerSpec[] = [
     usage_trend: "declining",
     last_contact_days_ago: 38,
     notes: "Series A startup. Cash-strapped. Two prior payment plans negotiated.",
-    has_anomaly: false,
     risk_level: "medium",
     verified_status: "self_attested",
   },
@@ -154,9 +164,10 @@ const CUSTOMERS: CustomerSpec[] = [
     usage_trend: "stable",
     last_contact_days_ago: 4,
     notes: "Anchor account. Pays reliably on day 44 of every cycle.",
-    has_anomaly: false,
     risk_level: "low",
     verified_status: "document_verified",
+    // Pays the same day every cycle — clean control: no drift, no anomaly.
+    payment_days: [14, 14, 14, 14, 14],
   },
 ];
 
@@ -241,6 +252,11 @@ function daysFrom(n: number): Date {
   d.setUTCDate(d.getUTCDate() + n);
   return d;
 }
+/** `monthsBack` calendar months before NOW, pinned to the given day-of-month. */
+function monthsAgoOnDay(monthsBack: number, day: number): Date {
+  const d = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth() - monthsBack, day));
+  return d;
+}
 
 export async function seedBrainSaasDemo(
   pool: Pool,
@@ -292,7 +308,6 @@ export async function seedBrainSaasDemo(
         usage_trend: c.usage_trend,
         last_contact_days_ago: c.last_contact_days_ago,
         notes: c.notes,
-        has_anomaly: c.has_anomaly,
       },
       source_ids: sourceIds,
       evidence_ids: evidenceIds,
@@ -469,6 +484,38 @@ export async function seedBrainSaasDemo(
       arInvoices[cust.key] = id;
     }
   });
+
+  // ---------- Monthly inflow history (AR anomaly signal) ----------
+  // For each customer with a seeded `payment_days`, post one `cleared` inflow per
+  // cycle onto the operating account. The wiki Q&A grounds in these rows, and the
+  // BrainSaaS AR agent derives the payment-window-drift anomaly from the dates —
+  // so the "agent noticed the drift" is data-derived, not a scripted flag. The
+  // memo names the customer because the wiki evidence row only carries `cp=<id>`.
+  for (const cust of CUSTOMERS) {
+    if (cust.payment_days === undefined) continue;
+    const amount = (cust.monthly_payment ?? cust.mrr_usd).toFixed(2);
+    const cpId = customers[cust.key]!.id;
+    // Oldest cycle first: payment_days[0] is the furthest back.
+    const cycles = cust.payment_days.length;
+    for (let i = 0; i < cycles; i++) {
+      const monthsBack = cycles - i;
+      await recordTransactionRow(pool, audit, ctx, {
+        account_id: operating.id,
+        external_transaction_id: `brainsaas_${cust.key}_inflow_${monthsBack}`,
+        amount,
+        currency: "USD",
+        direction: "inflow",
+        transaction_date: monthsAgoOnDay(monthsBack, cust.payment_days[i]!).toISOString(),
+        counterparty_id: cpId,
+        status: "cleared",
+        description_normalized: `${cust.name} monthly payment`,
+        source_ids: sourceIds,
+        evidence_ids: evidenceIds,
+        provenance: "extracted",
+        confidence: 0.95,
+      });
+    }
+  }
 
   // ---------- Active policy (off-chain; on-chain registration is a later phase) ----------
   const approvedVendorCpIds = VENDORS.filter((v) => v.approved).map((v) => vendors[v.key]!.id);

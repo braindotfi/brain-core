@@ -242,12 +242,23 @@ function composeEvidenceContext(candidates: ReadonlyArray<LedgerCandidate>): str
   return candidates.map((c) => `[${c.id}] (${c.type}) ${c.excerpt}`).join("\n");
 }
 
+/**
+ * Strip a leading/trailing markdown code fence so the inner JSON parses. Some
+ * models (e.g. gpt-4o-mini) wrap their JSON in ```json … ``` even when asked for
+ * raw JSON; without this the parse below throws and we lose evidence_ids.
+ */
+function stripCodeFence(text: string): string {
+  const trimmed = text.trim();
+  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n?```$/i.exec(trimmed);
+  return fenced !== null ? fenced[1]!.trim() : trimmed;
+}
+
 function parseLlmAnswer(
   text: string,
   candidates: ReadonlyArray<LedgerCandidate>,
 ): { answer: string; evidenceIds: string[] } {
   try {
-    const json = JSON.parse(text) as { answer?: string; evidence_ids?: string[] };
+    const json = JSON.parse(stripCodeFence(text)) as { answer?: string; evidence_ids?: string[] };
     if (typeof json.answer !== "string") throw new Error("no answer field");
     const ids = Array.isArray(json.evidence_ids) ? json.evidence_ids : [];
     const allowed = new Set(candidates.map((c) => c.id));
