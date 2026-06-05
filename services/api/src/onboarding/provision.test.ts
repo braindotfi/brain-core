@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { isBrainId, ID_PREFIX } from "@brain/shared";
-import { contentHash } from "@brain/policy";
+import { contentHash, evaluate, type Action } from "@brain/policy";
 import {
   buildDefaultPolicyDocument,
   DEFAULT_CONFIDENCE_FLOOR,
@@ -147,8 +147,9 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
     // signing a v2 starts from a known-stable v1 they can diff against).
     const parsed = JSON.parse(contentJson);
     expect(parsed).toEqual(buildDefaultPolicyDocument());
-    // The rule is the named floor at the configured constant (0.5 -- matches
-    // the agent_contributed write ceiling).
+    // The rule is the named floor at the configured constant. The floor sits
+    // ABOVE the 0.5 agent_contributed write ceiling (see the boundary
+    // regression block below) so an uncorroborated 0.5 row cannot satisfy it.
     expect(parsed.rules[0].when["agent.confidence.gte"]).toBe(DEFAULT_CONFIDENCE_FLOOR);
     expect(parsed.rules[0].applies_to).toEqual(["any"]);
     expect(parsed.rules[0].execute).toBe("auto");
@@ -157,5 +158,57 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
     // hard-coded -- otherwise a future DSL change to canonicalize() would
     // silently break the on-disk policy without failing this test.
     expect(Buffer.compare(capturedHash, contentHash(parsed))).toBe(0);
+  });
+});
+
+describe("default confidence floor — boundary enforcement (Codex 2026-06-05 P0)", () => {
+  // The defect: the floor was 0.5 and the VM compares inclusively
+  // (action.confidence >= bound), while agent-contributed Ledger rows are
+  // capped at <= 0.5. So an uncorroborated document-extracted obligation at
+  // exactly the 0.5 ceiling satisfied `0.5 >= 0.5`, matched the floor rule,
+  // and resolved to `auto` -- the floor was a no-op for the exact case it
+  // exists to gate. The fix raises the floor strictly above the 0.5 ceiling
+  // (and at/below the ~0.7 minimum reconciliation-corroboration score, so a
+  // CORROBORATED obligation still clears it).
+  const policy = buildDefaultPolicyDocument();
+
+  function actionWithConfidence(confidence: number | null): Action {
+    return {
+      kind: "outbound_payment",
+      counterparty_id: null,
+      amount: { currency: "USD", value: "100.00" },
+      agent_role: null,
+      timestamp: new Date("2026-06-05T00:00:00Z"),
+      confidence,
+    };
+  }
+
+  it("the floor sits strictly above the 0.5 agent-contributed ceiling", () => {
+    expect(DEFAULT_CONFIDENCE_FLOOR).toBeGreaterThan(0.5);
+  });
+
+  it("rejects an uncorroborated agent-contributed obligation at the 0.5 ceiling", () => {
+    // The core regression: 0.5 must NOT auto-execute under the default policy.
+    expect(evaluate(policy, actionWithConfidence(0.5)).outcome).toBe("reject");
+  });
+
+  it("rejects a missing confidence signal (fail closed)", () => {
+    expect(evaluate(policy, actionWithConfidence(null)).outcome).toBe("reject");
+  });
+
+  it("rejects everything below the floor", () => {
+    for (const c of [0, 0.25, 0.49, DEFAULT_CONFIDENCE_FLOOR - 0.01]) {
+      expect(evaluate(policy, actionWithConfidence(c)).outcome).toBe("reject");
+    }
+  });
+
+  it("admits a corroborated obligation at the floor and above (>= floor)", () => {
+    // Reconciliation promotes a corroborated obligation toward the match score
+    // (>= ~0.7, capped at 0.9), so a corroborated row must still clear the floor
+    // -- otherwise the earned-autonomy path is dead.
+    expect(evaluate(policy, actionWithConfidence(DEFAULT_CONFIDENCE_FLOOR)).outcome).toBe("allow");
+    for (const c of [0.7, 0.8, 0.9]) {
+      expect(evaluate(policy, actionWithConfidence(c)).outcome).toBe("allow");
+    }
   });
 });

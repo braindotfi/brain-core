@@ -41,19 +41,32 @@ import { contentHash, type PolicyDocument } from "@brain/policy";
  * running without earned-autonomy. Opus 4.8 review P1-1.
  *
  * Tenants opt OUT (by re-signing an updated policy without this rule), not
- * in. The floor matches the agent-contributed write ceiling, so an intent
- * cited against an agent-contributed obligation will reject under this rule
- * until that obligation is corroborated upward (RFC 0004 §5.2 / persist.ts
- * counter-side check, batch 10 C-2).
+ * in. The floor sits STRICTLY ABOVE the 0.5 agent-contributed write ceiling:
+ * the VM compares inclusively (`action.confidence >= bound`), so a floor of
+ * 0.5 would have admitted an obligation sitting exactly at the 0.5 ceiling --
+ * the floor would have been a no-op for the very case it exists to gate
+ * (Codex 2026-06-05 P0). An intent cited against an uncorroborated
+ * agent-contributed obligation (confidence <= 0.5) therefore rejects under
+ * this rule until the obligation is corroborated upward (RFC 0004 §5.2 /
+ * persist.ts counter-side check, batch 10 C-2).
  *
- * Rule shape: `applies_to: [any]`, `when: {agent.confidence.gte: 0.5}`,
+ * Value choice (0.6): it must be > 0.5 (above the uncorroborated ceiling) AND
+ * <= ~0.7 (the minimum reconciliation-corroboration match score; persist.ts
+ * lifts a corroborated obligation toward the match score, capped at 0.9). A
+ * higher floor (e.g. 0.75/0.8) would block a legitimately-corroborated
+ * obligation whose match score is 0.7, killing the earned-autonomy path; 0.6
+ * cleanly separates the uncorroborated population (<= 0.5) from the
+ * corroborated/first-party population (>= 0.7). A future refinement could
+ * split distinct `propose` vs `auto` thresholds instead of one global floor.
+ *
+ * Rule shape: `applies_to: [any]`, `when: {agent.confidence.gte: 0.6}`,
  * `execute: auto`. The VM short-circuits on the FIRST matching rule (the
  * default-deny tail still applies when no rule matches), so a tenant policy
  * update that adds a more-permissive rule above this one supersedes the
  * floor without removing it. The policy is stored at version 1 in state
  * `active` so it is enforced from the first request.
  */
-export const DEFAULT_CONFIDENCE_FLOOR = 0.5;
+export const DEFAULT_CONFIDENCE_FLOOR = 0.6;
 
 export function buildDefaultPolicyDocument(floor = DEFAULT_CONFIDENCE_FLOOR): PolicyDocument {
   return {
