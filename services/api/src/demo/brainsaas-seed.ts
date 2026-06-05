@@ -546,10 +546,23 @@ function mapIds(rows: Record<string, CounterpartyRow>): Record<string, string> {
 }
 
 // ---------------------------------------------------------------------------
-// Policy — AP / Treasury / AR rules in one active policy document.
-//   AP : approved & ≤$50k → auto(allow); approved & >$50k → confirm(escalate);
-//        unapproved → reject.
-//   Treasury (onchain_tx) → auto. AR (agent_action) → auto.
+// Policy — AP / Treasury / AR rules in one active policy document. Reproduces
+// the scenario governance the pre-integration BrainSaaS seed expressed, mapped
+// onto the brain-core DSL primitives the standalone evaluator can check.
+//   AP (outbound_payment): approved & ≤$50k → auto(allow); approved & >$50k →
+//        confirm(escalate, ≈ dual_key_above_50k); unapproved → reject
+//        (≈ vendor_approved).
+//   Treasury (onchain_tx): large deploy >$250k USD → confirm (≈ buffer /
+//        concentration breach escalation); otherwise auto. The marquee AP
+//        settlement is a symbolic ETH transfer — its currency never matches the
+//        USD threshold, so it stays auto and the verified money path is intact.
+//   AR (agent_action): outstanding >$500k → confirm (≈ approval_above_500k);
+//        otherwise auto.
+// The buffer minimum, per-venue concentration cap, approved-venue list, the
+// 7-day chase window, and relationship tone are NOT brain-core gate primitives
+// (no DSL/Ledger column expresses them) — they remain advisory, orchestrator-
+// side checks in BrainSaaS. `params.operating_buffer_min` below is the one such
+// value carried in the policy doc for the demo to read.
 // Off-chain insert (mirrors the golden-path demo-governance seed). On-chain
 // registration to BrainPolicyRegistry is layered on by the provision-run path.
 // ---------------------------------------------------------------------------
@@ -582,7 +595,9 @@ async function seedPolicy(
           "counterparty.in": "vendors.approved",
           "amount.gt": { currency: "USD", value: "50000.00" },
         },
-        require: "owner_approval",
+        // Dual-key above $50k (≈ the old dual_key_above_50k): two distinct
+        // approver roles must sign, not one.
+        require: "owner_and_cfo",
         execute: "confirm",
       },
       {
@@ -591,7 +606,27 @@ async function seedPolicy(
         when: { "counterparty.not_in": "vendors.approved" },
         execute: "reject",
       },
+      // Treasury — a large on-chain deploy escalates (proxy for an operating-
+      // buffer or per-venue concentration breach, which the DSL can't express
+      // directly). USD-denominated so the symbolic ETH marquee settlement never
+      // matches it and stays auto via treasury-auto-onchain below.
+      {
+        id: "treasury-confirm-large-deploy",
+        applies_to: ["onchain_tx"],
+        when: { "amount.gt": { currency: "USD", value: "250000.00" } },
+        require: "owner_approval",
+        execute: "confirm",
+      },
       { id: "treasury-auto-onchain", applies_to: ["onchain_tx"], when: {}, execute: "auto" },
+      // AR — chasing an account with very large outstanding requires approval
+      // before any counterparty-facing action (≈ the old approval_above_500k).
+      {
+        id: "ar-confirm-above-500k",
+        applies_to: ["agent_action"],
+        when: { "amount.gt": { currency: "USD", value: "500000.00" } },
+        require: "owner_approval",
+        execute: "confirm",
+      },
       { id: "ar-auto-agent-action", applies_to: ["agent_action"], when: {}, execute: "auto" },
     ],
   };
