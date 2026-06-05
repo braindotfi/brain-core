@@ -78,7 +78,11 @@ export interface BuildPaymentIntentServiceDeps {
     input: DuplicateCheckInput,
   ) => Promise<DuplicateCheckResult>;
 
-  resolveObligationConfidence?: (
+  // RFC 0004 §5.2 + C-4: required so a new intent's confidence is always capped
+  // at the obligation it pays. Required (not optional) so the cap cannot be
+  // silently absent at one route mount; the production fence + parity lint
+  // enforce it the same way as the other money-path loaders.
+  resolveObligationConfidence: (
     ctx: ServiceCallContext,
     obligationId: string,
   ) => Promise<number | null>;
@@ -138,9 +142,7 @@ export function buildPaymentIntentService(
     sumActiveReservations: deps.sumActiveReservations,
     resolveEvidence: deps.resolveEvidence,
     detectDuplicates: deps.detectDuplicates,
-    ...(deps.resolveObligationConfidence !== undefined
-      ? { resolveObligationConfidence: deps.resolveObligationConfidence }
-      : {}),
+    resolveObligationConfidence: deps.resolveObligationConfidence,
     ...(deps.resolveEscrowState !== undefined
       ? { resolveEscrowState: deps.resolveEscrowState }
       : {}),

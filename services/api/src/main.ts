@@ -193,6 +193,7 @@ import { buildPaymentIntentService } from "./composition/payment-intent-service.
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
 import { assertEscrowAuditApproved } from "./composition/escrow-audit-gate.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
+import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
 import { seedBrainSaasDemo } from "./demo/brainsaas-seed.js";
 import { YIELD_VENUES } from "./demo/yield-venues.js";
@@ -614,6 +615,24 @@ async function main(): Promise<void> {
   const sumActiveReservations = makeSumActiveReservations(pool);
   const resolveEvidence = makeResolveEvidence(pool);
   const detectDuplicates = makeDetectDuplicates(pool);
+  // RFC 0004 §5.2: cap a new intent's confidence at the obligation it pays, so
+  // document-extracted (<= 0.5) obligations gate via policy. Shared across every
+  // PaymentIntentService construction so the cap can never be silently absent at
+  // one route mount (C-4); the factory now requires it.
+  const resolveObligationConfidence = async (
+    ctx: ServiceCallContext,
+    obligationId: string,
+  ): Promise<number | null> =>
+    (await ledgerService.findObligationById(ctx, obligationId))?.confidence ?? null;
+
+  // Production fence: the always-applicable money-path safety loaders must be
+  // wired in production. Same fail-closed posture as the rail/escrow fences.
+  assertMoneyPathLoadersWiredInProduction({
+    nodeEnv: process.env.NODE_ENV,
+    hasResolveEvidence: resolveEvidence !== undefined,
+    hasDetectDuplicates: detectDuplicates !== undefined,
+    hasResolveObligationConfidence: resolveObligationConfidence !== undefined,
+  });
 
   // Agent-router routing enqueue (agent-router Phase 1). Shared by the
   // PaymentIntent + reconciliation domain-event producers so events actually
@@ -636,10 +655,7 @@ async function main(): Promise<void> {
     sumActiveReservations,
     resolveEvidence,
     detectDuplicates,
-    // RFC 0004 §5.2: cap a new intent's confidence at the obligation it pays,
-    // so document-extracted (<= 0.5) obligations gate via policy.
-    resolveObligationConfidence: async (ctx, obligationId) =>
-      (await ledgerService.findObligationById(ctx, obligationId))?.confidence ?? null,
+    resolveObligationConfidence,
     ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
     ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
     sourceCredentialResolver,
@@ -1246,6 +1262,7 @@ async function main(): Promise<void> {
           sumActiveReservations,
           resolveEvidence,
           detectDuplicates,
+          resolveObligationConfidence,
           ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
           ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
           sourceCredentialResolver,
