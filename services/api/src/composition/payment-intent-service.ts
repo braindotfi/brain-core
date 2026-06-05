@@ -78,6 +78,10 @@ export interface BuildPaymentIntentServiceDeps {
     input: DuplicateCheckInput,
   ) => Promise<DuplicateCheckResult>;
 
+  resolveObligationConfidence?: (
+    ctx: ServiceCallContext,
+    obligationId: string,
+  ) => Promise<number | null>;
   resolveEscrowState?: (
     ctx: ServiceCallContext,
     input: EscrowStateInput,
@@ -134,6 +138,9 @@ export function buildPaymentIntentService(
     sumActiveReservations: deps.sumActiveReservations,
     resolveEvidence: deps.resolveEvidence,
     detectDuplicates: deps.detectDuplicates,
+    ...(deps.resolveObligationConfidence !== undefined
+      ? { resolveObligationConfidence: deps.resolveObligationConfidence }
+      : {}),
     ...(deps.resolveEscrowState !== undefined
       ? { resolveEscrowState: deps.resolveEscrowState }
       : {}),

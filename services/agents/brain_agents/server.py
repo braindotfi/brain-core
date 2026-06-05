@@ -14,6 +14,8 @@ from brain_agents.anomaly.scheduler import AnomalyScheduler, SchedulerConfig
 from brain_agents.client import BrainApiClient
 from brain_agents.config import settings
 from brain_agents.deps import AppDeps
+from brain_agents.document_extractor.agent import DocumentExtractorAgent
+from brain_agents.document_extractor.routes import router as document_router
 from brain_agents.payment.agent import PaymentAgent
 from brain_agents.payment.routes import router as payment_router
 from brain_agents.plaid_extractor.agent import PlaidExtractorAgent
@@ -100,6 +102,9 @@ def create_app(deps: AppDeps | None = None) -> FastAPI:
                 payment_agent=PaymentAgent(openai_client, settings.openai_model),
                 anomaly_agent=anomaly_agent,
                 plaid_extractor_agent=PlaidExtractorAgent(),
+                document_extractor_agent=DocumentExtractorAgent(
+                    openai_client, settings.openai_model
+                ),
             )
             # Anomaly scheduler (autopilot). Stays dormant when no tenant ids
             # are configured, matching the agent's advisory-only contract.
@@ -132,6 +137,7 @@ def create_app(deps: AppDeps | None = None) -> FastAPI:
     application.include_router(payment_router)
     application.include_router(anomaly_router)
     application.include_router(plaid_router)
+    application.include_router(document_router)
 
     @application.get("/health")
     async def health() -> dict[str, Any]:

@@ -67,6 +67,14 @@ export interface CreatePaymentIntentInput {
   agent_id?: string;
   evidence_ids?: string[];
   /**
+   * Confidence of the evidence backing this intent (RFC 0004 §5.2). Carried
+   * onto the stored row and into the policy VM so `agent.confidence.gte` rules
+   * can gate low-confidence intents. Omitted ⇒ defaults to 1.0 (the prior
+   * always-confident behavior); document-extracted proposals pass the real
+   * value (<= 0.5).
+   */
+  confidence?: number;
+  /**
    * x402 settlement recipient on-chain address (RFC 0001 §6.1). Required by the
    * route for action_type=x402_settle; ignored for other action types. The §6
    * gate (check 6.5) re-validates it against the counterparty's onchain_address.

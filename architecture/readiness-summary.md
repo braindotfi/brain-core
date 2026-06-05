@@ -23,6 +23,8 @@ Suitable for controlled-pilot use under SLA, not yet for unrestricted production
 
 - **Payment rails** on Base **Sepolia**: `bank_ach` (Plaid sandbox or production), `onchain_base`, `x402_base`, `escrow_base`. All four register at boot when env is present.
 - **Internal AI agents**: reconciliation, payment, anomaly. Run under inbound HMAC + the §6 gate on every proposal.
+- **Document ingestion without Plaid** (RFC 0004): an uploaded document (CSV / text / XLSX; PDF deferred) flows through `POST /raw/{id}/parsed` → the `document_extractor` agent → `doc_obligation_v1` normalize → a candidate obligation (confidence ≤ 0.5), answerable by the Wiki question endpoint. The components are wired; the upload-to-extract auto-trigger is a follow-up.
+- **Earned-autonomy confidence gate** (RFC 0004 §5.2): a tenant policy rule `agent.confidence.gte` gates a payment on the confidence of the evidence it rests on. A document-extracted obligation starts low-confidence and must be corroborated (reconciliation lifts it upward-only, ≤ 0.9) or confirmed before it can drive an unattended payment. The §6 gate is unchanged and still reads Ledger, never Wiki.
 - **Investor-grade demo**: `pnpm run demo:golden-path` with `BRAIN_DEMO_STRICT_PROOF=true` proves the full chain end-to-end (propose → gate → execute → anchor → verify) in one command.
 - **Operator readiness tools**: `pnpm run production-readiness` aggregates per-rail + per-fence + per-guard status (and reads `docs/risk-register.json`) into a single go/no-go readout. Open `P0` risks pin the result to red. The PR CI workflow uploads the JSON as a per-commit artifact; `pnpm run readiness-trend` prints the per-release trajectory from `docs/readiness-history/`.
 

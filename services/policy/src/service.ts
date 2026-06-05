@@ -173,6 +173,11 @@ export class PolicyService {
       // "business" today); thread the same source here for tenant.category rules.
       tenant_category: "business",
       timestamp: new Date(),
+      // RFC 0004 §5.2: thread the intent's evidence confidence so a tenant
+      // policy rule `agent.confidence.gte` becomes a live autonomy gate. The VM
+      // fails closed when this is null, so an unset confidence never satisfies a
+      // threshold rule.
+      confidence: intent.confidence ?? null,
       ...(spendInWindow !== undefined ? { spend_in_window: spendInWindow } : {}),
       ...(txCountInWindow !== undefined ? { tx_count_in_window: txCountInWindow } : {}),
     };

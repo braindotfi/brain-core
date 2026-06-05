@@ -4,13 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  vite: ^6.4.2
-  ws: '>=8.20.1'
-  vitest: '>=4.1.0'
-  '@vitest/coverage-v8': '>=4.1.0'
-  '@vitest/ui': '>=4.1.0'
-
 importers:
 
   .:
@@ -28,7 +21,7 @@ importers:
         specifier: ^8.8.0
         version: 8.59.3(eslint@9.39.4)(typescript@5.9.3)
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -46,7 +39,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   clients/sdk:
@@ -59,7 +52,7 @@ importers:
         specifier: ^22.7.0
         version: 22.19.19
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       openapi-typescript:
         specifier: ^7.5.0
@@ -68,7 +61,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   schemas:
@@ -108,7 +101,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -117,7 +110,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   services/api:
@@ -217,7 +210,7 @@ importers:
         version: 5.10.0
       openai:
         specifier: ^4.68.0
-        version: 4.104.0(ws@8.20.1)(zod@3.25.76)
+        version: 4.104.0(ws@8.18.3)(zod@3.25.76)
       pg:
         specifier: ^8.13.0
         version: 8.20.0
@@ -250,7 +243,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -262,7 +255,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   services/audit:
@@ -287,7 +280,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -299,7 +292,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   services/execution:
@@ -330,7 +323,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -342,7 +335,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   services/internal-agents:
@@ -361,7 +354,7 @@ importers:
         specifier: ^22.7.0
         version: 22.19.19
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -370,7 +363,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   services/ledger:
@@ -392,7 +385,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -404,7 +397,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   services/mcp:
@@ -435,7 +428,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -444,7 +437,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   services/policy:
@@ -472,7 +465,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -484,7 +477,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   services/raw:
@@ -515,7 +508,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -524,7 +517,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   services/wiki:
@@ -561,7 +554,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -573,7 +566,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   shared:
@@ -643,7 +636,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -655,7 +648,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   tests/adversarial:
@@ -680,7 +673,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   tests/e2e:
@@ -692,7 +685,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   tests/invariants:
@@ -726,7 +719,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   tools/demo-reset:
@@ -783,7 +776,7 @@ importers:
         specifier: ^8.11.10
         version: 8.20.0
       '@vitest/coverage-v8':
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(vitest@4.1.8)
       eslint:
         specifier: ^9.12.0
@@ -792,7 +785,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   tools/plaid-sandbox:
@@ -836,7 +829,7 @@ importers:
         specifier: ^5.6.2
         version: 5.9.3
       vitest:
-        specifier: '>=4.1.0'
+        specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0))
 
   tools/static-jwks:
@@ -2022,7 +2015,7 @@ packages:
     resolution: {integrity: sha512-lt3kovsyHwYe00wq4D1ti0Z974fWj4NLp6siqiyEufUpyFwK9Yhi7rBhac9JL5aA0zoMrJqc4vYPZRUnI7l7nw==}
     peerDependencies:
       '@vitest/browser': 4.1.8
-      vitest: '>=4.1.0'
+      vitest: 4.1.8
     peerDependenciesMeta:
       '@vitest/browser':
         optional: true
@@ -2034,7 +2027,7 @@ packages:
     resolution: {integrity: sha512-LEiN/xe4OSIbKe9HQIp5OC24agGD9J5CnmMgsLohVVoOPWL9a2sBoR6VBx43jQZb7Kr1l4RCuyCJzcAa0+dojw==}
     peerDependencies:
       msw: ^2.4.9
-      vite: ^6.4.2
+      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
       msw:
         optional: true
@@ -2662,7 +2655,7 @@ packages:
   isows@1.0.7:
     resolution: {integrity: sha512-I1fSfDCZL5P0v33sVqeTDSpcstAg/N+wF5HS033mogOVIp4B+oHC7oOCsA3axAbBSGTJ8QubbNmnIRN/h8U7hg==}
     peerDependencies:
-      ws: '>=8.20.1'
+      ws: '*'
 
   istanbul-lib-coverage@3.2.2:
     resolution: {integrity: sha512-O8dpsF+r0WV/8MNRKfnmrtCWhuKjxrq2w+jpzBL5UZKTi2LeVWnWOmWRxFlesJONmc+wLAGvKQZEOanko0LFTg==}
@@ -2881,7 +2874,7 @@ packages:
     resolution: {integrity: sha512-p99EFNsA/yX6UhVO93f5kJsDRLAg+CTA2RBqdHK4RtK8u5IJw32Hyb2dTGKbnnFmnuoBv5r7Z2CURI9sGZpSuA==}
     hasBin: true
     peerDependencies:
-      ws: '>=8.20.1'
+      ws: ^8.18.0
       zod: ^3.23.8
     peerDependenciesMeta:
       ws:
@@ -3362,11 +3355,11 @@ packages:
       '@vitest/browser-preview': 4.1.8
       '@vitest/browser-webdriverio': 4.1.8
       '@vitest/coverage-istanbul': 4.1.8
-      '@vitest/coverage-v8': '>=4.1.0'
-      '@vitest/ui': '>=4.1.0'
+      '@vitest/coverage-v8': 4.1.8
+      '@vitest/ui': 4.1.8
       happy-dom: '*'
       jsdom: '*'
-      vite: ^6.4.2
+      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
       '@edge-runtime/vm':
         optional: true
@@ -3417,6 +3410,30 @@ packages:
 
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
+
+  ws@8.17.1:
+    resolution: {integrity: sha512-6XQFvXTkbfUOZOKKILFG1PDK2NDQs4azKQl26T0YS5CxqWLgXajbPZ+h4gZekJyRqFU8pvnbAbbs/3TgRPy+GQ==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
+  ws@8.18.3:
+    resolution: {integrity: sha512-PEIGCY5tSlUt50cqyMXfCzX+oOPqN0vuGqWzbcJ2xvnkzkq46oOpz7dQaTDBdfICb4N14+GARUDw2XV2N4tvzg==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
 
   ws@8.20.1:
     resolution: {integrity: sha512-It4dO0K5v//JtTXuPkfEOaI3uUN87iYPnqo/ZzqCoG3g8uhA66QUMs/SrM0YK7/NAu+r4LMh/9dq2A7k+rHs+w==}
@@ -5237,7 +5254,7 @@ snapshots:
       '@types/node': 22.7.5
       aes-js: 4.0.0-beta.5
       tslib: 2.7.0
-      ws: 8.20.1
+      ws: 8.17.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -5512,9 +5529,9 @@ snapshots:
 
   isexe@2.0.0: {}
 
-  isows@1.0.7(ws@8.20.1):
+  isows@1.0.7(ws@8.18.3):
     dependencies:
-      ws: 8.20.1
+      ws: 8.18.3
 
   istanbul-lib-coverage@3.2.2: {}
 
@@ -5718,6 +5735,21 @@ snapshots:
       define-lazy-prop: 3.0.0
       is-inside-container: 1.0.0
       wsl-utils: 0.1.0
+
+  openai@4.104.0(ws@8.18.3)(zod@3.25.76):
+    dependencies:
+      '@types/node': 18.19.130
+      '@types/node-fetch': 2.6.13
+      abort-controller: 3.0.0
+      agentkeepalive: 4.6.0
+      form-data-encoder: 1.7.2
+      formdata-node: 4.4.1
+      node-fetch: 2.7.0
+    optionalDependencies:
+      ws: 8.18.3
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - encoding
 
   openai@4.104.0(ws@8.20.1)(zod@3.25.76):
     dependencies:
@@ -6161,9 +6193,9 @@ snapshots:
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
       abitype: 1.2.3(typescript@5.9.3)(zod@3.25.76)
-      isows: 1.0.7(ws@8.20.1)
+      isows: 1.0.7(ws@8.18.3)
       ox: 0.14.20(typescript@5.9.3)(zod@3.25.76)
-      ws: 8.20.1
+      ws: 8.18.3
     optionalDependencies:
       typescript: 5.9.3
     transitivePeerDependencies:
@@ -6235,7 +6267,12 @@ snapshots:
 
   wrappy@1.0.2: {}
 
-  ws@8.20.1: {}
+  ws@8.17.1: {}
+
+  ws@8.18.3: {}
+
+  ws@8.20.1:
+    optional: true
 
   wsl-utils@0.1.0:
     dependencies:

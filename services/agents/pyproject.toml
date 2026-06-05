@@ -16,6 +16,9 @@ dependencies = [
   "openai>=1.50.0",
   "httpx>=0.27.0",
   "pydantic-settings>=2.5.0",
+  # Deterministic spreadsheet -> text for the document_extractor (RFC 0004).
+  # CSV/plain text need only the stdlib; PDF/OCR is a deferred follow-up.
+  "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +30,7 @@ dev = [
   "pytest-cov>=5.0.0",
   "pytest-asyncio>=0.24.0",
   "respx>=0.21.0",
+  "types-openpyxl>=3.1.0",
 ]
 
 [build-system]

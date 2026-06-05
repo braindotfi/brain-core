@@ -46,7 +46,12 @@ import type { Pool } from "pg";
 export interface GoldenPathSeed {
   tenantId: string;
   actor: string;
-  accounts: { checking: AccountRow; savings: AccountRow; card: AccountRow; smartAccount: AccountRow | null };
+  accounts: {
+    checking: AccountRow;
+    savings: AccountRow;
+    card: AccountRow;
+    smartAccount: AccountRow | null;
+  };
   counterparties: {
     employer: CounterpartyRow;
     landlord: CounterpartyRow;
@@ -202,7 +207,17 @@ async function seedCounterparties(
 ): Promise<GoldenPathSeed["counterparties"]> {
   async function cp(args: {
     name: string;
-    type: "merchant" | "vendor" | "customer" | "employer" | "bank" | "wallet" | "exchange" | "tax_authority" | "agent" | "other";
+    type:
+      | "merchant"
+      | "vendor"
+      | "customer"
+      | "employer"
+      | "bank"
+      | "wallet"
+      | "exchange"
+      | "tax_authority"
+      | "agent"
+      | "other";
     risk_level?: "low" | "medium" | "high" | "sanctioned";
     verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared";
     aliases?: string[];
@@ -769,10 +784,31 @@ async function seedArInvoices(
     }
 
     // Acme Corp: $4,200 overdue 14 days
-    await arInv({ n: 2001, counterpartyId: cps.acmeCorp.id, due: "4200.00", paid: "0.00", status: "sent", dueDaysOffset: -14 });
+    await arInv({
+      n: 2001,
+      counterpartyId: cps.acmeCorp.id,
+      due: "4200.00",
+      paid: "0.00",
+      status: "sent",
+      dueDaysOffset: -14,
+    });
     // Global Tech: $11,500 overdue 32 days (will trigger firm tone)
-    await arInv({ n: 2002, counterpartyId: cps.globalTech.id, due: "11500.00", paid: "2000.00", status: "partial", dueDaysOffset: -32 });
+    await arInv({
+      n: 2002,
+      counterpartyId: cps.globalTech.id,
+      due: "11500.00",
+      paid: "2000.00",
+      status: "partial",
+      dueDaysOffset: -32,
+    });
     // Blue Sky Media: $2,800 current (not yet overdue)
-    await arInv({ n: 2003, counterpartyId: cps.blueSkyMedia.id, due: "2800.00", paid: "0.00", status: "sent", dueDaysOffset: 5 });
+    await arInv({
+      n: 2003,
+      counterpartyId: cps.blueSkyMedia.id,
+      due: "2800.00",
+      paid: "0.00",
+      status: "sent",
+      dueDaysOffset: 5,
+    });
   });
 }

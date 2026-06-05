@@ -224,6 +224,131 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
     expect(p.parsed).toEqual([]);
   });
 
+  async function ingestUpload(token: string, content: string): Promise<string> {
+    if (h === null) throw new Error("harness not built");
+    const boundary = "----brainBoundary";
+    const body =
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="source_type"\r\n\r\nupload\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="f.txt"\r\nContent-Type: text/plain\r\n\r\n` +
+      `${content}\r\n` +
+      `--${boundary}--\r\n`;
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/raw/ingest",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": `multipart/form-data; boundary=${boundary}`,
+      },
+      payload: body,
+    });
+    return (res.json() as { raw_id: string }).raw_id;
+  }
+
+  it("POST /raw/{raw_id}/parsed writes a record; GET then returns it", async () => {
+    if (h === null) return;
+    const token = await writeToken();
+    const raw_id = await ingestUpload(token, "parsed-write");
+
+    const writeRes = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({
+        parser: "doc_obligation_v1",
+        parser_version: "1.0.0",
+        extracted: { direction: "payable", amount: "100.00", currency: "USD" },
+        confidence: 0.4,
+      }),
+    });
+    expect(writeRes.statusCode).toBe(201);
+    const written = writeRes.json() as { id: string; raw_artifact_id: string; confidence: number };
+    expect(written.raw_artifact_id).toBe(raw_id);
+    expect(written.confidence).toBe(0.4);
+
+    const getRes = await h.app.inject({
+      method: "GET",
+      url: `/raw/${raw_id}/parsed`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const listed = getRes.json() as { parsed: Array<{ id: string; parser: string }> };
+    expect(listed.parsed).toHaveLength(1);
+    expect(listed.parsed[0]?.id).toBe(written.id);
+    expect(listed.parsed[0]?.parser).toBe("doc_obligation_v1");
+  });
+
+  it("POST /raw/{raw_id}/parsed is idempotent on (artifact, parser, version): re-post returns 200 + same row", async () => {
+    if (h === null) return;
+    const token = await writeToken();
+    const raw_id = await ingestUpload(token, "parsed-idempotent");
+    const payload = JSON.stringify({
+      parser: "doc_obligation_v1",
+      parser_version: "1.0.0",
+      extracted: { direction: "receivable", amount: "5.00" },
+    });
+    const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+
+    const first = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers,
+      payload,
+    });
+    const second = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers,
+      payload,
+    });
+
+    expect(first.statusCode).toBe(201);
+    expect(second.statusCode).toBe(200);
+    expect((second.json() as { id: string }).id).toBe((first.json() as { id: string }).id);
+  });
+
+  it("POST /raw/{raw_id}/parsed returns 404 for an unknown artifact", async () => {
+    if (h === null) return;
+    const token = await writeToken();
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/raw/${newRawArtifactId()}/parsed`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({ parser: "p", parser_version: "1", extracted: {} }),
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: { code: "raw_artifact_not_found" } });
+  });
+
+  it("POST /raw/{raw_id}/parsed requires raw:write scope (403 with read-only token)", async () => {
+    if (h === null) return;
+    const writer = await writeToken();
+    const raw_id = await ingestUpload(writer, "parsed-scope");
+    const readToken = await writeToken(["raw:read"]);
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers: { authorization: `Bearer ${readToken}`, "content-type": "application/json" },
+      payload: JSON.stringify({ parser: "p", parser_version: "1", extracted: {} }),
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: { code: "auth_scope_insufficient" } });
+  });
+
+  it("POST /raw/{raw_id}/parsed rejects a malformed body (400)", async () => {
+    if (h === null) return;
+    const token = await writeToken();
+    const raw_id = await ingestUpload(token, "parsed-badbody");
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: JSON.stringify({ parser: "", parser_version: "1", extracted: {} }),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: { code: "request_body_invalid" } });
+  });
+
   it("POST /raw/webhooks/plaid rejects missing signature (401)", async () => {
     if (h === null) return;
     const res = await h.app.inject({
