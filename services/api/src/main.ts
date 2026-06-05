@@ -1029,13 +1029,17 @@ async function main(): Promise<void> {
   // has not adopted H-23 and an explicit action is accepted if the agent offers
   // it (pre-H-23 behaviour). Once the map is present its fail-closed semantics
   // apply (an unlisted agent gets [] ⇒ every explicit action denied). The hook
-  // gates the explicit requested-action path only; event/intent/default
-  // resolution is unaffected.
+  // now gates EVERY resolution source — explicit, event_map, intent_map, and
+  // default (Codex 2026-06-05 P1) — not just explicit requests.
   const actionResolver = new ActionResolver({
     classifier: agentClassifier,
     isActionAllowed: async (tenantId, agentKey, action) => {
       if (tenantId === undefined) {
-        return true; // no tenant ⇒ no signed policy to enforce (pre-H-23)
+        // Codex P1 follow-up: a tenant-owned agent run must carry a tenant. In
+        // production a missing tenant fails CLOSED (deny) rather than skipping
+        // the signed allowlist; dev/test keep the pre-H-23 "no tenant ⇒ allow"
+        // allowance so unit fixtures without a tenant still resolve.
+        return cfg.NODE_ENV !== "production";
       }
       const doc = await policyService.getActiveDocument({
         tenantId,
@@ -1045,6 +1049,21 @@ async function main(): Promise<void> {
         return true; // tenant has not adopted the H-23 allowlist
       }
       return allowedActionsFor(doc, agentKey).includes(action);
+    },
+    // Codex P1 follow-up: record a policy denial in the audit trail (tenant,
+    // agent, candidate action, resolution source) so a refused action is
+    // visible, not just surfaced to the caller as missing_action. Skipped when
+    // there is no tenant to scope the event to (the prod no-tenant deny above).
+    onPolicyDenied: async ({ tenantId, agentKey, action, source }) => {
+      if (tenantId === undefined) return;
+      await audit.emit({
+        tenantId,
+        layer: "agent",
+        actor: agentKey,
+        action: "agent.action.policy_denied",
+        inputs: { agent_key: agentKey, action, source },
+        outputs: { denied: true },
+      });
     },
   });
 

@@ -75,6 +75,20 @@ export interface ActionResolverDeps {
     agentKey: string,
     action: string,
   ) => boolean | Promise<boolean>;
+  /**
+   * Observability hook fired when `isActionAllowed` denies the resolved
+   * candidate (Codex 2026-06-05 P1 follow-up). The wiring supplies an emitter
+   * that records an audit event with the tenant, agent, candidate action, and
+   * the resolution source, so a policy denial is visible in the trail rather
+   * than only surfacing as a `missing_action` to the caller. Kept as a callback
+   * so the resolver stays free of an audit dependency.
+   */
+  readonly onPolicyDenied?: (info: {
+    tenantId: string | undefined;
+    agentKey: string;
+    action: string;
+    source: ActionSource;
+  }) => void | Promise<void>;
 }
 
 function readRequestedAction(context: Record<string, unknown> | undefined): string | undefined {
@@ -160,6 +174,12 @@ export class ActionResolver {
     if (this.deps.isActionAllowed !== undefined) {
       const allowed = await this.deps.isActionAllowed(input.tenantId, agentKey, candidate.action);
       if (!allowed) {
+        await this.deps.onPolicyDenied?.({
+          tenantId: input.tenantId,
+          agentKey,
+          action: candidate.action,
+          source: candidate.source,
+        });
         return {
           status: "missing_action",
           reason: `action "${candidate.action}" is denied by policy for ${agentKey} (source=${candidate.source})`,

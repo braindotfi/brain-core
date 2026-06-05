@@ -246,6 +246,46 @@ describe("ActionResolver — H-23 signed-policy allowlist", () => {
     expect(r).toEqual({ status: "resolved", action: "draft", source: "default" });
   });
 
+  it("fires onPolicyDenied with tenant/agent/action/source on a denial (Codex P1 follow-up)", async () => {
+    const denied: Array<Record<string, unknown>> = [];
+    const audited = new ActionResolver({
+      classifier: new RulesIntentClassifier(),
+      isActionAllowed: (_t, agent, action) => (agentActions[agent] ?? []).includes(action),
+      onPolicyDenied: (info) => {
+        denied.push(info);
+      },
+    });
+    // "escalate" is not allowlisted, selected here via the event map.
+    const r = await audited.resolve({
+      definition: def({ event_action_map: { "invoice.overdue": "escalate" } }),
+      actions: ["escalate"],
+      tenantId: "tnt_test",
+      event: "invoice.overdue",
+    });
+    expect(r.status).toBe("missing_action");
+    expect(denied).toEqual([
+      { tenantId: "tnt_test", agentKey: "test_agent", action: "escalate", source: "event_map" },
+    ]);
+  });
+
+  it("does not fire onPolicyDenied when the candidate is allowed", async () => {
+    const denied: unknown[] = [];
+    const audited = new ActionResolver({
+      classifier: new RulesIntentClassifier(),
+      isActionAllowed: (_t, agent, action) => (agentActions[agent] ?? []).includes(action),
+      onPolicyDenied: (info) => {
+        denied.push(info);
+      },
+    });
+    await audited.resolve({
+      definition: def({}),
+      actions: ["send"],
+      tenantId: "tnt_test",
+      context: { [REQUESTED_ACTION_KEY]: "send" },
+    });
+    expect(denied).toEqual([]);
+  });
+
   it("denies every explicit request when the agent's allowlist is empty", async () => {
     const empty = new ActionResolver({
       classifier: new RulesIntentClassifier(),
