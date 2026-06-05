@@ -4,10 +4,14 @@
  * The §6 gate degrades a check to `not_applicable` when its loader is absent,
  * which is correct for action-type-specific loaders (escrow-state 6.6, M2M
  * attestation 5.5, x402 6.5, micropayment 8.5) that only apply when that rail
- * or action type is enabled. But three loaders apply to EVERY payment and must
- * never be silently absent in production:
+ * or action type is enabled. But several loaders apply to EVERY payment and
+ * must never be silently absent in production:
  *   - resolveEvidence              (§6 check 9.5, evidence-semantic validation)
  *   - detectDuplicates             (§6 check 11.5, duplicate-payment rejection)
+ *   - sumActiveReservations        (§6 check 8, available_balance >= amount + reserved;
+ *                                   without it the gate falls back to reserved="0" and
+ *                                   the parallel double-spend window opens silently --
+ *                                   batch 11 M-1 closes this seam)
  *   - resolveObligationConfidence  (RFC 0004 §5.2, caps intent confidence at the
  *                                   obligation it pays so document-extracted
  *                                   evidence is gateable by policy)
@@ -33,19 +37,23 @@ export interface PaymentLoadersProdFenceInput {
   nodeEnv: string | undefined;
   hasResolveEvidence: boolean;
   hasDetectDuplicates: boolean;
+  hasSumActiveReservations: boolean;
   hasResolveObligationConfidence: boolean;
   hasResolveObligationDirection: boolean;
 }
 
 /**
  * Throws when production booted without an always-applicable money-path loader.
- * No-op outside production or when all three are wired.
+ * No-op outside production or when all loaders are wired.
  */
 export function assertMoneyPathLoadersWiredInProduction(input: PaymentLoadersProdFenceInput): void {
   if (input.nodeEnv !== "production") return;
   const missing: string[] = [];
   if (!input.hasResolveEvidence) missing.push("resolveEvidence (§6 check 9.5)");
   if (!input.hasDetectDuplicates) missing.push("detectDuplicates (§6 check 11.5)");
+  if (!input.hasSumActiveReservations) {
+    missing.push("sumActiveReservations (§6 check 8, batch 11 M-1)");
+  }
   if (!input.hasResolveObligationConfidence) {
     missing.push("resolveObligationConfidence (RFC 0004 §5.2)");
   }
@@ -56,9 +64,10 @@ export function assertMoneyPathLoadersWiredInProduction(input: PaymentLoadersPro
   throw new Error(
     "NODE_ENV=production requires the always-applicable money-path safety " +
       `loaders to be wired; missing: ${missing.join(", ")}. These gate every ` +
-      "payment (evidence-semantic validation, duplicate-payment rejection, and " +
-      "the obligation confidence cap); a missing loader would let the §6 gate " +
-      "record not_applicable and pass vacuously. Refusing to start so the " +
+      "payment (evidence-semantic validation, duplicate-payment rejection, " +
+      "concurrent-reservation accounting, the obligation confidence cap, and " +
+      "the outflow-receivable rejection); a missing loader would let the §6 " +
+      "gate record not_applicable and pass vacuously. Refusing to start so the " +
       "orchestrator surfaces the misconfiguration as CrashLoopBackoff.",
   );
 }

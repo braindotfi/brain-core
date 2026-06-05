@@ -4,6 +4,7 @@ import { assertMoneyPathLoadersWiredInProduction } from "./payment-loaders-prod-
 const allWired = {
   hasResolveEvidence: true,
   hasDetectDuplicates: true,
+  hasSumActiveReservations: true,
   hasResolveObligationConfidence: true,
   hasResolveObligationDirection: true,
 };
@@ -15,6 +16,7 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         nodeEnv: "development",
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
+        hasSumActiveReservations: false,
         hasResolveObligationConfidence: false,
         hasResolveObligationDirection: false,
       }),
@@ -27,6 +29,7 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         nodeEnv: "test",
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
+        hasSumActiveReservations: false,
         hasResolveObligationConfidence: false,
         hasResolveObligationDirection: false,
       }),
@@ -39,13 +42,14 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         nodeEnv: undefined,
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
+        hasSumActiveReservations: false,
         hasResolveObligationConfidence: false,
         hasResolveObligationDirection: false,
       }),
     ).not.toThrow();
   });
 
-  it("is silent in production when all three loaders are wired", () => {
+  it("is silent in production when every always-applicable loader is wired", () => {
     expect(() =>
       assertMoneyPathLoadersWiredInProduction({ nodeEnv: "production", ...allWired }),
     ).not.toThrow();
@@ -81,6 +85,22 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
     ).toThrow(/detectDuplicates/);
   });
 
+  it("throws in production when sumActiveReservations is missing (M-1)", () => {
+    // Batch 11 M-1 regression: §6 check 8 falls back to `reserved="0"` when
+    // the reservations loader is absent (gate.ts ~L685), silently opening
+    // the parallel double-spend window the check exists to close. The
+    // factory currently keeps the loader required (compiler-enforced), but
+    // a future refactor that re-introduces optionality would have no boot
+    // signal without this fence row. Codex/Opus P0-1.
+    expect(() =>
+      assertMoneyPathLoadersWiredInProduction({
+        nodeEnv: "production",
+        ...allWired,
+        hasSumActiveReservations: false,
+      }),
+    ).toThrow(/sumActiveReservations/);
+  });
+
   it("throws in production when resolveObligationDirection is missing (H-1)", () => {
     // Batch 10 H-1 regression: the §6 gate's outflow-receivable rejection
     // is silently dormant when this loader is absent. Production booting
@@ -101,11 +121,12 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         nodeEnv: "production",
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
+        hasSumActiveReservations: false,
         hasResolveObligationConfidence: false,
         hasResolveObligationDirection: false,
       }),
     ).toThrow(
-      /resolveEvidence.*detectDuplicates.*resolveObligationConfidence.*resolveObligationDirection/s,
+      /resolveEvidence.*detectDuplicates.*sumActiveReservations.*resolveObligationConfidence.*resolveObligationDirection/s,
     );
   });
 });

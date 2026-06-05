@@ -657,6 +657,7 @@ async function main(): Promise<void> {
     nodeEnv: process.env.NODE_ENV,
     hasResolveEvidence: resolveEvidence !== undefined,
     hasDetectDuplicates: detectDuplicates !== undefined,
+    hasSumActiveReservations: sumActiveReservations !== undefined,
     hasResolveObligationConfidence: resolveObligationConfidence !== undefined,
     hasResolveObligationDirection: resolveObligationDirection !== undefined,
   });
