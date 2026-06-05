@@ -272,6 +272,20 @@ export class PaymentIntentService implements IPaymentIntentService {
    * Effective confidence for a new intent (RFC 0004 §5.2): the minimum of any
    * explicit input confidence and the referenced obligation's confidence.
    * Returns undefined when neither is known, so the row keeps the 1.0 default.
+   *
+   * Batch 10 H-2: when the caller SUPPLIES an obligation_id but the loader
+   * returns null (the obligation does not exist in the Ledger or is in
+   * another tenant), throw `obligation_not_found` instead of silently
+   * skipping the cap. Pre-H-2 behaviour let an agent bypass
+   * `agent.confidence.gte` simply by referencing a non-existent obligation_id,
+   * because the cap path defaulted the row to confidence=1.0 and the
+   * downstream §6 gate has no way to detect "id was provided but did not
+   * resolve". This change moves that detection one layer up where the answer
+   * is unambiguous.
+   *
+   * The "loader unwired" branch is unchanged: dev/test paths without the
+   * loader keep their pre-H-2 behaviour (no cap, no throw). The production
+   * fence already requires the loader to be wired in NODE_ENV=production.
    */
   private async resolveEffectiveConfidence(
     ctx: ServiceCallContext,
@@ -283,12 +297,17 @@ export class PaymentIntentService implements IPaymentIntentService {
         ctx,
         input.obligation_id,
       );
-      if (obligationConfidence !== null) {
-        confidence =
-          confidence === undefined
-            ? obligationConfidence
-            : Math.min(confidence, obligationConfidence);
+      if (obligationConfidence === null) {
+        throw brainError(
+          "obligation_not_found",
+          `obligation_id ${input.obligation_id} did not resolve in the Ledger; refusing to create a PaymentIntent referencing a missing obligation`,
+          { details: { obligation_id: input.obligation_id } },
+        );
       }
+      confidence =
+        confidence === undefined
+          ? obligationConfidence
+          : Math.min(confidence, obligationConfidence);
     }
     return confidence;
   }

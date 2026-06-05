@@ -189,4 +189,44 @@ describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", 
 
     expect(insertConfidence(calls)).toBe(1.0);
   });
+
+  it("H-2 regression: throws obligation_not_found when obligation_id was supplied but resolver returned null", async () => {
+    // The bug this guards: an agent submits an intent with a non-existent
+    // obligation_id and the cap path used to silently skip, leaving the row
+    // at confidence=1.0 and bypassing a tenant `agent.confidence.gte` rule.
+    // Post-H-2 the missing obligation is a hard 404, not a silent default.
+    const audit = new InMemoryAuditEmitter();
+    const { pool } = makeFakePool();
+    const service = makeService(pool, audit, {
+      resolveObligationConfidence: async () => null, // obligation does not exist
+    });
+
+    await expect(service.create(ctx, baseInput)).rejects.toMatchObject({
+      code: "obligation_not_found",
+      details: { obligation_id: OBL },
+    });
+  });
+
+  it("H-2 regression: still defaults when obligation_id is NOT supplied (no resolver call)", async () => {
+    // When the caller doesn't reference an obligation, the resolver is never
+    // consulted, so the H-2 hard-fail must not fire. Sanity-check the gate
+    // condition is `input.obligation_id !== undefined`, not just `resolver
+    // returns null`.
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    let calledResolver = false;
+    const service = makeService(pool, audit, {
+      resolveObligationConfidence: async () => {
+        calledResolver = true;
+        return null;
+      },
+    });
+
+    const inputNoObligation: CreatePaymentIntentInput = { ...baseInput };
+    delete (inputNoObligation as { obligation_id?: string }).obligation_id;
+    await service.create(ctx, inputNoObligation);
+
+    expect(calledResolver).toBe(false);
+    expect(insertConfidence(calls)).toBe(1.0);
+  });
 });

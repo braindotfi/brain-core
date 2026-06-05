@@ -92,6 +92,11 @@ export const BRAIN_ERROR_CODES = [
   "payment_intent_not_found",
   "payment_intent_invalid_state",
   "payment_intent_gate_failed",
+  // Batch 10 H-2: an intent referenced an obligation_id that did not resolve
+  // in the Ledger. Pre-H-2 the confidence cap silently no-op'd and the row
+  // landed at confidence=1.0, which let an agent bypass a tenant
+  // `agent.confidence.gte` policy by citing a non-existent obligation.
+  "obligation_not_found",
   "payment_intent_approval_required",
   "payment_intent_approval_invalid",
   // P0.4 approver/quorum hardening.
@@ -264,6 +269,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   agent_run_not_found: 404,
   execution_proposal_not_found: 404,
   payment_intent_not_found: 404,
+  obligation_not_found: 404,
   audit_event_not_found: 404,
 
   // 400 — domain validation
