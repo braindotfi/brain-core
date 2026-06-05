@@ -136,13 +136,7 @@ export async function provisionTenant(
         `INSERT INTO policies
            (id, tenant_id, version, content, content_hash, quorum_required, state, created_by, activated_at)
          VALUES ($1, $2, 1, $3, $4, 1, 'active', $5, now())`,
-        [
-          policyId,
-          tenantId,
-          JSON.stringify(defaultPolicy),
-          defaultPolicyHash,
-          userId,
-        ],
+        [policyId, tenantId, JSON.stringify(defaultPolicy), defaultPolicyHash, userId],
       );
     });
   } catch (err) {

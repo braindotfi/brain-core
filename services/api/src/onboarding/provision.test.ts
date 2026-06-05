@@ -137,8 +137,8 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
     // Schema:
     //   [0] policy id  [1] tenant id  [2] content JSON  [3] content_hash buf
     //   [4] created_by
-    const [policyId, capturedTenant, contentJson, capturedHash, createdBy] =
-      policyInsert!.values as [string, string, string, Buffer, string];
+    const [policyId, capturedTenant, contentJson, capturedHash, createdBy] = policyInsert!
+      .values as [string, string, string, Buffer, string];
     expect(isBrainId(policyId, ID_PREFIX.policy)).toBe(true);
     expect(capturedTenant).toBe(tenantId);
     expect(createdBy).toBe(userId);
