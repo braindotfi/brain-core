@@ -1,7 +1,17 @@
 /**
- * Execution routes: 9 endpoints per Brain_API_Specification.yaml §Execution
- * plus /execution/mcp MCP surface. Proposal state machine §8.1, execution
- * state machine §8.2, agent registration state machine §8.4.
+ * §Execution endpoints (proposal state machine §8.1, execution state machine
+ * §8.2, agent registration §8.4). Despite the "v0.2" framing, most of this
+ * surface is LIVE, not vestigial: `/execution/propose`, `/approve`,
+ * `/escalate`, `/{execution_id}`, and `/agents*` are the generic action
+ * proposal/approval API consumed by the published SDK `actions` resource and by
+ * the Python reasoning agents (reconciliation / payment / anomaly call
+ * `POST /v1/execution/propose`). Do not delete them without first providing a
+ * v0.3 replacement and migrating both consumers.
+ *
+ * Two sub-routes ARE inert: `/execution/execute` is decommissioned (it bypassed
+ * the §6 gate; money movement goes through `/payment-intents/*` /
+ * `/actions/{id}/execute`), and `/execution/mcp` is a deprecated ping-only shim
+ * superseded by `/v1/agents/mcp` (the real MCP server, services/mcp).
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -152,7 +162,11 @@ export async function registerExecutionRoutes(
         }
         const signed = new Set(updated.approvers_signed);
         const required = new Set(updated.required_approvers);
-        const allSigned = Array.from(required).every((r) => signed.has(r) || hasRole(principal, r));
+        // Legacy v0.2 approval is satisfied by approver-id signature presence.
+        // This path has no org-role membership model; tenant org roles + quorum
+        // live in the PaymentIntent / ApprovalService path (the v0.3 approval
+        // surface). New integrations approve via /payment-intents/*.
+        const allSigned = Array.from(required).every((r) => signed.has(r));
         if (allSigned) {
           return transitionProposal(c, proposalId, "pending", "approved");
         }
@@ -267,11 +281,12 @@ export async function registerExecutionRoutes(
     },
   );
 
-  // POST /execution/mcp — MCP surface for external agents.
-  // MVP dispatches by `method` field so third-party MCP clients can call
-  // wiki.query / execution.propose / raw.contribute with a Brain-scoped
-  // JWT. Full JSON-RPC / SSE framing lands in a follow-up; stage-6 ships
-  // the HTTP surface that the payment-agent demo uses.
+  // POST /execution/mcp — DEPRECATED v0.2 back-compat shim.
+  // The live MCP surface is POST /v1/agents/mcp (services/mcp): a JSON-RPC 2.0
+  // server with 12 tools, 7 resource URIs, and 5 prompts. This legacy route
+  // only ever answered `ping`; it is retained for the v0.3 transition window
+  // (Brain_MVP_Architecture.md "Backward-compat note") and points callers at
+  // the real surface rather than returning a bare "not implemented".
   app.post(
     "/execution/mcp",
     async (
@@ -289,18 +304,15 @@ export async function registerExecutionRoutes(
       if (method === undefined) {
         throw brainError("request_body_invalid", "method required");
       }
-      switch (method) {
-        case "ping":
-          return reply.status(200).send({ ok: true });
-        default:
-          throw brainError(
-            "execution_agent_not_registered",
-            `MCP method not implemented: ${method}`,
-            {
-              statusOverride: 501,
-            },
-          );
+      if (method === "ping") {
+        return reply.status(200).send({ ok: true });
       }
+      throw brainError(
+        "execution_agent_not_registered",
+        `the /execution/mcp shim is deprecated and only retains 'ping'; ` +
+          `use POST /v1/agents/mcp for the full MCP surface (requested method: ${method})`,
+        { statusOverride: 501 },
+      );
     },
   );
 }
@@ -310,13 +322,6 @@ function requirePrincipal(request: FastifyRequest) {
     throw brainError("auth_token_missing", "principal required");
   }
   return request.principal;
-}
-
-function hasRole(_principal: ReturnType<typeof requirePrincipal>, _role: string): boolean {
-  // Role membership lookup lands with the tenant organization model in a
-  // subsequent PR. For stage-6 we treat approval by id presence in the
-  // approvers_signed list as sufficient.
-  return false;
 }
 
 function serializeProposal(row: ProposalRow): Record<string, unknown> {
