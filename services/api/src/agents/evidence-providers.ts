@@ -52,6 +52,18 @@ function ctxFor(tenantId: string): ServiceCallContext {
   return { tenantId, actor: SYSTEM_ACTOR };
 }
 
+/**
+ * The evidence item's confidence is the Ledger row's persisted `confidence`
+ * (every entity carries it via LedgerCommonFields), clamped to [0, 1]. Using
+ * the persisted value -- rather than a hardcoded 1 -- keeps a low-confidence
+ * (e.g. uncorroborated, document-extracted) obligation from producing
+ * high-confidence routing evidence merely because the row exists (Codex P2).
+ * A non-finite value fails safe to 0, never 1.
+ */
+function evidenceConfidence(c: number): number {
+  return Number.isFinite(c) ? Math.max(0, Math.min(1, c)) : 0;
+}
+
 // ---------- typed EvidenceRef builders -------------------------------------
 
 function balanceEvidence(b: Balance): Evidence {
@@ -61,7 +73,7 @@ function balanceEvidence(b: Balance): Evidence {
     source_system: "ledger",
     object_type: "balance",
     object_id: b.id,
-    confidence: 1,
+    confidence: evidenceConfidence(b.confidence),
     timestamp: b.as_of,
     excerpt: `${b.currency} current ${b.current_balance}`,
   };
@@ -74,7 +86,7 @@ function transactionEvidence(t: Transaction): Evidence {
     source_system: "ledger",
     object_type: "transaction",
     object_id: t.id,
-    confidence: 1,
+    confidence: evidenceConfidence(t.confidence),
     timestamp: t.transaction_date,
     excerpt: `${t.direction} ${t.currency} ${t.amount} ${t.status}`,
   };
@@ -87,7 +99,7 @@ function counterpartyEvidence(c: Counterparty): Evidence {
     source_system: "ledger",
     object_type: "counterparty",
     object_id: c.id,
-    confidence: 1,
+    confidence: evidenceConfidence(c.confidence),
     excerpt: `${c.name} (${c.type})${c.risk_level !== null ? ` risk=${c.risk_level}` : ""}`,
   };
 }
@@ -99,7 +111,7 @@ function invoiceEvidence(i: Invoice): Evidence {
     source_system: "ledger",
     object_type: "invoice",
     object_id: i.id,
-    confidence: 1,
+    confidence: evidenceConfidence(i.confidence),
     timestamp: i.issue_date,
     excerpt: `${i.invoice_number} ${i.status} due ${i.currency} ${i.amount_due}`,
   };
@@ -112,7 +124,7 @@ function obligationEvidence(o: Obligation): Evidence {
     source_system: "ledger",
     object_type: "obligation",
     object_id: o.id,
-    confidence: 1,
+    confidence: evidenceConfidence(o.confidence),
     timestamp: o.due_date,
     excerpt: `${o.type} ${o.status} due ${o.currency} ${o.amount_due}`,
   };

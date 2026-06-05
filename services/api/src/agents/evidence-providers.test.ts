@@ -59,6 +59,8 @@ const transaction: Transaction = {
   description_raw: null,
   description_normalized: null,
   reconciliation_status: "unreconciled",
+  provenance: "extracted",
+  confidence: 1,
 } as unknown as Transaction;
 
 const counterparty: Counterparty = {
@@ -66,6 +68,8 @@ const counterparty: Counterparty = {
   name: "Globex",
   type: "vendor",
   risk_level: "low",
+  provenance: "extracted",
+  confidence: 1,
 } as unknown as Counterparty;
 
 const invoice: Invoice = {
@@ -80,6 +84,8 @@ const invoice: Invoice = {
   status: "sent",
   linked_document_ids: [],
   linked_transaction_ids: [],
+  provenance: "extracted",
+  confidence: 1,
 } as unknown as Invoice;
 
 const obligation: Obligation = {
@@ -93,6 +99,10 @@ const obligation: Obligation = {
   recurrence: null,
   status: "due",
   linked_transaction_ids: [],
+  // Uncorroborated, document-extracted ⇒ low persisted confidence. The
+  // evidence builder must reflect THIS, not a hardcoded 1 (Codex P2).
+  provenance: "agent_contributed",
+  confidence: 0.4,
 } as unknown as Obligation;
 
 const wikiPage: WikiPage = {
@@ -184,6 +194,18 @@ describe("makeLedgerEvidenceProvider", () => {
       requiredEvidence: ["obligation"],
     });
     expect(items.map((i) => i.kind)).toEqual(["obligation"]);
+  });
+
+  it("propagates the obligation's persisted confidence, not a hardcoded 1 (Codex P2)", async () => {
+    // A low-confidence (uncorroborated) obligation must not produce
+    // high-confidence routing evidence merely because the row exists.
+    const provider = makeLedgerEvidenceProvider(fakeLedger());
+    const items = await provider({
+      tenantId: TENANT,
+      context: { obligation_id: "ob_1" },
+      requiredEvidence: ["obligation"],
+    });
+    expect(items[0]?.confidence).toBe(0.4);
   });
 
   it("produces no evidence when context lacks the needed reference", async () => {
