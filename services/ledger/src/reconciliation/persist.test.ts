@@ -30,8 +30,12 @@ function input(overrides: Partial<PersistMatchInput> = {}): PersistMatchInput {
 }
 
 describe("persistMatch — corroboration write-back", () => {
-  it("raises a matched obligation's confidence and audits it", async () => {
+  it("raises a matched obligation's confidence when the counter-side is independently sourced", async () => {
+    // Counter-side transaction provenance = 'extracted' (came from a Plaid feed,
+    // not the agent). This is the canonical "independent corroboration" case
+    // RFC 0004 §5.2 sanctions for lifting the obligation.
     const { pool, queries } = fakePool({
+      "SELECT provenance FROM ledger_transactions": [{ provenance: "extracted" }],
       "UPDATE ledger_obligations": [{ id: OBL, confidence: 0.8 }],
     });
     const audit = new InMemoryAuditEmitter();
@@ -51,6 +55,92 @@ describe("persistMatch — corroboration write-back", () => {
     expect(actions).toContain("ledger.obligation.corroborated");
     const corroborated = audit.events.find((e) => e.action === "ledger.obligation.corroborated");
     expect(corroborated?.outputs).toMatchObject({ obligation_id: OBL, confidence: 0.8 });
+  });
+
+  it("lifts when the counter-side is human-confirmed", async () => {
+    // A human-confirmed transaction is also independent of the agent.
+    const { pool, queries } = fakePool({
+      "SELECT provenance FROM ledger_transactions": [{ provenance: "human_confirmed" }],
+      "UPDATE ledger_obligations": [{ id: OBL, confidence: 0.7 }],
+    });
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await persistMatch(pool, audit, makeCtx(), input({ confidenceScore: 0.7 }));
+    expect(result.created).toBe(true);
+    expect(queries.find((q) => q.text.includes("UPDATE ledger_obligations"))).toBeDefined();
+    expect(audit.events.map((e) => e.action)).toContain("ledger.obligation.corroborated");
+  });
+
+  it("C-2 regression: refuses to lift when the counter-side is agent_contributed (self-corroboration)", async () => {
+    // The bug this guards: an agent contributes BOTH an obligation AND a
+    // "corroborating" transaction, both at provenance=agent_contributed. The
+    // unguarded code would promote the obligation to provenance=extracted with
+    // confidence up to 0.9, defeating the 0.5 agent-contributed ceiling
+    // entirely. Post-C-2: the match row is still recorded (useful evidence for
+    // the matcher), but the obligation stays put.
+    const { pool, queries } = fakePool({
+      "SELECT provenance FROM ledger_transactions": [{ provenance: "agent_contributed" }],
+    });
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await persistMatch(pool, audit, makeCtx(), input());
+    expect(result.created).toBe(true);
+    expect(queries.find((q) => q.text.includes("UPDATE ledger_obligations"))).toBeUndefined();
+    const actions = audit.events.map((e) => e.action);
+    expect(actions).toContain("ledger.reconciliation.matched");
+    expect(actions).not.toContain("ledger.obligation.corroborated");
+  });
+
+  it("C-2 regression: refuses to lift when the counter-side is inferred or ambiguous", async () => {
+    // Same independence rule: only `extracted` and `human_confirmed` count.
+    // `inferred` and `ambiguous` are not independent corroboration.
+    for (const prov of ["inferred", "ambiguous"]) {
+      const { pool, queries } = fakePool({
+        "SELECT provenance FROM ledger_transactions": [{ provenance: prov }],
+      });
+      const audit = new InMemoryAuditEmitter();
+      const result = await persistMatch(pool, audit, makeCtx(), input());
+      expect(result.created).toBe(true);
+      expect(
+        queries.find((q) => q.text.includes("UPDATE ledger_obligations")),
+        `provenance=${prov} must not corroborate`,
+      ).toBeUndefined();
+      expect(audit.events.map((e) => e.action)).not.toContain("ledger.obligation.corroborated");
+    }
+  });
+
+  it("C-2 regression: refuses to lift when the counter-side row is missing entirely", async () => {
+    // The SELECT returns no rows (counter-side id does not resolve). Safe
+    // default: no corroboration. The match row stands.
+    const { pool, queries } = fakePool({
+      "SELECT provenance FROM ledger_transactions": [],
+    });
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await persistMatch(pool, audit, makeCtx(), input());
+    expect(result.created).toBe(true);
+    expect(queries.find((q) => q.text.includes("UPDATE ledger_obligations"))).toBeUndefined();
+    expect(audit.events.map((e) => e.action)).not.toContain("ledger.obligation.corroborated");
+  });
+
+  it("C-2 regression: refuses to lift when the counter-side type is outside the whitelist", async () => {
+    // A future matcher pairs an obligation with some new entity type the
+    // provenance lookup table does not know yet. Safe default: no lift, no
+    // crash. Adding the new type is a one-line change in persist.ts.
+    const { pool, queries } = fakePool({
+      "UPDATE ledger_obligations": [{ id: OBL, confidence: 0.8 }],
+    });
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await persistMatch(
+      pool,
+      audit,
+      makeCtx(),
+      input({ rightEntityType: "future_unknown_type", rightEntityId: "x" }),
+    );
+    expect(result.created).toBe(true);
+    expect(queries.find((q) => q.text.includes("UPDATE ledger_obligations"))).toBeUndefined();
+    expect(audit.events.map((e) => e.action)).not.toContain("ledger.obligation.corroborated");
   });
 
   it("does not touch obligations when neither side is an obligation", async () => {

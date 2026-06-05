@@ -43,8 +43,57 @@ export interface PersistMatchResult {
  * `agent_contributed` provenance to `extracted` since the row is now backed
  * by independent Ledger evidence. The 0.9 ceiling and single-match lift are a
  * calibration choice flagged in RFC 0004 §7.1, open to tuning.
+ *
+ * Batch 10 C-2: the lift is gated on the counter-side row's provenance. The
+ * point of corroboration is that "independent Ledger evidence" backs the
+ * obligation. If the counter-side row is itself agent_contributed (i.e. the
+ * same agent class wrote both the obligation and its "corroborating"
+ * transaction), there is no independence; promoting would let the agent
+ * self-promote past the 0.5 ceiling it was supposed to be confined to. The
+ * counter-side MUST be `extracted` or `human_confirmed` for the lift to fire.
+ * Otherwise the match row is still recorded (it is useful evidence for the
+ * reconciliation matcher), but the obligation's confidence + provenance are
+ * left untouched and no `ledger.obligation.corroborated` audit event fires.
  */
 const CORROBORATION_CONFIDENCE_CEILING = 0.9;
+
+/**
+ * Provenance values that count as "independent of the agent" for the
+ * corroboration write-back. Anything else (agent_contributed, inferred,
+ * ambiguous) does NOT corroborate.
+ */
+const INDEPENDENT_PROVENANCE = new Set(["extracted", "human_confirmed"]);
+
+/**
+ * Tables the reconciliation matchers can pair an obligation with. Each entry
+ * names the SQL table and the provenance column. Used to look up the
+ * counter-side row's provenance before deciding whether to lift the
+ * obligation. Centralised here (not embedded in the SQL) so adding a new
+ * matcher entity type is a one-line change in one place and the safe default
+ * (return null → no lift) holds for any not-yet-mapped type.
+ */
+const COUNTER_SIDE_PROVENANCE_TABLES: Record<string, string> = {
+  transaction: "ledger_transactions",
+  invoice: "ledger_invoices",
+  document: "ledger_documents",
+  balance: "ledger_balances",
+};
+
+async function loadCounterSideProvenance(
+  c: TenantScopedClient,
+  entityType: string,
+  entityId: string,
+): Promise<string | null> {
+  const table = COUNTER_SIDE_PROVENANCE_TABLES[entityType];
+  if (table === undefined) return null; // Safe default: unknown type cannot corroborate.
+  const { rows } = await c.query<{ provenance: string }>(
+    // The table name is whitelisted above (not user input), so interpolation
+    // is safe; the id parameter still binds normally.
+    `SELECT provenance FROM ${table} WHERE id = $1 LIMIT 1`,
+    [entityId],
+  );
+  return rows[0]?.provenance ?? null;
+}
 
 export async function persistMatch(
   pool: Pool,
@@ -100,13 +149,29 @@ export async function persistMatch(
       );
     }
 
-    // Corroboration write-back: an obligation matched against independent
-    // evidence earns confidence (upward-only). See CORROBORATION_* above.
-    for (const entity of [
-      { type: input.leftEntityType, id: input.leftEntityId },
-      { type: input.rightEntityType, id: input.rightEntityId },
-    ]) {
-      if (entity.type !== "obligation") continue;
+    // Corroboration write-back: an obligation matched against INDEPENDENT
+    // evidence earns confidence (upward-only). The independence check (C-2)
+    // queries the counter-side row's provenance: only `extracted` or
+    // `human_confirmed` rows corroborate. If the counter-side is itself
+    // agent_contributed, the match is recorded but the obligation's
+    // confidence + provenance stay put. See CORROBORATION_* above.
+    const sides = [
+      {
+        self: { type: input.leftEntityType, id: input.leftEntityId },
+        counter: { type: input.rightEntityType, id: input.rightEntityId },
+      },
+      {
+        self: { type: input.rightEntityType, id: input.rightEntityId },
+        counter: { type: input.leftEntityType, id: input.leftEntityId },
+      },
+    ];
+    for (const { self, counter } of sides) {
+      if (self.type !== "obligation") continue;
+      const counterProv = await loadCounterSideProvenance(c, counter.type, counter.id);
+      if (counterProv === null || !INDEPENDENT_PROVENANCE.has(counterProv)) {
+        // No independent corroboration; do not lift. The match row stands.
+        continue;
+      }
       const { rows } = await c.query<{ id: string; confidence: number }>(
         `UPDATE ledger_obligations
             SET confidence = GREATEST(confidence, LEAST($2::real, $3::real)),
@@ -115,7 +180,7 @@ export async function persistMatch(
                 updated_at = now()
           WHERE id = $1
           RETURNING id, confidence`,
-        [entity.id, input.confidenceScore, CORROBORATION_CONFIDENCE_CEILING],
+        [self.id, input.confidenceScore, CORROBORATION_CONFIDENCE_CEILING],
       );
       const row = rows[0];
       if (row !== undefined) promoted.push(row);
