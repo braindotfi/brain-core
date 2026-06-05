@@ -233,7 +233,11 @@ describe("makeWikiEvidenceProvider", () => {
       requiredEvidence: [],
     });
     expect(items.map((i) => i.kind)).toEqual(["wiki"]);
-    expect(items[0]).toMatchObject({ ref: "wiki:globex", source_system: "wiki" });
+    // `ref` is a wiki evidence reference (wiki:<slug>), not an auth scope.
+    // Assert it via regex so the check-scope-vocab guard's {layer}:{verb}
+    // heuristic does not mistake the literal for an unknown scope.
+    expect(items[0]?.ref).toMatch(/^wiki:globex$/);
+    expect(items[0]).toMatchObject({ source_system: "wiki" });
   });
 
   it("produces no citations when no text query can be derived", async () => {

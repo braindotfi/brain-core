@@ -2,9 +2,9 @@
 
 Brain runs on two substrates with different rollback mechanics:
 
-- **Azure Container Apps** (managed staging/production) — revision-based; see
+- **Azure Container Apps** (managed staging/production). Revision-based; see
   [§A](#a-azure-container-apps).
-- **Single-host Docker** (testnet dev-live VM, `docker-compose.prod.yml`) —
+- **Single-host Docker** (testnet dev-live VM, `docker-compose.prod.yml`).
   image-tag based; see [§B](#b-single-host-docker-testnet-dev-live).
 
 The forward-only migration rule in [Post-Rollback](#post-rollback) applies to
@@ -69,14 +69,14 @@ Contributor` on the resource group.
 
 The testnet VM runs the stack from `docker-compose.prod.yml`, which builds a
 local `brain-core:prod` image. Rollback here means **re-pinning the `api` (and
-`migrate`) service to a previously-built, known-good image tag** — there is no
+`migrate`) service to a previously-built, known-good image tag**. There is no
 revision controller, so the image tag IS the unit of rollback.
 
 ### Prerequisites
 
 - SSH access to the VM and membership in the `docker` group.
 - A known-good image tag to roll back to. **This only works if images were
-  tagged at deploy time** — see [Tagging discipline](#tagging-discipline) below.
+  tagged at deploy time**. See [Tagging discipline](#tagging-discipline) below.
   Without prior tags, the only "rollback" is `git checkout <good-sha>` +
   rebuild, which is slow and rebuilds from source.
 
@@ -90,14 +90,14 @@ revision controller, so the image tag IS the unit of rollback.
 
 2. Re-pin the `api`/`migrate` image tag. The compose file resolves the image as
    `brain-core:${BRAIN_IMAGE_TAG:-prod}`, so a rollback is a single env override
-   — no file edit:
+   . No file edit:
 
    ```bash
    BRAIN_IMAGE_TAG=<GOOD_TAG> \
      docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --no-build api
    ```
 
-   `--no-build` is critical — it recreates the container from the existing
+   `--no-build` is critical. It recreates the container from the existing
    tagged image instead of rebuilding the current (bad) source. (Set
    `BRAIN_IMAGE_TAG` in `.env.prod` to make the pin sticky across later
    `up` invocations.)
@@ -111,7 +111,7 @@ revision controller, so the image tag IS the unit of rollback.
    ```
 
 4. Do **not** roll back the `migrate`/`db-roles` one-shots to "undo" a
-   migration — migrations are forward-only (see Post-Rollback). Rolling the
+   migration. Migrations are forward-only (see Post-Rollback). Rolling the
    `api` image back to a build whose code predates a migration is safe as long
    as the migration is forward-compatible (it must be, per §10.5).
 
@@ -132,7 +132,7 @@ re-pin is always available. Prune older ones with `docker image prune`.
 ### Data & volumes
 
 The stack's state lives in named volumes (`pg-data`, `redis-data`,
-`minio-data`). An image rollback does **not** touch them — Postgres data,
+`minio-data`). An image rollback does **not** touch them. Postgres data,
 Redis state, and blobs survive. Never `docker compose down -v` as part of a
 rollback; `-v` deletes those volumes.
 
