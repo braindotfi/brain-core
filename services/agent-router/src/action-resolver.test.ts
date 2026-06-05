@@ -181,16 +181,69 @@ describe("ActionResolver — H-23 signed-policy allowlist", () => {
     if (r.status === "missing_action") expect(r.reason).toMatch(/denied by policy/);
   });
 
-  it("does NOT consult the allowlist on the event-map fallback path", async () => {
-    // "escalate" is NOT in the agent's policy allowlist, yet the event mapping
-    // still resolves it — the allowlist gates explicit requests only.
+  // Codex 2026-06-05 P1: the signed allowlist must gate EVERY resolution
+  // source, not just explicit requests. Previously event_map / intent_map /
+  // default_action returned an action without consulting isActionAllowed, so a
+  // denied action could still be selected by an event mapping, a classifier
+  // match, or a declared default -- making PolicyDocument.agent_actions an
+  // incomplete authorization boundary.
+
+  it("consults the allowlist on the event-map path and denies a non-allowlisted action", async () => {
+    // "escalate" is NOT in the agent's policy allowlist; the event mapping must
+    // no longer smuggle it past the signed policy.
     const r = await fromPolicy.resolve({
       definition: def({ event_action_map: { "invoice.overdue": "escalate" } }),
       actions: ["escalate"],
       tenantId: "tnt_test",
       event: "invoice.overdue",
     });
-    expect(r).toEqual({ status: "resolved", action: "escalate", source: "event_map" });
+    expect(r.status).toBe("missing_action");
+    if (r.status === "missing_action") expect(r.reason).toMatch(/denied by policy/);
+  });
+
+  it("resolves an allowlisted action via the event-map path", async () => {
+    // The check denies only non-allowlisted actions; an allowed one still flows.
+    const r = await fromPolicy.resolve({
+      definition: def({ event_action_map: { "doc.ready": "draft" } }),
+      actions: ["draft"],
+      tenantId: "tnt_test",
+      event: "doc.ready",
+    });
+    expect(r).toEqual({ status: "resolved", action: "draft", source: "event_map" });
+  });
+
+  it("consults the allowlist on the intent-map path and denies a non-allowlisted action", async () => {
+    const r = await fromPolicy.resolve({
+      definition: def({
+        intent_action_map: [{ patterns: ["escalate this dispute"], action: "escalate" }],
+      }),
+      actions: ["escalate"],
+      tenantId: "tnt_test",
+      intent: "please escalate this dispute now",
+    });
+    expect(r.status).toBe("missing_action");
+    if (r.status === "missing_action") expect(r.reason).toMatch(/denied by policy/);
+  });
+
+  it("consults the allowlist on the default-action path and denies a non-allowlisted action", async () => {
+    const r = await fromPolicy.resolve({
+      definition: def({ default_action: "escalate" }),
+      actions: ["escalate"],
+      tenantId: "tnt_test",
+      event: "unmapped.event",
+    });
+    expect(r.status).toBe("missing_action");
+    if (r.status === "missing_action") expect(r.reason).toMatch(/denied by policy/);
+  });
+
+  it("resolves an allowlisted default action", async () => {
+    const r = await fromPolicy.resolve({
+      definition: def({ default_action: "draft" }),
+      actions: ["draft"],
+      tenantId: "tnt_test",
+      event: "unmapped.event",
+    });
+    expect(r).toEqual({ status: "resolved", action: "draft", source: "default" });
   });
 
   it("denies every explicit request when the agent's allowlist is empty", async () => {
