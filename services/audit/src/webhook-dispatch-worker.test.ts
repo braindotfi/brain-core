@@ -14,7 +14,7 @@ import {
   newTenantId,
 } from "@brain/shared";
 import type { Pool } from "pg";
-import { runWebhookDispatchCycle } from "./webhook-dispatch-worker.js";
+import { runWebhookDispatchCycle, startWebhookDispatchWorker } from "./webhook-dispatch-worker.js";
 
 const TENANT = newTenantId();
 
@@ -189,5 +189,55 @@ describe("nextAttemptDelaySeconds", () => {
     expect(nextAttemptDelaySeconds(5)).toBe(480);
     // Cap holds past 5.
     expect(nextAttemptDelaySeconds(10)).toBe(480);
+  });
+});
+
+describe("startWebhookDispatchWorker", () => {
+  it("polls a cycle each interval and stop() halts further polls", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pool } = makeFakePool(() => []); // nothing due → quick no-op cycle
+      const connectSpy = pool.connect as ReturnType<typeof vi.fn>;
+      const worker = startWebhookDispatchWorker(
+        { pool, audit: new InMemoryAuditEmitter() },
+        { intervalMs: 1000 },
+      );
+
+      // First tick is scheduled, not immediate.
+      expect(connectSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+      // Self-reschedules.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(connectSpy).toHaveBeenCalledTimes(2);
+
+      worker.stop();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(connectSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("swallows a cycle error and keeps the worker alive", async () => {
+    vi.useFakeTimers();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const pool = {
+        connect: vi.fn(() => {
+          throw new Error("pool down");
+        }),
+      } as unknown as Pool;
+      const worker = startWebhookDispatchWorker(
+        { pool, audit: new InMemoryAuditEmitter() },
+        { intervalMs: 1000 },
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(errSpy).toHaveBeenCalled();
+      worker.stop();
+    } finally {
+      errSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

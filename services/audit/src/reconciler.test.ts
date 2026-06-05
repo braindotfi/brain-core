@@ -1,7 +1,11 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryAuditEmitter, newTenantId } from "@brain/shared";
-import { reconcileOrphanedAnchors, type AnchorEventReader } from "./reconciler.js";
+import {
+  reconcileOrphanedAnchors,
+  startAnchorReconciler,
+  type AnchorEventReader,
+} from "./reconciler.js";
 
 interface OrphanRow {
   id: string;
@@ -96,5 +100,54 @@ describe("reconcileOrphanedAnchors", () => {
     expect(res).toEqual({ recovered: 0, flagged: 0 });
     expect(reader.findAnchorTx).not.toHaveBeenCalled();
     expect(txQueries).toHaveLength(0);
+  });
+});
+
+describe("startAnchorReconciler", () => {
+  it("runs a cycle immediately and on the interval, then stop() halts it", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pool } = fakePool([orphan()]);
+      const reader = readerReturning({ txHash: Buffer.alloc(32, 9), blockNumber: 1n });
+      const findAnchorTx = reader.findAnchorTx as ReturnType<typeof vi.fn>;
+      const rec = startAnchorReconciler(
+        { pool, reader, audit: new InMemoryAuditEmitter() },
+        { intervalMs: 1000 },
+      );
+
+      // The immediate cycle + first interval tick both run a reconcile.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(findAnchorTx).toHaveBeenCalled();
+      const callsBeforeStop = findAnchorTx.mock.calls.length;
+
+      rec.stop();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(findAnchorTx.mock.calls.length).toBe(callsBeforeStop);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("swallows a cycle error so the interval keeps running", async () => {
+    vi.useFakeTimers();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const pool = {
+        query: vi.fn(async () => {
+          throw new Error("db down");
+        }),
+        connect: async () => ({ query: vi.fn(), release: vi.fn() }),
+      } as unknown as Pool;
+      const rec = startAnchorReconciler(
+        { pool, reader: readerReturning(null), audit: new InMemoryAuditEmitter() },
+        { intervalMs: 1000 },
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(errSpy).toHaveBeenCalled();
+      rec.stop();
+    } finally {
+      errSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });
