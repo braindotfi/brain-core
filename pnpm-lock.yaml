@@ -660,9 +660,15 @@ importers:
 
   tests/adversarial:
     dependencies:
+      '@brain/agent-router':
+        specifier: workspace:*
+        version: link:../../services/agent-router
       '@brain/execution':
         specifier: workspace:*
         version: link:../../services/execution
+      '@brain/schemas':
+        specifier: workspace:*
+        version: link:../../schemas
       '@brain/shared':
         specifier: workspace:*
         version: link:../../shared

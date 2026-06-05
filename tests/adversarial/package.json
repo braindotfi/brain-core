@@ -18,6 +18,8 @@
   },
   "dependencies": {
     "@brain/shared": "workspace:*",
-    "@brain/execution": "workspace:*"
+    "@brain/execution": "workspace:*",
+    "@brain/agent-router": "workspace:*",
+    "@brain/schemas": "workspace:*"
   }
 }
