@@ -502,6 +502,50 @@ describe("PostgresAgentRegistry", () => {
     expect(result?.scopes).toContain("audit:read");
     expect(result?.scopes).not.toContain("execution:propose");
   });
+
+  it("H-3 regression: default `partner` role does NOT include payment_intent:execute", async () => {
+    // Batch 10 H-3: the partner role used to silently carry execute power,
+    // which meant a partner address registered on-chain could move money via
+    // a leaked SIWX token alone. The default partner now stops at approve;
+    // execute requires the explicit partner_execute role.
+    const pool = makePool([
+      {
+        id: "agent_01PART0000000000000000000",
+        tenant_id: "tnt_01PART000000000000000000",
+        role: "partner",
+        scope_hash: null,
+        state: "active",
+      },
+    ]);
+    const registry = new PostgresAgentRegistry(pool);
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    expect(result?.scopes).toContain("payment_intent:propose");
+    expect(result?.scopes).toContain("payment_intent:approve");
+    expect(result?.scopes).not.toContain("payment_intent:execute");
+    // Read scopes still present for the integration use case.
+    expect(result?.scopes).toContain("ledger:read");
+    expect(result?.scopes).toContain("audit:read");
+  });
+
+  it("H-3: explicit `partner_execute` role carries payment_intent:execute", async () => {
+    // The opt-in path. Operators have to register an agent with this exact
+    // role string for the execute scope to mint; the on-chain scope-hash
+    // check then binds the elevated scope set to a specific registration.
+    const pool = makePool([
+      {
+        id: "agent_01PEXE0000000000000000000",
+        tenant_id: "tnt_01PEXE000000000000000000",
+        role: "partner_execute",
+        scope_hash: null,
+        state: "active",
+      },
+    ]);
+    const registry = new PostgresAgentRegistry(pool);
+    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    expect(result?.scopes).toContain("payment_intent:execute");
+    expect(result?.scopes).toContain("payment_intent:approve");
+    expect(result?.scopes).toContain("payment_intent:propose");
+  });
 });
 
 describe("POST /auth/siwx — registry resolution", () => {

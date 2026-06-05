@@ -319,10 +319,34 @@ function scopesForRole(role: string): Scope[] {
     case "anomaly":
       return ["ledger:read", "wiki:read"];
     case "partner":
-      // Integration/demo partner: the full propose→approve→execute payment
-      // lifecycle plus policy + audit reads, so an external app (e.g. the
-      // BrainSaaS Playground) can drive and prove a scenario end-to-end.
-      // Does NOT include audit:admin.
+      // Default partner role (batch 10 H-3): READ + PROPOSE + APPROVE only.
+      // The role was previously broadened to include `payment_intent:execute`
+      // for the BrainSaaS Playground convenience, but that means any partner
+      // address registered on-chain implicitly carried execute power. Demos
+      // that need execute now use the explicit `partner_execute` role below
+      // (or mint their own scoped token via /v1/demo/provision-run, which
+      // post-C-1 issues read+propose tokens only). Tightening this default
+      // means a leaked partner key cannot drain funds; the worst case is a
+      // proposed-and-approved intent that still requires a tenant-side
+      // execute call.
+      return [
+        "ledger:read",
+        "wiki:read",
+        "raw:write",
+        "policy:read",
+        "payment_intent:propose",
+        "payment_intent:approve",
+        "execution:propose",
+        "audit:read",
+      ];
+    case "partner_execute":
+      // Opt-in partner role (batch 10 H-3): adds `payment_intent:execute`
+      // to the default partner scope set. Operators must explicitly register
+      // an agent with this role for it to mint a tokenable execute scope; a
+      // partner row created with the default `partner` role does NOT auto-
+      // upgrade. The scope-hash check against BrainMCPAgentRegistry covers
+      // the role-to-scope mapping, so a partner_execute scope_hash differs
+      // from a plain partner scope_hash and cannot be cross-impersonated.
       return [
         "ledger:read",
         "wiki:read",
@@ -335,7 +359,7 @@ function scopesForRole(role: string): Scope[] {
         "audit:read",
       ];
     default:
-      // dev / unknown — read-heavy, no execution
+      // dev / unknown -- read-heavy, no execution
       return ["ledger:read", "wiki:read", "raw:read", "policy:read", "audit:read"];
   }
 }

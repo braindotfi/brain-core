@@ -22,7 +22,24 @@ export interface AgentRecord {
   // `kind` is the agent's provenance — matches InternalAgentDefinition.provenance.
   kind: "internal" | "external";
   // Domain function. Extended additively as internal agents ship.
-  role: "reconciliation" | "payment" | "anomaly" | "partner" | "collections" | "treasury";
+  /**
+   * Domain function. Extended additively as internal agents ship.
+   *
+   * Batch 10 H-3: split `partner` into two roles.
+   *   - `partner` (default): READ + PROPOSE + APPROVE, no payment_intent:execute.
+   *   - `partner_execute` (opt-in): the elevated role explicitly carries execute.
+   *
+   * Operators must register an agent with `partner_execute` to mint a tokenable
+   * execute scope. The default `partner` role cannot auto-upgrade.
+   */
+  role:
+    | "reconciliation"
+    | "payment"
+    | "anomaly"
+    | "partner"
+    | "partner_execute"
+    | "collections"
+    | "treasury";
   display_name: string;
   scope_hash: string | null;
   onchain_address: string | null;
