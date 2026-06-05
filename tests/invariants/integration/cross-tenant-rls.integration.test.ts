@@ -225,12 +225,8 @@ suite("Cross-tenant RLS, per data-bearing table (integration -- requires DATABAS
        VALUES ($1, $2, 'ach_outbound', $3, $4, '10.00', 'USD', 'approved', ARRAY[]::TEXT[])`,
       [piId, a, acctId, cpId],
     );
-    expect(
-      await countAs("SELECT id FROM ledger_payment_intents WHERE id = $1", [piId], b),
-    ).toBe(0);
-    expect(
-      await countAs("SELECT id FROM ledger_payment_intents WHERE id = $1", [piId], a),
-    ).toBe(1);
+    expect(await countAs("SELECT id FROM ledger_payment_intents WHERE id = $1", [piId], b)).toBe(0);
+    expect(await countAs("SELECT id FROM ledger_payment_intents WHERE id = $1", [piId], a)).toBe(1);
   });
 
   // ------ Agents (the registration table itself) --------------------------
