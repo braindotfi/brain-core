@@ -97,6 +97,12 @@ export const BRAIN_ERROR_CODES = [
   // landed at confidence=1.0, which let an agent bypass a tenant
   // `agent.confidence.gte` policy by citing a non-existent obligation.
   "obligation_not_found",
+  // Codex 2026-06-05 P2: a NEW obligation-linked PaymentIntent must target a
+  // known `payable` obligation. A `null` (direction unknown -- older rows or a
+  // non-vendor/customer counterparty) or `receivable` (money owed TO us;
+  // paying it out is the wrong-way flow §6 check 6.7 rejects) direction is
+  // refused at creation rather than silently passing.
+  "obligation_direction_invalid",
   "payment_intent_approval_required",
   "payment_intent_approval_invalid",
   // P0.4 approver/quorum hardening.
@@ -315,6 +321,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   policy_decision_required: 422,
   payment_intent_approval_required: 422,
   payment_intent_approval_invalid: 422,
+  obligation_direction_invalid: 422,
   // P0.4 approver/quorum hardening.
   approval_signer_revoked: 403,
   approval_cross_tenant: 403,

@@ -312,6 +312,38 @@ export class PaymentIntentService implements IPaymentIntentService {
     return confidence;
   }
 
+  /**
+   * Codex 2026-06-05 P2 — creation-time obligation-direction gate. A NEW
+   * obligation-linked PaymentIntent must target a known `payable` obligation.
+   * The §6 gate's check 6.7 rejects a `receivable` at execute but lets a `null`
+   * (unknown) direction PASS — leaving legacy already-created rows lenient. This
+   * closes the gap for NEW intents at the creation boundary (the natural
+   * new-vs-legacy split): `null` (older rows / non-vendor-customer counterparty)
+   * and `receivable` (money owed TO us; paying it out is the wrong-way drain
+   * 6.7 guards) are both refused here, so a doomed or mis-directed intent is
+   * never created.
+   *
+   * Enforced only when the direction loader is wired (the production money-path
+   * fence requires it; dev/test without it keep prior behavior, matching the
+   * confidence-cap loader's contract).
+   */
+  private async assertObligationDirectionPayable(
+    ctx: ServiceCallContext,
+    input: CreatePaymentIntentInput,
+  ): Promise<void> {
+    if (input.obligation_id === undefined || this.deps.resolveObligationDirection === undefined) {
+      return;
+    }
+    const direction = await this.deps.resolveObligationDirection(ctx, input.obligation_id);
+    if (direction !== "payable") {
+      throw brainError(
+        "obligation_direction_invalid",
+        `obligation_id ${input.obligation_id} has direction '${direction ?? "unknown"}'; a new obligation-linked PaymentIntent must target a known payable obligation`,
+        { details: { obligation_id: input.obligation_id, direction } },
+      );
+    }
+  }
+
   public async create(
     ctx: ServiceCallContext,
     input: CreatePaymentIntentInput,
@@ -324,6 +356,10 @@ export class PaymentIntentService implements IPaymentIntentService {
     // cites. Cap its confidence at the referenced obligation's so a low-
     // confidence (document-extracted) obligation gates the payment via policy.
     const effectiveConfidence = await this.resolveEffectiveConfidence(ctx, input);
+
+    // Codex P2: a new obligation-linked intent must target a known payable
+    // obligation (rejects null/receivable at creation; see the method doc).
+    await this.assertObligationDirectionPayable(ctx, input);
 
     // Evaluate policy at creation time so the row carries a fresh
     // PolicyDecision id. Re-evaluation happens at execute() to defend

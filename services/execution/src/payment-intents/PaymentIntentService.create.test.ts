@@ -112,6 +112,10 @@ function makeService(
   audit: InMemoryAuditEmitter,
   opts: {
     resolveObligationConfidence?: (ctx: ServiceCallContext, id: string) => Promise<number | null>;
+    resolveObligationDirection?: (
+      ctx: ServiceCallContext,
+      id: string,
+    ) => Promise<"payable" | "receivable" | null>;
     onPolicy?: (intent: GatePaymentIntent) => void;
   } = {},
 ): PaymentIntentService {
@@ -130,6 +134,9 @@ function makeService(
     },
     ...(opts.resolveObligationConfidence !== undefined
       ? { resolveObligationConfidence: opts.resolveObligationConfidence }
+      : {}),
+    ...(opts.resolveObligationDirection !== undefined
+      ? { resolveObligationDirection: opts.resolveObligationDirection }
       : {}),
   });
 }
@@ -228,5 +235,65 @@ describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", 
 
     expect(calledResolver).toBe(false);
     expect(insertConfidence(calls)).toBe(1.0);
+  });
+});
+
+describe("PaymentIntentService.create — obligation-direction gate (Codex 2026-06-05 P2)", () => {
+  it("rejects a new obligation-linked intent whose direction is unknown (null)", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool } = makeFakePool();
+    const service = makeService(pool, audit, {
+      resolveObligationDirection: async () => null, // older row / non-vendor-customer cp
+    });
+    await expect(service.create(ctx, baseInput)).rejects.toMatchObject({
+      code: "obligation_direction_invalid",
+      details: { obligation_id: OBL, direction: null },
+    });
+  });
+
+  it("rejects a new obligation-linked intent that targets a receivable (wrong-way)", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool } = makeFakePool();
+    const service = makeService(pool, audit, {
+      resolveObligationDirection: async () => "receivable",
+    });
+    await expect(service.create(ctx, baseInput)).rejects.toMatchObject({
+      code: "obligation_direction_invalid",
+      details: { obligation_id: OBL, direction: "receivable" },
+    });
+  });
+
+  it("allows a new obligation-linked intent that targets a payable", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit, {
+      resolveObligationDirection: async () => "payable",
+    });
+    await service.create(ctx, baseInput);
+    expect(calls.some((c) => c.sql.includes("INSERT INTO ledger_payment_intents"))).toBe(true);
+  });
+
+  it("does not enforce direction when no obligation_id is supplied", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool } = makeFakePool();
+    let called = false;
+    const service = makeService(pool, audit, {
+      resolveObligationDirection: async () => {
+        called = true;
+        return null;
+      },
+    });
+    const inputNoObligation: CreatePaymentIntentInput = { ...baseInput };
+    delete (inputNoObligation as { obligation_id?: string }).obligation_id;
+    await service.create(ctx, inputNoObligation);
+    expect(called).toBe(false);
+  });
+
+  it("does not enforce direction when the loader is unwired (dev/test parity)", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit); // no resolveObligationDirection
+    await service.create(ctx, baseInput);
+    expect(calls.some((c) => c.sql.includes("INSERT INTO ledger_payment_intents"))).toBe(true);
   });
 });
