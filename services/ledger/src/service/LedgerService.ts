@@ -55,6 +55,14 @@ import {
 import type { LedgerDeps } from "../deps.js";
 import { recordTransactionRow, upsertAccountRow, upsertCounterpartyRow } from "./writes.js";
 import { normalizePlaidArtifact } from "../extractors/plaid.js";
+import { normalizeDocObligationArtifact } from "../extractors/doc-obligation.js";
+
+/**
+ * Fallback confidence for a doc_obligation_v1 row whose raw_parsed.confidence
+ * is null. The agent-contributed ceiling (§3.2) caps the persisted value to
+ * 0.5 regardless; this is only the pre-cap default.
+ */
+const AGENT_CONTRIBUTED_DOC_CONFIDENCE = 0.5;
 
 export class LedgerService implements ILedgerService {
   public constructor(private readonly deps: LedgerDeps) {}
@@ -242,8 +250,9 @@ export class LedgerService implements ILedgerService {
         parser: string;
         parser_version: string;
         extracted: Record<string, unknown>;
+        confidence: number | null;
       }>(
-        `SELECT id, raw_artifact_id, parser, parser_version, extracted
+        `SELECT id, raw_artifact_id, parser, parser_version, extracted, confidence
            FROM raw_parsed
           WHERE id = $1
           LIMIT 1`,
@@ -263,6 +272,15 @@ export class LedgerService implements ILedgerService {
           rawParsedId: parsed.id,
           rawArtifactId: parsed.raw_artifact_id,
           payload: parsed.extracted,
+        });
+        return { created: result };
+      }
+      case "doc_obligation_v1": {
+        const result = await normalizeDocObligationArtifact(this.deps.pool, this.deps.audit, ctx, {
+          rawParsedId: parsed.id,
+          rawArtifactId: parsed.raw_artifact_id,
+          payload: parsed.extracted,
+          confidence: parsed.confidence ?? AGENT_CONTRIBUTED_DOC_CONFIDENCE,
         });
         return { created: result };
       }

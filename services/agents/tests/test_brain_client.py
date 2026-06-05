@@ -144,6 +144,56 @@ async def test_raw_ingest_inlines_str_body_verbatim() -> None:
     assert "body_b64" not in captured_body
 
 
+async def test_post_parsed_hits_raw_parsed_endpoint_with_expected_body() -> None:
+    captured: dict[str, Any] = {}
+    captured_url: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content.decode("utf-8")))
+        captured_url["url"] = str(request.url)
+        return httpx.Response(201, json={"id": "prs_01TEST", "created": True})
+
+    raw_id = "raw_01TESTAAAAAAAAAAAAAAAAAA"
+    with respx.mock() as mock:
+        mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").mock(side_effect=handler)
+        client = BrainApiClient(BASE, TOKEN)
+        result = await client.post_parsed(
+            raw_id=raw_id,
+            parser="doc_obligation_v1",
+            parser_version="1.0.0",
+            extracted={"counterparty_name": "Acme", "amount": "10.00"},
+            confidence=0.4,
+        )
+
+    assert captured_url["url"] == f"{BASE}/v1/raw/{raw_id}/parsed"
+    assert captured["parser"] == "doc_obligation_v1"
+    assert captured["parser_version"] == "1.0.0"
+    assert captured["extracted"]["counterparty_name"] == "Acme"
+    assert captured["confidence"] == 0.4
+    assert result["id"] == "prs_01TEST"
+
+
+async def test_post_parsed_omits_confidence_when_none() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(201, json={"id": "prs_01TEST"})
+
+    raw_id = "raw_01TESTBBBBBBBBBBBBBBBBBB"
+    with respx.mock() as mock:
+        mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").mock(side_effect=handler)
+        client = BrainApiClient(BASE, TOKEN)
+        await client.post_parsed(
+            raw_id=raw_id,
+            parser="doc_obligation_v1",
+            parser_version="1.0.0",
+            extracted={"amount": "10.00"},
+        )
+
+    assert "confidence" not in captured
+
+
 @pytest.mark.parametrize("status", [400, 404, 500])
 async def test_list_recent_transactions_raises_on_non_2xx(status: int) -> None:
     with respx.mock() as mock:

@@ -10,6 +10,7 @@ import pytest
 from brain_agents.anomaly.agent import AnomalyAgent
 from brain_agents.client import BrainApiClient
 from brain_agents.deps import AppDeps
+from brain_agents.document_extractor.agent import DocumentExtractorAgent
 from brain_agents.payment.agent import PaymentAgent
 from brain_agents.plaid_extractor.agent import PlaidExtractorAgent
 from brain_agents.reconciliation.agent import ReconciliationAgent
@@ -38,6 +39,7 @@ def _make_mock_deps() -> AppDeps:
         payment_agent=AsyncMock(spec=PaymentAgent),
         anomaly_agent=mock_anomaly,
         plaid_extractor_agent=MagicMock(spec=PlaidExtractorAgent),
+        document_extractor_agent=AsyncMock(spec=DocumentExtractorAgent),
     )
 
 

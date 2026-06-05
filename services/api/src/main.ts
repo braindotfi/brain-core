@@ -614,6 +614,10 @@ async function main(): Promise<void> {
     sumActiveReservations,
     resolveEvidence,
     detectDuplicates,
+    // RFC 0004 §5.2: cap a new intent's confidence at the obligation it pays,
+    // so document-extracted (<= 0.5) obligations gate via policy.
+    resolveObligationConfidence: async (ctx, obligationId) =>
+      (await ledgerService.findObligationById(ctx, obligationId))?.confidence ?? null,
     ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
     ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
     sourceCredentialResolver,

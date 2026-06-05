@@ -390,6 +390,47 @@ paths:
                     items:
                       $ref: '#/components/schemas/RawParsed'
         '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Raw]
+      summary: Write a parsed (stage-3) record for an artifact
+      description: >
+        Records one parser-output row for the referenced artifact. Called by
+        extraction workers and first-party extractor agents (e.g.
+        document_extractor); it is the stage-3 producer of `raw_parsed`.
+        Naturally idempotent on the (raw_artifact_id, parser, parser_version)
+        tuple: re-posting the same tuple returns the existing row with 200.
+        Writing into Ledger remains the Ledger normalize service's job; this
+        endpoint never touches Ledger.
+      operationId: writeRawParsed
+      parameters:
+        - $ref: '#/components/parameters/RawId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parser, parser_version, extracted]
+              properties:
+                parser: { type: string, minLength: 1, maxLength: 128 }
+                parser_version: { type: string, minLength: 1, maxLength: 64 }
+                extracted:
+                  type: object
+                  additionalProperties: true
+                confidence: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        '201':
+          description: Parsed record created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RawParsed' }
+        '200':
+          description: Parsed record already existed (idempotent re-post)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RawParsed' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   #############################################################################
   # LAYER 2: LEDGER
