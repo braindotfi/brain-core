@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, type Principal } from "@brain/shared";
+import {
+  brainError,
+  InMemoryAuditEmitter,
+  type Principal,
+  type ServiceCallContext,
+} from "@brain/shared";
 import { BrainMcpServer } from "./server.js";
-import { FakeAuthVerifier, type AgentRecord } from "./auth.js";
+import { FakeAuthVerifier, type AgentRecord, type AuthVerifier } from "./auth.js";
 import type {
   ILedgerService,
   IPaymentIntentService,
@@ -1067,5 +1072,227 @@ describe("BrainMcpServer.handle — payment_intent.propose status variants", () 
       const r = res.result as { content: Array<{ text: string }> };
       expect(r.content[0]!.text).toContain("reject");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batch 12: hostile-input + rejection-audit coverage.
+//
+// Pre-batch-12 the MCP server only emitted `agent.mcp.tool_called` on the
+// SUCCESS path. Every rejection -- bad scope, unknown tool, parse fail,
+// tenant mismatch, on-chain scope-hash drift -- left no audit row, so a
+// determined caller could probe the surface invisibly. These tests pin the
+// new behaviour: every rejection emits exactly one `agent.mcp.tool_called`
+// row with `ok: false` and a stable error code in outputs.
+// ---------------------------------------------------------------------------
+
+/** AuthVerifier that always throws the supplied error -- exercises auth-stage rejections. */
+class ThrowingAuthVerifier implements AuthVerifier {
+  public constructor(private readonly err: Error) {}
+  public async verify(_principal: Principal): Promise<{
+    agent: AgentRecord;
+    ctx: ServiceCallContext;
+  }> {
+    throw this.err;
+  }
+}
+
+function makeServerWith(verifier: AuthVerifier, scopes: string[] = []) {
+  const audit = new InMemoryAuditEmitter();
+  const server = new BrainMcpServer({
+    auth: verifier,
+    ledger: fakeLedger(),
+    wiki: fakeWiki(),
+    raw: fakeRaw(),
+    paymentIntents: fakePI(),
+    audit,
+  });
+  return { server, audit, p: principal(scopes) };
+}
+
+describe("BrainMcpServer.handle -- rejection-audit emission (batch 12)", () => {
+  it("emits agent.mcp.tool_called {ok:false, error_code} on scope mismatch", async () => {
+    const { server, audit, p } = makeServer(["wiki:read"]); // lacking ledger:read
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "ledger.account.get", arguments: { account_id: "acct_x" } },
+      },
+      p,
+    );
+    expect("error" in res).toBe(true);
+
+    const rows = audit.events.filter((e) => e.action === "agent.mcp.tool_called");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.outputs).toMatchObject({
+      ok: false,
+      error_code: "auth_scope_insufficient",
+    });
+    expect(rows[0]?.inputs).toMatchObject({ tool: "ledger.account.get" });
+    // Tenant + actor are taken from the verified ctx (FakeAuthVerifier passes).
+    expect(rows[0]?.tenantId).toBe(TENANT);
+    expect(rows[0]?.actor).toBe(AGENT_ID);
+  });
+
+  it("emits a rejection row on unknown tool", async () => {
+    const { server, audit, p } = makeServer(["ledger:read"]);
+    await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "ledger.banana.list", arguments: {} },
+      },
+      p,
+    );
+    const rows = audit.events.filter((e) => e.action === "agent.mcp.tool_called");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.outputs).toMatchObject({
+      ok: false,
+      error_code: "request_params_invalid",
+    });
+  });
+
+  it("emits a rejection row when tool input fails to parse", async () => {
+    // ledger.account.get requires `account_id`; we pass empty arguments.
+    const { server, audit, p } = makeServer(["ledger:read"]);
+    await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "ledger.account.get", arguments: {} },
+      },
+      p,
+    );
+    const rows = audit.events.filter((e) => e.action === "agent.mcp.tool_called");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.outputs).toMatchObject({ ok: false });
+  });
+
+  it("emits a rejection row when auth.verify throws (tenant mismatch)", async () => {
+    // Auth-stage failures don't have a verified ctx yet, so the audit row
+    // keys to the principal's CLAIMED tenant + actor. The act of recording
+    // the rejection IS the value -- it tells the operator who probed.
+    const verifier = new ThrowingAuthVerifier(
+      brainError("auth_tenant_mismatch", "agent tenant does not match JWT tenant"),
+    );
+    const { server, audit, p } = makeServerWith(verifier, ["ledger:read"]);
+
+    await expect(
+      server.handle(
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "ledger.account.get", arguments: { account_id: "acct_x" } },
+        },
+        p,
+      ),
+    ).rejects.toMatchObject({ code: "auth_tenant_mismatch" });
+
+    const rows = audit.events.filter((e) => e.action === "agent.mcp.tool_called");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.outputs).toMatchObject({
+      ok: false,
+      error_code: "auth_tenant_mismatch",
+    });
+    expect(rows[0]?.inputs).toMatchObject({ tool: "auth.verify" });
+    expect(rows[0]?.tenantId).toBe(TENANT);
+    expect(rows[0]?.actor).toBe(AGENT_ID);
+  });
+
+  it("emits a rejection row on on-chain scope_hash drift", async () => {
+    const verifier = new ThrowingAuthVerifier(
+      brainError("agent_scope_hash_mismatch", "scope hash drift detected"),
+    );
+    const { server, audit, p } = makeServerWith(verifier, ["ledger:read"]);
+
+    await expect(
+      server.handle(
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "ledger.account.get", arguments: { account_id: "acct_x" } },
+        },
+        p,
+      ),
+    ).rejects.toMatchObject({ code: "agent_scope_hash_mismatch" });
+
+    const rows = audit.events.filter((e) => e.action === "agent.mcp.tool_called");
+    expect(rows[0]?.outputs).toMatchObject({
+      ok: false,
+      error_code: "agent_scope_hash_mismatch",
+    });
+  });
+
+  it("emits a rejection row on resources/read scope mismatch", async () => {
+    // resources.read takes the same audit path as tools/call.
+    const { server, audit, p } = makeServer(["wiki:read"]); // lacking ledger:read
+    await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "brain://ledger/accounts/acct_x" },
+      },
+      p,
+    );
+    const rows = audit.events.filter((e) => e.action === "agent.mcp.tool_called");
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    const lastRow = rows[rows.length - 1];
+    expect(lastRow?.outputs).toMatchObject({ ok: false });
+    expect(lastRow?.inputs).toMatchObject({
+      tool: "resources.read:brain://ledger/accounts/acct_x",
+    });
+  });
+
+  it("does NOT emit a rejection row on the happy path (single ok:true row only)", async () => {
+    // Sanity check: the rejection path must not double-emit on success.
+    const { server, audit, p } = makeServer(["wiki:read"]);
+    await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "wiki.question", arguments: { question: "balance?" } },
+      },
+      p,
+    );
+    const rows = audit.events.filter((e) => e.action === "agent.mcp.tool_called");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.outputs).toMatchObject({ ok: true });
+  });
+
+  it("audit emitter failure does NOT mask the original rejection", async () => {
+    // When the auth verifier throws AND the audit emitter also throws, the
+    // server still surfaces the original auth error to the caller. The audit
+    // sink failure is logged-and-swallowed (defensive design: we never want
+    // audit to be a vector for hiding the underlying problem).
+    class BadEmitter {
+      public emit = vi.fn(async () => {
+        throw new Error("audit sink down");
+      });
+    }
+    const verifier = new ThrowingAuthVerifier(
+      brainError("agent_scope_hash_mismatch", "scope hash drift"),
+    );
+    const server = new BrainMcpServer({
+      auth: verifier,
+      ledger: fakeLedger(),
+      wiki: fakeWiki(),
+      raw: fakeRaw(),
+      paymentIntents: fakePI(),
+      audit: new BadEmitter() as unknown as InMemoryAuditEmitter,
+    });
+    await expect(
+      server.handle(
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "any.tool" } },
+        principal([]),
+      ),
+    ).rejects.toMatchObject({ code: "agent_scope_hash_mismatch" });
   });
 });

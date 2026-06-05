@@ -66,8 +66,20 @@ export class BrainMcpServer {
     const requestId = newRequestId();
 
     // Verify the agent FIRST. Any failure here returns a JSON-RPC error
-    // before we even look at the method name.
-    const auth = await this.deps.auth.verify(principal);
+    // before we even look at the method name. Batch 12: emit an audit row
+    // on auth-verify failures too, so operators see scope-mismatch /
+    // scope-hash drift / tenant-mismatch probes in the trail. We do NOT
+    // have a verified ctx yet, so the audit uses the principal's CLAIMED
+    // tenant + actor from the JWT (that is, what just got rejected). The
+    // act of rejection is the value here -- the row says "someone with
+    // this JWT got bounced at the MCP boundary".
+    let auth: Awaited<ReturnType<AuthVerifier["verify"]>>;
+    try {
+      auth = await this.deps.auth.verify(principal);
+    } catch (err) {
+      await this.emitRejectionAudit(principal, "auth.verify", err);
+      throw err;
+    }
     const buildProof = this.deps.buildProof;
     const tenantId = auth.ctx.tenantId;
     const toolCtx: ToolContext = {
@@ -127,26 +139,39 @@ export class BrainMcpServer {
     params: Record<string, unknown>,
     scopes: ReadonlyArray<string>,
   ): Promise<ToolCallResult> {
-    if (typeof params.name !== "string") invalidParams("'name' is required");
-    const tool = findTool(params.name as string);
-    if (tool === undefined) {
-      throw brainError("request_params_invalid", `unknown tool: ${params.name}`, {
-        details: { name: params.name, available: toolDescriptors().map((t) => t.name) },
+    // Batch 12: emit `agent.mcp.tool_called` on rejection too. Every branch
+    // below (unknown tool, scope mismatch, parse fail, handler throw) used
+    // to leave NO audit row, so a determined caller could probe the
+    // surface invisibly. Now each rejection emits with `ok: false` and the
+    // brainError code attached to outputs.
+    const label = typeof params.name === "string" ? params.name : "<missing>";
+    try {
+      if (typeof params.name !== "string") invalidParams("'name' is required");
+      const tool = findTool(params.name as string);
+      if (tool === undefined) {
+        throw brainError("request_params_invalid", `unknown tool: ${params.name}`, {
+          details: { name: params.name, available: toolDescriptors().map((t) => t.name) },
+        });
+      }
+      enforceScopes(tool, scopes);
+
+      const argsRaw =
+        typeof params.arguments === "object" &&
+        params.arguments !== null &&
+        !Array.isArray(params.arguments)
+          ? (params.arguments as Record<string, unknown>)
+          : {};
+      const input = tool.parseInput(argsRaw);
+      const result = await tool.handle(ctx, input);
+      await this.emitOuterAudit(ctx, tool.name, true, { result_kind: "tool_result" });
+
+      return shapeToolResult(result);
+    } catch (err) {
+      await this.emitOuterAudit(ctx, label, false, {
+        error_code: extractErrorCode(err),
       });
+      throw err;
     }
-    enforceScopes(tool, scopes);
-
-    const argsRaw =
-      typeof params.arguments === "object" &&
-      params.arguments !== null &&
-      !Array.isArray(params.arguments)
-        ? (params.arguments as Record<string, unknown>)
-        : {};
-    const input = tool.parseInput(argsRaw);
-    const result = await tool.handle(ctx, input);
-    await this.emitOuterAudit(ctx, tool.name, true, { result_kind: "tool_result" });
-
-    return shapeToolResult(result);
   }
 
   private async resourcesRead(
@@ -154,12 +179,22 @@ export class BrainMcpServer {
     params: Record<string, unknown>,
     scopes: ReadonlyArray<string>,
   ): Promise<ResourceReadResult> {
-    const uri = params.uri;
-    if (typeof uri !== "string") invalidParams("'uri' is required");
-    const { result, requiredScopes } = await readResource(uri as string, ctx);
-    requireAll(scopes, requiredScopes);
-    await this.emitOuterAudit(ctx, `resources.read:${uri}`, true, { uri });
-    return result;
+    // Batch 12: same rejection-audit treatment as toolsCall.
+    const uri = typeof params.uri === "string" ? params.uri : "<missing>";
+    const label = `resources.read:${uri}`;
+    try {
+      if (typeof params.uri !== "string") invalidParams("'uri' is required");
+      const { result, requiredScopes } = await readResource(params.uri as string, ctx);
+      requireAll(scopes, requiredScopes);
+      await this.emitOuterAudit(ctx, label, true, { uri });
+      return result;
+    } catch (err) {
+      await this.emitOuterAudit(ctx, label, false, {
+        uri,
+        error_code: extractErrorCode(err),
+      });
+      throw err;
+    }
   }
 
   private promptsGet(params: Record<string, unknown>): PromptGetResult {
@@ -198,6 +233,32 @@ export class BrainMcpServer {
     });
   }
 
+  /**
+   * Batch 12: audit row for a request that never made it past the auth
+   * verifier (no verified ctx). The principal is what got rejected, so the
+   * row keys to its CLAIMED tenant + agent id. Caller still re-throws after
+   * we return -- the audit is best-effort and never modifies the outcome.
+   */
+  private async emitRejectionAudit(
+    principal: Principal,
+    stage: string,
+    err: unknown,
+  ): Promise<void> {
+    try {
+      await this.deps.audit.emit({
+        tenantId: principal.tenantId,
+        layer: "agent",
+        actor: principal.id,
+        action: "agent.mcp.tool_called",
+        inputs: { tool: stage },
+        outputs: { ok: false, error_code: extractErrorCode(err) },
+      });
+    } catch {
+      // Audit-emitter failure must not mask the original rejection. Swallow
+      // the secondary error; the request still rejects normally.
+    }
+  }
+
   /** Test-only: forces a list response without going through dispatcher. */
   public _testInitialize(): InitializeResult {
     return this.initialize();
@@ -226,6 +287,19 @@ function shapeToolResult(result: ToolResult): ToolCallResult {
     content: [{ type: "text", text: result.summary }],
     structuredContent: result.payload,
   };
+}
+
+/**
+ * Best-effort `code` extraction for the audit row. brainError attaches a
+ * `code` property; non-brain errors land as "unknown" so the audit row never
+ * panics on a malformed payload.
+ */
+function extractErrorCode(err: unknown): string {
+  if (typeof err === "object" && err !== null && "code" in err) {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === "string" && code.length > 0) return code;
+  }
+  return "unknown";
 }
 
 function enforceScopes(tool: Tool, scopes: ReadonlyArray<string>): void {
