@@ -105,15 +105,41 @@ const envSchema = z.object({
 
   /**
    * Set to "true" to expose POST /v1/demo/provision-run — the BrainSaaS
-   * "Brain Playground" fresh-tenant-per-run provisioner. Unlike BRAIN_DEMO_MODE
-   * (which throws in production), this flag is prod-capable: provisioning seeds
-   * real tenant-scoped data via the app role (RLS on) and mints a scoped JWT, so
-   * it is safe to enable on the testnet prod stack. Default OFF.
+   * "Brain Playground" fresh-tenant-per-run provisioner. Default OFF.
+   *
+   * The route mints a scoped JWT for a fresh demo tenant. The minted token
+   * carries READ + PROPOSE scopes only; it does NOT include payment_intent:execute,
+   * audit:admin, or policy:write (batch 10 C-1 hardening). Execution must still
+   * go through a tenant principal via /v1/payment-intents/{id}/execute.
+   *
+   * Production safety: enabling this in production is fenced by
+   * assertDemoProvisionFences. Set BRAIN_DEMO_PROVISION_TESTNET_ATTESTED="true"
+   * to acknowledge that this stack is a testnet "prod" (Base Sepolia, sandbox
+   * rails) rather than a live-money mainnet. Without that attestation, boot
+   * fails when NODE_ENV=production AND BRAIN_DEMO_PROVISION_ENABLED=true.
+   *
+   * Auth: when the route is enabled, callers MUST send the
+   * X-Demo-Provision-Auth header equal to BRAIN_DEMO_PROVISION_SECRET. The
+   * route used to be skipAuth: true; that footgun is closed.
    */
   BRAIN_DEMO_PROVISION_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
     .default("false"),
+  /**
+   * Required when BRAIN_DEMO_PROVISION_ENABLED=true in NODE_ENV=production.
+   * The operator's explicit attestation that this stack is a testnet "prod"
+   * (Base Sepolia, sandbox rails, no live mainnet exposure). Without it, the
+   * api refuses to start. Mirrors the BRAIN_ESCROW_AUDIT_APPROVED pattern.
+   */
+  BRAIN_DEMO_PROVISION_TESTNET_ATTESTED: z.enum(["true", "false"]).default("false"),
+  /**
+   * Shared-secret header value the api compares X-Demo-Provision-Auth against.
+   * Required when BRAIN_DEMO_PROVISION_ENABLED=true. Loaded from Key Vault in
+   * production. Without it, the route cannot register (the route handler
+   * itself throws if env is missing at register time).
+   */
+  BRAIN_DEMO_PROVISION_SECRET: optionalNonEmptyString(),
 
   // ---- Self-serve onboarding (RFC 0002) ----
   /**

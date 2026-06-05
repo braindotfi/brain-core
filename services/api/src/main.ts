@@ -11,6 +11,7 @@
  */
 
 import { initTracing, shutdownTracing } from "./instrumentation.js";
+import { timingSafeEqual } from "node:crypto";
 import Fastify from "fastify";
 import fastifyCors from "@fastify/cors";
 import fastifyRateLimit from "@fastify/rate-limit";
@@ -194,6 +195,7 @@ import { assertDbIsolationFences } from "./composition/db-isolation.js";
 import { assertEscrowAuditApproved } from "./composition/escrow-audit-gate.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
 import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
+import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
 import { seedBrainSaasDemo } from "./demo/brainsaas-seed.js";
 import { YIELD_VENUES } from "./demo/yield-venues.js";
@@ -272,6 +274,17 @@ async function main(): Promise<void> {
     ...(cfg.BRAIN_ESCROW_AUDIT_RECEIPT !== undefined
       ? { auditReceipt: cfg.BRAIN_ESCROW_AUDIT_RECEIPT }
       : {}),
+  });
+
+  // Batch 10 C-1: refuse to boot when /v1/demo/provision-run is enabled
+  // without (a) the shared-secret header configured (so the route would mint
+  // tokens to anyone reaching it) or (b) the testnet attestation in
+  // NODE_ENV=production. Logic + tests live in composition/demo-provision-fence.ts.
+  assertDemoProvisionFences({
+    nodeEnv: cfg.NODE_ENV,
+    provisionEnabled: cfg.BRAIN_DEMO_PROVISION_ENABLED,
+    provisionSecret: cfg.BRAIN_DEMO_PROVISION_SECRET,
+    testnetAttested: cfg.BRAIN_DEMO_PROVISION_TESTNET_ATTESTED,
   });
 
   let wikiPool = pool;
@@ -1657,31 +1670,76 @@ async function main(): Promise<void> {
       // ── POST /v1/demo/provision-run ──────────────────────────────────
       // The BrainSaaS "Brain Playground" fresh-tenant-per-run provisioner.
       // Creates a brand-new tenant, seeds the 3-scenario business into it
-      // (tenant-scoped via the app role, RLS on → each run is isolated, so the
-      // §6 gate's no-duplicate-payment check never collides across runs), and
-      // returns a scoped agent JWT the demo runners use to drive one full
+      // (tenant-scoped via the app role, RLS on, so each run is isolated and
+      // the §6 gate's no-duplicate-payment check never collides across runs),
+      // and returns a scoped agent JWT the demo runners use to drive one full
       // policy → payment-intent → audit-anchor flow.
       //
-      // Prod-capable: gated by BRAIN_DEMO_PROVISION_ENABLED, NOT BRAIN_DEMO_MODE
-      // (which throws in production). Enable only on the testnet prod stack.
+      // Auth (batch 10 C-1): no longer skipAuth. Callers MUST send
+      // X-Demo-Provision-Auth equal to BRAIN_DEMO_PROVISION_SECRET. The fence
+      // above guarantees the secret is present when this branch registers.
+      //
+      // Scopes (batch 10 C-1): READ + PROPOSE only. The minted token does
+      // NOT include payment_intent:execute, audit:admin, or policy:write.
+      // Execution and anchor publication run via tenant-scoped service paths,
+      // not via the demo token. Removes the "fresh-tenant drain" footgun a
+      // leaked playground token would otherwise represent.
+      //
+      // Prod-capable: gated by BRAIN_DEMO_PROVISION_ENABLED + the boot fence
+      // (which requires BRAIN_DEMO_PROVISION_TESTNET_ATTESTED=true in
+      // NODE_ENV=production).
       if (cfg.BRAIN_DEMO_PROVISION_ENABLED) {
+        // The fence guarantees this is set when provisioning is enabled, but
+        // narrow the type for the closure below.
+        const provisionSecret = cfg.BRAIN_DEMO_PROVISION_SECRET;
+        if (provisionSecret === undefined || provisionSecret.length === 0) {
+          throw new Error(
+            "internal: BRAIN_DEMO_PROVISION_SECRET missing after fence passed (should be unreachable)",
+          );
+        }
         v1.post(
           "/demo/provision-run",
           { config: { skipAuth: true, rateLimit: { max: 10, timeWindow: "1 minute" } } },
-          async (_req, reply) => {
-            const PROVISION_TTL_S = 30 * 60; // 30 min — long enough for one run.
+          async (req, reply) => {
+            // Shared-secret header check. skipAuth: true above bypasses JWT
+            // verification (provisioning issues a JWT, the caller doesn't have
+            // one yet), but the route is NOT public: it requires the operator
+            // header. Constant-time comparison so timing doesn't leak the
+            // secret a byte at a time.
+            const headerRaw = req.headers["x-demo-provision-auth"];
+            const provided = Array.isArray(headerRaw) ? headerRaw[0] : headerRaw;
+            const expectedBuf = Buffer.from(provisionSecret, "utf8");
+            const providedBuf = Buffer.from(provided ?? "", "utf8");
+            const ok =
+              providedBuf.length === expectedBuf.length &&
+              timingSafeEqual(providedBuf, expectedBuf);
+            if (!ok) {
+              reply.status(401);
+              return {
+                error: {
+                  code: "auth_header_invalid",
+                  message:
+                    "X-Demo-Provision-Auth header missing or does not match BRAIN_DEMO_PROVISION_SECRET",
+                  request_id: req.id ?? null,
+                  docs_url: "https://docs.brain.fi/build/playground",
+                },
+              };
+            }
+
+            const PROVISION_TTL_S = 30 * 60; // 30 min, long enough for one run.
             const tenantId = newTenantId();
             const actor = newUserId();
 
             // Off-the-record seed: provisioning must not pollute the tenant's
-            // audit chain — only the run's actions should anchor.
+            // audit chain (only the run's actions should anchor).
             const seed = await seedBrainSaasDemo(pool, new InMemoryAuditEmitter(), tenantId, actor);
 
             // The token acts AS the seeded payment agent (type "agent") so the
-            // §6 gate's agent-identity check passes for on-chain settlement
-            // (Phase D). Broad scope set incl. audit:admin for the anchor-publish
-            // path (B2 decision: SIWX `partner` stays least-privilege; this demo
-            // token carries the elevated scope instead).
+            // §6 gate's agent-identity check passes when the run later proposes
+            // a payment-intent. Read + propose scopes ONLY. Execute, audit
+            // admin, and policy write are deliberately excluded (batch 10 C-1):
+            // the demo token can drive UI flows but cannot, on its own, settle
+            // a payment or rewrite policy.
             const token = await siwxSigner.sign({
               id: seed.agentId,
               type: "agent",
@@ -1694,14 +1752,11 @@ async function main(): Promise<void> {
                 "raw:read",
                 "raw:write",
                 "policy:read",
-                "policy:write",
                 "execution:read",
                 "execution:propose",
                 "payment_intent:propose",
                 "payment_intent:approve",
-                "payment_intent:execute",
                 "audit:read",
-                "audit:admin",
               ],
             });
 
