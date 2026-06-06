@@ -6,6 +6,20 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.2 (control-plane hardening)
+
+Follow-up review fixes. All stricter / fail-closed.
+
+#### Changed. Safer defaults + provenance
+
+- **The default tenant policy never auto-executes money.** A freshly provisioned tenant's default now requires human **confirmation** for `outbound_payment` / `onchain_tx` above the confidence floor (with a single-signer approval); non-money actions still auto-allow. The prior blanket `auto` rule (which the repo's own policy linter flags as unsafe-for-money) is gone. A tenant signs a constrained autonomy policy to earn unattended money movement.
+- **High-trust provider source types are reserved to authenticated ingestion.** `source_type: "plaid"` / `"stripe"` are refused on the generic `/raw/ingest` route with `raw_source_reserved` (403); they may only arrive via the HMAC-verified `/raw/webhooks/{provider}` path, so a `raw:write` caller can't mint high-trust evidence by choosing the label.
+
+#### Fixed. Audit-control plumbing
+
+- The committed `contracts/audit-status.json` now ships in the production image, so the mainnet escrow boot fence can actually pass once the audit is approved (previously it was excluded and failed closed forever).
+- `pnpm run production-readiness` now models the same two-part mainnet-escrow condition as the runtime boot fence (committed approved record **and** env attestation), so the report can no longer show green for a deployment the runtime would reject.
+
 ### v0.5.1 (autonomy + provenance hardening)
 
 A safety-hardening batch. All changes are stricter (fail-closed), never more permissive.

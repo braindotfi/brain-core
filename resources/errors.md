@@ -63,12 +63,14 @@ try {
 
 ### Source and Raw
 
-| Code                            | Meaning                                         | Fix                               |
-| ------------------------------- | ----------------------------------------------- | --------------------------------- |
-| `source_not_found`              | Source id doesn't match a connected source      | List sources to find the right id |
-| `source_credential_invalid`     | Upstream-source credentials were rejected (401) | Reconnect the source              |
-| `raw_artifact_not_found`        | No raw artifact for that id (404)               | Check the id                      |
-| `raw_webhook_signature_invalid` | A provider webhook's HMAC didn't verify (401)   | Check the signing secret          |
+| Code                            | Meaning                                                                                                                                                                                                                                                         | Fix                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `source_not_found`              | Source id doesn't match a connected source                                                                                                                                                                                                                      | List sources to find the right id                                      |
+| `source_credential_invalid`     | Upstream-source credentials were rejected (401)                                                                                                                                                                                                                 | Reconnect the source                                                   |
+| `raw_artifact_not_found`        | No raw artifact for that id (404)                                                                                                                                                                                                                               | Check the id                                                           |
+| `raw_source_unsupported`        | Unknown `source_type` (400)                                                                                                                                                                                                                                     | Use a supported source type                                            |
+| `raw_source_reserved`           | A high-trust provider `source_type` (`plaid`/`stripe`) was sent to the generic `/raw/ingest` route (403). Those may only arrive via the authenticated `/raw/webhooks/{provider}` path, so a generic caller can't mint high-trust evidence by choosing the label | Ingest via the provider webhook, or use `upload` / `agent_contributed` |
+| `raw_webhook_signature_invalid` | A provider webhook's HMAC didn't verify (401)                                                                                                                                                                                                                   | Check the signing secret                                               |
 
 ### Policy
 
