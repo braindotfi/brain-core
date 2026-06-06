@@ -62,9 +62,7 @@ def _assert_runtime_credentials_configured() -> None:
     if not _is_production():
         return
     missing = [
-        name
-        for name in ("OPENAI_API_KEY", "BRAIN_API_TOKEN")
-        if os.environ.get(name, "") == ""
+        name for name in ("OPENAI_API_KEY", "BRAIN_API_TOKEN") if os.environ.get(name, "") == ""
     ]
     if missing:
         raise RuntimeError(
