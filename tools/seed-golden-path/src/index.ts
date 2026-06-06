@@ -163,22 +163,27 @@ export async function seedGoldenPath(
     invoiceId: invoices.outstanding,
   });
 
-  // Backdate the AWS counterparty's payment instructions so the duplicate-
-  // detector's 24h destination_recently_changed rule doesn't block the demo's
-  // onchain_transfer intent. The aliases were just written by the seed, which
-  // triggers the instructions history writer; setting changed_at to 25h ago
-  // lets the gate treat them as pre-established.
-  if (process.env["BRAIN_DEMO_ONCHAIN_RECIPIENT"]) {
-    await pool.query(
-      `UPDATE ledger_counterparty_payment_instructions
-          SET changed_at = now() - interval '25 hours'
-        WHERE counterparty_id = $1`,
-      [counterparties.aws.id],
-    );
-  }
-
   // ---------- AR Invoices (receivables from customer counterparties) ----------
   await seedArInvoices(pool, ctx, sourceIds, evidenceIds, counterparties);
+
+  // Backdate every seeded counterparty's payment instructions so the section 6
+  // duplicate-detector's 24h `destination_recently_changed` rule (rule 6,
+  // services/policy/src/duplicate-detector.ts) treats them as pre-established.
+  // The seed represents an established financial history, so a just-written
+  // instruction must not read as a freshly-changed vendor account, which is the
+  // gate's strongest fraud signal. The dup gate is rail-agnostic (it runs for
+  // ACH and on-chain alike) and the golden path settles whichever `sent`
+  // invoice sorts first (the Figma AP invoice on the default plaid_sandbox/ACH
+  // path; the AWS counterparty on the on-chain path), so the backdate must
+  // cover the whole tenant. It was previously gated on
+  // BRAIN_DEMO_ONCHAIN_RECIPIENT and scoped to AWS, which left the default ACH
+  // golden-path smoke failing at gate check 11.5 (no_duplicate_payment).
+  await pool.query(
+    `UPDATE ledger_counterparty_payment_instructions
+        SET changed_at = now() - interval '25 hours'
+      WHERE owner_id = $1`,
+    [tenantId],
+  );
 
   return {
     tenantId,
