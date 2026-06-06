@@ -2,9 +2,50 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { escrowAuditFence } from "../production-readiness.mjs";
 
 const SCRIPT = join(process.cwd(), "scripts/production-readiness.mjs");
 const ADDR = "0x" + "ab".repeat(20);
+
+// Direct parity matrix for the escrow fence, exercising the same two-part
+// condition the runtime fence (assertEscrowAuditApproved) uses. The subprocess
+// tests above can only see the real (pending) audit-status.json; this covers the
+// approved cases too. Pass/fail here must match the runtime fence for the same
+// inputs (Codex 2026-06-06 P1: report and runtime cannot disagree).
+const APPROVED = { status: "approved", approved: true };
+const PENDING = { status: "pending", approved: false };
+const att = { attested: true, hasReceipt: false, auditReceipt: undefined };
+const noAtt = { attested: false, hasReceipt: false, auditReceipt: undefined };
+
+test("escrowAuditFence: mainnet + approved record + env attestation => green", () => {
+  assert.equal(
+    escrowAuditFence({ chainId: "8453", escrowAddr: true, ...att, auditStatus: APPROVED }).status,
+    "green",
+  );
+});
+test("escrowAuditFence: mainnet + approved record but NO env attestation => red", () => {
+  assert.equal(
+    escrowAuditFence({ chainId: "8453", escrowAddr: true, ...noAtt, auditStatus: APPROVED }).status,
+    "red",
+  );
+});
+test("escrowAuditFence: mainnet + env attestation but PENDING record => red", () => {
+  const row = escrowAuditFence({ chainId: "8453", escrowAddr: true, ...att, auditStatus: PENDING });
+  assert.equal(row.status, "red");
+  assert.match(row.note, /status=pending \(not approved\)/);
+});
+test("escrowAuditFence: Sepolia is green regardless of audit/env", () => {
+  assert.equal(
+    escrowAuditFence({ chainId: "84532", escrowAddr: true, ...noAtt, auditStatus: PENDING }).status,
+    "green",
+  );
+});
+test("escrowAuditFence: mainnet with no escrow address is green (silent)", () => {
+  assert.equal(
+    escrowAuditFence({ chainId: "8453", escrowAddr: false, ...noAtt, auditStatus: PENDING }).status,
+    "green",
+  );
+});
 
 function runWithEnv(env, args = ["--json"]) {
   try {
@@ -111,7 +152,11 @@ test("production + mainnet escrow without audit flag: fence red", () => {
   assert.match(escrowFence.note, /would FAIL boot/);
 });
 
-test("production + mainnet escrow WITH audit flag: fence green", () => {
+test("production + mainnet escrow WITH env attestation but PENDING audit record: fence RED (parity)", () => {
+  // Parity fix (Codex 2026-06-06 P1): a bare env attestation no longer turns the
+  // fence green. The committed contracts/audit-status.json is `pending`, so the
+  // report must red — matching the runtime fence, which refuses to boot. The
+  // report cannot be green for a deployment the runtime rejects.
   const r = runWithEnv({
     NODE_ENV: "production",
     BRAIN_WIKI_DB_URL: "postgres://x",
@@ -124,8 +169,8 @@ test("production + mainnet escrow WITH audit flag: fence green", () => {
     PLAID_SECRET: "secret",
   });
   const escrowFence = r.parsed.sections.fences.find((f) => f.name === "Escrow audit (mainnet)");
-  assert.equal(escrowFence.status, "green");
-  assert.match(escrowFence.note, /audit explicitly attested/);
+  assert.equal(escrowFence.status, "red");
+  assert.match(escrowFence.note, /audit-status\.json status=pending \(not approved\)/);
 });
 
 test("production + Python agent URL without secret: fence red", () => {
@@ -144,10 +189,14 @@ test("production + Python agent URL without secret: fence red", () => {
   assert.equal(hmacFence.status, "red");
 });
 
-test("CI guards section reports all 10 expected guards", () => {
+test("CI guards section includes check-audit-status and all are green", () => {
   const r = runWithEnv({ NODE_ENV: "development" });
-  assert.equal(r.parsed.sections.ci_guards.length, 10);
-  // Each guard should be green (present + wired into lint) on the real repo.
+  const names = r.parsed.sections.ci_guards.map((g) => g.name);
+  // Assert the expected guards are present (names, not a brittle hard count) —
+  // check-audit-status was added with the R-01 control and must be reported.
+  assert.ok(names.includes("check-audit-status"), `missing check-audit-status; got ${names.join(", ")}`);
+  assert.ok(names.includes("check-escrow-audit-marker"));
+  assert.ok(r.parsed.sections.ci_guards.length >= 11, `expected >= 11 guards, got ${names.length}`);
   for (const g of r.parsed.sections.ci_guards) {
     assert.equal(g.status, "green", `${g.name}: ${g.note}`);
   }

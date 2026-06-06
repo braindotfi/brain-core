@@ -15,7 +15,7 @@
  * Categories:
  *   - rails posture            (per-rail required_env_present + production_allowed)
  *   - boot fences              (would each fence pass given current env?)
- *   - CI guards                (do all 10 lint scripts exist in package.json?)
+ *   - CI guards                (do all required lint scripts exist in package.json?)
  *   - tenant deletion / blob   (informational: phase B status)
  *   - external blockers        (audit + Azure deploy)
  *
@@ -25,6 +25,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const ROOT = process.cwd();
 const ARGS = new Set(process.argv.slice(2));
@@ -55,6 +56,49 @@ const STATUS = {
 
 function envSet(key) {
   return env[key] !== undefined && env[key] !== "";
+}
+
+// Read contracts/audit-status.json the same way the runtime escrow boot fence
+// does (composition/escrow-audit-gate.ts -> readAuditStatusApproved), so this
+// pre-deploy report and the runtime fence give the SAME pass/fail decision.
+// Fail-closed: a missing/malformed file is treated as not-approved.
+function readAuditStatus() {
+  try {
+    const doc = JSON.parse(readFileSync(join(ROOT, "contracts/audit-status.json"), "utf8"));
+    const status = typeof doc.status === "string" ? doc.status : "missing";
+    return { status, approved: status === "approved" };
+  } catch {
+    return { status: "missing", approved: false };
+  }
+}
+
+/**
+ * Pure escrow-audit fence row, mirroring assertEscrowAuditApproved EXACTLY so
+ * the report and the runtime fence can never disagree: on Base mainnet (8453)
+ * with an escrow address, boot requires BOTH the committed audit record
+ * (audit-status.json status=approved) AND an operator env attestation. Exported
+ * for direct parity testing. Silent (green) on non-mainnet or no escrow address.
+ */
+export function escrowAuditFence({ chainId, escrowAddr, attested, hasReceipt, auditReceipt, auditStatus }) {
+  const name = "Escrow audit (mainnet)";
+  if (chainId !== "8453" || !escrowAddr) {
+    return {
+      name,
+      status: "green",
+      note: chainId === "8453" ? "no escrow address (silent)" : `Sepolia (chain ${chainId})`,
+    };
+  }
+  if (auditStatus.approved && attested) {
+    return {
+      name,
+      status: "green",
+      note: `audit-status approved + ${hasReceipt ? `receipt: ${auditReceipt}` : "legacy boolean attestation"}`,
+    };
+  }
+  const missing = [];
+  if (!auditStatus.approved) missing.push(`audit-status.json status=${auditStatus.status} (not approved)`);
+  if (!attested) missing.push("no BRAIN_ESCROW_AUDIT_RECEIPT / BRAIN_ESCROW_AUDIT_APPROVED");
+  return { name, status: "red", note: `would FAIL boot — ${missing.join("; ")}` };
 }
 
 // Parse the rail catalog (same regex as check-rails-catalog-drift).
@@ -134,34 +178,22 @@ function checkBootFences(catalog) {
     fences.push({ name: "DB isolation", status: "green", note: "both URLs set" });
   }
 
-  // 2. Escrow audit
+  // 2. Escrow audit — uses the same two-part rule as the runtime fence.
   const chainId = env.BRAIN_BASE_CHAIN_ID ?? "84532";
   const escrowAddr = envSet("BRAIN_ESCROW_ADDRESS");
   const auditApproved = env.BRAIN_ESCROW_AUDIT_APPROVED === "true";
   const auditReceipt = env.BRAIN_ESCROW_AUDIT_RECEIPT;
   const hasReceipt = typeof auditReceipt === "string" && auditReceipt.length > 0;
-  const attested = auditApproved || hasReceipt;
-  if (chainId === "8453" && escrowAddr && !attested) {
-    fences.push({
-      name: "Escrow audit (mainnet)",
-      status: "red",
-      note: "would FAIL boot — mainnet escrow set without BRAIN_ESCROW_AUDIT_RECEIPT or BRAIN_ESCROW_AUDIT_APPROVED=true",
-    });
-  } else if (chainId === "8453" && escrowAddr && attested) {
-    fences.push({
-      name: "Escrow audit (mainnet)",
-      status: "green",
-      note: hasReceipt
-        ? `audit receipt: ${auditReceipt}`
-        : "audit explicitly attested (legacy boolean)",
-    });
-  } else {
-    fences.push({
-      name: "Escrow audit (mainnet)",
-      status: "green",
-      note: chainId === "8453" ? "no escrow address (silent)" : `Sepolia (chain ${chainId})`,
-    });
-  }
+  fences.push(
+    escrowAuditFence({
+      chainId,
+      escrowAddr,
+      attested: auditApproved || hasReceipt,
+      hasReceipt,
+      auditReceipt,
+      auditStatus: readAuditStatus(),
+    }),
+  );
 
   // 3. Live rails in production
   const live = catalog.some(
@@ -250,6 +282,7 @@ const REQUIRED_GUARDS = [
   "check-docs-drift",
   "check-rails-catalog-drift",
   "check-escrow-audit-marker",
+  "check-audit-status",
 ];
 
 function checkCiGuards() {
@@ -284,14 +317,17 @@ function checkDeferredItems() {
       : "deferred; RFC 0003 awaiting signoff (URIs surfaced on delete)",
   });
 
-  const auditScopeSrc = readFileSync(join(ROOT, "contracts/AUDIT-SCOPE.md"), "utf8");
-  const auditPinned = !/TODO\(brain-hardening\): pin the audited commit SHA/.test(auditScopeSrc);
+  // Drive this off the committed audit record, NOT the presence/absence of a
+  // TODO marker in AUDIT-SCOPE.md (that flips green the moment the marker is
+  // edited, independent of the real audit). green only when approved; yellow
+  // while in progress; yellow (not green) while pending.
+  const auditStatus = readAuditStatus();
   rows.push({
     name: "External smart-contract audit (BrainEscrow)",
-    status: auditPinned ? "green" : "yellow",
-    note: auditPinned
-      ? "audited commit pinned in AUDIT-SCOPE.md"
-      : "engagement pending; mainnet escrow boot-fenced until resolved",
+    status: auditStatus.approved ? "green" : "yellow",
+    note: auditStatus.approved
+      ? "audit-status.json: approved"
+      : `audit-status.json: ${auditStatus.status}; mainnet escrow boot-fenced until approved`,
   });
 
   return rows;
@@ -420,4 +456,8 @@ function main() {
   if (allRows.some((r) => r.status === "red")) process.exit(1);
 }
 
-main();
+// Run only when invoked directly (node scripts/production-readiness.mjs), so the
+// pure helpers above can be imported by tests without executing main().
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
