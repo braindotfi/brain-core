@@ -23,7 +23,13 @@
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { evaluateApproval, isChainApproved, parseAuditStatus } from "@brain/shared";
+import {
+  deployedRuntimeMatches,
+  evaluateApproval,
+  isChainApproved,
+  isValidImmutableRefs,
+  parseAuditStatus,
+} from "@brain/shared";
 
 const BASE_MAINNET_CHAIN_ID = 8453;
 
@@ -82,6 +88,82 @@ export function readAuditStatusApproved(startDir: string = process.cwd()): boole
  */
 export function readAuditChainApproved(chainId: number, startDir: string = process.cwd()): boolean {
   return isChainApproved(readAuditStatusDoc(startDir), chainId);
+}
+
+/**
+ * The committed deployed-bytecode expectation: the audited (immutable-masked)
+ * runtime bytecode hash and the immutable byte ranges to mask. Read from
+ * contracts/audit-status.json so the runtime fence can verify the on-chain code
+ * without the Foundry artifact (the image ships dist/, not contracts/out/).
+ */
+export function readDeployedBytecodeExpectation(startDir: string = process.cwd()): {
+  expectedRuntimeSha256: string | undefined;
+  immutableReferences: unknown;
+} {
+  const doc = readAuditStatusDoc(startDir);
+  if (typeof doc !== "object" || doc === null) {
+    return { expectedRuntimeSha256: undefined, immutableReferences: undefined };
+  }
+  const record = doc as Record<string, unknown>;
+  const sha = record["runtime_bytecode_sha256"];
+  return {
+    expectedRuntimeSha256: typeof sha === "string" ? sha : undefined,
+    immutableReferences: record["immutable_references"],
+  };
+}
+
+export interface DeployedBytecodeGateInput {
+  /** cfg.BRAIN_BASE_CHAIN_ID. */
+  chainId: number;
+  /** cfg.BRAIN_ESCROW_ADDRESS — undefined ⇒ EscrowBaseRail not configured. */
+  escrowAddress: string | undefined;
+  /** audit-status.json runtime_bytecode_sha256 (immutable-masked). */
+  expectedRuntimeSha256: string | undefined;
+  /** audit-status.json immutable_references (validated here). */
+  immutableReferences: unknown;
+  /** eth_getCode seam: resolves the deployed bytecode hex ("0x..") for an address. */
+  getCode: (address: string) => Promise<string>;
+}
+
+/**
+ * On Base mainnet, with an escrow address configured, verify the DEPLOYED escrow
+ * bytecode matches the audited runtime bytecode (immutable-masked) via
+ * `eth_getCode`. Throws on any mismatch so a wrong / unaudited / tampered
+ * deployment becomes a CrashLoopBackoff rather than a silent funds-custody risk.
+ *
+ * Silent on non-mainnet chains and when no escrow address is set. Mainnet escrow
+ * is ALSO gated by assertEscrowAuditApproved (the committed-approved + chain +
+ * env checks) — this is the on-chain half: "and the code on-chain is the code we
+ * audited". Async because eth_getCode is a network read.
+ *
+ * Fail-closed: if the committed record lacks the runtime hash or immutable
+ * ranges, we cannot verify, so we refuse to boot.
+ */
+export async function assertDeployedEscrowBytecode(
+  input: DeployedBytecodeGateInput,
+): Promise<void> {
+  if (input.chainId !== BASE_MAINNET_CHAIN_ID) return;
+  if (input.escrowAddress === undefined) return;
+
+  const expected = input.expectedRuntimeSha256;
+  const refs = input.immutableReferences;
+  if (expected === undefined || !isValidImmutableRefs(refs)) {
+    throw new Error(
+      "BRAIN_ESCROW_ADDRESS is set on Base mainnet but contracts/audit-status.json is missing " +
+        "runtime_bytecode_sha256 or a valid immutable_references list; cannot verify the deployed " +
+        "escrow bytecode against the audited build. Refusing to start.",
+    );
+  }
+
+  const deployed = await input.getCode(input.escrowAddress);
+  const result = deployedRuntimeMatches(deployed, expected, refs);
+  if (!result.match) {
+    throw new Error(
+      `Deployed escrow bytecode at ${input.escrowAddress} (Base mainnet) does NOT match the audited ` +
+        `runtime bytecode: ${result.reason ?? "mismatch"}. The on-chain contract is not the audited ` +
+        "build. Refusing to start.",
+    );
+  }
 }
 
 export interface EscrowAuditGateInput {

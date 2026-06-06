@@ -194,10 +194,13 @@ import {
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
 import {
+  assertDeployedEscrowBytecode,
   assertEscrowAuditApproved,
   readAuditChainApproved,
   readAuditStatusApproved,
+  readDeployedBytecodeExpectation,
 } from "./composition/escrow-audit-gate.js";
+import { makeBaseGetCode } from "./composition/eth-getcode.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
 import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
@@ -283,6 +286,26 @@ async function main(): Promise<void> {
       ? { auditReceipt: cfg.BRAIN_ESCROW_AUDIT_RECEIPT }
       : {}),
   });
+
+  // On-chain half of the mainnet escrow fence: verify the DEPLOYED escrow
+  // bytecode matches the audited runtime bytecode (immutable-masked) via
+  // eth_getCode. Only on Base mainnet with an escrow address + a Base RPC
+  // configured; silent (early-return inside) otherwise. Runs AFTER the
+  // audit-approval fence above, so it is reached only once the audit is
+  // approved — the deployed code must then be the code we audited.
+  {
+    const escrowRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
+    if (cfg.BRAIN_ESCROW_ADDRESS !== undefined) {
+      const expectation = readDeployedBytecodeExpectation();
+      await assertDeployedEscrowBytecode({
+        chainId: cfg.BRAIN_BASE_CHAIN_ID,
+        escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
+        expectedRuntimeSha256: expectation.expectedRuntimeSha256,
+        immutableReferences: expectation.immutableReferences,
+        getCode: makeBaseGetCode(escrowRpcUrl, cfg.BRAIN_BASE_CHAIN_ID),
+      });
+    }
+  }
 
   // Batch 10 C-1: refuse to boot when /v1/demo/provision-run is enabled
   // without (a) the shared-secret header configured (so the route would mint
