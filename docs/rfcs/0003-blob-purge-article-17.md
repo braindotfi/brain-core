@@ -7,10 +7,12 @@
   queue around the existing `BlobAdapter.purgeTenant` (per-tenant prefix erasure,
   added in v0.5.1 after this RFC) instead of the per-blob `purge(path, by)` the
   sketch proposed. Per-prefix erasure is simpler, leverages the realized
-  primitive, and erases orphan bytes a per-blob list would miss. Remaining
-  follow-up: cloud version-aware deletion (S3 all-versions + delete markers,
-  Azure snapshots/versions) inside each adapter's `purgeTenant`, plus a CI
-  call-site guard restricting `purgeTenant` to the worker.
+  primitive, and erases orphan bytes a per-blob list would miss. Version-aware
+  permanent deletion now lands too: `S3BlobAdapter.purgeTenant` deletes every
+  object version + delete marker by `{Key, VersionId}` (paginated), and
+  `AzureBlobAdapter.purgeTenant` deletes every version + snapshot by id; both
+  surface object-lock / immutable-policy failures in `failed`. Remaining
+  follow-up: a CI call-site guard restricting `purgeTenant` to the worker.
 - **Date:** 2026-05-30
 - **Authors:** ai-assisted
 - **Affects:** `Brain_MVP_Architecture.md` Layer 1, `Brain_Engineering_Standards.md`
