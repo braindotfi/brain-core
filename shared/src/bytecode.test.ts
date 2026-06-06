@@ -9,18 +9,23 @@ import {
   maskedRuntimeSha256,
 } from "./bytecode.js";
 
-// The real BrainEscrow Foundry artifact (has the `arbiter` immutable at 3 byte
-// offsets). The masking logic must be correct against it, not just synthetic data.
+// A COMMITTED snapshot of the real BrainEscrow Foundry artifact's
+// deployedBytecode (has the `arbiter` immutable at 3 byte offsets). We read the
+// snapshot, not contracts/out/BrainEscrow.sol/BrainEscrow.json, so the masking
+// logic is exercised against REAL bytecode without a forge build dependency: the
+// `typescript` CI job (lint + unit) does not run `forge build`, so the artifact
+// is absent there. Regenerate __fixtures__/brain-escrow-deployed.json from the
+// artifact if the contract changes.
 const artifact = JSON.parse(
   readFileSync(
-    fileURLToPath(new URL("../../contracts/out/BrainEscrow.sol/BrainEscrow.json", import.meta.url)),
+    fileURLToPath(new URL("./__fixtures__/brain-escrow-deployed.json", import.meta.url)),
     "utf8",
   ),
-) as { deployedBytecode: { object: string; immutableReferences: Record<string, never> } };
+) as { object: string; immutableReferences: Record<string, never> };
 
-const RUNTIME = artifact.deployedBytecode.object;
+const RUNTIME = artifact.object;
 const STRIPPED = RUNTIME.replace(/^0x/, "");
-const REFS = flattenImmutableReferences(artifact.deployedBytecode.immutableReferences);
+const REFS = flattenImmutableReferences(artifact.immutableReferences);
 const EXPECTED = maskedRuntimeSha256(RUNTIME, REFS);
 
 /** Write `value` into a 32-byte immutable slot at byteOffset. */
