@@ -37,6 +37,28 @@ function hex(v: unknown): string | null {
   return String(v);
 }
 
+/**
+ * Trust label for a piece of evidence, derived from the Raw artifact's
+ * source_type (raw_artifacts has no trust column). Mirrors the v0.5.1
+ * provider-trust posture: authenticated-provider / on-chain sources are
+ * high-trust, agent-contributed is low, everything else (manual upload, email,
+ * ERP) is medium. Informational on the proof; never a gate input.
+ */
+function sourceTrustLevel(sourceType: string | null): "high" | "medium" | "low" | "unknown" {
+  switch (sourceType) {
+    case "plaid":
+    case "stripe":
+    case "chain_evm":
+      return "high";
+    case "agent_contributed":
+      return "low";
+    case null:
+      return "unknown";
+    default:
+      return "medium";
+  }
+}
+
 interface PaymentIntentLite {
   id: string;
   created_by_agent_id: string | null;
@@ -81,7 +103,9 @@ export async function fetchProofSources(
   let policyHash: string | null = null;
   if (pd !== null) {
     const phRes = await client.query<{ content_hash: string | null }>(
-      `SELECT content_hash FROM policies WHERE id = $1 AND version = $2 LIMIT 1`,
+      // content_hash is BYTEA — hex-encode it (mirrors behavior_hash / event_hash)
+      // so policy_hash is a hex string, not a raw Buffer in the JSON proof.
+      `SELECT encode(content_hash, 'hex') AS content_hash FROM policies WHERE id = $1 AND version = $2 LIMIT 1`,
       [pd.policy_id, pd.policy_version],
     );
     policyHash = phRes.rows[0]?.content_hash ?? null;
@@ -135,13 +159,13 @@ export async function fetchProofSources(
       sha256: string | null;
       source_type: string | null;
       kind: string | null;
-      trust_level: string | null;
     }>(
+      // raw_artifacts stores the content hash as `sha256` (BYTEA), and has no
+      // trust column — trust is derived from source_type (sourceTrustLevel).
       `SELECT p.id AS id,
-              encode(a.content_sha256, 'hex') AS sha256,
+              encode(a.sha256, 'hex') AS sha256,
               a.source_type AS source_type,
-              p.extracted->>'kind' AS kind,
-              a.trust_level AS trust_level
+              p.extracted->>'kind' AS kind
          FROM raw_parsed p
          JOIN raw_artifacts a ON a.id = p.raw_artifact_id
         WHERE p.id = ANY($1::text[])`,
@@ -152,7 +176,7 @@ export async function fetchProofSources(
       sha256: r.sha256 ?? "",
       source_type: r.source_type ?? "unknown",
       kind: r.kind ?? "unknown",
-      trust_level: r.trust_level ?? "unknown",
+      trust_level: sourceTrustLevel(r.source_type),
     }));
   }
 

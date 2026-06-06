@@ -345,22 +345,61 @@ else
   record "verify" warn ""
 fi
 
-# ── 11.5 Money-movement E2E negative case (BRAIN_DEMO_E2E_FULL=true) ──────────
-# Deterministic, SYNCHRONOUS money-path guarantee for the PR gate (R-04): a
-# duplicate payment must be actively REJECTED — not merely "the happy path
-# settles". This exercises the §6 gate's duplicate-payment check (11.5)
-# end-to-end and needs no async on-chain anchor.
-#
-# NOTE: a gate-check COVERAGE assertion (checks 8/9.5/11.5 applicable, read from
-# the proof's gate_checks) is intentionally deferred. GET /proof/{id} currently
-# returns HTTP 500 for an in-flight (dispatching / unanchored) PaymentIntent
-# instead of a partial proof; that proof-endpoint bug is tracked as a separate
-# follow-up, and this gate stays reliable in the meantime.
+# ── 11.5 Money-movement E2E assertions (BRAIN_DEMO_E2E_FULL=true) ─────────────
+# Deterministic, SYNCHRONOUS money-path guarantees for the PR gate (R-04). They
+# read the proof's gate_checks (the execute.before snapshot the §6 gate persists,
+# available while the PI is still `dispatching`) and exercise the duplicate gate
+# at execute — no dependency on the async on-chain anchor.
 if [[ "${BRAIN_DEMO_E2E_FULL:-false}" == "true" ]]; then
-  header "11.5 Money-movement E2E (duplicate-payment negative)"
-  # A second payment for the SAME invoice must be blocked — at propose (no PI id
-  # returned) or at execute (§6 check 11.5). Uses curl -s so a 4xx envelope is
-  # captured, not fatal.
+  header "11.5 Money-movement E2E assertions"
+
+  # (a) §6 coverage. The proof MUST return 200 for an in-flight PI (a partial
+  # proof — gate_checks present, merkle_root empty until anchored). 9.5
+  # (evidence-semantic) + 11.5 (duplicate) are always-applicable money-path
+  # checks (required loaders) and MUST pass and NOT be not_applicable; check 8
+  # (available balance) must be present + passed but MAY be not_applicable when
+  # the demo has no balance source.
+  start_step
+  PROOF_HTTP=$(curl -s -o /tmp/proof.json -w "%{http_code}" "$V1/proof/$PI_ID" \
+    -H "Authorization: Bearer $TOKEN")
+  PROOF_FULL=$(cat /tmp/proof.json)
+  note "proof HTTP=$PROOF_HTTP gate_check_indices=$(echo "${PROOF_FULL:-}" | jq -c '[.gate_checks[]?.index]' 2>/dev/null || echo '?')"
+  if [[ "$PROOF_HTTP" != "200" ]]; then
+    fail "proof endpoint returned HTTP $PROOF_HTTP for an in-flight PI (expected a 200 partial proof): $(echo "${PROOF_FULL:-}" | head -c 160)"
+    record "gate_coverage" fail ""
+    exit 1
+  fi
+  for idx in 9.5 11.5; do
+    MATCH=$(echo "$PROOF_FULL" | jq -c --argjson i "$idx" '[.gate_checks[]? | select(.index == $i)]')
+    if [[ "$(echo "$MATCH" | jq 'length')" == "0" ]]; then
+      fail "§6 check $idx absent from the proof — the money path did not run it"
+      record "gate_coverage" fail ""
+      exit 1
+    fi
+    if [[ "$(echo "$MATCH" | jq 'any(.[]; .detail.not_applicable == true)')" == "true" ]]; then
+      fail "§6 check $idx is not_applicable on the money path (loader unwired?)"
+      record "gate_coverage" fail ""
+      exit 1
+    fi
+    if [[ "$(echo "$MATCH" | jq 'all(.[]; .passed == true)')" != "true" ]]; then
+      fail "§6 check $idx did not pass"
+      record "gate_coverage" fail ""
+      exit 1
+    fi
+    ok "§6 check $idx applicable + passed"
+  done
+  C8=$(echo "$PROOF_FULL" | jq -c '[.gate_checks[]? | select(.index == 8)]')
+  if [[ "$(echo "$C8" | jq 'length')" == "0" || "$(echo "$C8" | jq 'all(.[]; .passed == true)')" != "true" ]]; then
+    fail "§6 check 8 (available_balance) missing or not passed: $C8"
+    record "gate_coverage" fail ""
+    exit 1
+  fi
+  ok "§6 check 8 present + passed"
+  record "gate_coverage" ok ""
+
+  # (b) Duplicate-payment NEGATIVE: a second payment for the SAME invoice must be
+  # blocked — at propose (no PI id returned) or at execute (§6 check 11.5). Uses
+  # curl -s so a 4xx envelope is captured, not fatal.
   start_step
   DUP=$(curl -s -X POST "$V1/payment-intents" \
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
