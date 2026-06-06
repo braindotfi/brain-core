@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as Viem from "viem";
 
 // Mock viem's createPublicClient so the seam can be tested without a real RPC.
 // We keep the rest of viem real (http, base, baseSepolia) so makeBaseGetCode's
 // chain selection still runs against the genuine chain objects.
 const getCodeMock = vi.fn();
 vi.mock("viem", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("viem")>();
+  const actual = await importOriginal<typeof Viem>();
   return { ...actual, createPublicClient: () => ({ getCode: getCodeMock }) };
 });
 
