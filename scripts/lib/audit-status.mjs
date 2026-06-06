@@ -65,6 +65,17 @@ function isApprovedChainIds(ids) {
 }
 
 /**
+ * Whether `v` is a valid immutable-references list: an array (possibly empty, for
+ * a contract with no immutables) of {start,length} byte ranges with non-negative
+ * integer fields. The mainnet escrow boot fence masks exactly these ranges before
+ * comparing the on-chain bytecode to runtime_bytecode_sha256, so an approved
+ * record must carry them or the fence cannot verify (and refuses to boot).
+ */
+function isImmutableRefsArray(v) {
+  return Array.isArray(v) && v.every((r) => isObject(r) && isNonNegInt(r.start) && isNonNegInt(r.length));
+}
+
+/**
  * Whether `chainId` is among the chain ids the audit authorizes. The runtime
  * escrow fence uses this so an approved audit for Base mainnet cannot be
  * stretched to authorize escrow on a different chain.
@@ -173,6 +184,13 @@ export function evaluateApproval(doc) {
     }
     if (!SHA256_RE.test(doc.runtime_bytecode_sha256)) {
       reasons.push('status "approved" requires runtime_bytecode_sha256 to be a 64-hex sha256');
+    }
+    // runtime_bytecode_sha256 above is masked over these immutable ranges; the
+    // boot fence masks the on-chain code over the same ranges before comparing.
+    if (!isImmutableRefsArray(doc.immutable_references)) {
+      reasons.push(
+        'status "approved" requires immutable_references to be an array of {start,length} byte ranges',
+      );
     }
     for (const r of compilerReasons(doc.compiler)) reasons.push(r);
     if (!isApprovedChainIds(doc.approved_chain_ids)) {

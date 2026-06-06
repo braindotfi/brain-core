@@ -11,13 +11,28 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { hashContractSources } from "../lib/hash-contract-sources.mjs";
-import { buildEvidenceFromArtifact } from "../lib/contract-build-evidence.mjs";
+import { buildEvidenceFromArtifact, hashBytecode } from "../lib/contract-build-evidence.mjs";
 
 const TOOL = join(process.cwd(), "scripts/verify-audited-build.mjs");
 
 const ARTIFACT = {
   bytecode: { object: "0x60016002600355" },
   deployedBytecode: { object: "0x6003600455" },
+  metadata: {
+    compiler: { version: "0.8.24+commit.e11b9ed9" },
+    settings: { optimizer: { enabled: true, runs: 200 }, evmVersion: "cancun" },
+  },
+};
+
+// An artifact WITH an immutable byte range (e.g. an `immutable` arbiter address):
+// the on-chain runtime would carry real bytes here, so the recorded runtime hash
+// must be masked over [4,6) and the immutable_references emitted.
+const IMMUTABLE_ARTIFACT = {
+  bytecode: { object: "0x60016002600355" },
+  deployedBytecode: {
+    object: "0xaabbccddeeff00112233",
+    immutableReferences: { "7": [{ start: 4, length: 2 }] },
+  },
   metadata: {
     compiler: { version: "0.8.24+commit.e11b9ed9" },
     settings: { optimizer: { enabled: true, runs: 200 }, evmVersion: "cancun" },
@@ -37,7 +52,7 @@ const APPROVED_BASE = {
 };
 
 /** Build a staged repo; returns its root. Caller passes the audit-status doc. */
-function stage(statusDoc, { mutateSource = false } = {}) {
+function stage(statusDoc, { mutateSource = false, artifact = ARTIFACT } = {}) {
   const root = mkdtempSync(join(tmpdir(), "verify-build-"));
   mkdirSync(join(root, "contracts/src"), { recursive: true });
   mkdirSync(join(root, "contracts/out/BrainEscrow.sol"), { recursive: true });
@@ -48,7 +63,7 @@ function stage(statusDoc, { mutateSource = false } = {}) {
   writeFileSync(join(root, "contracts/src/IBrainEscrow.sol"), "// interface\n");
   writeFileSync(
     join(root, "contracts/out/BrainEscrow.sol/BrainEscrow.json"),
-    JSON.stringify(ARTIFACT),
+    JSON.stringify(artifact),
   );
   writeFileSync(join(root, "contracts/audit-status.json"), JSON.stringify(statusDoc, null, 2));
   return root;
@@ -69,10 +84,10 @@ function run(root) {
 }
 
 /** The evidence the tool will compute for the un-mutated staged repo. */
-function expectedEvidence(root) {
+function expectedEvidence(root, artifact = ARTIFACT) {
   return {
     contract_source_tree_sha256: hashContractSources(join(root, "contracts/src")),
-    ...buildEvidenceFromArtifact(ARTIFACT),
+    ...buildEvidenceFromArtifact(artifact),
   };
 }
 
@@ -127,4 +142,34 @@ test("missing forge artifact fails with a clear message", () => {
   const r = run(root);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /forge build/);
+});
+
+test("immutable artifact: runtime hash is masked over the immutable range and refs are emitted", () => {
+  const probe = stage({ ...APPROVED_BASE, status: "pending" }, { artifact: IMMUTABLE_ARTIFACT });
+  const ev = expectedEvidence(probe, IMMUTABLE_ARTIFACT);
+  rmSync(probe, { recursive: true, force: true });
+
+  // The masked runtime hash MUST differ from the naive (unmasked) hash, else the
+  // masking is a no-op and the on-chain comparison would false-mismatch.
+  assert.notEqual(
+    ev.runtime_bytecode_sha256,
+    hashBytecode(IMMUTABLE_ARTIFACT.deployedBytecode.object),
+  );
+  assert.deepEqual(ev.immutable_references, [{ start: 4, length: 2 }]);
+
+  // And an approved record carrying that masked evidence verifies clean.
+  const r = run(stage({ ...APPROVED_BASE, ...ev }, { artifact: IMMUTABLE_ARTIFACT }));
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.match(r.stdout, /OK . current build matches/);
+});
+
+test("approved with tampered immutable_references fails", () => {
+  const probe = stage({ ...APPROVED_BASE, status: "pending" }, { artifact: IMMUTABLE_ARTIFACT });
+  const ev = expectedEvidence(probe, IMMUTABLE_ARTIFACT);
+  rmSync(probe, { recursive: true, force: true });
+
+  const tampered = { ...ev, immutable_references: [{ start: 0, length: 2 }] };
+  const r = run(stage({ ...APPROVED_BASE, ...tampered }, { artifact: IMMUTABLE_ARTIFACT }));
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /immutable_references/);
 });
