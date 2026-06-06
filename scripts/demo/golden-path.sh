@@ -239,6 +239,11 @@ EXEC=$(curl -s -X POST "$V1/payment-intents/$PI_ID/execute" \
 EXEC_ERR=$(echo "$EXEC" | jq -r '.error.code // empty')
 if [[ -n "$EXEC_ERR" ]]; then
   fail "execute rejected: $EXEC_ERR — $(echo "$EXEC" | jq -r '.error.message // ""')"
+  # Surface the gate's structured detail. For a §6 check-11.5 (duplicate)
+  # rejection this carries { check_index, check_name, collisions:[{rule,
+  # conflicting_payment_intent_id, detail}] } — the exact dedup rule that
+  # fired, which is the difference between a seed/demo fix and a gate bug.
+  echo "  detail: $(echo "$EXEC" | jq -c '.error.details // {}')" >&2
   record "execute" fail "$PI_ID"
   exit 1
 fi
