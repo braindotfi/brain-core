@@ -2,7 +2,11 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { assertEscrowAuditApproved, readAuditStatusApproved } from "./escrow-audit-gate.js";
+import {
+  assertEscrowAuditApproved,
+  readAuditChainApproved,
+  readAuditStatusApproved,
+} from "./escrow-audit-gate.js";
 
 const ANY_ADDR = "0x" + "ab".repeat(20);
 
@@ -98,6 +102,19 @@ describe("readAuditStatusApproved", () => {
     mkdirSync(nested, { recursive: true });
     expect(readAuditStatusApproved(nested)).toBe(true);
   });
+
+  it("readAuditChainApproved: true only for a chain in approved_chain_ids", () => {
+    // COMPLETE_APPROVED lists approved_chain_ids: [8453].
+    expect(readAuditChainApproved(8453, fixtureDir("approved"))).toBe(true);
+    expect(readAuditChainApproved(84532, fixtureDir("approved"))).toBe(false);
+  });
+
+  it("readAuditChainApproved: fail-closed on a missing or chain-omitting record", () => {
+    expect(readAuditChainApproved(8453, fixtureDir(undefined))).toBe(false);
+    expect(
+      readAuditChainApproved(8453, writeFixture({ ...COMPLETE_APPROVED, approved_chain_ids: [] })),
+    ).toBe(false);
+  });
 });
 
 describe("assertEscrowAuditApproved", () => {
@@ -108,6 +125,7 @@ describe("assertEscrowAuditApproved", () => {
         escrowAddress: ANY_ADDR,
         auditApproved: "false",
         auditStatusApproved: false,
+        auditChainApproved: false,
       }),
     ).not.toThrow();
   });
@@ -119,6 +137,7 @@ describe("assertEscrowAuditApproved", () => {
         escrowAddress: undefined,
         auditApproved: "false",
         auditStatusApproved: false,
+        auditChainApproved: false,
       }),
     ).not.toThrow();
   });
@@ -130,6 +149,7 @@ describe("assertEscrowAuditApproved", () => {
         escrowAddress: ANY_ADDR,
         auditApproved: "false",
         auditStatusApproved: true, // committed record OK, but no env attestation
+        auditChainApproved: true,
       }),
     ).toThrow(/neither BRAIN_ESCROW_AUDIT_RECEIPT nor BRAIN_ESCROW_AUDIT_APPROVED/);
   });
@@ -141,6 +161,7 @@ describe("assertEscrowAuditApproved", () => {
         escrowAddress: ANY_ADDR,
         auditApproved: "true",
         auditStatusApproved: true,
+        auditChainApproved: true,
       }),
     ).not.toThrow();
   });
@@ -153,6 +174,7 @@ describe("assertEscrowAuditApproved", () => {
         auditApproved: "false",
         auditReceipt: "https://audits.brain.fi/escrow-2026-06.pdf#commit=abc123",
         auditStatusApproved: true,
+        auditChainApproved: true,
       }),
     ).not.toThrow();
   });
@@ -166,8 +188,23 @@ describe("assertEscrowAuditApproved", () => {
         auditApproved: "true",
         auditReceipt: "https://audits.brain.fi/escrow.pdf",
         auditStatusApproved: false, // committed record still pending
+        auditChainApproved: true,
       }),
     ).toThrow(/audit-status\.json status is not "approved"/);
+  });
+
+  it("throws on mainnet when the record is approved + env attested but this chain is not in approved_chain_ids", () => {
+    // An audit approved for some other chain must not authorize Base mainnet.
+    expect(() =>
+      assertEscrowAuditApproved({
+        chainId: 8453,
+        escrowAddress: ANY_ADDR,
+        auditApproved: "true",
+        auditReceipt: "https://audits.brain.fi/escrow.pdf",
+        auditStatusApproved: true,
+        auditChainApproved: false,
+      }),
+    ).toThrow(/approved_chain_ids does not list this chain \(8453\)/);
   });
 
   it("fails on mainnet when the receipt is an empty string (must be non-empty)", () => {
@@ -178,6 +215,7 @@ describe("assertEscrowAuditApproved", () => {
         auditApproved: "false",
         auditReceipt: "",
         auditStatusApproved: true,
+        auditChainApproved: true,
       }),
     ).toThrow(/neither BRAIN_ESCROW_AUDIT_RECEIPT nor BRAIN_ESCROW_AUDIT_APPROVED/);
   });
@@ -190,6 +228,7 @@ describe("assertEscrowAuditApproved", () => {
         auditApproved: "true",
         auditReceipt: "ipfs://Qmabc...",
         auditStatusApproved: true,
+        auditChainApproved: true,
       }),
     ).not.toThrow();
   });
@@ -202,6 +241,7 @@ describe("assertEscrowAuditApproved", () => {
         auditApproved: "false",
         auditReceipt: "https://audits.brain.fi/escrow.pdf",
         auditStatusApproved: false,
+        auditChainApproved: false,
       }),
     ).not.toThrow();
   });
@@ -214,6 +254,7 @@ describe("assertEscrowAuditApproved", () => {
           escrowAddress: ANY_ADDR,
           auditApproved: "false",
           auditStatusApproved: false,
+          auditChainApproved: false,
         }),
       ).not.toThrow();
     }
