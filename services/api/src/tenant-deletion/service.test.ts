@@ -170,6 +170,51 @@ describe("TenantDeletionService", () => {
     // No audit emit on rollback.
     expect(audit.events).toHaveLength(0);
   });
+
+  it("enqueues a durable blob purge job and emits purge_requested when blobs exist", async () => {
+    // Fake pool that returns a job id for the purge-queue INSERT.
+    const client = {
+      query: vi.fn((sql: string) => {
+        if (sql.startsWith("SELECT blob_uri FROM raw_artifacts")) {
+          return Promise.resolve({ rows: [{ blob_uri: "tnt_x/a" }], rowCount: 1 });
+        }
+        if (sql.includes("INSERT INTO tenant_blob_purge_jobs")) {
+          return Promise.resolve({ rows: [{ id: "tbp_JOB1" }], rowCount: 1 });
+        }
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool;
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+
+    const result = await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+
+    expect(result.blobPurgeJobId).toBe("tbp_JOB1");
+    // The enqueue INSERT runs inside the transaction, before the deletes.
+    const calls = client.query.mock.calls.map((c) => c[0] as string);
+    const insertIdx = calls.findIndex((s) => s.includes("INSERT INTO tenant_blob_purge_jobs"));
+    const firstDeleteIdx = calls.findIndex((s) => s.startsWith("DELETE FROM "));
+    expect(insertIdx).toBeGreaterThan(-1);
+    expect(insertIdx).toBeLessThan(firstDeleteIdx);
+    // tenant.deleted is still first; purge_requested follows.
+    expect(audit.events[0]!.action).toBe("tenant.deleted");
+    const requested = audit.events.find((e) => e.action === "tenant_blob.purge_requested");
+    expect(requested).toBeDefined();
+    expect(
+      (requested!.outputs as { tenant_blob_purge_job_id: string }).tenant_blob_purge_job_id,
+    ).toBe("tbp_JOB1");
+  });
+
+  it("does NOT enqueue a purge job when the tenant uploaded no blobs", async () => {
+    const pool = fakePool({ raw_artifacts: 0 }, []);
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+    const result = await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+    expect(result.blobPurgeJobId).toBeNull();
+    expect(audit.events.some((e) => e.action === "tenant_blob.purge_requested")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,16 @@
 # RFC 0003. Blob purge carveout for GDPR Article 17 (right to erasure)
 
-- **Status:** Proposed. Awaiting human signoff before phase B implementation.
+- **Status:** Accepted (phase B implemented). The durable purge queue, privileged
+  worker, transactional enqueue, and lifecycle audit events shipped
+  (`tenant_blob_purge_jobs` migration, `blob-purge-repo.ts`,
+  `blob-purge-worker.ts`). DEVIATION from the §2.3 sketch below: this builds the
+  queue around the existing `BlobAdapter.purgeTenant` (per-tenant prefix erasure,
+  added in v0.5.1 after this RFC) instead of the per-blob `purge(path, by)` the
+  sketch proposed. Per-prefix erasure is simpler, leverages the realized
+  primitive, and erases orphan bytes a per-blob list would miss. Remaining
+  follow-up: cloud version-aware deletion (S3 all-versions + delete markers,
+  Azure snapshots/versions) inside each adapter's `purgeTenant`, plus a CI
+  call-site guard restricting `purgeTenant` to the worker.
 - **Date:** 2026-05-30
 - **Authors:** ai-assisted
 - **Affects:** `Brain_MVP_Architecture.md` Layer 1, `Brain_Engineering_Standards.md`

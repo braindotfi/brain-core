@@ -71,6 +71,9 @@ export const ID_PREFIX = {
   // Wiki annotations (HITL corrections). Each annotation lands as a Raw
   // artifact for the provenance trail; the annotation id is its own handle.
   wikiAnnotation: "ann",
+  // RFC 0003 — durable tenant blob purge job (GDPR Art. 17). One row per
+  // tenant deletion; survives the deletion and is drained by a privileged worker.
+  tenantBlobPurgeJob: "tbp",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];

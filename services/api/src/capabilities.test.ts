@@ -55,6 +55,7 @@ function base(): BootCapabilities {
     },
     liveAgentsCount: 19,
     webhookDispatchWorker: true,
+    tenantBlobPurgeWorker: true,
     auditAnchorBroadcaster: false,
     mcpProofBuilder: true,
     sourceCredentialEncryption: false,
