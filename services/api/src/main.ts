@@ -65,6 +65,7 @@ import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anch
 import { logBootCapabilities } from "./capabilities.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { TenantDeletionService } from "./tenant-deletion/service.js";
+import { startTenantBlobPurgeWorker } from "./tenant-deletion/blob-purge-worker.js";
 import { registerTenantDeletionRoute } from "./tenant-deletion/route.js";
 import { registerProofViewRoute } from "./proof/view.js";
 import { registerSecurityHeaders } from "./security-headers.js";
@@ -858,6 +859,22 @@ async function main(): Promise<void> {
     { intervalMs: 5_000 },
   );
   log.info("webhook dispatch worker started");
+
+  // RFC 0003: drain the durable tenant blob purge queue. Jobs belong to
+  // already-deleted tenants, so the worker uses the privileged (BYPASSRLS) pool
+  // and erases the Raw bytes via the configured BlobAdapter, with bounded
+  // retries + a dead-letter state. Harmless when idle.
+  const tenantBlobPurgeWorker = startTenantBlobPurgeWorker(
+    {
+      privilegedPool,
+      blob,
+      audit,
+      metrics,
+      workerId: `tenant-blob-purge-worker-${process.pid}`,
+    },
+    { intervalMs: 30_000 },
+  );
+  log.info("tenant blob purge worker started");
 
   const anchorBroadcaster =
     cfg.AUDIT_PUBLISHER_KEY !== undefined
@@ -1936,6 +1953,7 @@ async function main(): Promise<void> {
       },
       liveAgentsCount: Object.keys(LIVE_AGENTS.liveAgents ?? {}).length,
       webhookDispatchWorker: true,
+      tenantBlobPurgeWorker: true,
       auditAnchorBroadcaster: anchorBroadcaster !== undefined,
       mcpProofBuilder: true,
       sourceCredentialEncryption: sourceCredential !== undefined,
@@ -1965,6 +1983,7 @@ async function main(): Promise<void> {
     normalizeWorker.stop();
     outboxWorker.stop();
     webhookDispatchWorker.stop();
+    tenantBlobPurgeWorker.stop();
     anchorReconciler?.stop();
     try {
       await agentRouteWorker.close();

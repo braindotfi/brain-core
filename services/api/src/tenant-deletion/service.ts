@@ -39,6 +39,7 @@
 
 import type { Pool } from "pg";
 import type { AuditEmitter, ServiceCallContext } from "@brain/shared";
+import { enqueueBlobPurgeJob } from "./blob-purge-repo.js";
 
 export interface TenantDeletionResult {
   tenantId: string;
@@ -50,6 +51,9 @@ export interface TenantDeletionResult {
   /** Every `blob_uri` from the deleted `raw_artifacts` rows. Operators run
    *  the purge job against this list to satisfy GDPR Article 17 fully. */
   blobUrisPendingPurge: ReadonlyArray<string>;
+  /** The `tenant_blob_purge_jobs` row enqueued for the privileged worker to
+   *  erase the Raw bytes (RFC 0003). `null` when the tenant uploaded no blobs. */
+  blobPurgeJobId: string | null;
 }
 
 /**
@@ -131,7 +135,14 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
  * verify-without-trusting-Brain promise; GDPR Article 17(3)(b) permits
  * retention for the establishment or defence of legal claims.
  */
-export const PRESERVED_TABLES: ReadonlySet<string> = new Set(["audit_events", "audit_anchors"]);
+export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
+  "audit_events",
+  "audit_anchors",
+  // RFC 0003: the blob purge queue must SURVIVE the deletion — a privileged
+  // worker drains it after the tenant rows are gone, and the row stands as the
+  // on-record proof that Article 17 erasure was enqueued.
+  "tenant_blob_purge_jobs",
+]);
 
 export interface TenantDeletionDeps {
   /** A privileged Pool (BYPASSRLS) so cross-tenant rows are reachable. */
@@ -150,6 +161,7 @@ export class TenantDeletionService {
     const deletedRows: Record<string, number> = {};
     let totalRows = 0;
     let blobUrisPendingPurge: string[] = [];
+    let blobPurgeJobId: string | null = null;
     try {
       await client.query("BEGIN");
       // Snapshot the blob_uri list BEFORE the DELETE wipes the rows. These
@@ -160,6 +172,18 @@ export class TenantDeletionService {
         [targetTenantId],
       );
       blobUrisPendingPurge = (blobRes.rows as Array<{ blob_uri: string }>).map((r) => r.blob_uri);
+      // RFC 0003: enqueue the durable blob-purge job IN this transaction, before
+      // the rows are wiped, so the hand-off to the privileged worker is atomic
+      // with the deletion (a rolled-back deletion leaves no orphan job). Gated
+      // on there being blobs to erase. The job lives in PRESERVED_TABLES, so it
+      // survives the deletes below.
+      if (blobUrisPendingPurge.length > 0) {
+        blobPurgeJobId = await enqueueBlobPurgeJob(client, {
+          tenantId: targetTenantId,
+          blobPrefix: `${targetTenantId}/`,
+          blobArtifactCount: blobUrisPendingPurge.length,
+        });
+      }
       for (const { table, column } of TENANT_SCOPED_TABLES) {
         const res = await client.query(`DELETE FROM ${table} WHERE ${column} = $1`, [
           targetTenantId,
@@ -201,8 +225,28 @@ export class TenantDeletionService {
         // to satisfy Article 17 fully.
         blob_artifact_count: blobUrisPendingPurge.length,
         blob_uris_pending_purge: blobUrisPendingPurge,
+        // RFC 0003: the durable purge job that will actually erase the bytes.
+        blob_purge_job_id: blobPurgeJobId,
       },
     });
+
+    // RFC 0003: a distinct lifecycle event for the enqueued erasure, so the
+    // chain shows request → (worker) completion. Emitted only when a job was
+    // enqueued (i.e. the tenant had blobs to purge).
+    if (blobPurgeJobId !== null) {
+      await this.deps.audit.emit({
+        tenantId: targetTenantId,
+        layer: "audit",
+        actor: ctx.actor,
+        action: "tenant_blob.purge_requested",
+        inputs: { tenant_id: targetTenantId, requested_by: ctx.actor },
+        outputs: {
+          tenant_blob_purge_job_id: blobPurgeJobId,
+          blob_prefix: `${targetTenantId}/`,
+          blob_artifact_count: blobUrisPendingPurge.length,
+        },
+      });
+    }
 
     return {
       tenantId: targetTenantId,
@@ -210,6 +254,7 @@ export class TenantDeletionService {
       totalRows,
       blobArtifactCount: blobUrisPendingPurge.length,
       blobUrisPendingPurge,
+      blobPurgeJobId,
     };
   }
 }

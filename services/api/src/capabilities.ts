@@ -61,6 +61,8 @@ export interface BootCapabilities {
   liveAgentsCount: number;
   /** Whether startWebhookDispatchWorker is running (item 13). */
   webhookDispatchWorker: boolean;
+  /** Whether the RFC 0003 tenant blob purge worker is draining the durable purge queue. */
+  tenantBlobPurgeWorker: boolean;
   /** Whether the audit anchor broadcaster is wired to a real Base RPC (publishes Merkle roots on-chain). */
   auditAnchorBroadcaster: boolean;
   /** Whether the MCP brain://proofs/{action_id} resource is wired through poolProofBuilder. */
@@ -132,6 +134,7 @@ export function logBootCapabilities(c: BootCapabilities, log: Logger): void {
       gate_loaders_dormant: dormant,
       live_agents_count: c.liveAgentsCount,
       webhook_dispatch_worker: c.webhookDispatchWorker,
+      tenant_blob_purge_worker: c.tenantBlobPurgeWorker,
       audit_anchor_broadcaster: c.auditAnchorBroadcaster,
       mcp_proof_builder: c.mcpProofBuilder,
       source_credential_encryption: c.sourceCredentialEncryption,
