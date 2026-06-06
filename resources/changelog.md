@@ -6,6 +6,22 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.4 (audit-build binding, GDPR erasure, money-path CI)
+
+Review-remediation batch. The internal CI/test work is omitted; the items below are API-, compliance-, or diligence-facing.
+
+#### Fixed. Proof API
+
+- **`GET /v1/proof/{action_id}` no longer 500s for an in-flight payment.** A PaymentIntent that is executed but still `dispatching` (settlement async, not yet anchored) now returns a **200 partial proof** (gate checks present, `merkle_root` empty until anchored) instead of an internal error. Root cause was a never-run-on-Postgres evidence query referencing non-existent columns. `policy_hash` is now hex-encoded (was a raw byte buffer).
+
+#### Added. GDPR Article 17 erasure (RFC 0003)
+
+- **Tenant deletion now durably and permanently erases Raw blob bytes.** `DELETE /v1/tenants/{id}` enqueues a `tenant_blob_purge_jobs` row in the deletion transaction; a privileged worker drains it via `BlobAdapter.purgeTenant` with bounded retries, a dead-letter state, legal-hold surfacing, and per-lifecycle audit events (`tenant_blob.purge_requested` / `_completed` / `_blocked_legal_hold` / `_retried` / `_exhausted`). `purgeTenant` does version-aware deletion (S3 every object version + delete marker; Azure versions + snapshots), so erasure is permanent in a versioned bucket, closing the gap where a "deleted" response left the user's PII recoverable.
+
+#### Changed. Mainnet escrow audit binding (diligence)
+
+- **Audit approval binds to the audited build, not just a commit.** `contracts/audit-status.json` approval now additionally requires the compiler settings, contract-source-tree hash, and creation/runtime bytecode hashes, plus an explicit `approved_chain_ids`. A CI step recomputes them from the working tree + Foundry artifact and fails the build on drift; the mainnet escrow boot fence also requires the booting chain to be in `approved_chain_ids`. A single shared validator now backs the runtime fence, the CI guard, and the readiness command (previously the runtime path was a bare `status === "approved"` check).
+
 ### v0.5.3 (CI + demo integrity)
 
 Internal hardening. No API, protocol, MCP, or SDK surface change. Recorded here because it restores an end-to-end proof artifact integrators rely on, and one item affects anyone bootstrapping the schema.

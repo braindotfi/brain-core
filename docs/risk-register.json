@@ -27,7 +27,7 @@
       "title": "Tenant blob purge not implemented (GDPR Article 17 gap)",
       "priority": "P0",
       "status": "mitigating",
-      "mitigation_summary": "DELETE /v1/tenants/{id} surfaces blob URIs pending purge; RFC 0003 phase A landed, phase B awaits signoff.",
+      "mitigation_summary": "RFC 0003 phase B shipped: tenant deletion enqueues a durable tenant_blob_purge_jobs row in the deletion transaction; a privileged worker (blob-purge-worker.ts) drains it via BlobAdapter.purgeTenant with bounded backoff, a dead-letter state, legal-hold surfacing, and per-lifecycle audit events. purgeTenant now does version-aware permanent erasure (S3 all object versions + delete markers; Azure versions + snapshots) and is restricted to the worker by a CI call-site guard (check-blob-purge-callsite). Remaining: a production-shaped integration test against live S3/Azure proving permanent erasure. (Realized via BlobAdapter.purgeTenant rather than the per-blob purge() the RFC sketched.)",
       "exit_criteria": [
         "tenant_blob_purge_jobs migration",
         "BlobAdapter.purge() on memory/s3/azure",
@@ -38,7 +38,13 @@
       "owner": "engineering",
       "evidence": [
         "docs/rfcs/0003-blob-purge-article-17.md",
-        "services/api/src/tenant-deletion/service.ts"
+        "services/api/src/tenant-deletion/service.ts",
+        "services/api/migrations/0006_tenant_blob_purge_jobs.sql",
+        "services/api/src/tenant-deletion/blob-purge-repo.ts",
+        "services/api/src/tenant-deletion/blob-purge-worker.ts",
+        "shared/src/blob/s3.ts",
+        "shared/src/blob/azure.ts",
+        "scripts/check-blob-purge-callsite.mjs"
       ]
     },
     {
@@ -65,7 +71,7 @@
       "title": "Full money-movement E2E not yet enforced in CI",
       "priority": "P1",
       "status": "mitigating",
-      "mitigation_summary": "Strict-mode demo (BRAIN_DEMO_STRICT_PROOF) runs the full chain locally; e2e probe asserts gate dormancy from staging history. CI-enforced full E2E pending deterministic stack-in-CI.",
+      "mitigation_summary": "A money_movement_e2e job now runs on EVERY PR (.github/workflows/pr.yml) against a real pg+redis stack + booted demo API: the full chain provision->ingest->normalize->propose->policy->execute, plus assertions that the §6 gate ran checks 8/9.5/11.5 (none not_applicable, read from the proof's gate_checks) and that three negatives are actively rejected (duplicate payment, excessive-amount policy reject, missing-approval). Remaining: full strict-proof (on-chain merkle anchor) mode needs a CI-available Base RPC; audit-before->after linkage and receivable-direction / low-confidence negatives are layerable follow-ups.",
       "exit_criteria": [
         "deterministic local-stack-in-CI (pg+redis+localstack+boot binary in GH Actions)",
         "golden-path demo runs in strict mode on every PR",
@@ -75,7 +81,8 @@
       "owner": "engineering+infra",
       "evidence": [
         "tests/e2e/signed-agent-gated-payment.e2e.test.ts",
-        "scripts/demo/golden-path.sh"
+        "scripts/demo/golden-path.sh",
+        ".github/workflows/pr.yml"
       ]
     },
     {
