@@ -213,7 +213,7 @@ suite("Cross-tenant RLS, per data-bearing table (integration -- requires DATABAS
     );
     await seedOwner(
       `INSERT INTO ledger_accounts
-         (id, owner_id, type, name, currency, status, source_ids, evidence_ids, provenance, confidence)
+         (id, owner_id, account_type, name, currency, status, source_ids, evidence_ids, provenance, confidence)
        VALUES ($1, $2, 'bank_checking', 'Checking', 'USD', 'active',
                ARRAY[]::TEXT[], ARRAY[]::TEXT[], 'extracted', 0.9)`,
       [acctId, a],
