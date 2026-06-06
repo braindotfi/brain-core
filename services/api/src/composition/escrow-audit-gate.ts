@@ -23,31 +23,44 @@
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { evaluateApproval, parseAuditStatus } from "@brain/shared";
 
 const BASE_MAINNET_CHAIN_ID = 8453;
 
 /**
- * Resolve and read contracts/audit-status.json, returning whether its status is
- * "approved". Walks up from `startDir` (default process.cwd()) so it works
- * whether the api is launched from the repo root or from services/api.
+ * Resolve and read contracts/audit-status.json, returning whether the record
+ * authorizes a mainnet escrow boot. Walks up from `startDir` (default
+ * process.cwd()) so it works whether the api is launched from the repo root or
+ * from services/api.
  *
- * Fail-closed: a missing file, a parse error, or any status other than
- * "approved" yields `false`. A mainnet-escrow deploy must therefore SHIP the
- * committed, audit-derived contracts/audit-status.json (status "approved") into
- * the image, or this fence keeps the api from booting. check-audit-status.mjs
- * guarantees the file cannot say "approved" without real audit evidence.
+ * The verdict is the shared `evaluateApproval` (from @brain/shared) — the SAME
+ * canonical validator the CI guard (scripts/check-audit-status.mjs) and the
+ * readiness aggregator use. So `approved` is NOT a bare `status === "approved"`
+ * check: it additionally requires a non-empty auditor, a 40-hex audited commit,
+ * a report reference, and zero unresolved critical/high findings. This closes
+ * the fail-open where an out-of-band image build could ship an incomplete
+ * record whose `status` happened to read "approved".
+ *
+ * Fail-closed: a missing file, a malformed file, or any incomplete/non-approved
+ * record yields `false`. A mainnet-escrow deploy must therefore SHIP a
+ * committed, fully-evidenced contracts/audit-status.json into the image, or
+ * this fence keeps the api from booting. Once a file is found at a level it is
+ * THE record (we do not keep walking up past a malformed file to a stale
+ * ancestor) — read failure (ENOENT) is what advances to the parent.
  */
 export function readAuditStatusApproved(startDir: string = process.cwd()): boolean {
   let dir = startDir;
   for (let i = 0; i < 16; i += 1) {
+    let raw: string;
     try {
-      const raw = readFileSync(join(dir, "contracts", "audit-status.json"), "utf8");
-      return (JSON.parse(raw) as { status?: unknown }).status === "approved";
+      raw = readFileSync(join(dir, "contracts", "audit-status.json"), "utf8");
     } catch {
       const parent = dirname(dir);
       if (parent === dir) break;
       dir = parent;
+      continue;
     }
+    return evaluateApproval(parseAuditStatus(raw).doc).approved;
   }
   return false;
 }

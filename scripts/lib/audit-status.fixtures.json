@@ -1,0 +1,194 @@
+{
+  "_comment": "Shared parity corpus for the audit-status validator. BOTH the .mjs validator test (scripts/__tests__/audit-status-lib.test.mjs) and the TS validator test (shared/src/audit-status.test.ts) load THIS file and assert identical verdicts, so the two language ports of the canonical logic cannot diverge. integrityOk = checkIntegrity(doc).ok; approved = evaluateApproval(doc).approved; reasonSubstr = a substring that must appear in at least one reason when the verdict is a failure.",
+  "cases": [
+    {
+      "name": "pending record (valid shape, not approved)",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "pending",
+        "auditor": null,
+        "audited_commit": null,
+        "report_url": null,
+        "report_sha256": null,
+        "unresolved_findings": { "critical": null, "high": null, "medium": null, "low": null }
+      },
+      "integrityOk": true,
+      "approved": false,
+      "reasonSubstr": "not \"approved\""
+    },
+    {
+      "name": "fully approved with complete evidence",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "approved",
+        "auditor": "Acme Smart Contract Audits",
+        "audited_commit": "0123456789abcdef0123456789abcdef01234567",
+        "report_url": "https://example.com/brain-escrow-audit.pdf",
+        "report_sha256": "ab12cd34ef5678901234567890abcdef1234567890abcdef1234567890abcdef",
+        "unresolved_findings": { "critical": 0, "high": 0, "medium": 2, "low": 5 }
+      },
+      "integrityOk": true,
+      "approved": true
+    },
+    {
+      "name": "approved with report_sha256 only (no url)",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "approved",
+        "auditor": "Acme Smart Contract Audits",
+        "audited_commit": "0123456789abcdef0123456789abcdef01234567",
+        "report_url": null,
+        "report_sha256": "ab12cd34ef5678901234567890abcdef1234567890abcdef1234567890abcdef",
+        "unresolved_findings": { "critical": 0, "high": 0, "medium": 0, "low": 0 }
+      },
+      "integrityOk": true,
+      "approved": true
+    },
+    {
+      "name": "approved but auditor missing (null)",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "approved",
+        "auditor": null,
+        "audited_commit": "0123456789abcdef0123456789abcdef01234567",
+        "report_url": "https://example.com/report.pdf",
+        "report_sha256": null,
+        "unresolved_findings": { "critical": 0, "high": 0, "medium": 0, "low": 0 }
+      },
+      "integrityOk": true,
+      "approved": false,
+      "reasonSubstr": "non-empty auditor"
+    },
+    {
+      "name": "approved but audited_commit is not a 40-hex SHA",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "approved",
+        "auditor": "Acme Smart Contract Audits",
+        "audited_commit": "not-a-real-sha",
+        "report_url": "https://example.com/report.pdf",
+        "report_sha256": null,
+        "unresolved_findings": { "critical": 0, "high": 0, "medium": 0, "low": 0 }
+      },
+      "integrityOk": true,
+      "approved": false,
+      "reasonSubstr": "40-hex"
+    },
+    {
+      "name": "approved but no report reference",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "approved",
+        "auditor": "Acme Smart Contract Audits",
+        "audited_commit": "0123456789abcdef0123456789abcdef01234567",
+        "report_url": null,
+        "report_sha256": null,
+        "unresolved_findings": { "critical": 0, "high": 0, "medium": 0, "low": 0 }
+      },
+      "integrityOk": true,
+      "approved": false,
+      "reasonSubstr": "report_url or a report_sha256"
+    },
+    {
+      "name": "approved but an unresolved critical finding remains",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "approved",
+        "auditor": "Acme Smart Contract Audits",
+        "audited_commit": "0123456789abcdef0123456789abcdef01234567",
+        "report_url": "https://example.com/report.pdf",
+        "report_sha256": null,
+        "unresolved_findings": { "critical": 1, "high": 0, "medium": 0, "low": 0 }
+      },
+      "integrityOk": true,
+      "approved": false,
+      "reasonSubstr": "critical === 0"
+    },
+    {
+      "name": "approved but unresolved high findings remain",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "approved",
+        "auditor": "Acme Smart Contract Audits",
+        "audited_commit": "0123456789abcdef0123456789abcdef01234567",
+        "report_url": "https://example.com/report.pdf",
+        "report_sha256": null,
+        "unresolved_findings": { "critical": 0, "high": 2, "medium": 0, "low": 0 }
+      },
+      "integrityOk": true,
+      "approved": false,
+      "reasonSubstr": "high === 0"
+    },
+    {
+      "name": "invalid status value",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "done",
+        "auditor": "Acme",
+        "audited_commit": "0123456789abcdef0123456789abcdef01234567",
+        "report_url": "https://example.com/report.pdf",
+        "report_sha256": null,
+        "unresolved_findings": { "critical": 0, "high": 0, "medium": 0, "low": 0 }
+      },
+      "integrityOk": false,
+      "approved": false,
+      "reasonSubstr": "status must be one of"
+    },
+    {
+      "name": "missing required key (auditor absent entirely)",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "pending",
+        "audited_commit": null,
+        "report_url": null,
+        "report_sha256": null,
+        "unresolved_findings": { "critical": null, "high": null, "medium": null, "low": null }
+      },
+      "integrityOk": false,
+      "approved": false,
+      "reasonSubstr": "missing required key: auditor"
+    },
+    {
+      "name": "negative finding count",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "pending",
+        "auditor": null,
+        "audited_commit": null,
+        "report_url": null,
+        "report_sha256": null,
+        "unresolved_findings": { "critical": -1, "high": 0, "medium": 0, "low": 0 }
+      },
+      "integrityOk": false,
+      "approved": false,
+      "reasonSubstr": "non-negative integer"
+    },
+    {
+      "name": "unresolved_findings not an object",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "pending",
+        "auditor": null,
+        "audited_commit": null,
+        "report_url": null,
+        "report_sha256": null,
+        "unresolved_findings": null
+      },
+      "integrityOk": false,
+      "approved": false,
+      "reasonSubstr": "must be an object"
+    }
+  ]
+}

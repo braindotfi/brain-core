@@ -8,6 +8,7 @@ import { join } from "node:path";
 const TREND_SCRIPT = join(process.cwd(), "scripts/readiness-trend.mjs");
 const SNAPSHOT_SCRIPT = join(process.cwd(), "scripts/readiness-snapshot.mjs");
 const AGGREGATOR = join(process.cwd(), "scripts/production-readiness.mjs");
+const AUDIT_STATUS_LIB = join(process.cwd(), "scripts/lib/audit-status.mjs");
 
 function fakeSnapshot(overrides = {}) {
   const aggregator = {
@@ -124,6 +125,10 @@ test("snapshot script requires a tag arg and refuses to overwrite", () => {
     mkdirSync(join(root, "docs"), { recursive: true });
     cpSync(AGGREGATOR, join(root, "scripts/production-readiness.mjs"));
     cpSync(SNAPSHOT_SCRIPT, join(root, "scripts/readiness-snapshot.mjs"));
+    // production-readiness.mjs imports ./lib/audit-status.mjs (the canonical
+    // audit-status validator); stage it alongside so the import resolves.
+    mkdirSync(join(root, "scripts/lib"), { recursive: true });
+    cpSync(AUDIT_STATUS_LIB, join(root, "scripts/lib/audit-status.mjs"));
     // Stub the files the aggregator reads.
     writeFileSync(
       join(root, "services/api/src/composition/rail-catalog.ts"),

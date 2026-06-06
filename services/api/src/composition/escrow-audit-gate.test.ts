@@ -11,21 +11,57 @@ describe("readAuditStatusApproved", () => {
   afterEach(() => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
-  function fixtureDir(status: string | undefined): string {
+  // A fully-evidenced approved record (the only shape that authorizes a mainnet
+  // boot): the runtime fence uses the shared evaluateApproval, so "approved"
+  // alone is not enough — auditor, a 40-hex audited commit, a report reference,
+  // and zero unresolved critical/high findings are all required.
+  const COMPLETE_APPROVED = {
+    contract: "BrainEscrow",
+    scope_doc: "contracts/AUDIT-SCOPE.md",
+    status: "approved",
+    auditor: "Acme Smart Contract Audits",
+    audited_commit: "0123456789abcdef0123456789abcdef01234567",
+    report_url: "https://example.com/report.pdf",
+    report_sha256: null,
+    unresolved_findings: { critical: 0, high: 0, medium: 1, low: 3 },
+  };
+
+  function writeFixture(doc: Record<string, unknown> | undefined): string {
     const root = mkdtempSync(join(tmpdir(), "audit-status-read-"));
     dirs.push(root);
-    if (status !== undefined) {
+    if (doc !== undefined) {
       mkdirSync(join(root, "contracts"), { recursive: true });
-      writeFileSync(
-        join(root, "contracts/audit-status.json"),
-        JSON.stringify({ contract: "BrainEscrow", status }),
-      );
+      writeFileSync(join(root, "contracts/audit-status.json"), JSON.stringify(doc));
     }
     return root;
   }
 
-  it("returns true only when the committed status is 'approved'", () => {
+  // A complete, integrity-valid record at the given status. Only "approved"
+  // (with the full evidence above) authorizes boot; other statuses are valid
+  // but not approved.
+  function fixtureDir(status: string | undefined): string {
+    if (status === undefined) return writeFixture(undefined);
+    return writeFixture({ ...COMPLETE_APPROVED, status });
+  }
+
+  it("returns true when the committed record is approved with full evidence", () => {
     expect(readAuditStatusApproved(fixtureDir("approved"))).toBe(true);
+  });
+
+  it("returns false (fail-closed) when status is 'approved' but evidence is incomplete", () => {
+    // The exact fail-open this validator closes: a bare status flip without the
+    // auditor / 40-hex commit / report / zero-critical-high evidence.
+    expect(
+      readAuditStatusApproved(writeFixture({ contract: "BrainEscrow", status: "approved" })),
+    ).toBe(false);
+    expect(readAuditStatusApproved(writeFixture({ ...COMPLETE_APPROVED, auditor: null }))).toBe(
+      false,
+    );
+    expect(
+      readAuditStatusApproved(
+        writeFixture({ ...COMPLETE_APPROVED, unresolved_findings: { critical: 1, high: 0 } }),
+      ),
+    ).toBe(false);
   });
 
   it("returns false for a pending/in_progress status (fail-closed)", () => {
@@ -35,6 +71,14 @@ describe("readAuditStatusApproved", () => {
 
   it("returns false (fail-closed) when the file is absent", () => {
     expect(readAuditStatusApproved(fixtureDir(undefined))).toBe(false);
+  });
+
+  it("returns false (fail-closed) on a malformed file (no walk-up past it)", () => {
+    const root = mkdtempSync(join(tmpdir(), "audit-status-read-"));
+    dirs.push(root);
+    mkdirSync(join(root, "contracts"), { recursive: true });
+    writeFileSync(join(root, "contracts/audit-status.json"), "{ not json");
+    expect(readAuditStatusApproved(root)).toBe(false);
   });
 
   it("finds the file by walking up from a nested start dir", () => {
