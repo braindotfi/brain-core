@@ -88,6 +88,15 @@ function main() {
       `runtime_bytecode_sha256: committed ${doc.runtime_bytecode_sha256} != current ${current.runtime_bytecode_sha256}`,
     );
   }
+  // immutable_references must match exactly: the runtime hash above is masked
+  // over precisely these byte ranges, and the boot fence masks the on-chain code
+  // over the committed ranges. If they drift, the masked hashes are comparing
+  // different regions and the on-chain verification is meaningless.
+  if (JSON.stringify(doc.immutable_references) !== JSON.stringify(current.immutable_references)) {
+    mismatches.push(
+      `immutable_references: committed ${JSON.stringify(doc.immutable_references)} != current ${JSON.stringify(current.immutable_references)}`,
+    );
+  }
   const committedCompiler = doc.compiler ?? {};
   for (const k of COMPILER_KEYS) {
     if (JSON.stringify(committedCompiler[k]) !== JSON.stringify(current.compiler[k])) {

@@ -1,6 +1,6 @@
 {
-  "_comment": "Shared parity corpus for the audit-status validator. BOTH the .mjs validator test (scripts/__tests__/audit-status-lib.test.mjs) and the TS validator test (shared/src/audit-status.test.ts) load THIS file and assert identical verdicts, so the two language ports of the canonical logic cannot diverge. integrityOk = checkIntegrity(doc).ok; approved = evaluateApproval(doc).approved; reasonSubstr = a substring that must appear in at least one reason when the verdict is a failure. Every approved-shaped case carries a full valid build-evidence block (compiler + 64-hex source-tree/creation/runtime hashes + approved_chain_ids) so a failing case isolates exactly the one field under test.",
-  "buildEvidenceNote": "A reusable valid build-evidence block: compiler {solc_version, optimizer_enabled, optimizer_runs, evm_version} + contract_source_tree_sha256 + creation_bytecode_sha256 + runtime_bytecode_sha256 (all 64-hex) + non-empty approved_chain_ids.",
+  "_comment": "Shared parity corpus for the audit-status validator. BOTH the .mjs validator test (scripts/__tests__/audit-status-lib.test.mjs) and the TS validator test (shared/src/audit-status.test.ts) load THIS file and assert identical verdicts, so the two language ports of the canonical logic cannot diverge. integrityOk = checkIntegrity(doc).ok; approved = evaluateApproval(doc).approved; reasonSubstr = a substring that must appear in at least one reason when the verdict is a failure. Every approved-shaped case carries a full valid build-evidence block (compiler + 64-hex source-tree/creation/runtime hashes + immutable_references + approved_chain_ids) so a failing case isolates exactly the one field under test.",
+  "buildEvidenceNote": "A reusable valid build-evidence block: compiler {solc_version, optimizer_enabled, optimizer_runs, evm_version} + contract_source_tree_sha256 + creation_bytecode_sha256 + runtime_bytecode_sha256 (all 64-hex, runtime masked over immutable_references) + immutable_references (array of {start,length}) + non-empty approved_chain_ids.",
   "cases": [
     {
       "name": "pending record (valid shape, not approved)",
@@ -38,6 +38,7 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453]
       },
       "integrityOk": true,
@@ -63,7 +64,34 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453, 84532]
+      },
+      "integrityOk": true,
+      "approved": true
+    },
+    {
+      "name": "approved with empty immutable_references (contract with no immutables)",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "approved",
+        "auditor": "Acme Smart Contract Audits",
+        "audited_commit": "0123456789abcdef0123456789abcdef01234567",
+        "report_url": "https://example.com/report.pdf",
+        "report_sha256": null,
+        "unresolved_findings": { "critical": 0, "high": 0, "medium": 0, "low": 0 },
+        "compiler": {
+          "solc_version": "0.8.24+commit.e11b9ed9",
+          "optimizer_enabled": true,
+          "optimizer_runs": 200,
+          "evm_version": "cancun"
+        },
+        "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [],
+        "approved_chain_ids": [8453]
       },
       "integrityOk": true,
       "approved": true
@@ -88,6 +116,7 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453]
       },
       "integrityOk": true,
@@ -114,6 +143,7 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453]
       },
       "integrityOk": true,
@@ -140,6 +170,7 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453]
       },
       "integrityOk": true,
@@ -166,6 +197,7 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453]
       },
       "integrityOk": true,
@@ -192,6 +224,7 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453]
       },
       "integrityOk": true,
@@ -213,6 +246,7 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453]
       },
       "integrityOk": true,
@@ -239,6 +273,7 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453]
       },
       "integrityOk": true,
@@ -265,6 +300,7 @@
         "contract_source_tree_sha256": "deadbeef",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453]
       },
       "integrityOk": true,
@@ -291,11 +327,66 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": null,
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": [8453]
       },
       "integrityOk": true,
       "approved": false,
       "reasonSubstr": "runtime_bytecode_sha256"
+    },
+    {
+      "name": "approved but immutable_references missing (null)",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "approved",
+        "auditor": "Acme Smart Contract Audits",
+        "audited_commit": "0123456789abcdef0123456789abcdef01234567",
+        "report_url": "https://example.com/report.pdf",
+        "report_sha256": null,
+        "unresolved_findings": { "critical": 0, "high": 0, "medium": 0, "low": 0 },
+        "compiler": {
+          "solc_version": "0.8.24+commit.e11b9ed9",
+          "optimizer_enabled": true,
+          "optimizer_runs": 200,
+          "evm_version": "cancun"
+        },
+        "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": null,
+        "approved_chain_ids": [8453]
+      },
+      "integrityOk": true,
+      "approved": false,
+      "reasonSubstr": "immutable_references"
+    },
+    {
+      "name": "approved but immutable_references entry has a negative start",
+      "doc": {
+        "contract": "BrainEscrow",
+        "scope_doc": "contracts/AUDIT-SCOPE.md",
+        "status": "approved",
+        "auditor": "Acme Smart Contract Audits",
+        "audited_commit": "0123456789abcdef0123456789abcdef01234567",
+        "report_url": "https://example.com/report.pdf",
+        "report_sha256": null,
+        "unresolved_findings": { "critical": 0, "high": 0, "medium": 0, "low": 0 },
+        "compiler": {
+          "solc_version": "0.8.24+commit.e11b9ed9",
+          "optimizer_enabled": true,
+          "optimizer_runs": 200,
+          "evm_version": "cancun"
+        },
+        "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": -1, "length": 32 }],
+        "approved_chain_ids": [8453]
+      },
+      "integrityOk": true,
+      "approved": false,
+      "reasonSubstr": "immutable_references"
     },
     {
       "name": "approved but approved_chain_ids is empty",
@@ -317,6 +408,7 @@
         "contract_source_tree_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "creation_bytecode_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
         "runtime_bytecode_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "immutable_references": [{ "start": 1234, "length": 32 }],
         "approved_chain_ids": []
       },
       "integrityOk": true,
