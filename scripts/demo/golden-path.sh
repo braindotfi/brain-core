@@ -421,6 +421,56 @@ if [[ "${BRAIN_DEMO_E2E_FULL:-false}" == "true" ]]; then
       exit 1
     fi
   fi
+
+  # (c) Policy REJECT NEGATIVE: a payment above the demo policy's reject band
+  # (>$10k) must be rejected by policy at propose — the intent is created with
+  # status "rejected" and is never executable.
+  if [[ -z "$CHECKING_ACCOUNT_ID" || -z "$CP_ID" ]]; then
+    fail "negatives need CHECKING_ACCOUNT_ID + CP_ID (seed shape changed?)"
+    record "policy_reject_negative" fail ""
+    exit 1
+  fi
+  start_step
+  REJ=$(curl -s -X POST "$V1/payment-intents" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d "$(jq -n --arg a "$CHECKING_ACCOUNT_ID" --arg c "$CP_ID" \
+      '{action_type:"ach_outbound", source_account_id:$a, destination_counterparty_id:$c, amount:"20000.00", currency:"USD"}')")
+  REJ_STATUS=$(echo "$REJ" | jq -r '.status // empty')
+  if [[ "$REJ_STATUS" == "rejected" ]]; then
+    ok "excessive payment (\$20k) rejected by policy at propose"
+    record "policy_reject_negative" ok ""
+  else
+    fail "EXCESSIVE PAYMENT NOT REJECTED: \$20k proposal status=$REJ_STATUS (expected rejected): $REJ"
+    record "policy_reject_negative" fail ""
+    exit 1
+  fi
+
+  # (d) MISSING-APPROVAL NEGATIVE: a payment in the confirm band ($1k-$10k)
+  # creates a pending_approval intent; executing it WITHOUT an approval must be
+  # blocked (the §6 gate's approval determination/grant).
+  start_step
+  CONF=$(curl -s -X POST "$V1/payment-intents" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d "$(jq -n --arg a "$CHECKING_ACCOUNT_ID" --arg c "$CP_ID" \
+      '{action_type:"ach_outbound", source_account_id:$a, destination_counterparty_id:$c, amount:"5000.00", currency:"USD"}')")
+  CONF_ID=$(echo "$CONF" | jq -r '.id // empty')
+  CONF_STATUS=$(echo "$CONF" | jq -r '.status // empty')
+  if [[ -z "$CONF_ID" || "$CONF_STATUS" != "pending_approval" ]]; then
+    fail "confirm-band (\$5k) proposal did not become pending_approval: status=$CONF_STATUS: $CONF"
+    record "missing_approval_negative" fail ""
+    exit 1
+  fi
+  CONF_EXEC=$(curl -s -X POST "$V1/payment-intents/$CONF_ID/execute" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}')
+  CONF_CODE=$(echo "$CONF_EXEC" | jq -r '.error.code // empty')
+  if [[ -n "$CONF_CODE" ]]; then
+    ok "unapproved confirm-band payment blocked at execute: $CONF_CODE"
+    record "missing_approval_negative" ok ""
+  else
+    fail "MISSING APPROVAL NOT ENFORCED: pending_approval intent $CONF_ID executed unapproved: $CONF_EXEC"
+    record "missing_approval_negative" fail ""
+    exit 1
+  fi
 fi
 
 # ── 12. Summary ──────────────────────────────────────────────────────────────
