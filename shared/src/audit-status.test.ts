@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 
-import { parseAuditStatus, checkIntegrity, evaluateApproval } from "./audit-status.js";
+import {
+  parseAuditStatus,
+  checkIntegrity,
+  evaluateApproval,
+  isChainApproved,
+} from "./audit-status.js";
 
 interface CorpusCase {
   name: string;
@@ -10,6 +15,13 @@ interface CorpusCase {
   integrityOk: boolean;
   approved: boolean;
   reasonSubstr?: string;
+}
+
+interface ChainCase {
+  name: string;
+  approved_chain_ids: number[];
+  chainId: number;
+  expected: boolean;
 }
 
 // The SAME parity corpus the .mjs port's test consumes
@@ -20,7 +32,7 @@ const corpus = JSON.parse(
     fileURLToPath(new URL("../../scripts/lib/audit-status.fixtures.json", import.meta.url)),
     "utf8",
   ),
-) as { cases: CorpusCase[] };
+) as { cases: CorpusCase[]; chainApprovalCases: ChainCase[] };
 
 describe("audit-status validator (TS port) — shared parity corpus", () => {
   for (const c of corpus.cases) {
@@ -39,6 +51,19 @@ describe("audit-status validator (TS port) — shared parity corpus", () => {
       }
     });
   }
+});
+
+describe("isChainApproved (TS port) — shared chain-approval corpus", () => {
+  for (const c of corpus.chainApprovalCases) {
+    it(c.name, () => {
+      expect(isChainApproved({ approved_chain_ids: c.approved_chain_ids }, c.chainId)).toBe(
+        c.expected,
+      );
+    });
+  }
+  it("is fail-closed on a non-object document", () => {
+    expect(isChainApproved(null, 8453)).toBe(false);
+  });
 });
 
 describe("audit-status validator (TS port) — unit", () => {

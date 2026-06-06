@@ -51,6 +51,17 @@ const APPROVED = {
   report_url: "https://reports.example/brain-escrow.pdf",
   report_sha256: null,
   unresolved_findings: { critical: 0, high: 0, medium: 2, low: 5 },
+  // Build-evidence binding (required for approval).
+  compiler: {
+    solc_version: "0.8.24+commit.e11b9ed9",
+    optimizer_enabled: true,
+    optimizer_runs: 200,
+    evm_version: "cancun",
+  },
+  contract_source_tree_sha256: "a".repeat(64),
+  creation_bytecode_sha256: "b".repeat(64),
+  runtime_bytecode_sha256: "c".repeat(64),
+  approved_chain_ids: [8453],
 };
 
 test("valid pending: OK", () => {

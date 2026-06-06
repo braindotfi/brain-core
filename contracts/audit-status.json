@@ -14,5 +14,10 @@
     "medium": null,
     "low": null
   },
-  "notes": "External smart-contract audit (R-01) not yet engaged. BrainEscrow is the only funds-custodying contract and is Base Sepolia testnet-only until this clears. Mainnet escrow boot is fenced by composition/escrow-audit-gate.ts (which now ALSO requires this file's status to be 'approved'), and check-audit-status.mjs forbids marking 'approved' without an auditor, an audited 40-hex commit, a report reference, and zero unresolved critical/high findings. Update this file ONLY from the auditor's final report."
+  "compiler": null,
+  "contract_source_tree_sha256": null,
+  "creation_bytecode_sha256": null,
+  "runtime_bytecode_sha256": null,
+  "approved_chain_ids": null,
+  "notes": "External smart-contract audit (R-01) not yet engaged. BrainEscrow is the only funds-custodying contract and is Base Sepolia testnet-only until this clears. Mainnet escrow boot is fenced by composition/escrow-audit-gate.ts (which ALSO requires this file's status to be 'approved'), and check-audit-status.mjs forbids marking 'approved' without an auditor, an audited 40-hex commit, a report reference, and zero unresolved critical/high findings. Approval ALSO binds to the audited build (P1): compiler (solc_version/optimizer_enabled/optimizer_runs/evm_version), contract_source_tree_sha256, and creation/runtime_bytecode_sha256, plus approved_chain_ids. Populate these from `node scripts/verify-audited-build.mjs` (run after `forge build`) using the auditor's final report; that tool also re-verifies them in CI so a contract or toolchain change after the audited commit fails the build. Update this file ONLY from the auditor's final report."
 }
