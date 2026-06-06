@@ -40,6 +40,7 @@ describe("readAuditStatusApproved", () => {
     contract_source_tree_sha256: "a".repeat(64),
     creation_bytecode_sha256: "b".repeat(64),
     runtime_bytecode_sha256: "c".repeat(64),
+    immutable_references: [{ start: 301, length: 32 }],
     approved_chain_ids: [8453],
   };
 
