@@ -6,6 +6,16 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.3 (CI + demo integrity)
+
+Internal hardening. No API, protocol, MCP, or SDK surface change. Recorded here because it restores an end-to-end proof artifact integrators rely on, and one item affects anyone bootstrapping the schema.
+
+#### Fixed. CI + golden-path
+
+- **The golden-path smoke runs end-to-end as a post-merge CI gate again.** Its job depends on the unit+integration job, which had been red on an unrelated, masked test-schema failure, so the smoke was silently skipped and the full `seed → ingest → normalize → propose → policy → execute → proof` chain was not actually exercised in CI. The prerequisite suite is green again and the smoke passes front to back (propose → `approved` → execute → `dispatching`).
+- **The demo seed no longer trips the §6 duplicate-payment gate (check 11.5).** A freshly-seeded counterparty's payment instructions were stamped `now()`, which the `destination_recently_changed` rule correctly reads as a vendor-account-swap signal. The seed's backdate mitigation had been scoped to the on-chain recipient only; it now backdates every seeded counterparty for the tenant, so the default ACH demo settles cleanly. The §6 gate itself is unchanged and still fail-closed.
+- **The migration set is self-contained for `pgcrypto`.** A migrations-only bootstrap (for example a test schema that does not run the `postgres-init` extension script) now creates `pgcrypto` via migration `0031`, so the migration `0027` payment-instruction trigger's `digest()` call resolves instead of failing at first insert. This affects anyone building a schema from the migration set alone.
+
 ### v0.5.2 (control-plane hardening)
 
 Follow-up review fixes. All stricter / fail-closed.

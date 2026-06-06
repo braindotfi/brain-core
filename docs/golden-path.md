@@ -49,7 +49,7 @@ ingest       ok      110ms      raw_01J…
 normalize    ok      230ms      inv_01J…
 wiki         ok      180ms      ent_01J…
 reconcile    ok      150ms      run_01J…
-propose      ok      210ms      pi_01J…       (policy: allow|confirm)
+propose      ok      210ms      pi_01J…       (policy: approved)
 approve      ok      90ms       pi_01J…
 execute      ok      640ms      pi_01J…       (status: dispatching|executed)
 anchor       warn    70ms                     (async worker; may anchor later)
@@ -81,6 +81,10 @@ compliance-/investor-facing screen (see `services/api/src/proof/view.ts`).
 
 > **Note (CI parity):** `docker-compose.smoke.yml` runs this exact script against
 > a fresh stack and exits non-zero on any required-step failure; the `golden_path_smoke`
-> CI job runs it after the integration tests. This runbook and the script were
-> authored without a live stack in the dev environment (see `BLOCKERS.md` B-1), so
-> the `warn`-tolerant steps may need endpoint-path alignment on the first live run.
+> CI job runs it after the integration tests: post-merge on `main`, in non-strict
+> mode (the `anchor`/`verify` steps stay `warn`-tolerant; `execute` is required).
+> The `golden-path smoke` now passes end-to-end against a fresh stack on every
+> merge, so the full `propose → approve → execute` chain, including the §6
+> duplicate-payment gate (check 11.5), is exercised in CI. Set
+> `BRAIN_DEMO_STRICT_PROOF=true` to also block on anchor + proof verification
+> (investor-diligence runs).
