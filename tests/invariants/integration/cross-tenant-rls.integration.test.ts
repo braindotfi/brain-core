@@ -250,11 +250,13 @@ suite("Cross-tenant RLS, per data-bearing table (integration -- requires DATABAS
     const a = newTenantId();
     const b = newTenantId();
     const pageId = `wpg_${createHash("sha1").update(`${a}:wpg`).digest("hex").slice(0, 26)}`;
+    // wiki_pages keys on tenant_id (not owner_id) and its real NOT NULL columns
+    // are page_type / slug / body_md / source_revision.
     await seedOwner(
       `INSERT INTO wiki_pages
-         (id, owner_id, entity_type, entity_id, content, source_ids, evidence_ids, version)
-       VALUES ($1, $2, 'counterparty', 'cp_seed', 'body', ARRAY[]::TEXT[], ARRAY[]::TEXT[], 1)`,
-      [pageId, a],
+         (id, tenant_id, page_type, subject_id, slug, body_md, source_revision)
+       VALUES ($1, $2, 'counterparty', 'cp_seed', $3, 'body', 'rev1')`,
+      [pageId, a, `/counterparty/${pageId}`],
     );
     expect(await countAs("SELECT id FROM wiki_pages WHERE id = $1", [pageId], b)).toBe(0);
     expect(await countAs("SELECT id FROM wiki_pages WHERE id = $1", [pageId], a)).toBe(1);
