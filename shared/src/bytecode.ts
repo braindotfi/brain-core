@@ -92,7 +92,9 @@ export function maskImmutables(runtimeHex: string, refs: ReadonlyArray<Immutable
 
 /** sha256 (hex) of the masked runtime bytecode. */
 export function maskedRuntimeSha256(runtimeHex: string, refs: ReadonlyArray<ImmutableRef>): string {
-  return createHash("sha256").update(Buffer.from(maskImmutables(runtimeHex, refs), "hex")).digest("hex");
+  return createHash("sha256")
+    .update(Buffer.from(maskImmutables(runtimeHex, refs), "hex"))
+    .digest("hex");
 }
 
 /**
