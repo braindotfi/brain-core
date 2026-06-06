@@ -1,8 +1,10 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { maskedRuntimeSha256 } from "@brain/shared";
 import {
+  assertDeployedEscrowBytecode,
   assertEscrowAuditApproved,
   readAuditChainApproved,
   readAuditStatusApproved,
@@ -258,5 +260,111 @@ describe("assertEscrowAuditApproved", () => {
         }),
       ).not.toThrow();
     }
+  });
+});
+
+describe("assertDeployedEscrowBytecode", () => {
+  // 64-byte synthetic runtime with an "immutable" range at bytes [2,6).
+  const RUNTIME = "0x60806040" + "00".repeat(60);
+  const REFS = [{ start: 2, length: 4 }];
+  const EXPECTED = maskedRuntimeSha256(RUNTIME, REFS);
+
+  function withImmutables(value: number): string {
+    const buf = Buffer.from(RUNTIME.slice(2), "hex");
+    buf.fill(value, 2, 6);
+    return "0x" + buf.toString("hex");
+  }
+
+  it("is silent on non-mainnet (no eth_getCode call)", async () => {
+    const getCode = vi.fn();
+    await expect(
+      assertDeployedEscrowBytecode({
+        chainId: 84_532,
+        escrowAddress: ANY_ADDR,
+        expectedRuntimeSha256: EXPECTED,
+        immutableReferences: REFS,
+        getCode,
+      }),
+    ).resolves.toBeUndefined();
+    expect(getCode).not.toHaveBeenCalled();
+  });
+
+  it("is silent on mainnet when no escrow address is set", async () => {
+    const getCode = vi.fn();
+    await expect(
+      assertDeployedEscrowBytecode({
+        chainId: 8453,
+        escrowAddress: undefined,
+        expectedRuntimeSha256: EXPECTED,
+        immutableReferences: REFS,
+        getCode,
+      }),
+    ).resolves.toBeUndefined();
+    expect(getCode).not.toHaveBeenCalled();
+  });
+
+  it("passes when the deployed code masks to the audited hash (immutables filled in)", async () => {
+    const getCode = vi.fn(async () => withImmutables(0xff)); // arbiter address written
+    await expect(
+      assertDeployedEscrowBytecode({
+        chainId: 8453,
+        escrowAddress: ANY_ADDR,
+        expectedRuntimeSha256: EXPECTED,
+        immutableReferences: REFS,
+        getCode,
+      }),
+    ).resolves.toBeUndefined();
+    expect(getCode).toHaveBeenCalledWith(ANY_ADDR);
+  });
+
+  it("throws when the deployed code differs OUTSIDE the immutables", async () => {
+    const buf = Buffer.from(RUNTIME.slice(2), "hex");
+    buf[10] = buf[10]! ^ 0xff;
+    const getCode = vi.fn(async () => "0x" + buf.toString("hex"));
+    await expect(
+      assertDeployedEscrowBytecode({
+        chainId: 8453,
+        escrowAddress: ANY_ADDR,
+        expectedRuntimeSha256: EXPECTED,
+        immutableReferences: REFS,
+        getCode,
+      }),
+    ).rejects.toThrow(/does NOT match the audited/);
+  });
+
+  it("throws when no contract is deployed at the address (empty code)", async () => {
+    const getCode = vi.fn(async () => "0x");
+    await expect(
+      assertDeployedEscrowBytecode({
+        chainId: 8453,
+        escrowAddress: ANY_ADDR,
+        expectedRuntimeSha256: EXPECTED,
+        immutableReferences: REFS,
+        getCode,
+      }),
+    ).rejects.toThrow(/does NOT match the audited/);
+  });
+
+  it("throws (fail-closed) when the record lacks the runtime hash or immutable refs", async () => {
+    const getCode = vi.fn(async () => RUNTIME);
+    await expect(
+      assertDeployedEscrowBytecode({
+        chainId: 8453,
+        escrowAddress: ANY_ADDR,
+        expectedRuntimeSha256: undefined,
+        immutableReferences: REFS,
+        getCode,
+      }),
+    ).rejects.toThrow(/runtime_bytecode_sha256 or a valid immutable_references/);
+    await expect(
+      assertDeployedEscrowBytecode({
+        chainId: 8453,
+        escrowAddress: ANY_ADDR,
+        expectedRuntimeSha256: EXPECTED,
+        immutableReferences: "not-an-array",
+        getCode,
+      }),
+    ).rejects.toThrow(/immutable_references/);
+    expect(getCode).not.toHaveBeenCalled();
   });
 });
