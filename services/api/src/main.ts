@@ -194,6 +194,7 @@ import { buildPaymentIntentService } from "./composition/payment-intent-service.
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
 import {
   assertEscrowAuditApproved,
+  readAuditChainApproved,
   readAuditStatusApproved,
 } from "./composition/escrow-audit-gate.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
@@ -276,6 +277,7 @@ async function main(): Promise<void> {
     escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
     auditApproved: cfg.BRAIN_ESCROW_AUDIT_APPROVED,
     auditStatusApproved: readAuditStatusApproved(),
+    auditChainApproved: readAuditChainApproved(cfg.BRAIN_BASE_CHAIN_ID),
     ...(cfg.BRAIN_ESCROW_AUDIT_RECEIPT !== undefined
       ? { auditReceipt: cfg.BRAIN_ESCROW_AUDIT_RECEIPT }
       : {}),

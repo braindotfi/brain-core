@@ -23,7 +23,7 @@
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { evaluateApproval, parseAuditStatus } from "@brain/shared";
+import { evaluateApproval, isChainApproved, parseAuditStatus } from "@brain/shared";
 
 const BASE_MAINNET_CHAIN_ID = 8453;
 
@@ -48,7 +48,7 @@ const BASE_MAINNET_CHAIN_ID = 8453;
  * THE record (we do not keep walking up past a malformed file to a stale
  * ancestor) — read failure (ENOENT) is what advances to the parent.
  */
-export function readAuditStatusApproved(startDir: string = process.cwd()): boolean {
+export function readAuditStatusDoc(startDir: string = process.cwd()): unknown {
   let dir = startDir;
   for (let i = 0; i < 16; i += 1) {
     let raw: string;
@@ -60,9 +60,28 @@ export function readAuditStatusApproved(startDir: string = process.cwd()): boole
       dir = parent;
       continue;
     }
-    return evaluateApproval(parseAuditStatus(raw).doc).approved;
+    // Once a file is found at a level it is THE record (we do not walk up past a
+    // malformed file to a stale ancestor). parseAuditStatus is fail-soft: a
+    // malformed file yields null, which every downstream check treats as not
+    // approved.
+    return parseAuditStatus(raw).doc;
   }
-  return false;
+  return null;
+}
+
+export function readAuditStatusApproved(startDir: string = process.cwd()): boolean {
+  return evaluateApproval(readAuditStatusDoc(startDir)).approved;
+}
+
+/**
+ * Whether the committed audit record authorizes escrow on `chainId` — i.e. the
+ * chain is listed in the record's `approved_chain_ids`. Uses the same shared
+ * validator the CI guard / readiness aggregator use, so an approval scoped to
+ * Base mainnet cannot be stretched to a different chain. Fail-closed: a missing,
+ * malformed, or chain-omitting record yields `false`.
+ */
+export function readAuditChainApproved(chainId: number, startDir: string = process.cwd()): boolean {
+  return isChainApproved(readAuditStatusDoc(startDir), chainId);
 }
 
 export interface EscrowAuditGateInput {
@@ -89,6 +108,14 @@ export interface EscrowAuditGateInput {
    * open critical/high findings). Read from the file at the call site.
    */
   auditStatusApproved: boolean;
+  /**
+   * Whether the committed audit record's `approved_chain_ids` lists `chainId`
+   * (P1 build binding). An audit approved for one chain must not authorize
+   * escrow on another, so mainnet escrow boot ALSO requires the audited chain
+   * set to include Base mainnet. Compute at the call site via
+   * `readAuditChainApproved(chainId)`.
+   */
+  auditChainApproved: boolean;
 }
 
 /**
@@ -113,10 +140,17 @@ export function assertEscrowAuditApproved(input: EscrowAuditGateInput): void {
   if (input.escrowAddress === undefined) return;
   const hasReceipt = typeof input.auditReceipt === "string" && input.auditReceipt.length > 0;
   const hasEnvAttestation = input.auditApproved === "true" || hasReceipt;
-  if (input.auditStatusApproved && hasEnvAttestation) return;
+  if (input.auditStatusApproved && input.auditChainApproved && hasEnvAttestation) return;
   const missing: string[] = [];
   if (!input.auditStatusApproved) {
     missing.push('contracts/audit-status.json status is not "approved" (R-01: audit not complete)');
+  }
+  if (!input.auditChainApproved) {
+    missing.push(
+      `contracts/audit-status.json approved_chain_ids does not list this chain (${String(
+        input.chainId,
+      )}); the audit did not authorize escrow here`,
+    );
   }
   if (!hasEnvAttestation) {
     missing.push(
