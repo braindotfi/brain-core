@@ -131,6 +131,13 @@ COPY --from=builder /app/services/policy/migrations services/policy/migrations
 COPY --from=builder /app/services/raw/migrations services/raw/migrations
 COPY --from=builder /app/services/wiki/migrations services/wiki/migrations
 
+# Committed external-audit record. The mainnet escrow boot fence
+# (composition/escrow-audit-gate.ts -> readAuditStatusApproved) reads this file
+# at startup; without it the fence fails closed and mainnet escrow could never
+# boot even after a completed audit. The .dockerignore re-includes only this one
+# file from the otherwise-excluded contracts/ tree.
+COPY --from=builder /app/contracts/audit-status.json contracts/audit-status.json
+
 EXPOSE 3000
 
 USER node
