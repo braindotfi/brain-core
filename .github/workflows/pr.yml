@@ -132,6 +132,15 @@ jobs:
       - name: forge build
         run: forge build --sizes
 
+      - name: verify audited-build evidence
+        # Binds contracts/audit-status.json to the real build (P1). While the
+        # audit is pending this prints the current source-tree + bytecode +
+        # compiler evidence (exit 0); once the record is "approved" it FAILS the
+        # build if the source tree, compiler, or bytecode drift from what was
+        # audited. Runs from the repo root (the job default is contracts/).
+        working-directory: ${{ github.workspace }}
+        run: node scripts/verify-audited-build.mjs
+
       - name: forge test
         # Hard gate: the contracts (incl. the UNAUDITED BrainEscrow that gates
         # Phase 5) must have GREEN unit + fuzz + invariant tests before the

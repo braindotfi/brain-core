@@ -28,6 +28,7 @@ export const REQUIRED_KEYS = [
 
 const SEVERITIES = ["critical", "high", "medium", "low"];
 const SHA1_RE = /^[0-9a-f]{40}$/;
+const SHA256_RE = /^[0-9a-f]{64}$/;
 
 function isObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -39,6 +40,39 @@ function isNonEmptyString(v) {
 
 function isNonNegInt(v) {
   return typeof v === "number" && Number.isInteger(v) && v >= 0;
+}
+
+function compilerReasons(c) {
+  if (!isObject(c)) return ['status "approved" requires a compiler object'];
+  const out = [];
+  if (!isNonEmptyString(c.solc_version))
+    out.push('status "approved" requires compiler.solc_version');
+  if (typeof c.optimizer_enabled !== "boolean")
+    out.push('status "approved" requires compiler.optimizer_enabled (boolean)');
+  if (!isNonNegInt(c.optimizer_runs))
+    out.push('status "approved" requires compiler.optimizer_runs (non-negative integer)');
+  if (!isNonEmptyString(c.evm_version))
+    out.push('status "approved" requires compiler.evm_version');
+  return out;
+}
+
+function isApprovedChainIds(ids) {
+  return (
+    Array.isArray(ids) &&
+    ids.length > 0 &&
+    ids.every((n) => typeof n === "number" && Number.isInteger(n) && n > 0)
+  );
+}
+
+/**
+ * Whether `chainId` is among the chain ids the audit authorizes. The runtime
+ * escrow fence uses this so an approved audit for Base mainnet cannot be
+ * stretched to authorize escrow on a different chain.
+ */
+export function isChainApproved(doc, chainId) {
+  if (!isObject(doc)) return false;
+  const ids = doc.approved_chain_ids;
+  return isApprovedChainIds(ids) && ids.includes(chainId);
 }
 
 /**
@@ -126,6 +160,25 @@ export function evaluateApproval(doc) {
       if (uf.high !== 0) {
         reasons.push('status "approved" requires unresolved_findings.high === 0');
       }
+    }
+    // Build-evidence binding (P1: pin approval to the exact audited build).
+    // Approval must name the source tree, compiler, and creation+runtime
+    // bytecode that were audited, plus the chain ids the audit authorizes, so a
+    // later contract or toolchain change cannot ride an older approval.
+    if (!SHA256_RE.test(doc.contract_source_tree_sha256)) {
+      reasons.push('status "approved" requires contract_source_tree_sha256 to be a 64-hex sha256');
+    }
+    if (!SHA256_RE.test(doc.creation_bytecode_sha256)) {
+      reasons.push('status "approved" requires creation_bytecode_sha256 to be a 64-hex sha256');
+    }
+    if (!SHA256_RE.test(doc.runtime_bytecode_sha256)) {
+      reasons.push('status "approved" requires runtime_bytecode_sha256 to be a 64-hex sha256');
+    }
+    for (const r of compilerReasons(doc.compiler)) reasons.push(r);
+    if (!isApprovedChainIds(doc.approved_chain_ids)) {
+      reasons.push(
+        'status "approved" requires a non-empty approved_chain_ids array of positive integers',
+      );
     }
   } else {
     reasons.push(`status is ${JSON.stringify(doc.status)}, not "approved"`);

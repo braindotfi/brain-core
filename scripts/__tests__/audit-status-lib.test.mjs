@@ -9,7 +9,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { parseAuditStatus, checkIntegrity, evaluateApproval } from "../lib/audit-status.mjs";
+import {
+  parseAuditStatus,
+  checkIntegrity,
+  evaluateApproval,
+  isChainApproved,
+} from "../lib/audit-status.mjs";
 
 const corpus = JSON.parse(
   readFileSync(fileURLToPath(new URL("../lib/audit-status.fixtures.json", import.meta.url)), "utf8"),
@@ -33,6 +38,18 @@ test("parity corpus: integrity + approval verdicts match the shared fixtures", (
       );
     }
   }
+});
+
+test("parity corpus: isChainApproved matches the shared chain-approval fixtures", () => {
+  for (const c of corpus.chainApprovalCases) {
+    assert.equal(
+      isChainApproved({ approved_chain_ids: c.approved_chain_ids }, c.chainId),
+      c.expected,
+      c.name,
+    );
+  }
+  // Fail-closed on a non-object document.
+  assert.equal(isChainApproved(null, 8453), false);
 });
 
 test("evaluateApproval is fail-closed on a non-object document", () => {

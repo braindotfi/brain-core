@@ -42,6 +42,7 @@
     "agents:test": "cd services/agents && uv run pytest",
     "contracts:build": "cd contracts && forge build",
     "contracts:test": "cd contracts && forge test",
+    "verify-audited-build": "node scripts/verify-audited-build.mjs",
     "dev": "./scripts/dev.sh",
     "dev:up": "./scripts/dev-up.sh",
     "dev:down": "docker compose -f docker-compose.yml -f docker-compose.dev.yml down",
