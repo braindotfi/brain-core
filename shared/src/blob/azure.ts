@@ -33,7 +33,17 @@ export class AzureBlobAdapter implements BlobAdapter {
   private readonly service: BlobServiceClient;
   private readonly credential: StorageSharedKeyCredential | undefined;
 
-  public constructor(private readonly opts: AzureAdapterOptions) {
+  public constructor(
+    private readonly opts: AzureAdapterOptions,
+    service?: BlobServiceClient,
+  ) {
+    if (service !== undefined) {
+      // Injection seam for tests (a fake BlobServiceClient); production builds
+      // the client from credentials below. No signing credential in this path.
+      this.service = service;
+      this.credential = undefined;
+      return;
+    }
     if (opts.accountKey !== undefined) {
       this.credential = new StorageSharedKeyCredential(opts.accountName, opts.accountKey);
       this.service = new BlobServiceClient(
@@ -135,12 +145,29 @@ export class AzureBlobAdapter implements BlobAdapter {
     const container = this.containerClient();
     let deleted = 0;
     const failed: string[] = [];
-    for await (const blob of container.listBlobsFlat({ prefix })) {
+    // Permanent (GDPR Art. 17) erasure must remove every VERSION and SNAPSHOT,
+    // not just the current blob — with versioning enabled a plain delete keeps
+    // prior versions. Include both and delete each specific version/snapshot.
+    for await (const blob of container.listBlobsFlat({
+      prefix,
+      includeVersions: true,
+      includeSnapshots: true,
+    })) {
       try {
-        await container.getBlockBlobClient(blob.name).delete({ deleteSnapshots: "include" });
+        const blobClient = container.getBlobClient(blob.name);
+        if (blob.versionId !== undefined) {
+          await blobClient.withVersion(blob.versionId).delete();
+        } else if (blob.snapshot !== undefined) {
+          await blobClient.withSnapshot(blob.snapshot).delete();
+        } else {
+          await container.getBlockBlobClient(blob.name).delete({ deleteSnapshots: "include" });
+        }
         deleted += 1;
       } catch {
-        failed.push(blob.name);
+        // Immutable-policy / legal-hold-protected versions can't be deleted;
+        // surface them (keyed by version/snapshot) for the release runbook.
+        const id = blob.versionId ?? blob.snapshot;
+        failed.push(id !== undefined ? `${blob.name}@${id}` : blob.name);
       }
     }
     return { deleted, failed };

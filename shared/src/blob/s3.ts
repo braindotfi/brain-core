@@ -7,7 +7,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
-  ListObjectsV2Command,
+  ListObjectVersionsCommand,
   PutObjectCommand,
   PutObjectTaggingCommand,
   S3Client,
@@ -35,7 +35,14 @@ export interface S3AdapterOptions {
 
 export class S3BlobAdapter implements BlobAdapter {
   private readonly client: S3Client;
-  public constructor(private readonly opts: S3AdapterOptions) {
+  /**
+   * `client` is an optional injection seam for tests (a fake with `.send`); in
+   * production it is left undefined and a real S3Client is constructed from opts.
+   */
+  public constructor(
+    private readonly opts: S3AdapterOptions,
+    client?: S3Client,
+  ) {
     const cfg: S3ClientConfig = {
       ...(opts.region !== undefined ? { region: opts.region } : {}),
       ...(opts.endpoint !== undefined ? { endpoint: opts.endpoint } : {}),
@@ -49,7 +56,7 @@ export class S3BlobAdapter implements BlobAdapter {
           }
         : {}),
     };
-    this.client = new S3Client(cfg);
+    this.client = client ?? new S3Client(cfg);
   }
 
   public async put(
@@ -115,28 +122,43 @@ export class S3BlobAdapter implements BlobAdapter {
     const prefix = `${tenantId}/`;
     let deleted = 0;
     const failed: string[] = [];
-    let continuationToken: string | undefined;
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+    // Permanent (GDPR Art. 17) erasure requires deleting EVERY version. In a
+    // versioned bucket a plain DeleteObject (no VersionId) only writes a delete
+    // marker, leaving prior versions recoverable — so list all object versions
+    // AND delete markers and delete each one by {Key, VersionId}.
     do {
       const list = await this.client.send(
-        new ListObjectsV2Command({
+        new ListObjectVersionsCommand({
           Bucket: this.opts.bucket,
           Prefix: prefix,
-          ...(continuationToken !== undefined ? { ContinuationToken: continuationToken } : {}),
+          ...(keyMarker !== undefined ? { KeyMarker: keyMarker } : {}),
+          ...(versionIdMarker !== undefined ? { VersionIdMarker: versionIdMarker } : {}),
         }),
       );
-      for (const obj of list.Contents ?? []) {
-        if (obj.Key === undefined) continue;
+      const entries = [...(list.Versions ?? []), ...(list.DeleteMarkers ?? [])];
+      for (const entry of entries) {
+        if (entry.Key === undefined || entry.VersionId === undefined) continue;
         try {
           await this.client.send(
-            new DeleteObjectCommand({ Bucket: this.opts.bucket, Key: obj.Key }),
+            new DeleteObjectCommand({
+              Bucket: this.opts.bucket,
+              Key: entry.Key,
+              VersionId: entry.VersionId,
+            }),
           );
           deleted += 1;
         } catch {
-          failed.push(obj.Key);
+          // Object-lock / legal-hold-protected versions cannot be force-deleted.
+          // Surface them (keyed by version) for the release runbook instead of
+          // silently skipping — the worker records these as legal_hold_paths.
+          failed.push(`${entry.Key}@${entry.VersionId}`);
         }
       }
-      continuationToken = list.IsTruncated === true ? list.NextContinuationToken : undefined;
-    } while (continuationToken !== undefined);
+      keyMarker = list.IsTruncated === true ? list.NextKeyMarker : undefined;
+      versionIdMarker = list.IsTruncated === true ? list.NextVersionIdMarker : undefined;
+    } while (keyMarker !== undefined || versionIdMarker !== undefined);
     return { deleted, failed };
   }
 
