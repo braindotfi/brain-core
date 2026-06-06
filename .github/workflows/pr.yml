@@ -168,3 +168,61 @@ jobs:
           gitleaks version
       - name: gitleaks
         run: gitleaks detect --source . --log-opts="origin/main..HEAD" --redact --exit-code 1
+
+  # Money-movement E2E (R-04): a deterministic full-chain payment run on EVERY
+  # PR, against a real pg+redis stack and the booted demo API. Beyond the happy
+  # path it asserts the §6 gate ran checks 8/9.5/11.5 (none not_applicable) and
+  # that a duplicate payment is actively rejected. main.yml runs the same script
+  # post-merge without BRAIN_DEMO_E2E_FULL; this job is the PR gate.
+  money_movement_e2e:
+    name: money-movement e2e
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: brain
+          POSTGRES_PASSWORD: brain
+          POSTGRES_DB: brain
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://brain:brain@localhost:5432/brain
+      REDIS_URL: redis://localhost:6379
+      AUTH_JWKS_URL: https://auth.brain.fi/.well-known/jwks.json
+      BRAIN_DEMO_MODE: "true"
+      BRAIN_BASE_URL: http://localhost:3000
+      BRAIN_DEMO_E2E_FULL: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: Build tools
+        run: pnpm -r --filter './tools/**' run build
+      - name: Migrate
+        run: node tools/migrate/dist/cli.js up
+      - name: Boot API (demo mode)
+        run: |
+          pnpm -C services/api start &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/health && break || sleep 2
+          done
+      - name: Money-movement E2E
+        run: ./scripts/demo/golden-path.sh
