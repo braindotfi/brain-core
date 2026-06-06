@@ -345,6 +345,67 @@ else
   record "verify" warn ""
 fi
 
+# ── 11.5 Money-movement E2E assertions (BRAIN_DEMO_E2E_FULL=true) ─────────────
+# Deterministic, SYNCHRONOUS money-path guarantees, suitable as a required PR
+# gate. They do NOT depend on the async on-chain anchor (merkle_root), so they
+# run reliably in CI without a Base RPC: §6 gate-check coverage comes from the
+# execute.before event the gate persists, and the duplicate-payment block is
+# enforced at execute time. (R-04: full money movement enforced in CI.)
+if [[ "${BRAIN_DEMO_E2E_FULL:-false}" == "true" ]]; then
+  header "11.5 Money-movement E2E assertions"
+  start_step
+  # (a) §6 coverage: the money path MUST run checks 8 (amount limit), 9.5
+  # (evidence-semantic), 11.5 (duplicate) — and none may be not_applicable
+  # (that would mean a money-path loader is unwired).
+  PROOF_FULL=$(curl -s "$V1/proof/$PI_ID" -H "Authorization: Bearer $TOKEN")
+  for idx in 8 9.5 11.5; do
+    MATCH=$(echo "${PROOF_FULL:-}" | jq -c --argjson i "$idx" '[.gate_checks[]? | select(.index == $i)]')
+    if [[ "$(echo "$MATCH" | jq 'length')" == "0" ]]; then
+      fail "§6 check $idx absent from the proof — the money path did not run it"
+      record "gate_coverage" fail ""
+      exit 1
+    fi
+    if [[ "$(echo "$MATCH" | jq 'any(.[]; .detail.not_applicable == true)')" == "true" ]]; then
+      fail "§6 check $idx is not_applicable on the money path (loader unwired?)"
+      record "gate_coverage" fail ""
+      exit 1
+    fi
+    if [[ "$(echo "$MATCH" | jq 'all(.[]; .passed == true)')" != "true" ]]; then
+      fail "§6 check $idx did not pass"
+      record "gate_coverage" fail ""
+      exit 1
+    fi
+    ok "§6 check $idx applicable + passed"
+  done
+  record "gate_coverage" ok ""
+
+  # (b) Duplicate-payment NEGATIVE: a second payment for the SAME invoice must be
+  # blocked — at propose (no PI id returned) or at execute (§6 check 11.5).
+  # Proves the duplicate detector actively rejects, not merely that the happy
+  # path settles. Uses curl -s so a 4xx envelope is captured, not fatal.
+  start_step
+  DUP=$(curl -s -X POST "$V1/payment-intents" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d "$(jq -n --arg id "$INVOICE_ID" '{type:"pay_invoice", invoice_id:$id}')")
+  DUP_ID=$(echo "$DUP" | jq -r '.id // empty')
+  if [[ -z "$DUP_ID" || "$DUP_ID" == "null" ]]; then
+    ok "duplicate blocked at propose: $(echo "$DUP" | jq -r '.error.code // "?"')"
+    record "dup_negative" ok ""
+  else
+    DUP_EXEC=$(curl -s -X POST "$V1/payment-intents/$DUP_ID/execute" \
+      -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}')
+    DUP_CODE=$(echo "$DUP_EXEC" | jq -r '.error.code // empty')
+    if [[ -n "$DUP_CODE" ]]; then
+      ok "duplicate blocked at execute: $DUP_CODE (check $(echo "$DUP_EXEC" | jq -r '.error.details.check_index // "?"'))"
+      record "dup_negative" ok ""
+    else
+      fail "DUPLICATE PAYMENT NOT BLOCKED: a 2nd payment for invoice $INVOICE_ID executed: $DUP_EXEC"
+      record "dup_negative" fail ""
+      exit 1
+    fi
+  fi
+fi
+
 # ── 12. Summary ──────────────────────────────────────────────────────────────
 header "Summary"
 printf "%-12s %-7s %-10s %s\n" "STEP" "STATUS" "DURATION" "OUTPUT"
