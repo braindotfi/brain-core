@@ -15,7 +15,7 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { brainError, fetchPublicHttps, isBrainId, requireScope, type Scope } from "@brain/shared";
-import { adapterForSourceType } from "../adapters/registry.js";
+import { adapterForGenericIngest } from "../adapters/registry.js";
 import { ingestOne } from "../services/ingest.js";
 import type { RawDeps } from "../deps.js";
 
@@ -103,9 +103,10 @@ async function handleMultipart(request: FastifyRequest, reply: FastifyReply, dep
   if (source_type === undefined || file === undefined) {
     throw brainError("request_body_invalid", "source_type and file are required");
   }
-  // Validate via the adapter registry — unknown source_type returns the
-  // canonical raw_source_unsupported error.
-  adapterForSourceType(source_type);
+  // Validate via the adapter registry — unknown source_type returns
+  // raw_source_unsupported; a provider-authenticated-only type (plaid/stripe)
+  // returns raw_source_reserved (it may only arrive via the webhook).
+  adapterForGenericIngest(source_type);
 
   const result = await ingestOne(deps, {
     tenantId: request.principal!.tenantId,
@@ -132,7 +133,7 @@ async function handleJson(request: FastifyRequest, reply: FastifyReply, deps: Ra
   if (body.source_type === undefined || body.url === undefined) {
     throw brainError("request_body_invalid", "source_type and url are required");
   }
-  adapterForSourceType(body.source_type);
+  adapterForGenericIngest(body.source_type);
 
   const headers: Record<string, string> = {};
   if (body.auth_header !== undefined) headers["authorization"] = body.auth_header;

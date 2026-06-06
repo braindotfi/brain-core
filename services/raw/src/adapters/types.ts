@@ -24,6 +24,18 @@ export interface FetchedArtifact {
 export interface SourceAdapter {
   /** Machine id — matches raw_artifacts.source_type. */
   readonly sourceType: string;
+  /**
+   * When true, an artifact of this source_type may ONLY be created through an
+   * authenticated provider path (the HMAC-verified `/raw/webhooks/{provider}`
+   * route), never through the generic, caller-supplied `/raw/ingest` route.
+   *
+   * This is the authenticated-provenance boundary (Codex 2026-06-06 P1): the §6
+   * gate maps `plaid`/`stripe` artifacts to HIGH evidence trust, so a generic
+   * `raw:write` principal must not be able to MINT high-trust evidence by simply
+   * labelling its upload `source_type: "plaid"`. Trust must derive from a
+   * verified provider, not from a string the caller chose.
+   */
+  readonly providerAuthenticatedOnly?: boolean;
   /** For webhook-capable providers only. Others throw 501. */
   handleWebhook?(
     tenantId: string,

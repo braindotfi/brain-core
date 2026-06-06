@@ -48,6 +48,10 @@ export const BRAIN_ERROR_CODES = [
   "raw_artifact_not_found",
   "raw_artifact_tombstoned",
   "raw_source_unsupported",
+  // Codex 2026-06-06 P1: a high-trust provider source_type (plaid/stripe) was
+  // asserted via the generic caller-supplied /raw/ingest route; it may only be
+  // created through the authenticated provider webhook.
+  "raw_source_reserved",
   "raw_webhook_signature_invalid",
 
   // Ledger
@@ -248,6 +252,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   // 403 — authorization
   auth_scope_insufficient: 403,
   auth_tenant_mismatch: 403,
+  raw_source_reserved: 403,
 
   // 400 — validation
   request_body_invalid: 400,

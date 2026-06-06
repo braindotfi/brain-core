@@ -44,6 +44,26 @@ export function adapterForSourceType(sourceType: string): SourceAdapter {
   return a;
 }
 
+/**
+ * Resolve the adapter for a source_type asserted via the GENERIC, caller-
+ * supplied `/raw/ingest` route, rejecting provider-authenticated-only types.
+ * A `raw:write` principal cannot label its upload `source_type: "plaid"` to mint
+ * HIGH-trust evidence — `plaid`/`stripe` must arrive via the HMAC-verified
+ * webhook (adapterForWebhookProvider), which is not subject to this check
+ * (Codex 2026-06-06 P1 — authenticated provenance).
+ */
+export function adapterForGenericIngest(sourceType: string): SourceAdapter {
+  const a = adapterForSourceType(sourceType);
+  if (a.providerAuthenticatedOnly === true) {
+    throw brainError(
+      "raw_source_reserved",
+      `source_type '${sourceType}' is reserved for the authenticated provider webhook ` +
+        `(/raw/webhooks/${sourceType}) and cannot be asserted via /raw/ingest`,
+    );
+  }
+  return a;
+}
+
 export function adapterForWebhookProvider(provider: string): SourceAdapter {
   const a = BY_PROVIDER.get(provider);
   if (a === undefined) {

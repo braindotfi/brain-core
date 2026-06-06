@@ -24,6 +24,9 @@ interface PlaidWebhookEnvelope {
 
 export const PlaidAdapter: SourceAdapter = {
   sourceType: "plaid",
+  // High-trust provider: only the HMAC-verified webhook may create plaid
+  // artifacts, never the generic caller-supplied /raw/ingest route.
+  providerAuthenticatedOnly: true,
   async handleWebhook(_tenantId, rawBody): Promise<FetchedArtifact[]> {
     let parsed: PlaidWebhookEnvelope;
     try {

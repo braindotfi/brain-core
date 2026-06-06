@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { isBrainError } from "@brain/shared";
-import { adapterForSourceType, adapterForWebhookProvider, listAdapters } from "./registry.js";
+import {
+  adapterForGenericIngest,
+  adapterForSourceType,
+  adapterForWebhookProvider,
+  listAdapters,
+} from "./registry.js";
 
 describe("adapterForSourceType", () => {
   it("returns an adapter for every OpenAPI source_type enum value", () => {
@@ -34,6 +39,35 @@ describe("adapterForWebhookProvider", () => {
     expect(adapterForWebhookProvider("alchemy").sourceType).toBe("chain_evm");
     expect(adapterForWebhookProvider("netsuite").sourceType).toBe("erp_netsuite");
     expect(adapterForWebhookProvider("generic_hmac").sourceType).toBe("upload");
+  });
+});
+
+describe("adapterForGenericIngest (authenticated provenance, Codex P1)", () => {
+  it("rejects high-trust provider source types with raw_source_reserved", () => {
+    for (const reserved of ["plaid", "stripe"]) {
+      try {
+        adapterForGenericIngest(reserved);
+        expect.fail(`expected ${reserved} to be reserved`);
+      } catch (err) {
+        expect(isBrainError(err)).toBe(true);
+        if (isBrainError(err)) expect(err.code).toBe("raw_source_reserved");
+      }
+    }
+  });
+
+  it("permits the medium/low-trust source types on the generic route", () => {
+    for (const ok of ["upload", "email", "erp_netsuite", "chain_evm", "agent_contributed"]) {
+      expect(adapterForGenericIngest(ok).sourceType).toBe(ok);
+    }
+  });
+
+  it("still rejects an unknown source_type as raw_source_unsupported", () => {
+    try {
+      adapterForGenericIngest("mystery");
+      expect.fail();
+    } catch (err) {
+      if (isBrainError(err)) expect(err.code).toBe("raw_source_unsupported");
+    }
   });
 });
 
