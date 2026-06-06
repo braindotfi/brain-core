@@ -208,24 +208,40 @@ else
     -d "$(jq -n --arg id "$INVOICE_ID" '{type:"pay_invoice", invoice_id:$id}')")
 fi
 PI_ID=$(echo "$PI" | jq -r '.id // empty')
-OUTCOME=$(echo "$PI" | jq -r '.policy_decision.outcome // .outcome // "unknown"')
+# The propose response carries the policy result as the intent `status`
+# (approved | pending_approval | rejected — PaymentIntentService.create maps
+# allow→approved, confirm→pending_approval, reject→rejected). Older field names
+# (.policy_decision.outcome / .outcome) are kept as fallbacks but were never
+# present, which is why this used to print "unknown".
+OUTCOME=$(echo "$PI" | jq -r '.status // .policy_decision.outcome // .outcome // "unknown"')
 [[ -n "$PI_ID" && "$PI_ID" != "null" ]] || { fail "propose failed: $PI"; record "propose" fail ""; exit 1; }
 ok "PaymentIntent $PI_ID (policy: $OUTCOME)"; record "propose" ok "$PI_ID"
 
 # ── 8. Approve if the policy required confirmation ───────────────────────────
 header "8. Approve (if confirm)"
 start_step
-if [[ "$OUTCOME" == "confirm" || "$OUTCOME" == "confirmed" ]]; then
+if [[ "$OUTCOME" == "confirm" || "$OUTCOME" == "confirmed" || "$OUTCOME" == "pending_approval" ]]; then
   req POST "/payment-intents/$PI_ID/approve" '{}' >/dev/null && ok "auto-signed approver"
   record "approve" ok "$PI_ID"
 else
-  ok "no approval required (outcome=$OUTCOME)"; record "approve" ok ""
+  ok "no approval required (status=$OUTCOME)"; record "approve" ok ""
 fi
 
 # ── 9. Execute through the rail (§6 gate runs here) ──────────────────────────
 header "9. Execute via rail ($RAIL)"
 start_step
-EXEC=$(req POST "/payment-intents/$PI_ID/execute" '{}')
+# Use curl -s (not the -sf `req`) so a 4xx/5xx §6-gate rejection envelope is
+# captured and its error.code surfaced, rather than aborting opaquely under
+# `set -e` with only "exit code 22" (curl --fail). The gate runs here; its
+# denials are the single most useful diagnostic this smoke test produces.
+EXEC=$(curl -s -X POST "$V1/payment-intents/$PI_ID/execute" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}')
+EXEC_ERR=$(echo "$EXEC" | jq -r '.error.code // empty')
+if [[ -n "$EXEC_ERR" ]]; then
+  fail "execute rejected: $EXEC_ERR — $(echo "$EXEC" | jq -r '.error.message // ""')"
+  record "execute" fail "$PI_ID"
+  exit 1
+fi
 EXEC_STATUS=$(echo "$EXEC" | jq -r '.status // .outcome // "unknown"')
 ok "execute → $EXEC_STATUS"; record "execute" ok "$PI_ID"
 
