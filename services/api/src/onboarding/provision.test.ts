@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { isBrainId, ID_PREFIX } from "@brain/shared";
-import { contentHash, evaluate, type Action } from "@brain/policy";
+import { contentHash, evaluate, lintPolicy, type Action } from "@brain/policy";
 import {
   buildDefaultPolicyDocument,
   DEFAULT_CONFIDENCE_FLOOR,
@@ -150,9 +150,14 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
     // The rule is the named floor at the configured constant. The floor sits
     // ABOVE the 0.5 agent_contributed write ceiling (see the boundary
     // regression block below) so an uncorroborated 0.5 row cannot satisfy it.
+    // Rule 0 gates money movement to human confirmation; rule 1 is the
+    // non-money floor. Money is never auto-executed by default (Codex P0).
     expect(parsed.rules[0].when["agent.confidence.gte"]).toBe(DEFAULT_CONFIDENCE_FLOOR);
-    expect(parsed.rules[0].applies_to).toEqual(["any"]);
-    expect(parsed.rules[0].execute).toBe("auto");
+    expect(parsed.rules[0].applies_to).toEqual(["outbound_payment", "onchain_tx"]);
+    expect(parsed.rules[0].execute).toBe("confirm");
+    expect(parsed.rules[0].require).toBe("single_signer");
+    expect(parsed.rules[1].applies_to).toEqual(["inbound_payment", "ledger_write"]);
+    expect(parsed.rules[1].execute).toBe("auto");
 
     // content_hash is sha256 of the canonical document. Computed in code, not
     // hard-coded -- otherwise a future DSL change to canonicalize() would
@@ -172,7 +177,7 @@ describe("default confidence floor — boundary enforcement (Codex 2026-06-05 P0
   // CORROBORATED obligation still clears it).
   const policy = buildDefaultPolicyDocument();
 
-  function actionWithConfidence(confidence: number | null): Action {
+  function paymentWithConfidence(confidence: number | null): Action {
     return {
       kind: "outbound_payment",
       counterparty_id: null,
@@ -187,28 +192,45 @@ describe("default confidence floor — boundary enforcement (Codex 2026-06-05 P0
     expect(DEFAULT_CONFIDENCE_FLOOR).toBeGreaterThan(0.5);
   });
 
-  it("rejects an uncorroborated agent-contributed obligation at the 0.5 ceiling", () => {
-    // The core regression: 0.5 must NOT auto-execute under the default policy.
-    expect(evaluate(policy, actionWithConfidence(0.5)).outcome).toBe("reject");
+  it("rejects an uncorroborated agent-contributed payment at the 0.5 ceiling", () => {
+    // 0.5 must not satisfy the floor at all (below 0.6 -> no match -> deny).
+    expect(evaluate(policy, paymentWithConfidence(0.5)).outcome).toBe("reject");
   });
 
   it("rejects a missing confidence signal (fail closed)", () => {
-    expect(evaluate(policy, actionWithConfidence(null)).outcome).toBe("reject");
+    expect(evaluate(policy, paymentWithConfidence(null)).outcome).toBe("reject");
   });
 
-  it("rejects everything below the floor", () => {
+  it("rejects payments below the floor", () => {
     for (const c of [0, 0.25, 0.49, DEFAULT_CONFIDENCE_FLOOR - 0.01]) {
-      expect(evaluate(policy, actionWithConfidence(c)).outcome).toBe("reject");
+      expect(evaluate(policy, paymentWithConfidence(c)).outcome).toBe("reject");
     }
   });
 
-  it("admits a corroborated obligation at the floor and above (>= floor)", () => {
-    // Reconciliation promotes a corroborated obligation toward the match score
-    // (>= ~0.7, capped at 0.9), so a corroborated row must still clear the floor
-    // -- otherwise the earned-autonomy path is dead.
-    expect(evaluate(policy, actionWithConfidence(DEFAULT_CONFIDENCE_FLOOR)).outcome).toBe("allow");
+  it("a corroborated payment at/above the floor requires CONFIRM, not auto allow (Codex P0)", () => {
+    // The safe default never auto-executes money; a >= floor payment escalates
+    // to human confirmation. A tenant can sign a constrained policy to earn auto.
+    expect(evaluate(policy, paymentWithConfidence(DEFAULT_CONFIDENCE_FLOOR)).outcome).toBe(
+      "confirm",
+    );
     for (const c of [0.7, 0.8, 0.9]) {
-      expect(evaluate(policy, actionWithConfidence(c)).outcome).toBe("allow");
+      expect(evaluate(policy, paymentWithConfidence(c)).outcome).toBe("confirm");
     }
+  });
+
+  it("a newly provisioned tenant cannot AUTO-execute a payment at any confidence", () => {
+    for (const c of [0.6, 0.95, 1]) {
+      expect(evaluate(policy, paymentWithConfidence(c)).outcome).not.toBe("allow");
+    }
+  });
+
+  it("non-money actions above the floor still auto-allow (not needlessly gated)", () => {
+    const ledgerWrite: Action = { ...paymentWithConfidence(0.8), kind: "ledger_write" };
+    expect(evaluate(policy, ledgerWrite).outcome).toBe("allow");
+  });
+
+  it("the default policy is lint-clean: lintPolicy returns zero ERROR findings", () => {
+    const errors = lintPolicy(buildDefaultPolicyDocument()).filter((f) => f.severity === "ERROR");
+    expect(errors).toEqual([]);
   });
 });

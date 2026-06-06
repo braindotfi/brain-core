@@ -59,12 +59,25 @@ import { contentHash, type PolicyDocument } from "@brain/policy";
  * corroborated/first-party population (>= 0.7). A future refinement could
  * split distinct `propose` vs `auto` thresholds instead of one global floor.
  *
- * Rule shape: `applies_to: [any]`, `when: {agent.confidence.gte: 0.6}`,
- * `execute: auto`. The VM short-circuits on the FIRST matching rule (the
- * default-deny tail still applies when no rule matches), so a tenant policy
- * update that adds a more-permissive rule above this one supersedes the
- * floor without removing it. The policy is stored at version 1 in state
- * `active` so it is enforced from the first request.
+ * Default shape (Codex 2026-06-06 P0): money movement is NEVER auto-executed by
+ * default. The prior single `applies_to: [any], execute: auto` rule auto-ALLOWED
+ * any >= floor action with no amount cap, no counterparty allowlist, no spend
+ * window, and no approval path -- a shape the repo's own `lintPolicy()` flags as
+ * unsafe-for-money (auto_no_amount_cap, auto_no_counterparty_constraint, ...).
+ * A fresh tenant could thus auto-execute a payment with no constraints (only the
+ * shadow-by-default promotion gate stood in the way). The default is now split:
+ *
+ *   1. money movement (outbound_payment / onchain_tx) at >= floor => `confirm`
+ *      with a single-signer approval requirement (human in the loop);
+ *   2. non-money agent actions (inbound_payment / ledger_write) at >= floor =>
+ *      `auto` (safe to allow; not a money mover, so lint-clean).
+ *
+ * Below the floor, no rule matches and the default-deny tail rejects. The VM
+ * short-circuits on the FIRST matching rule, so a tenant signing a constrained
+ * autonomy policy (with caps + counterparty allowlist + approval path) can
+ * supersede rule 1 to earn unattended money movement. `buildDefaultPolicyDocument`
+ * is lint-clean: `lintPolicy()` returns zero ERROR findings (asserted in tests).
+ * Stored at version 1, state `active`, enforced from the first request.
  */
 export const DEFAULT_CONFIDENCE_FLOOR = 0.6;
 
@@ -73,8 +86,15 @@ export function buildDefaultPolicyDocument(floor = DEFAULT_CONFIDENCE_FLOOR): Po
     version: 1,
     rules: [
       {
-        id: "default-agent-confidence-floor",
-        applies_to: ["any"],
+        id: "default-money-requires-confirmation",
+        applies_to: ["outbound_payment", "onchain_tx"],
+        when: { "agent.confidence.gte": floor },
+        execute: "confirm",
+        require: "single_signer",
+      },
+      {
+        id: "default-non-money-confidence-floor",
+        applies_to: ["inbound_payment", "ledger_write"],
         when: { "agent.confidence.gte": floor },
         execute: "auto",
       },
