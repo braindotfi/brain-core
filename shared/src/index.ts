@@ -15,6 +15,7 @@
 export * from "./errors.js";
 export * from "./ids.js";
 export * from "./config.js";
+export * from "./audit-status.js";
 
 // Observability (§6)
 export { createLogger, childFromContext } from "./logger.js";

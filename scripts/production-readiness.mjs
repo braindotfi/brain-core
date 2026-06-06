@@ -27,6 +27,8 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { evaluateApproval } from "./lib/audit-status.mjs";
+
 const ROOT = process.cwd();
 const ARGS = new Set(process.argv.slice(2));
 const JSON_MODE = ARGS.has("--json");
@@ -58,15 +60,18 @@ function envSet(key) {
   return env[key] !== undefined && env[key] !== "";
 }
 
-// Read contracts/audit-status.json the same way the runtime escrow boot fence
-// does (composition/escrow-audit-gate.ts -> readAuditStatusApproved), so this
-// pre-deploy report and the runtime fence give the SAME pass/fail decision.
-// Fail-closed: a missing/malformed file is treated as not-approved.
+// Read contracts/audit-status.json through the SAME canonical validator the
+// runtime escrow boot fence (composition/escrow-audit-gate.ts) and the CI guard
+// (check-audit-status.mjs) use, so this pre-deploy report and the runtime fence
+// give the SAME pass/fail decision. `approved` is the full evaluateApproval
+// verdict (auditor + 40-hex commit + report + zero critical/high), NOT a bare
+// status check — an incomplete record whose status reads "approved" is not
+// approved here either. Fail-closed: a missing/malformed file is not-approved.
 function readAuditStatus() {
   try {
     const doc = JSON.parse(readFileSync(join(ROOT, "contracts/audit-status.json"), "utf8"));
     const status = typeof doc.status === "string" ? doc.status : "missing";
-    return { status, approved: status === "approved" };
+    return { status, approved: evaluateApproval(doc).approved };
   } catch {
     return { status: "missing", approved: false };
   }
