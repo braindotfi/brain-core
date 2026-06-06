@@ -357,7 +357,13 @@ if [[ "${BRAIN_DEMO_E2E_FULL:-false}" == "true" ]]; then
   # (a) §6 coverage: the money path MUST run checks 8 (amount limit), 9.5
   # (evidence-semantic), 11.5 (duplicate) — and none may be not_applicable
   # (that would mean a money-path loader is unwired).
-  PROOF_FULL=$(curl -s "$V1/proof/$PI_ID" -H "Authorization: Bearer $TOKEN")
+  # The §6 gate persists gate_checks on the execute.before audit event, so the
+  # proof carries them even while the PI is still `dispatching` (no anchor
+  # needed). Diagnostic line first so a shape/route surprise is visible in CI.
+  PROOF_HTTP=$(curl -s -o /tmp/proof.json -w "%{http_code}" "$V1/proof/$PI_ID" \
+    -H "Authorization: Bearer $TOKEN")
+  PROOF_FULL=$(cat /tmp/proof.json)
+  note "proof HTTP=$PROOF_HTTP indices=$(echo "${PROOF_FULL:-}" | jq -c '[.gate_checks[]?.index]' 2>/dev/null || echo '?') body[0:160]=$(echo "${PROOF_FULL:-}" | head -c 160)"
   for idx in 8 9.5 11.5; do
     MATCH=$(echo "${PROOF_FULL:-}" | jq -c --argjson i "$idx" '[.gate_checks[]? | select(.index == $i)]')
     if [[ "$(echo "$MATCH" | jq 'length')" == "0" ]]; then
