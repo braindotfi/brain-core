@@ -94,55 +94,50 @@ describe("claimDueBlobPurgeJobs", () => {
 describe("status transitions (fenced on lockToken)", () => {
   it("markBlobPurgeCompleted sets completed + fences on locked_by + reports lease held", async () => {
     const { client, calls } = fakeQueryable([{ id: "tbp_1" }]); // rowCount 1 ⇒ held
-    const held = await markBlobPurgeCompleted(client, "tbp_1", 5, "evt_1", "tok");
+    const held = await markBlobPurgeCompleted(client, "tbp_1", 5, "tok");
     expect(held).toBe(true);
     const [sql, params] = calls[0]!;
     expect(sql).toContain("status = 'completed'");
-    expect(sql).toContain("locked_by = $4");
-    expect(params).toEqual(["tbp_1", 5, "evt_1", "tok"]);
+    expect(sql).toContain("locked_by = $3");
+    // No audit_event_ids write: the outbox is the job→audit relation now.
+    expect(sql).not.toContain("audit_event_ids");
+    expect(params).toEqual(["tbp_1", 5, "tok"]);
   });
 
   it("a fenced mark reports lease LOST when 0 rows match (stolen lease)", async () => {
     const { client } = fakeQueryable([]); // rowCount 0 ⇒ not held
-    const held = await markBlobPurgeCompleted(client, "tbp_1", 5, "evt_1", "stale-tok");
+    const held = await markBlobPurgeCompleted(client, "tbp_1", 5, "stale-tok");
     expect(held).toBe(false);
   });
 
   it("markBlobPurgeBlockedLegalHold records the surfaced paths + fences", async () => {
     const { client, calls } = fakeQueryable([{ id: "tbp_1" }]);
-    const held = await markBlobPurgeBlockedLegalHold(
-      client,
-      "tbp_1",
-      2,
-      ["a/hold.pdf"],
-      "evt_2",
-      "tok",
-    );
+    const held = await markBlobPurgeBlockedLegalHold(client, "tbp_1", 2, ["a/hold.pdf"], "tok");
     expect(held).toBe(true);
     const [sql, params] = calls[0]!;
     expect(sql).toContain("status = 'blocked_legal_hold'");
-    expect(sql).toContain("locked_by = $5");
-    expect(params).toEqual(["tbp_1", 2, ["a/hold.pdf"], "evt_2", "tok"]);
+    expect(sql).toContain("locked_by = $4");
+    expect(params).toEqual(["tbp_1", 2, ["a/hold.pdf"], "tok"]);
   });
 
   it("markBlobPurgeFailed schedules the backoff, bumps attempts + fences", async () => {
     const { client, calls } = fakeQueryable([{ id: "tbp_1" }]);
-    const held = await markBlobPurgeFailed(client, "tbp_1", 2, "azure 503", 60, "evt_3", "tok");
+    const held = await markBlobPurgeFailed(client, "tbp_1", 2, "azure 503", 60, "tok");
     expect(held).toBe(true);
     const [sql, params] = calls[0]!;
     expect(sql).toContain("status = 'failed'");
     expect(sql).toContain("next_attempt_at = now() + ($4 || ' seconds')::interval");
-    expect(sql).toContain("locked_by = $6");
-    expect(params).toEqual(["tbp_1", 2, "azure 503", "60", "evt_3", "tok"]);
+    expect(sql).toContain("locked_by = $5");
+    expect(params).toEqual(["tbp_1", 2, "azure 503", "60", "tok"]);
   });
 
   it("markBlobPurgeExhausted dead-letters at the cap + fences", async () => {
     const { client, calls } = fakeQueryable([{ id: "tbp_1" }]);
-    const held = await markBlobPurgeExhausted(client, "tbp_1", 6, "azure 503", "evt_4", "tok");
+    const held = await markBlobPurgeExhausted(client, "tbp_1", 6, "azure 503", "tok");
     expect(held).toBe(true);
     const [sql, params] = calls[0]!;
     expect(sql).toContain("status = 'exhausted'");
-    expect(sql).toContain("locked_by = $5");
-    expect(params).toEqual(["tbp_1", 6, "azure 503", "evt_4", "tok"]);
+    expect(sql).toContain("locked_by = $4");
+    expect(params).toEqual(["tbp_1", 6, "azure 503", "tok"]);
   });
 });

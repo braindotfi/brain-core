@@ -186,7 +186,7 @@ export async function runBlobPurgeCycle(
         "tenant_blob.purge_exhausted",
         { attempt, last_error: message },
         eventKey,
-        (conn) => markBlobPurgeExhausted(conn, job.id, attempt, message, eventKey, lockToken),
+        (conn) => markBlobPurgeExhausted(conn, job.id, attempt, message, lockToken),
       );
       if (held) tally.exhausted += 1;
       else onLeaseLost(job);
@@ -198,7 +198,7 @@ export async function runBlobPurgeCycle(
         "tenant_blob.purge_retried",
         { attempt, last_error: message, next_attempt_in_seconds: delay },
         eventKey,
-        (conn) => markBlobPurgeFailed(conn, job.id, attempt, message, delay, eventKey, lockToken),
+        (conn) => markBlobPurgeFailed(conn, job.id, attempt, message, delay, lockToken),
       );
       if (held) tally.retried += 1;
       else onLeaseLost(job);
@@ -233,7 +233,7 @@ export async function runBlobPurgeCycle(
           "tenant_blob.purge_completed",
           { deleted: result.deleted },
           eventKey,
-          (conn) => markBlobPurgeCompleted(conn, job.id, result.deleted, eventKey, lockToken),
+          (conn) => markBlobPurgeCompleted(conn, job.id, result.deleted, lockToken),
         );
         if (held) tally.completed += 1;
         else onLeaseLost(job);
@@ -272,7 +272,6 @@ export async function runBlobPurgeCycle(
                 job.id,
                 result.deleted,
                 legalHoldPaths,
-                eventKey,
                 lockToken,
               ),
           );

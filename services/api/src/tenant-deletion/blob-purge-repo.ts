@@ -149,16 +149,14 @@ export async function markBlobPurgeCompleted(
   client: Queryable,
   id: string,
   deletedCount: number,
-  auditEventId: string,
   lockToken: string,
 ): Promise<boolean> {
   const res = await client.query(
     `UPDATE tenant_blob_purge_jobs
         SET status = 'completed', deleted_count = $2, completed_at = now(),
-            locked_at = NULL, locked_by = NULL,
-            audit_event_ids = array_append(audit_event_ids, $3)
-      WHERE id = $1 AND locked_by = $4`,
-    [id, deletedCount, auditEventId, lockToken],
+            locked_at = NULL, locked_by = NULL
+      WHERE id = $1 AND locked_by = $3`,
+    [id, deletedCount, lockToken],
   );
   return (res.rowCount ?? 0) > 0;
 }
@@ -173,16 +171,14 @@ export async function markBlobPurgeBlockedLegalHold(
   id: string,
   deletedCount: number,
   legalHoldPaths: ReadonlyArray<string>,
-  auditEventId: string,
   lockToken: string,
 ): Promise<boolean> {
   const res = await client.query(
     `UPDATE tenant_blob_purge_jobs
         SET status = 'blocked_legal_hold', deleted_count = $2, legal_hold_paths = $3,
-            completed_at = now(), locked_at = NULL, locked_by = NULL,
-            audit_event_ids = array_append(audit_event_ids, $4)
-      WHERE id = $1 AND locked_by = $5`,
-    [id, deletedCount, [...legalHoldPaths], auditEventId, lockToken],
+            completed_at = now(), locked_at = NULL, locked_by = NULL
+      WHERE id = $1 AND locked_by = $4`,
+    [id, deletedCount, [...legalHoldPaths], lockToken],
   );
   return (res.rowCount ?? 0) > 0;
 }
@@ -194,17 +190,15 @@ export async function markBlobPurgeFailed(
   attempt: number,
   error: string,
   delaySeconds: number,
-  auditEventId: string,
   lockToken: string,
 ): Promise<boolean> {
   const res = await client.query(
     `UPDATE tenant_blob_purge_jobs
         SET status = 'failed', attempts = $2, last_error = $3,
             next_attempt_at = now() + ($4 || ' seconds')::interval,
-            locked_at = NULL, locked_by = NULL,
-            audit_event_ids = array_append(audit_event_ids, $5)
-      WHERE id = $1 AND locked_by = $6`,
-    [id, attempt, error, String(delaySeconds), auditEventId, lockToken],
+            locked_at = NULL, locked_by = NULL
+      WHERE id = $1 AND locked_by = $5`,
+    [id, attempt, error, String(delaySeconds), lockToken],
   );
   return (res.rowCount ?? 0) > 0;
 }
@@ -215,16 +209,14 @@ export async function markBlobPurgeExhausted(
   id: string,
   attempt: number,
   error: string,
-  auditEventId: string,
   lockToken: string,
 ): Promise<boolean> {
   const res = await client.query(
     `UPDATE tenant_blob_purge_jobs
         SET status = 'exhausted', attempts = $2, last_error = $3, completed_at = now(),
-            locked_at = NULL, locked_by = NULL,
-            audit_event_ids = array_append(audit_event_ids, $4)
-      WHERE id = $1 AND locked_by = $5`,
-    [id, attempt, error, auditEventId, lockToken],
+            locked_at = NULL, locked_by = NULL
+      WHERE id = $1 AND locked_by = $4`,
+    [id, attempt, error, lockToken],
   );
   return (res.rowCount ?? 0) > 0;
 }
