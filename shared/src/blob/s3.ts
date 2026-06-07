@@ -18,11 +18,13 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type {
   BlobAdapter,
   BlobObject,
+  BlobPurgeFailure,
   BlobPurgeResult,
   PutOptions,
   SignedUrlOptions,
 } from "./types.js";
 import { sha256Hex } from "./types.js";
+import { classifyBlobDeleteError } from "./purge-classify.js";
 
 export interface S3AdapterOptions {
   bucket: string;
@@ -121,7 +123,7 @@ export class S3BlobAdapter implements BlobAdapter {
   public async purgeTenant(tenantId: string): Promise<BlobPurgeResult> {
     const prefix = `${tenantId}/`;
     let deleted = 0;
-    const failed: string[] = [];
+    const failures: BlobPurgeFailure[] = [];
     let keyMarker: string | undefined;
     let versionIdMarker: string | undefined;
     // Permanent (GDPR Art. 17) erasure requires deleting EVERY version. In a
@@ -149,17 +151,25 @@ export class S3BlobAdapter implements BlobAdapter {
             }),
           );
           deleted += 1;
-        } catch {
-          // Object-lock / legal-hold-protected versions cannot be force-deleted.
-          // Surface them (keyed by version) for the release runbook instead of
-          // silently skipping — the worker records these as legal_hold_paths.
-          failed.push(`${entry.Key}@${entry.VersionId}`);
+        } catch (err) {
+          // CLASSIFY the failure rather than assuming legal hold. A throttle /
+          // 503 / network blip must be retried, not turned into a terminal
+          // blocked_legal_hold; only a real object-lock / WORM response is
+          // terminal. The worker reads `category`/`retryable` to decide.
+          const c = classifyBlobDeleteError(err);
+          failures.push({
+            path: `${entry.Key}@${entry.VersionId}`,
+            category: c.category,
+            retryable: c.retryable,
+            ...(c.providerCode !== undefined ? { providerCode: c.providerCode } : {}),
+            message: err instanceof Error ? err.message : String(err),
+          });
         }
       }
       keyMarker = list.IsTruncated === true ? list.NextKeyMarker : undefined;
       versionIdMarker = list.IsTruncated === true ? list.NextVersionIdMarker : undefined;
     } while (keyMarker !== undefined || versionIdMarker !== undefined);
-    return { deleted, failed };
+    return { deleted, failures };
   }
 
   public async healthcheck(): Promise<boolean> {

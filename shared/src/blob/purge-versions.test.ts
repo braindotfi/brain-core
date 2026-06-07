@@ -15,7 +15,7 @@ import { S3BlobAdapter } from "./s3.js";
 import { AzureBlobAdapter } from "./azure.js";
 
 describe("S3BlobAdapter.purgeTenant — version-aware", () => {
-  function fakeS3(opts: { lock?: string[] } = {}): {
+  function fakeS3(opts: { lock?: string[]; transient?: string[] } = {}): {
     client: S3Client;
     deletedVersions: string[];
   } {
@@ -46,6 +46,14 @@ describe("S3BlobAdapter.purgeTenant — version-aware", () => {
         const { Key, VersionId } = cmd.input;
         const id = `${Key}@${VersionId}`;
         if (opts.lock?.includes(id)) return Promise.reject(new Error("object locked"));
+        if (opts.transient?.includes(id)) {
+          return Promise.reject(
+            Object.assign(new Error("please slow down"), {
+              name: "SlowDown",
+              $metadata: { httpStatusCode: 503 },
+            }),
+          );
+        }
         deletedVersions.push(id);
         return Promise.resolve({});
       }
@@ -59,18 +67,33 @@ describe("S3BlobAdapter.purgeTenant — version-aware", () => {
     const adapter = new S3BlobAdapter({ bucket: "b" }, client);
     const res = await adapter.purgeTenant("tnt_a");
     expect(res.deleted).toBe(4);
-    expect(res.failed).toEqual([]);
+    expect(res.failures).toEqual([]);
     expect(deletedVersions.sort()).toEqual(
       ["tnt_a/doc@dm1", "tnt_a/doc@v1", "tnt_a/doc@v2", "tnt_a/img@v3"].sort(),
     );
   });
 
-  it("surfaces object-lock / legal-hold protected versions in failed", async () => {
+  it("surfaces object-lock / legal-hold protected versions as a terminal legal_hold failure", async () => {
     const { client } = fakeS3({ lock: ["tnt_a/doc@v2"] });
     const adapter = new S3BlobAdapter({ bucket: "b" }, client);
     const res = await adapter.purgeTenant("tnt_a");
     expect(res.deleted).toBe(3);
-    expect(res.failed).toEqual(["tnt_a/doc@v2"]);
+    expect(res.failures.map((f) => f.path)).toEqual(["tnt_a/doc@v2"]);
+    // An object-lock error is classified terminal (not retried).
+    expect(res.failures[0]).toMatchObject({ category: "legal_hold", retryable: false });
+  });
+
+  it("classifies a 503/SlowDown as transient (retryable), NOT a legal hold", async () => {
+    const { client } = fakeS3({ transient: ["tnt_a/doc@v2"] });
+    const adapter = new S3BlobAdapter({ bucket: "b" }, client);
+    const res = await adapter.purgeTenant("tnt_a");
+    expect(res.deleted).toBe(3);
+    expect(res.failures[0]).toMatchObject({
+      path: "tnt_a/doc@v2",
+      category: "transient",
+      retryable: true,
+      providerCode: "SlowDown",
+    });
   });
 });
 
@@ -121,7 +144,7 @@ describe("AzureBlobAdapter.purgeTenant — version-aware", () => {
     const adapter = new AzureBlobAdapter({ accountName: "a", container: "c" }, service);
     const res = await adapter.purgeTenant("tnt_a");
     expect(res.deleted).toBe(4);
-    expect(res.failed).toEqual([]);
+    expect(res.failures).toEqual([]);
     expect(deleted).toEqual([
       "tnt_a/doc@v1",
       "tnt_a/doc@v2",
@@ -131,13 +154,14 @@ describe("AzureBlobAdapter.purgeTenant — version-aware", () => {
     expect(listOpts[0]).toMatchObject({ includeVersions: true, includeSnapshots: true });
   });
 
-  it("surfaces immutability / legal-hold failures (keyed by version)", async () => {
+  it("surfaces immutability / legal-hold failures (keyed by version) as terminal legal_hold", async () => {
     const { service } = fakeAzure([{ name: "tnt_a/doc", versionId: "v1" }], {
       lock: ["tnt_a/doc@v1"],
     });
     const adapter = new AzureBlobAdapter({ accountName: "a", container: "c" }, service);
     const res = await adapter.purgeTenant("tnt_a");
     expect(res.deleted).toBe(0);
-    expect(res.failed).toEqual(["tnt_a/doc@v1"]);
+    expect(res.failures.map((f) => f.path)).toEqual(["tnt_a/doc@v1"]);
+    expect(res.failures[0]).toMatchObject({ category: "legal_hold", retryable: false });
   });
 });

@@ -15,11 +15,13 @@ import {
 import type {
   BlobAdapter,
   BlobObject,
+  BlobPurgeFailure,
   BlobPurgeResult,
   PutOptions,
   SignedUrlOptions,
 } from "./types.js";
 import { sha256Hex } from "./types.js";
+import { classifyBlobDeleteError } from "./purge-classify.js";
 
 export interface AzureAdapterOptions {
   /** Azure Storage account name, e.g. "brainraw". */
@@ -144,7 +146,7 @@ export class AzureBlobAdapter implements BlobAdapter {
     const prefix = `${tenantId}/`;
     const container = this.containerClient();
     let deleted = 0;
-    const failed: string[] = [];
+    const failures: BlobPurgeFailure[] = [];
     // Permanent (GDPR Art. 17) erasure must remove every VERSION and SNAPSHOT,
     // not just the current blob — with versioning enabled a plain delete keeps
     // prior versions. Include both and delete each specific version/snapshot.
@@ -163,14 +165,22 @@ export class AzureBlobAdapter implements BlobAdapter {
           await container.getBlockBlobClient(blob.name).delete({ deleteSnapshots: "include" });
         }
         deleted += 1;
-      } catch {
-        // Immutable-policy / legal-hold-protected versions can't be deleted;
-        // surface them (keyed by version/snapshot) for the release runbook.
+      } catch (err) {
+        // CLASSIFY rather than assume legal hold: ServerBusy / 503 / timeout must
+        // be retried, only a real immutability policy (BlobImmutableDueToPolicy)
+        // is terminal. The worker reads `category`/`retryable` to decide.
         const id = blob.versionId ?? blob.snapshot;
-        failed.push(id !== undefined ? `${blob.name}@${id}` : blob.name);
+        const c = classifyBlobDeleteError(err);
+        failures.push({
+          path: id !== undefined ? `${blob.name}@${id}` : blob.name,
+          category: c.category,
+          retryable: c.retryable,
+          ...(c.providerCode !== undefined ? { providerCode: c.providerCode } : {}),
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     }
-    return { deleted, failed };
+    return { deleted, failures };
   }
 
   public async healthcheck(): Promise<boolean> {
