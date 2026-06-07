@@ -42,7 +42,11 @@ import {
   type BlobPurgeJobRow,
   type Queryable,
 } from "./blob-purge-repo.js";
-import { drainAuditOutbox, enqueueAuditOutbox } from "./blob-purge-audit-outbox.js";
+import {
+  drainAuditOutbox,
+  enqueueAuditOutbox,
+  reportAuditOutboxHealth,
+} from "./blob-purge-audit-outbox.js";
 
 export interface BlobPurgeWorkerDeps {
   /** Privileged Pool (BYPASSRLS): purge jobs belong to deleted tenants. */
@@ -299,6 +303,13 @@ export async function runBlobPurgeCycle(
   tally.auditPublished = drain.published;
   tally.auditFailed = drain.failed;
   tally.auditExhausted = drain.exhausted;
+
+  // Emit observable health for the audit-evidence outbox (backlog + dead-letters)
+  // so an exhausted mandatory audit row is alertable rather than silent.
+  await reportAuditOutboxHealth({
+    privilegedPool: deps.privilegedPool,
+    ...(deps.metrics !== undefined ? { metrics: deps.metrics } : {}),
+  });
 
   return tally;
 }
