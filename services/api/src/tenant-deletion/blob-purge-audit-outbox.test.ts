@@ -6,12 +6,16 @@ import {
   countAuditOutboxByStatus,
   drainAuditOutbox,
   enqueueAuditOutbox,
+  listAuditOutbox,
   markAuditOutboxFailed,
   markAuditOutboxPublished,
   nextOutboxAttemptDelaySeconds,
+  operatorReplayExhaustedAuditOutbox,
   replayExhaustedAuditOutbox,
   reportAuditOutboxHealth,
   type AuditOutboxRow,
+  type AuditOutboxRowSummary,
+  type OperatorReplayDeps,
 } from "./blob-purge-audit-outbox.js";
 import type { Queryable } from "./blob-purge-repo.js";
 
@@ -325,5 +329,110 @@ describe("reportAuditOutboxHealth", () => {
     );
     expect(errSpy).toHaveBeenCalled(); // exhausted > 0 => critical log
     errSpy.mockRestore();
+  });
+});
+
+describe("operator recovery surface", () => {
+  function summary(over: Partial<AuditOutboxRowSummary> = {}): AuditOutboxRowSummary {
+    return {
+      id: "tbo_1",
+      tenant_id: "tnt_a",
+      event_key: "tnt_a:purge_completed",
+      action: "tenant_blob.purge_completed",
+      status: "exhausted",
+      attempts: 12,
+      age_seconds: 7200,
+      ...over,
+    };
+  }
+
+  /** Pool whose connect() yields a client returning `rows` for the FOR UPDATE select. */
+  function fakeReplayPool(rows: AuditOutboxRowSummary[]): {
+    pool: OperatorReplayDeps["privilegedPool"];
+    sql: string[];
+  } {
+    const sql: string[] = [];
+    const client = {
+      query: vi.fn(async (text: string, _p?: ReadonlyArray<unknown>) => {
+        sql.push(text.trim().split("\n")[0]!.trim());
+        if (text.includes("FOR UPDATE")) return { rows, rowCount: rows.length };
+        return { rows: [], rowCount: rows.length };
+      }),
+      release: vi.fn(),
+    };
+    return { pool: { connect: async () => client }, sql };
+  }
+
+  it("listAuditOutbox filters by tenant + age and returns non-sensitive metadata", async () => {
+    const { client, calls } = fakeQ([summary()]);
+    const rows = await listAuditOutbox(client, {
+      status: "exhausted",
+      filter: { tenantId: "tnt_a", olderThanSeconds: 3600 },
+      limit: 50,
+    });
+    expect(rows).toHaveLength(1);
+    const [sql, params] = calls[0]!;
+    expect(sql).toContain("status = $1");
+    expect(sql).toContain("tenant_id = $2");
+    expect(sql).toContain("seconds')::interval");
+    expect(sql).not.toContain("payload"); // never selects the payload
+    expect(params).toEqual(["exhausted", "tnt_a", "3600", 50]);
+  });
+
+  it("dry-run lists matching rows without mutating or auditing", async () => {
+    const { pool, sql } = fakeReplayPool([summary()]);
+    const audit = new InMemoryAuditEmitter();
+    const res = await operatorReplayExhaustedAuditOutbox(
+      { privilegedPool: pool, audit },
+      { operator: "ops@brain", dryRun: true },
+    );
+    expect(res.dryRun).toBe(true);
+    expect(res.replayed).toHaveLength(1);
+    expect(sql).toContain("ROLLBACK");
+    expect(sql.some((s) => s.startsWith("UPDATE"))).toBe(false);
+    expect(audit.events).toHaveLength(0); // dry-run is never audited
+  });
+
+  it("replays exhausted rows and audits the replay per affected tenant", async () => {
+    const rows = [
+      summary({ id: "tbo_1", tenant_id: "tnt_a", event_key: "tnt_a:k1" }),
+      summary({ id: "tbo_2", tenant_id: "tnt_a", event_key: "tnt_a:k2" }),
+      summary({ id: "tbo_3", tenant_id: "tnt_b", event_key: "tnt_b:k1" }),
+    ];
+    const { pool, sql } = fakeReplayPool(rows);
+    const audit = new InMemoryAuditEmitter();
+
+    const res = await operatorReplayExhaustedAuditOutbox(
+      { privilegedPool: pool, audit },
+      { operator: "ops@brain" },
+    );
+
+    expect(res.dryRun).toBe(false);
+    expect(res.replayed).toHaveLength(3);
+    expect(sql.some((s) => s.startsWith("UPDATE"))).toBe(true);
+    expect(sql).toContain("COMMIT");
+    // One audit event per affected tenant, on that tenant's chain.
+    expect(audit.events).toHaveLength(2);
+    const a = audit.events.find((e) => e.tenantId === "tnt_a")!;
+    expect(a.action).toBe("audit.outbox.replayed");
+    expect(a.actor).toBe("ops@brain");
+    expect(a.inputs).toMatchObject({
+      operator: "ops@brain",
+      count: 2,
+      event_keys: ["tnt_a:k1", "tnt_a:k2"],
+    });
+    expect(audit.events.find((e) => e.tenantId === "tnt_b")!.inputs).toMatchObject({ count: 1 });
+  });
+
+  it("is a no-op (no audit) when nothing matches", async () => {
+    const { pool, sql } = fakeReplayPool([]);
+    const audit = new InMemoryAuditEmitter();
+    const res = await operatorReplayExhaustedAuditOutbox(
+      { privilegedPool: pool, audit },
+      { operator: "ops@brain" },
+    );
+    expect(res.replayed).toEqual([]);
+    expect(sql.some((s) => s.startsWith("UPDATE"))).toBe(false);
+    expect(audit.events).toHaveLength(0);
   });
 });

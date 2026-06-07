@@ -183,6 +183,168 @@ export async function countAuditOutboxByStatus(
   return row?.n ?? 0;
 }
 
+// ---------------------------------------------------------------------------
+// Operator recovery surface (Codex c96283d P2): inspect and replay exhausted
+// audit-evidence rows, with the replay itself audited.
+// ---------------------------------------------------------------------------
+
+/** Operator filter for listing / replaying outbox rows. All clauses are AND-ed. */
+export interface AuditOutboxFilter {
+  tenantId?: string;
+  eventKey?: string;
+  id?: string;
+  /** Only rows whose created_at is older than this many seconds. */
+  olderThanSeconds?: number;
+}
+
+/** A non-sensitive row summary for operator inspection (no payload/inputs). */
+export interface AuditOutboxRowSummary {
+  id: string;
+  tenant_id: string;
+  event_key: string;
+  action: string;
+  status: "pending" | "published" | "exhausted";
+  attempts: number;
+  age_seconds: number;
+}
+
+/** Build the parameterized WHERE fragments shared by list + replay. */
+function buildOutboxFilter(filter: AuditOutboxFilter | undefined, params: unknown[]): string[] {
+  const clauses: string[] = [];
+  if (filter?.tenantId !== undefined) {
+    params.push(filter.tenantId);
+    clauses.push(`tenant_id = $${params.length}`);
+  }
+  if (filter?.eventKey !== undefined) {
+    params.push(filter.eventKey);
+    clauses.push(`event_key = $${params.length}`);
+  }
+  if (filter?.id !== undefined) {
+    params.push(filter.id);
+    clauses.push(`id = $${params.length}`);
+  }
+  if (filter?.olderThanSeconds !== undefined) {
+    params.push(String(filter.olderThanSeconds));
+    clauses.push(`created_at < now() - ($${params.length} || ' seconds')::interval`);
+  }
+  return clauses;
+}
+
+/**
+ * List outbox rows for operator inspection (dry-run before replay). Returns only
+ * non-sensitive metadata — never the payload/inputs. Defaults to exhausted rows.
+ */
+export async function listAuditOutbox(
+  client: Queryable,
+  opts: {
+    status?: "pending" | "published" | "exhausted";
+    filter?: AuditOutboxFilter;
+    limit?: number;
+  } = {},
+): Promise<AuditOutboxRowSummary[]> {
+  const params: unknown[] = [opts.status ?? "exhausted"];
+  const clauses = [`status = $1`, ...buildOutboxFilter(opts.filter, params)];
+  params.push(opts.limit ?? 100);
+  const res = await client.query(
+    `SELECT id, tenant_id, event_key, action, status, attempts,
+            extract(epoch FROM now() - created_at)::int AS age_seconds
+       FROM tenant_blob_purge_audit_outbox
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY created_at
+      LIMIT $${params.length}`,
+    params,
+  );
+  return res.rows as AuditOutboxRowSummary[];
+}
+
+export interface OperatorReplayDeps {
+  privilegedPool: {
+    connect: () => Promise<Queryable & { release: () => void }>;
+  };
+  audit: AuditEmitter;
+}
+
+export interface OperatorReplayResult {
+  dryRun: boolean;
+  /** Rows that were (or, in dry-run, would be) requeued. */
+  replayed: AuditOutboxRowSummary[];
+}
+
+/**
+ * Audited operator replay: requeue exhausted rows matching `filter` and record
+ * the action as a `audit.outbox.replayed` audit event (one per affected tenant,
+ * so the evidence lands on that tenant's chain). Supports dry-run (inspect with
+ * no mutation and no audit). The replay itself is therefore never silent.
+ */
+export async function operatorReplayExhaustedAuditOutbox(
+  deps: OperatorReplayDeps,
+  opts: { operator: string; filter?: AuditOutboxFilter; dryRun?: boolean; limit?: number },
+): Promise<OperatorReplayResult> {
+  const c = await deps.privilegedPool.connect();
+  try {
+    await c.query("BEGIN");
+    const params: unknown[] = ["exhausted"];
+    const clauses = [`status = $1`, ...buildOutboxFilter(opts.filter, params)];
+    params.push(opts.limit ?? 100);
+    const sel = await c.query(
+      `SELECT id, tenant_id, event_key, action, status, attempts,
+              extract(epoch FROM now() - created_at)::int AS age_seconds
+         FROM tenant_blob_purge_audit_outbox
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY created_at
+        LIMIT $${params.length}
+        FOR UPDATE`,
+      params,
+    );
+    const rows = sel.rows as AuditOutboxRowSummary[];
+
+    if (opts.dryRun === true || rows.length === 0) {
+      await c.query("ROLLBACK");
+      return { dryRun: opts.dryRun === true, replayed: rows };
+    }
+
+    await c.query(
+      `UPDATE tenant_blob_purge_audit_outbox
+          SET status = 'pending', attempts = 0, next_attempt_at = now(), last_error = NULL
+        WHERE id = ANY($1)`,
+      [rows.map((r) => r.id)],
+    );
+    await c.query("COMMIT");
+
+    // Audit the replay per affected tenant (correct provenance on each chain).
+    const byTenant = new Map<string, AuditOutboxRowSummary[]>();
+    for (const r of rows) {
+      const list = byTenant.get(r.tenant_id) ?? [];
+      list.push(r);
+      byTenant.set(r.tenant_id, list);
+    }
+    for (const [tenantId, trows] of byTenant) {
+      await deps.audit.emit({
+        tenantId,
+        layer: "audit",
+        actor: opts.operator,
+        action: "audit.outbox.replayed",
+        inputs: {
+          operator: opts.operator,
+          count: trows.length,
+          event_keys: trows.map((r) => r.event_key),
+        },
+        outputs: {},
+      });
+    }
+    return { dryRun: false, replayed: rows };
+  } catch (err) {
+    try {
+      await c.query("ROLLBACK");
+    } catch {
+      /* swallow — original error wins */
+    }
+    throw err;
+  } finally {
+    c.release();
+  }
+}
+
 export interface AuditOutboxDrainDeps {
   privilegedPool: Pool;
   audit: AuditEmitter;

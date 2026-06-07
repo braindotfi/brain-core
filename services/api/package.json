@@ -25,7 +25,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "start": "node dist/main.js",
-    "dev": "tsx watch src/main.ts"
+    "dev": "tsx watch src/main.ts",
+    "audit-outbox": "tsx src/tenant-deletion/audit-outbox-cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",

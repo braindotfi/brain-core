@@ -20,6 +20,7 @@ export default defineConfig({
         // Require integration tests; excluded from unit coverage gate:
         "src/anchorBroadcaster.ts",
         "src/main.ts",
+        "src/tenant-deletion/audit-outbox-cli.ts",
         "src/auth/siwe.ts",
         "src/sandbox/resolvers.ts",
       ],
