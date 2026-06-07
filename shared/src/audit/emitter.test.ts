@@ -54,13 +54,32 @@ describe("InMemoryAuditEmitter", () => {
   it("dedupes by idempotency key (same tenant + key returns the SAME event)", async () => {
     const emitter = new InMemoryAuditEmitter();
     const tenant = newTenantId();
-    const a = await emitter.emit({ ...baseEvent(), tenantId: tenant, idempotencyKey: "k1" });
-    const b = await emitter.emit({ ...baseEvent(), tenantId: tenant, idempotencyKey: "k1" });
-    expect(b).toBe(a); // the existing event, not a duplicate
+    // Reuse ONE payload object: the idempotency contract is "same key => same
+    // content", so both emits must carry identical content to dedupe.
+    const input = { ...baseEvent(), tenantId: tenant, idempotencyKey: "k1" };
+    const a = await emitter.emit(input);
+    const b = await emitter.emit(input); // the existing event, not a duplicate
+    expect(b).toBe(a);
     expect(emitter.events).toHaveLength(1);
     // A different key writes a new event.
-    await emitter.emit({ ...baseEvent(), tenantId: tenant, idempotencyKey: "k2" });
+    await emitter.emit({ ...input, idempotencyKey: "k2" });
     expect(emitter.events).toHaveLength(2);
+  });
+
+  it("throws audit_idempotency_conflict when a key is reused for different content", async () => {
+    const emitter = new InMemoryAuditEmitter();
+    const tenant = newTenantId();
+    const input = { ...baseEvent(), tenantId: tenant, idempotencyKey: "k1" };
+    await emitter.emit(input);
+    // Same key, different action -> a different logical payload -> conflict.
+    await expect(emitter.emit({ ...input, action: "raw.tombstone" })).rejects.toMatchObject({
+      code: "audit_idempotency_conflict",
+    });
+    // The conflicting emit did not add a second event.
+    expect(emitter.events).toHaveLength(1);
+    // The identical payload still dedupes (returns the original).
+    const again = await emitter.emit(input);
+    expect(again).toBe(emitter.events[0]);
   });
 });
 
@@ -121,8 +140,18 @@ describe("PostgresAuditEmitter", () => {
 
   it("returns the existing event (no INSERT) on an idempotency-key hit", async () => {
     const existingId = "evt_existing";
-    const existingHash = Buffer.from("c".repeat(64), "hex");
     const createdAt = new Date("2026-06-07T00:00:00.000Z");
+    // The stored row represents a prior emit of THIS payload (the idempotency
+    // contract: same key => same content), so its event_hash is that payload's
+    // hash at the stored chain position. The emitter recomputes and matches it.
+    const input: AuditEventInput = { ...baseEvent(), idempotencyKey: "k1" };
+    const existingHashHex = hashEvent({
+      event: input,
+      id: existingId,
+      createdAt: createdAt.toISOString(),
+      prevEventHash: null,
+    });
+    const existingHash = Buffer.from(existingHashHex, "hex");
     const log: string[] = [];
     const client = {
       released: false,
@@ -150,15 +179,68 @@ describe("PostgresAuditEmitter", () => {
     const pool = { connect: async () => client } as unknown as Pool;
     const emitter = new PostgresAuditEmitter(pool);
 
-    const ev = await emitter.emit({ ...baseEvent(), idempotencyKey: "k1" });
+    const ev = await emitter.emit(input);
 
     expect(ev.id).toBe(existingId);
-    expect(ev.eventHash).toBe("c".repeat(64));
+    expect(ev.eventHash).toBe(existingHashHex);
     expect(ev.prevEventHash).toBeNull();
     expect(ev.createdAt).toBe("2026-06-07T00:00:00.000Z");
     // It returned the existing row — NO new event was inserted.
     expect(log.some((s) => s.startsWith("INSERT"))).toBe(false);
     expect(log).toContain("COMMIT");
+    expect(client.released).toBe(true);
+  });
+
+  it("throws audit_idempotency_conflict when the same key has a different payload", async () => {
+    const createdAt = new Date("2026-06-07T00:00:00.000Z");
+    const base = baseEvent();
+    // The stored row's hash is for one payload; the caller emits a DIFFERENT one
+    // (only `action` differs) under the same key. The recomputed hash will not
+    // match the stored hash -> conflict, not a silent phantom return.
+    const storedHash = Buffer.from(
+      hashEvent({
+        event: { ...base, action: "raw.ingest", idempotencyKey: "k1" },
+        id: "evt_existing",
+        createdAt: createdAt.toISOString(),
+        prevEventHash: null,
+      }),
+      "hex",
+    );
+    const log: string[] = [];
+    const client = {
+      released: false,
+      query: vi.fn(async (text: string) => {
+        log.push(text.trim().split("\n")[0]!.trim());
+        if (text.includes("idempotency_key = $2")) {
+          return {
+            rows: [
+              {
+                id: "evt_existing",
+                event_hash: storedHash,
+                prev_event_hash: null,
+                created_at: createdAt,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(() => {
+        client.released = true;
+      }),
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+    const emitter = new PostgresAuditEmitter(pool);
+
+    await expect(
+      emitter.emit({ ...base, action: "raw.tombstone", idempotencyKey: "k1" }),
+    ).rejects.toMatchObject({ code: "audit_idempotency_conflict" });
+
+    // Read-only transaction rolled back; nothing written or committed.
+    expect(log).toContain("ROLLBACK");
+    expect(log).not.toContain("COMMIT");
+    expect(log.some((s) => s.startsWith("INSERT"))).toBe(false);
     expect(client.released).toBe(true);
   });
 
