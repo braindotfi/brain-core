@@ -87,7 +87,7 @@ describe("InMemoryAuditEmitter", () => {
 // PostgresAuditEmitter — tested with a fake pool double.
 // ---------------------------------------------------------------------------
 
-function makeFakePgPool(rows: Array<{ event_hash: string }> = []) {
+function makeFakePgPool(rows: Array<{ event_hash: string | Buffer }> = []) {
   const log: string[] = [];
   const client = {
     released: false,
@@ -129,13 +129,36 @@ describe("PostgresAuditEmitter", () => {
     expect(ev.eventHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("reads prev_event_hash from the tenant's latest row", async () => {
-    const priorHash = "b".repeat(64);
-    const { pool } = makeFakePgPool([{ event_hash: priorHash }]);
+  it("reads prev_event_hash from the tenant's latest row and exposes it as hex", async () => {
+    // node-pg returns the BYTEA event_hash column as a Buffer; the emitter must
+    // normalize it to the canonical hex string, not leak the Buffer through the
+    // declared `string` contract (Codex c96283d P1).
+    const priorHashHex = "b".repeat(64);
+    const { pool } = makeFakePgPool([{ event_hash: Buffer.from(priorHashHex, "hex") }]);
     const emitter = new PostgresAuditEmitter(pool);
 
     const ev = await emitter.emit(baseEvent());
-    expect(ev.prevEventHash).toBe(priorHash);
+    expect(ev.prevEventHash).toBe(priorHashHex);
+  });
+
+  it("hashes over the HEX predecessor, not the raw BYTEA buffer", async () => {
+    // The canonical hash contract requires a hex-string predecessor. If the raw
+    // Buffer reaches hashEvent it canonicalizes as {"0":..,"1":..}, so the stored
+    // hash would not recompute from the documented hex form (and a non-genesis
+    // idempotent replay would falsely conflict). (Codex c96283d P1)
+    const priorHashHex = "c".repeat(64);
+    const { pool } = makeFakePgPool([{ event_hash: Buffer.from(priorHashHex, "hex") }]);
+    const emitter = new PostgresAuditEmitter(pool);
+    const input = baseEvent();
+
+    const ev = await emitter.emit(input);
+    const recomputed = hashEvent({
+      event: input,
+      id: ev.id,
+      createdAt: ev.createdAt,
+      prevEventHash: priorHashHex,
+    });
+    expect(ev.eventHash).toBe(recomputed);
   });
 
   it("returns the existing event (no INSERT) on an idempotency-key hit", async () => {

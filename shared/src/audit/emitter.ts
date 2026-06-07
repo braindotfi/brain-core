@@ -185,7 +185,12 @@ export class PostgresAuditEmitter implements AuditEmitter {
       }
 
       // Read the most recent event for this tenant (now race-free under the lock).
-      const prev = await client.query<{ event_hash: string }>(
+      // event_hash is a BYTEA column, so node-pg hands it back as a Buffer.
+      // Normalize to the canonical hex string here: hashEvent's contract is a hex
+      // predecessor, and leaking the raw Buffer would (a) canonicalize a
+      // {"0":..} object instead of the hex digest and (b) make a non-genesis
+      // idempotent replay falsely conflict (Codex c96283d P1).
+      const prev = await client.query<{ event_hash: Buffer }>(
         `SELECT event_hash
            FROM audit_events
           WHERE tenant_id = $1
@@ -194,7 +199,7 @@ export class PostgresAuditEmitter implements AuditEmitter {
           FOR UPDATE`,
         [event.tenantId],
       );
-      const prevHash = prev.rows[0]?.event_hash ?? null;
+      const prevHash = prev.rows[0]?.event_hash.toString("hex") ?? null;
 
       const id = newAuditEventId();
       const createdAt = new Date().toISOString();
