@@ -10,6 +10,7 @@ import {
   markAuditOutboxPublished,
   nextOutboxAttemptDelaySeconds,
   replayExhaustedAuditOutbox,
+  reportAuditOutboxHealth,
   type AuditOutboxRow,
 } from "./blob-purge-audit-outbox.js";
 import type { Queryable } from "./blob-purge-repo.js";
@@ -247,5 +248,82 @@ describe("drainAuditOutbox", () => {
     const [sql, params] = calls[0]!;
     expect(sql).toContain("count(*)");
     expect(params).toEqual(["exhausted"]);
+  });
+});
+
+describe("reportAuditOutboxHealth", () => {
+  function healthPool(row: {
+    pending: number;
+    exhausted: number;
+    oldest_pending_age_s: number;
+    oldest_exhausted_age_s: number;
+  }): { pool: Pool; sql: string[] } {
+    const sql: string[] = [];
+    const pool = {
+      query: vi.fn(async (text: string) => {
+        sql.push(text);
+        return { rows: [row], rowCount: 1 };
+      }),
+    } as unknown as Pool;
+    return { pool, sql };
+  }
+
+  it("emits gauges and returns the snapshot, with no log when nothing is exhausted", async () => {
+    const { pool, sql } = healthPool({
+      pending: 2,
+      exhausted: 0,
+      oldest_pending_age_s: 41.5,
+      oldest_exhausted_age_s: 0,
+    });
+    const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const health = await reportAuditOutboxHealth({
+      privilegedPool: pool,
+      metrics: metrics as never,
+    });
+
+    expect(health).toEqual({
+      pending: 2,
+      exhausted: 0,
+      oldestPendingAgeSeconds: 41.5,
+      oldestExhaustedAgeSeconds: 0,
+    });
+    expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.outbox.pending.count", 2);
+    expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.outbox.exhausted.count", 0);
+    expect(metrics.gauge).toHaveBeenCalledWith(
+      "brain.audit.outbox.oldest_pending_age_seconds",
+      41.5,
+    );
+    // Counts are per-status FILTER aggregates over the whole table.
+    expect(sql.some((s) => s.includes("FILTER (WHERE status = 'exhausted')"))).toBe(true);
+    // Clean evidence => no critical log.
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("logs critical when exhausted mandatory audit rows exist", async () => {
+    const { pool } = healthPool({
+      pending: 0,
+      exhausted: 3,
+      oldest_pending_age_s: 0,
+      oldest_exhausted_age_s: 7200,
+    });
+    const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const health = await reportAuditOutboxHealth({
+      privilegedPool: pool,
+      metrics: metrics as never,
+    });
+
+    expect(health.exhausted).toBe(3);
+    expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.outbox.exhausted.count", 3);
+    expect(metrics.gauge).toHaveBeenCalledWith(
+      "brain.audit.outbox.oldest_exhausted_age_seconds",
+      7200,
+    );
+    expect(errSpy).toHaveBeenCalled(); // exhausted > 0 => critical log
+    errSpy.mockRestore();
   });
 });

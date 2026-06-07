@@ -308,3 +308,79 @@ export async function drainAuditOutbox(
   }
   return tally;
 }
+
+export interface AuditOutboxHealth {
+  /** Rows still awaiting delivery. */
+  pending: number;
+  /** Rows dead-lettered at the delivery cap — mandatory audit evidence that was
+   *  permanently abandoned. Any non-zero value is an operational red. */
+  exhausted: number;
+  /** Age of the oldest pending row, in seconds (0 when none). */
+  oldestPendingAgeSeconds: number;
+  /** Age of the oldest exhausted row, in seconds (0 when none). */
+  oldestExhaustedAgeSeconds: number;
+}
+
+export interface AuditOutboxHealthDeps {
+  privilegedPool: Pool;
+  metrics?: MetricsEmitter;
+}
+
+/**
+ * Emit observable health for the audit-evidence outbox so a delivery backlog or
+ * a dead-lettered (exhausted) mandatory audit row is visible before it becomes a
+ * silent compliance gap. Mirrors the audit-consistency verifier: a read-only
+ * snapshot, gauges, and a critical log when exhausted rows exist. Operators turn
+ * the exhausted gauge into a red alert (the static production-readiness script
+ * cannot, since it has no live DB).
+ *
+ * MUST run through the privileged (BYPASSRLS) pool: the counts span every tenant
+ * and set no tenant scope, so on the request-path role they would see zero rows.
+ */
+export async function reportAuditOutboxHealth(
+  deps: AuditOutboxHealthDeps,
+): Promise<AuditOutboxHealth> {
+  const res = await deps.privilegedPool.query<{
+    pending: number;
+    exhausted: number;
+    oldest_pending_age_s: number;
+    oldest_exhausted_age_s: number;
+  }>(
+    `SELECT
+        count(*) FILTER (WHERE status = 'pending')::int AS pending,
+        count(*) FILTER (WHERE status = 'exhausted')::int AS exhausted,
+        coalesce(
+          extract(epoch FROM now() - min(created_at) FILTER (WHERE status = 'pending')), 0
+        )::float8 AS oldest_pending_age_s,
+        coalesce(
+          extract(epoch FROM now() - min(created_at) FILTER (WHERE status = 'exhausted')), 0
+        )::float8 AS oldest_exhausted_age_s
+       FROM tenant_blob_purge_audit_outbox`,
+  );
+  const row = res.rows[0];
+  const health: AuditOutboxHealth = {
+    pending: Number(row?.pending ?? 0),
+    exhausted: Number(row?.exhausted ?? 0),
+    oldestPendingAgeSeconds: Number(row?.oldest_pending_age_s ?? 0),
+    oldestExhaustedAgeSeconds: Number(row?.oldest_exhausted_age_s ?? 0),
+  };
+
+  deps.metrics?.gauge("brain.audit.outbox.pending.count", health.pending);
+  deps.metrics?.gauge("brain.audit.outbox.exhausted.count", health.exhausted);
+  deps.metrics?.gauge(
+    "brain.audit.outbox.oldest_pending_age_seconds",
+    health.oldestPendingAgeSeconds,
+  );
+  deps.metrics?.gauge(
+    "brain.audit.outbox.oldest_exhausted_age_seconds",
+    health.oldestExhaustedAgeSeconds,
+  );
+
+  if (health.exhausted > 0) {
+    console.error("[audit-outbox] exhausted mandatory audit-evidence rows present", {
+      exhausted: health.exhausted,
+      oldestExhaustedAgeSeconds: health.oldestExhaustedAgeSeconds,
+    });
+  }
+  return health;
+}
