@@ -17,9 +17,11 @@
  * not clear on its own) with the paths surfaced for the release runbook.
  */
 
+import { randomUUID } from "node:crypto";
 import type { AuditEmitter, BlobAdapter, MetricsEmitter } from "@brain/shared";
 import type { Pool } from "pg";
 import {
+  BLOB_PURGE_LEASE_SECONDS,
   claimDueBlobPurgeJobs,
   markBlobPurgeBlockedLegalHold,
   markBlobPurgeCompleted,
@@ -39,6 +41,8 @@ export interface BlobPurgeWorkerDeps {
   workerId?: string;
   /** Override the attempt cap (defaults to MAX_BLOB_PURGE_ATTEMPTS). */
   maxAttempts?: number;
+  /** Override the lease timeout in seconds (defaults to BLOB_PURGE_LEASE_SECONDS). */
+  leaseSeconds?: number;
 }
 
 export interface BlobPurgeCycleResult {
@@ -47,6 +51,10 @@ export interface BlobPurgeCycleResult {
   blockedLegalHold: number;
   retried: number;
   exhausted: number;
+  /** Stale-lease jobs reclaimed this cycle from a crashed/stuck prior worker. */
+  reclaimed: number;
+  /** Outcomes discarded because the lease was stolen mid-flight (fenced write). */
+  leaseLost: number;
 }
 
 async function emitLifecycle(
@@ -83,13 +91,19 @@ export async function runBlobPurgeCycle(
   opts: { limit?: number } = {},
 ): Promise<BlobPurgeCycleResult> {
   const max = deps.maxAttempts ?? MAX_BLOB_PURGE_ATTEMPTS;
+  const lease = deps.leaseSeconds ?? BLOB_PURGE_LEASE_SECONDS;
   const workerId = deps.workerId ?? "tenant-blob-purge-worker";
+  // A UNIQUE token per cycle (not the static worker name) is what every status
+  // write below is fenced on. If this job's lease is later reclaimed, the new
+  // owner stamps a different token and our fenced writes no-op — so a resurrected
+  // stale worker cannot clobber the new owner's result (review P1 #1).
+  const lockToken = `${workerId}:${randomUUID()}`;
   const limit = opts.limit ?? 10;
 
   const c = await deps.privilegedPool.connect();
   let claimed: BlobPurgeJobRow[];
   try {
-    claimed = await claimDueBlobPurgeJobs(c, workerId, max, limit);
+    claimed = await claimDueBlobPurgeJobs(c, lockToken, max, lease, limit);
   } finally {
     c.release();
   }
@@ -100,10 +114,40 @@ export async function runBlobPurgeCycle(
     blockedLegalHold: 0,
     retried: 0,
     exhausted: 0,
+    reclaimed: 0,
+    leaseLost: 0,
+  };
+
+  // A fenced write returned false ⇒ another worker reclaimed this job's lease
+  // mid-flight; our outcome is stale and was NOT applied. Record + move on.
+  const onLeaseLost = (job: BlobPurgeJobRow): void => {
+    tally.leaseLost += 1;
+    deps.metrics?.increment("brain.tenant.blob_purge.lease_lost.count", {
+      tenant_id: job.tenant_id,
+    });
+    console.warn(
+      "[blob-purge-worker] lease lost (reclaimed by another worker); discarding outcome",
+      { job_id: job.id },
+    );
   };
 
   for (const job of claimed) {
     tally.claimed += 1;
+    // Observability for crash recovery: a reclaimed job means a prior worker
+    // claimed it and never reached a terminal state.
+    if (job.reclaimed) {
+      tally.reclaimed += 1;
+      deps.metrics?.increment("brain.tenant.blob_purge.reclaimed.count", {
+        tenant_id: job.tenant_id,
+      });
+      await emitLifecycle(
+        deps,
+        job,
+        "tenant_blob.purge_reclaimed",
+        { attempts: job.attempts },
+        workerId,
+      );
+    }
     try {
       const result = await deps.blob.purgeTenant(job.tenant_id);
       if (result.failed.length === 0) {
@@ -114,8 +158,15 @@ export async function runBlobPurgeCycle(
           { deleted: result.deleted },
           workerId,
         );
-        await markBlobPurgeCompleted(deps.privilegedPool, job.id, result.deleted, ev);
-        tally.completed += 1;
+        const held = await markBlobPurgeCompleted(
+          deps.privilegedPool,
+          job.id,
+          result.deleted,
+          ev,
+          lockToken,
+        );
+        if (held) tally.completed += 1;
+        else onLeaseLost(job);
       } else {
         deps.metrics?.increment("brain.tenant.blob_purge.legal_hold.count", {
           tenant_id: job.tenant_id,
@@ -127,14 +178,16 @@ export async function runBlobPurgeCycle(
           { deleted: result.deleted, legal_hold_paths: result.failed },
           workerId,
         );
-        await markBlobPurgeBlockedLegalHold(
+        const held = await markBlobPurgeBlockedLegalHold(
           deps.privilegedPool,
           job.id,
           result.deleted,
           result.failed,
           ev,
+          lockToken,
         );
-        tally.blockedLegalHold += 1;
+        if (held) tally.blockedLegalHold += 1;
+        else onLeaseLost(job);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -150,8 +203,16 @@ export async function runBlobPurgeCycle(
           { attempt, last_error: message },
           workerId,
         );
-        await markBlobPurgeExhausted(deps.privilegedPool, job.id, attempt, message, ev);
-        tally.exhausted += 1;
+        const held = await markBlobPurgeExhausted(
+          deps.privilegedPool,
+          job.id,
+          attempt,
+          message,
+          ev,
+          lockToken,
+        );
+        if (held) tally.exhausted += 1;
+        else onLeaseLost(job);
       } else {
         const delay = nextPurgeAttemptDelaySeconds(attempt);
         const ev = await emitLifecycle(
@@ -161,8 +222,17 @@ export async function runBlobPurgeCycle(
           { attempt, last_error: message, next_attempt_in_seconds: delay },
           workerId,
         );
-        await markBlobPurgeFailed(deps.privilegedPool, job.id, attempt, message, delay, ev);
-        tally.retried += 1;
+        const held = await markBlobPurgeFailed(
+          deps.privilegedPool,
+          job.id,
+          attempt,
+          message,
+          delay,
+          ev,
+          lockToken,
+        );
+        if (held) tally.retried += 1;
+        else onLeaseLost(job);
       }
     }
   }
