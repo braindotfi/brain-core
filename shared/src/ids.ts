@@ -74,6 +74,9 @@ export const ID_PREFIX = {
   // RFC 0003 — durable tenant blob purge job (GDPR Art. 17). One row per
   // tenant deletion; survives the deletion and is drained by a privileged worker.
   tenantBlobPurgeJob: "tbp",
+  // RFC 0003 — transactional audit outbox for purge-lifecycle events. One row per
+  // lifecycle transition; delivered to the audit service by the purge worker.
+  tenantBlobPurgeAuditOutbox: "tbo",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];

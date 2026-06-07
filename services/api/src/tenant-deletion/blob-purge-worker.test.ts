@@ -9,19 +9,51 @@ import type { BlobPurgeJobRow } from "./blob-purge-repo.js";
  * handler. The claim UPDATE (status = 'purging') returns the supplied jobs; the
  * mark UPDATEs return rowCount 1. Every SQL string is captured for assertions.
  */
+interface OutboxRow {
+  id: unknown;
+  job_id: unknown;
+  tenant_id: unknown;
+  action: unknown;
+  payload: unknown;
+  event_key: unknown;
+  attempts: number;
+}
+
 function fakePool(
   jobs: BlobPurgeJobRow[],
   opts: { markRowCount?: number } = {},
-): { pool: Pool; calls: string[] } {
+): { pool: Pool; calls: string[]; outbox: OutboxRow[] } {
   const calls: string[] = [];
   // markRowCount controls the fenced-write outcome: 1 ⇒ lease still held, 0 ⇒
   // lease was stolen by a concurrent reclaim (the worker discards the outcome).
   const markRowCount = opts.markRowCount ?? 1;
-  const query = vi.fn((sql: string) => {
+  // Models tenant_blob_purge_audit_outbox: transitions INSERT here; the drain
+  // SELECTs pending rows one at a time and the publisher emits them. This is how
+  // the audit events surface (now via the outbox, not an inline emit).
+  const outbox: OutboxRow[] = [];
+  const query = vi.fn((sql: string, params?: ReadonlyArray<unknown>) => {
     calls.push(sql);
     if (sql.includes("SET status = 'purging'")) {
       return Promise.resolve({ rows: jobs, rowCount: jobs.length });
     }
+    if (sql.includes("INSERT INTO tenant_blob_purge_audit_outbox")) {
+      const p = params ?? [];
+      outbox.push({
+        id: p[0],
+        job_id: p[1],
+        tenant_id: p[2],
+        action: p[3],
+        payload: JSON.parse(String(p[4])),
+        event_key: p[5],
+        attempts: 0,
+      });
+      return Promise.resolve({ rows: [], rowCount: 1 });
+    }
+    if (sql.includes("FROM tenant_blob_purge_audit_outbox") && sql.includes("status = 'pending'")) {
+      const row = outbox.shift();
+      return Promise.resolve({ rows: row ? [row] : [], rowCount: row ? 1 : 0 });
+    }
+    // job status UPDATE (fenced) → markRowCount; BEGIN/COMMIT/outbox marks → 1.
     return Promise.resolve({ rows: [], rowCount: markRowCount });
   });
   const client = { query, release: vi.fn() };
@@ -29,7 +61,7 @@ function fakePool(
     connect: vi.fn(() => Promise.resolve(client)),
     query,
   } as unknown as Pool;
-  return { pool, calls };
+  return { pool, calls, outbox };
 }
 
 function fakeBlob(impl: (tenantId: string) => Promise<BlobPurgeResult>): BlobAdapter {
@@ -258,6 +290,58 @@ describe("runBlobPurgeCycle", () => {
     expect(tally).toMatchObject({ claimed: 1, completed: 0, leaseLost: 1 });
     expect(metrics.increment).toHaveBeenCalledWith(
       "brain.tenant.blob_purge.lease_lost.count",
+      expect.objectContaining({ tenant_id: "tnt_01TESTTENANT" }),
+    );
+    // A stolen lease ⇒ ROLLBACK ⇒ nothing enqueued to the outbox.
+    expect(audit.events).toHaveLength(0);
+  });
+
+  it("writes the audit intent to the outbox with a deterministic event_key, then publishes it", async () => {
+    const { pool, outbox, calls } = fakePool([job()]);
+    const blob = fakeBlob(() => Promise.resolve({ deleted: 5, failures: [] }));
+    const audit = new InMemoryAuditEmitter();
+
+    const tally = await runBlobPurgeCycle({ privilegedPool: pool, blob, audit });
+
+    // Atomic transition: the completed status write and the outbox enqueue are in
+    // the same transaction (BEGIN ... UPDATE status='completed' ... INSERT outbox
+    // ... COMMIT). After the drain the outbox is emptied and the event delivered.
+    expect(tally).toMatchObject({ claimed: 1, completed: 1, auditPublished: 1, auditFailed: 0 });
+    expect(outbox).toHaveLength(0); // drained
+    expect(calls).toContain("BEGIN");
+    expect(calls).toContain("COMMIT");
+    // The delivered audit event carries the purge outputs + the deterministic key.
+    const ev = audit.events.find((e) => e.action === "tenant_blob.purge_completed");
+    expect(ev).toBeDefined();
+    expect(ev?.inputs).toMatchObject({ event_key: "tbp_01TESTJOB:tenant_blob.purge_completed:0" });
+    expect(ev?.outputs).toMatchObject({ deleted: 5 });
+  });
+
+  it("a job commits its terminal state even when audit delivery is down; the row is retried (no sentinel)", async () => {
+    const { pool, outbox, calls } = fakePool([job()]);
+    const blob = fakeBlob(() => Promise.resolve({ deleted: 5, failures: [] }));
+    // Audit service is unavailable: every emit rejects.
+    const audit = { emit: vi.fn(() => Promise.reject(new Error("audit service down"))) };
+    const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
+
+    const tally = await runBlobPurgeCycle({
+      privilegedPool: pool,
+      blob,
+      audit: audit as never,
+      metrics: metrics as never,
+    });
+
+    // The job is COMPLETED (committed) regardless of audit delivery — a truthful
+    // committed result. The audit intent stays in the outbox (delivery failed) to
+    // be retried; it is NOT lost and there is no 'audit-emit-failed' sentinel.
+    expect(tally).toMatchObject({ completed: 1, auditPublished: 0, auditFailed: 1 });
+    expect(calls.some((s) => s.includes("status = 'completed'"))).toBe(true);
+    expect(calls.some((s) => s.includes("audit-emit-failed"))).toBe(false);
+    // The failed delivery bumped the outbox row's attempt/backoff (not deleted).
+    expect(calls.some((s) => s.includes("UPDATE tenant_blob_purge_audit_outbox"))).toBe(true);
+    void outbox;
+    expect(metrics.increment).toHaveBeenCalledWith(
+      "brain.tenant.blob_purge.audit_publish_failed.count",
       expect.objectContaining({ tenant_id: "tnt_01TESTTENANT" }),
     );
   });

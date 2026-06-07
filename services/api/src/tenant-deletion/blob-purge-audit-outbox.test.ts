@@ -1,0 +1,170 @@
+import { describe, expect, it, vi } from "vitest";
+import type { Pool } from "pg";
+import { InMemoryAuditEmitter } from "@brain/shared";
+import {
+  claimPendingAuditOutbox,
+  drainAuditOutbox,
+  enqueueAuditOutbox,
+  markAuditOutboxFailed,
+  markAuditOutboxPublished,
+  nextOutboxAttemptDelaySeconds,
+  type AuditOutboxRow,
+} from "./blob-purge-audit-outbox.js";
+import type { Queryable } from "./blob-purge-repo.js";
+
+function fakeQ(rows: unknown[] = []): { client: Queryable; calls: [string, unknown[]][] } {
+  const calls: [string, unknown[]][] = [];
+  const client: Queryable = {
+    query: vi.fn((sql: string, params: ReadonlyArray<unknown> = []) => {
+      calls.push([sql, [...params]]);
+      return Promise.resolve({ rows, rowCount: rows.length });
+    }),
+  };
+  return { client, calls };
+}
+
+describe("nextOutboxAttemptDelaySeconds", () => {
+  it("is exponential, capped at 480s", () => {
+    expect(nextOutboxAttemptDelaySeconds(1)).toBe(30);
+    expect(nextOutboxAttemptDelaySeconds(2)).toBe(60);
+    expect(nextOutboxAttemptDelaySeconds(5)).toBe(480);
+    expect(nextOutboxAttemptDelaySeconds(12)).toBe(480);
+  });
+});
+
+describe("enqueueAuditOutbox", () => {
+  it("inserts ON CONFLICT (event_key) DO NOTHING with a jsonb payload", async () => {
+    const { client, calls } = fakeQ();
+    await enqueueAuditOutbox(client, {
+      jobId: "tbp_1",
+      tenantId: "tnt_1",
+      action: "tenant_blob.purge_completed",
+      payload: { deleted: 4 },
+      eventKey: "tbp_1:tenant_blob.purge_completed:0",
+    });
+    const [sql, params] = calls[0]!;
+    expect(sql).toContain("INSERT INTO tenant_blob_purge_audit_outbox");
+    expect(sql).toContain("ON CONFLICT (event_key) DO NOTHING");
+    expect(sql).toContain("$5::jsonb");
+    // id is generated; the rest are passed through, payload JSON-encoded.
+    expect(params.slice(1)).toEqual([
+      "tbp_1",
+      "tnt_1",
+      "tenant_blob.purge_completed",
+      JSON.stringify({ deleted: 4 }),
+      "tbp_1:tenant_blob.purge_completed:0",
+    ]);
+  });
+});
+
+describe("claimPendingAuditOutbox", () => {
+  it("selects pending due rows under the cap, FOR UPDATE SKIP LOCKED", async () => {
+    const { client, calls } = fakeQ([]);
+    await claimPendingAuditOutbox(client, 12, 1);
+    const [sql, params] = calls[0]!;
+    expect(sql).toContain("status = 'pending'");
+    expect(sql).toContain("next_attempt_at <= now()");
+    expect(sql).toContain("attempts < $1");
+    expect(sql).toContain("FOR UPDATE SKIP LOCKED");
+    expect(params).toEqual([12, 1]);
+  });
+});
+
+describe("mark transitions", () => {
+  it("markAuditOutboxPublished records the real audit_event_id", async () => {
+    const { client, calls } = fakeQ();
+    await markAuditOutboxPublished(client, "tbo_1", "evt_real");
+    const [sql, params] = calls[0]!;
+    expect(sql).toContain("status = 'published'");
+    expect(sql).toContain("audit_event_id = $2");
+    expect(params).toEqual(["tbo_1", "evt_real"]);
+  });
+
+  it("markAuditOutboxFailed bumps attempts + schedules backoff", async () => {
+    const { client, calls } = fakeQ();
+    await markAuditOutboxFailed(client, "tbo_1", 3, "audit down", 120);
+    const [sql, params] = calls[0]!;
+    expect(sql).toContain("attempts = $2");
+    expect(sql).toContain("next_attempt_at = now() + ($4 || ' seconds')::interval");
+    expect(params).toEqual(["tbo_1", 3, "audit down", "120"]);
+  });
+});
+
+function row(overrides: Partial<AuditOutboxRow> = {}): AuditOutboxRow {
+  return {
+    id: "tbo_1",
+    job_id: "tbp_1",
+    tenant_id: "tnt_1",
+    action: "tenant_blob.purge_completed",
+    payload: { deleted: 3 },
+    event_key: "tbp_1:tenant_blob.purge_completed:0",
+    attempts: 0,
+    ...overrides,
+  };
+}
+
+/** Pool whose pending-claim SELECT serves `pending` one at a time, then empty. */
+function drainPool(pending: AuditOutboxRow[]): { pool: Pool; calls: string[] } {
+  const remaining = [...pending];
+  const calls: string[] = [];
+  const query = vi.fn((sql: string) => {
+    calls.push(sql);
+    if (sql.includes("FROM tenant_blob_purge_audit_outbox") && sql.includes("status = 'pending'")) {
+      const r = remaining.shift();
+      return Promise.resolve({ rows: r ? [r] : [], rowCount: r ? 1 : 0 });
+    }
+    return Promise.resolve({ rows: [], rowCount: 1 });
+  });
+  const client = { query, release: vi.fn() };
+  return {
+    pool: { connect: vi.fn(() => Promise.resolve(client)), query } as unknown as Pool,
+    calls,
+  };
+}
+
+describe("drainAuditOutbox", () => {
+  it("delivers a pending row to the audit service and marks it published", async () => {
+    const { pool, calls } = drainPool([row()]);
+    const audit = new InMemoryAuditEmitter();
+
+    const res = await drainAuditOutbox({ privilegedPool: pool, audit, workerId: "w1" });
+
+    expect(res).toEqual({ published: 1, failed: 0 });
+    expect(audit.events).toHaveLength(1);
+    expect(audit.events[0]).toMatchObject({
+      action: "tenant_blob.purge_completed",
+      tenantId: "tnt_1",
+      outputs: { deleted: 3 },
+    });
+    expect(calls.some((s) => s.includes("status = 'published'"))).toBe(true);
+  });
+
+  it("on audit failure, records the failure (backoff) and does NOT mark published", async () => {
+    const { pool, calls } = drainPool([row()]);
+    const audit = { emit: vi.fn(() => Promise.reject(new Error("audit down"))) };
+    const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
+
+    const res = await drainAuditOutbox({
+      privilegedPool: pool,
+      audit: audit as never,
+      workerId: "w1",
+      metrics: metrics as never,
+    });
+
+    expect(res).toEqual({ published: 0, failed: 1 });
+    expect(calls.some((s) => s.includes("attempts = $2"))).toBe(true);
+    expect(calls.some((s) => s.includes("status = 'published'"))).toBe(false);
+    expect(metrics.increment).toHaveBeenCalledWith(
+      "brain.tenant.blob_purge.audit_publish_failed.count",
+      expect.objectContaining({ tenant_id: "tnt_1" }),
+    );
+  });
+
+  it("is a no-op when the outbox is empty", async () => {
+    const { pool } = drainPool([]);
+    const audit = new InMemoryAuditEmitter();
+    const res = await drainAuditOutbox({ privilegedPool: pool, audit, workerId: "w1" });
+    expect(res).toEqual({ published: 0, failed: 0 });
+    expect(audit.events).toHaveLength(0);
+  });
+});

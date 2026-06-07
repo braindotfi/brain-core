@@ -4,21 +4,27 @@
  * Drains `tenant_blob_purge_jobs`: claims due jobs, calls
  * `BlobAdapter.purgeTenant(tenantId)` to erase the Raw bytes a deleted tenant
  * uploaded, and records the outcome with bounded retries + a dead-letter
- * (exhausted) state. Every lifecycle transition emits an audit event so the
- * erasure is provable on the chain (the tenant's rows are gone, but the audit
- * layer is retained).
+ * (exhausted) state.
  *
  * Connection model: the queue is for ALREADY-DELETED tenants, so there is no
  * live request scope — the worker uses the privileged (BYPASSRLS) pool and
  * drains cross-tenant, exactly like the outbox + webhook-dispatch workers.
  *
+ * Lease recovery (review P1 #1): each cycle stamps a unique lock token and every
+ * status write is fenced on it; stale 'purging' leases are reclaimed so a crashed
+ * worker cannot strand a job.
+ *
  * Failure classification (review P1 #2): purgeTenant returns CLASSIFIED failures.
- * Transient (throttle / 5xx / network) and authorization / unknown errors are
- * RETRIED (purgeTenant is idempotent) and bounded by the attempt cap. Only when
- * every remaining failure is a confirmed legal hold (WORM / object-lock) does the
- * job terminate as `blocked_legal_hold` (NOT retried — a hold will not clear on
- * its own) with the paths surfaced for the release runbook. A 503 or expired
- * credential no longer masquerades as a legal hold.
+ * Transient / authorization / unknown errors are RETRIED (purgeTenant is
+ * idempotent) and bounded by the attempt cap. Only when every remaining failure
+ * is a confirmed legal hold (WORM / object-lock) does the job terminate as
+ * `blocked_legal_hold`. A 503 or expired credential no longer masquerades as one.
+ *
+ * Transactional audit (review P2 #1): every lifecycle transition writes its audit
+ * INTENT to `tenant_blob_purge_audit_outbox` in the SAME transaction as the
+ * status change (atomic — neither can exist without the other), and a publisher
+ * drained at the end of each cycle delivers it to the audit service idempotently.
+ * No more emit-before-write orphans and no more 'audit-emit-failed' sentinel.
  */
 
 import { randomUUID } from "node:crypto";
@@ -34,7 +40,9 @@ import {
   nextPurgeAttemptDelaySeconds,
   MAX_BLOB_PURGE_ATTEMPTS,
   type BlobPurgeJobRow,
+  type Queryable,
 } from "./blob-purge-repo.js";
+import { drainAuditOutbox, enqueueAuditOutbox } from "./blob-purge-audit-outbox.js";
 
 export interface BlobPurgeWorkerDeps {
   /** Privileged Pool (BYPASSRLS): purge jobs belong to deleted tenants. */
@@ -59,6 +67,10 @@ export interface BlobPurgeCycleResult {
   reclaimed: number;
   /** Outcomes discarded because the lease was stolen mid-flight (fenced write). */
   leaseLost: number;
+  /** Audit-outbox rows delivered to the audit service this cycle. */
+  auditPublished: number;
+  /** Audit-outbox rows whose delivery failed this cycle (will be retried). */
+  auditFailed: number;
 }
 
 /** Human-readable summary of a mixed failure batch for the retry's last_error. */
@@ -67,31 +79,6 @@ function summarizeFailures(failures: ReadonlyArray<BlobPurgeFailure>): string {
   for (const f of failures) counts.set(f.category, (counts.get(f.category) ?? 0) + 1);
   const parts = [...counts.entries()].map(([cat, n]) => `${n} ${cat}`);
   return `${failures.length} object(s) could not be erased (${parts.join(", ")}); retrying`;
-}
-
-async function emitLifecycle(
-  deps: BlobPurgeWorkerDeps,
-  job: BlobPurgeJobRow,
-  action: string,
-  outputs: Record<string, unknown>,
-  workerId: string,
-): Promise<string> {
-  try {
-    const ev = await deps.audit.emit({
-      tenantId: job.tenant_id,
-      layer: "audit",
-      actor: workerId,
-      action,
-      inputs: { tenant_blob_purge_job_id: job.id, blob_prefix: job.blob_prefix },
-      outputs,
-    });
-    return ev.id;
-  } catch (err) {
-    // An audit-emit failure must not strand the job in 'purging'; record a
-    // sentinel and continue so the status transition still lands.
-    console.warn("[blob-purge-worker] failed to emit lifecycle audit event", err);
-    return "audit-emit-failed";
-  }
 }
 
 /**
@@ -128,6 +115,8 @@ export async function runBlobPurgeCycle(
     exhausted: 0,
     reclaimed: 0,
     leaseLost: 0,
+    auditPublished: 0,
+    auditFailed: 0,
   };
 
   // A fenced write returned false ⇒ another worker reclaimed this job's lease
@@ -143,49 +132,70 @@ export async function runBlobPurgeCycle(
     );
   };
 
-  // Retry-or-dead-letter, fenced on the lease. Shared by the catch path (the
-  // purge call itself threw, e.g. a LIST error) and the classified-failure path
-  // (some objects failed transiently).
+  // Apply a terminal/retry status transition AND enqueue its audit intent in ONE
+  // transaction (review P2 #1): atomic, fenced on the lease. Returns whether the
+  // lease was still held (the write landed).
+  const commitTransition = async (
+    job: BlobPurgeJobRow,
+    action: string,
+    payload: Record<string, unknown>,
+    eventKey: string,
+    mark: (client: Queryable) => Promise<boolean>,
+  ): Promise<boolean> => {
+    const conn = await deps.privilegedPool.connect();
+    try {
+      await conn.query("BEGIN");
+      const held = await mark(conn);
+      if (!held) {
+        await conn.query("ROLLBACK");
+        return false;
+      }
+      await enqueueAuditOutbox(conn, {
+        jobId: job.id,
+        tenantId: job.tenant_id,
+        action,
+        payload,
+        eventKey,
+      });
+      await conn.query("COMMIT");
+      return true;
+    } catch (err) {
+      try {
+        await conn.query("ROLLBACK");
+      } catch {
+        /* swallow — original error wins */
+      }
+      throw err;
+    } finally {
+      conn.release();
+    }
+  };
+
   const retryOrExhaust = async (job: BlobPurgeJobRow, message: string): Promise<void> => {
     const attempt = job.attempts + 1;
     if (attempt >= max) {
       deps.metrics?.increment("brain.tenant.blob_purge.exhausted.count", {
         tenant_id: job.tenant_id,
       });
-      const ev = await emitLifecycle(
-        deps,
+      const eventKey = `${job.id}:tenant_blob.purge_exhausted:${attempt}`;
+      const held = await commitTransition(
         job,
         "tenant_blob.purge_exhausted",
         { attempt, last_error: message },
-        workerId,
-      );
-      const held = await markBlobPurgeExhausted(
-        deps.privilegedPool,
-        job.id,
-        attempt,
-        message,
-        ev,
-        lockToken,
+        eventKey,
+        (conn) => markBlobPurgeExhausted(conn, job.id, attempt, message, eventKey, lockToken),
       );
       if (held) tally.exhausted += 1;
       else onLeaseLost(job);
     } else {
       const delay = nextPurgeAttemptDelaySeconds(attempt);
-      const ev = await emitLifecycle(
-        deps,
+      const eventKey = `${job.id}:tenant_blob.purge_retried:${attempt}`;
+      const held = await commitTransition(
         job,
         "tenant_blob.purge_retried",
         { attempt, last_error: message, next_attempt_in_seconds: delay },
-        workerId,
-      );
-      const held = await markBlobPurgeFailed(
-        deps.privilegedPool,
-        job.id,
-        attempt,
-        message,
-        delay,
-        ev,
-        lockToken,
+        eventKey,
+        (conn) => markBlobPurgeFailed(conn, job.id, attempt, message, delay, eventKey, lockToken),
       );
       if (held) tally.retried += 1;
       else onLeaseLost(job);
@@ -195,37 +205,32 @@ export async function runBlobPurgeCycle(
   for (const job of claimed) {
     tally.claimed += 1;
     // Observability for crash recovery: a reclaimed job means a prior worker
-    // claimed it and never reached a terminal state.
+    // claimed it and never reached a terminal state. The reclaim audit event has
+    // no state change, so it is enqueued on its own (idempotent on event_key).
     if (job.reclaimed) {
       tally.reclaimed += 1;
       deps.metrics?.increment("brain.tenant.blob_purge.reclaimed.count", {
         tenant_id: job.tenant_id,
       });
-      await emitLifecycle(
-        deps,
-        job,
-        "tenant_blob.purge_reclaimed",
-        { attempts: job.attempts },
-        workerId,
-      );
+      await enqueueAuditOutbox(deps.privilegedPool, {
+        jobId: job.id,
+        tenantId: job.tenant_id,
+        action: "tenant_blob.purge_reclaimed",
+        payload: { attempts: job.attempts },
+        eventKey: `${job.id}:tenant_blob.purge_reclaimed:${job.attempts}`,
+      });
     }
     try {
       const result = await deps.blob.purgeTenant(job.tenant_id);
       const { failures } = result;
       if (failures.length === 0) {
-        const ev = await emitLifecycle(
-          deps,
+        const eventKey = `${job.id}:tenant_blob.purge_completed:${job.attempts}`;
+        const held = await commitTransition(
           job,
           "tenant_blob.purge_completed",
           { deleted: result.deleted },
-          workerId,
-        );
-        const held = await markBlobPurgeCompleted(
-          deps.privilegedPool,
-          job.id,
-          result.deleted,
-          ev,
-          lockToken,
+          eventKey,
+          (conn) => markBlobPurgeCompleted(conn, job.id, result.deleted, eventKey, lockToken),
         );
         if (held) tally.completed += 1;
         else onLeaseLost(job);
@@ -252,20 +257,21 @@ export async function runBlobPurgeCycle(
           deps.metrics?.increment("brain.tenant.blob_purge.legal_hold.count", {
             tenant_id: job.tenant_id,
           });
-          const ev = await emitLifecycle(
-            deps,
+          const eventKey = `${job.id}:tenant_blob.purge_blocked_legal_hold:${job.attempts}`;
+          const held = await commitTransition(
             job,
             "tenant_blob.purge_blocked_legal_hold",
             { deleted: result.deleted, legal_hold_paths: legalHoldPaths },
-            workerId,
-          );
-          const held = await markBlobPurgeBlockedLegalHold(
-            deps.privilegedPool,
-            job.id,
-            result.deleted,
-            legalHoldPaths,
-            ev,
-            lockToken,
+            eventKey,
+            (conn) =>
+              markBlobPurgeBlockedLegalHold(
+                conn,
+                job.id,
+                result.deleted,
+                legalHoldPaths,
+                eventKey,
+                lockToken,
+              ),
           );
           if (held) tally.blockedLegalHold += 1;
           else onLeaseLost(job);
@@ -276,6 +282,20 @@ export async function runBlobPurgeCycle(
       await retryOrExhaust(job, err instanceof Error ? err.message : String(err));
     }
   }
+
+  // Deliver this cycle's (and any previously-failed) audit intents. Runs every
+  // tick so a transient audit outage self-heals on the next cycle.
+  const drain = await drainAuditOutbox(
+    {
+      privilegedPool: deps.privilegedPool,
+      audit: deps.audit,
+      workerId,
+      ...(deps.metrics !== undefined ? { metrics: deps.metrics } : {}),
+    },
+    { limit: 50 },
+  );
+  tally.auditPublished = drain.published;
+  tally.auditFailed = drain.failed;
 
   return tally;
 }
