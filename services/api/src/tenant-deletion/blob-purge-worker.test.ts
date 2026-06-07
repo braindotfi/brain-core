@@ -9,14 +9,20 @@ import type { BlobPurgeJobRow } from "./blob-purge-repo.js";
  * handler. The claim UPDATE (status = 'purging') returns the supplied jobs; the
  * mark UPDATEs return rowCount 1. Every SQL string is captured for assertions.
  */
-function fakePool(jobs: BlobPurgeJobRow[]): { pool: Pool; calls: string[] } {
+function fakePool(
+  jobs: BlobPurgeJobRow[],
+  opts: { markRowCount?: number } = {},
+): { pool: Pool; calls: string[] } {
   const calls: string[] = [];
+  // markRowCount controls the fenced-write outcome: 1 ⇒ lease still held, 0 ⇒
+  // lease was stolen by a concurrent reclaim (the worker discards the outcome).
+  const markRowCount = opts.markRowCount ?? 1;
   const query = vi.fn((sql: string) => {
     calls.push(sql);
     if (sql.includes("SET status = 'purging'")) {
       return Promise.resolve({ rows: jobs, rowCount: jobs.length });
     }
-    return Promise.resolve({ rows: [], rowCount: 1 });
+    return Promise.resolve({ rows: [], rowCount: markRowCount });
   });
   const client = { query, release: vi.fn() };
   const pool = {
@@ -38,6 +44,7 @@ function job(overrides: Partial<BlobPurgeJobRow> = {}): BlobPurgeJobRow {
     blob_artifact_count: 3,
     status: "purging",
     attempts: 0,
+    reclaimed: false,
     ...overrides,
   };
 }
@@ -125,5 +132,51 @@ describe("runBlobPurgeCycle", () => {
     expect(tally).toMatchObject({ claimed: 0, completed: 0 });
     expect(blob.purgeTenant).not.toHaveBeenCalled();
     expect(audit.events).toHaveLength(0);
+  });
+
+  it("emits purge_reclaimed + a metric for a stale-lease job recovered from a crashed worker", async () => {
+    // The claim returns this row with reclaimed=true (its prior lease expired).
+    const { pool } = fakePool([job({ reclaimed: true })]);
+    const blob = fakeBlob(() => Promise.resolve({ deleted: 4, failed: [] }));
+    const audit = new InMemoryAuditEmitter();
+    const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
+
+    const tally = await runBlobPurgeCycle({
+      privilegedPool: pool,
+      blob,
+      audit,
+      metrics: metrics as never,
+    });
+
+    expect(tally).toMatchObject({ claimed: 1, completed: 1, reclaimed: 1, leaseLost: 0 });
+    expect(audit.events.map((e) => e.action)).toContain("tenant_blob.purge_reclaimed");
+    expect(metrics.increment).toHaveBeenCalledWith(
+      "brain.tenant.blob_purge.reclaimed.count",
+      expect.objectContaining({ tenant_id: "tnt_01TESTTENANT" }),
+    );
+    // The job still completes its purge after recovery.
+    expect(audit.events.map((e) => e.action)).toContain("tenant_blob.purge_completed");
+  });
+
+  it("discards the outcome (leaseLost) when a fenced write finds the lease was stolen", async () => {
+    // markRowCount 0 ⇒ the fenced UPDATE matched no row: another worker reclaimed
+    // this job mid-flight, so our completion must NOT be counted.
+    const { pool } = fakePool([job()], { markRowCount: 0 });
+    const blob = fakeBlob(() => Promise.resolve({ deleted: 9, failed: [] }));
+    const audit = new InMemoryAuditEmitter();
+    const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
+
+    const tally = await runBlobPurgeCycle({
+      privilegedPool: pool,
+      blob,
+      audit,
+      metrics: metrics as never,
+    });
+
+    expect(tally).toMatchObject({ claimed: 1, completed: 0, leaseLost: 1 });
+    expect(metrics.increment).toHaveBeenCalledWith(
+      "brain.tenant.blob_purge.lease_lost.count",
+      expect.objectContaining({ tenant_id: "tnt_01TESTTENANT" }),
+    );
   });
 });
