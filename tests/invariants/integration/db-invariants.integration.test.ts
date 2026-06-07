@@ -569,9 +569,44 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       // which scans all tenants and sets no scope.
       const res = await checkAuditConsistency({ privilegedPool: blind as unknown as Pool });
       await blind.query("ROLLBACK");
-      expect(res).toEqual({ forks: 0, gaps: 0 });
+      expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 0 });
     } finally {
       blind.release();
     }
+  });
+
+  // 9 — two genesis (null-predecessor) events for one tenant escape both the
+  // fork check (which excludes null predecessors) and the gap check (each
+  // genesis is self-consistent). The genesis-cardinality check catches them.
+  // Validated against real SQL — the unit fakePool cannot exercise the
+  // `FILTER (WHERE prev_event_hash IS NULL) <> 1` semantics. (doc A P2.1)
+  it("detects a tenant with two genesis events via the privileged pool", async () => {
+    const tenant = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "genesis.one",
+      inputs: {},
+      outputs: {},
+    });
+    const second = await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "genesis.two",
+      inputs: {},
+      outputs: {},
+    });
+
+    // Sever the second event's predecessor as the (super)owner: now the tenant
+    // has two null-predecessor events — a duplicated chain head.
+    await pool.query(`UPDATE audit_events SET prev_event_hash = NULL WHERE id = $1`, [second.id]);
+
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await checkAuditConsistency({ privilegedPool: pool });
+    errSpy.mockRestore();
+    expect(res.invalidGenesis).toBeGreaterThanOrEqual(1);
   });
 });

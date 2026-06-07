@@ -3,11 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import { checkAuditConsistency } from "./audit-consistency.js";
 
 /** Pool that returns a count for the fork query and the gap query independently. */
-function fakePool(counts: { forks: number; gaps: number }): { pool: Pool; sql: string[] } {
+function fakePool(counts: { forks: number; gaps: number; invalidGenesis?: number }): {
+  pool: Pool;
+  sql: string[];
+} {
   const sql: string[] = [];
   const pool = {
     query: vi.fn(async (text: string) => {
       sql.push(text);
+      if (text.includes("invalid_genesis")) {
+        return { rows: [{ n: String(counts.invalidGenesis ?? 0) }], rowCount: 1 };
+      }
       if (text.includes("GROUP BY tenant_id, prev_event_hash")) {
         return { rows: [{ n: String(counts.forks) }], rowCount: 1 };
       }
@@ -24,11 +30,13 @@ describe("checkAuditConsistency", () => {
   it("reports zero on a clean chain and runs the fork + gap queries", async () => {
     const { pool, sql } = fakePool({ forks: 0, gaps: 0 });
     const res = await checkAuditConsistency({ privilegedPool: pool });
-    expect(res).toEqual({ forks: 0, gaps: 0 });
-    // Fork query groups by predecessor; gap query is an anti-join on event_hash.
+    expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 0 });
+    // Fork query groups by predecessor; gap query is an anti-join on event_hash;
+    // genesis query counts tenants without exactly one null-predecessor event.
     expect(sql.some((s) => s.includes("GROUP BY tenant_id, prev_event_hash"))).toBe(true);
     expect(sql.some((s) => s.includes("HAVING count(*) > 1"))).toBe(true);
     expect(sql.some((s) => s.includes("NOT EXISTS"))).toBe(true);
+    expect(sql.some((s) => s.includes("FILTER (WHERE prev_event_hash IS NULL) <> 1"))).toBe(true);
   });
 
   it("surfaces fork + gap counts and emits gauges + a critical log", async () => {
@@ -38,10 +46,24 @@ describe("checkAuditConsistency", () => {
 
     const res = await checkAuditConsistency({ privilegedPool: pool, metrics: metrics as never });
 
-    expect(res).toEqual({ forks: 2, gaps: 1 });
+    expect(res).toEqual({ forks: 2, gaps: 1, invalidGenesis: 0 });
     expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.fork.count", 2);
     expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.gap.count", 1);
     // A non-zero count is a P0-grade signal → critical log.
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("flags a tenant with multiple genesis events even when forks and gaps are zero", async () => {
+    const { pool } = fakePool({ forks: 0, gaps: 0, invalidGenesis: 2 });
+    const metrics = { gauge: vi.fn(), increment: vi.fn(), histogram: vi.fn(), duration: vi.fn() };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await checkAuditConsistency({ privilegedPool: pool, metrics: metrics as never });
+
+    // Two genesis events escape fork + gap detection; this is the only signal.
+    expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 2 });
+    expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.invalid_genesis.count", 2);
     expect(errSpy).toHaveBeenCalled();
     errSpy.mockRestore();
   });
