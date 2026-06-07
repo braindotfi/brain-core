@@ -38,8 +38,9 @@
  */
 
 import type { Pool } from "pg";
-import type { AuditEmitter, ServiceCallContext } from "@brain/shared";
+import type { AuditEmitter, AuditEventInput, ServiceCallContext } from "@brain/shared";
 import { enqueueBlobPurgeJob } from "./blob-purge-repo.js";
+import { enqueueAuditOutbox } from "./blob-purge-audit-outbox.js";
 
 export interface TenantDeletionResult {
   tenantId: string;
@@ -165,6 +166,12 @@ export class TenantDeletionService {
     let totalRows = 0;
     let blobUrisPendingPurge: string[] = [];
     let blobPurgeJobId: string | null = null;
+    // Built inside the transaction (once the deletes have run) and reused for the
+    // post-commit best-effort emit. Idempotency keys are stable per tenant.
+    let deletedOutputs: Record<string, unknown> = {};
+    let purgeRequestedOutputs: Record<string, unknown> | null = null;
+    const deletedEventKey = `${targetTenantId}:tenant.deleted`;
+    const purgeRequestedEventKey = `${targetTenantId}:tenant_blob.purge_requested`;
     try {
       await client.query("BEGIN");
       // Snapshot the blob_uri list BEFORE the DELETE wipes the rows. These
@@ -201,6 +208,47 @@ export class TenantDeletionService {
       const tenantsCount = tenantsRes.rowCount ?? 0;
       deletedRows.tenants = tenantsCount;
       totalRows += tenantsCount;
+
+      // Enqueue the deletion audit INTENTS in this same transaction (review P1):
+      // a committed deletion always has a durable audit record, even if the
+      // immediate emit after commit fails or the process dies. The blob-purge
+      // worker delivers these from the outbox (idempotency-keyed, so the
+      // immediate emit below cannot produce a duplicate).
+      deletedOutputs = {
+        total_rows_deleted: totalRows,
+        per_table_counts: deletedRows,
+        // Explicit non-deletion: audit_events + audit_anchors preserved under the
+        // GDPR legitimate-interest carveout (financial integrity).
+        preserved: ["audit_events", "audit_anchors"],
+        // Blob bytes are NOT removed by this transaction (§3 Layer-1 immutability).
+        blob_artifact_count: blobUrisPendingPurge.length,
+        blob_uris_pending_purge: blobUrisPendingPurge,
+        blob_purge_job_id: blobPurgeJobId,
+      };
+      await enqueueAuditOutbox(client, {
+        tenantId: targetTenantId,
+        action: "tenant.deleted",
+        payload: deletedOutputs,
+        eventKey: deletedEventKey,
+        actor: ctx.actor,
+        inputs: { tenant_id: targetTenantId, requested_by: ctx.actor },
+      });
+      if (blobPurgeJobId !== null) {
+        purgeRequestedOutputs = {
+          tenant_blob_purge_job_id: blobPurgeJobId,
+          blob_prefix: `${targetTenantId}/`,
+          blob_artifact_count: blobUrisPendingPurge.length,
+        };
+        await enqueueAuditOutbox(client, {
+          jobId: blobPurgeJobId,
+          tenantId: targetTenantId,
+          action: "tenant_blob.purge_requested",
+          payload: purgeRequestedOutputs,
+          eventKey: purgeRequestedEventKey,
+          actor: ctx.actor,
+          inputs: { tenant_id: targetTenantId, requested_by: ctx.actor },
+        });
+      }
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");
@@ -209,45 +257,28 @@ export class TenantDeletionService {
       client.release();
     }
 
-    // Emit the tombstone audit event AFTER the transaction commits so the
-    // chain reflects only successful deletions.
-    await this.deps.audit.emit({
+    // Best-effort immediate emit for fast audit visibility. Idempotency-keyed to
+    // the outbox event_key, so the worker's later delivery finds this event and
+    // does NOT duplicate it. A failure here does NOT fail the already-committed
+    // deletion — the durable outbox intent above guarantees eventual delivery.
+    await this.emitBestEffort({
       tenantId: targetTenantId,
       layer: "audit",
       actor: ctx.actor,
       action: "tenant.deleted",
       inputs: { tenant_id: targetTenantId, requested_by: ctx.actor },
-      outputs: {
-        total_rows_deleted: totalRows,
-        per_table_counts: deletedRows,
-        // Explicit non-deletion: audit_events + audit_anchors preserved
-        // under GDPR legitimate-interest carveout (financial integrity).
-        preserved: ["audit_events", "audit_anchors"],
-        // Blob bytes are NOT removed by this transaction (§3 Layer-1
-        // immutability). Operators run a separate purge against these URIs
-        // to satisfy Article 17 fully.
-        blob_artifact_count: blobUrisPendingPurge.length,
-        blob_uris_pending_purge: blobUrisPendingPurge,
-        // RFC 0003: the durable purge job that will actually erase the bytes.
-        blob_purge_job_id: blobPurgeJobId,
-      },
+      outputs: deletedOutputs,
+      idempotencyKey: deletedEventKey,
     });
-
-    // RFC 0003: a distinct lifecycle event for the enqueued erasure, so the
-    // chain shows request → (worker) completion. Emitted only when a job was
-    // enqueued (i.e. the tenant had blobs to purge).
-    if (blobPurgeJobId !== null) {
-      await this.deps.audit.emit({
+    if (purgeRequestedOutputs !== null) {
+      await this.emitBestEffort({
         tenantId: targetTenantId,
         layer: "audit",
         actor: ctx.actor,
         action: "tenant_blob.purge_requested",
         inputs: { tenant_id: targetTenantId, requested_by: ctx.actor },
-        outputs: {
-          tenant_blob_purge_job_id: blobPurgeJobId,
-          blob_prefix: `${targetTenantId}/`,
-          blob_artifact_count: blobUrisPendingPurge.length,
-        },
+        outputs: purgeRequestedOutputs,
+        idempotencyKey: purgeRequestedEventKey,
       });
     }
 
@@ -259,5 +290,22 @@ export class TenantDeletionService {
       blobUrisPendingPurge,
       blobPurgeJobId,
     };
+  }
+
+  /**
+   * Emit an audit event without letting a failure propagate: the deletion has
+   * already committed and its audit intent is durably enqueued, so an audit
+   * outage must not turn a successful deletion into an error response. The
+   * outbox worker delivers the durable intent regardless.
+   */
+  private async emitBestEffort(event: AuditEventInput): Promise<void> {
+    try {
+      await this.deps.audit.emit(event);
+    } catch (err) {
+      console.warn(
+        "[tenant-deletion] immediate audit emit failed; the outbox will deliver it",
+        err,
+      );
+    }
   }
 }
