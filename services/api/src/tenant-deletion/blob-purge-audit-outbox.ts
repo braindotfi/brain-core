@@ -197,6 +197,10 @@ function outboxRowToEvent(
     action: row.action,
     inputs: { tenant_blob_purge_job_id: row.job_id, event_key: row.event_key },
     outputs: row.payload,
+    // End-to-end idempotency: if delivery already wrote this event but the
+    // publisher crashed before marking the row published, the retry returns the
+    // existing event instead of duplicating it.
+    idempotencyKey: row.event_key,
   };
 }
 

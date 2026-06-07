@@ -45,6 +45,14 @@ export class InMemoryAuditEmitter implements AuditEmitter {
   public readonly events: AuditEvent[] = [];
 
   public async emit(event: AuditEventInput): Promise<AuditEvent> {
+    // Idempotent delivery parity with the Postgres emitter: same tenant + key
+    // returns the existing event rather than a duplicate.
+    if (event.idempotencyKey !== undefined) {
+      const existing = this.events.find(
+        (e) => e.tenantId === event.tenantId && e.idempotencyKey === event.idempotencyKey,
+      );
+      if (existing !== undefined) return existing;
+    }
     const id = newAuditEventId();
     const createdAt = new Date().toISOString();
     const prev = this.latestForTenant(event.tenantId);
@@ -101,6 +109,37 @@ export class PostgresAuditEmitter implements AuditEmitter {
         [event.tenantId],
       );
 
+      // Idempotent delivery: if this logical event was already written (same
+      // tenant + external idempotency key), return it instead of inserting a
+      // duplicate. Makes an at-least-once publisher effectively exactly-once.
+      // Race-free here because the advisory lock serialises this tenant's emits.
+      if (event.idempotencyKey !== undefined) {
+        const existing = await client.query<{
+          id: string;
+          event_hash: Buffer;
+          prev_event_hash: Buffer | null;
+          created_at: Date;
+        }>(
+          `SELECT id, event_hash, prev_event_hash, created_at
+             FROM audit_events
+            WHERE tenant_id = $1 AND idempotency_key = $2
+            LIMIT 1`,
+          [event.tenantId, event.idempotencyKey],
+        );
+        const hit = existing.rows[0];
+        if (hit !== undefined) {
+          await client.query("COMMIT");
+          return {
+            ...event,
+            id: hit.id,
+            createdAt: hit.created_at.toISOString(),
+            eventHash: hit.event_hash.toString("hex"),
+            prevEventHash:
+              hit.prev_event_hash === null ? null : hit.prev_event_hash.toString("hex"),
+          };
+        }
+      }
+
       // Read the most recent event for this tenant (now race-free under the lock).
       const prev = await client.query<{ event_hash: string }>(
         `SELECT event_hash
@@ -126,8 +165,8 @@ export class PostgresAuditEmitter implements AuditEmitter {
         `INSERT INTO audit_events (
            id, tenant_id, layer, actor, action, inputs, outputs,
            policy_version, policy_decision_id, before_state, after_state,
-           event_hash, prev_event_hash, created_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+           event_hash, prev_event_hash, created_at, idempotency_key
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
         [
           id,
           event.tenantId,
@@ -143,6 +182,7 @@ export class PostgresAuditEmitter implements AuditEmitter {
           Buffer.from(eventHash, "hex"),
           prevHash === null ? null : Buffer.from(prevHash, "hex"),
           createdAt,
+          event.idempotencyKey ?? null,
         ],
       );
 

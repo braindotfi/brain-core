@@ -51,6 +51,14 @@ export interface AuditEventInput {
   readonly beforeState?: Readonly<Record<string, unknown>>;
   /** Post-image of the entity for material state transitions. */
   readonly afterState?: Readonly<Record<string, unknown>>;
+  /**
+   * Optional external idempotency key (unique per tenant). When set, the emitter
+   * returns the EXISTING event if one was already written with this key instead
+   * of inserting a duplicate — so an at-least-once publisher (e.g. the audit
+   * outbox, keyed by its event_key) becomes effectively exactly-once. Omit for
+   * ordinary emits (the common case); they are unconstrained.
+   */
+  readonly idempotencyKey?: string;
 }
 
 export interface AuditEvent extends AuditEventInput {

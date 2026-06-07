@@ -479,4 +479,39 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
     }
     expect(visited.size).toBe(N);
   }, 30_000);
+
+  // 7 — an idempotency key makes audit delivery replay-safe (Codex 2026-06-07
+  // P2: replaying one outbox row cannot create a second logical audit event).
+  it("an idempotency key dedupes audit events (replay-safe, exactly-once)", async () => {
+    const tenant = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    const base = {
+      tenantId: tenant,
+      layer: "audit" as const,
+      actor: "system",
+      action: "test.idem",
+      inputs: {},
+      outputs: {},
+      idempotencyKey: "dup-key",
+    };
+    const ev1 = await emitter.emit(base);
+    const ev2 = await emitter.emit(base); // a replay with the same key
+    expect(ev2.id).toBe(ev1.id); // returned the existing event, not a new one
+
+    const c = await pool.connect();
+    try {
+      await c.query(`SET search_path TO ${schema}, public`);
+      await c.query("BEGIN");
+      await c.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+      const res = await c.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM audit_events
+          WHERE tenant_id = $1 AND idempotency_key = $2`,
+        [tenant, "dup-key"],
+      );
+      await c.query("COMMIT");
+      expect(res.rows[0]!.n).toBe(1); // exactly one physical row
+    } finally {
+      c.release();
+    }
+  });
 });
