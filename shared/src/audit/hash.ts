@@ -15,6 +15,17 @@
 import { createHash } from "node:crypto";
 import type { AuditEventInput } from "./types.js";
 
+/**
+ * Version of the canonical-hash serialization that produced an event's
+ * `event_hash`. Persisted per row (`audit_events.hash_schema_version`) so the
+ * consistency verifier recomputes and compares ONLY events written under the
+ * current canonicalization, never flagging rows produced by a superseded form
+ * (e.g. the pre-BYTEA-fix Buffer serialization). Bump this whenever
+ * `canonicalize` changes; 0 means "pre-versioning" and is skipped by the
+ * verifier. (Codex c96283d P1 #2.)
+ */
+export const AUDIT_HASH_SCHEMA_VERSION = 1;
+
 export interface HashInput {
   readonly event: AuditEventInput;
   /** Event id (ULID). Included to break ties in edge cases where two

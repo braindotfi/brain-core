@@ -570,7 +570,7 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       // which scans all tenants and sets no scope.
       const res = await checkAuditConsistency({ privilegedPool: blind as unknown as Pool });
       await blind.query("ROLLBACK");
-      expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 0 });
+      expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 0, hashMismatches: 0 });
     } finally {
       blind.release();
     }
@@ -702,5 +702,35 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       prevEventHash: genesis.eventHash,
     });
     expect(recomputed).toBe(second.eventHash);
+  });
+
+  // 12 — content-hash verification recomputes the canonical hash from persisted
+  // logical fields and flags a row mutated WITHOUT rehashing. The structural
+  // fork/gap/genesis checks cannot see such a tamper, because the chain stays
+  // structurally connected. (Codex c96283d P1 #2)
+  it("detects an audit event whose content was mutated without rehashing", async () => {
+    const tenant = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    const ev = await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "content.original",
+      inputs: { v: 1 },
+      outputs: {},
+    });
+    // Baseline: the freshly-emitted (correctly hashed) event recomputes cleanly
+    // and adds no mismatch.
+    const before = await checkAuditConsistency({ privilegedPool: pool });
+
+    // Privileged tamper: change a logical field but leave event_hash untouched.
+    await pool.query(`UPDATE audit_events SET action = 'content.tampered' WHERE id = $1`, [ev.id]);
+
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const after = await checkAuditConsistency({ privilegedPool: pool });
+    errSpy.mockRestore();
+
+    // Exactly the tampered row flips from matching to mismatching.
+    expect(after.hashMismatches).toBe(before.hashMismatches + 1);
   });
 });
