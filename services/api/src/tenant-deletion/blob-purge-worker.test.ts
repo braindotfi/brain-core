@@ -17,6 +17,8 @@ interface OutboxRow {
   payload: unknown;
   event_key: unknown;
   attempts: number;
+  actor: unknown;
+  inputs: unknown;
 }
 
 function fakePool(
@@ -46,6 +48,8 @@ function fakePool(
         payload: JSON.parse(String(p[4])),
         event_key: p[5],
         attempts: 0,
+        actor: p[6] ?? null,
+        inputs: JSON.parse(String(p[7] ?? "{}")),
       });
       return Promise.resolve({ rows: [], rowCount: 1 });
     }

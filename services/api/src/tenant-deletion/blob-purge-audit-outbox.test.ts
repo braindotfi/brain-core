@@ -48,13 +48,16 @@ describe("enqueueAuditOutbox", () => {
     expect(sql).toContain("INSERT INTO tenant_blob_purge_audit_outbox");
     expect(sql).toContain("ON CONFLICT (event_key) DO NOTHING");
     expect(sql).toContain("$5::jsonb");
-    // id is generated; the rest are passed through, payload JSON-encoded.
+    // id is generated; the rest are passed through, payload + inputs JSON-encoded.
+    // No actor/inputs supplied ⇒ null actor + "{}" inputs.
     expect(params.slice(1)).toEqual([
       "tbp_1",
       "tnt_1",
       "tenant_blob.purge_completed",
       JSON.stringify({ deleted: 4 }),
       "tbp_1:tenant_blob.purge_completed:0",
+      null,
+      JSON.stringify({}),
     ]);
   });
 });
@@ -101,6 +104,8 @@ function row(overrides: Partial<AuditOutboxRow> = {}): AuditOutboxRow {
     payload: { deleted: 3 },
     event_key: "tbp_1:tenant_blob.purge_completed:0",
     attempts: 0,
+    actor: null,
+    inputs: {},
     ...overrides,
   };
 }
@@ -139,6 +144,36 @@ describe("drainAuditOutbox", () => {
       outputs: { deleted: 3 },
     });
     expect(calls.some((s) => s.includes("status = 'published'"))).toBe(true);
+  });
+
+  it("delivers an explicit-actor row (e.g. tenant.deleted) with its actor + merged inputs", async () => {
+    const { pool } = drainPool([
+      row({
+        job_id: null,
+        action: "tenant.deleted",
+        actor: "usr_requester",
+        inputs: { tenant_id: "tnt_1", requested_by: "usr_requester" },
+        payload: { total_rows_deleted: 5 },
+        event_key: "tnt_1:tenant.deleted",
+      }),
+    ]);
+    const audit = new InMemoryAuditEmitter();
+
+    const res = await drainAuditOutbox({ privilegedPool: pool, audit, workerId: "w1" });
+
+    expect(res.published).toBe(1);
+    const ev = audit.events[0]!;
+    expect(ev.action).toBe("tenant.deleted");
+    expect(ev.actor).toBe("usr_requester"); // explicit actor, not the worker id
+    expect(ev.inputs).toMatchObject({
+      tenant_id: "tnt_1",
+      requested_by: "usr_requester",
+      event_key: "tnt_1:tenant.deleted",
+    });
+    // job_id null ⇒ no tenant_blob_purge_job_id key
+    expect(ev.inputs).not.toHaveProperty("tenant_blob_purge_job_id");
+    // The event carries the outbox event_key as its idempotency key.
+    expect(ev.idempotencyKey).toBe("tnt_1:tenant.deleted");
   });
 
   it("on audit failure, records the failure (backoff) and does NOT mark published", async () => {

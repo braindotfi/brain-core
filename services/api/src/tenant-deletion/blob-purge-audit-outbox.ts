@@ -25,12 +25,17 @@ export const MAX_OUTBOX_PUBLISH_ATTEMPTS = 12;
 
 export interface AuditOutboxRow {
   id: string;
-  job_id: string;
+  /** Null for events not tied to a purge job (e.g. tenant.deleted). */
+  job_id: string | null;
   tenant_id: string;
   action: string;
   payload: Record<string, unknown>;
   event_key: string;
   attempts: number;
+  /** Event actor; null ⇒ delivery falls back to the worker id. */
+  actor: string | null;
+  /** Extra event inputs (merged into the delivered event's inputs). */
+  inputs: Record<string, unknown>;
 }
 
 /** Exponential backoff for a failed audit delivery, capped at 480s. */
@@ -47,24 +52,31 @@ export function nextOutboxAttemptDelaySeconds(attempt: number): number {
 export async function enqueueAuditOutbox(
   client: Queryable,
   input: {
-    jobId: string;
+    jobId?: string | null;
     tenantId: string;
     action: string;
     payload: Record<string, unknown>;
     eventKey: string;
+    /** Event actor. Omit for purge-lifecycle events (delivery uses the worker id). */
+    actor?: string;
+    /** Extra event inputs (e.g. requester). Defaults to {}. */
+    inputs?: Record<string, unknown>;
   },
 ): Promise<void> {
   await client.query(
-    `INSERT INTO tenant_blob_purge_audit_outbox (id, job_id, tenant_id, action, payload, event_key)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+    `INSERT INTO tenant_blob_purge_audit_outbox
+        (id, job_id, tenant_id, action, payload, event_key, actor, inputs)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb)
        ON CONFLICT (event_key) DO NOTHING`,
     [
       brainId("tbo"),
-      input.jobId,
+      input.jobId ?? null,
       input.tenantId,
       input.action,
       JSON.stringify(input.payload),
       input.eventKey,
+      input.actor ?? null,
+      JSON.stringify(input.inputs ?? {}),
     ],
   );
 }
@@ -76,7 +88,7 @@ export async function claimPendingAuditOutbox(
   limit: number,
 ): Promise<AuditOutboxRow[]> {
   const res = await client.query(
-    `SELECT id, job_id, tenant_id, action, payload, event_key, attempts
+    `SELECT id, job_id, tenant_id, action, payload, event_key, attempts, actor, inputs
        FROM tenant_blob_purge_audit_outbox
       WHERE status = 'pending'
         AND next_attempt_at <= now()
@@ -193,9 +205,15 @@ function outboxRowToEvent(
   return {
     tenantId: row.tenant_id,
     layer: "audit",
-    actor: workerId,
+    // Explicit actor for non-purge events (e.g. the deletion requester); the
+    // purge-lifecycle rows carry no actor and fall back to the worker id.
+    actor: row.actor ?? workerId,
     action: row.action,
-    inputs: { tenant_blob_purge_job_id: row.job_id, event_key: row.event_key },
+    inputs: {
+      ...(row.job_id !== null ? { tenant_blob_purge_job_id: row.job_id } : {}),
+      ...row.inputs,
+      event_key: row.event_key,
+    },
     outputs: row.payload,
     // End-to-end idempotency: if delivery already wrote this event but the
     // publisher crashed before marking the row published, the retry returns the

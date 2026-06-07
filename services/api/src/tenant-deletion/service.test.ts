@@ -215,6 +215,42 @@ describe("TenantDeletionService", () => {
     expect(result.blobPurgeJobId).toBeNull();
     expect(audit.events.some((e) => e.action === "tenant_blob.purge_requested")).toBe(false);
   });
+
+  it("enqueues the tenant.deleted audit intent IN the transaction (durable, before commit)", async () => {
+    const pool = fakePool({ raw_artifacts: 1 });
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+    await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+
+    const client = await pool.connect();
+    const calls = vi.mocked(client.query).mock.calls;
+    const enqueueIdx = calls.findIndex(
+      ([sql, params]) =>
+        typeof sql === "string" &&
+        sql.includes("INSERT INTO tenant_blob_purge_audit_outbox") &&
+        Array.isArray(params) &&
+        params[3] === "tenant.deleted",
+    );
+    const commitIdx = calls.findIndex(([sql]) => sql === "COMMIT");
+    expect(enqueueIdx).toBeGreaterThan(-1);
+    // The audit intent is durable: enqueued inside the deletion transaction.
+    expect(enqueueIdx).toBeLessThan(commitIdx);
+  });
+
+  it("a failing audit emitter does not fail the committed deletion (best-effort emit)", async () => {
+    const pool = fakePool({ raw_artifacts: 1 });
+    // Audit service is down: the immediate emit rejects.
+    const audit = { emit: vi.fn(() => Promise.reject(new Error("audit service down"))) };
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit: audit as never });
+
+    // The deletion already committed, so it must still resolve; the durable
+    // outbox intent (enqueued in-txn) is what guarantees the audit eventually.
+    const result = await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+    expect(result.tenantId).toBe(TENANT);
+    const client = await pool.connect();
+    const calls = vi.mocked(client.query).mock.calls.map((c) => c[0] as string);
+    expect(calls).toContain("COMMIT");
+  });
 });
 
 // ---------------------------------------------------------------------------
