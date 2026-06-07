@@ -52,7 +52,7 @@ function job(overrides: Partial<BlobPurgeJobRow> = {}): BlobPurgeJobRow {
 describe("runBlobPurgeCycle", () => {
   it("marks a clean purge completed and emits purge_completed", async () => {
     const { pool, calls } = fakePool([job()]);
-    const blob = fakeBlob(() => Promise.resolve({ deleted: 5, failed: [] }));
+    const blob = fakeBlob(() => Promise.resolve({ deleted: 5, failures: [] }));
     const audit = new InMemoryAuditEmitter();
 
     const tally = await runBlobPurgeCycle({ privilegedPool: pool, blob, audit });
@@ -63,10 +63,20 @@ describe("runBlobPurgeCycle", () => {
     expect(calls.some((s) => s.includes("status = 'completed'"))).toBe(true);
   });
 
-  it("terminates as blocked_legal_hold when some paths can't be erased", async () => {
+  it("terminates as blocked_legal_hold only when every failure is a confirmed legal hold", async () => {
     const { pool, calls } = fakePool([job()]);
     const blob = fakeBlob(() =>
-      Promise.resolve({ deleted: 2, failed: ["tnt_01TESTTENANT/legal/hold.pdf"] }),
+      Promise.resolve({
+        deleted: 2,
+        failures: [
+          {
+            path: "tnt_01TESTTENANT/legal/hold.pdf",
+            category: "legal_hold" as const,
+            retryable: false,
+            message: "object is protected by Object Lock",
+          },
+        ],
+      }),
     );
     const audit = new InMemoryAuditEmitter();
     const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
@@ -78,13 +88,85 @@ describe("runBlobPurgeCycle", () => {
       metrics: metrics as never,
     });
 
-    expect(tally).toMatchObject({ claimed: 1, completed: 0, blockedLegalHold: 1 });
+    expect(tally).toMatchObject({ claimed: 1, completed: 0, blockedLegalHold: 1, retried: 0 });
     expect(audit.events.map((e) => e.action)).toContain("tenant_blob.purge_blocked_legal_hold");
     expect(calls.some((s) => s.includes("status = 'blocked_legal_hold'"))).toBe(true);
     expect(metrics.increment).toHaveBeenCalledWith(
       "brain.tenant.blob_purge.legal_hold.count",
       expect.objectContaining({ tenant_id: "tnt_01TESTTENANT" }),
     );
+    // Per-category failure metric is emitted too.
+    expect(metrics.increment).toHaveBeenCalledWith(
+      "brain.tenant.blob_purge.failure.count",
+      expect.objectContaining({ tenant_id: "tnt_01TESTTENANT", category: "legal_hold" }),
+    );
+  });
+
+  it("RETRIES (does not blocked_legal_hold) when a failure is transient — a 503 is not a hold", async () => {
+    const { pool, calls } = fakePool([job({ attempts: 0 })]);
+    const blob = fakeBlob(() =>
+      Promise.resolve({
+        deleted: 1,
+        failures: [
+          {
+            path: "tnt_01TESTTENANT/doc@v2",
+            category: "transient" as const,
+            retryable: true,
+            providerCode: "SlowDown",
+            message: "please slow down",
+          },
+        ],
+      }),
+    );
+    const audit = new InMemoryAuditEmitter();
+    const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
+
+    const tally = await runBlobPurgeCycle({
+      privilegedPool: pool,
+      blob,
+      audit,
+      metrics: metrics as never,
+    });
+
+    expect(tally).toMatchObject({ claimed: 1, retried: 1, blockedLegalHold: 0, exhausted: 0 });
+    expect(audit.events.map((e) => e.action)).toContain("tenant_blob.purge_retried");
+    expect(calls.some((s) => s.includes("status = 'failed'"))).toBe(true);
+    expect(calls.some((s) => s.includes("status = 'blocked_legal_hold'"))).toBe(false);
+    expect(metrics.increment).toHaveBeenCalledWith(
+      "brain.tenant.blob_purge.failure.count",
+      expect.objectContaining({ category: "transient" }),
+    );
+  });
+
+  it("retries a MIXED batch (transient + legal_hold): retryable wins, hold is not lost", async () => {
+    const { pool, calls } = fakePool([job({ attempts: 0 })]);
+    const blob = fakeBlob(() =>
+      Promise.resolve({
+        deleted: 0,
+        failures: [
+          {
+            path: "tnt_01TESTTENANT/a@v1",
+            category: "legal_hold" as const,
+            retryable: false,
+            message: "object lock",
+          },
+          {
+            path: "tnt_01TESTTENANT/b@v1",
+            category: "transient" as const,
+            retryable: true,
+            message: "503",
+          },
+        ],
+      }),
+    );
+    const audit = new InMemoryAuditEmitter();
+
+    const tally = await runBlobPurgeCycle({ privilegedPool: pool, blob, audit });
+
+    // A retryable failure present ⇒ retry the whole job (purgeTenant idempotent);
+    // the legal hold is re-encountered next run and only terminal once alone.
+    expect(tally).toMatchObject({ claimed: 1, retried: 1, blockedLegalHold: 0 });
+    expect(calls.some((s) => s.includes("status = 'blocked_legal_hold'"))).toBe(false);
   });
 
   it("schedules a backoff retry when purge throws under the attempt cap", async () => {
@@ -124,7 +206,7 @@ describe("runBlobPurgeCycle", () => {
 
   it("is a no-op when no jobs are due", async () => {
     const { pool } = fakePool([]);
-    const blob = fakeBlob(() => Promise.resolve({ deleted: 0, failed: [] }));
+    const blob = fakeBlob(() => Promise.resolve({ deleted: 0, failures: [] }));
     const audit = new InMemoryAuditEmitter();
 
     const tally = await runBlobPurgeCycle({ privilegedPool: pool, blob, audit });
@@ -137,7 +219,7 @@ describe("runBlobPurgeCycle", () => {
   it("emits purge_reclaimed + a metric for a stale-lease job recovered from a crashed worker", async () => {
     // The claim returns this row with reclaimed=true (its prior lease expired).
     const { pool } = fakePool([job({ reclaimed: true })]);
-    const blob = fakeBlob(() => Promise.resolve({ deleted: 4, failed: [] }));
+    const blob = fakeBlob(() => Promise.resolve({ deleted: 4, failures: [] }));
     const audit = new InMemoryAuditEmitter();
     const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
 
@@ -162,7 +244,7 @@ describe("runBlobPurgeCycle", () => {
     // markRowCount 0 ⇒ the fenced UPDATE matched no row: another worker reclaimed
     // this job mid-flight, so our completion must NOT be counted.
     const { pool } = fakePool([job()], { markRowCount: 0 });
-    const blob = fakeBlob(() => Promise.resolve({ deleted: 9, failed: [] }));
+    const blob = fakeBlob(() => Promise.resolve({ deleted: 9, failures: [] }));
     const audit = new InMemoryAuditEmitter();
     const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
 

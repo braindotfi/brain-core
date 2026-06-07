@@ -65,7 +65,7 @@ describe("MemoryBlobAdapter", () => {
 
     const res = await a.purgeTenant("tnt_a");
 
-    expect(res).toEqual({ deleted: 2, failed: [] });
+    expect(res).toEqual({ deleted: 2, failures: [] });
     // tnt_a is gone, tnt_b untouched (no cross-tenant erasure).
     expect([...a.objects.keys()].some((k) => k.startsWith("tnt_a/"))).toBe(false);
     expect([...a.objects.keys()].some((k) => k.startsWith("tnt_b/"))).toBe(true);
@@ -76,8 +76,8 @@ describe("MemoryBlobAdapter", () => {
     await a.put(blobPath("tnt_a", "s1"), Buffer.from("1"), {});
     expect((await a.purgeTenant("tnt_a")).deleted).toBe(1);
     // second run finds nothing left
-    expect(await a.purgeTenant("tnt_a")).toEqual({ deleted: 0, failed: [] });
-    expect(await a.purgeTenant("tnt_missing")).toEqual({ deleted: 0, failed: [] });
+    expect(await a.purgeTenant("tnt_a")).toEqual({ deleted: 0, failures: [] });
+    expect(await a.purgeTenant("tnt_missing")).toEqual({ deleted: 0, failures: [] });
   });
 
   it("purgeTenant does not match a tenant id that is a prefix of another", async () => {

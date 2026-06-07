@@ -72,7 +72,7 @@ export class MemoryBlobAdapter implements BlobAdapter {
         deleted += 1;
       }
     }
-    return { deleted, failed: [] };
+    return { deleted, failures: [] };
   }
 
   public async healthcheck(): Promise<boolean> {

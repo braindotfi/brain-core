@@ -12,13 +12,17 @@
  * live request scope — the worker uses the privileged (BYPASSRLS) pool and
  * drains cross-tenant, exactly like the outbox + webhook-dispatch workers.
  *
- * Legal holds: when purgeTenant reports paths it could not erase (WORM / legal
- * hold), the job terminates as `blocked_legal_hold` (NOT retried — a hold will
- * not clear on its own) with the paths surfaced for the release runbook.
+ * Failure classification (review P1 #2): purgeTenant returns CLASSIFIED failures.
+ * Transient (throttle / 5xx / network) and authorization / unknown errors are
+ * RETRIED (purgeTenant is idempotent) and bounded by the attempt cap. Only when
+ * every remaining failure is a confirmed legal hold (WORM / object-lock) does the
+ * job terminate as `blocked_legal_hold` (NOT retried — a hold will not clear on
+ * its own) with the paths surfaced for the release runbook. A 503 or expired
+ * credential no longer masquerades as a legal hold.
  */
 
 import { randomUUID } from "node:crypto";
-import type { AuditEmitter, BlobAdapter, MetricsEmitter } from "@brain/shared";
+import type { AuditEmitter, BlobAdapter, BlobPurgeFailure, MetricsEmitter } from "@brain/shared";
 import type { Pool } from "pg";
 import {
   BLOB_PURGE_LEASE_SECONDS,
@@ -55,6 +59,14 @@ export interface BlobPurgeCycleResult {
   reclaimed: number;
   /** Outcomes discarded because the lease was stolen mid-flight (fenced write). */
   leaseLost: number;
+}
+
+/** Human-readable summary of a mixed failure batch for the retry's last_error. */
+function summarizeFailures(failures: ReadonlyArray<BlobPurgeFailure>): string {
+  const counts = new Map<string, number>();
+  for (const f of failures) counts.set(f.category, (counts.get(f.category) ?? 0) + 1);
+  const parts = [...counts.entries()].map(([cat, n]) => `${n} ${cat}`);
+  return `${failures.length} object(s) could not be erased (${parts.join(", ")}); retrying`;
 }
 
 async function emitLifecycle(
@@ -131,6 +143,55 @@ export async function runBlobPurgeCycle(
     );
   };
 
+  // Retry-or-dead-letter, fenced on the lease. Shared by the catch path (the
+  // purge call itself threw, e.g. a LIST error) and the classified-failure path
+  // (some objects failed transiently).
+  const retryOrExhaust = async (job: BlobPurgeJobRow, message: string): Promise<void> => {
+    const attempt = job.attempts + 1;
+    if (attempt >= max) {
+      deps.metrics?.increment("brain.tenant.blob_purge.exhausted.count", {
+        tenant_id: job.tenant_id,
+      });
+      const ev = await emitLifecycle(
+        deps,
+        job,
+        "tenant_blob.purge_exhausted",
+        { attempt, last_error: message },
+        workerId,
+      );
+      const held = await markBlobPurgeExhausted(
+        deps.privilegedPool,
+        job.id,
+        attempt,
+        message,
+        ev,
+        lockToken,
+      );
+      if (held) tally.exhausted += 1;
+      else onLeaseLost(job);
+    } else {
+      const delay = nextPurgeAttemptDelaySeconds(attempt);
+      const ev = await emitLifecycle(
+        deps,
+        job,
+        "tenant_blob.purge_retried",
+        { attempt, last_error: message, next_attempt_in_seconds: delay },
+        workerId,
+      );
+      const held = await markBlobPurgeFailed(
+        deps.privilegedPool,
+        job.id,
+        attempt,
+        message,
+        delay,
+        ev,
+        lockToken,
+      );
+      if (held) tally.retried += 1;
+      else onLeaseLost(job);
+    }
+  };
+
   for (const job of claimed) {
     tally.claimed += 1;
     // Observability for crash recovery: a reclaimed job means a prior worker
@@ -150,7 +211,8 @@ export async function runBlobPurgeCycle(
     }
     try {
       const result = await deps.blob.purgeTenant(job.tenant_id);
-      if (result.failed.length === 0) {
+      const { failures } = result;
+      if (failures.length === 0) {
         const ev = await emitLifecycle(
           deps,
           job,
@@ -168,72 +230,50 @@ export async function runBlobPurgeCycle(
         if (held) tally.completed += 1;
         else onLeaseLost(job);
       } else {
-        deps.metrics?.increment("brain.tenant.blob_purge.legal_hold.count", {
-          tenant_id: job.tenant_id,
-        });
-        const ev = await emitLifecycle(
-          deps,
-          job,
-          "tenant_blob.purge_blocked_legal_hold",
-          { deleted: result.deleted, legal_hold_paths: result.failed },
-          workerId,
-        );
-        const held = await markBlobPurgeBlockedLegalHold(
-          deps.privilegedPool,
-          job.id,
-          result.deleted,
-          result.failed,
-          ev,
-          lockToken,
-        );
-        if (held) tally.blockedLegalHold += 1;
-        else onLeaseLost(job);
+        // Per-category metric so transient / authorization / legal_hold / unknown
+        // are distinguishable on the dashboard (review P1 #2).
+        for (const f of failures) {
+          deps.metrics?.increment("brain.tenant.blob_purge.failure.count", {
+            tenant_id: job.tenant_id,
+            category: f.category,
+          });
+        }
+        const retryable = failures.filter((f) => f.retryable);
+        if (retryable.length > 0) {
+          // Some objects can still be erased on a later run (transient cloud
+          // error / authorization / unknown). Retry the WHOLE job — purgeTenant
+          // is idempotent — instead of burning it to a terminal legal hold over
+          // a 503. Any genuine legal holds in this batch are re-encountered on
+          // the next run and only become terminal once they are ALL that remain.
+          await retryOrExhaust(job, summarizeFailures(failures));
+        } else {
+          // Only confirmed legal holds remain (nothing retryable) → terminal.
+          const legalHoldPaths = failures.map((f) => f.path);
+          deps.metrics?.increment("brain.tenant.blob_purge.legal_hold.count", {
+            tenant_id: job.tenant_id,
+          });
+          const ev = await emitLifecycle(
+            deps,
+            job,
+            "tenant_blob.purge_blocked_legal_hold",
+            { deleted: result.deleted, legal_hold_paths: legalHoldPaths },
+            workerId,
+          );
+          const held = await markBlobPurgeBlockedLegalHold(
+            deps.privilegedPool,
+            job.id,
+            result.deleted,
+            legalHoldPaths,
+            ev,
+            lockToken,
+          );
+          if (held) tally.blockedLegalHold += 1;
+          else onLeaseLost(job);
+        }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const attempt = job.attempts + 1;
-      if (attempt >= max) {
-        deps.metrics?.increment("brain.tenant.blob_purge.exhausted.count", {
-          tenant_id: job.tenant_id,
-        });
-        const ev = await emitLifecycle(
-          deps,
-          job,
-          "tenant_blob.purge_exhausted",
-          { attempt, last_error: message },
-          workerId,
-        );
-        const held = await markBlobPurgeExhausted(
-          deps.privilegedPool,
-          job.id,
-          attempt,
-          message,
-          ev,
-          lockToken,
-        );
-        if (held) tally.exhausted += 1;
-        else onLeaseLost(job);
-      } else {
-        const delay = nextPurgeAttemptDelaySeconds(attempt);
-        const ev = await emitLifecycle(
-          deps,
-          job,
-          "tenant_blob.purge_retried",
-          { attempt, last_error: message, next_attempt_in_seconds: delay },
-          workerId,
-        );
-        const held = await markBlobPurgeFailed(
-          deps.privilegedPool,
-          job.id,
-          attempt,
-          message,
-          delay,
-          ev,
-          lockToken,
-        );
-        if (held) tally.retried += 1;
-        else onLeaseLost(job);
-      }
+      // purgeTenant itself threw (e.g. a LIST error, not a per-object failure).
+      await retryOrExhaust(job, err instanceof Error ? err.message : String(err));
     }
   }
 

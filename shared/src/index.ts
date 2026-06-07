@@ -81,6 +81,7 @@ export { createBlobAdapter, type BlobBackend, type BlobFactoryConfig } from "./b
 export { S3BlobAdapter, type S3AdapterOptions } from "./blob/s3.js";
 export { AzureBlobAdapter, type AzureAdapterOptions } from "./blob/azure.js";
 export { MemoryBlobAdapter } from "./blob/memory.js";
+export { classifyBlobDeleteError, type ClassifiedBlobDeleteError } from "./blob/purge-classify.js";
 
 // Background jobs (BullMQ on Redis — §2)
 export * from "./queue/types.js";

@@ -30,16 +30,40 @@ export interface SignedUrlOptions {
   expiresInSeconds: number;
 }
 
+export type BlobPurgeFailureCategory = "legal_hold" | "transient" | "authorization" | "unknown";
+
+export interface BlobPurgeFailure {
+  /** Object path that could not be erased ("<key>@<versionId>" / blob name). */
+  path: string;
+  /**
+   * Why it failed, which decides handling:
+   *  - legal_hold: WORM / object-lock / immutability policy. TERMINAL — a hold
+   *    will not clear on its own; surfaced for the legal-hold-release runbook.
+   *  - transient: throttling / timeout / 5xx / network. Retried with backoff.
+   *  - authorization: 401/403 that is NOT an object-lock. Retried (bounded by
+   *    the attempt cap → dead-letter), never presented as a legal hold.
+   *  - unknown: anything unclassified. Retried conservatively, never a legal hold.
+   */
+  category: BlobPurgeFailureCategory;
+  /** Whether a later purge run may succeed on this object (false only for legal_hold). */
+  retryable: boolean;
+  /** Stable provider error code (e.g. SlowDown, BlobImmutableDueToPolicy), if any. */
+  providerCode?: string;
+  message: string;
+}
+
 export interface BlobPurgeResult {
   /** Number of objects actually deleted under the tenant prefix. */
   deleted: number;
   /**
-   * Paths that could NOT be deleted — typically WORM/legal-hold-protected
-   * blobs. They are surfaced (not force-deleted) so a deliberate, audited
-   * legal-hold-release runbook / dead-letter path handles them, rather than
-   * this primitive silently undermining the immutability guarantee.
+   * Objects that could NOT be deleted, each CLASSIFIED so the worker can tell a
+   * permanent WORM/legal-hold (terminal) apart from a transient cloud error
+   * (retryable). The old shape was a bare `string[]` the worker treated wholesale
+   * as legal holds, so a 503 / throttle / expired-credential wrongly became a
+   * terminal `blocked_legal_hold`. Confirmed legal holds are surfaced (not
+   * force-deleted) for a deliberate, audited legal-hold-release runbook.
    */
-  failed: string[];
+  failures: BlobPurgeFailure[];
 }
 
 export interface BlobAdapter {
@@ -58,8 +82,9 @@ export interface BlobAdapter {
    * bytes — distinct from {@link tombstone}, which preserves them — and runs
    * only on tenant deletion, via a privileged worker. It does NOT force-release
    * a legal hold / immutable policy (that would undermine WORM); such blobs are
-   * returned in {@link BlobPurgeResult.failed} for the legal-hold-release
-   * runbook. Idempotent: a re-run after partial success deletes the remainder.
+   * returned (classified) in {@link BlobPurgeResult.failures} for the
+   * legal-hold-release runbook. Idempotent: a re-run after partial success
+   * deletes the remainder.
    */
   purgeTenant(tenantId: string): Promise<BlobPurgeResult>;
   healthcheck(): Promise<boolean>;
