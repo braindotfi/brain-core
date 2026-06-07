@@ -18,7 +18,16 @@ import type { Pool } from "pg";
 import type { MetricsEmitter } from "@brain/shared";
 
 export interface AuditConsistencyDeps {
-  pool: Pool;
+  /**
+   * MUST be the cross-tenant privileged pool (the BYPASSRLS `brain_privileged`
+   * role), NOT the request-path pool. The fork/gap queries scan every tenant's
+   * chain and deliberately set no `app.tenant_id`; under the request role's
+   * `FORCE ROW LEVEL SECURITY` that predicate (`tenant_id =
+   * current_setting('app.tenant_id', true)`) matches ZERO rows, so the verifier
+   * would report a permanent false-clean. Passing the privileged pool is what
+   * lets this detective control actually see the data it is meant to verify.
+   */
+  privilegedPool: Pool;
   metrics?: MetricsEmitter;
 }
 
@@ -33,7 +42,7 @@ export async function checkAuditConsistency(
   deps: AuditConsistencyDeps,
 ): Promise<AuditConsistencyResult> {
   // Fork: >1 event for one tenant chained off the same predecessor.
-  const forkRes = await deps.pool.query<{ n: string }>(
+  const forkRes = await deps.privilegedPool.query<{ n: string }>(
     `SELECT count(*)::bigint AS n FROM (
        SELECT tenant_id, prev_event_hash
          FROM audit_events
@@ -46,7 +55,7 @@ export async function checkAuditConsistency(
 
   // Gap: an event whose predecessor hash is not the event_hash of any event for
   // the same tenant — a broken chain link (a missing or mismatched predecessor).
-  const gapRes = await deps.pool.query<{ n: string }>(
+  const gapRes = await deps.privilegedPool.query<{ n: string }>(
     `SELECT count(*)::bigint AS n
        FROM audit_events e
       WHERE e.prev_event_hash IS NOT NULL
