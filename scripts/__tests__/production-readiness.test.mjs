@@ -202,6 +202,27 @@ test("CI guards section includes check-audit-status and all are green", () => {
   }
 });
 
+test("deferred blob-purge row is sourced from R-02 (no stale 'awaiting signoff'), and agrees with the register", () => {
+  // P2 #2 (2026-06-07 review): the blob-purge readiness line used a hardcoded
+  // existsSync on a path that does not exist (src/workers/...), so it always
+  // reported "deferred; awaiting signoff" even though the worker shipped, while
+  // the risk register said phase B shipped. The line is now derived from the
+  // R-02 risk-register entry, so the two can never disagree.
+  const r = runWithEnv({ NODE_ENV: "development" });
+  const blobRow = r.parsed.sections.deferred.find((row) => /blob purge/i.test(row.name));
+  assert.ok(blobRow, "expected a tenant blob-purge row in the deferred section");
+  // The stale lie must be gone.
+  assert.doesNotMatch(blobRow.note, /awaiting signoff/i, `stale note: ${blobRow.note}`);
+  // It must reflect the real R-02 status and agree with the risks section.
+  const r02 = r.parsed.sections.risks.find((row) => row.name.startsWith("R-02"));
+  assert.ok(r02, "R-02 should be present in the risks section");
+  // R-02 is 'mitigating' (yellow) while hardening + the live-cloud erasure
+  // integration test remain; the deferred line must match (never green while
+  // R-02 is open/mitigating).
+  assert.equal(blobRow.status, r02.status === "red" ? "red" : "yellow");
+  assert.match(blobRow.note, /R-02/);
+});
+
 test("colored terminal output prints overall summary line", () => {
   // The script may exit 1 (an open P0 risk in the real register puts the
   // aggregator in red); the human-readable output is what we assert on,

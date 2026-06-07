@@ -309,18 +309,41 @@ function checkCiGuards() {
   return rows;
 }
 
+/** Read a single risk-register entry by id; null if the file or id is absent. */
+function readRisk(id) {
+  const path = join(ROOT, "docs/risk-register.json");
+  if (!existsSync(path)) return null;
+  try {
+    const register = JSON.parse(readFileSync(path, "utf8"));
+    return (register.risks ?? []).find((r) => r.id === id) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function checkDeferredItems() {
   const rows = [];
-  const blobPurgeWorker = existsSync(
-    join(ROOT, "services/api/src/workers/tenant-blob-purge-worker.ts"),
-  );
-  rows.push({
-    name: "Tenant blob purge (RFC 0003 phase B)",
-    status: blobPurgeWorker ? "green" : "yellow",
-    note: blobPurgeWorker
-      ? "phase B shipped"
-      : "deferred; RFC 0003 awaiting signoff (URIs surfaced on delete)",
-  });
+  // Derive the blob-purge readiness line from the R-02 risk-register entry (the
+  // single structured source) rather than a file-existence heuristic. The old
+  // probe checked a path that never existed (src/workers/...), so it reported
+  // "awaiting signoff" forever even though the worker shipped — disagreeing with
+  // the register. Sourcing from R-02 makes the two agree by construction: green
+  // only when R-02 is closed (all hardening + the live-cloud erasure integration
+  // test done), yellow while it is open/mitigating.
+  const r02 = readRisk("R-02");
+  if (r02 === null) {
+    rows.push({
+      name: "Tenant blob purge (RFC 0003 phase B)",
+      status: "yellow",
+      note: "R-02 not found in docs/risk-register.json; cannot determine status",
+    });
+  } else {
+    rows.push({
+      name: "Tenant blob purge (RFC 0003 phase B)",
+      status: r02.status === "closed" ? "green" : "yellow",
+      note: `R-02 ${r02.status}: ${r02.mitigation_summary}`,
+    });
+  }
 
   // Drive this off the committed audit record, NOT the presence/absence of a
   // TODO marker in AUDIT-SCOPE.md (that flips green the moment the marker is
