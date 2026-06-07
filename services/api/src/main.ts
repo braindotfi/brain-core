@@ -130,6 +130,7 @@ import {
   registerWebhookRoutes,
   publishAnchor,
   startAnchorReconciler,
+  startAuditConsistencyVerifier,
   startWebhookDispatchWorker,
 } from "@brain/audit";
 import type { AuditDeps } from "@brain/audit";
@@ -929,6 +930,12 @@ async function main(): Promise<void> {
           }),
         })
       : undefined;
+
+  // Runtime audit-consistency verifier (review doc #2 6.4): a read-only detective
+  // control that periodically scans audit_events for per-tenant hash-chain forks
+  // or gaps and emits gauges. The emitter's advisory lock prevents new forks;
+  // this makes any regression / legacy inconsistency observable.
+  const auditConsistencyVerifier = startAuditConsistencyVerifier({ pool, metrics });
 
   // Exposed for POST /v1/demo/anchor/trigger — set when anchorBroadcaster is configured.
   let triggerAnchor: (() => Promise<void>) | undefined;
@@ -2008,6 +2015,7 @@ async function main(): Promise<void> {
     webhookDispatchWorker.stop();
     tenantBlobPurgeWorker.stop();
     anchorReconciler?.stop();
+    auditConsistencyVerifier.stop();
     try {
       await agentRouteWorker.close();
     } catch (err) {

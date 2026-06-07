@@ -29,6 +29,13 @@ export {
   type AnchorReconciler,
 } from "./reconciler.js";
 export {
+  checkAuditConsistency,
+  startAuditConsistencyVerifier,
+  type AuditConsistencyDeps,
+  type AuditConsistencyResult,
+  type AuditConsistencyVerifier,
+} from "./audit-consistency.js";
+export {
   runWebhookDispatchCycle,
   startWebhookDispatchWorker,
   type WebhookDispatchWorkerDeps,
