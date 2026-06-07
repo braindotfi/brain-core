@@ -6,6 +6,16 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.5 (GDPR erasure hardening)
+
+Second-pass review remediation of the tenant blob-purge workflow (RFC 0003). Compliance- and diligence-facing; the internal worker/test detail is omitted.
+
+#### Changed. Tenant erasure is now crash-safe and audit-atomic
+
+- **A crashed purge worker can no longer silently strand a GDPR Article 17 erasure.** A job claimed by a worker that then dies (left in `purging`) is now reclaimed by another worker once its lease expires, and every status write is fenced on a unique lock token so a resurrected stale worker cannot overwrite the new owner's result.
+- **A transient cloud error no longer masquerades as a permanent legal hold.** Per-object delete failures are classified: throttling / 5xx / network / authorization errors are retried, and only a confirmed WORM / object-lock response makes the job terminal (`blocked_legal_hold`). Previously any failed delete was treated as a legal hold, so a 503 could permanently stop an erasure.
+- **Purge-lifecycle audit events are now written transactionally.** Each state transition records its audit intent in the same database transaction as the status change (via an outbox), and a publisher delivers it to the audit service idempotently. This removes the prior ordering where an audit event could be emitted before the state write (orphaning a "completed" record) and the `audit-emit-failed` sentinel that let a job complete with no real audit event. A tenant deletion now returns a truthful committed result even if the audit service is momentarily unavailable.
+
 ### v0.5.4 (audit-build binding, GDPR erasure, money-path CI)
 
 Review-remediation batch. The internal CI/test work is omitted; the items below are API-, compliance-, or diligence-facing.

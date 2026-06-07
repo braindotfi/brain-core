@@ -30,7 +30,7 @@
       "title": "Tenant blob purge not implemented (GDPR Article 17 gap)",
       "priority": "P0",
       "status": "mitigating",
-      "mitigation_summary": "RFC 0003 phase B shipped: tenant deletion enqueues a durable tenant_blob_purge_jobs row in the deletion transaction; a privileged worker (blob-purge-worker.ts) drains it via BlobAdapter.purgeTenant with bounded backoff, a dead-letter state, legal-hold surfacing, and per-lifecycle audit events. purgeTenant now does version-aware permanent erasure (S3 all object versions + delete markers; Azure versions + snapshots) and is restricted to the worker by a CI call-site guard (check-blob-purge-callsite). Remaining: a production-shaped integration test against live S3/Azure proving permanent erasure. (Realized via BlobAdapter.purgeTenant rather than the per-blob purge() the RFC sketched.)",
+      "mitigation_summary": "RFC 0003 phase B shipped: tenant deletion enqueues a durable tenant_blob_purge_jobs row in the deletion transaction; a privileged worker (blob-purge-worker.ts) drains it via BlobAdapter.purgeTenant with bounded backoff, a dead-letter state, and version-aware permanent erasure (S3 all object versions + delete markers; Azure versions + snapshots), restricted to the worker by a CI call-site guard (check-blob-purge-callsite). 2026-06-07 review hardening shipped: (i) crash-safe lease recovery (stale 'purging' jobs reclaimed past a lease timeout; every status write fenced on a unique lock token, so a crashed worker cannot strand a job); (ii) structured failure classification (transient / authorization / unknown errors are retried, only a confirmed WORM / object-lock is the terminal blocked_legal_hold, so a 503 no longer masquerades as a legal hold); (iii) a transactional audit outbox (each state transition writes its audit intent in the same transaction and a publisher delivers it idempotently, removing the emit-before-write orphan and the 'audit-emit-failed' sentinel). Remaining: a production-shaped integration test against live S3/Azure proving permanent erasure.",
       "exit_criteria": [
         "tenant_blob_purge_jobs migration",
         "BlobAdapter.purge() on memory/s3/azure",
@@ -41,13 +41,11 @@
       "owner": "engineering",
       "evidence": [
         "docs/rfcs/0003-blob-purge-article-17.md",
-        "services/api/src/tenant-deletion/service.ts",
-        "services/api/migrations/0006_tenant_blob_purge_jobs.sql",
-        "services/api/src/tenant-deletion/blob-purge-repo.ts",
         "services/api/src/tenant-deletion/blob-purge-worker.ts",
-        "shared/src/blob/s3.ts",
-        "shared/src/blob/azure.ts",
-        "scripts/check-blob-purge-callsite.mjs"
+        "services/api/src/tenant-deletion/blob-purge-repo.ts",
+        "services/api/src/tenant-deletion/blob-purge-audit-outbox.ts",
+        "shared/src/blob/purge-classify.ts",
+        "services/api/src/tenant-deletion/service.test.ts"
       ]
     },
     {
