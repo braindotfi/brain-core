@@ -706,6 +706,9 @@ importers:
       '@brain/agent-router':
         specifier: workspace:*
         version: link:../../services/agent-router
+      '@brain/audit':
+        specifier: workspace:*
+        version: link:../../services/audit
       '@brain/execution':
         specifier: workspace:*
         version: link:../../services/execution

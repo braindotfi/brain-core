@@ -935,7 +935,11 @@ async function main(): Promise<void> {
   // control that periodically scans audit_events for per-tenant hash-chain forks
   // or gaps and emits gauges. The emitter's advisory lock prevents new forks;
   // this makes any regression / legacy inconsistency observable.
-  const auditConsistencyVerifier = startAuditConsistencyVerifier({ pool, metrics });
+  // The verifier scans every tenant's chain with no tenant scope set, so it MUST
+  // run through the BYPASSRLS privileged pool. On the request-path `pool` (the
+  // FORCE-RLS `brain_app` role) the queries would match zero rows and report a
+  // permanent false-clean (doc A P1.1).
+  const auditConsistencyVerifier = startAuditConsistencyVerifier({ privilegedPool, metrics });
 
   // Exposed for POST /v1/demo/anchor/trigger — set when anchorBroadcaster is configured.
   let triggerAnchor: (() => Promise<void>) | undefined;

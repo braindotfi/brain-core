@@ -23,7 +23,7 @@ function fakePool(counts: { forks: number; gaps: number }): { pool: Pool; sql: s
 describe("checkAuditConsistency", () => {
   it("reports zero on a clean chain and runs the fork + gap queries", async () => {
     const { pool, sql } = fakePool({ forks: 0, gaps: 0 });
-    const res = await checkAuditConsistency({ pool });
+    const res = await checkAuditConsistency({ privilegedPool: pool });
     expect(res).toEqual({ forks: 0, gaps: 0 });
     // Fork query groups by predecessor; gap query is an anti-join on event_hash.
     expect(sql.some((s) => s.includes("GROUP BY tenant_id, prev_event_hash"))).toBe(true);
@@ -36,7 +36,7 @@ describe("checkAuditConsistency", () => {
     const metrics = { gauge: vi.fn(), increment: vi.fn(), histogram: vi.fn(), duration: vi.fn() };
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const res = await checkAuditConsistency({ pool, metrics: metrics as never });
+    const res = await checkAuditConsistency({ privilegedPool: pool, metrics: metrics as never });
 
     expect(res).toEqual({ forks: 2, gaps: 1 });
     expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.fork.count", 2);
@@ -49,7 +49,7 @@ describe("checkAuditConsistency", () => {
   it("does not log when the chain is clean", async () => {
     const { pool } = fakePool({ forks: 0, gaps: 0 });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await checkAuditConsistency({ pool });
+    await checkAuditConsistency({ privilegedPool: pool });
     expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
   });

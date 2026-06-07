@@ -21,7 +21,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Client, Pool } from "pg";
 import {
   PostgresAuditEmitter,
@@ -34,6 +34,7 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import { isValidPaymentIntentTransition } from "@brain/execution";
+import { checkAuditConsistency } from "@brain/audit";
 import { LedgerPaymentIntents, upsertAccountRow, upsertCounterpartyRow } from "@brain/ledger";
 import { AGENT_CONTRIBUTED_CONFIDENCE_CEILING } from "../../../schemas/index.js";
 import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
@@ -512,6 +513,65 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       expect(res.rows[0]!.n).toBe(1); // exactly one physical row
     } finally {
       c.release();
+    }
+  });
+
+  // 8 — the audit-consistency verifier is a PRIVILEGED-pool detective control.
+  // Through the BYPASSRLS pool it sees every tenant and detects a corrupted
+  // chain; on a tenant-scoped app-role connection (the request-path role under
+  // FORCE RLS) the same queries see ZERO rows and report a permanent
+  // false-clean. This is the regression guard for doc A P1.1: the verifier must
+  // never be wired to the request-path pool.
+  it("audit-consistency verifier detects a gap via the privileged pool but is blind on a tenant-scoped app-role connection", async () => {
+    const tenant = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "chain.genesis",
+      inputs: {},
+      outputs: {},
+    });
+    const e2 = await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "chain.second",
+      inputs: {},
+      outputs: {},
+    });
+
+    // Corrupt the chain as the (super)owner: point e2 at a predecessor hash that
+    // is the event_hash of no event — a gap. (REVOKE UPDATE is on PUBLIC, not
+    // the owner, and superusers bypass RLS.)
+    await pool.query(`UPDATE audit_events SET prev_event_hash = decode($2, 'hex') WHERE id = $1`, [
+      e2.id,
+      "aa".repeat(32),
+    ]);
+
+    // Privileged pool: sees across tenants, detects the gap, logs critical.
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const privileged = await checkAuditConsistency({ privilegedPool: pool });
+    expect(privileged.gaps).toBeGreaterThanOrEqual(1);
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+
+    // Request-path role with no tenant scope set: RLS hides every row, so the
+    // identical verifier reports a false-clean. This is exactly the production
+    // regression that wiring it to `privilegedPool` prevents.
+    const blind = await pool.connect();
+    try {
+      await blind.query(`SET search_path TO ${schema}, public`);
+      await blind.query("BEGIN");
+      await blind.query(`SET LOCAL ROLE ${appRole}`);
+      // deliberately NO set_config('app.tenant_id', ...) — mirrors the verifier,
+      // which scans all tenants and sets no scope.
+      const res = await checkAuditConsistency({ privilegedPool: blind as unknown as Pool });
+      await blind.query("ROLLBACK");
+      expect(res).toEqual({ forks: 0, gaps: 0 });
+    } finally {
+      blind.release();
     }
   });
 });
