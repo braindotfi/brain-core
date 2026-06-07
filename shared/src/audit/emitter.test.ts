@@ -50,6 +50,18 @@ describe("InMemoryAuditEmitter", () => {
     });
     expect(recomputed).toBe(ev.eventHash);
   });
+
+  it("dedupes by idempotency key (same tenant + key returns the SAME event)", async () => {
+    const emitter = new InMemoryAuditEmitter();
+    const tenant = newTenantId();
+    const a = await emitter.emit({ ...baseEvent(), tenantId: tenant, idempotencyKey: "k1" });
+    const b = await emitter.emit({ ...baseEvent(), tenantId: tenant, idempotencyKey: "k1" });
+    expect(b).toBe(a); // the existing event, not a duplicate
+    expect(emitter.events).toHaveLength(1);
+    // A different key writes a new event.
+    await emitter.emit({ ...baseEvent(), tenantId: tenant, idempotencyKey: "k2" });
+    expect(emitter.events).toHaveLength(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -105,6 +117,69 @@ describe("PostgresAuditEmitter", () => {
 
     const ev = await emitter.emit(baseEvent());
     expect(ev.prevEventHash).toBe(priorHash);
+  });
+
+  it("returns the existing event (no INSERT) on an idempotency-key hit", async () => {
+    const existingId = "evt_existing";
+    const existingHash = Buffer.from("c".repeat(64), "hex");
+    const createdAt = new Date("2026-06-07T00:00:00.000Z");
+    const log: string[] = [];
+    const client = {
+      released: false,
+      query: vi.fn(async (text: string) => {
+        log.push(text.trim().split("\n")[0]!.trim());
+        if (text.includes("idempotency_key = $2")) {
+          return {
+            rows: [
+              {
+                id: existingId,
+                event_hash: existingHash,
+                prev_event_hash: null,
+                created_at: createdAt,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(() => {
+        client.released = true;
+      }),
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+    const emitter = new PostgresAuditEmitter(pool);
+
+    const ev = await emitter.emit({ ...baseEvent(), idempotencyKey: "k1" });
+
+    expect(ev.id).toBe(existingId);
+    expect(ev.eventHash).toBe("c".repeat(64));
+    expect(ev.prevEventHash).toBeNull();
+    expect(ev.createdAt).toBe("2026-06-07T00:00:00.000Z");
+    // It returned the existing row — NO new event was inserted.
+    expect(log.some((s) => s.startsWith("INSERT"))).toBe(false);
+    expect(log).toContain("COMMIT");
+    expect(client.released).toBe(true);
+  });
+
+  it("passes idempotency_key as a column + value on INSERT when supplied", async () => {
+    const calls: { text: string; values: unknown[] }[] = [];
+    const client = {
+      query: vi.fn(async (text: string, values?: unknown[]) => {
+        calls.push({ text, values: values ?? [] });
+        return { rows: [], rowCount: 0 }; // no idempotency hit, empty tail → genesis insert
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+    const emitter = new PostgresAuditEmitter(pool);
+
+    await emitter.emit({ ...baseEvent(), idempotencyKey: "k1" });
+
+    const insert = calls.find((c) => c.text.includes("INSERT INTO audit_events"));
+    expect(insert).toBeDefined();
+    expect(insert!.text).toContain("idempotency_key");
+    expect(insert!.values).toContain("k1");
   });
 
   it("rolls back and rethrows on INSERT failure", async () => {
