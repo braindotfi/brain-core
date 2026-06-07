@@ -36,6 +36,13 @@ export interface AuditConsistencyResult {
   forks: number;
   /** Events whose prev_event_hash references no event_hash for the same tenant. */
   gaps: number;
+  /**
+   * Non-empty tenants whose count of genesis (null-predecessor) events is not
+   * exactly one. Two genesis events escape both the fork check (which excludes
+   * null predecessors) and the gap check (each genesis is self-consistent), so a
+   * forked or duplicated chain head is otherwise invisible.
+   */
+  invalidGenesis: number;
 }
 
 export async function checkAuditConsistency(
@@ -67,15 +74,31 @@ export async function checkAuditConsistency(
   );
   const gaps = Number(gapRes.rows[0]?.n ?? 0);
 
+  // Genesis cardinality: a healthy non-empty tenant has EXACTLY ONE event with a
+  // null predecessor. A tenant with no events contributes no row here and is
+  // correctly not flagged; one with two genesis events (legacy or corrupted) or
+  // zero (a missing chain head) is.
+  const genesisRes = await deps.privilegedPool.query<{ n: string }>(
+    `SELECT count(*)::bigint AS n FROM (
+       SELECT tenant_id
+         FROM audit_events
+        GROUP BY tenant_id
+       HAVING count(*) FILTER (WHERE prev_event_hash IS NULL) <> 1
+     ) invalid_genesis`,
+  );
+  const invalidGenesis = Number(genesisRes.rows[0]?.n ?? 0);
+
   deps.metrics?.gauge("brain.audit.consistency.fork.count", forks);
   deps.metrics?.gauge("brain.audit.consistency.gap.count", gaps);
-  if (forks > 0 || gaps > 0) {
+  deps.metrics?.gauge("brain.audit.consistency.invalid_genesis.count", invalidGenesis);
+  if (forks > 0 || gaps > 0 || invalidGenesis > 0) {
     console.error("[audit-consistency] per-tenant hash-chain inconsistency detected", {
       forks,
       gaps,
+      invalidGenesis,
     });
   }
-  return { forks, gaps };
+  return { forks, gaps, invalidGenesis };
 }
 
 export interface AuditConsistencyVerifier {
