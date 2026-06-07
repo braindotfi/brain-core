@@ -203,6 +203,7 @@ import {
 } from "./composition/escrow-audit-gate.js";
 import { makeBaseGetCode } from "./composition/eth-getcode.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
+import { closeAllPools } from "./composition/close-pools.js";
 import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
@@ -2030,9 +2031,12 @@ async function main(): Promise<void> {
     } catch (err) {
       log.error({ err }, "app.close failed");
     }
-    try {
-      await pool.end();
-    } catch (err) {
+    // Close every DISTINCT pool. wikiPool/privilegedPool alias `pool` in dev
+    // (single-pool mode) and are separate pools in production; closeAllPools
+    // dedupes by reference so each underlying pool is ended exactly once, and a
+    // failure to close one never blocks the others (doc A P2.3).
+    const { errors: poolCloseErrors } = await closeAllPools([pool, wikiPool, privilegedPool]);
+    for (const err of poolCloseErrors) {
       log.error({ err }, "pool.end failed");
     }
     try {
