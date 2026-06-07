@@ -194,6 +194,7 @@ import {
 } from "./gate-loaders/index.js";
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
+import { assertDbRoles, type RoleIdentity } from "./composition/db-roles.js";
 import {
   assertDeployedEscrowBytecode,
   assertEscrowAuditApproved,
@@ -843,6 +844,34 @@ async function main(): Promise<void> {
       statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
       applicationName: `${cfg.SERVICE_NAME}-privileged`,
     });
+  }
+
+  // Verify each pool actually connects with the intended role, not just that its
+  // URL is set (db-isolation.ts only checks presence). Production-only: the
+  // isolation fence above guarantees the three pools are distinct there; in
+  // dev/test they alias one (often superuser) connection, so there is nothing
+  // meaningful to enforce. (Codex c96283d P2.)
+  if (cfg.NODE_ENV === "production") {
+    await assertDbRoles(
+      [
+        {
+          label: "request",
+          pool: { query: (s: string) => pool.query<RoleIdentity>(s) },
+          mustBypassRls: false,
+        },
+        {
+          label: "privileged",
+          pool: { query: (s: string) => privilegedPool.query<RoleIdentity>(s) },
+          mustBypassRls: true,
+        },
+        {
+          label: "wiki",
+          pool: { query: (s: string) => wikiPool.query<RoleIdentity>(s) },
+          mustBypassRls: false,
+        },
+      ],
+      { enforce: true, log: (msg, ctx) => log.info(ctx, msg) },
+    );
   }
 
   const withPrivileged = async <T>(
