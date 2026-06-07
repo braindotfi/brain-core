@@ -118,6 +118,59 @@ export async function markAuditOutboxFailed(
   );
 }
 
+/**
+ * Terminal dead-letter at the attempt cap. Unlike {@link markAuditOutboxFailed},
+ * this moves the row to an explicit `exhausted` state so it is NOT silently
+ * pending-but-ineligible: mandatory audit evidence that could not be delivered is
+ * observable (a critical metric is emitted alongside) and operator-replayable.
+ */
+export async function markAuditOutboxExhausted(
+  client: Queryable,
+  id: string,
+  attempt: number,
+  error: string,
+): Promise<void> {
+  await client.query(
+    `UPDATE tenant_blob_purge_audit_outbox
+        SET status = 'exhausted', attempts = $2, last_error = $3
+      WHERE id = $1`,
+    [id, attempt, error],
+  );
+}
+
+/**
+ * Operator replay: reset exhausted rows back to `pending` (attempts cleared, due
+ * now) so the publisher re-attempts delivery on the next drain. Idempotent on the
+ * audit side via the row's UNIQUE event_key. Returns the number requeued.
+ */
+export async function replayExhaustedAuditOutbox(client: Queryable, limit = 100): Promise<number> {
+  const res = await client.query(
+    `UPDATE tenant_blob_purge_audit_outbox
+        SET status = 'pending', attempts = 0, next_attempt_at = now(), last_error = NULL
+      WHERE id IN (
+        SELECT id FROM tenant_blob_purge_audit_outbox
+         WHERE status = 'exhausted'
+         ORDER BY created_at
+         LIMIT $1
+      )`,
+    [limit],
+  );
+  return res.rowCount ?? 0;
+}
+
+/** Count rows in the given status (operator/readiness observability). */
+export async function countAuditOutboxByStatus(
+  client: Queryable,
+  status: "pending" | "published" | "exhausted",
+): Promise<number> {
+  const res = await client.query(
+    `SELECT count(*)::int AS n FROM tenant_blob_purge_audit_outbox WHERE status = $1`,
+    [status],
+  );
+  const row = res.rows[0] as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
 export interface AuditOutboxDrainDeps {
   privilegedPool: Pool;
   audit: AuditEmitter;
@@ -129,6 +182,8 @@ export interface AuditOutboxDrainDeps {
 export interface AuditOutboxDrainResult {
   published: number;
   failed: number;
+  /** Rows dead-lettered to `exhausted` this cycle (delivery cap hit). */
+  exhausted: number;
 }
 
 function outboxRowToEvent(
@@ -153,7 +208,7 @@ function outboxRowToEvent(
 async function publishOneOutboxRow(
   deps: AuditOutboxDrainDeps,
   maxAttempts: number,
-): Promise<"empty" | "published" | "failed"> {
+): Promise<"empty" | "published" | "failed" | "exhausted"> {
   const c = await deps.privilegedPool.connect();
   try {
     await c.query("BEGIN");
@@ -170,6 +225,21 @@ async function publishOneOutboxRow(
     } catch (err) {
       const attempt = row.attempts + 1;
       const message = err instanceof Error ? err.message : String(err);
+      if (attempt >= maxAttempts) {
+        // Cap hit: dead-letter to an explicit, observable `exhausted` state
+        // rather than leaving the row pending-but-ineligible. Mandatory audit
+        // evidence that could not be delivered must be loud, not silent.
+        await markAuditOutboxExhausted(c, row.id, attempt, message);
+        await c.query("COMMIT");
+        deps.metrics?.increment("brain.tenant.blob_purge.audit_outbox_exhausted.count", {
+          tenant_id: row.tenant_id,
+        });
+        console.error(
+          "[blob-purge-audit-outbox] audit delivery exhausted; mandatory evidence undelivered",
+          { outbox_id: row.id, tenant_id: row.tenant_id, event_key: row.event_key, attempt },
+        );
+        return "exhausted";
+      }
       await markAuditOutboxFailed(
         c,
         row.id,
@@ -206,11 +276,12 @@ export async function drainAuditOutbox(
 ): Promise<AuditOutboxDrainResult> {
   const maxAttempts = deps.maxAttempts ?? MAX_OUTBOX_PUBLISH_ATTEMPTS;
   const limit = opts.limit ?? 50;
-  const tally: AuditOutboxDrainResult = { published: 0, failed: 0 };
+  const tally: AuditOutboxDrainResult = { published: 0, failed: 0, exhausted: 0 };
   for (let i = 0; i < limit; i += 1) {
     const disposition = await publishOneOutboxRow(deps, maxAttempts);
     if (disposition === "empty") break;
     if (disposition === "published") tally.published += 1;
+    else if (disposition === "exhausted") tally.exhausted += 1;
     else tally.failed += 1;
   }
   return tally;

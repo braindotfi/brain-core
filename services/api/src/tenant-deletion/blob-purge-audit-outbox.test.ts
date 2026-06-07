@@ -3,11 +3,13 @@ import type { Pool } from "pg";
 import { InMemoryAuditEmitter } from "@brain/shared";
 import {
   claimPendingAuditOutbox,
+  countAuditOutboxByStatus,
   drainAuditOutbox,
   enqueueAuditOutbox,
   markAuditOutboxFailed,
   markAuditOutboxPublished,
   nextOutboxAttemptDelaySeconds,
+  replayExhaustedAuditOutbox,
   type AuditOutboxRow,
 } from "./blob-purge-audit-outbox.js";
 import type { Queryable } from "./blob-purge-repo.js";
@@ -129,7 +131,7 @@ describe("drainAuditOutbox", () => {
 
     const res = await drainAuditOutbox({ privilegedPool: pool, audit, workerId: "w1" });
 
-    expect(res).toEqual({ published: 1, failed: 0 });
+    expect(res).toEqual({ published: 1, failed: 0, exhausted: 0 });
     expect(audit.events).toHaveLength(1);
     expect(audit.events[0]).toMatchObject({
       action: "tenant_blob.purge_completed",
@@ -151,7 +153,7 @@ describe("drainAuditOutbox", () => {
       metrics: metrics as never,
     });
 
-    expect(res).toEqual({ published: 0, failed: 1 });
+    expect(res).toEqual({ published: 0, failed: 1, exhausted: 0 });
     expect(calls.some((s) => s.includes("attempts = $2"))).toBe(true);
     expect(calls.some((s) => s.includes("status = 'published'"))).toBe(false);
     expect(metrics.increment).toHaveBeenCalledWith(
@@ -164,7 +166,51 @@ describe("drainAuditOutbox", () => {
     const { pool } = drainPool([]);
     const audit = new InMemoryAuditEmitter();
     const res = await drainAuditOutbox({ privilegedPool: pool, audit, workerId: "w1" });
-    expect(res).toEqual({ published: 0, failed: 0 });
+    expect(res).toEqual({ published: 0, failed: 0, exhausted: 0 });
     expect(audit.events).toHaveLength(0);
+  });
+
+  it("dead-letters to exhausted at the attempt cap (critical metric, not silent pending)", async () => {
+    // maxAttempts 1 + a row at attempts 0 ⇒ the first failed delivery hits the cap.
+    const { pool, calls } = drainPool([row({ attempts: 0 })]);
+    const audit = { emit: vi.fn(() => Promise.reject(new Error("audit down"))) };
+    const metrics = { increment: vi.fn(), observe: vi.fn(), gauge: vi.fn() };
+
+    const res = await drainAuditOutbox({
+      privilegedPool: pool,
+      audit: audit as never,
+      workerId: "w1",
+      metrics: metrics as never,
+      maxAttempts: 1,
+    });
+
+    expect(res).toEqual({ published: 0, failed: 0, exhausted: 1 });
+    // The row moved to an explicit, observable terminal state (not pending).
+    expect(calls.some((s) => s.includes("status = 'exhausted'"))).toBe(true);
+    expect(calls.some((s) => s.includes("status = 'published'"))).toBe(false);
+    // ...with a critical metric so undelivered mandatory evidence is loud.
+    expect(metrics.increment).toHaveBeenCalledWith(
+      "brain.tenant.blob_purge.audit_outbox_exhausted.count",
+      expect.objectContaining({ tenant_id: "tnt_1" }),
+    );
+  });
+
+  it("replayExhaustedAuditOutbox requeues exhausted rows to pending", async () => {
+    const { client, calls } = fakeQ([{ id: "tbo_1" }, { id: "tbo_2" }]);
+    const n = await replayExhaustedAuditOutbox(client, 50);
+    expect(n).toBe(2);
+    const [sql, params] = calls[0]!;
+    expect(sql).toContain("SET status = 'pending', attempts = 0");
+    expect(sql).toContain("status = 'exhausted'");
+    expect(params).toEqual([50]);
+  });
+
+  it("countAuditOutboxByStatus counts rows in a status", async () => {
+    const { client, calls } = fakeQ([{ n: 3 }]);
+    const n = await countAuditOutboxByStatus(client, "exhausted");
+    expect(n).toBe(3);
+    const [sql, params] = calls[0]!;
+    expect(sql).toContain("count(*)");
+    expect(params).toEqual(["exhausted"]);
   });
 });

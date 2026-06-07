@@ -71,6 +71,8 @@ export interface BlobPurgeCycleResult {
   auditPublished: number;
   /** Audit-outbox rows whose delivery failed this cycle (will be retried). */
   auditFailed: number;
+  /** Audit-outbox rows dead-lettered to `exhausted` this cycle (delivery cap hit). */
+  auditExhausted: number;
 }
 
 /** Human-readable summary of a mixed failure batch for the retry's last_error. */
@@ -117,6 +119,7 @@ export async function runBlobPurgeCycle(
     leaseLost: 0,
     auditPublished: 0,
     auditFailed: 0,
+    auditExhausted: 0,
   };
 
   // A fenced write returned false ⇒ another worker reclaimed this job's lease
@@ -296,6 +299,7 @@ export async function runBlobPurgeCycle(
   );
   tally.auditPublished = drain.published;
   tally.auditFailed = drain.failed;
+  tally.auditExhausted = drain.exhausted;
 
   return tally;
 }
