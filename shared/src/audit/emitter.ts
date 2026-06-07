@@ -15,17 +15,26 @@
  * rewired to call that API (or enqueue to BullMQ) instead of writing the
  * row directly. The interface stays the same; implementations swap.
  *
- * Hash chain: we serialize emit within a single Postgres transaction per
- * tenant. The chain's invariant (`prev_event_hash` equals the previous
- * event's `event_hash` for that tenant) is enforced using a row lock on
- * the latest tenant event inside the transaction. That makes concurrent
- * emits for the same tenant serializable without a Redis-mediated lock.
+ * Hash chain: we serialize emit per tenant with a transaction-scoped advisory
+ * lock keyed by the tenant id (`pg_advisory_xact_lock`), held until COMMIT/
+ * ROLLBACK. A row lock on the latest event is NOT sufficient: a tenant with no
+ * events yet has no row to lock (genesis race), and `ORDER BY ... LIMIT 1 FOR
+ * UPDATE` only locks the row found at query start, so a concurrent emit that
+ * already passed that point appends off the same predecessor and FORKS the
+ * chain. The advisory lock makes emits for one tenant strictly serial (each
+ * sees the true latest event) while different tenants stay concurrent. (Codex
+ * 2026-06-07 P1: concurrent audit writes must not fork the per-tenant chain.)
  */
 
 import type { Pool, PoolClient } from "pg";
 import { newAuditEventId } from "../ids.js";
 import { hashEvent } from "./hash.js";
 import type { AuditEvent, AuditEventInput } from "./types.js";
+
+// Fixed advisory-lock namespace (int4) for the per-tenant audit chain. Paired
+// with hashtext(tenant_id) so the two-key form locks one namespace per tenant.
+// Value is arbitrary but stable: 0x41554454 = "AUDT".
+const AUDIT_CHAIN_LOCK_NAMESPACE = 0x41554454;
 
 export interface AuditEmitter {
   emit(event: AuditEventInput): Promise<AuditEvent>;
@@ -84,7 +93,15 @@ export class PostgresAuditEmitter implements AuditEmitter {
       // Set tenant scope for RLS — audit_events has per-tenant isolation policies.
       await client.query("SELECT set_config('app.tenant_id', $1, true)", [event.tenantId]);
 
-      // Lock the most recent event for this tenant (if any) to serialize.
+      // Serialize all emits for THIS tenant so the per-tenant hash chain cannot
+      // fork under concurrency. Transaction-scoped (auto-released at COMMIT/
+      // ROLLBACK); different tenants hash to different keys and stay concurrent.
+      await client.query(
+        `SELECT pg_advisory_xact_lock(${AUDIT_CHAIN_LOCK_NAMESPACE}, hashtext($1))`,
+        [event.tenantId],
+      );
+
+      // Read the most recent event for this tenant (now race-free under the lock).
       const prev = await client.query<{ event_hash: string }>(
         `SELECT event_hash
            FROM audit_events

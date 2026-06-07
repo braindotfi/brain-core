@@ -419,4 +419,64 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
     // cannot register the same login email — this is what backs signup_email_taken.
     await expect(insertOwner(b, email)).rejects.toThrow(/duplicate key|unique/i);
   });
+
+  // 6 — concurrent audit emits for one tenant form a SINGLE linear hash chain
+  // (Codex 2026-06-07 P1: the per-tenant chain must not fork under concurrency).
+  it("concurrent audit emits for one tenant form a single linear hash chain", async () => {
+    const tenant = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    const N = 24;
+
+    // Fire N emits for the SAME tenant at once. Without the per-tenant advisory
+    // lock these race: multiple genesis events (no tail row to lock yet) and/or
+    // two events sharing one predecessor (locking the tail is not enough) — a
+    // forked structure rather than a chain.
+    await Promise.all(
+      Array.from({ length: N }, (_unused, i) =>
+        emitter.emit({
+          tenantId: tenant,
+          layer: "audit",
+          actor: "system",
+          action: "test.concurrent",
+          inputs: { i },
+          outputs: {},
+        }),
+      ),
+    );
+
+    // Read the chain back under the tenant scope.
+    const c = await pool.connect();
+    let rows: { eh: string; peh: string | null }[];
+    try {
+      await c.query(`SET search_path TO ${schema}, public`);
+      await c.query("BEGIN");
+      await c.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+      const res = await c.query<{ eh: string; peh: string | null }>(
+        `SELECT encode(event_hash, 'hex') AS eh, encode(prev_event_hash, 'hex') AS peh
+           FROM audit_events WHERE tenant_id = $1`,
+        [tenant],
+      );
+      await c.query("COMMIT");
+      rows = res.rows;
+    } finally {
+      c.release();
+    }
+
+    expect(rows.length).toBe(N);
+    // Exactly one genesis event (prev_event_hash = null).
+    expect(rows.filter((r) => r.peh === null).length).toBe(1);
+    // No two events share a predecessor — that duplication is the fork signature.
+    const prevs = rows.map((r) => r.peh).filter((p): p is string => p !== null);
+    expect(new Set(prevs).size).toBe(prevs.length);
+    // Walking from the genesis must visit every event in one unbranched line.
+    const byPrev = new Map(rows.map((r) => [r.peh ?? "__genesis__", r] as const));
+    let cur = byPrev.get("__genesis__");
+    const visited = new Set<string>();
+    while (cur !== undefined) {
+      expect(visited.has(cur.eh)).toBe(false);
+      visited.add(cur.eh);
+      cur = byPrev.get(cur.eh);
+    }
+    expect(visited.size).toBe(N);
+  }, 30_000);
 });
