@@ -103,6 +103,17 @@ describe("McpAuthVerifier", () => {
     });
   });
 
+  it("rejects when the agent's tenant_id does not match the JWT tenant (cross-tenant)", async () => {
+    // Defense-in-depth: even if a cross-tenant agent row were resolved, its
+    // tenant_id must equal the caller's JWT tenant or the call is refused before
+    // any tool runs. (The on-chain scope check is never even reached.)
+    stubTenantScope(activeAgent({ tenant_id: "tnt_someone_else" }));
+    const verifier = new McpAuthVerifier(makePool(), makeChecker(SCOPE_HASH_HEX));
+    await expect(verifier.verify(principal())).rejects.toMatchObject({
+      code: "auth_tenant_mismatch",
+    });
+  });
+
   describe("clearCache (scope-rotation seam)", () => {
     // Two distinct agent ids so per-agent invalidation can be observed not
     // disturbing the other entry.
