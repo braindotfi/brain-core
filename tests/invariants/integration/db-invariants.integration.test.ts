@@ -30,6 +30,7 @@ import {
   newAgentId,
   newPaymentIntentId,
   brainId,
+  hashEvent,
   ID_PREFIX,
   type ServiceCallContext,
 } from "@brain/shared";
@@ -655,5 +656,51 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
     } finally {
       c.release();
     }
+  });
+
+  // 11 — a NON-GENESIS idempotent replay must dedupe to the existing event, not
+  // throw a false audit_idempotency_conflict. Real-pg regression guard for the
+  // BYTEA predecessor-hash bug: the write-time hash and the conflict recompute
+  // must use the same hex representation of prev_event_hash. node-pg returns
+  // BYTEA as a Buffer, which only this real-DB path exercises. (Codex c96283d P1)
+  it("replays a non-genesis idempotent audit event without a false conflict", async () => {
+    const tenant = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    const genesis = await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "chain.head",
+      inputs: {},
+      outputs: {},
+    });
+    const key = `${tenant}:nongenesis`;
+    const evtInput = {
+      tenantId: tenant,
+      layer: "audit" as const,
+      actor: "system",
+      action: "chain.second",
+      inputs: { a: 1 },
+      outputs: {},
+      idempotencyKey: key,
+    };
+    const second = await emitter.emit(evtInput);
+    // The predecessor link is the genesis HEX hash, not a Buffer-shaped value.
+    expect(second.prevEventHash).toBe(genesis.eventHash);
+
+    // Replay the SAME non-genesis event (same key + content): must dedupe to the
+    // same id, never throw. (Pre-fix this raised audit_idempotency_conflict.)
+    const replay = await emitter.emit(evtInput);
+    expect(replay.id).toBe(second.id);
+    expect(replay.eventHash).toBe(second.eventHash);
+
+    // The persisted hash recomputes exactly from logical fields + hex prev.
+    const recomputed = hashEvent({
+      event: evtInput,
+      id: second.id,
+      createdAt: second.createdAt,
+      prevEventHash: genesis.eventHash,
+    });
+    expect(recomputed).toBe(second.eventHash);
   });
 });
