@@ -142,6 +142,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // worker drains it after the tenant rows are gone, and the row stands as the
   // on-record proof that Article 17 erasure was enqueued.
   "tenant_blob_purge_jobs",
+  // RFC 0003 (P2 #1): the purge audit outbox likewise survives — it carries the
+  // lifecycle audit intents the worker delivers after the tenant rows are gone.
+  "tenant_blob_purge_audit_outbox",
 ]);
 
 export interface TenantDeletionDeps {
