@@ -29,7 +29,7 @@
 import type { Pool, PoolClient } from "pg";
 import { newAuditEventId } from "../ids.js";
 import { brainError } from "../errors.js";
-import { hashEvent } from "./hash.js";
+import { AUDIT_HASH_SCHEMA_VERSION, hashEvent } from "./hash.js";
 import type { AuditEvent, AuditEventInput } from "./types.js";
 
 // Fixed advisory-lock namespace (int4) for the per-tenant audit chain. Paired
@@ -214,8 +214,9 @@ export class PostgresAuditEmitter implements AuditEmitter {
         `INSERT INTO audit_events (
            id, tenant_id, layer, actor, action, inputs, outputs,
            policy_version, policy_decision_id, before_state, after_state,
-           event_hash, prev_event_hash, created_at, idempotency_key
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+           event_hash, prev_event_hash, created_at, idempotency_key,
+           hash_schema_version
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [
           id,
           event.tenantId,
@@ -232,6 +233,9 @@ export class PostgresAuditEmitter implements AuditEmitter {
           prevHash === null ? null : Buffer.from(prevHash, "hex"),
           createdAt,
           event.idempotencyKey ?? null,
+          // Tag the row with the canonicalization that produced event_hash so the
+          // consistency verifier only recomputes current-version rows.
+          AUDIT_HASH_SCHEMA_VERSION,
         ],
       );
 
