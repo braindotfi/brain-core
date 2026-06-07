@@ -8,18 +8,21 @@
       "title": "External smart-contract audit not yet complete (BrainEscrow)",
       "priority": "P0",
       "status": "open",
-      "mitigation_summary": "Mainnet boot-fenced (escrow-audit-gate.ts) + CI guard (check-escrow-audit-marker) + 4 Foundry invariants on the contract.",
+      "mitigation_summary": "Mainnet boot-fenced (escrow-audit-gate.ts) + CI guard (check-escrow-audit-marker) + 4 Foundry invariants on the contract. The deployed on-chain bytecode is also verified at mainnet boot against the audited immutable-masked runtime hash via eth_getCode (assertDeployedEscrowBytecode), and the audit-build evidence (compiler + source-tree + creation/runtime bytecode hashes + immutable_references + approved_chain_ids) is recomputed from the working tree in CI (verify-audited-build.mjs) so a contract or toolchain change cannot ride an older approval.",
       "exit_criteria": [
         "external audit completes with no critical or high findings",
         "audited commit SHA + tag pinned in contracts/AUDIT-SCOPE.md",
-        "deployed mainnet bytecode verified to match audited bytecode",
+        "deployed mainnet bytecode verified to match audited bytecode (control shipped: eth_getCode boot fence; pending live mainnet confirmation)",
         "BRAIN_ESCROW_AUDIT_RECEIPT set to the audit report URL/hash (or legacy BRAIN_ESCROW_AUDIT_APPROVED=\"true\") in production env"
       ],
       "owner": "engineering+external-auditor",
       "evidence": [
         "contracts/AUDIT-SCOPE.md",
         "services/api/src/composition/escrow-audit-gate.ts",
-        "scripts/check-escrow-audit-marker.mjs"
+        "scripts/check-escrow-audit-marker.mjs",
+        "shared/src/bytecode.ts",
+        "scripts/verify-audited-build.mjs",
+        "contracts/audit-status.json"
       ]
     },
     {

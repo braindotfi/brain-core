@@ -21,6 +21,7 @@ Review-remediation batch. The internal CI/test work is omitted; the items below 
 #### Changed. Mainnet escrow audit binding (diligence)
 
 - **Audit approval binds to the audited build, not just a commit.** `contracts/audit-status.json` approval now additionally requires the compiler settings, contract-source-tree hash, and creation/runtime bytecode hashes, plus an explicit `approved_chain_ids`. A CI step recomputes them from the working tree + Foundry artifact and fails the build on drift; the mainnet escrow boot fence also requires the booting chain to be in `approved_chain_ids`. A single shared validator now backs the runtime fence, the CI guard, and the readiness command (previously the runtime path was a bare `status === "approved"` check).
+- **The mainnet escrow boot fence now also verifies the DEPLOYED on-chain bytecode.** With an escrow address configured on Base mainnet, the api reads the live contract code via `eth_getCode` and refuses to boot unless it matches the audited runtime bytecode. Because Solidity writes `immutable` values (the escrow arbiter) into the deployed code at construction, the audited hash and the on-chain code are compared with those immutable byte ranges masked; an approved `contracts/audit-status.json` now carries the masked `runtime_bytecode_sha256` plus the `immutable_references` ranges. A wrong, unaudited, or tampered deployment becomes a refused boot rather than a silent funds-custody risk.
 
 ### v0.5.3 (CI + demo integrity)
 
