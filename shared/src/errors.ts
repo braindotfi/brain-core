@@ -138,6 +138,9 @@ export const BRAIN_ERROR_CODES = [
   "audit_proof_invalid",
   "audit_anchor_not_yet_published",
   "audit_no_events",
+  // An idempotency key was reused for an event whose logical payload differs
+  // from the one already persisted under that key (doc A P1.2).
+  "audit_idempotency_conflict",
 
   // Trust surfaces (H-07 Proof API / H-25 Agent Run History)
   "proof_not_found",
@@ -303,6 +306,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   policy_version_mismatch: 409,
   execution_proposal_invalid_state: 409,
   execution_idempotency_conflict: 409,
+  audit_idempotency_conflict: 409,
   execution_agent_not_registered: 409,
   payment_intent_invalid_state: 409,
   payment_intent_gate_failed: 409,

@@ -28,6 +28,7 @@
 
 import type { Pool, PoolClient } from "pg";
 import { newAuditEventId } from "../ids.js";
+import { brainError } from "../errors.js";
 import { hashEvent } from "./hash.js";
 import type { AuditEvent, AuditEventInput } from "./types.js";
 
@@ -51,7 +52,25 @@ export class InMemoryAuditEmitter implements AuditEmitter {
       const existing = this.events.find(
         (e) => e.tenantId === event.tenantId && e.idempotencyKey === event.idempotencyKey,
       );
-      if (existing !== undefined) return existing;
+      if (existing !== undefined) {
+        // Same conflict check as the Postgres emitter: recompute the hash with
+        // the caller's payload pinned to the stored chain fields. A mismatch
+        // means the key was reused for different content (doc A P1.2).
+        const recomputed = hashEvent({
+          event,
+          id: existing.id,
+          createdAt: existing.createdAt,
+          prevEventHash: existing.prevEventHash,
+        });
+        if (recomputed !== existing.eventHash) {
+          throw brainError(
+            "audit_idempotency_conflict",
+            "idempotency key reused for a different audit event payload",
+            { details: { tenantId: event.tenantId, idempotencyKey: event.idempotencyKey } },
+          );
+        }
+        return existing;
+      }
     }
     const id = newAuditEventId();
     const createdAt = new Date().toISOString();
@@ -128,14 +147,39 @@ export class PostgresAuditEmitter implements AuditEmitter {
         );
         const hit = existing.rows[0];
         if (hit !== undefined) {
+          const storedHash = hit.event_hash.toString("hex");
+          const prevEventHash =
+            hit.prev_event_hash === null ? null : hit.prev_event_hash.toString("hex");
+          // Conflict detection: recompute the event hash with the CALLER's
+          // payload pinned to the STORED chain fields (id, createdAt, prev).
+          // hashEvent covers every logical field, so any differing field yields
+          // a different hash. Reusing the exact write-time serializer means this
+          // can never raise a false conflict. A mismatch means the same key was
+          // reused for different content — fail loudly instead of returning a
+          // phantom event that was never persisted (doc A P1.2).
+          const recomputed = hashEvent({
+            event,
+            id: hit.id,
+            createdAt: hit.created_at.toISOString(),
+            prevEventHash,
+          });
+          if (recomputed !== storedHash) {
+            // The catch below rolls back this read-only transaction.
+            throw brainError(
+              "audit_idempotency_conflict",
+              "idempotency key reused for a different audit event payload",
+              { details: { tenantId: event.tenantId, idempotencyKey: event.idempotencyKey } },
+            );
+          }
           await client.query("COMMIT");
+          // The hash match proves the caller's payload equals the persisted one,
+          // so this is byte-equivalent to reconstructing the row from the DB.
           return {
             ...event,
             id: hit.id,
             createdAt: hit.created_at.toISOString(),
-            eventHash: hit.event_hash.toString("hex"),
-            prevEventHash:
-              hit.prev_event_hash === null ? null : hit.prev_event_hash.toString("hex"),
+            eventHash: storedHash,
+            prevEventHash,
           };
         }
       }

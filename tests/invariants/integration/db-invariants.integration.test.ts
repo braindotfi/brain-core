@@ -609,4 +609,51 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
     errSpy.mockRestore();
     expect(res.invalidGenesis).toBeGreaterThanOrEqual(1);
   });
+
+  // 10 — reusing an idempotency key with DIFFERENT content fails loudly instead
+  // of returning a phantom event. Validated against real Postgres: the stored
+  // event_hash comes from a real prior emit, so this also proves the conflict
+  // recompute round-trips created_at / prev_event_hash exactly. (doc A P1.2)
+  it("rejects an idempotency-key reuse whose payload differs (audit_idempotency_conflict)", async () => {
+    const tenant = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    const key = "reuse-key";
+    await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "first.action",
+      inputs: {},
+      outputs: {},
+      idempotencyKey: key,
+    });
+    await expect(
+      emitter.emit({
+        tenantId: tenant,
+        layer: "audit",
+        actor: "system",
+        action: "second.action", // different payload, same key
+        inputs: {},
+        outputs: {},
+        idempotencyKey: key,
+      }),
+    ).rejects.toMatchObject({ code: "audit_idempotency_conflict" });
+
+    // The conflicting emit wrote no second physical row.
+    const c = await pool.connect();
+    try {
+      await c.query(`SET search_path TO ${schema}, public`);
+      await c.query("BEGIN");
+      await c.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+      const res = await c.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM audit_events
+          WHERE tenant_id = $1 AND idempotency_key = $2`,
+        [tenant, key],
+      );
+      await c.query("COMMIT");
+      expect(res.rows[0]!.n).toBe(1);
+    } finally {
+      c.release();
+    }
+  });
 });
