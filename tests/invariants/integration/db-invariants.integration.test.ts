@@ -780,4 +780,68 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       }),
     ).rejects.toMatchObject({ code: "audit_idempotency_conflict" });
   });
+
+  // 14 — the audit log is append-only at the GRANT level. A runtime role with the
+  // production-style blanket DML grant CAN mutate audit_events (the gap); the
+  // targeted REVOKE strips UPDATE/DELETE and overrides the grant, where a
+  // `REVOKE ... FROM PUBLIC` alone would not. (Codex 307161b P1 #1)
+  it("revokes UPDATE/DELETE on audit_events from a full-DML runtime role", async () => {
+    const tenant = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    const ev = await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "append.only",
+      inputs: {},
+      outputs: {},
+    });
+
+    const fullRole = `${schema}_full`;
+    const owner = await pool.connect();
+    try {
+      await owner.query(`SET search_path TO ${schema}, public`);
+      await owner.query(`DROP ROLE IF EXISTS ${fullRole}`);
+      // BYPASSRLS so RLS does not mask the grant behaviour we are testing; the
+      // blanket DML grant mirrors infra/db-roles.sql for brain_app/brain_privileged.
+      await owner.query(`CREATE ROLE ${fullRole} NOLOGIN BYPASSRLS`);
+      await owner.query(`GRANT USAGE ON SCHEMA ${schema} TO ${fullRole}`);
+      await owner.query(
+        `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${fullRole}`,
+      );
+
+      const asRole = async (sql: string): Promise<void> => {
+        await owner.query("BEGIN");
+        await owner.query(`SET LOCAL ROLE ${fullRole}`);
+        try {
+          await owner.query(sql, [ev.id]);
+        } finally {
+          await owner.query("ROLLBACK");
+        }
+      };
+
+      // The gap: under the blanket grant the role CAN rewrite audit history.
+      await asRole(`UPDATE audit_events SET action = 'tampered' WHERE id = $1`);
+
+      // The fix (mirrors db-roles.sql): revoke the mutation rights on audit_events.
+      await owner.query(`REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM ${fullRole}`);
+
+      // Now UPDATE and DELETE are denied; SELECT still works (read-only audit).
+      await expect(
+        asRole(`UPDATE audit_events SET action = 'tampered' WHERE id = $1`),
+      ).rejects.toThrow(/permission denied/i);
+      await expect(asRole(`DELETE FROM audit_events WHERE id = $1`)).rejects.toThrow(
+        /permission denied/i,
+      );
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE ${fullRole}`);
+      const sel = await owner.query(`SELECT id FROM audit_events WHERE id = $1`, [ev.id]);
+      await owner.query("ROLLBACK");
+      expect(sel.rows.length).toBe(1);
+    } finally {
+      owner.release();
+      await pool.query(`DROP OWNED BY ${fullRole}`).catch(() => undefined);
+      await pool.query(`DROP ROLE IF EXISTS ${fullRole}`).catch(() => undefined);
+    }
+  });
 });

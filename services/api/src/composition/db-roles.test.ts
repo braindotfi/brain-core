@@ -146,6 +146,26 @@ describe("assertDbRoles", () => {
     ).rejects.toThrow(/must NOT have INSERT on ledger_counterparties/);
   });
 
+  it("throws when a runtime role can UPDATE audit_events (append-only enforcement)", async () => {
+    await expect(
+      assertDbRoles(
+        [
+          {
+            label: "request",
+            query: fakeQuery(appRole, { "audit_events:UPDATE": true }),
+            mustBypassRls: false,
+            expectedRole: "brain_app",
+            forbidden: [
+              { table: "audit_events", privilege: "UPDATE" },
+              { table: "audit_events", privilege: "DELETE" },
+            ],
+          },
+        ],
+        { enforce: true },
+      ),
+    ).rejects.toThrow(/must NOT have UPDATE on audit_events/);
+  });
+
   it("does not throw in non-enforce (dev) mode but still reports violations + logs", async () => {
     const log = vi.fn();
     const res = await assertDbRoles(

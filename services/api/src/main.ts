@@ -866,12 +866,22 @@ async function main(): Promise<void> {
           query: asQuery(pool),
           mustBypassRls: false,
           expectedRole: "brain_app",
+          // The audit log is append-only: no runtime role may mutate it. Catches a
+          // deployment that did not apply the db-roles.sql REVOKE (Codex 307161b P1 #1).
+          forbidden: [
+            { table: "audit_events", privilege: "UPDATE" },
+            { table: "audit_events", privilege: "DELETE" },
+          ],
         },
         {
           label: "privileged",
           query: asQuery(privilegedPool),
           mustBypassRls: true,
           expectedRole: "brain_privileged",
+          forbidden: [
+            { table: "audit_events", privilege: "UPDATE" },
+            { table: "audit_events", privilege: "DELETE" },
+          ],
         },
         {
           label: "wiki",
