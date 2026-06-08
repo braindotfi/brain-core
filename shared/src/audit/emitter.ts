@@ -225,7 +225,13 @@ export class PostgresAuditEmitter implements AuditEmitter {
         }
       }
 
-      // Read the most recent event for this tenant (now race-free under the lock).
+      // Read the most recent event for this tenant (race-free under the
+      // per-tenant advisory lock taken above — no row lock needed, and a plain
+      // SELECT here is REQUIRED: the append-only grant model revokes UPDATE on
+      // audit_events from the runtime roles, so a `FOR UPDATE` row lock would
+      // raise `permission denied for table audit_events` (42501). The advisory
+      // lock already serialises this tenant's emits, so the row lock added
+      // nothing anyway.
       // event_hash is a BYTEA column, so node-pg hands it back as a Buffer.
       // Normalize to the canonical hex string here: hashEvent's contract is a hex
       // predecessor, and leaking the raw Buffer would (a) canonicalize a
@@ -236,8 +242,7 @@ export class PostgresAuditEmitter implements AuditEmitter {
            FROM audit_events
           WHERE tenant_id = $1
           ORDER BY created_at DESC, id DESC
-          LIMIT 1
-          FOR UPDATE`,
+          LIMIT 1`,
         [event.tenantId],
       );
       const prevHash = prev.rows[0]?.event_hash.toString("hex") ?? null;

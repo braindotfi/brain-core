@@ -104,6 +104,11 @@ COPY --from=builder /app/schemas/entity schemas/entity
 COPY --from=builder /app/schemas/relation schemas/relation
 COPY --from=builder /app/shared/dist shared/dist
 COPY --from=builder /app/services/api/dist services/api/dist
+# OpenAPI spec for the /v1/docs UI. `services/api` build runs copy-spec to
+# generate services/api/assets/openapi.yaml; the runtime loader (docs/spec.ts)
+# reads it at boot, so without this COPY the /v1/docs plugin throws and the api
+# crash-loops in prod.
+COPY --from=builder /app/services/api/assets services/api/assets
 COPY --from=builder /app/services/raw/dist services/raw/dist
 COPY --from=builder /app/services/ledger/dist services/ledger/dist
 COPY --from=builder /app/services/wiki/dist services/wiki/dist
