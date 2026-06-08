@@ -2,17 +2,21 @@
 description: Five minutes from npm install to a working integration.
 ---
 
-# Quickstart
+# Copy of Quickstart
 
 By the end of this page, you'll have a working integration that reads a tenant's financial state in natural language, proposes a payment, and pulls a verifiable receipt for what happened. Five minutes.
 
-### 1. Install
+{% stepper %}
+{% step %}
+### Install
 
 ```bash
 npm install @brain/sdk
 ```
+{% endstep %}
 
-### 2. Get a Key
+{% step %}
+### Get a Key
 
 Sign up at [console.brain.dev](https://console.brain.dev), create a tenant, and copy your sandbox API key (`brain_sk_test_...`).
 
@@ -24,8 +28,10 @@ BRAIN_API_KEY=brain_sk_test_...
 {% hint style="info" %}
 Sandbox uses test credentials and Base Sepolia for on-chain anchoring. No real money moves. Production keys (`brain_sk_live_...`) work the same way against `console.brain.fi`.
 {% endhint %}
+{% endstep %}
 
-### 3. Build
+{% step %}
+### Build
 
 ```typescript
 import { Brain } from "@brain/sdk";
@@ -56,8 +62,10 @@ console.log(proof.merklePath); // verifiable without trusting Brain
 ```
 
 That's it. You just touched all five capabilities of Brain through one client.
+{% endstep %}
 
-### 4. What You Just Built
+{% step %}
+### What You Just Built
 
 | Line                    | What Brain did under the hood                                                                                 |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -68,6 +76,8 @@ That's it. You just touched all five capabilities of Brain through one client.
 | `brain.proof`           | Pulled a Merkle proof from a tamper-evident log anchored on Base L2                                           |
 
 You'll meet each of these underneath as you go deeper. For now, they're just five methods on one client.
+{% endstep %}
+{% endstepper %}
 
 ### Where to Go Next
 
