@@ -14,6 +14,7 @@
  * real audit record).
  */
 
+import { randomUUID } from "node:crypto";
 import type { AuditEmitter, MetricsEmitter } from "@brain/shared";
 import { brainId } from "@brain/shared";
 import type { Pool } from "pg";
@@ -261,7 +262,6 @@ export interface OperatorReplayDeps {
   privilegedPool: {
     connect: () => Promise<Queryable & { release: () => void }>;
   };
-  audit: AuditEmitter;
 }
 
 export interface OperatorReplayResult {
@@ -271,10 +271,13 @@ export interface OperatorReplayResult {
 }
 
 /**
- * Audited operator replay: requeue exhausted rows matching `filter` and record
- * the action as a `audit.outbox.replayed` audit event (one per affected tenant,
- * so the evidence lands on that tenant's chain). Supports dry-run (inspect with
- * no mutation and no audit). The replay itself is therefore never silent.
+ * Audited operator replay: requeue exhausted rows matching `filter` AND enqueue
+ * the `audit.outbox.replayed` evidence in the SAME transaction (one intent per
+ * affected tenant), so the recovery action and its audit record commit
+ * atomically. The existing drain then delivers that intent idempotently. This
+ * avoids the post-commit emit, which could leave a replay unaudited if the audit
+ * write failed after the requeue committed (Codex fca9ac8 P1 #3). Supports
+ * dry-run (inspect with no mutation and no audit intent).
  */
 export async function operatorReplayExhaustedAuditOutbox(
   deps: OperatorReplayDeps,
@@ -309,9 +312,11 @@ export async function operatorReplayExhaustedAuditOutbox(
         WHERE id = ANY($1)`,
       [rows.map((r) => r.id)],
     );
-    await c.query("COMMIT");
 
-    // Audit the replay per affected tenant (correct provenance on each chain).
+    // Enqueue the replay evidence per affected tenant IN THIS TRANSACTION. The
+    // operation id makes each invocation's event_key unique (and deterministic
+    // for the publisher's exactly-once delivery via the row's unique event_key).
+    const operationId = randomUUID();
     const byTenant = new Map<string, AuditOutboxRowSummary[]>();
     for (const r of rows) {
       const list = byTenant.get(r.tenant_id) ?? [];
@@ -319,19 +324,22 @@ export async function operatorReplayExhaustedAuditOutbox(
       byTenant.set(r.tenant_id, list);
     }
     for (const [tenantId, trows] of byTenant) {
-      await deps.audit.emit({
+      await enqueueAuditOutbox(c, {
         tenantId,
-        layer: "audit",
-        actor: opts.operator,
         action: "audit.outbox.replayed",
+        payload: {},
+        eventKey: `audit.outbox.replayed:${operationId}:${tenantId}`,
+        actor: opts.operator,
         inputs: {
           operator: opts.operator,
+          operation_id: operationId,
           count: trows.length,
           event_keys: trows.map((r) => r.event_key),
         },
-        outputs: {},
       });
     }
+
+    await c.query("COMMIT");
     return { dryRun: false, replayed: rows };
   } catch (err) {
     try {

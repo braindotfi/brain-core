@@ -17,7 +17,6 @@
  */
 
 import { Pool } from "pg";
-import { PostgresAuditEmitter } from "@brain/shared";
 import {
   listAuditOutbox,
   operatorReplayExhaustedAuditOutbox,
@@ -102,9 +101,8 @@ async function main(): Promise<void> {
         console.error("replay requires --operator <identity>");
         process.exit(2);
       }
-      const audit = new PostgresAuditEmitter(pool);
       const res = await operatorReplayExhaustedAuditOutbox(
-        { privilegedPool: pool, audit },
+        { privilegedPool: pool },
         {
           operator,
           filter,
