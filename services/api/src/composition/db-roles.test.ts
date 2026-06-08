@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { assertDbRoles, type PoolRoleExpectation, type RoleIdentity } from "./db-roles.js";
+import { assertDbRoles, type RoleIdentity, type RoleQuery } from "./db-roles.js";
 
-function fakePool(id: RoleIdentity): PoolRoleExpectation["pool"] {
-  return { query: vi.fn(async () => ({ rows: [id] })) };
+/** A query fn returning `id` for the role query and `perms` for has_table_privilege. */
+function fakeQuery(id: RoleIdentity, perms: Record<string, boolean> = {}): RoleQuery {
+  return async (sql: string, params?: ReadonlyArray<unknown>) => {
+    if (sql.includes("has_table_privilege")) {
+      const key = `${String(params?.[0])}:${String(params?.[1])}`;
+      return { rows: [{ has: perms[key] ?? false }] };
+    }
+    return { rows: [id] };
+  };
 }
 
 const appRole: RoleIdentity = {
@@ -17,17 +24,35 @@ const privRole: RoleIdentity = {
   rolbypassrls: true,
   rolsuper: false,
 };
+const wikiRole: RoleIdentity = {
+  current_user: "brain_wiki_reader",
+  session_user: "brain_wiki_reader",
+  rolbypassrls: false,
+  rolsuper: false,
+};
 
 describe("assertDbRoles", () => {
-  it("passes for a correct request/privileged/wiki split", async () => {
+  it("passes for a correct request/privileged/wiki split with role names + perms", async () => {
     const res = await assertDbRoles(
       [
-        { label: "request", pool: fakePool(appRole), mustBypassRls: false },
-        { label: "privileged", pool: fakePool(privRole), mustBypassRls: true },
+        {
+          label: "request",
+          query: fakeQuery(appRole),
+          mustBypassRls: false,
+          expectedRole: "brain_app",
+        },
+        {
+          label: "privileged",
+          query: fakeQuery(privRole),
+          mustBypassRls: true,
+          expectedRole: "brain_privileged",
+        },
         {
           label: "wiki",
-          pool: fakePool({ ...appRole, current_user: "brain_wiki_reader" }),
+          query: fakeQuery(wikiRole),
           mustBypassRls: false,
+          expectedRole: "brain_wiki_reader",
+          forbidden: [{ table: "ledger_counterparties", privilege: "INSERT" }], // returns false
         },
       ],
       { enforce: true },
@@ -42,7 +67,7 @@ describe("assertDbRoles", () => {
         [
           {
             label: "request",
-            pool: fakePool({ ...appRole, rolbypassrls: true }),
+            query: fakeQuery({ ...appRole, rolbypassrls: true }),
             mustBypassRls: false,
           },
         ],
@@ -59,7 +84,7 @@ describe("assertDbRoles", () => {
         [
           {
             label: "privileged",
-            pool: fakePool({ ...privRole, rolbypassrls: false }),
+            query: fakeQuery({ ...privRole, rolbypassrls: false }),
             mustBypassRls: true,
           },
         ],
@@ -76,7 +101,7 @@ describe("assertDbRoles", () => {
         [
           {
             label: "request",
-            pool: fakePool({ ...appRole, rolsuper: true }),
+            query: fakeQuery({ ...appRole, rolsuper: true }),
             mustBypassRls: false,
           },
         ],
@@ -87,10 +112,50 @@ describe("assertDbRoles", () => {
     ).rejects.toThrow(/SUPERUSER/);
   });
 
+  it("throws when a pool connects as the wrong role (swapped URL)", async () => {
+    // request URL points at the wiki role: same NOBYPASSRLS posture, wrong identity.
+    await expect(
+      assertDbRoles(
+        [
+          {
+            label: "request",
+            query: fakeQuery(wikiRole),
+            mustBypassRls: false,
+            expectedRole: "brain_app",
+          },
+        ],
+        { enforce: true },
+      ),
+    ).rejects.toThrow(/must connect as brain_app but connected as brain_wiki_reader/);
+  });
+
+  it("throws when the wiki pool can write a Ledger table", async () => {
+    await expect(
+      assertDbRoles(
+        [
+          {
+            label: "wiki",
+            query: fakeQuery(wikiRole, { "ledger_counterparties:INSERT": true }),
+            mustBypassRls: false,
+            expectedRole: "brain_wiki_reader",
+            forbidden: [{ table: "ledger_counterparties", privilege: "INSERT" }],
+          },
+        ],
+        { enforce: true },
+      ),
+    ).rejects.toThrow(/must NOT have INSERT on ledger_counterparties/);
+  });
+
   it("does not throw in non-enforce (dev) mode but still reports violations + logs", async () => {
     const log = vi.fn();
     const res = await assertDbRoles(
-      [{ label: "request", pool: fakePool({ ...appRole, rolsuper: true }), mustBypassRls: false }],
+      [
+        {
+          label: "request",
+          query: fakeQuery({ ...appRole, rolsuper: true }),
+          mustBypassRls: false,
+        },
+      ],
       { enforce: false, log },
     );
     expect(res.violations).toHaveLength(1);

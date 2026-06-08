@@ -1,20 +1,22 @@
 /**
- * Boot-time DB role verification (Codex c96283d P2).
+ * Boot-time DB role verification (Codex c96283d P2, extended by fca9ac8 P2 #4).
  *
  * `db-isolation.ts` fences that the isolation URLs are SET, but a URL's presence
  * does not prove it connects with the intended role. This queries each pool's
- * actual role and asserts its RLS posture:
+ * actual role and asserts:
  *
- *   - the request pool (brain_app) and the wiki pool (brain_wiki_reader) must
- *     NOT be BYPASSRLS and must not be a superuser (a superuser bypasses RLS
- *     unconditionally, defeating tenant isolation);
- *   - the privileged pool (brain_privileged) MUST be BYPASSRLS so its sanctioned
- *     cross-tenant jobs (audit emitter, anchoring, consistency verifier) can see
- *     every tenant.
+ *   - RLS posture: the request (brain_app) and wiki (brain_wiki_reader) pools
+ *     must NOT be BYPASSRLS and must not be a superuser; the privileged
+ *     (brain_privileged) pool MUST be BYPASSRLS;
+ *   - role IDENTITY: each pool connects as its EXPECTED role name, so a swapped
+ *     request/wiki URL (both NOBYPASSRLS, so the posture check alone can't tell
+ *     them apart) is caught;
+ *   - representative permissions: a role must NOT hold privileges it should never
+ *     have (e.g. the wiki reader must not be able to write Ledger tables).
  *
  * In production a mismatch throws (fail-closed boot). In dev/test, where all
  * three pools alias one possibly-superuser connection, it only logs the observed
- * identities so the operator can see the runtime capabilities.
+ * identities.
  */
 
 export interface RoleIdentity {
@@ -24,12 +26,21 @@ export interface RoleIdentity {
   rolsuper: boolean;
 }
 
+export type RoleQuery = (
+  sql: string,
+  params?: ReadonlyArray<unknown>,
+) => Promise<{ rows: ReadonlyArray<unknown> }>;
+
 export interface PoolRoleExpectation {
   /** "request" | "privileged" | "wiki" — used in messages. */
   label: string;
-  pool: { query: (sql: string) => Promise<{ rows: RoleIdentity[] }> };
+  query: RoleQuery;
   /** privileged → true; request/wiki → false. */
   mustBypassRls: boolean;
+  /** Exact role name this pool must connect as (catches a swapped URL). */
+  expectedRole?: string;
+  /** Privileges the role must NOT hold (defense-in-depth against a swapped URL). */
+  forbidden?: ReadonlyArray<{ table: string; privilege: string }>;
 }
 
 export interface AssertDbRolesOptions {
@@ -55,8 +66,8 @@ export async function assertDbRoles(
   const violations: string[] = [];
 
   for (const p of pools) {
-    const res = await p.pool.query(ROLE_QUERY);
-    const id = res.rows[0];
+    const res = await p.query(ROLE_QUERY);
+    const id = res.rows[0] as RoleIdentity | undefined;
     if (id === undefined) {
       violations.push(`${p.label}: could not resolve the current_user role from pg_roles`);
       continue;
@@ -78,11 +89,29 @@ export async function assertDbRoles(
         `${p.label} must NOT be BYPASSRLS but ${id.current_user} is — tenant isolation defeated`,
       );
     }
+    // Role identity: catches a swapped URL even when RLS posture matches.
+    if (p.expectedRole !== undefined && id.current_user !== p.expectedRole) {
+      violations.push(
+        `${p.label} must connect as ${p.expectedRole} but connected as ${id.current_user} (swapped URL?)`,
+      );
+    }
+    // Representative forbidden privileges.
+    for (const f of p.forbidden ?? []) {
+      const pr = await p.query(`SELECT has_table_privilege(current_user, $1, $2) AS has`, [
+        f.table,
+        f.privilege,
+      ]);
+      if ((pr.rows[0] as { has?: unknown } | undefined)?.has === true) {
+        violations.push(
+          `${p.label} (${id.current_user}) must NOT have ${f.privilege} on ${f.table} but does`,
+        );
+      }
+    }
   }
 
   if (violations.length > 0 && opts.enforce) {
     throw new Error(
-      `DB role verification failed (Codex c96283d P2):\n  - ${violations.join("\n  - ")}`,
+      `DB role verification failed (Codex c96283d P2 / fca9ac8 P2 #4):\n  - ${violations.join("\n  - ")}`,
     );
   }
   return { identities, violations };

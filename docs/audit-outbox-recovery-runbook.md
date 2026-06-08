@@ -32,9 +32,10 @@ pnpm -C services/api run audit-outbox list --tenant tnt_123 --limit 100
 pnpm -C services/api run audit-outbox list --status pending --older-than 3600
 ```
 
-Connects via `DATABASE_PRIVILEGED_URL` (falls back to `DATABASE_URL`). It must be
-the `brain_privileged` (BYPASSRLS) role, because exhausted rows belong to
-already-deleted tenants with no live request scope.
+Requires `DATABASE_PRIVILEGED_URL` (there is no fallback to `DATABASE_URL` for a
+privileged recovery operation). It must be the `brain_privileged` (BYPASSRLS)
+role, because exhausted rows belong to already-deleted tenants with no live
+request scope.
 
 ## 2. Diagnose the root cause
 
