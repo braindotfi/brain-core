@@ -5,7 +5,6 @@
 ## Introduction
 
 * [Quickstart](introduction/quickstart.md)
-* [Copy of Quickstart](introduction/quickstart-1.md)
 * [The Wiki Layer vs. RAG and Graph](introduction/the-wiki-layer-vs.-rag-and-graph.md)
 
 ## Build
