@@ -860,4 +860,110 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       await pool.query(`DROP ROLE IF EXISTS ${fullRole}`).catch(() => undefined);
     }
   });
+
+  // 15 — the verifier FORENSIC tables (audit_verifier_checkpoint, audit_integrity_findings)
+  // are global and RLS-exempt. Under the production blanket DML grant a request-style role
+  // (NOBYPASSRLS — and these tables have no RLS, so it sees every tenant's rows) could read
+  // cross-tenant findings, forge findings, delete real ones, or reset the cursor. The
+  // targeted REVOKEs strip the request role entirely and keep findings append-only even for
+  // the privileged verifier role. (Codex 9389568 P1)
+  it("locks down the verifier forensic tables (no request access; findings append-only)", async () => {
+    const tenant = newTenantId();
+    const findingId = `aif_${tenant}`;
+    // Seed one finding + a checkpoint row as the owner so there is forensic state to read.
+    await pool.query(
+      `INSERT INTO audit_integrity_findings
+         (id, event_id, tenant_id, verifier_name, hash_schema_version, expected_hash, observed_hash)
+       VALUES ($1, $2, $3, 'content_hash', 1, decode('aa', 'hex'), decode('bb', 'hex'))
+       ON CONFLICT DO NOTHING`,
+      [findingId, `evt_${tenant}`, tenant],
+    );
+    await pool.query(
+      `INSERT INTO audit_verifier_checkpoint (verifier_name, hash_schema_version)
+       VALUES ('content_hash', 1) ON CONFLICT DO NOTHING`,
+    );
+
+    const appRole = `${schema}_appish`;
+    const privRole = `${schema}_privish`;
+    const owner = await pool.connect();
+    const insertFinding =
+      `INSERT INTO audit_integrity_findings ` +
+      `(id, event_id, tenant_id, verifier_name, hash_schema_version, expected_hash, observed_hash) ` +
+      `VALUES ($1, $2, $3, 'content_hash', 1, decode('aa', 'hex'), decode('bb', 'hex'))`;
+    try {
+      await owner.query(`SET search_path TO ${schema}, public`);
+      for (const r of [appRole, privRole]) {
+        await owner.query(`DROP ROLE IF EXISTS ${r}`);
+      }
+      // Both roles get the production blanket DML grant (mirrors infra/db-roles.sql).
+      // request-style: NOBYPASSRLS; privileged-style: BYPASSRLS (the verifier pool).
+      await owner.query(`CREATE ROLE ${appRole} NOLOGIN NOBYPASSRLS`);
+      await owner.query(`CREATE ROLE ${privRole} NOLOGIN BYPASSRLS`);
+      for (const r of [appRole, privRole]) {
+        await owner.query(`GRANT USAGE ON SCHEMA ${schema} TO ${r}`);
+        await owner.query(
+          `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${r}`,
+        );
+      }
+
+      const asRole = async (role: string, sql: string, params: unknown[] = []): Promise<void> => {
+        await owner.query("BEGIN");
+        await owner.query(`SET LOCAL ROLE ${role}`);
+        try {
+          await owner.query(sql, params);
+        } finally {
+          await owner.query("ROLLBACK");
+        }
+      };
+
+      // The gap: under the blanket grant the request role CAN read forensic state.
+      await asRole(appRole, `SELECT * FROM audit_integrity_findings`);
+      await asRole(appRole, `SELECT * FROM audit_verifier_checkpoint`);
+
+      // The fix (mirrors db-roles.sql): strip the request role; findings append-only.
+      await owner.query(
+        `REVOKE ALL ON audit_verifier_checkpoint, audit_integrity_findings FROM ${appRole}`,
+      );
+      await owner.query(
+        `REVOKE UPDATE, DELETE, TRUNCATE ON audit_integrity_findings FROM ${privRole}`,
+      );
+      await owner.query(`REVOKE DELETE, TRUNCATE ON audit_verifier_checkpoint FROM ${privRole}`);
+
+      // Request role now has NO access to either table — read, write, or reset.
+      await expect(asRole(appRole, `SELECT 1 FROM audit_integrity_findings`)).rejects.toThrow(
+        /permission denied/i,
+      );
+      await expect(asRole(appRole, `SELECT 1 FROM audit_verifier_checkpoint`)).rejects.toThrow(
+        /permission denied/i,
+      );
+      await expect(
+        asRole(appRole, insertFinding, [`aif_x_${tenant}`, `evt_x_${tenant}`, tenant]),
+      ).rejects.toThrow(/permission denied/i);
+      await expect(
+        asRole(appRole, `UPDATE audit_verifier_checkpoint SET completed_passes = 0`),
+      ).rejects.toThrow(/permission denied/i);
+
+      // Privileged role keeps the verifier's needs (insert a finding, advance the cursor)
+      // but can no longer erase a detected break.
+      await asRole(privRole, insertFinding, [`aif_p_${tenant}`, `evt_p_${tenant}`, tenant]);
+      await asRole(
+        privRole,
+        `UPDATE audit_verifier_checkpoint SET completed_passes = completed_passes + 1 WHERE verifier_name = 'content_hash'`,
+      );
+      await expect(
+        asRole(privRole, `UPDATE audit_integrity_findings SET status = 'resolved' WHERE id = $1`, [
+          findingId,
+        ]),
+      ).rejects.toThrow(/permission denied/i);
+      await expect(
+        asRole(privRole, `DELETE FROM audit_integrity_findings WHERE id = $1`, [findingId]),
+      ).rejects.toThrow(/permission denied/i);
+    } finally {
+      owner.release();
+      for (const r of [appRole, privRole]) {
+        await pool.query(`DROP OWNED BY ${r}`).catch(() => undefined);
+        await pool.query(`DROP ROLE IF EXISTS ${r}`).catch(() => undefined);
+      }
+    }
+  });
 });

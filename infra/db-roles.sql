@@ -100,6 +100,24 @@ $$;
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
   FROM brain_app, brain_privileged, brain_wiki_reader;
 
+-- Audit-verifier FORENSIC state (audit_verifier_checkpoint, audit_integrity_findings):
+-- global, RLS-exempt tables that PROVE tamper detection. Only the privileged verifier
+-- pool (brain_privileged) ever touches them. Under the blanket DML grant above the
+-- request role (brain_app) could otherwise read cross-tenant findings + hashes, forge
+-- findings, delete or resolve real ones, or reset the verification cursor; and the wiki
+-- reader could read them. Strip both non-verifier roles entirely, and make findings
+-- APPEND-ONLY for every runtime role (no role may erase a detected break — the same
+-- guarantee as audit_events). brain_privileged retains exactly the verifier's needs:
+-- checkpoint SELECT/INSERT/UPDATE (the cursor advances) and findings SELECT/INSERT.
+-- A controlled resolution path (a later change) will grant finding UPDATE to a
+-- dedicated recovery role, not to the broad runtime roles. (Codex 9389568 P1.)
+REVOKE ALL ON audit_verifier_checkpoint, audit_integrity_findings
+  FROM brain_app, brain_wiki_reader;
+REVOKE DELETE, TRUNCATE ON audit_verifier_checkpoint
+  FROM brain_privileged;
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_integrity_findings
+  FROM brain_privileged;
+
 -- Defence in depth: FORCE RLS on every tenant-scoped table so even a connection
 -- that happens to be the table owner is still subject to the tenant_isolation
 -- policy. Applies to every table that has RLS enabled (set by the migrations).
