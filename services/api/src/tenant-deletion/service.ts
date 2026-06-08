@@ -146,6 +146,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // RFC 0003 (P2 #1): the purge audit outbox likewise survives — it carries the
   // lifecycle audit intents the worker delivers after the tenant rows are gone.
   "tenant_blob_purge_audit_outbox",
+  // Codex 307161b P1 #2: integrity findings are forensic records ABOUT the
+  // preserved, append-only audit log; they are retained with it, not erased.
+  "audit_integrity_findings",
 ]);
 
 export interface TenantDeletionDeps {

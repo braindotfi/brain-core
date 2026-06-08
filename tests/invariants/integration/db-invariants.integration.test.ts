@@ -728,11 +728,27 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
     await pool.query(`UPDATE audit_events SET action = 'content.tampered' WHERE id = $1`, [ev.id]);
 
     // The next pass (cursor wrapped to the start) re-verifies every row and
-    // catches the tampered one.
+    // catches the tampered one, recording a DURABLE finding.
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const after = await verifyContentHashCursor({ privilegedPool: pool });
-    errSpy.mockRestore();
     expect(after.hashMismatches).toBeGreaterThan(before.hashMismatches);
+    const f1 = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM audit_integrity_findings WHERE event_id = $1 AND status = 'open'`,
+      [ev.id],
+    );
+    expect(f1.rows[0]!.n).toBe(1);
+
+    // "Resolve" the underlying row so it recomputes clean again; the open finding
+    // must NOT be auto-cleared by a subsequent clean pass (it is sticky until an
+    // operator resolves it).
+    await pool.query(`UPDATE audit_events SET action = 'content.original' WHERE id = $1`, [ev.id]);
+    await verifyContentHashCursor({ privilegedPool: pool });
+    errSpy.mockRestore();
+    const f2 = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM audit_integrity_findings WHERE event_id = $1 AND status = 'open'`,
+      [ev.id],
+    );
+    expect(f2.rows[0]!.n).toBe(1); // still open after a clean re-scan
   });
 
   // 13 — a version-0 (pre-versioning) row replays idempotently by LOGICAL-FIELD
