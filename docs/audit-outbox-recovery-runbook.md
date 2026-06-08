@@ -66,8 +66,11 @@ pnpm -C services/api run audit-outbox replay --operator you@brain.fi \
 
 Drop `--dry-run` to requeue. Each requeued row goes back to `pending` (attempts
 cleared, due now) and is redelivered on the next worker cycle. The replay itself
-is audited: one `audit.outbox.replayed` event per affected tenant, recording the
-operator identity and the replayed event keys, on that tenant's chain.
+is audited: one `audit.outbox.replayed` evidence intent per affected tenant
+(operator identity + replayed event keys) is enqueued in the SAME transaction as
+the requeue, so the recovery action and its audit record commit atomically and
+the evidence survives an audit-path blip. The worker then delivers it
+idempotently on its next cycle, on that tenant's chain.
 
 ```bash
 pnpm -C services/api run audit-outbox replay --operator you@brain.fi --tenant tnt_123

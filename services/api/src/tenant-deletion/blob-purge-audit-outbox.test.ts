@@ -350,17 +350,20 @@ describe("operator recovery surface", () => {
   function fakeReplayPool(rows: AuditOutboxRowSummary[]): {
     pool: OperatorReplayDeps["privilegedPool"];
     sql: string[];
+    calls: [string, unknown[]][];
   } {
     const sql: string[] = [];
+    const calls: [string, unknown[]][] = [];
     const client = {
-      query: vi.fn(async (text: string, _p?: ReadonlyArray<unknown>) => {
+      query: vi.fn(async (text: string, p: ReadonlyArray<unknown> = []) => {
         sql.push(text.trim().split("\n")[0]!.trim());
+        calls.push([text, [...p]]);
         if (text.includes("FOR UPDATE")) return { rows, rowCount: rows.length };
         return { rows: [], rowCount: rows.length };
       }),
       release: vi.fn(),
     };
-    return { pool: { connect: async () => client }, sql };
+    return { pool: { connect: async () => client }, sql, calls };
   }
 
   it("listAuditOutbox filters by tenant + age and returns non-sensitive metadata", async () => {
@@ -379,60 +382,67 @@ describe("operator recovery surface", () => {
     expect(params).toEqual(["exhausted", "tnt_a", "3600", 50]);
   });
 
-  it("dry-run lists matching rows without mutating or auditing", async () => {
+  it("dry-run lists matching rows without mutating or enqueuing audit", async () => {
     const { pool, sql } = fakeReplayPool([summary()]);
-    const audit = new InMemoryAuditEmitter();
     const res = await operatorReplayExhaustedAuditOutbox(
-      { privilegedPool: pool, audit },
+      { privilegedPool: pool },
       { operator: "ops@brain", dryRun: true },
     );
     expect(res.dryRun).toBe(true);
     expect(res.replayed).toHaveLength(1);
     expect(sql).toContain("ROLLBACK");
     expect(sql.some((s) => s.startsWith("UPDATE"))).toBe(false);
-    expect(audit.events).toHaveLength(0); // dry-run is never audited
+    expect(sql.some((s) => s.startsWith("INSERT"))).toBe(false); // no audit intent enqueued
   });
 
-  it("replays exhausted rows and audits the replay per affected tenant", async () => {
+  it("requeues exhausted rows AND enqueues the replay audit intent in the same transaction", async () => {
     const rows = [
       summary({ id: "tbo_1", tenant_id: "tnt_a", event_key: "tnt_a:k1" }),
       summary({ id: "tbo_2", tenant_id: "tnt_a", event_key: "tnt_a:k2" }),
       summary({ id: "tbo_3", tenant_id: "tnt_b", event_key: "tnt_b:k1" }),
     ];
-    const { pool, sql } = fakeReplayPool(rows);
-    const audit = new InMemoryAuditEmitter();
+    const { pool, sql, calls } = fakeReplayPool(rows);
 
     const res = await operatorReplayExhaustedAuditOutbox(
-      { privilegedPool: pool, audit },
+      { privilegedPool: pool },
       { operator: "ops@brain" },
     );
 
     expect(res.dryRun).toBe(false);
     expect(res.replayed).toHaveLength(3);
-    expect(sql.some((s) => s.startsWith("UPDATE"))).toBe(true);
-    expect(sql).toContain("COMMIT");
-    // One audit event per affected tenant, on that tenant's chain.
-    expect(audit.events).toHaveLength(2);
-    const a = audit.events.find((e) => e.tenantId === "tnt_a")!;
-    expect(a.action).toBe("audit.outbox.replayed");
-    expect(a.actor).toBe("ops@brain");
-    expect(a.inputs).toMatchObject({
+
+    // The audit evidence is enqueued (not emitted post-commit) BEFORE the COMMIT,
+    // so the requeue and its audit intent are atomic (Codex fca9ac8 P1 #3).
+    const updateIdx = sql.findIndex((s) => s.startsWith("UPDATE"));
+    const insertIdxs = sql.map((s, i) => (s.startsWith("INSERT") ? i : -1)).filter((i) => i >= 0);
+    const commitIdx = sql.indexOf("COMMIT");
+    expect(updateIdx).toBeGreaterThanOrEqual(0);
+    expect(insertIdxs).toHaveLength(2); // one intent per affected tenant
+    expect(Math.max(...insertIdxs)).toBeLessThan(commitIdx); // enqueued before commit
+
+    // Each enqueued intent carries the operator + that tenant's event_keys.
+    const inserts = calls.filter(([t]) => t.includes("INSERT INTO tenant_blob_purge_audit_outbox"));
+    const tntA = inserts.find(([, p]) => p[2] === "tnt_a")!;
+    expect(tntA[1][3]).toBe("audit.outbox.replayed"); // action
+    expect(tntA[1][6]).toBe("ops@brain"); // actor
+    expect(String(tntA[1][5])).toMatch(/^audit\.outbox\.replayed:.*:tnt_a$/); // event_key
+    expect(JSON.parse(String(tntA[1][7]))).toMatchObject({
       operator: "ops@brain",
       count: 2,
       event_keys: ["tnt_a:k1", "tnt_a:k2"],
     });
-    expect(audit.events.find((e) => e.tenantId === "tnt_b")!.inputs).toMatchObject({ count: 1 });
+    const tntB = inserts.find(([, p]) => p[2] === "tnt_b")!;
+    expect(JSON.parse(String(tntB[1][7]))).toMatchObject({ count: 1 });
   });
 
-  it("is a no-op (no audit) when nothing matches", async () => {
+  it("is a no-op (no requeue, no audit intent) when nothing matches", async () => {
     const { pool, sql } = fakeReplayPool([]);
-    const audit = new InMemoryAuditEmitter();
     const res = await operatorReplayExhaustedAuditOutbox(
-      { privilegedPool: pool, audit },
+      { privilegedPool: pool },
       { operator: "ops@brain" },
     );
     expect(res.replayed).toEqual([]);
     expect(sql.some((s) => s.startsWith("UPDATE"))).toBe(false);
-    expect(audit.events).toHaveLength(0);
+    expect(sql.some((s) => s.startsWith("INSERT"))).toBe(false);
   });
 });
