@@ -68,6 +68,7 @@ import { TenantDeletionService } from "./tenant-deletion/service.js";
 import { startTenantBlobPurgeWorker } from "./tenant-deletion/blob-purge-worker.js";
 import { registerTenantDeletionRoute } from "./tenant-deletion/route.js";
 import { registerProofViewRoute } from "./proof/view.js";
+import { registerDocsRoutes } from "./docs/routes.js";
 import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
 
@@ -1444,6 +1445,10 @@ async function main(): Promise<void> {
       await v1.register(async (child) =>
         registerProofViewRoute(child, { buildProof: proofBuilder }),
       );
+      // Public interactive API reference — GET /v1/docs (Scalar UI) +
+      // GET /v1/openapi.yaml. Read-only projection of Brain_API_Specification.yaml;
+      // route-scoped CSP relaxation lives inside the plugin (docs/routes.ts).
+      await v1.register(async (child) => registerDocsRoutes(child));
       // GDPR right-to-erasure. The privileged pool BYPASSes RLS so cross-
       // tenant rows are reachable for cleanup; auth + tenant-match are
       // enforced at the route boundary.

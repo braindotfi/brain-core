@@ -13,6 +13,7 @@ infra/**
 *.tfstate.*
 Brain_API_Specification.yaml
 clients/sdk/src/generated/**
+services/api/assets/**
 
 # Local tooling / non-repo working trees — not brain-core sources
 .claude

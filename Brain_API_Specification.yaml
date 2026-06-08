@@ -63,8 +63,42 @@ tags:
     description: Platform administration (tenant-level operations)
   - name: Auth
     description: Self-serve onboarding & human (owner) authentication (RFC 0002). Public, rate-limited; available only when BRAIN_SELF_SERVE_SIGNUP is enabled.
+  - name: Docs
+    description: Public, read-only API documentation surface — the interactive reference UI and the raw OpenAPI contract it renders.
 
 paths:
+  /docs:
+    get:
+      tags: [Docs]
+      summary: Interactive API reference (Scalar)
+      description: |
+        Public HTML page rendering this OpenAPI contract as an interactive
+        reference, with same-origin "Try it out". Served by the gateway; the
+        renderer bundle is loaded same-origin from `/v1/docs/scalar.js` and the
+        spec from `/v1/openapi.yaml`.
+      operationId: getDocs
+      security: [] # public
+      responses:
+        "200":
+          description: HTML documentation page.
+          content:
+            text/html:
+              schema:
+                type: string
+  /openapi.yaml:
+    get:
+      tags: [Docs]
+      summary: OpenAPI contract (YAML)
+      description: Public, raw OpenAPI 3.1 document for this API — the source rendered by `/v1/docs`.
+      operationId: getOpenApiYaml
+      security: [] # public
+      responses:
+        "200":
+          description: The OpenAPI document.
+          content:
+            application/yaml:
+              schema:
+                type: string
   /signup:
     post:
       tags: [Auth]
