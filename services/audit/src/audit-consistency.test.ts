@@ -1,6 +1,10 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { checkAuditConsistency, verifyContentHashCursor } from "./audit-consistency.js";
+import {
+  checkAuditConsistency,
+  reportVerifierHealth,
+  verifyContentHashCursor,
+} from "./audit-consistency.js";
 
 /** Pool that returns a count per structural query (fork / gap / genesis). */
 function fakePool(counts: { forks: number; gaps: number; invalidGenesis?: number }): {
@@ -250,5 +254,91 @@ describe("verifyContentHashCursor (content, paged)", () => {
 
     expect(res.lastPassClean).toBe(false);
     expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.last_pass_clean", 0);
+  });
+});
+
+describe("reportVerifierHealth", () => {
+  function healthPool(opts: {
+    checkpoint?: Record<string, unknown> | null;
+    open?: number;
+    unsupported?: number;
+    legacy?: number;
+  }): Pool {
+    return {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("FROM audit_verifier_checkpoint")) {
+          return {
+            rows:
+              opts.checkpoint === null || opts.checkpoint === undefined ? [] : [opts.checkpoint],
+            rowCount: 1,
+          };
+        }
+        if (text.includes("FROM audit_integrity_findings")) {
+          return { rows: [{ n: String(opts.open ?? 0) }], rowCount: 1 };
+        }
+        if (text.includes("FILTER (WHERE hash_schema_version >")) {
+          return {
+            rows: [
+              { unsupported: String(opts.unsupported ?? 0), legacy: String(opts.legacy ?? 0) },
+            ],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as Pool;
+  }
+
+  it("maps a clean checkpoint + counts into a side-effect-free snapshot", async () => {
+    const pool = healthPool({
+      checkpoint: {
+        last_pass_status: "clean",
+        last_clean_pass_at: new Date("2026-06-08T00:00:00.000Z"),
+        last_failed_pass_at: null,
+        last_full_pass_at: new Date("2026-06-08T00:00:00.000Z"),
+        completed_passes: "7",
+        current_pass_failure_count: "0",
+        seconds_since_clean: 12,
+      },
+      open: 0,
+      unsupported: 0,
+      legacy: 3,
+    });
+    const h = await reportVerifierHealth({ privilegedPool: pool });
+    expect(h.lastPassStatus).toBe("clean");
+    expect(h.lastCleanPassAt).toBe("2026-06-08T00:00:00.000Z");
+    expect(h.completedPasses).toBe(7);
+    expect(h.secondsSinceCleanFullPass).toBe(12);
+    expect(h.openFindings).toBe(0);
+    expect(h.legacyUnverifiable).toBe(3);
+  });
+
+  it("reports 'never' with null timestamps before the verifier has ever run", async () => {
+    const pool = healthPool({ checkpoint: null });
+    const h = await reportVerifierHealth({ privilegedPool: pool });
+    expect(h.lastPassStatus).toBe("never");
+    expect(h.lastCleanPassAt).toBeNull();
+    expect(h.lastFullPassAt).toBeNull();
+    expect(h.secondsSinceCleanFullPass).toBeNull();
+    expect(h.completedPasses).toBe(0);
+  });
+
+  it("surfaces an open finding (a detected break awaiting resolution)", async () => {
+    const pool = healthPool({
+      checkpoint: {
+        last_pass_status: "failed",
+        last_clean_pass_at: null,
+        last_failed_pass_at: new Date("2026-06-08T00:00:00.000Z"),
+        last_full_pass_at: new Date("2026-06-08T00:00:00.000Z"),
+        completed_passes: "1",
+        current_pass_failure_count: "0",
+        seconds_since_clean: null,
+      },
+      open: 2,
+    });
+    const h = await reportVerifierHealth({ privilegedPool: pool });
+    expect(h.lastPassStatus).toBe("failed");
+    expect(h.openFindings).toBe(2);
+    expect(h.secondsSinceCleanFullPass).toBeNull();
   });
 });
