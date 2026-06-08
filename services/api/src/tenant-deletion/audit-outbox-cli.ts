@@ -8,9 +8,14 @@
  *     [--tenant T] [--event-key K] [--id ID] [--older-than SECONDS] [--dry-run] [--limit N]
  *
  * Connects via DATABASE_PRIVILEGED_URL (required; no DATABASE_URL fallback for a
- * privileged recovery operation). `replay` is
- * itself audited (an `audit.outbox.replayed` event per affected tenant). Always
- * `--dry-run` first to see what would be requeued. Runbook:
+ * privileged recovery operation) and verifies on connect that it is actually the
+ * BYPASSRLS privileged role (fail-closed in production), so a misconfigured URL
+ * cannot silently report "0 rows" under RLS. `--limit` / `--older-than` are
+ * validated (whole number, in range) before any DB work. `replay` is itself
+ * audited (an `audit.outbox.replayed` event per affected tenant) and the event
+ * carries self-describing evidence: the exact filter, the running build commit
+ * (BRAIN_BUILD_SHA / GIT_COMMIT / GIT_SHA / SOURCE_COMMIT), and the row count.
+ * Always `--dry-run` first to see what would be requeued. Runbook:
  * docs/audit-outbox-recovery-runbook.md.
  *
  * This file is a thin entrypoint (excluded from the unit-coverage gate); all
@@ -18,11 +23,17 @@
  */
 
 import { Pool } from "pg";
+import { assertDbRoles, type RoleQuery } from "../composition/db-roles.js";
 import {
   listAuditOutbox,
   operatorReplayExhaustedAuditOutbox,
   type AuditOutboxFilter,
 } from "./blob-purge-audit-outbox.js";
+import { parseBoundedInt, resolveSourceCommit } from "./audit-outbox-cli-args.js";
+
+/** Bounds for operator integer flags (reject NaN / negative / fat-fingered huge). */
+const LIMIT_BOUNDS = { min: 1, max: 100_000 } as const;
+const OLDER_THAN_BOUNDS = { min: 0, max: 100 * 365 * 24 * 60 * 60 } as const; // ~100y in seconds
 
 function out(line: string): void {
   process.stdout.write(`${line}\n`);
@@ -55,8 +66,37 @@ function buildFilter(flags: Record<string, string | boolean>): AuditOutboxFilter
     ...(str(flags.tenant) !== undefined ? { tenantId: str(flags.tenant)! } : {}),
     ...(str(flags["event-key"]) !== undefined ? { eventKey: str(flags["event-key"])! } : {}),
     ...(str(flags.id) !== undefined ? { id: str(flags.id)! } : {}),
-    ...(olderThan !== undefined ? { olderThanSeconds: Number(olderThan) } : {}),
+    ...(olderThan !== undefined
+      ? { olderThanSeconds: parseBoundedInt("older-than", olderThan, OLDER_THAN_BOUNDS) }
+      : {}),
   };
+}
+
+/**
+ * Verify the connection is the BYPASSRLS privileged role before doing any
+ * cross-tenant recovery. A NOBYPASSRLS connection would see zero rows under RLS
+ * and silently report "nothing to replay" — a dangerous false negative for a
+ * recovery tool. Fail-closed in production; warn-only elsewhere (a local
+ * superuser is fine for dev), mirroring the boot-time check (Codex 307161b P2 #3).
+ */
+async function verifyPrivilegedRole(pool: Pool): Promise<void> {
+  const asQuery: RoleQuery = (sql, params) =>
+    pool.query(sql, params === undefined ? undefined : [...params]);
+  const enforce = process.env.NODE_ENV === "production";
+  const { violations } = await assertDbRoles(
+    [
+      {
+        label: "audit-outbox-cli (privileged)",
+        query: asQuery,
+        mustBypassRls: true,
+        expectedRole: process.env.BRAIN_PRIVILEGED_ROLE ?? "brain_privileged",
+      },
+    ],
+    { enforce, log: (msg, ctx) => console.error(`${msg} ${JSON.stringify(ctx)}`) },
+  );
+  for (const v of violations) {
+    console.error(`[audit-outbox] role check warning: ${v}`);
+  }
 }
 
 async function main(): Promise<void> {
@@ -71,10 +111,20 @@ async function main(): Promise<void> {
   }
 
   const limitStr = str(flags.limit);
-  const limit = limitStr !== undefined ? Number(limitStr) : undefined;
-  const filter = buildFilter(flags);
+  let limit: number | undefined;
+  let filter: AuditOutboxFilter;
+  try {
+    limit = limitStr !== undefined ? parseBoundedInt("limit", limitStr, LIMIT_BOUNDS) : undefined;
+    filter = buildFilter(flags); // validates --older-than
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(2);
+  }
   const pool = new Pool({ connectionString: url });
   try {
+    // Fail fast if this is not the privileged (BYPASSRLS) role: a request-scoped
+    // connection would see zero rows under RLS and silently do nothing.
+    await verifyPrivilegedRole(pool);
     if (sub === "list") {
       const statusFlag = str(flags.status);
       const status =
@@ -104,6 +154,7 @@ async function main(): Promise<void> {
         console.error("replay requires --operator <identity>");
         process.exit(2);
       }
+      const sourceCommit = resolveSourceCommit(process.env);
       const res = await operatorReplayExhaustedAuditOutbox(
         { privilegedPool: pool },
         {
@@ -111,6 +162,13 @@ async function main(): Promise<void> {
           filter,
           dryRun: flags["dry-run"] === true,
           ...(limit !== undefined ? { limit } : {}),
+          // Self-describing forensic evidence: the exact filter, the running
+          // build, and (added by the replay) the row count + event_keys.
+          evidence: {
+            filter,
+            ...(sourceCommit !== undefined ? { source_commit: sourceCommit } : {}),
+            ...(limit !== undefined ? { limit } : {}),
+          },
         },
       );
       out(`${res.dryRun ? "[dry-run] would replay" : "replayed"} ${res.replayed.length} row(s):`);
