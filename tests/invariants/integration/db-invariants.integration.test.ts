@@ -998,4 +998,37 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
     // fully resolved -> allowed.
     await ins(`aif_ok_res_${tenant}`, ["resolved", new Date(), "ops@brain", "INC-42"]);
   });
+
+  // 17 — a COMPLETED full pass distinguishes clean from failed. The earlier
+  // structural tests leave content mismatches in the table (they rewrite
+  // prev_event_hash without rehashing), so every pass here completes but is NOT
+  // clean. A failed pass must report last_pass_clean=false, reset the per-pass
+  // accumulator at the wrap, and NOT advance last_clean_pass_at — so "a pass
+  // finished" is never mistaken for "the chain verified clean". (Codex 9389568 P2)
+  it("a failed full pass reports failed and does not advance last_clean_pass_at", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const pass1 = await verifyContentHashCursor({ privilegedPool: pool });
+    expect(pass1.completedPass).toBe(true);
+    expect(pass1.lastPassClean).toBe(false); // residual mismatches exist
+    expect(pass1.currentPassFailureCount).toBe(0); // accumulator reset at the wrap
+
+    const readCheckpoint = async (): Promise<string | null> => {
+      const r = await pool.query<{ last_clean_pass_at: Date | null; last_pass_status: string }>(
+        `SELECT last_clean_pass_at, last_pass_status
+           FROM audit_verifier_checkpoint WHERE verifier_name = 'content_hash'`,
+      );
+      expect(r.rows[0]!.last_pass_status).toBe("failed");
+      const v = r.rows[0]!.last_clean_pass_at;
+      return v === null ? null : v.toISOString();
+    };
+    const cleanAt1 = await readCheckpoint();
+
+    // A second failed pass must leave last_clean_pass_at exactly where it was.
+    const pass2 = await verifyContentHashCursor({ privilegedPool: pool });
+    expect(pass2.lastPassClean).toBe(false);
+    expect(await readCheckpoint()).toBe(cleanAt1);
+
+    errSpy.mockRestore();
+  });
 });

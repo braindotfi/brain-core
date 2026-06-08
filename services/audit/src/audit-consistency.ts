@@ -136,6 +136,15 @@ export interface ContentHashVerifyResult {
   openFindings: number;
   /** True when this cycle's page reached the end and the cursor wrapped. */
   completedPass: boolean;
+  /**
+   * True when the most recently COMPLETED full pass found zero mismatches on every
+   * page. A pass that found a mismatch on any page is `false`, even though it still
+   * advanced completed_passes/last_full_pass_at — so "a pass finished" is not
+   * mistaken for "the chain verified clean" (Codex 9389568 P2).
+   */
+  lastPassClean: boolean;
+  /** Mismatches accumulated across the IN-PROGRESS pass so far; reset to 0 at each wrap. */
+  currentPassFailureCount: number;
 }
 
 /**
@@ -174,8 +183,9 @@ export async function verifyContentHashCursor(
       hash_schema_version: number;
       last_created_at: Date | null;
       last_event_id: string | null;
+      current_pass_failure_count: string | number;
     }>(
-      `SELECT hash_schema_version, last_created_at, last_event_id
+      `SELECT hash_schema_version, last_created_at, last_event_id, current_pass_failure_count
          FROM audit_verifier_checkpoint WHERE verifier_name = $1 FOR UPDATE`,
       [CONTENT_HASH_VERIFIER_NAME],
     );
@@ -183,6 +193,8 @@ export async function verifyContentHashCursor(
     const versionChanged = cp === undefined || cp.hash_schema_version !== AUDIT_HASH_SCHEMA_VERSION;
     const lastCreatedAt = versionChanged ? null : cp.last_created_at;
     const lastEventId = versionChanged ? null : cp.last_event_id;
+    // A version bump restarts the pass, so its accumulated failure count resets too.
+    const priorPassFailures = versionChanged ? 0 : Number(cp?.current_pass_failure_count ?? 0);
 
     // Next page after the cursor, in stable keyset order.
     const page = await c.query<{
@@ -254,24 +266,39 @@ export async function verifyContentHashCursor(
     }
 
     // Advance the cursor (or wrap to the start after a full pass), recording this
-    // cycle's failure count on the checkpoint.
+    // cycle's failure count AND the running per-pass accumulation on the checkpoint.
     const completedPass = page.rows.length < pageSize;
+    const passFailuresSoFar = priorPassFailures + hashMismatches;
     const failedAt = hashMismatches > 0 ? "now()" : "last_failed_at";
     if (completedPass) {
+      // The wrap closes a full pass: it is CLEAN only if no page in the whole pass
+      // found a mismatch. Advance last_clean_pass_at only then; otherwise mark the
+      // pass failed and leave last_clean_pass_at stale. Reset the per-pass counter.
+      const cleanPass = passFailuresSoFar === 0;
       await c.query(
         `UPDATE audit_verifier_checkpoint
             SET last_created_at = NULL, last_event_id = NULL, hash_schema_version = $2,
                 completed_passes = completed_passes + 1, last_full_pass_at = now(),
-                last_failure_count = $3, last_failed_at = ${failedAt}, updated_at = now()
+                last_failure_count = $3, last_failed_at = ${failedAt},
+                current_pass_failure_count = 0, last_pass_status = $4,
+                last_clean_pass_at = ${cleanPass ? "now()" : "last_clean_pass_at"},
+                last_failed_pass_at = ${cleanPass ? "last_failed_pass_at" : "now()"},
+                updated_at = now()
           WHERE verifier_name = $1`,
-        [CONTENT_HASH_VERIFIER_NAME, AUDIT_HASH_SCHEMA_VERSION, hashMismatches],
+        [
+          CONTENT_HASH_VERIFIER_NAME,
+          AUDIT_HASH_SCHEMA_VERSION,
+          hashMismatches,
+          cleanPass ? "clean" : "failed",
+        ],
       );
     } else {
       const last = page.rows[page.rows.length - 1]!;
       await c.query(
         `UPDATE audit_verifier_checkpoint
             SET last_created_at = $2, last_event_id = $3, hash_schema_version = $4,
-                last_failure_count = $5, last_failed_at = ${failedAt}, updated_at = now()
+                last_failure_count = $5, last_failed_at = ${failedAt},
+                current_pass_failure_count = $6, updated_at = now()
           WHERE verifier_name = $1`,
         [
           CONTENT_HASH_VERIFIER_NAME,
@@ -279,6 +306,7 @@ export async function verifyContentHashCursor(
           last.id,
           AUDIT_HASH_SCHEMA_VERSION,
           hashMismatches,
+          passFailuresSoFar,
         ],
       );
     }
@@ -290,6 +318,8 @@ export async function verifyContentHashCursor(
       legacyUnverifiable: 0,
       openFindings: 0,
       completedPass,
+      lastPassClean: false,
+      currentPassFailureCount: passFailuresSoFar,
     };
   } catch (err) {
     try {
@@ -328,6 +358,23 @@ export async function verifyContentHashCursor(
   );
   result.openFindings = Number(openRes.rows[0]?.n ?? 0);
 
+  // Pass-cleanliness: report the outcome of the most recent COMPLETED full pass and
+  // how long since the chain last verified clean end-to-end. "A pass finished"
+  // (completed_passes / last_full_pass_at) is NOT the same as "the chain is clean".
+  const passRes = await deps.privilegedPool.query<{
+    last_pass_status: string;
+    current_pass_failure_count: string;
+    seconds_since_clean: number | null;
+  }>(
+    `SELECT last_pass_status, current_pass_failure_count,
+            extract(epoch FROM now() - last_clean_pass_at)::float8 AS seconds_since_clean
+       FROM audit_verifier_checkpoint WHERE verifier_name = $1`,
+    [CONTENT_HASH_VERIFIER_NAME],
+  );
+  const passRow = passRes.rows[0];
+  result.lastPassClean = passRow?.last_pass_status === "clean";
+  result.currentPassFailureCount = Number(passRow?.current_pass_failure_count ?? 0);
+
   deps.metrics?.gauge("brain.audit.consistency.hash_mismatch.count", result.hashMismatches);
   deps.metrics?.gauge("brain.audit.consistency.rows_verified.count", result.rowsVerified);
   deps.metrics?.gauge(
@@ -342,6 +389,20 @@ export async function verifyContentHashCursor(
     result.legacyUnverifiable,
   );
   deps.metrics?.gauge("brain.audit.consistency.open_findings.count", result.openFindings);
+  // Clean/failed-pass observability (Codex 9389568 P2): 1 when the last completed
+  // pass was clean, plus the in-progress failure count and the staleness of the
+  // last clean pass. An alert on "last_pass_clean == 0" or a growing
+  // seconds_since_clean_full_pass catches a verifier that keeps finishing passes
+  // that are NOT clean — invisible if you only watch last_full_pass_at.
+  deps.metrics?.gauge("brain.audit.consistency.last_pass_clean", result.lastPassClean ? 1 : 0);
+  deps.metrics?.gauge(
+    "brain.audit.consistency.current_pass_failure_count",
+    result.currentPassFailureCount,
+  );
+  const secondsSinceClean = passRow?.seconds_since_clean;
+  if (secondsSinceClean !== null && secondsSinceClean !== undefined) {
+    deps.metrics?.gauge("brain.audit.consistency.seconds_since_clean_full_pass", secondsSinceClean);
+  }
   if (result.hashMismatches > 0 || result.unsupportedVersion > 0 || result.openFindings > 0) {
     console.error("[audit-consistency] content-hash verification flagged events", {
       hashMismatches: result.hashMismatches,

@@ -79,6 +79,8 @@ function fakeCursorPool(opts: {
   unsupported?: number;
   legacy?: number;
   openFindings?: number;
+  lastPassStatus?: "never" | "clean" | "failed";
+  currentPassFailures?: number;
 }): {
   pool: Pool;
   sql: string[];
@@ -89,7 +91,14 @@ function fakeCursorPool(opts: {
       sql.push(text);
       if (text.includes("FOR UPDATE")) {
         return {
-          rows: [{ hash_schema_version: 1, last_created_at: null, last_event_id: null }],
+          rows: [
+            {
+              hash_schema_version: 1,
+              last_created_at: null,
+              last_event_id: null,
+              current_pass_failure_count: 0,
+            },
+          ],
           rowCount: 1,
         };
       }
@@ -112,6 +121,18 @@ function fakeCursorPool(opts: {
       }
       if (text.includes("audit_integrity_findings")) {
         return { rows: [{ n: String(opts.openFindings ?? 0) }], rowCount: 1 };
+      }
+      if (text.includes("last_pass_status")) {
+        return {
+          rows: [
+            {
+              last_pass_status: opts.lastPassStatus ?? "clean",
+              current_pass_failure_count: String(opts.currentPassFailures ?? 0),
+              seconds_since_clean: opts.lastPassStatus === "never" ? null : 0,
+            },
+          ],
+          rowCount: 1,
+        };
       }
       return { rows: [], rowCount: 0 };
     }),
@@ -196,5 +217,38 @@ describe("verifyContentHashCursor (content, paged)", () => {
     // per-cycle integrity error log (which would spam on a permanent population).
     expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
+  });
+
+  it("reports a CLEAN completed pass via last_pass_clean=1", async () => {
+    const { pool } = fakeCursorPool({
+      pageRows: [],
+      lastPassStatus: "clean",
+      currentPassFailures: 0,
+    });
+    const metrics = { gauge: vi.fn(), increment: vi.fn(), histogram: vi.fn(), duration: vi.fn() };
+
+    const res = await verifyContentHashCursor({ privilegedPool: pool, metrics: metrics as never });
+
+    expect(res.lastPassClean).toBe(true);
+    expect(res.currentPassFailureCount).toBe(0);
+    expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.last_pass_clean", 1);
+    expect(metrics.gauge).toHaveBeenCalledWith(
+      "brain.audit.consistency.current_pass_failure_count",
+      0,
+    );
+    expect(metrics.gauge).toHaveBeenCalledWith(
+      "brain.audit.consistency.seconds_since_clean_full_pass",
+      0,
+    );
+  });
+
+  it("reports a FAILED completed pass via last_pass_clean=0 (a finished pass is not a clean one)", async () => {
+    const { pool } = fakeCursorPool({ pageRows: [], lastPassStatus: "failed" });
+    const metrics = { gauge: vi.fn(), increment: vi.fn(), histogram: vi.fn(), duration: vi.fn() };
+
+    const res = await verifyContentHashCursor({ privilegedPool: pool, metrics: metrics as never });
+
+    expect(res.lastPassClean).toBe(false);
+    expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.last_pass_clean", 0);
   });
 });
