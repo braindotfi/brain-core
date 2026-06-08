@@ -27,7 +27,9 @@
 
 import {
   newExecutionId,
+  startManagedInterval,
   type AuditEmitter,
+  type ManagedWorker,
   type ServiceCallContext,
   type TenantScopedClient,
 } from "@brain/shared";
@@ -253,31 +255,21 @@ async function emitStuck(
 export function startOutboxWorker(
   deps: OutboxWorkerDeps,
   opts: { intervalMs?: number; limit?: number; staleSeconds?: number } = {},
-): { stop: () => void } {
+): ManagedWorker {
   const intervalMs = opts.intervalMs ?? 1_000;
-  let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
 
   const cycleOpts: { limit?: number; staleSeconds?: number } = {};
   if (opts.limit !== undefined) cycleOpts.limit = opts.limit;
   if (opts.staleSeconds !== undefined) cycleOpts.staleSeconds = opts.staleSeconds;
 
-  const tick = async (): Promise<void> => {
-    if (stopped) return;
-    try {
+  return startManagedInterval(
+    async () => {
       await runOutboxCycle(deps, cycleOpts);
-    } catch (err) {
-      // Never let one bad cycle kill the loop; surface and continue.
-      console.error("[outbox-worker] cycle failed", err);
-    }
-    if (!stopped) timer = setTimeout(() => void tick(), intervalMs);
-  };
-  timer = setTimeout(() => void tick(), intervalMs);
-
-  return {
-    stop: () => {
-      stopped = true;
-      if (timer !== undefined) clearTimeout(timer);
     },
-  };
+    intervalMs,
+    {
+      // Never let one bad cycle kill the loop; surface and continue.
+      onError: (err) => console.error("[outbox-worker] cycle failed", err),
+    },
+  );
 }

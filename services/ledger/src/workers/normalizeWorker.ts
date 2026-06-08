@@ -14,7 +14,8 @@
  */
 
 import type { Pool } from "pg";
-import { withTenantScope, type AuditEmitter } from "@brain/shared";
+import { startManagedInterval, withTenantScope, type AuditEmitter } from "@brain/shared";
+import type { ManagedWorker } from "@brain/shared";
 import { LedgerService } from "../service/LedgerService.js";
 import type { LedgerDeps } from "../deps.js";
 
@@ -49,9 +50,7 @@ export interface NormalizeWorkerOptions {
   actor?: string;
 }
 
-export interface NormalizeWorker {
-  stop(): void;
-}
+export type NormalizeWorker = ManagedWorker;
 
 export function startNormalizeWorker(
   deps: { pool: Pool; audit: AuditEmitter },
@@ -64,11 +63,7 @@ export function startNormalizeWorker(
   const ledgerDeps: LedgerDeps = { pool: deps.pool, audit: deps.audit };
   const ledgerService = new LedgerService(ledgerDeps);
 
-  let active = true;
-
   async function poll(): Promise<void> {
-    if (!active) return;
-
     let rows: Array<{ id: string; tenant_id: string }>;
     try {
       // Cross-tenant poll — requires BYPASSRLS or superuser in production.
@@ -91,7 +86,6 @@ export function startNormalizeWorker(
     }
 
     for (const row of rows) {
-      if (!active) break;
       let errorMessage: string | null = null;
       try {
         await ledgerService.normalizeFromRaw(
@@ -111,16 +105,8 @@ export function startNormalizeWorker(
     }
   }
 
-  const handle = setInterval(() => {
-    void poll();
-  }, intervalMs);
-
-  void poll();
-
-  return {
-    stop() {
-      active = false;
-      clearInterval(handle);
-    },
-  };
+  return startManagedInterval(poll, intervalMs, {
+    runImmediately: true,
+    onError: (err) => console.error("[normalizeWorker] cycle failed:", err),
+  });
 }

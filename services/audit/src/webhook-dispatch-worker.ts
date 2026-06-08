@@ -25,8 +25,10 @@ import {
   getDueDeadLetters,
   incrementDeadLetterAttempt,
   MAX_WEBHOOK_DELIVERY_ATTEMPTS,
+  startManagedInterval,
   withTenantScope,
   type AuditEmitter,
+  type ManagedWorker,
   type MetricsEmitter,
 } from "@brain/shared";
 import type { Pool } from "pg";
@@ -149,27 +151,16 @@ export async function runWebhookDispatchCycle(
 export function startWebhookDispatchWorker(
   deps: WebhookDispatchWorkerDeps,
   opts: { intervalMs?: number; limit?: number } = {},
-): { stop: () => void } {
+): ManagedWorker {
   const intervalMs = opts.intervalMs ?? 5_000;
-  let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   const cycleOpts: { limit?: number } = {};
   if (opts.limit !== undefined) cycleOpts.limit = opts.limit;
 
-  const tick = async (): Promise<void> => {
-    if (stopped) return;
-    try {
+  return startManagedInterval(
+    async () => {
       await runWebhookDispatchCycle(deps, cycleOpts);
-    } catch (err) {
-      console.error("[webhook-worker] cycle failed", err);
-    }
-    if (!stopped) timer = setTimeout(() => void tick(), intervalMs);
-  };
-  timer = setTimeout(() => void tick(), intervalMs);
-  return {
-    stop: () => {
-      stopped = true;
-      if (timer !== undefined) clearTimeout(timer);
     },
-  };
+    intervalMs,
+    { onError: (err) => console.error("[webhook-worker] cycle failed", err) },
+  );
 }

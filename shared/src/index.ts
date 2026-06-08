@@ -170,3 +170,9 @@ export {
   type CredentialKeyProvider,
   type CredentialKeyProviderOptions,
 } from "./crypto/credential-key-provider.js";
+
+export {
+  startManagedInterval,
+  type ManagedWorker,
+  type ManagedIntervalOptions,
+} from "./workers/managed-interval.js";

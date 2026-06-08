@@ -15,8 +15,8 @@
  */
 
 import type { Pool } from "pg";
-import { AUDIT_HASH_SCHEMA_VERSION, hashEvent } from "@brain/shared";
-import type { AuditEventInput, MetricsEmitter } from "@brain/shared";
+import { AUDIT_HASH_SCHEMA_VERSION, hashEvent, startManagedInterval } from "@brain/shared";
+import type { AuditEventInput, ManagedWorker, MetricsEmitter } from "@brain/shared";
 
 export interface AuditConsistencyDeps {
   /**
@@ -171,9 +171,7 @@ export async function checkAuditConsistency(
   return { forks, gaps, invalidGenesis, hashMismatches };
 }
 
-export interface AuditConsistencyVerifier {
-  stop(): void;
-}
+export type AuditConsistencyVerifier = ManagedWorker;
 
 /** Run checkAuditConsistency on a fixed cadence (default every 10 minutes). */
 export function startAuditConsistencyVerifier(
@@ -181,24 +179,14 @@ export function startAuditConsistencyVerifier(
   opts: { intervalMs?: number } = {},
 ): AuditConsistencyVerifier {
   const intervalMs = opts.intervalMs ?? 10 * 60 * 1000;
-  let active = true;
-
-  async function cycle(): Promise<void> {
-    if (!active) return;
-    try {
+  return startManagedInterval(
+    async () => {
       await checkAuditConsistency(deps);
-    } catch (err) {
-      console.error("[audit-consistency] cycle failed:", err);
-    }
-  }
-
-  const handle = setInterval(() => void cycle(), intervalMs);
-  void cycle();
-
-  return {
-    stop() {
-      active = false;
-      clearInterval(handle);
     },
-  };
+    intervalMs,
+    {
+      runImmediately: true,
+      onError: (err) => console.error("[audit-consistency] cycle failed:", err),
+    },
+  );
 }
