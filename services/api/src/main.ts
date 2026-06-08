@@ -2040,41 +2040,68 @@ async function main(): Promise<void> {
   log.info({ port: cfg.PORT, version: cfg.SERVICE_VERSION }, "brain-server up");
 
   // -- graceful shutdown ----------------------------------------------
-  const shutdown = async (signal: string): Promise<void> => {
-    log.info({ signal }, "shutting down");
-    anchorShutdown = true;
-    if (anchorTimer !== undefined) clearTimeout(anchorTimer);
-    normalizeWorker.stop();
-    outboxWorker.stop();
-    webhookDispatchWorker.stop();
-    tenantBlobPurgeWorker.stop();
-    anchorReconciler?.stop();
-    auditConsistencyVerifier.stop();
-    try {
-      await agentRouteWorker.close();
-    } catch (err) {
-      log.error({ err }, "agentRouteWorker.close failed");
-    }
-    try {
-      await app.close();
-    } catch (err) {
-      log.error({ err }, "app.close failed");
-    }
-    // Close every DISTINCT pool. wikiPool/privilegedPool alias `pool` in dev
-    // (single-pool mode) and are separate pools in production; closeAllPools
-    // dedupes by reference so each underlying pool is ended exactly once, and a
-    // failure to close one never blocks the others (doc A P2.3).
-    const { errors: poolCloseErrors } = await closeAllPools([pool, wikiPool, privilegedPool]);
-    for (const err of poolCloseErrors) {
-      log.error({ err }, "pool.end failed");
-    }
-    try {
-      redis.disconnect();
-    } catch (err) {
-      log.error({ err }, "redis.disconnect failed");
-    }
-    await shutdownTracing();
-    process.exit(0);
+  // Drain in order so DB pools never close underneath active work (Codex
+  // c96283d P2): stop new HTTP, then prevent + await in-flight worker cycles
+  // (bounded), then BullMQ jobs, then pools/redis/tracing. Idempotent via a
+  // shared promise so concurrent SIGINT+SIGTERM run the sequence once. Exits
+  // non-zero if any critical resource failed to close cleanly.
+  const WORKER_DRAIN_MS = 10_000;
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (signal: string): Promise<void> => {
+    if (shutdownPromise !== undefined) return shutdownPromise;
+    shutdownPromise = (async () => {
+      log.info({ signal }, "shutting down");
+      anchorShutdown = true;
+      if (anchorTimer !== undefined) clearTimeout(anchorTimer);
+      let cleanClose = true;
+
+      // 1. Stop accepting new HTTP work (Fastify drains in-flight requests).
+      try {
+        await app.close();
+      } catch (err) {
+        cleanClose = false;
+        log.error({ err }, "app.close failed");
+      }
+
+      // 2. Prevent new worker cycles AND await any in-flight cycle (bounded), so
+      //    a pool is never closed mid-cycle.
+      const drainables = [
+        normalizeWorker,
+        outboxWorker,
+        webhookDispatchWorker,
+        tenantBlobPurgeWorker,
+        auditConsistencyVerifier,
+        ...(anchorReconciler !== undefined ? [anchorReconciler] : []),
+      ];
+      await Promise.allSettled(drainables.map((w) => w.stopAndDrain(WORKER_DRAIN_MS)));
+
+      // 3. The BullMQ route worker drains its own in-flight jobs.
+      try {
+        await agentRouteWorker.close();
+      } catch (err) {
+        cleanClose = false;
+        log.error({ err }, "agentRouteWorker.close failed");
+      }
+
+      // 4. Close every DISTINCT pool. wikiPool/privilegedPool alias `pool` in dev
+      //    and are separate pools in production; closeAllPools dedupes by
+      //    reference and one failure never blocks the rest (doc A P2.3).
+      const { errors: poolCloseErrors } = await closeAllPools([pool, wikiPool, privilegedPool]);
+      for (const err of poolCloseErrors) {
+        cleanClose = false;
+        log.error({ err }, "pool.end failed");
+      }
+
+      try {
+        redis.disconnect();
+      } catch (err) {
+        cleanClose = false;
+        log.error({ err }, "redis.disconnect failed");
+      }
+      await shutdownTracing();
+      process.exit(cleanClose ? 0 : 1);
+    })();
+    return shutdownPromise;
   };
 
   process.on("SIGINT", () => {

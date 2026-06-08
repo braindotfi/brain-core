@@ -14,7 +14,8 @@
  * matching the normalize worker. The per-anchor write is tenant-scoped.
  */
 
-import { withTenantScope, type AuditEmitter } from "@brain/shared";
+import { startManagedInterval, withTenantScope, type AuditEmitter } from "@brain/shared";
+import type { ManagedWorker } from "@brain/shared";
 import type { Pool } from "pg";
 import { setAnchorTxHash } from "./repository.js";
 
@@ -104,9 +105,7 @@ export async function reconcileOrphanedAnchors(
   return { recovered, flagged };
 }
 
-export interface AnchorReconciler {
-  stop(): void;
-}
+export type AnchorReconciler = ManagedWorker;
 
 /** Run reconcileOrphanedAnchors on a fixed cadence (default every 5 minutes). */
 export function startAnchorReconciler(
@@ -114,24 +113,14 @@ export function startAnchorReconciler(
   opts: ReconcileOptions & { intervalMs?: number } = {},
 ): AnchorReconciler {
   const intervalMs = opts.intervalMs ?? 5 * 60 * 1000;
-  let active = true;
-
-  async function cycle(): Promise<void> {
-    if (!active) return;
-    try {
+  return startManagedInterval(
+    async () => {
       await reconcileOrphanedAnchors(deps, opts);
-    } catch (err) {
-      console.error("[anchorReconciler] cycle failed:", err);
-    }
-  }
-
-  const handle = setInterval(() => void cycle(), intervalMs);
-  void cycle();
-
-  return {
-    stop() {
-      active = false;
-      clearInterval(handle);
     },
-  };
+    intervalMs,
+    {
+      runImmediately: true,
+      onError: (err) => console.error("[anchorReconciler] cycle failed:", err),
+    },
+  );
 }

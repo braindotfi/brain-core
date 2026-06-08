@@ -28,7 +28,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { AuditEmitter, BlobAdapter, BlobPurgeFailure, MetricsEmitter } from "@brain/shared";
+import { startManagedInterval } from "@brain/shared";
+import type {
+  AuditEmitter,
+  BlobAdapter,
+  BlobPurgeFailure,
+  ManagedWorker,
+  MetricsEmitter,
+} from "@brain/shared";
 import type { Pool } from "pg";
 import {
   BLOB_PURGE_LEASE_SECONDS,
@@ -321,27 +328,16 @@ export async function runBlobPurgeCycle(
 export function startTenantBlobPurgeWorker(
   deps: BlobPurgeWorkerDeps,
   opts: { intervalMs?: number; limit?: number } = {},
-): { stop: () => void } {
+): ManagedWorker {
   const intervalMs = opts.intervalMs ?? 30_000;
-  let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   const cycleOpts: { limit?: number } = {};
   if (opts.limit !== undefined) cycleOpts.limit = opts.limit;
 
-  const tick = async (): Promise<void> => {
-    if (stopped) return;
-    try {
+  return startManagedInterval(
+    async () => {
       await runBlobPurgeCycle(deps, cycleOpts);
-    } catch (err) {
-      console.error("[blob-purge-worker] cycle failed", err);
-    }
-    if (!stopped) timer = setTimeout(() => void tick(), intervalMs);
-  };
-  timer = setTimeout(() => void tick(), intervalMs);
-  return {
-    stop: () => {
-      stopped = true;
-      if (timer !== undefined) clearTimeout(timer);
     },
-  };
+    intervalMs,
+    { onError: (err) => console.error("[blob-purge-worker] cycle failed", err) },
+  );
 }
