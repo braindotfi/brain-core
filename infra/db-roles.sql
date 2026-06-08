@@ -87,6 +87,19 @@ BEGIN
 END
 $$;
 
+-- §1.4 audit append-only: the audit log must be IMMUTABLE to every runtime role.
+-- The blanket DML grant above (and the default privileges) hand brain_app +
+-- brain_privileged UPDATE/DELETE on every table, and `REVOKE ... FROM PUBLIC` in
+-- the audit migration does NOT strip an explicit role grant. Revoke the mutation
+-- rights on audit_events here so neither the request role (within its tenant) nor
+-- the privileged role (across all tenants) can rewrite or erase audit history.
+-- The append-only guarantee the on-chain anchor and proofs rely on is otherwise
+-- unenforced at the DB level. Only the migration/owner role retains the ability
+-- to administratively repair audit data, through a separately controlled, audited
+-- procedure. (Codex 307161b P1 #1.)
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
+  FROM brain_app, brain_privileged, brain_wiki_reader;
+
 -- Defence in depth: FORCE RLS on every tenant-scoped table so even a connection
 -- that happens to be the table owner is still subject to the tenant_isolation
 -- policy. Applies to every table that has RLS enabled (set by the migrations).
