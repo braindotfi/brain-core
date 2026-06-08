@@ -141,6 +141,10 @@ export const BRAIN_ERROR_CODES = [
   // An idempotency key was reused for an event whose logical payload differs
   // from the one already persisted under that key (doc A P1.2).
   "audit_idempotency_conflict",
+  // A persisted audit row carries a hash_schema_version this code does not know
+  // how to verify (e.g. written by a newer deployment). Fail closed (Codex
+  // fca9ac8 P1 #1).
+  "audit_hash_version_unsupported",
 
   // Trust surfaces (H-07 Proof API / H-25 Agent Run History)
   "proof_not_found",
@@ -429,6 +433,8 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
 
   // 500 — last resort (docs name: INTERNAL_ERROR)
   internal_error: 500,
+  // Data carries a hash schema version this build cannot verify — fail closed.
+  audit_hash_version_unsupported: 500,
 };
 
 export function httpStatusForCode(code: BrainErrorCode): number {

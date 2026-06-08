@@ -67,6 +67,30 @@ export function hashEvent(input: HashInput): string {
   return createHash("sha256").update(canonicalize(input), "utf8").digest("hex");
 }
 
+/**
+ * Stable serialization of ONLY an event's logical fields (no id / created_at /
+ * prev_event_hash). Used to compare two events for idempotency content equality
+ * WITHOUT relying on the chain hash — e.g. for rows written under a superseded
+ * canonicalization (`hash_schema_version = 0`), where a hash recompute would be
+ * unreliable but the logical content is still directly comparable.
+ */
+export function logicalPayloadFingerprint(e: AuditEventInput): string {
+  return stableStringify(
+    stableJsonValue({
+      tenant_id: e.tenantId,
+      layer: e.layer,
+      actor: e.actor,
+      action: e.action,
+      inputs: e.inputs,
+      outputs: e.outputs,
+      policy_version: e.policyVersion ?? null,
+      policy_decision_id: e.policyDecisionId ?? null,
+      before_state: e.beforeState ?? null,
+      after_state: e.afterState ?? null,
+    }),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Stable stringify
 //

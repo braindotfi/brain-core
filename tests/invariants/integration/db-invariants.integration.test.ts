@@ -733,4 +733,50 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
     // Exactly the tampered row flips from matching to mismatching.
     expect(after.hashMismatches).toBe(before.hashMismatches + 1);
   });
+
+  // 13 — a version-0 (pre-versioning) row replays idempotently by LOGICAL-FIELD
+  // comparison, not by recomputing its superseded hash, so a pre-BYTEA-fix event
+  // never false-conflicts. (Codex fca9ac8 P1 #1)
+  it("replays a version-0 idempotent event by logical comparison, not hash recompute", async () => {
+    const tenant = newTenantId();
+    const key = `${tenant}:v0`;
+    const id = `evt_v0_${tenant}`;
+    // Insert a pre-versioning row directly (hash_schema_version = 0) with an
+    // arbitrary, superseded event_hash that a recompute would NOT reproduce.
+    await pool.query(
+      `INSERT INTO audit_events
+         (id, tenant_id, layer, actor, action, inputs, outputs, event_hash,
+          prev_event_hash, created_at, idempotency_key, hash_schema_version)
+       VALUES ($1, $2, 'audit', 'system', 'v0.replay', $3::jsonb, '{}'::jsonb,
+               decode($4, 'hex'), NULL, now(), $5, 0)`,
+      [id, tenant, JSON.stringify({ a: 1 }), "aa".repeat(32), key],
+    );
+    const emitter = new PostgresAuditEmitter(pool);
+
+    // Same logical content + key -> returns the existing v0 row, no false conflict
+    // (a hash recompute would differ from the stored superseded hash).
+    const same = await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "v0.replay",
+      inputs: { a: 1 },
+      outputs: {},
+      idempotencyKey: key,
+    });
+    expect(same.id).toBe(id);
+
+    // Different content + same key -> conflict.
+    await expect(
+      emitter.emit({
+        tenantId: tenant,
+        layer: "audit",
+        actor: "system",
+        action: "v0.DIFFERENT",
+        inputs: { a: 1 },
+        outputs: {},
+        idempotencyKey: key,
+      }),
+    ).rejects.toMatchObject({ code: "audit_idempotency_conflict" });
+  });
 });
