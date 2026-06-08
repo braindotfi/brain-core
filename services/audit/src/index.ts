@@ -30,9 +30,12 @@ export {
 } from "./reconciler.js";
 export {
   checkAuditConsistency,
+  verifyContentHashCursor,
   startAuditConsistencyVerifier,
+  CONTENT_HASH_VERIFIER_NAME,
   type AuditConsistencyDeps,
   type AuditConsistencyResult,
+  type ContentHashVerifyResult,
   type AuditConsistencyVerifier,
 } from "./audit-consistency.js";
 export {
