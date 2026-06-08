@@ -6,12 +6,16 @@
  * forks; this verifier DETECTS any pre-fix or regressed inconsistency so an
  * integrity break is observable (metrics + a critical log) rather than silent.
  *
- * Two checks, both within the audit service's own table (no cross-service read):
- *   - fork: two committed events for one tenant share a predecessor hash;
- *   - gap:  an event's prev_event_hash matches no event_hash for that tenant.
+ * Two layers, both within the audit service's own table (no cross-service read):
+ *   - STRUCTURAL (checkAuditConsistency, global each cycle): fork (two events
+ *     share a predecessor), gap (a predecessor matches no event_hash), and
+ *     genesis cardinality (a tenant without exactly one null-predecessor event);
+ *   - CONTENT (verifyContentHashCursor, paged via a durable cursor): recompute
+ *     each current-version event's canonical hash and compare to the stored one,
+ *     so a mutation that left the chain structurally connected is still caught.
  *
  * A non-zero count is a P0-grade signal: the Merkle chain the on-chain anchor
- * commits to is no longer a single linear history for that tenant.
+ * commits to is no longer a single, faithful, linear history for that tenant.
  */
 
 import type { Pool } from "pg";
@@ -31,8 +35,9 @@ export interface AuditConsistencyDeps {
   privilegedPool: Pool;
   metrics?: MetricsEmitter;
   /**
-   * Max rows the content-hash recompute scans per cycle (most-recent first,
-   * current schema version only). Bounds the cost on large tables. Default 1000.
+   * Page size for verifyContentHashCursor: rows recomputed-and-compared per cycle
+   * as the durable cursor advances through current-version events. Bounds the
+   * cost on large tables. Default 1000.
    */
   hashScanLimit?: number;
 }
@@ -49,13 +54,6 @@ export interface AuditConsistencyResult {
    * forked or duplicated chain head is otherwise invisible.
    */
   invalidGenesis: number;
-  /**
-   * Current-version events whose recomputed canonical hash does NOT equal the
-   * stored event_hash — a content mutation (privileged tamper or migration
-   * defect) that the structural checks cannot see, because the chain stays
-   * structurally connected. Bounded scan (see `hashScanLimit`).
-   */
-  hashMismatches: number;
 }
 
 export async function checkAuditConsistency(
@@ -101,79 +99,193 @@ export async function checkAuditConsistency(
   );
   const invalidGenesis = Number(genesisRes.rows[0]?.n ?? 0);
 
-  // Content integrity: recompute the canonical hash from persisted logical fields
-  // and compare to the stored event_hash. Catches a privileged mutation or
-  // migration defect that changed actor/action/inputs/outputs/policy/state
-  // WITHOUT rehashing — the structural fork/gap/genesis checks see such a chain
-  // as healthy because it stays structurally connected. Bounded to the most
-  // recent `hashScanLimit` rows AT THE CURRENT schema version, so a superseded
-  // serialization is never flagged. (Codex c96283d P1 #2.)
-  const hashScanLimit = deps.hashScanLimit ?? 1000;
-  const contentRes = await deps.privilegedPool.query<{
-    id: string;
-    tenant_id: string;
-    layer: AuditEventInput["layer"];
-    actor: string;
-    action: string;
-    inputs: Record<string, unknown>;
-    outputs: Record<string, unknown>;
-    policy_version: number | null;
-    policy_decision_id: string | null;
-    before_state: Record<string, unknown> | null;
-    after_state: Record<string, unknown> | null;
-    prev_event_hash: Buffer | null;
-    created_at: Date;
-    event_hash: Buffer;
-  }>(
-    `SELECT id, tenant_id, layer, actor, action, inputs, outputs,
-            policy_version, policy_decision_id, before_state, after_state,
-            prev_event_hash, created_at, event_hash
-       FROM audit_events
-      WHERE hash_schema_version = $1
-      ORDER BY created_at DESC, id DESC
-      LIMIT $2`,
-    [AUDIT_HASH_SCHEMA_VERSION, hashScanLimit],
-  );
-  let hashMismatches = 0;
-  for (const r of contentRes.rows) {
-    const recomputed = hashEvent({
-      event: {
-        tenantId: r.tenant_id,
-        layer: r.layer,
-        actor: r.actor,
-        action: r.action,
-        inputs: r.inputs,
-        outputs: r.outputs,
-        ...(r.policy_version !== null ? { policyVersion: r.policy_version } : {}),
-        ...(r.policy_decision_id !== null ? { policyDecisionId: r.policy_decision_id } : {}),
-        ...(r.before_state !== null ? { beforeState: r.before_state } : {}),
-        ...(r.after_state !== null ? { afterState: r.after_state } : {}),
-      },
-      id: r.id,
-      createdAt: r.created_at.toISOString(),
-      prevEventHash: r.prev_event_hash === null ? null : r.prev_event_hash.toString("hex"),
-    });
-    if (recomputed !== r.event_hash.toString("hex")) hashMismatches += 1;
-  }
-
   deps.metrics?.gauge("brain.audit.consistency.fork.count", forks);
   deps.metrics?.gauge("brain.audit.consistency.gap.count", gaps);
   deps.metrics?.gauge("brain.audit.consistency.invalid_genesis.count", invalidGenesis);
-  deps.metrics?.gauge("brain.audit.consistency.hash_mismatch.count", hashMismatches);
-  if (forks > 0 || gaps > 0 || invalidGenesis > 0 || hashMismatches > 0) {
-    console.error("[audit-consistency] per-tenant hash-chain inconsistency detected", {
+  if (forks > 0 || gaps > 0 || invalidGenesis > 0) {
+    console.error("[audit-consistency] per-tenant hash-chain structural inconsistency detected", {
       forks,
       gaps,
       invalidGenesis,
-      hashMismatches,
     });
   }
-  return { forks, gaps, invalidGenesis, hashMismatches };
+  return { forks, gaps, invalidGenesis };
+}
+
+/** Stable name for the content-hash verifier's durable cursor row. */
+export const CONTENT_HASH_VERIFIER_NAME = "content_hash";
+
+export interface ContentHashVerifyResult {
+  /** Rows recomputed-and-compared this cycle. */
+  rowsVerified: number;
+  /** Of those, how many whose recomputed hash != stored event_hash. */
+  hashMismatches: number;
+  /** Rows at a version NEWER than this build can verify (written by a newer deploy). */
+  unsupportedVersion: number;
+  /** True when this cycle's page reached the end and the cursor wrapped. */
+  completedPass: boolean;
+}
+
+/**
+ * Content-hash verification via a DURABLE CURSOR (Codex fca9ac8 P1 #2). Each call
+ * pages through the next `hashScanLimit` current-version events in stable
+ * (created_at, id) order, recomputes the canonical hash, compares to the stored
+ * one, and advances the checkpoint transactionally — wrapping to the beginning
+ * after a full pass. Over successive cycles EVERY current-version event is
+ * verified, not just the newest N. A content mutation (privileged tamper /
+ * migration defect) that the structural fork/gap/genesis checks cannot see is
+ * therefore eventually caught.
+ */
+export async function verifyContentHashCursor(
+  deps: AuditConsistencyDeps,
+): Promise<ContentHashVerifyResult> {
+  const pageSize = deps.hashScanLimit ?? 1000;
+  const c = await deps.privilegedPool.connect();
+  let result: ContentHashVerifyResult;
+  try {
+    await c.query("BEGIN");
+    // Ensure + lock the cursor row; a version bump resets the keyset position.
+    await c.query(
+      `INSERT INTO audit_verifier_checkpoint (verifier_name, hash_schema_version)
+         VALUES ($1, $2) ON CONFLICT (verifier_name) DO NOTHING`,
+      [CONTENT_HASH_VERIFIER_NAME, AUDIT_HASH_SCHEMA_VERSION],
+    );
+    const cpRes = await c.query<{
+      hash_schema_version: number;
+      last_created_at: Date | null;
+      last_event_id: string | null;
+    }>(
+      `SELECT hash_schema_version, last_created_at, last_event_id
+         FROM audit_verifier_checkpoint WHERE verifier_name = $1 FOR UPDATE`,
+      [CONTENT_HASH_VERIFIER_NAME],
+    );
+    const cp = cpRes.rows[0];
+    const versionChanged = cp === undefined || cp.hash_schema_version !== AUDIT_HASH_SCHEMA_VERSION;
+    const lastCreatedAt = versionChanged ? null : cp.last_created_at;
+    const lastEventId = versionChanged ? null : cp.last_event_id;
+
+    // Next page after the cursor, in stable keyset order.
+    const page = await c.query<{
+      id: string;
+      tenant_id: string;
+      layer: AuditEventInput["layer"];
+      actor: string;
+      action: string;
+      inputs: Record<string, unknown>;
+      outputs: Record<string, unknown>;
+      policy_version: number | null;
+      policy_decision_id: string | null;
+      before_state: Record<string, unknown> | null;
+      after_state: Record<string, unknown> | null;
+      prev_event_hash: Buffer | null;
+      created_at: Date;
+      event_hash: Buffer;
+    }>(
+      `SELECT id, tenant_id, layer, actor, action, inputs, outputs,
+              policy_version, policy_decision_id, before_state, after_state,
+              prev_event_hash, created_at, event_hash
+         FROM audit_events
+        WHERE hash_schema_version = $1
+          AND ($2::timestamptz IS NULL OR (created_at, id) > ($2, $3))
+        ORDER BY created_at, id
+        LIMIT $4`,
+      [AUDIT_HASH_SCHEMA_VERSION, lastCreatedAt, lastEventId, pageSize],
+    );
+
+    let hashMismatches = 0;
+    for (const r of page.rows) {
+      const recomputed = hashEvent({
+        event: {
+          tenantId: r.tenant_id,
+          layer: r.layer,
+          actor: r.actor,
+          action: r.action,
+          inputs: r.inputs,
+          outputs: r.outputs,
+          ...(r.policy_version !== null ? { policyVersion: r.policy_version } : {}),
+          ...(r.policy_decision_id !== null ? { policyDecisionId: r.policy_decision_id } : {}),
+          ...(r.before_state !== null ? { beforeState: r.before_state } : {}),
+          ...(r.after_state !== null ? { afterState: r.after_state } : {}),
+        },
+        id: r.id,
+        createdAt: r.created_at.toISOString(),
+        prevEventHash: r.prev_event_hash === null ? null : r.prev_event_hash.toString("hex"),
+      });
+      if (recomputed !== r.event_hash.toString("hex")) hashMismatches += 1;
+    }
+
+    // Advance the cursor (or wrap to the start after a full pass).
+    const completedPass = page.rows.length < pageSize;
+    if (completedPass) {
+      await c.query(
+        `UPDATE audit_verifier_checkpoint
+            SET last_created_at = NULL, last_event_id = NULL, hash_schema_version = $2,
+                completed_passes = completed_passes + 1, last_full_pass_at = now(), updated_at = now()
+          WHERE verifier_name = $1`,
+        [CONTENT_HASH_VERIFIER_NAME, AUDIT_HASH_SCHEMA_VERSION],
+      );
+    } else {
+      const last = page.rows[page.rows.length - 1]!;
+      await c.query(
+        `UPDATE audit_verifier_checkpoint
+            SET last_created_at = $2, last_event_id = $3, hash_schema_version = $4, updated_at = now()
+          WHERE verifier_name = $1`,
+        [
+          CONTENT_HASH_VERIFIER_NAME,
+          last.created_at.toISOString(),
+          last.id,
+          AUDIT_HASH_SCHEMA_VERSION,
+        ],
+      );
+    }
+    await c.query("COMMIT");
+    result = {
+      rowsVerified: page.rows.length,
+      hashMismatches,
+      unsupportedVersion: 0,
+      completedPass,
+    };
+  } catch (err) {
+    try {
+      await c.query("ROLLBACK");
+    } catch {
+      /* swallow — original error wins */
+    }
+    throw err;
+  } finally {
+    c.release();
+  }
+
+  // Rows written by a NEWER deployment than this build (version > current) cannot
+  // be verified here — surface them rather than silently skip.
+  const unsupportedRes = await deps.privilegedPool.query<{ n: string }>(
+    `SELECT count(*)::bigint AS n FROM audit_events WHERE hash_schema_version > $1`,
+    [AUDIT_HASH_SCHEMA_VERSION],
+  );
+  result.unsupportedVersion = Number(unsupportedRes.rows[0]?.n ?? 0);
+
+  deps.metrics?.gauge("brain.audit.consistency.hash_mismatch.count", result.hashMismatches);
+  deps.metrics?.gauge("brain.audit.consistency.rows_verified.count", result.rowsVerified);
+  deps.metrics?.gauge(
+    "brain.audit.consistency.unsupported_version.count",
+    result.unsupportedVersion,
+  );
+  if (result.hashMismatches > 0 || result.unsupportedVersion > 0) {
+    console.error("[audit-consistency] content-hash verification flagged events", {
+      hashMismatches: result.hashMismatches,
+      unsupportedVersion: result.unsupportedVersion,
+      rowsVerified: result.rowsVerified,
+    });
+  }
+  return result;
 }
 
 export type AuditConsistencyVerifier = ManagedWorker;
 
-/** Run checkAuditConsistency on a fixed cadence (default every 10 minutes). */
+/**
+ * Run the structural checks (fork/gap/genesis, global) AND advance the
+ * content-hash cursor by one page, on a fixed cadence (default every 10 minutes).
+ */
 export function startAuditConsistencyVerifier(
   deps: AuditConsistencyDeps,
   opts: { intervalMs?: number } = {},
@@ -182,6 +294,7 @@ export function startAuditConsistencyVerifier(
   return startManagedInterval(
     async () => {
       await checkAuditConsistency(deps);
+      await verifyContentHashCursor(deps);
     },
     intervalMs,
     {

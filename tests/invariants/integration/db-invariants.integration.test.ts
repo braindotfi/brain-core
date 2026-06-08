@@ -35,7 +35,7 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import { isValidPaymentIntentTransition } from "@brain/execution";
-import { checkAuditConsistency } from "@brain/audit";
+import { checkAuditConsistency, verifyContentHashCursor } from "@brain/audit";
 import { LedgerPaymentIntents, upsertAccountRow, upsertCounterpartyRow } from "@brain/ledger";
 import { AGENT_CONTRIBUTED_CONFIDENCE_CEILING } from "../../../schemas/index.js";
 import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
@@ -570,7 +570,7 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       // which scans all tenants and sets no scope.
       const res = await checkAuditConsistency({ privilegedPool: blind as unknown as Pool });
       await blind.query("ROLLBACK");
-      expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 0, hashMismatches: 0 });
+      expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 0 });
     } finally {
       blind.release();
     }
@@ -708,7 +708,7 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
   // logical fields and flags a row mutated WITHOUT rehashing. The structural
   // fork/gap/genesis checks cannot see such a tamper, because the chain stays
   // structurally connected. (Codex c96283d P1 #2)
-  it("detects an audit event whose content was mutated without rehashing", async () => {
+  it("the content-hash cursor detects an event mutated without rehashing", async () => {
     const tenant = newTenantId();
     const emitter = new PostgresAuditEmitter(pool);
     const ev = await emitter.emit({
@@ -719,19 +719,20 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       inputs: { v: 1 },
       outputs: {},
     });
-    // Baseline: the freshly-emitted (correctly hashed) event recomputes cleanly
-    // and adds no mismatch.
-    const before = await checkAuditConsistency({ privilegedPool: pool });
+    // One cursor cycle covers the whole (small) table and wraps; the freshly
+    // emitted event recomputes cleanly.
+    const before = await verifyContentHashCursor({ privilegedPool: pool });
+    expect(before.completedPass).toBe(true);
 
     // Privileged tamper: change a logical field but leave event_hash untouched.
     await pool.query(`UPDATE audit_events SET action = 'content.tampered' WHERE id = $1`, [ev.id]);
 
+    // The next pass (cursor wrapped to the start) re-verifies every row and
+    // catches the tampered one.
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const after = await checkAuditConsistency({ privilegedPool: pool });
+    const after = await verifyContentHashCursor({ privilegedPool: pool });
     errSpy.mockRestore();
-
-    // Exactly the tampered row flips from matching to mismatching.
-    expect(after.hashMismatches).toBe(before.hashMismatches + 1);
+    expect(after.hashMismatches).toBeGreaterThan(before.hashMismatches);
   });
 
   // 13 — a version-0 (pre-versioning) row replays idempotently by LOGICAL-FIELD

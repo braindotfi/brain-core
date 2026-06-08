@@ -1,14 +1,9 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { checkAuditConsistency } from "./audit-consistency.js";
+import { checkAuditConsistency, verifyContentHashCursor } from "./audit-consistency.js";
 
-/** Pool that returns a count per structural query, plus optional content rows. */
-function fakePool(counts: {
-  forks: number;
-  gaps: number;
-  invalidGenesis?: number;
-  contentRows?: unknown[];
-}): {
+/** Pool that returns a count per structural query (fork / gap / genesis). */
+function fakePool(counts: { forks: number; gaps: number; invalidGenesis?: number }): {
   pool: Pool;
   sql: string[];
 } {
@@ -16,11 +11,6 @@ function fakePool(counts: {
   const pool = {
     query: vi.fn(async (text: string) => {
       sql.push(text);
-      // Content-hash recompute query (current schema version, bounded scan).
-      if (text.includes("hash_schema_version")) {
-        const rows = counts.contentRows ?? [];
-        return { rows, rowCount: rows.length };
-      }
       if (text.includes("invalid_genesis")) {
         return { rows: [{ n: String(counts.invalidGenesis ?? 0) }], rowCount: 1 };
       }
@@ -36,13 +26,11 @@ function fakePool(counts: {
   return { pool, sql };
 }
 
-describe("checkAuditConsistency", () => {
-  it("reports zero on a clean chain and runs the fork + gap queries", async () => {
+describe("checkAuditConsistency (structural)", () => {
+  it("reports zero on a clean chain and runs the fork + gap + genesis queries", async () => {
     const { pool, sql } = fakePool({ forks: 0, gaps: 0 });
     const res = await checkAuditConsistency({ privilegedPool: pool });
-    expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 0, hashMismatches: 0 });
-    // Fork query groups by predecessor; gap query is an anti-join on event_hash;
-    // genesis query counts tenants without exactly one null-predecessor event.
+    expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 0 });
     expect(sql.some((s) => s.includes("GROUP BY tenant_id, prev_event_hash"))).toBe(true);
     expect(sql.some((s) => s.includes("HAVING count(*) > 1"))).toBe(true);
     expect(sql.some((s) => s.includes("NOT EXISTS"))).toBe(true);
@@ -56,10 +44,9 @@ describe("checkAuditConsistency", () => {
 
     const res = await checkAuditConsistency({ privilegedPool: pool, metrics: metrics as never });
 
-    expect(res).toEqual({ forks: 2, gaps: 1, invalidGenesis: 0, hashMismatches: 0 });
+    expect(res).toEqual({ forks: 2, gaps: 1, invalidGenesis: 0 });
     expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.fork.count", 2);
     expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.gap.count", 1);
-    // A non-zero count is a P0-grade signal → critical log.
     expect(errSpy).toHaveBeenCalled();
     errSpy.mockRestore();
   });
@@ -71,22 +58,64 @@ describe("checkAuditConsistency", () => {
 
     const res = await checkAuditConsistency({ privilegedPool: pool, metrics: metrics as never });
 
-    // Two genesis events escape fork + gap detection; this is the only signal.
-    expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 2, hashMismatches: 0 });
+    expect(res).toEqual({ forks: 0, gaps: 0, invalidGenesis: 2 });
     expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.invalid_genesis.count", 2);
     expect(errSpy).toHaveBeenCalled();
     errSpy.mockRestore();
   });
 
-  it("flags a content-hash mismatch when a stored event_hash does not recompute", async () => {
-    // A row whose stored event_hash does not match the recompute of its logical
-    // fields — a content mutation the structural checks cannot see.
-    const row = {
-      id: "evt_1",
-      tenant_id: "tnt_1",
+  it("does not log when the chain is structurally clean", async () => {
+    const { pool } = fakePool({ forks: 0, gaps: 0 });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await checkAuditConsistency({ privilegedPool: pool });
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+});
+
+/** Pool with a connect()-able client for the cursor transaction + a direct query. */
+function fakeCursorPool(opts: { pageRows: unknown[]; unsupported?: number }): {
+  pool: Pool;
+  sql: string[];
+} {
+  const sql: string[] = [];
+  const client = {
+    query: vi.fn(async (text: string) => {
+      sql.push(text);
+      if (text.includes("FOR UPDATE")) {
+        return {
+          rows: [{ hash_schema_version: 1, last_created_at: null, last_event_id: null }],
+          rowCount: 1,
+        };
+      }
+      if (text.startsWith("SELECT id, tenant_id")) {
+        return { rows: opts.pageRows, rowCount: opts.pageRows.length };
+      }
+      return { rows: [], rowCount: 0 }; // BEGIN / INSERT / UPDATE / COMMIT
+    }),
+    release: vi.fn(),
+  };
+  const pool = {
+    connect: async () => client,
+    query: vi.fn(async (text: string) => {
+      sql.push(text);
+      if (text.includes("hash_schema_version >")) {
+        return { rows: [{ n: String(opts.unsupported ?? 0) }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    }),
+  } as unknown as Pool;
+  return { pool, sql };
+}
+
+describe("verifyContentHashCursor (content, paged)", () => {
+  function row(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "e1",
+      tenant_id: "t1",
       layer: "audit",
       actor: "system",
-      action: "test.tamper",
+      action: "x",
       inputs: {},
       outputs: {},
       policy_version: null,
@@ -95,27 +124,43 @@ describe("checkAuditConsistency", () => {
       after_state: null,
       prev_event_hash: null,
       created_at: new Date("2026-06-08T00:00:00.000Z"),
-      event_hash: Buffer.from("00".repeat(32), "hex"), // not the real hash of the fields
+      event_hash: Buffer.from("00".repeat(32), "hex"), // not the real hash → mismatch
+      ...over,
     };
-    const { pool, sql } = fakePool({ forks: 0, gaps: 0, contentRows: [row] });
+  }
+
+  it("flags a row whose stored hash does not recompute, wraps after a short page", async () => {
+    const { pool, sql } = fakeCursorPool({ pageRows: [row()] });
     const metrics = { gauge: vi.fn(), increment: vi.fn(), histogram: vi.fn(), duration: vi.fn() };
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const res = await checkAuditConsistency({ privilegedPool: pool, metrics: metrics as never });
+    const res = await verifyContentHashCursor({ privilegedPool: pool, metrics: metrics as never });
 
+    expect(res.rowsVerified).toBe(1);
     expect(res.hashMismatches).toBe(1);
+    expect(res.completedPass).toBe(true); // page < pageSize → wrapped
     expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.hash_mismatch.count", 1);
+    expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.rows_verified.count", 1);
+    // The cursor paged in stable (created_at, id) order and recorded a full pass.
+    expect(sql.some((s) => s.includes("ORDER BY created_at, id"))).toBe(true);
+    expect(sql.some((s) => s.includes("completed_passes = completed_passes + 1"))).toBe(true);
     expect(errSpy).toHaveBeenCalled();
-    // The recompute scans current-version rows only.
-    expect(sql.some((s) => s.includes("hash_schema_version = $1"))).toBe(true);
     errSpy.mockRestore();
   });
 
-  it("does not log when the chain is clean", async () => {
-    const { pool } = fakePool({ forks: 0, gaps: 0 });
+  it("surfaces rows written by a newer (unsupported) schema version", async () => {
+    const { pool } = fakeCursorPool({ pageRows: [], unsupported: 3 });
+    const metrics = { gauge: vi.fn(), increment: vi.fn(), histogram: vi.fn(), duration: vi.fn() };
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await checkAuditConsistency({ privilegedPool: pool });
-    expect(errSpy).not.toHaveBeenCalled();
+
+    const res = await verifyContentHashCursor({ privilegedPool: pool, metrics: metrics as never });
+
+    expect(res.unsupportedVersion).toBe(3);
+    expect(metrics.gauge).toHaveBeenCalledWith(
+      "brain.audit.consistency.unsupported_version.count",
+      3,
+    );
+    expect(errSpy).toHaveBeenCalled();
     errSpy.mockRestore();
   });
 });
