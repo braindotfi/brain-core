@@ -8,14 +8,17 @@ By the end of this page, you'll have a working integration that reads a tenant's
 
 {% stepper %}
 {% step %}
+
 ### Install
 
 ```bash
 npm install @brain/sdk
 ```
+
 {% endstep %}
 
 {% step %}
+
 ### Get a Key
 
 Sign up at [console.brain.dev](https://console.brain.dev), create a tenant, and copy your sandbox API key (`brain_sk_test_...`).
@@ -31,6 +34,7 @@ Sandbox uses test credentials and Base Sepolia for on-chain anchoring. No real m
 {% endstep %}
 
 {% step %}
+
 ### Build
 
 ```typescript
@@ -65,6 +69,7 @@ That's it. You just touched all five capabilities of Brain through one client.
 {% endstep %}
 
 {% step %}
+
 ### What You Just Built
 
 | Line                    | What Brain did under the hood                                                                                 |
