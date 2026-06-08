@@ -278,10 +278,21 @@ export interface OperatorReplayResult {
  * avoids the post-commit emit, which could leave a replay unaudited if the audit
  * write failed after the requeue committed (Codex fca9ac8 P1 #3). Supports
  * dry-run (inspect with no mutation and no audit intent).
+ *
+ * `opts.evidence` is merged into every per-tenant audit intent's inputs, so the
+ * recovery record is self-describing: the operator passes the exact filter, the
+ * source commit, and any other context, and it lands in the durable audit event
+ * alongside the operator + event_keys (Codex 307161b P2 #3).
  */
 export async function operatorReplayExhaustedAuditOutbox(
   deps: OperatorReplayDeps,
-  opts: { operator: string; filter?: AuditOutboxFilter; dryRun?: boolean; limit?: number },
+  opts: {
+    operator: string;
+    filter?: AuditOutboxFilter;
+    dryRun?: boolean;
+    limit?: number;
+    evidence?: Record<string, unknown>;
+  },
 ): Promise<OperatorReplayResult> {
   const c = await deps.privilegedPool.connect();
   try {
@@ -331,6 +342,7 @@ export async function operatorReplayExhaustedAuditOutbox(
         eventKey: `audit.outbox.replayed:${operationId}:${tenantId}`,
         actor: opts.operator,
         inputs: {
+          ...(opts.evidence ?? {}),
           operator: opts.operator,
           operation_id: operationId,
           count: trows.length,

@@ -435,6 +435,34 @@ describe("operator recovery surface", () => {
     expect(JSON.parse(String(tntB[1][7]))).toMatchObject({ count: 1 });
   });
 
+  it("merges operator evidence into the audit intent without overriding canonical keys", async () => {
+    const rows = [summary({ id: "tbo_1", tenant_id: "tnt_a", event_key: "tnt_a:k1" })];
+    const { pool, calls } = fakeReplayPool(rows);
+
+    await operatorReplayExhaustedAuditOutbox(
+      { privilegedPool: pool },
+      {
+        operator: "ops@brain",
+        evidence: {
+          filter: { tenantId: "tnt_a" },
+          source_commit: "abc123",
+          // A malicious/buggy evidence key must NOT clobber the real count.
+          count: 9999,
+        },
+      },
+    );
+
+    const inserts = calls.filter(([t]) => t.includes("INSERT INTO tenant_blob_purge_audit_outbox"));
+    const inputs = JSON.parse(String(inserts[0]![1][7]));
+    expect(inputs).toMatchObject({
+      filter: { tenantId: "tnt_a" },
+      source_commit: "abc123",
+      operator: "ops@brain",
+      event_keys: ["tnt_a:k1"],
+    });
+    expect(inputs.count).toBe(1); // canonical key wins over evidence's 9999
+  });
+
   it("is a no-op (no requeue, no audit intent) when nothing matches", async () => {
     const { pool, sql } = fakeReplayPool([]);
     const res = await operatorReplayExhaustedAuditOutbox(
