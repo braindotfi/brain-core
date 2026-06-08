@@ -868,9 +868,14 @@ async function main(): Promise<void> {
           expectedRole: "brain_app",
           // The audit log is append-only: no runtime role may mutate it. Catches a
           // deployment that did not apply the db-roles.sql REVOKE (Codex 307161b P1 #1).
+          // The request role must also have NO access to the global, RLS-exempt
+          // verifier forensic tables — a SELECT there would already be a cross-tenant
+          // read of integrity findings (Codex 9389568 P1).
           forbidden: [
             { table: "audit_events", privilege: "UPDATE" },
             { table: "audit_events", privilege: "DELETE" },
+            { table: "audit_verifier_checkpoint", privilege: "SELECT" },
+            { table: "audit_integrity_findings", privilege: "SELECT" },
           ],
         },
         {
@@ -878,9 +883,14 @@ async function main(): Promise<void> {
           query: asQuery(privilegedPool),
           mustBypassRls: true,
           expectedRole: "brain_privileged",
+          // The verifier runs on this pool, so it keeps findings SELECT/INSERT and
+          // checkpoint SELECT/INSERT/UPDATE — but a detected break must be
+          // un-erasable: assert it can neither UPDATE nor DELETE findings.
           forbidden: [
             { table: "audit_events", privilege: "UPDATE" },
             { table: "audit_events", privilege: "DELETE" },
+            { table: "audit_integrity_findings", privilege: "UPDATE" },
+            { table: "audit_integrity_findings", privilege: "DELETE" },
           ],
         },
         {
@@ -888,8 +898,13 @@ async function main(): Promise<void> {
           query: asQuery(wikiPool),
           mustBypassRls: false,
           expectedRole: "brain_wiki_reader",
-          // The wiki reader must never be able to write Ledger truth.
-          forbidden: [{ table: "ledger_counterparties", privilege: "INSERT" }],
+          // The wiki reader must never be able to write Ledger truth, nor read the
+          // global verifier forensic tables.
+          forbidden: [
+            { table: "ledger_counterparties", privilege: "INSERT" },
+            { table: "audit_verifier_checkpoint", privilege: "SELECT" },
+            { table: "audit_integrity_findings", privilege: "SELECT" },
+          ],
         },
       ],
       { enforce: true, log: (msg, ctx) => log.info(ctx, msg) },
