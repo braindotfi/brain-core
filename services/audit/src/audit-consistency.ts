@@ -18,6 +18,7 @@
  * commits to is no longer a single, faithful, linear history for that tenant.
  */
 
+import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { AUDIT_HASH_SCHEMA_VERSION, hashEvent, startManagedInterval } from "@brain/shared";
 import type { AuditEventInput, ManagedWorker, MetricsEmitter } from "@brain/shared";
@@ -122,6 +123,8 @@ export interface ContentHashVerifyResult {
   hashMismatches: number;
   /** Rows at a version NEWER than this build can verify (written by a newer deploy). */
   unsupportedVersion: number;
+  /** STICKY count of OPEN integrity findings across all cycles (not just this page). */
+  openFindings: number;
   /** True when this cycle's page reached the end and the cursor wrapped. */
   completedPass: boolean;
 }
@@ -211,30 +214,54 @@ export async function verifyContentHashCursor(
         createdAt: r.created_at.toISOString(),
         prevEventHash: r.prev_event_hash === null ? null : r.prev_event_hash.toString("hex"),
       });
-      if (recomputed !== r.event_hash.toString("hex")) hashMismatches += 1;
+      if (recomputed !== r.event_hash.toString("hex")) {
+        hashMismatches += 1;
+        // Record a DURABLE finding (at most one OPEN per verifier+event) so the
+        // break stays visible after a later clean page resets the per-page gauge.
+        await c.query(
+          `INSERT INTO audit_integrity_findings
+             (id, event_id, tenant_id, verifier_name, hash_schema_version, expected_hash, observed_hash)
+           VALUES ($1, $2, $3, $4, $5, decode($6, 'hex'), $7)
+           ON CONFLICT (verifier_name, event_id) WHERE status = 'open' DO NOTHING`,
+          [
+            `aif_${randomUUID()}`,
+            r.id,
+            r.tenant_id,
+            CONTENT_HASH_VERIFIER_NAME,
+            AUDIT_HASH_SCHEMA_VERSION,
+            recomputed,
+            r.event_hash,
+          ],
+        );
+      }
     }
 
-    // Advance the cursor (or wrap to the start after a full pass).
+    // Advance the cursor (or wrap to the start after a full pass), recording this
+    // cycle's failure count on the checkpoint.
     const completedPass = page.rows.length < pageSize;
+    const failedAt = hashMismatches > 0 ? "now()" : "last_failed_at";
     if (completedPass) {
       await c.query(
         `UPDATE audit_verifier_checkpoint
             SET last_created_at = NULL, last_event_id = NULL, hash_schema_version = $2,
-                completed_passes = completed_passes + 1, last_full_pass_at = now(), updated_at = now()
+                completed_passes = completed_passes + 1, last_full_pass_at = now(),
+                last_failure_count = $3, last_failed_at = ${failedAt}, updated_at = now()
           WHERE verifier_name = $1`,
-        [CONTENT_HASH_VERIFIER_NAME, AUDIT_HASH_SCHEMA_VERSION],
+        [CONTENT_HASH_VERIFIER_NAME, AUDIT_HASH_SCHEMA_VERSION, hashMismatches],
       );
     } else {
       const last = page.rows[page.rows.length - 1]!;
       await c.query(
         `UPDATE audit_verifier_checkpoint
-            SET last_created_at = $2, last_event_id = $3, hash_schema_version = $4, updated_at = now()
+            SET last_created_at = $2, last_event_id = $3, hash_schema_version = $4,
+                last_failure_count = $5, last_failed_at = ${failedAt}, updated_at = now()
           WHERE verifier_name = $1`,
         [
           CONTENT_HASH_VERIFIER_NAME,
           last.created_at.toISOString(),
           last.id,
           AUDIT_HASH_SCHEMA_VERSION,
+          hashMismatches,
         ],
       );
     }
@@ -243,6 +270,7 @@ export async function verifyContentHashCursor(
       rowsVerified: page.rows.length,
       hashMismatches,
       unsupportedVersion: 0,
+      openFindings: 0,
       completedPass,
     };
   } catch (err) {
@@ -264,16 +292,25 @@ export async function verifyContentHashCursor(
   );
   result.unsupportedVersion = Number(unsupportedRes.rows[0]?.n ?? 0);
 
+  // STICKY open-findings count (cross-cycle): a detected break stays counted until
+  // an operator resolves it, unlike the per-page hash_mismatch gauge.
+  const openRes = await deps.privilegedPool.query<{ n: string }>(
+    `SELECT count(*)::bigint AS n FROM audit_integrity_findings WHERE status = 'open'`,
+  );
+  result.openFindings = Number(openRes.rows[0]?.n ?? 0);
+
   deps.metrics?.gauge("brain.audit.consistency.hash_mismatch.count", result.hashMismatches);
   deps.metrics?.gauge("brain.audit.consistency.rows_verified.count", result.rowsVerified);
   deps.metrics?.gauge(
     "brain.audit.consistency.unsupported_version.count",
     result.unsupportedVersion,
   );
-  if (result.hashMismatches > 0 || result.unsupportedVersion > 0) {
+  deps.metrics?.gauge("brain.audit.consistency.open_findings.count", result.openFindings);
+  if (result.hashMismatches > 0 || result.unsupportedVersion > 0 || result.openFindings > 0) {
     console.error("[audit-consistency] content-hash verification flagged events", {
       hashMismatches: result.hashMismatches,
       unsupportedVersion: result.unsupportedVersion,
+      openFindings: result.openFindings,
       rowsVerified: result.rowsVerified,
     });
   }

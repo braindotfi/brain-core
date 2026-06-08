@@ -74,7 +74,11 @@ describe("checkAuditConsistency (structural)", () => {
 });
 
 /** Pool with a connect()-able client for the cursor transaction + a direct query. */
-function fakeCursorPool(opts: { pageRows: unknown[]; unsupported?: number }): {
+function fakeCursorPool(opts: {
+  pageRows: unknown[];
+  unsupported?: number;
+  openFindings?: number;
+}): {
   pool: Pool;
   sql: string[];
 } {
@@ -101,6 +105,9 @@ function fakeCursorPool(opts: { pageRows: unknown[]; unsupported?: number }): {
       sql.push(text);
       if (text.includes("hash_schema_version >")) {
         return { rows: [{ n: String(opts.unsupported ?? 0) }], rowCount: 1 };
+      }
+      if (text.includes("audit_integrity_findings")) {
+        return { rows: [{ n: String(opts.openFindings ?? 0) }], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
     }),
@@ -129,8 +136,8 @@ describe("verifyContentHashCursor (content, paged)", () => {
     };
   }
 
-  it("flags a row whose stored hash does not recompute, wraps after a short page", async () => {
-    const { pool, sql } = fakeCursorPool({ pageRows: [row()] });
+  it("flags a row whose stored hash does not recompute, records a durable finding, wraps", async () => {
+    const { pool, sql } = fakeCursorPool({ pageRows: [row()], openFindings: 1 });
     const metrics = { gauge: vi.fn(), increment: vi.fn(), histogram: vi.fn(), duration: vi.fn() };
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -138,9 +145,13 @@ describe("verifyContentHashCursor (content, paged)", () => {
 
     expect(res.rowsVerified).toBe(1);
     expect(res.hashMismatches).toBe(1);
+    expect(res.openFindings).toBe(1); // sticky, survives a later clean page
     expect(res.completedPass).toBe(true); // page < pageSize → wrapped
     expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.hash_mismatch.count", 1);
     expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.rows_verified.count", 1);
+    expect(metrics.gauge).toHaveBeenCalledWith("brain.audit.consistency.open_findings.count", 1);
+    // A durable finding is inserted (at most one open per verifier+event).
+    expect(sql.some((s) => s.includes("INSERT INTO audit_integrity_findings"))).toBe(true);
     // The cursor paged in stable (created_at, id) order and recorded a full pass.
     expect(sql.some((s) => s.includes("ORDER BY created_at, id"))).toBe(true);
     expect(sql.some((s) => s.includes("completed_passes = completed_passes + 1"))).toBe(true);
