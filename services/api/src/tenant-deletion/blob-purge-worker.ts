@@ -338,6 +338,9 @@ export function startTenantBlobPurgeWorker(
       await runBlobPurgeCycle(deps, cycleOpts);
     },
     intervalMs,
-    { onError: (err) => console.error("[blob-purge-worker] cycle failed", err) },
+    {
+      name: "blob-purge",
+      onError: (err) => console.error("[blob-purge-worker] cycle failed", err),
+    },
   );
 }

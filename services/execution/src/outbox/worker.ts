@@ -268,6 +268,7 @@ export function startOutboxWorker(
     },
     intervalMs,
     {
+      name: "execution-outbox",
       // Never let one bad cycle kill the loop; surface and continue.
       onError: (err) => console.error("[outbox-worker] cycle failed", err),
     },

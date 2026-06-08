@@ -106,6 +106,7 @@ export function startNormalizeWorker(
   }
 
   return startManagedInterval(poll, intervalMs, {
+    name: "normalize",
     runImmediately: true,
     onError: (err) => console.error("[normalizeWorker] cycle failed:", err),
   });

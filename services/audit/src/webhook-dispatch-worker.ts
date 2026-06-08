@@ -161,6 +161,9 @@ export function startWebhookDispatchWorker(
       await runWebhookDispatchCycle(deps, cycleOpts);
     },
     intervalMs,
-    { onError: (err) => console.error("[webhook-worker] cycle failed", err) },
+    {
+      name: "webhook-dispatch",
+      onError: (err) => console.error("[webhook-worker] cycle failed", err),
+    },
   );
 }

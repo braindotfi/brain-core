@@ -119,6 +119,7 @@ export function startAnchorReconciler(
     },
     intervalMs,
     {
+      name: "anchor-reconciler",
       runImmediately: true,
       onError: (err) => console.error("[anchorReconciler] cycle failed:", err),
     },

@@ -173,6 +173,7 @@ export {
 
 export {
   startManagedInterval,
+  type DrainResult,
   type ManagedWorker,
   type ManagedIntervalOptions,
 } from "./workers/managed-interval.js";

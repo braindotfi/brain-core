@@ -205,6 +205,7 @@ import {
 import { makeBaseGetCode } from "./composition/eth-getcode.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
 import { closeAllPools } from "./composition/close-pools.js";
+import { runShutdown } from "./composition/shutdown.js";
 import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
@@ -2040,11 +2041,11 @@ async function main(): Promise<void> {
   log.info({ port: cfg.PORT, version: cfg.SERVICE_VERSION }, "brain-server up");
 
   // -- graceful shutdown ----------------------------------------------
-  // Drain in order so DB pools never close underneath active work (Codex
-  // c96283d P2): stop new HTTP, then prevent + await in-flight worker cycles
-  // (bounded), then BullMQ jobs, then pools/redis/tracing. Idempotent via a
-  // shared promise so concurrent SIGINT+SIGTERM run the sequence once. Exits
-  // non-zero if any critical resource failed to close cleanly.
+  // Orchestration + the unclean-exit decision live in the runShutdown
+  // coordinator (testable). Idempotent via a shared promise so concurrent
+  // SIGINT+SIGTERM run the sequence once. A worker that times out instead of
+  // draining makes the shutdown unclean and the process exits non-zero (Codex
+  // fca9ac8 P2 #5).
   const WORKER_DRAIN_MS = 10_000;
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = (signal: string): Promise<void> => {
@@ -2053,53 +2054,30 @@ async function main(): Promise<void> {
       log.info({ signal }, "shutting down");
       anchorShutdown = true;
       if (anchorTimer !== undefined) clearTimeout(anchorTimer);
-      let cleanClose = true;
 
-      // 1. Stop accepting new HTTP work (Fastify drains in-flight requests).
-      try {
-        await app.close();
-      } catch (err) {
-        cleanClose = false;
-        log.error({ err }, "app.close failed");
-      }
-
-      // 2. Prevent new worker cycles AND await any in-flight cycle (bounded), so
-      //    a pool is never closed mid-cycle.
-      const drainables = [
-        normalizeWorker,
-        outboxWorker,
-        webhookDispatchWorker,
-        tenantBlobPurgeWorker,
-        auditConsistencyVerifier,
-        ...(anchorReconciler !== undefined ? [anchorReconciler] : []),
-      ];
-      await Promise.allSettled(drainables.map((w) => w.stopAndDrain(WORKER_DRAIN_MS)));
-
-      // 3. The BullMQ route worker drains its own in-flight jobs.
-      try {
-        await agentRouteWorker.close();
-      } catch (err) {
-        cleanClose = false;
-        log.error({ err }, "agentRouteWorker.close failed");
-      }
-
-      // 4. Close every DISTINCT pool. wikiPool/privilegedPool alias `pool` in dev
-      //    and are separate pools in production; closeAllPools dedupes by
-      //    reference and one failure never blocks the rest (doc A P2.3).
-      const { errors: poolCloseErrors } = await closeAllPools([pool, wikiPool, privilegedPool]);
-      for (const err of poolCloseErrors) {
-        cleanClose = false;
-        log.error({ err }, "pool.end failed");
-      }
-
-      try {
-        redis.disconnect();
-      } catch (err) {
-        cleanClose = false;
-        log.error({ err }, "redis.disconnect failed");
-      }
-      await shutdownTracing();
-      process.exit(cleanClose ? 0 : 1);
+      const outcome = await runShutdown({
+        workers: [
+          normalizeWorker,
+          outboxWorker,
+          webhookDispatchWorker,
+          tenantBlobPurgeWorker,
+          auditConsistencyVerifier,
+          ...(anchorReconciler !== undefined ? [anchorReconciler] : []),
+        ],
+        workerDrainMs: WORKER_DRAIN_MS,
+        closeApp: () => app.close(),
+        closeAgentRouteWorker: () => agentRouteWorker.close(),
+        closePools: () => closeAllPools([pool, wikiPool, privilegedPool]),
+        disconnectRedis: () => redis.disconnect(),
+        shutdownTracing: () => shutdownTracing(),
+        log,
+        metrics,
+      });
+      log.info(
+        { clean: outcome.clean, timedOutWorkers: outcome.timedOutWorkers },
+        "shutdown complete",
+      );
+      process.exit(outcome.exitCode);
     })();
     return shutdownPromise;
   };
