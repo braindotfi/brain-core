@@ -43,36 +43,44 @@ describe("startManagedInterval", () => {
     w.stop();
   });
 
-  it("stopAndDrain awaits the in-flight cycle before resolving", async () => {
+  it("stopAndDrain awaits the in-flight cycle, then reports drained", async () => {
     const d = deferred();
-    let done = false;
+    let result: { status: string } | undefined;
     const w = startManagedInterval(() => d.promise, 100_000, { runImmediately: true });
-    const drain = w.stopAndDrain(5_000).then(() => {
-      done = true;
+    const drain = w.stopAndDrain(5_000).then((r) => {
+      result = r;
     });
     await tick();
-    expect(done).toBe(false); // cycle still running, drain still pending
+    expect(result).toBeUndefined(); // cycle still running, drain still pending
     d.resolve();
     await drain;
-    expect(done).toBe(true);
+    expect(result).toEqual({ status: "drained" });
   });
 
-  it("stopAndDrain resolves on the timeout when a cycle hangs", async () => {
+  it("stopAndDrain reports timed_out with the worker name when a cycle hangs", async () => {
     const w = startManagedInterval(() => new Promise<void>(() => {}), 100_000, {
       runImmediately: true,
+      name: "hanger",
     });
     // Would hang forever without the bounded timeout.
-    await w.stopAndDrain(20);
-    expect(true).toBe(true);
+    const r = await w.stopAndDrain(20);
+    expect(r).toEqual({ status: "timed_out", worker: "hanger" });
   });
 
-  it("stopAndDrain resolves immediately when nothing is in flight", async () => {
+  it("stopAndDrain reports drained immediately when nothing is in flight", async () => {
     let n = 0;
     const w = startManagedInterval(async () => {
       n += 1;
     }, 100_000); // no immediate run
-    await w.stopAndDrain(5_000);
+    const r = await w.stopAndDrain(5_000);
+    expect(r).toEqual({ status: "drained" });
     expect(n).toBe(0);
+  });
+
+  it("exposes the worker name", () => {
+    const w = startManagedInterval(async () => {}, 100_000, { name: "audit-consistency" });
+    expect(w.name).toBe("audit-consistency");
+    w.stop();
   });
 
   it("routes a thrown cycle error to onError without rejecting the loop", async () => {

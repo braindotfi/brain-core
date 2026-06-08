@@ -185,6 +185,7 @@ export function startAuditConsistencyVerifier(
     },
     intervalMs,
     {
+      name: "audit-consistency",
       runImmediately: true,
       onError: (err) => console.error("[audit-consistency] cycle failed:", err),
     },
