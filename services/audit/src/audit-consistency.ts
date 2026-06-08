@@ -414,6 +414,85 @@ export async function verifyContentHashCursor(
   return result;
 }
 
+/**
+ * Read-only health snapshot of the content-hash verifier for an operator surface
+ * (90eade5 doc 5.10). Pure: it reads the durable checkpoint + a few global counts
+ * and emits NO metrics and NO logs and mutates nothing, so it is safe to call
+ * on-demand from an HTTP handler. MUST use the privileged (BYPASSRLS) pool — the
+ * verifier tables are global/RLS-exempt and the version counts span every tenant.
+ */
+export interface AuditVerifierHealth {
+  /** Outcome of the most recent COMPLETED full pass; "never" until the first wrap. */
+  lastPassStatus: "never" | "clean" | "failed";
+  /** ISO timestamp of the last fully-clean pass, or null if there has never been one. */
+  lastCleanPassAt: string | null;
+  /** ISO timestamp of the last failed pass, or null. */
+  lastFailedPassAt: string | null;
+  /** ISO timestamp the last full pass completed (clean OR failed), or null. */
+  lastFullPassAt: string | null;
+  /** Total full passes the cursor has completed. */
+  completedPasses: number;
+  /** Mismatches accumulated in the in-progress pass so far. */
+  currentPassFailureCount: number;
+  /** Seconds since the last clean full pass; null if there has never been one. */
+  secondsSinceCleanFullPass: number | null;
+  /** Sticky count of OPEN integrity findings (a detected break awaiting resolution). */
+  openFindings: number;
+  /** Events at a version newer than this build can verify. */
+  unsupportedVersion: number;
+  /** Events at an older (e.g. pre-versioning v0) scheme this build cannot recompute. */
+  legacyUnverifiable: number;
+}
+
+export async function reportVerifierHealth(deps: {
+  privilegedPool: Pool;
+}): Promise<AuditVerifierHealth> {
+  const cp = await deps.privilegedPool.query<{
+    last_pass_status: string;
+    last_clean_pass_at: Date | null;
+    last_failed_pass_at: Date | null;
+    last_full_pass_at: Date | null;
+    completed_passes: string;
+    current_pass_failure_count: string;
+    seconds_since_clean: number | null;
+  }>(
+    `SELECT last_pass_status, last_clean_pass_at, last_failed_pass_at, last_full_pass_at,
+            completed_passes, current_pass_failure_count,
+            extract(epoch FROM now() - last_clean_pass_at)::float8 AS seconds_since_clean
+       FROM audit_verifier_checkpoint WHERE verifier_name = $1`,
+    [CONTENT_HASH_VERIFIER_NAME],
+  );
+  const row = cp.rows[0];
+
+  const openRes = await deps.privilegedPool.query<{ n: string }>(
+    `SELECT count(*)::bigint AS n FROM audit_integrity_findings WHERE status = 'open'`,
+  );
+  // Both version-coverage counts in ONE scan (vs two separate sequential scans).
+  const versionRes = await deps.privilegedPool.query<{ unsupported: string; legacy: string }>(
+    `SELECT count(*) FILTER (WHERE hash_schema_version > $1)::bigint AS unsupported,
+            count(*) FILTER (WHERE hash_schema_version < $1)::bigint AS legacy
+       FROM audit_events`,
+    [AUDIT_HASH_SCHEMA_VERSION],
+  );
+
+  const status = row?.last_pass_status;
+  return {
+    lastPassStatus: status === "clean" || status === "failed" ? status : "never",
+    lastCleanPassAt: row?.last_clean_pass_at?.toISOString() ?? null,
+    lastFailedPassAt: row?.last_failed_pass_at?.toISOString() ?? null,
+    lastFullPassAt: row?.last_full_pass_at?.toISOString() ?? null,
+    completedPasses: Number(row?.completed_passes ?? 0),
+    currentPassFailureCount: Number(row?.current_pass_failure_count ?? 0),
+    secondsSinceCleanFullPass:
+      row?.seconds_since_clean === null || row?.seconds_since_clean === undefined
+        ? null
+        : row.seconds_since_clean,
+    openFindings: Number(openRes.rows[0]?.n ?? 0),
+    unsupportedVersion: Number(versionRes.rows[0]?.unsupported ?? 0),
+    legacyUnverifiable: Number(versionRes.rows[0]?.legacy ?? 0),
+  };
+}
+
 export type AuditConsistencyVerifier = ManagedWorker;
 
 /**

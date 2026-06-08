@@ -31,11 +31,13 @@ export {
 export {
   checkAuditConsistency,
   verifyContentHashCursor,
+  reportVerifierHealth,
   startAuditConsistencyVerifier,
   CONTENT_HASH_VERIFIER_NAME,
   type AuditConsistencyDeps,
   type AuditConsistencyResult,
   type ContentHashVerifyResult,
+  type AuditVerifierHealth,
   type AuditConsistencyVerifier,
 } from "./audit-consistency.js";
 export {

@@ -68,6 +68,7 @@ import { TenantDeletionService } from "./tenant-deletion/service.js";
 import { startTenantBlobPurgeWorker } from "./tenant-deletion/blob-purge-worker.js";
 import { registerTenantDeletionRoute } from "./tenant-deletion/route.js";
 import { registerProofViewRoute } from "./proof/view.js";
+import { registerAuditHealthRoute } from "./audit-health/route.js";
 import { registerDocsRoutes } from "./docs/routes.js";
 import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
@@ -1352,6 +1353,11 @@ async function main(): Promise<void> {
     version: cfg.SERVICE_VERSION,
     service: cfg.SERVICE_NAME,
   }));
+
+  // Operator audit-health snapshot (90eade5 doc 5.10): auth + audit:admin, queries
+  // the global verifier tables via the privileged pool. Root-mounted (not /v1) so
+  // it stays an internal operational surface outside the public OpenAPI contract.
+  registerAuditHealthRoute(app, { privilegedPool });
 
   // Service layer route registrations — all under /v1 to match OpenAPI spec.
   // Raw: also registers content-type parsers + multipart inside registerRawPlugin.
