@@ -188,6 +188,7 @@ describe("PostgresAuditEmitter", () => {
                 event_hash: existingHash,
                 prev_event_hash: null,
                 created_at: createdAt,
+                hash_schema_version: 1,
               },
             ],
             rowCount: 1,
@@ -242,6 +243,7 @@ describe("PostgresAuditEmitter", () => {
                 event_hash: storedHash,
                 prev_event_hash: null,
                 created_at: createdAt,
+                hash_schema_version: 1,
               },
             ],
             rowCount: 1,
@@ -265,6 +267,81 @@ describe("PostgresAuditEmitter", () => {
     expect(log).not.toContain("COMMIT");
     expect(log.some((s) => s.startsWith("INSERT"))).toBe(false);
     expect(client.released).toBe(true);
+  });
+
+  /** Build a fake pg client whose idempotency lookup returns one stored row. */
+  function hitClient(over: Record<string, unknown>): {
+    client: { query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> };
+    log: string[];
+  } {
+    const log: string[] = [];
+    const client = {
+      query: vi.fn(async (text: string) => {
+        log.push(text.trim().split("\n")[0]!.trim());
+        if (text.includes("idempotency_key = $2")) {
+          return {
+            rows: [
+              {
+                id: "evt_v0",
+                event_hash: Buffer.from("cc".repeat(32), "hex"), // superseded hash, ignored for v0
+                prev_event_hash: null,
+                created_at: new Date("2026-06-07T00:00:00.000Z"),
+                policy_version: null,
+                policy_decision_id: null,
+                before_state: null,
+                after_state: null,
+                ...over,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    return { client, log };
+  }
+
+  it("version-0 hit returns the existing event when logical fields match (no rehash)", async () => {
+    const input: AuditEventInput = { ...baseEvent(), idempotencyKey: "k1" };
+    const { client, log } = hitClient({
+      hash_schema_version: 0,
+      layer: input.layer,
+      actor: input.actor,
+      action: input.action,
+      inputs: input.inputs,
+      outputs: input.outputs,
+    });
+    const ev = await new PostgresAuditEmitter({
+      connect: async () => client,
+    } as unknown as Pool).emit(input);
+    expect(ev.id).toBe("evt_v0");
+    expect(log).toContain("COMMIT");
+    expect(log.some((s) => s.startsWith("INSERT"))).toBe(false); // no false conflict, no duplicate
+  });
+
+  it("version-0 hit conflicts when logical fields differ", async () => {
+    const input: AuditEventInput = { ...baseEvent(), idempotencyKey: "k1" };
+    const { client } = hitClient({
+      hash_schema_version: 0,
+      layer: input.layer,
+      actor: input.actor,
+      action: "raw.tombstone", // differs from input.action
+      inputs: input.inputs,
+      outputs: input.outputs,
+    });
+    await expect(
+      new PostgresAuditEmitter({ connect: async () => client } as unknown as Pool).emit(input),
+    ).rejects.toMatchObject({ code: "audit_idempotency_conflict" });
+  });
+
+  it("fails closed on an unverifiable (unknown) hash_schema_version", async () => {
+    const input: AuditEventInput = { ...baseEvent(), idempotencyKey: "k1" };
+    const { client } = hitClient({ hash_schema_version: 99 });
+    await expect(
+      new PostgresAuditEmitter({ connect: async () => client } as unknown as Pool).emit(input),
+    ).rejects.toMatchObject({ code: "audit_hash_version_unsupported" });
   });
 
   it("passes idempotency_key as a column + value on INSERT when supplied", async () => {

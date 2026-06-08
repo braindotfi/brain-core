@@ -29,7 +29,7 @@
 import type { Pool, PoolClient } from "pg";
 import { newAuditEventId } from "../ids.js";
 import { brainError } from "../errors.js";
-import { AUDIT_HASH_SCHEMA_VERSION, hashEvent } from "./hash.js";
+import { AUDIT_HASH_SCHEMA_VERSION, hashEvent, logicalPayloadFingerprint } from "./hash.js";
 import type { AuditEvent, AuditEventInput } from "./types.js";
 
 // Fixed advisory-lock namespace (int4) for the per-tenant audit chain. Paired
@@ -138,8 +138,20 @@ export class PostgresAuditEmitter implements AuditEmitter {
           event_hash: Buffer;
           prev_event_hash: Buffer | null;
           created_at: Date;
+          hash_schema_version: number;
+          layer: AuditEventInput["layer"];
+          actor: string;
+          action: string;
+          inputs: Record<string, unknown>;
+          outputs: Record<string, unknown>;
+          policy_version: number | null;
+          policy_decision_id: string | null;
+          before_state: Record<string, unknown> | null;
+          after_state: Record<string, unknown> | null;
         }>(
-          `SELECT id, event_hash, prev_event_hash, created_at
+          `SELECT id, event_hash, prev_event_hash, created_at, hash_schema_version,
+                  layer, actor, action, inputs, outputs,
+                  policy_version, policy_decision_id, before_state, after_state
              FROM audit_events
             WHERE tenant_id = $1 AND idempotency_key = $2
             LIMIT 1`,
@@ -150,20 +162,49 @@ export class PostgresAuditEmitter implements AuditEmitter {
           const storedHash = hit.event_hash.toString("hex");
           const prevEventHash =
             hit.prev_event_hash === null ? null : hit.prev_event_hash.toString("hex");
-          // Conflict detection: recompute the event hash with the CALLER's
-          // payload pinned to the STORED chain fields (id, createdAt, prev).
-          // hashEvent covers every logical field, so any differing field yields
-          // a different hash. Reusing the exact write-time serializer means this
-          // can never raise a false conflict. A mismatch means the same key was
-          // reused for different content — fail loudly instead of returning a
-          // phantom event that was never persisted (doc A P1.2).
-          const recomputed = hashEvent({
-            event,
-            id: hit.id,
-            createdAt: hit.created_at.toISOString(),
-            prevEventHash,
-          });
-          if (recomputed !== storedHash) {
+
+          // Conflict detection is VERSION-AWARE (Codex fca9ac8 P1 #1):
+          //   - current version: recompute the hash with the caller's payload
+          //     pinned to the stored chain fields and compare (exact serializer);
+          //   - version 0 (pre-versioning, e.g. the pre-BYTEA-fix Buffer hash):
+          //     the stored hash used a SUPERSEDED canonicalization, so a recompute
+          //     would falsely conflict — compare the persisted LOGICAL fields
+          //     directly instead;
+          //   - any other version: a row this build cannot verify — fail closed.
+          let conflict: boolean;
+          if (hit.hash_schema_version === AUDIT_HASH_SCHEMA_VERSION) {
+            conflict =
+              hashEvent({
+                event,
+                id: hit.id,
+                createdAt: hit.created_at.toISOString(),
+                prevEventHash,
+              }) !== storedHash;
+          } else if (hit.hash_schema_version === 0) {
+            const stored: AuditEventInput = {
+              tenantId: event.tenantId,
+              layer: hit.layer,
+              actor: hit.actor,
+              action: hit.action,
+              inputs: hit.inputs,
+              outputs: hit.outputs,
+              ...(hit.policy_version !== null ? { policyVersion: hit.policy_version } : {}),
+              ...(hit.policy_decision_id !== null
+                ? { policyDecisionId: hit.policy_decision_id }
+                : {}),
+              ...(hit.before_state !== null ? { beforeState: hit.before_state } : {}),
+              ...(hit.after_state !== null ? { afterState: hit.after_state } : {}),
+            };
+            conflict = logicalPayloadFingerprint(event) !== logicalPayloadFingerprint(stored);
+          } else {
+            throw brainError(
+              "audit_hash_version_unsupported",
+              `audit row hash_schema_version ${hit.hash_schema_version} is not verifiable by this build`,
+              { details: { tenantId: event.tenantId, idempotencyKey: event.idempotencyKey } },
+            );
+          }
+
+          if (conflict) {
             // The catch below rolls back this read-only transaction.
             throw brainError(
               "audit_idempotency_conflict",
@@ -172,8 +213,8 @@ export class PostgresAuditEmitter implements AuditEmitter {
             );
           }
           await client.query("COMMIT");
-          // The hash match proves the caller's payload equals the persisted one,
-          // so this is byte-equivalent to reconstructing the row from the DB.
+          // Content equality is proven (by hash or by logical-field comparison),
+          // so this is equivalent to reconstructing the row from the DB.
           return {
             ...event,
             id: hit.id,
