@@ -966,4 +966,36 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       }
     }
   });
+
+  // 16 — an integrity finding's resolution lifecycle is constrained: open rows carry
+  // no resolution fields, and a resolved row must record resolved_at + a non-empty
+  // actor + a non-empty reference. A "resolved" row can never claim resolution
+  // without recording WHO and WHY. (Codex 9389568 P2)
+  it("enforces the integrity-finding resolution CHECK constraint", async () => {
+    const tenant = newTenantId();
+    const base =
+      `INSERT INTO audit_integrity_findings ` +
+      `(id, event_id, tenant_id, verifier_name, hash_schema_version, expected_hash, observed_hash, status, resolved_at, resolution_actor, resolution_reference) ` +
+      `VALUES ($1, $2, $3, 'content_hash', 1, decode('aa', 'hex'), decode('bb', 'hex'), $4, $5, $6, $7)`;
+    const ins = (id: string, p: [string, unknown, unknown, unknown]): Promise<unknown> =>
+      pool.query(base, [id, `evt_${id}`, tenant, ...p]);
+
+    // resolved with a NULL actor -> rejected.
+    await expect(
+      ins(`aif_bad1_${tenant}`, ["resolved", new Date(), null, "INC-1"]),
+    ).rejects.toThrow(/audit_integrity_resolution_complete/);
+    // resolved with an empty reference -> rejected.
+    await expect(
+      ins(`aif_bad2_${tenant}`, ["resolved", new Date(), "ops@brain", "   "]),
+    ).rejects.toThrow(/audit_integrity_resolution_complete/);
+    // open with a stray resolution field -> rejected.
+    await expect(ins(`aif_bad3_${tenant}`, ["open", null, "ops@brain", null])).rejects.toThrow(
+      /audit_integrity_resolution_complete/,
+    );
+
+    // open with all resolution fields NULL -> allowed.
+    await ins(`aif_ok_open_${tenant}`, ["open", null, null, null]);
+    // fully resolved -> allowed.
+    await ins(`aif_ok_res_${tenant}`, ["resolved", new Date(), "ops@brain", "INC-42"]);
+  });
 });
