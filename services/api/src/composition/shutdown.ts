@@ -76,11 +76,17 @@ export async function runShutdown(deps: ShutdownDeps): Promise<ShutdownOutcome> 
     deps.log.error({ err }, "agentRouteWorker.close failed");
   }
 
-  // 4. Close every distinct pool (one failure never blocks the rest).
-  const { errors } = await deps.closePools();
-  for (const err of errors) {
+  // 4. Close every distinct pool (one failure never blocks the rest). Wrapped so
+  //    a rejection cannot escape the coordinator and skip process.exit.
+  try {
+    const { errors } = await deps.closePools();
+    for (const err of errors) {
+      clean = false;
+      deps.log.error({ err }, "pool.end failed");
+    }
+  } catch (err) {
     clean = false;
-    deps.log.error({ err }, "pool.end failed");
+    deps.log.error({ err }, "closePools failed");
   }
 
   // 5. Redis.
@@ -91,8 +97,14 @@ export async function runShutdown(deps: ShutdownDeps): Promise<ShutdownOutcome> 
     deps.log.error({ err }, "redis.disconnect failed");
   }
 
-  // 6. Tracing.
-  await deps.shutdownTracing();
+  // 6. Tracing. Wrapped too: a rejected flush must mark the shutdown unclean, not
+  //    escape and leave the process hanging without an exit decision.
+  try {
+    await deps.shutdownTracing();
+  } catch (err) {
+    clean = false;
+    deps.log.error({ err }, "shutdownTracing failed");
+  }
 
   return { clean, timedOutWorkers, exitCode: clean ? 0 : 1 };
 }

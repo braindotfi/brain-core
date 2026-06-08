@@ -81,6 +81,24 @@ describe("runShutdown", () => {
     expect(outcome.exitCode).toBe(1);
   });
 
+  it("marks unclean when closePools itself rejects (not just returns errors)", async () => {
+    const deps = baseDeps({
+      closePools: vi.fn(async () => Promise.reject(new Error("pool end rejected"))),
+    });
+    const outcome = await runShutdown(deps);
+    expect(outcome.clean).toBe(false);
+    expect(outcome.exitCode).toBe(1);
+  });
+
+  it("marks unclean (not unhandled rejection) when shutdownTracing rejects", async () => {
+    const deps = baseDeps({
+      shutdownTracing: vi.fn(async () => Promise.reject(new Error("flush boom"))),
+    });
+    const outcome = await runShutdown(deps);
+    expect(outcome.clean).toBe(false);
+    expect(outcome.exitCode).toBe(1);
+  });
+
   it("marks unclean when a worker stopAndDrain rejects", async () => {
     const deps = baseDeps({
       workers: [
