@@ -123,6 +123,15 @@ export interface ContentHashVerifyResult {
   hashMismatches: number;
   /** Rows at a version NEWER than this build can verify (written by a newer deploy). */
   unsupportedVersion: number;
+  /**
+   * Rows at a version OLDER than the current scheme (e.g. pre-versioning v0) that
+   * this build cannot recompute, so content verification does NOT cover them. A
+   * disclosed blind spot, not a break: these rows are still covered by the
+   * structural fork/gap/genesis checks, just not by hash recomputation. Surfaced
+   * (count + gauge) so the coverage gap is explicit, never silently assumed clean
+   * (Codex 307161b P2 #5).
+   */
+  legacyUnverifiable: number;
   /** STICKY count of OPEN integrity findings across all cycles (not just this page). */
   openFindings: number;
   /** True when this cycle's page reached the end and the cursor wrapped. */
@@ -138,6 +147,14 @@ export interface ContentHashVerifyResult {
  * verified, not just the newest N. A content mutation (privileged tamper /
  * migration defect) that the structural fork/gap/genesis checks cannot see is
  * therefore eventually caught.
+ *
+ * COVERAGE BOUNDARY (disclosed, not silent — Codex 307161b P2 #5): content
+ * recomputation only covers rows at the CURRENT hash_schema_version. Rows at a
+ * NEWER version (newer deploy) and at an OLDER version (pre-versioning v0) cannot
+ * be recomputed by this build, so they are counted and gauged separately
+ * (`unsupportedVersion` / `legacyUnverifiable`) instead of being implicitly
+ * treated as verified. Both populations remain covered by the structural checks.
+ * See docs/audit/runtime/consistency-verifier.md.
  */
 export async function verifyContentHashCursor(
   deps: AuditConsistencyDeps,
@@ -270,6 +287,7 @@ export async function verifyContentHashCursor(
       rowsVerified: page.rows.length,
       hashMismatches,
       unsupportedVersion: 0,
+      legacyUnverifiable: 0,
       openFindings: 0,
       completedPass,
     };
@@ -292,6 +310,17 @@ export async function verifyContentHashCursor(
   );
   result.unsupportedVersion = Number(unsupportedRes.rows[0]?.n ?? 0);
 
+  // Rows written by an OLDER scheme than this build (version < current, e.g. the
+  // pre-versioning v0 default) cannot be recomputed here either. They are NOT a
+  // break (the structural fork/gap/genesis checks still cover them) but they ARE
+  // a content-verification blind spot, so disclose the population explicitly
+  // rather than let "0 mismatches" imply full coverage (Codex 307161b P2 #5).
+  const legacyRes = await deps.privilegedPool.query<{ n: string }>(
+    `SELECT count(*)::bigint AS n FROM audit_events WHERE hash_schema_version < $1`,
+    [AUDIT_HASH_SCHEMA_VERSION],
+  );
+  result.legacyUnverifiable = Number(legacyRes.rows[0]?.n ?? 0);
+
   // STICKY open-findings count (cross-cycle): a detected break stays counted until
   // an operator resolves it, unlike the per-page hash_mismatch gauge.
   const openRes = await deps.privilegedPool.query<{ n: string }>(
@@ -304,6 +333,13 @@ export async function verifyContentHashCursor(
   deps.metrics?.gauge(
     "brain.audit.consistency.unsupported_version.count",
     result.unsupportedVersion,
+  );
+  // Disclosed coverage gap, emitted every cycle so a dashboard/alert can watch it.
+  // Deliberately NOT folded into the integrity error log below: a permanent legacy
+  // population is a known gap, not a per-cycle P0 break, and must not spam.
+  deps.metrics?.gauge(
+    "brain.audit.consistency.legacy_unverifiable.count",
+    result.legacyUnverifiable,
   );
   deps.metrics?.gauge("brain.audit.consistency.open_findings.count", result.openFindings);
   if (result.hashMismatches > 0 || result.unsupportedVersion > 0 || result.openFindings > 0) {

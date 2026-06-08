@@ -77,6 +77,7 @@ describe("checkAuditConsistency (structural)", () => {
 function fakeCursorPool(opts: {
   pageRows: unknown[];
   unsupported?: number;
+  legacy?: number;
   openFindings?: number;
 }): {
   pool: Pool;
@@ -105,6 +106,9 @@ function fakeCursorPool(opts: {
       sql.push(text);
       if (text.includes("hash_schema_version >")) {
         return { rows: [{ n: String(opts.unsupported ?? 0) }], rowCount: 1 };
+      }
+      if (text.includes("hash_schema_version <")) {
+        return { rows: [{ n: String(opts.legacy ?? 0) }], rowCount: 1 };
       }
       if (text.includes("audit_integrity_findings")) {
         return { rows: [{ n: String(opts.openFindings ?? 0) }], rowCount: 1 };
@@ -172,6 +176,25 @@ describe("verifyContentHashCursor (content, paged)", () => {
       3,
     );
     expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("discloses legacy (older-version) rows as a coverage gap without logging a P0 break", async () => {
+    // No mismatches, no unsupported, no open findings — only legacy v0 rows present.
+    const { pool } = fakeCursorPool({ pageRows: [], legacy: 5 });
+    const metrics = { gauge: vi.fn(), increment: vi.fn(), histogram: vi.fn(), duration: vi.fn() };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await verifyContentHashCursor({ privilegedPool: pool, metrics: metrics as never });
+
+    expect(res.legacyUnverifiable).toBe(5);
+    expect(metrics.gauge).toHaveBeenCalledWith(
+      "brain.audit.consistency.legacy_unverifiable.count",
+      5,
+    );
+    // A known coverage gap is disclosed via the gauge, NOT escalated to the
+    // per-cycle integrity error log (which would spam on a permanent population).
+    expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
   });
 });
