@@ -194,7 +194,7 @@ import {
 } from "./gate-loaders/index.js";
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
-import { assertDbRoles, type RoleIdentity } from "./composition/db-roles.js";
+import { assertDbRoles, type RoleQuery } from "./composition/db-roles.js";
 import {
   assertDeployedEscrowBytecode,
   assertEscrowAuditApproved,
@@ -848,27 +848,38 @@ async function main(): Promise<void> {
   }
 
   // Verify each pool actually connects with the intended role, not just that its
-  // URL is set (db-isolation.ts only checks presence). Production-only: the
-  // isolation fence above guarantees the three pools are distinct there; in
-  // dev/test they alias one (often superuser) connection, so there is nothing
-  // meaningful to enforce. (Codex c96283d P2.)
+  // URL is set (db-isolation.ts only checks presence). Checks RLS posture, the
+  // exact role NAME (so a swapped request/wiki URL is caught), and a
+  // representative forbidden privilege. Production-only: the isolation fence
+  // above guarantees the three pools are distinct there; in dev/test they alias
+  // one (often superuser) connection, so there is nothing meaningful to enforce.
+  // (Codex c96283d P2 / fca9ac8 P2 #4.)
   if (cfg.NODE_ENV === "production") {
+    const asQuery =
+      (p: typeof pool): RoleQuery =>
+      (s, params) =>
+        p.query(s, params === undefined ? undefined : [...params]);
     await assertDbRoles(
       [
         {
           label: "request",
-          pool: { query: (s: string) => pool.query<RoleIdentity>(s) },
+          query: asQuery(pool),
           mustBypassRls: false,
+          expectedRole: "brain_app",
         },
         {
           label: "privileged",
-          pool: { query: (s: string) => privilegedPool.query<RoleIdentity>(s) },
+          query: asQuery(privilegedPool),
           mustBypassRls: true,
+          expectedRole: "brain_privileged",
         },
         {
           label: "wiki",
-          pool: { query: (s: string) => wikiPool.query<RoleIdentity>(s) },
+          query: asQuery(wikiPool),
           mustBypassRls: false,
+          expectedRole: "brain_wiki_reader",
+          // The wiki reader must never be able to write Ledger truth.
+          forbidden: [{ table: "ledger_counterparties", privilege: "INSERT" }],
         },
       ],
       { enforce: true, log: (msg, ctx) => log.info(ctx, msg) },

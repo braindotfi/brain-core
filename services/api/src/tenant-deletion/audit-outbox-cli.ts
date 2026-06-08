@@ -7,7 +7,8 @@
  *   pnpm -C services/api run audit-outbox replay --operator you@brain \
  *     [--tenant T] [--event-key K] [--id ID] [--older-than SECONDS] [--dry-run] [--limit N]
  *
- * Connects via DATABASE_PRIVILEGED_URL (falls back to DATABASE_URL). `replay` is
+ * Connects via DATABASE_PRIVILEGED_URL (required; no DATABASE_URL fallback for a
+ * privileged recovery operation). `replay` is
  * itself audited (an `audit.outbox.replayed` event per affected tenant). Always
  * `--dry-run` first to see what would be requeued. Runbook:
  * docs/audit-outbox-recovery-runbook.md.
@@ -61,9 +62,11 @@ function buildFilter(flags: Record<string, string | boolean>): AuditOutboxFilter
 async function main(): Promise<void> {
   const [sub, ...rest] = process.argv.slice(2);
   const flags = parseFlags(rest);
-  const url = process.env.DATABASE_PRIVILEGED_URL ?? process.env.DATABASE_URL;
+  // A privileged cross-tenant recovery operation MUST use the privileged role;
+  // it does not silently fall back to DATABASE_URL (Codex fca9ac8 P2 #4).
+  const url = process.env.DATABASE_PRIVILEGED_URL;
   if (url === undefined || url.length === 0) {
-    console.error("DATABASE_PRIVILEGED_URL (or DATABASE_URL) must be set");
+    console.error("DATABASE_PRIVILEGED_URL must be set (no fallback to DATABASE_URL for recovery)");
     process.exit(2);
   }
 
