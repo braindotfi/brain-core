@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, newTenantId } from "@brain/shared";
+import { InMemoryAuditEmitter, errorHandlerPlugin, newTenantId } from "@brain/shared";
 import type { Pool } from "pg";
 import { registerAuditRoutes } from "./routes.js";
 import { buildTree, makeProof } from "./merkle.js";
@@ -123,6 +123,57 @@ describe("GET /audit/event/:id inclusion_proof shape", () => {
     expect(body.inclusion_proof).toHaveProperty("merkle_proof");
     expect(body.inclusion_proof.anchor_block).toBe(12345);
     expect(typeof body.inclusion_proof.anchor_tx_hash).toBe("string");
+    await app.close();
+  });
+});
+
+describe("GET /audit/events query-param validation (F-2)", () => {
+  const tenantId = newTenantId();
+
+  function buildApp(): ReturnType<typeof Fastify> {
+    const app = Fastify();
+    void app.register(errorHandlerPlugin);
+    app.addHook("onRequest", async (req) => {
+      (req as unknown as { principal: unknown }).principal = {
+        tenantId,
+        id: "user_1",
+        type: "user",
+        scopes: ["audit:read"],
+      };
+    });
+    const client = {
+      query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+      release: vi.fn(),
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+    void registerAuditRoutes(app, { pool, audit: new InMemoryAuditEmitter() });
+    return app;
+  }
+
+  it("rejects a non-numeric or negative limit with 400, never a pg 500", async () => {
+    const app = buildApp();
+    for (const bad of ["abc", "-5", "0", "3.5"]) {
+      const res = await app.inject({ method: "GET", url: `/audit/events?limit=${bad}` });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe("request_params_invalid");
+    }
+    await app.close();
+  });
+
+  it("rejects a garbage since/until timestamp with 400", async () => {
+    const app = buildApp();
+    const res = await app.inject({ method: "GET", url: "/audit/events?since=garbage" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("request_params_invalid");
+    await app.close();
+  });
+
+  it("still accepts a valid limit and clamps large values", async () => {
+    const app = buildApp();
+    const ok = await app.inject({ method: "GET", url: "/audit/events?limit=50" });
+    expect(ok.statusCode).toBe(200);
+    const clamped = await app.inject({ method: "GET", url: "/audit/events?limit=9999" });
+    expect(clamped.statusCode).toBe(200); // capped at 500, not rejected
     await app.close();
   });
 });
