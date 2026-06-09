@@ -81,6 +81,7 @@ describe("GET /audit/event/:id inclusion_proof shape", () => {
     period_end: new Date("2026-05-23T12:00:00Z"),
     onchain_tx_hash: Buffer.alloc(32, 9),
     onchain_block_number: "12345",
+    onchain_status: "confirmed",
     created_at: new Date("2026-05-23T12:00:00Z"),
   };
 

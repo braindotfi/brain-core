@@ -146,6 +146,15 @@ export async function listEventsForAnchor(
 
 // ---------- anchors ----------
 
+/**
+ * Anchor on-chain lifecycle (see migration 0014):
+ *   pending   — inserted, broadcast not yet confirmed.
+ *   confirmed — tx mined status=1, AnchorPublished emitted; tx hash set.
+ *   reverted  — tx mined status=0 (deterministic contract revert). Terminal —
+ *               the publisher loop and the reconciler must not retry it.
+ */
+export type AnchorOnchainStatus = "pending" | "confirmed" | "reverted";
+
 export interface AuditAnchorRow {
   id: string;
   tenant_id: string;
@@ -155,6 +164,7 @@ export interface AuditAnchorRow {
   period_end: Date;
   onchain_tx_hash: Buffer | null;
   onchain_block_number: string | null;
+  onchain_status: AnchorOnchainStatus;
   created_at: Date;
 }
 
@@ -217,8 +227,23 @@ export async function setAnchorTxHash(
   txHash: Buffer,
   blockNumber: bigint,
 ): Promise<void> {
+  // A persisted tx hash means the anchor() call mined successfully (the caller
+  // only reaches here for a confirmed/already-anchored broadcast), so move the
+  // row to its terminal `confirmed` state in the same write.
   await client.query(
-    `UPDATE audit_anchors SET onchain_tx_hash = $1, onchain_block_number = $2 WHERE id = $3`,
+    `UPDATE audit_anchors SET onchain_tx_hash = $1, onchain_block_number = $2, onchain_status = 'confirmed'
+      WHERE id = $3`,
     [txHash, blockNumber.toString(), id],
   );
+}
+
+/**
+ * Mark an anchor row as terminally `reverted`: the on-chain anchor() call mined
+ * with status=0 (a deterministic contract revert). We deliberately leave
+ * onchain_tx_hash NULL — there is no *valid* anchor tx, and the proof path keys
+ * `chain_anchor` off a non-null hash — but the terminal status stops the
+ * publisher loop and the reconciler from re-broadcasting the same window.
+ */
+export async function setAnchorReverted(client: TenantScopedClient, id: string): Promise<void> {
+  await client.query(`UPDATE audit_anchors SET onchain_status = 'reverted' WHERE id = $1`, [id]);
 }

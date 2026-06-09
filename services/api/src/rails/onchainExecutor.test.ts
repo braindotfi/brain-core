@@ -9,6 +9,7 @@ const m = vi.hoisted(() => ({
   readContract: vi.fn(),
   writeContract: vi.fn(),
   waitForTransactionReceipt: vi.fn(),
+  estimateFeesPerGas: vi.fn(),
   privateKeyToAccount: vi.fn((_pk: string) => ({ address: "0xACCOUNT" })),
 }));
 
@@ -16,10 +17,13 @@ vi.mock("viem", () => ({
   createPublicClient: vi.fn(() => ({
     readContract: m.readContract,
     waitForTransactionReceipt: m.waitForTransactionReceipt,
+    estimateFeesPerGas: m.estimateFeesPerGas,
   })),
   createWalletClient: vi.fn(() => ({ writeContract: m.writeContract })),
   http: vi.fn(() => ({})),
   parseAbi: vi.fn((x: string[]) => x),
+  // parseGwei("1.5") -> 1_500_000_000n
+  parseGwei: vi.fn((v: string) => BigInt(Math.round(Number(v) * 1e9))),
 }));
 vi.mock("viem/accounts", () => ({ privateKeyToAccount: m.privateKeyToAccount }));
 vi.mock("viem/chains", () => ({ base: { id: 8453 }, baseSepolia: { id: 84_532 } }));
@@ -33,6 +37,12 @@ describe("onchainExecutor", () => {
     m.readContract.mockReset();
     m.writeContract.mockReset();
     m.waitForTransactionReceipt.mockReset();
+    m.estimateFeesPerGas.mockReset();
+    // Default: network reports a tiny fee (Base Sepolia), so the floor wins.
+    m.estimateFeesPerGas.mockResolvedValue({
+      maxFeePerGas: 6_000_000n,
+      maxPriorityFeePerGas: 1_000_000n,
+    });
   });
 
   it("getHolderAddress derives the session-key address", () => {
@@ -65,8 +75,67 @@ describe("onchainExecutor", () => {
       data: "0x",
     });
     expect(res).toEqual({ txHash: "0xHASH", blockNumber: 99n, gasUsed: 21_000n });
+    // The fee floor (1.5/3 gwei) wins over the tiny Base Sepolia estimate, so
+    // the tx is includable and a retry can replace a stuck cheaper tx.
     expect(m.writeContract).toHaveBeenCalledWith(
-      expect.objectContaining({ functionName: "executeViaSessionKey" }),
+      expect.objectContaining({
+        functionName: "executeViaSessionKey",
+        maxPriorityFeePerGas: 1_500_000_000n,
+        maxFeePerGas: 3_000_000_000n,
+      }),
+    );
+  });
+
+  it("execute uses the network estimate when it exceeds the floor", async () => {
+    m.writeContract.mockResolvedValue("0xHASH");
+    m.waitForTransactionReceipt.mockResolvedValue({
+      transactionHash: "0xHASH",
+      blockNumber: 1n,
+      gasUsed: 21_000n,
+    });
+    m.estimateFeesPerGas.mockResolvedValue({
+      maxFeePerGas: 9_000_000_000n, // 9 gwei > 3 gwei floor
+      maxPriorityFeePerGas: 5_000_000_000n, // 5 gwei > 1.5 gwei floor
+    });
+    const ex = buildOnchainExecutor({ privateKey: PK, rpcUrl: "http://rpc" });
+    await ex.execute({
+      smartAccount: "0xSA",
+      holder: "0xH",
+      nonce: 1n,
+      target: "0xT",
+      value: 0n,
+      data: "0x",
+    });
+    expect(m.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxPriorityFeePerGas: 5_000_000_000n,
+        maxFeePerGas: 9_000_000_000n,
+      }),
+    );
+  });
+
+  it("execute falls back to the floor when estimateFeesPerGas throws", async () => {
+    m.writeContract.mockResolvedValue("0xHASH");
+    m.waitForTransactionReceipt.mockResolvedValue({
+      transactionHash: "0xHASH",
+      blockNumber: 1n,
+      gasUsed: 21_000n,
+    });
+    m.estimateFeesPerGas.mockRejectedValue(new Error("RPC does not support eth_feeHistory"));
+    const ex = buildOnchainExecutor({ privateKey: PK, rpcUrl: "http://rpc" });
+    await ex.execute({
+      smartAccount: "0xSA",
+      holder: "0xH",
+      nonce: 1n,
+      target: "0xT",
+      value: 0n,
+      data: "0x",
+    });
+    expect(m.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxPriorityFeePerGas: 1_500_000_000n,
+        maxFeePerGas: 3_000_000_000n,
+      }),
     );
   });
 

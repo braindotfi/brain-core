@@ -90,6 +90,28 @@ describe("reconcileOrphanedAnchors", () => {
     expect(audit.events).toHaveLength(0);
   });
 
+  it("excludes terminally reverted rows from the orphan scan", async () => {
+    const selects: string[] = [];
+    const pool = {
+      query: vi.fn(async (text: string) => {
+        selects.push(text);
+        return { rows: [], rowCount: 0 };
+      }),
+      connect: async () => ({ query: vi.fn(), release: vi.fn() }),
+    } as unknown as Pool;
+
+    await reconcileOrphanedAnchors({
+      pool,
+      reader: readerReturning(null),
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    const scan = selects.find((s) => s.includes("FROM audit_anchors"));
+    expect(scan).toBeDefined();
+    expect(scan).toContain("onchain_tx_hash IS NULL");
+    expect(scan).toContain("onchain_status <> 'reverted'");
+  });
+
   it("is a no-op when there are no orphans (already-anchored rows are filtered out)", async () => {
     const { pool, txQueries } = fakePool([]);
     const reader = readerReturning({ txHash: Buffer.alloc(32, 9), blockNumber: 1n });
