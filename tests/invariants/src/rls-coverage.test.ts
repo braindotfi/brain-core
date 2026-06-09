@@ -52,12 +52,26 @@ function tablesWithRls(sql: string): Set<string> {
   return out;
 }
 
+/**
+ * Tables that carry a `tenant_id` *reference* column but are deliberately NOT
+ * tenant-RLS-scoped because they hold privileged verifier/forensic state rather
+ * than tenant request-path data. Every entry MUST be justified by a migration
+ * comment documenting the privileged-only access model.
+ */
+const PRIVILEGED_NON_RLS_TABLES = new Set<string>([
+  // services/audit/migrations/0011_audit_integrity_findings.sql:
+  // "Verifier state, not tenant data: no RLS (only the privileged verifier writes)."
+  "audit_integrity_findings",
+]);
+
 describe("invariant: every tenant-scoped table enables row-level security (§1)", () => {
   it("no table with a tenant_id column is missing RLS", () => {
     const sql = allMigrationSql();
     const withTenant = tablesWithTenantId(sql);
     const withRls = tablesWithRls(sql);
-    const missing = [...withTenant].filter((t) => !withRls.has(t)).sort();
+    const missing = [...withTenant]
+      .filter((t) => !withRls.has(t) && !PRIVILEGED_NON_RLS_TABLES.has(t))
+      .sort();
     expect(missing, `tables with tenant_id but no RLS: ${missing.join(", ") || "(none)"}`).toEqual(
       [],
     );
