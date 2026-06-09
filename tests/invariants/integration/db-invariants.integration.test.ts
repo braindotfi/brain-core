@@ -35,7 +35,7 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import { isValidPaymentIntentTransition } from "@brain/execution";
-import { checkAuditConsistency, verifyContentHashCursor } from "@brain/audit";
+import { checkAuditConsistency, reportVerifierHealth, verifyContentHashCursor } from "@brain/audit";
 import { LedgerPaymentIntents, upsertAccountRow, upsertCounterpartyRow } from "@brain/ledger";
 import { AGENT_CONTRIBUTED_CONFIDENCE_CEILING } from "../../../schemas/index.js";
 import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
@@ -1029,6 +1029,38 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
     expect(pass2.lastPassClean).toBe(false);
     expect(await readCheckpoint()).toBe(cleanAt1);
 
+    errSpy.mockRestore();
+  });
+
+  // 18 — reportVerifierHealth runs against the REAL schema (its SQL is otherwise
+  // only fake-pool tested, so a column rename would surface as a runtime 500 in
+  // production), and it must never scan audit_events: the version-coverage counts
+  // come from the checkpoint, where the verifier persists them each cycle
+  // (Fable-5 F-1 / F-4).
+  it("reportVerifierHealth reads the real checkpoint and matches direct SQL", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // Run a cycle so the checkpoint exists and the persisted counts are fresh.
+    const cycle = await verifyContentHashCursor({ privilegedPool: pool });
+
+    const health = await reportVerifierHealth({ privilegedPool: pool });
+
+    // The snapshot agrees with the cycle that just persisted it.
+    expect(health.lastPassStatus === "clean" || health.lastPassStatus === "failed").toBe(true);
+    expect(health.lastFullPassAt).not.toBeNull();
+    expect(health.completedPasses).toBeGreaterThanOrEqual(1);
+    expect(health.unsupportedVersion).toBe(cycle.unsupportedVersion);
+    expect(health.legacyUnverifiable).toBe(cycle.legacyUnverifiable);
+    expect(health.openFindings).toBe(cycle.openFindings);
+
+    // ...and with direct SQL over the same schema (validates every column name).
+    const legacy = await pool.query<{ n: string }>(
+      `SELECT count(*)::bigint AS n FROM audit_events WHERE hash_schema_version < 1`,
+    );
+    expect(health.legacyUnverifiable).toBe(Number(legacy.rows[0]!.n));
+    const open = await pool.query<{ n: string }>(
+      `SELECT count(*)::bigint AS n FROM audit_integrity_findings WHERE status = 'open'`,
+    );
+    expect(health.openFindings).toBe(Number(open.rows[0]!.n));
     errSpy.mockRestore();
   });
 });

@@ -169,6 +169,28 @@ export async function verifyContentHashCursor(
   deps: AuditConsistencyDeps,
 ): Promise<ContentHashVerifyResult> {
   const pageSize = deps.hashScanLimit ?? 1000;
+
+  // Version-coverage counts, computed ONCE per cycle and persisted on the
+  // checkpoint below so the health endpoint never scans audit_events itself
+  // (Fable-5 F-1). Two separate queries on purpose: the 0009 index is partial
+  // (WHERE hash_schema_version > 0), so the unsupported (> current) count can
+  // use it while the legacy (< current) count cannot; a combined FILTER form
+  // would force a full scan for both. Run BEFORE the transaction so the
+  // FOR UPDATE checkpoint lock is never held across a table scan.
+  const unsupportedRes = await deps.privilegedPool.query<{ n: string }>(
+    `SELECT count(*)::bigint AS n FROM audit_events WHERE hash_schema_version > $1`,
+    [AUDIT_HASH_SCHEMA_VERSION],
+  );
+  const unsupportedVersion = Number(unsupportedRes.rows[0]?.n ?? 0);
+  // Rows written by an OLDER scheme (e.g. the pre-versioning v0 default) cannot
+  // be recomputed by this build. NOT a break (structural checks still cover
+  // them) but a disclosed content-verification blind spot (Codex 307161b P2 #5).
+  const legacyRes = await deps.privilegedPool.query<{ n: string }>(
+    `SELECT count(*)::bigint AS n FROM audit_events WHERE hash_schema_version < $1`,
+    [AUDIT_HASH_SCHEMA_VERSION],
+  );
+  const legacyUnverifiable = Number(legacyRes.rows[0]?.n ?? 0);
+
   const c = await deps.privilegedPool.connect();
   let result: ContentHashVerifyResult;
   try {
@@ -283,6 +305,7 @@ export async function verifyContentHashCursor(
                 current_pass_failure_count = 0, last_pass_status = $4,
                 last_clean_pass_at = ${cleanPass ? "now()" : "last_clean_pass_at"},
                 last_failed_pass_at = ${cleanPass ? "last_failed_pass_at" : "now()"},
+                unsupported_version_count = $5, legacy_unverifiable_count = $6,
                 updated_at = now()
           WHERE verifier_name = $1`,
         [
@@ -290,6 +313,8 @@ export async function verifyContentHashCursor(
           AUDIT_HASH_SCHEMA_VERSION,
           hashMismatches,
           cleanPass ? "clean" : "failed",
+          unsupportedVersion,
+          legacyUnverifiable,
         ],
       );
     } else {
@@ -298,7 +323,9 @@ export async function verifyContentHashCursor(
         `UPDATE audit_verifier_checkpoint
             SET last_created_at = $2, last_event_id = $3, hash_schema_version = $4,
                 last_failure_count = $5, last_failed_at = ${failedAt},
-                current_pass_failure_count = $6, updated_at = now()
+                current_pass_failure_count = $6,
+                unsupported_version_count = $7, legacy_unverifiable_count = $8,
+                updated_at = now()
           WHERE verifier_name = $1`,
         [
           CONTENT_HASH_VERIFIER_NAME,
@@ -307,6 +334,8 @@ export async function verifyContentHashCursor(
           AUDIT_HASH_SCHEMA_VERSION,
           hashMismatches,
           passFailuresSoFar,
+          unsupportedVersion,
+          legacyUnverifiable,
         ],
       );
     }
@@ -314,8 +343,8 @@ export async function verifyContentHashCursor(
     result = {
       rowsVerified: page.rows.length,
       hashMismatches,
-      unsupportedVersion: 0,
-      legacyUnverifiable: 0,
+      unsupportedVersion,
+      legacyUnverifiable,
       openFindings: 0,
       completedPass,
       lastPassClean: false,
@@ -331,25 +360,6 @@ export async function verifyContentHashCursor(
   } finally {
     c.release();
   }
-
-  // Rows written by a NEWER deployment than this build (version > current) cannot
-  // be verified here — surface them rather than silently skip.
-  const unsupportedRes = await deps.privilegedPool.query<{ n: string }>(
-    `SELECT count(*)::bigint AS n FROM audit_events WHERE hash_schema_version > $1`,
-    [AUDIT_HASH_SCHEMA_VERSION],
-  );
-  result.unsupportedVersion = Number(unsupportedRes.rows[0]?.n ?? 0);
-
-  // Rows written by an OLDER scheme than this build (version < current, e.g. the
-  // pre-versioning v0 default) cannot be recomputed here either. They are NOT a
-  // break (the structural fork/gap/genesis checks still cover them) but they ARE
-  // a content-verification blind spot, so disclose the population explicitly
-  // rather than let "0 mismatches" imply full coverage (Codex 307161b P2 #5).
-  const legacyRes = await deps.privilegedPool.query<{ n: string }>(
-    `SELECT count(*)::bigint AS n FROM audit_events WHERE hash_schema_version < $1`,
-    [AUDIT_HASH_SCHEMA_VERSION],
-  );
-  result.legacyUnverifiable = Number(legacyRes.rows[0]?.n ?? 0);
 
   // STICKY open-findings count (cross-cycle): a detected break stays counted until
   // an operator resolves it, unlike the per-page hash_mismatch gauge.
@@ -416,10 +426,15 @@ export async function verifyContentHashCursor(
 
 /**
  * Read-only health snapshot of the content-hash verifier for an operator surface
- * (90eade5 doc 5.10). Pure: it reads the durable checkpoint + a few global counts
- * and emits NO metrics and NO logs and mutates nothing, so it is safe to call
- * on-demand from an HTTP handler. MUST use the privileged (BYPASSRLS) pool — the
- * verifier tables are global/RLS-exempt and the version counts span every tenant.
+ * (90eade5 doc 5.10). Pure: it reads the durable checkpoint + the open-findings
+ * count and emits NO metrics and NO logs and mutates nothing, so it is safe to
+ * call on-demand from an HTTP handler. It NEVER queries audit_events — the
+ * version-coverage counts are read from the checkpoint, where the verifier
+ * persists them each cycle, so a polled health endpoint costs two small reads
+ * instead of a per-request scan of the largest table (Fable-5 F-1). Counts are
+ * therefore as-of the last verifier cycle (≤ the verifier interval stale).
+ * MUST use the privileged (BYPASSRLS) pool — the verifier tables are
+ * global/RLS-exempt.
  */
 export interface AuditVerifierHealth {
   /** Outcome of the most recent COMPLETED full pass; "never" until the first wrap. */
@@ -454,10 +469,13 @@ export async function reportVerifierHealth(deps: {
     last_full_pass_at: Date | null;
     completed_passes: string;
     current_pass_failure_count: string;
+    unsupported_version_count: string;
+    legacy_unverifiable_count: string;
     seconds_since_clean: number | null;
   }>(
     `SELECT last_pass_status, last_clean_pass_at, last_failed_pass_at, last_full_pass_at,
             completed_passes, current_pass_failure_count,
+            unsupported_version_count, legacy_unverifiable_count,
             extract(epoch FROM now() - last_clean_pass_at)::float8 AS seconds_since_clean
        FROM audit_verifier_checkpoint WHERE verifier_name = $1`,
     [CONTENT_HASH_VERIFIER_NAME],
@@ -466,13 +484,6 @@ export async function reportVerifierHealth(deps: {
 
   const openRes = await deps.privilegedPool.query<{ n: string }>(
     `SELECT count(*)::bigint AS n FROM audit_integrity_findings WHERE status = 'open'`,
-  );
-  // Both version-coverage counts in ONE scan (vs two separate sequential scans).
-  const versionRes = await deps.privilegedPool.query<{ unsupported: string; legacy: string }>(
-    `SELECT count(*) FILTER (WHERE hash_schema_version > $1)::bigint AS unsupported,
-            count(*) FILTER (WHERE hash_schema_version < $1)::bigint AS legacy
-       FROM audit_events`,
-    [AUDIT_HASH_SCHEMA_VERSION],
   );
 
   const status = row?.last_pass_status;
@@ -488,8 +499,8 @@ export async function reportVerifierHealth(deps: {
         ? null
         : row.seconds_since_clean,
     openFindings: Number(openRes.rows[0]?.n ?? 0),
-    unsupportedVersion: Number(versionRes.rows[0]?.unsupported ?? 0),
-    legacyUnverifiable: Number(versionRes.rows[0]?.legacy ?? 0),
+    unsupportedVersion: Number(row?.unsupported_version_count ?? 0),
+    legacyUnverifiable: Number(row?.legacy_unverifiable_count ?? 0),
   };
 }
 

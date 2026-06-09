@@ -506,6 +506,12 @@ export interface AuditOutboxHealth {
 export interface AuditOutboxHealthDeps {
   privilegedPool: Pool;
   metrics?: MetricsEmitter;
+  /**
+   * Suppress the critical log on exhausted rows. The worker-cycle caller keeps
+   * the loud default; a POLLED caller (the audit-health endpoint) sets this so
+   * one bad state does not emit a critical log line per poll (Fable-5 F-3).
+   */
+  quiet?: boolean;
 }
 
 /**
@@ -558,7 +564,7 @@ export async function reportAuditOutboxHealth(
     health.oldestExhaustedAgeSeconds,
   );
 
-  if (health.exhausted > 0) {
+  if (health.exhausted > 0 && deps.quiet !== true) {
     console.error("[audit-outbox] exhausted mandatory audit-evidence rows present", {
       exhausted: health.exhausted,
       oldestExhaustedAgeSeconds: health.oldestExhaustedAgeSeconds,

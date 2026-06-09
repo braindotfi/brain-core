@@ -76,7 +76,9 @@ export function registerAuditHealthRoute(app: FastifyInstance, deps: AuditHealth
 
     const [verifier, outbox] = await Promise.all([
       reportVerifierHealth({ privilegedPool: deps.privilegedPool }),
-      reportAuditOutboxHealth({ privilegedPool: deps.privilegedPool }),
+      // quiet: a polled endpoint must not emit a critical log line per poll;
+      // the worker-cycle caller keeps the loud default (Fable-5 F-3).
+      reportAuditOutboxHealth({ privilegedPool: deps.privilegedPool, quiet: true }),
     ]);
 
     reply.status(200);
