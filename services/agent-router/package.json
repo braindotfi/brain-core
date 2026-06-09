@@ -1,6 +1,6 @@
 {
   "name": "@brain/agent-router",
-  "version": "0.1.0",
+  "version": "0.0.4",
   "private": true,
   "description": "Multi-agent router. Selects an internal/external agent for an event or intent, scored by trigger, intent, evidence, reputation, and cost. Routes; never executes.",
   "type": "module",
