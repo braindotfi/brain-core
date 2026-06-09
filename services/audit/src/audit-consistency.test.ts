@@ -258,14 +258,15 @@ describe("verifyContentHashCursor (content, paged)", () => {
 });
 
 describe("reportVerifierHealth", () => {
-  function healthPool(opts: {
-    checkpoint?: Record<string, unknown> | null;
-    open?: number;
-    unsupported?: number;
-    legacy?: number;
-  }): Pool {
+  function healthPool(opts: { checkpoint?: Record<string, unknown> | null; open?: number }): Pool {
     return {
       query: vi.fn(async (text: string) => {
+        // F-1 regression lock: the health reader must NEVER scan audit_events —
+        // the version counts come from the checkpoint, where the verifier
+        // persisted them. A per-request scan of the largest table is the bug.
+        if (text.includes("FROM audit_events")) {
+          throw new Error("reportVerifierHealth must not query audit_events");
+        }
         if (text.includes("FROM audit_verifier_checkpoint")) {
           return {
             rows:
@@ -276,20 +277,12 @@ describe("reportVerifierHealth", () => {
         if (text.includes("FROM audit_integrity_findings")) {
           return { rows: [{ n: String(opts.open ?? 0) }], rowCount: 1 };
         }
-        if (text.includes("FILTER (WHERE hash_schema_version >")) {
-          return {
-            rows: [
-              { unsupported: String(opts.unsupported ?? 0), legacy: String(opts.legacy ?? 0) },
-            ],
-            rowCount: 1,
-          };
-        }
         return { rows: [], rowCount: 0 };
       }),
     } as unknown as Pool;
   }
 
-  it("maps a clean checkpoint + counts into a side-effect-free snapshot", async () => {
+  it("maps a clean checkpoint + persisted counts into a side-effect-free snapshot", async () => {
     const pool = healthPool({
       checkpoint: {
         last_pass_status: "clean",
@@ -298,11 +291,11 @@ describe("reportVerifierHealth", () => {
         last_full_pass_at: new Date("2026-06-08T00:00:00.000Z"),
         completed_passes: "7",
         current_pass_failure_count: "0",
+        unsupported_version_count: "0",
+        legacy_unverifiable_count: "3",
         seconds_since_clean: 12,
       },
       open: 0,
-      unsupported: 0,
-      legacy: 3,
     });
     const h = await reportVerifierHealth({ privilegedPool: pool });
     expect(h.lastPassStatus).toBe("clean");
@@ -310,7 +303,10 @@ describe("reportVerifierHealth", () => {
     expect(h.completedPasses).toBe(7);
     expect(h.secondsSinceCleanFullPass).toBe(12);
     expect(h.openFindings).toBe(0);
+    // Version-coverage counts come from the checkpoint (persisted by the
+    // verifier cycle), not from a live audit_events scan.
     expect(h.legacyUnverifiable).toBe(3);
+    expect(h.unsupportedVersion).toBe(0);
   });
 
   it("reports 'never' with null timestamps before the verifier has ever run", async () => {
@@ -332,6 +328,8 @@ describe("reportVerifierHealth", () => {
         last_full_pass_at: new Date("2026-06-08T00:00:00.000Z"),
         completed_passes: "1",
         current_pass_failure_count: "0",
+        unsupported_version_count: "0",
+        legacy_unverifiable_count: "0",
         seconds_since_clean: null,
       },
       open: 2,

@@ -23,13 +23,15 @@ function principal(scopes: Scope[]): Principal {
 function fakePool(opts: {
   checkpoint?: Record<string, unknown> | null;
   open?: number;
-  unsupported?: number;
-  legacy?: number;
   pending?: number;
   exhausted?: number;
 }): Pool {
   return {
     query: vi.fn(async (text: string) => {
+      // F-1 regression lock: the health endpoint must never scan audit_events.
+      if (text.includes("FROM audit_events")) {
+        throw new Error("audit-health must not query audit_events");
+      }
       if (text.includes("FROM audit_verifier_checkpoint")) {
         return {
           rows: opts.checkpoint === null || opts.checkpoint === undefined ? [] : [opts.checkpoint],
@@ -38,12 +40,6 @@ function fakePool(opts: {
       }
       if (text.includes("FROM audit_integrity_findings")) {
         return { rows: [{ n: String(opts.open ?? 0) }], rowCount: 1 };
-      }
-      if (text.includes("FILTER (WHERE hash_schema_version >")) {
-        return {
-          rows: [{ unsupported: String(opts.unsupported ?? 0), legacy: String(opts.legacy ?? 0) }],
-          rowCount: 1,
-        };
       }
       if (text.includes("FROM tenant_blob_purge_audit_outbox")) {
         return {
@@ -70,6 +66,8 @@ const cleanCheckpoint = {
   last_full_pass_at: new Date("2026-06-08T00:00:00.000Z"),
   completed_passes: "5",
   current_pass_failure_count: "0",
+  unsupported_version_count: "0",
+  legacy_unverifiable_count: "0",
   seconds_since_clean: 30,
 };
 
@@ -138,6 +136,18 @@ describe("GET /internal/audit/health", () => {
     const res = await app.inject({ method: "GET", url: "/internal/audit/health" });
     expect(res.statusCode).toBe(200);
     expect(res.json().status).toBe("critical");
+    errSpy.mockRestore();
+  });
+
+  it("does not emit a critical log per poll, even when exhausted evidence exists (quiet)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const app = await buildApp(fakePool({ checkpoint: cleanCheckpoint, exhausted: 2 }), [
+      "audit:admin",
+    ]);
+    const res = await app.inject({ method: "GET", url: "/internal/audit/health" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe("critical"); // exhausted > 0 still rolls up
+    expect(errSpy).not.toHaveBeenCalled(); // ...but a polled endpoint stays quiet (F-3)
     errSpy.mockRestore();
   });
 

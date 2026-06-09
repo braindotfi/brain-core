@@ -330,6 +330,22 @@ describe("reportAuditOutboxHealth", () => {
     expect(errSpy).toHaveBeenCalled(); // exhausted > 0 => critical log
     errSpy.mockRestore();
   });
+
+  it("suppresses the critical log under quiet (polled health endpoint caller)", async () => {
+    const { pool } = healthPool({
+      pending: 0,
+      exhausted: 3,
+      oldest_pending_age_s: 0,
+      oldest_exhausted_age_s: 7200,
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const health = await reportAuditOutboxHealth({ privilegedPool: pool, quiet: true });
+
+    expect(health.exhausted).toBe(3); // the snapshot itself is unchanged
+    expect(errSpy).not.toHaveBeenCalled(); // ...but a polled caller emits no log per poll
+    errSpy.mockRestore();
+  });
 });
 
 describe("operator recovery surface", () => {
