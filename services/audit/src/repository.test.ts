@@ -9,6 +9,7 @@ import {
   insertAnchor,
   listEventsForAnchor,
   queryEvents,
+  setAnchorReverted,
   setAnchorTxHash,
 } from "./repository.js";
 
@@ -233,12 +234,24 @@ describe("findAnchorByRoot", () => {
 });
 
 describe("setAnchorTxHash", () => {
-  it("issues UPDATE with txHash and blockNumber", async () => {
+  it("issues UPDATE with txHash, blockNumber, and confirmed status", async () => {
     const { client, log } = fakeClient();
     const txHash = Buffer.from("cafebabe", "hex");
     await setAnchorTxHash(client, "anc_1", txHash, 42n);
     expect(log[0]!.sql).toContain("SET onchain_tx_hash = $1");
+    // A persisted tx hash is a confirmed anchor — the same write makes it terminal.
+    expect(log[0]!.sql).toContain("onchain_status = 'confirmed'");
     expect(log[0]!.sql).toContain("WHERE id = $3");
     expect(log[0]!.values).toEqual([txHash, "42", "anc_1"]);
+  });
+});
+
+describe("setAnchorReverted", () => {
+  it("marks the row reverted without touching onchain_tx_hash", async () => {
+    const { client, log } = fakeClient();
+    await setAnchorReverted(client, "anc_2");
+    expect(log[0]!.sql).toContain("SET onchain_status = 'reverted'");
+    expect(log[0]!.sql).not.toContain("onchain_tx_hash");
+    expect(log[0]!.values).toEqual(["anc_2"]);
   });
 });

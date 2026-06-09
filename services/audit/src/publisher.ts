@@ -30,6 +30,7 @@ import {
   findAnchorByRoot,
   insertAnchor,
   listEventsForAnchor,
+  setAnchorReverted,
   setAnchorTxHash,
   type AuditAnchorRow,
 } from "./repository.js";
@@ -42,9 +43,24 @@ export interface BroadcastInput {
   periodEnd: Date;
 }
 
+/**
+ * Outcome of a broadcast attempt. The broadcaster resolves (never throws) for
+ * the three deterministic on-chain outcomes and throws only on transient errors
+ * (RPC/network), which the caller is free to retry on the next cycle:
+ *   confirmed        — tx mined status=1; AnchorPublished emitted.
+ *   already_anchored — the root was already published on-chain (skip the
+ *                      redundant broadcast); txHash/blockNumber identify the
+ *                      original winning tx so the DB row can be healed.
+ *   reverted         — tx mined status=0 (deterministic revert). Terminal — the
+ *                      caller must NOT retry. txHash is the reverted tx (kept
+ *                      for forensics; not persisted as a valid anchor).
+ */
+export type BroadcastStatus = "confirmed" | "already_anchored" | "reverted";
+
 export interface BroadcastResult {
   txHash: Buffer;
   blockNumber: bigint;
+  status: BroadcastStatus;
 }
 
 export type AnchorBroadcaster = (input: BroadcastInput) => Promise<BroadcastResult>;
@@ -85,7 +101,15 @@ export async function publishAnchor(
     return inserted;
   });
 
-  if (result === null || result.onchain_tx_hash !== null) return result;
+  // Nothing more to do for a row that already reached a terminal state:
+  //   - onchain_tx_hash set  → confirmed (a valid anchor tx mined), or
+  //   - onchain_status reverted → the contract rejected this window for good
+  //     (RootAlreadyPublished §5.3 with no recoverable winner, etc.).
+  // Re-broadcasting a terminal row is exactly the loop that burned testnet
+  // nonces/ETH before this fix.
+  if (result === null || result.onchain_tx_hash !== null || result.onchain_status === "reverted") {
+    return result;
+  }
 
   const broadcast = await broadcaster({
     tenantId: opts.tenantId,
@@ -96,7 +120,13 @@ export async function publishAnchor(
   });
 
   const finalized = await withTenantScope(pool, opts.tenantId, async (c) => {
-    await setAnchorTxHash(c, result.id, broadcast.txHash, broadcast.blockNumber);
+    if (broadcast.status === "reverted") {
+      // Deterministic on-chain revert — terminal. Record it and stop retrying.
+      await setAnchorReverted(c, result.id);
+    } else {
+      // confirmed | already_anchored — both carry a valid on-chain anchor tx.
+      await setAnchorTxHash(c, result.id, broadcast.txHash, broadcast.blockNumber);
+    }
     return findAnchorByRootLocal(c, result.merkle_root);
   });
   return finalized;

@@ -252,6 +252,10 @@ async function buildMerkleProof(
 ): Promise<{ merkleRoot: string; merkleProof: string[]; chainAnchor: ProofChainAnchor | null }> {
   if (leafEventId === null) return { merkleRoot: "", merkleProof: [], chainAnchor: null };
 
+  // Anchor against the latest CONFIRMED window. Filtering on a non-null tx hash
+  // keeps a freshly-inserted `pending` row (or a terminal `reverted` one) from
+  // shadowing the most recent on-chain anchor, so `chain_anchor` populates
+  // whenever any window has actually landed on-chain.
   const anchorRes = await client.query<{
     period_start: Date | string;
     period_end: Date | string;
@@ -259,7 +263,9 @@ async function buildMerkleProof(
     onchain_block_number: number | string | null;
   }>(
     `SELECT period_start, period_end, onchain_tx_hash, onchain_block_number
-       FROM audit_anchors ORDER BY period_end DESC LIMIT 1`,
+       FROM audit_anchors
+      WHERE onchain_tx_hash IS NOT NULL
+      ORDER BY period_end DESC LIMIT 1`,
     [],
   );
   const anchor = anchorRes.rows[0];

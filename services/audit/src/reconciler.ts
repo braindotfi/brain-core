@@ -59,6 +59,7 @@ export async function reconcileOrphanedAnchors(
     `SELECT id, tenant_id, merkle_root, created_at
        FROM audit_anchors
       WHERE onchain_tx_hash IS NULL
+        AND onchain_status <> 'reverted'
       ORDER BY created_at ASC
       LIMIT $1`,
     [limit],
