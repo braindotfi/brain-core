@@ -1,6 +1,6 @@
 {
   "name": "@brain/mcp",
-  "version": "0.3.0",
+  "version": "0.0.4",
   "private": true,
   "description": "Brain MCP (Model Context Protocol) server. Exposes ledger reads, wiki Q&A, raw contributions, and proposals through the standard MCP transport so external agents can connect using any MCP-compatible client.",
   "type": "module",

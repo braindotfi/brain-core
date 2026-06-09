@@ -104,6 +104,9 @@ logs/
 
 # OS
 .DS_Store
+# Windows NTFS alternate-data-stream marker files (created when the WSL clone is
+# touched by Windows tooling; e.g. `.env:Zone.Identifier`).
+*:Zone.Identifier
 
 # Tool output
 .claude/

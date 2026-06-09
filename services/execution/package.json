@@ -1,6 +1,6 @@
 {
   "name": "@brain/execution",
-  "version": "0.1.0",
+  "version": "0.0.4",
   "private": true,
   "description": "Proposal and execution state machine. Agents, rails, MCP server.",
   "type": "module",

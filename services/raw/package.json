@@ -1,6 +1,6 @@
 {
   "name": "@brain/raw",
-  "version": "0.1.0",
+  "version": "0.0.4",
   "private": true,
   "description": "Ingestion workers. Immutable artifact store, content-addressed, per-source adapters.",
   "type": "module",
