@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { BaseError, toHex } from "viem";
+import type * as Viem from "viem";
 
 // Mock only the client factories — keep keccak256/toHex/toBytes/parseGwei and the
 // error classes (BaseError/ContractFunctionRevertedError) real so the revert
@@ -11,7 +12,7 @@ const estimateFeesPerGas = vi.fn();
 const waitForTransactionReceipt = vi.fn();
 
 vi.mock("viem", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("viem")>();
+  const actual = await importOriginal<typeof Viem>();
   return {
     ...actual,
     createWalletClient: () => ({ writeContract }),

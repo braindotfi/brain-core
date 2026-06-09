@@ -1,11 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Pool } from "pg";
+import type * as BrainShared from "@brain/shared";
 import type { AuditAnchorRow } from "./repository.js";
 
 // withTenantScope just runs the callback with a throwaway client here — the
 // repository functions it would call are mocked below, so the client is unused.
 vi.mock("@brain/shared", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@brain/shared")>();
+  const actual = await importOriginal<typeof BrainShared>();
   return {
     ...actual,
     withTenantScope: vi.fn(async (_pool: unknown, _tid: string, cb: (c: unknown) => unknown) =>
