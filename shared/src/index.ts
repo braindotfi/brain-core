@@ -74,6 +74,7 @@ export { InMemoryAuditEmitter, PostgresAuditEmitter, type AuditEmitter } from ".
 export { default as requestIdPlugin, sanitizeRequestId } from "./http/request-id.js";
 export { default as errorHandlerPlugin, mapError } from "./http/error-handler.js";
 export * from "./http/context.js";
+export { parseDateParam, parsePositiveIntParam } from "./http/query-params.js";
 
 // Blob storage (§3 Layer 1)
 export * from "./blob/types.js";

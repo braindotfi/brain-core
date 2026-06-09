@@ -6,6 +6,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   brainError,
   newWebhookEndpointId,
+  parseDateParam,
+  parsePositiveIntParam,
   requireScope,
   withTenantScope,
   type Scope,
@@ -40,15 +42,20 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
     ) => {
       const principal = requirePrincipal(request);
       requireScope(principal.scopes, READ);
-      const limit = Math.min(
-        request.query.limit === undefined ? 100 : Number.parseInt(request.query.limit, 10),
-        500,
-      );
+      // Malformed limit/since/until is the caller's error: reject with 400
+      // request_params_invalid instead of letting NaN / Invalid Date reach SQL
+      // and surface as a misleading 500 (Fable-5 F-2).
+      const limit = parsePositiveIntParam("limit", request.query.limit, {
+        fallback: 100,
+        max: 500,
+      });
+      const since = parseDateParam("since", request.query.since);
+      const until = parseDateParam("until", request.query.until);
       const rows = await withTenantScope(deps.pool, principal.tenantId, (c) =>
         queryEvents(c, {
           ...(request.query.layer !== undefined ? { layer: request.query.layer } : {}),
-          ...(request.query.since !== undefined ? { since: new Date(request.query.since) } : {}),
-          ...(request.query.until !== undefined ? { until: new Date(request.query.until) } : {}),
+          ...(since !== undefined ? { since } : {}),
+          ...(until !== undefined ? { until } : {}),
           limit,
         }),
       );
@@ -132,10 +139,12 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
         throw brainError("request_params_invalid", "entityId malformed");
       }
 
-      const limit = Math.min(
-        request.query.limit === undefined ? 200 : Number.parseInt(request.query.limit, 10) || 200,
-        500,
-      );
+      // `|| 200` caught NaN here but not a negative — `?limit=-5` still reached
+      // SQL as LIMIT -5 and 500ed. Same strict parse as /audit/events (F-2).
+      const limit = parsePositiveIntParam("limit", request.query.limit, {
+        fallback: 200,
+        max: 500,
+      });
 
       const rows = await withTenantScope(deps.pool, principal.tenantId, (c) =>
         findEventsByEntity(c, entityType, entityId, limit),

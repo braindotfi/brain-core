@@ -1,5 +1,11 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError, requireScope, withTenantScope, type Scope } from "@brain/shared";
+import {
+  brainError,
+  parsePositiveIntParam,
+  requireScope,
+  withTenantScope,
+  type Scope,
+} from "@brain/shared";
 import { searchEntities, semanticSearch } from "../repository/entities.js";
 import {
   LEDGER_KINDS,
@@ -35,10 +41,12 @@ export async function registerSearch(app: FastifyInstance, deps: WikiDeps): Prom
       }
       requireScope(request.principal.scopes, READ_SCOPE);
 
-      const limit = Math.min(
-        request.query.limit === undefined ? 50 : parseInt(request.query.limit, 10),
-        500,
-      );
+      // Malformed limit is the caller's error: 400 request_params_invalid, not
+      // a NaN/negative LIMIT reaching SQL and surfacing as a 500 (Fable-5 F-2).
+      const limit = parsePositiveIntParam("limit", request.query.limit, {
+        fallback: 50,
+        max: 500,
+      });
       const kind = request.query.kind;
       if (kind !== undefined) {
         // v0.3 — Wiki search only returns Wiki-resident kinds (policy, agent).
