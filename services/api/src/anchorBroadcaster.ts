@@ -91,7 +91,9 @@ export interface ViemAnchorBroadcasterOptions {
 function createAnchorPublicClient(transport: ReturnType<typeof http>): AnchorPublicClient {
   return createPublicClient({ chain: baseSepolia, transport });
 }
-type AnchorPublicClient = ReturnType<typeof createPublicClient<ReturnType<typeof http>, typeof baseSepolia>>;
+type AnchorPublicClient = ReturnType<
+  typeof createPublicClient<ReturnType<typeof http>, typeof baseSepolia>
+>;
 
 /** True when an error is a deterministic on-chain revert (vs a transient RPC error). */
 function isDeterministicRevert(err: unknown): boolean {

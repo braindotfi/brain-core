@@ -244,12 +244,6 @@ export async function setAnchorTxHash(
  * `chain_anchor` off a non-null hash — but the terminal status stops the
  * publisher loop and the reconciler from re-broadcasting the same window.
  */
-export async function setAnchorReverted(
-  client: TenantScopedClient,
-  id: string,
-): Promise<void> {
-  await client.query(
-    `UPDATE audit_anchors SET onchain_status = 'reverted' WHERE id = $1`,
-    [id],
-  );
+export async function setAnchorReverted(client: TenantScopedClient, id: string): Promise<void> {
+  await client.query(`UPDATE audit_anchors SET onchain_status = 'reverted' WHERE id = $1`, [id]);
 }
