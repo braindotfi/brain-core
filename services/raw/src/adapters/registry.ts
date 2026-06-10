@@ -14,8 +14,8 @@ import {
   EthAddressAdapter,
   NetSuiteAdapter,
   OtherAdapter,
-  StripeAdapter,
 } from "./stubs.js";
+import { StripeAdapter } from "./stripe.js";
 import type { SourceAdapter } from "./types.js";
 import { CsvUploadAdapter, PdfUploadAdapter } from "./upload.js";
 import { CONNECTOR_DESCRIPTORS, type ConnectorDescriptor } from "./descriptors.js";
