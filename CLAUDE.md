@@ -76,7 +76,7 @@ pnpm run demo:reset               # reset demo state (alias for tools/demo-reset
 pnpm run plaid:sandbox            # start the Plaid sandbox tool
 ```
 
-`pnpm run lint` bundles 14 individually runnable CI guard scripts. Each can be called standalone:
+`pnpm run lint` bundles 15 individually runnable CI guard scripts. Each can be called standalone:
 
 ```bash
 pnpm run check-scope-vocab
@@ -93,7 +93,15 @@ pnpm run check-audit-status
 pnpm run check-risk-register-drift
 pnpm run check-contract-abi-drift
 pnpm run check-blob-purge-callsite
+pnpm run check-connector-descriptors
 ```
+
+`pnpm run scaffold-connector <snake_case_name>` generates a fully wired new
+source connector (vocabulary entry, stub adapter + descriptor, connect-time
+registry entry, Ledger parser skeleton `<name>_v1` + registration, test
+skeletons, CHECK-widening migration, OpenAPI enum value). Generated state
+passes lint/typecheck/test and the descriptor guard; implementing the
+adapter's modality methods and the extractor mapping is the remaining work.
 
 > `check-promotion-readiness` also exists (`scripts/check-promotion-readiness.mjs`) but is **not**
 > wired into `lint`. Run it manually before promoting a branch.
@@ -313,6 +321,7 @@ Run `./scripts/install-hooks.sh` once, it installs a pre-commit hook that scans 
 
 ## Known in-Progress Work
 
+- **Ingestion architecture, Phase 1+2 foundation landed** (`feat/ingestion-foundation`; spec: brain-ingestion-architecture-final.md). The raw layer is source-agnostic: one reconciled provider-named `source_type` vocabulary (migration raw/0007; includes `wiki_annotation` + the universal fallback `other`); a standard ingestion envelope over an opaque payload (`services/raw/src/envelope.ts`, raw/0008: declared `source_schema` never parsed at intake, effective/observed/ingested timestamps, source chain, per-tenant `idempotency_key` unique index); per-(connection, resource, object-type) sync checkpoints (`raw_sync_partitions`, raw/0009) with a lease protocol whose invariant is artifacts-commit-before-checkpoint-advance; `SourceAdapter.fetchIncremental` + a sync worker (`services/raw/src/workers/syncWorker.ts`, mounted in main.ts on the privileged pool) with Plaid `transactions/sync` + balance snapshot as the proving pull connector; a type-agnostic encrypted credential store with `updateCredentials` refresh; `ConnectorDescriptor` data per adapter (`adapters/descriptors.ts`) enforced by `check-connector-descriptors`; one Ledger parser registry (`services/ledger/src/extractors/registry.ts`) that both the normalize worker poll and `LedgerService.normalizeFromRaw` dispatch through; and the Phase 2 trust contract: `customer_asserted` provenance (0.5 confidence cap), caller-pushed source types resolve as low evidence trust, and §6 check 9.5 refuses an `allow` outcome on all-low-trust evidence unless the linked obligation was corroborated (`resolveObligationProvenance` loader). Phase 3 (named connectors: Stripe pull, Merge, Finch, document-tier extraction) is NOT started; `pnpm run scaffold-connector` is the entry point.
 - **Payment rails. All four wired**: `bank_ach` (`AchPlaidRail` with a real Plaid Transfer client), `onchain_base` (`OnchainBaseRail` with viem + KMS-signed session key), `x402_base` (`X402BaseRail` with a real `X402Client` against the Coinbase facilitator), and `escrow_base` (`EscrowBaseRail` against `BrainEscrow.release`) all register in `RailRegistry` at boot when their env vars are configured (see `services/api/src/main.ts:902-1003`). The `*StubRail` classes in `rails/stubs.ts` are retained for dev/test + `erp_writeback`; they **fail closed under `NODE_ENV=production`** (`defaultRails()` and each dispatch throw rather than fake-settle). A boot fence (`services/api/src/composition/rails-prod-fence.ts`) additionally refuses to start the api in `NODE_ENV=production` when zero live rails would register, so orchestrators see CrashLoopBackoff instead of a quiet 100%-of-payments-failing wave. All six protocol contracts are deployed on Base Sepolia (addresses in `SECURITY.md`); **mainnet remains blocked on the external smart-contract audit.** A second boot fence (`services/api/src/composition/escrow-audit-gate.ts`) refuses to start the api when `BRAIN_BASE_CHAIN_ID === 8453` + `BRAIN_ESCROW_ADDRESS` is set + `BRAIN_ESCROW_AUDIT_APPROVED !== "true"`, so an operator must explicitly attest audit completion before mainnet escrow registration is possible.
 - **Reconciliation matchers**: all 8 are concrete implementations (`services/ledger/src/reconciliation/{statement-balance,card-charge,invoice-payment,transaction-receipt,wallet-transfer,payroll-bank-debit,subscription-charge,onchain-settlement}.ts`), registered in `ReconciliationService`, and covered by unit + fast-check property tests (in the ledger coverage gate).
 - **Python agents**: the four MVP agents (`reconciliation/`, `payment/`, `anomaly/`, `plaid_extractor/`) plus the RFC 0004 `document_extractor/` are implemented under `services/agents/brain_agents/`. Each owns a FastAPI router (`/run/<agent>`); they share `BrainApiClient` for `/v1/execution/propose`, `/v1/raw/ingest`, and `/v1/raw/{id}/parsed` calls. `plaid_extractor` is deterministic (no LLM); the others reason via OpenAI. `document_extractor` turns an uploaded document (CSV/text/XLSX via the deterministic `extract_text`; PDF deferred) into a `doc_obligation_v1` payload and writes it to Raw via `BrainApiClient.post_parsed` (it never touches the Ledger). mypy strict + pytest 80% coverage gates apply. **Inbound HMAC auth**: every `/run/*` route verifies `X-Brain-Auth: sha256=<hex>` over the request body via shared `BRAIN_AGENTS_INBOUND_SECRET`. The Python side fails at _boot_ in production when the secret is unset (`create_app()` raises `RuntimeError` before FastAPI is constructed); the api side signs every outbound `ReconciliationAgentClient` call with the same secret (`services/api/src/agents/sign-agent-request.ts`) and refuses to start when `RECONCILIATION_AGENT_URL` is set in production without `BRAIN_AGENTS_INBOUND_SECRET`.
