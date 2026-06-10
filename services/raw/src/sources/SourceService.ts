@@ -51,6 +51,11 @@ export interface SourceCredentialStore {
     externalAccountId: string,
   ): Promise<SourceRecord | null>;
   resolveCredentials(tenantId: string, id: string): Promise<object | null>;
+  /**
+   * Replace a connection's credentials, re-encrypted under the current key.
+   * The storage-side refresh primitive for OAuth connectors and key rotation.
+   */
+  updateCredentials(tenantId: string, id: string, credentials: object): Promise<boolean>;
 }
 
 export interface ListFilter {

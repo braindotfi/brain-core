@@ -41,7 +41,15 @@ const PROVENANCE_VALUES = new Set([
   "ambiguous",
   "human_confirmed",
   "agent_contributed",
+  "customer_asserted",
 ]);
+
+/**
+ * Low-trust provenances share the 0.5 confidence ceiling (Phase 2 trust
+ * contract): agent contributions and generic-push / unknown-source data
+ * cannot mint high confidence; only corroboration lifts them (persistMatch).
+ */
+const CAPPED_PROVENANCES = new Set(["agent_contributed", "customer_asserted"]);
 
 function cappedConfidence(provenance: string, raw: number): number {
   if (raw < 0 || raw > 1) {
@@ -49,7 +57,7 @@ function cappedConfidence(provenance: string, raw: number): number {
       details: { confidence: raw },
     });
   }
-  if (provenance === "agent_contributed") {
+  if (CAPPED_PROVENANCES.has(provenance)) {
     return Math.min(raw, AGENT_CONTRIBUTED_CONFIDENCE_CEILING);
   }
   return raw;

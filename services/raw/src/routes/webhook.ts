@@ -143,6 +143,7 @@ export async function registerWebhook(
           sourceRef: a.sourceRef,
           body: a.body,
           mimeType: a.mimeType,
+          ...(a.envelope !== undefined ? { envelope: a.envelope } : {}),
         }));
         const results = await ingestMany(deps, inputs);
 

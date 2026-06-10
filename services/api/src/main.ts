@@ -77,6 +77,7 @@ import {
   registerRawPlugin,
   SourceService,
   PostgresSourceRepository,
+  startSyncWorker,
   type RegisterRawPluginOptions,
 } from "@brain/raw";
 
@@ -688,6 +689,16 @@ async function main(): Promise<void> {
     return d === "payable" || d === "receivable" ? d : null;
   };
 
+  // Phase 2 trust contract: the gate's low-trust auto-execution rule (check
+  // 9.5) reads the linked obligation's provenance — a reconciliation-
+  // corroborated obligation (promoted to `extracted`) keeps document-only
+  // evidence eligible for an `allow` outcome.
+  const resolveObligationProvenance = async (
+    ctx: ServiceCallContext,
+    obligationId: string,
+  ): Promise<string | null> =>
+    (await ledgerService.findObligationById(ctx, obligationId))?.provenance ?? null;
+
   // Production fence: the always-applicable money-path safety loaders must be
   // wired in production. Same fail-closed posture as the rail/escrow fences.
   assertMoneyPathLoadersWiredInProduction({
@@ -722,6 +733,7 @@ async function main(): Promise<void> {
     detectDuplicates,
     resolveObligationConfidence,
     resolveObligationDirection,
+    resolveObligationProvenance,
     ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
     ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
     sourceCredentialResolver,
@@ -1444,6 +1456,7 @@ async function main(): Promise<void> {
           detectDuplicates,
           resolveObligationConfidence,
           resolveObligationDirection,
+          resolveObligationProvenance,
           ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
           ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
           sourceCredentialResolver,
@@ -1958,6 +1971,18 @@ async function main(): Promise<void> {
   // -- background workers ---------------------------------------------
   const normalizeWorker = startNormalizeWorker({ pool, audit });
 
+  // Authenticated incremental pull (ingestion architecture §10). The
+  // cross-tenant source poll needs BYPASSRLS, hence privilegedPool; all
+  // per-partition ingest writes stay tenant-scoped. Credentials are resolved
+  // narrowly per partition run via the encrypted source-credential store.
+  const syncWorker = startSyncWorker({
+    pool: privilegedPool,
+    blob,
+    audit,
+    resolveCredentials: (tenantId, sourceId) =>
+      postgresSourceRepo.resolveCredentials(tenantId, sourceId),
+  });
+
   let anchorTimer: NodeJS.Timeout | undefined;
   let anchorShutdown = false;
 
@@ -2105,6 +2130,7 @@ async function main(): Promise<void> {
       const outcome = await runShutdown({
         workers: [
           normalizeWorker,
+          syncWorker,
           outboxWorker,
           webhookDispatchWorker,
           tenantBlobPurgeWorker,

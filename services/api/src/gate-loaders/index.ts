@@ -296,13 +296,24 @@ export function makeResolveEvidence(
 }
 
 function sourceTrust(sourceType: string): TrustLevel {
-  // Verified first-party financial sources (HMAC-authenticated webhooks) are
-  // signed-from-source ⇒ high. Agent-contributed artifacts are the lowest-trust
-  // input (an external principal pushed them) ⇒ low. Everything else (upload,
-  // email, ERP, on-chain, other) is medium. Trust never derives from the
-  // caller-chosen parser label.
+  // Verified first-party financial sources (HMAC-authenticated webhooks /
+  // authenticated pull) are signed-from-source ⇒ high. Caller-pushed inputs,
+  // agent contributions and the generic customer-push/file tier (Phase 2
+  // trust contract: customer_asserted), are low: the channel authenticates
+  // the CALLER, not the asserted facts, so the gate refuses auto-execution
+  // on them until corroborated. Everything else (authenticated ERP, on-chain
+  // indexers, human Wiki annotations) is medium. Trust never derives from
+  // the caller-chosen parser label.
   if (sourceType === "plaid" || sourceType === "stripe") return "high";
-  if (sourceType === "agent_contributed") return "low";
+  if (
+    sourceType === "agent_contributed" ||
+    sourceType === "csv_upload" ||
+    sourceType === "pdf_upload" ||
+    sourceType === "email_inbound" ||
+    sourceType === "other"
+  ) {
+    return "low";
+  }
   return "medium";
 }
 

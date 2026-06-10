@@ -12,6 +12,9 @@
  * dedup, and audit.
  */
 
+import type { ArtifactSourceType } from "../sources/types.js";
+import type { IngestEnvelopeFields } from "../envelope.js";
+
 export interface FetchedArtifact {
   /** Canonical bytes. Adapter may stream, but for MVP we buffer. */
   body: Buffer;
@@ -19,11 +22,55 @@ export interface FetchedArtifact {
   mimeType: string | undefined;
   /** Source-specific identifiers (Plaid webhook_id, NetSuite internal_id, etc.). */
   sourceRef: Record<string, unknown>;
+  /**
+   * Standard ingestion envelope (§9): declared source_schema, the
+   * effective/observed timestamps, source chain, object coordinates, and the
+   * sync idempotency key. Optional — adapters fill what their provider exposes.
+   */
+  envelope?: IngestEnvelopeFields;
+}
+
+export type SyncCheckpointType = "cursor" | "page_token" | "watermark" | "snapshot";
+
+/** Declares one partition an adapter syncs: a provider object type with its checkpoint style. */
+export interface SyncObjectTypeSpec {
+  readonly objectType: string;
+  readonly checkpointType: SyncCheckpointType;
+}
+
+/** The committed state the worker hands an adapter for one partition pull. */
+export interface SyncPartitionState {
+  readonly sourceId: string;
+  readonly resourceId: string;
+  readonly objectType: string;
+  readonly checkpointType: SyncCheckpointType;
+  /** Last committed checkpoint; null means backfill from the beginning. */
+  readonly committedCheckpoint: unknown;
+}
+
+export interface FetchIncrementalContext {
+  readonly tenantId: string;
+  /** Decrypted connection credentials, resolved by the worker; narrow + temporary. */
+  readonly credentials: Record<string, unknown>;
+  readonly partition: SyncPartitionState;
+}
+
+export interface FetchIncrementalResult {
+  /** One bounded batch of artifacts. The worker durably commits these FIRST. */
+  artifacts: FetchedArtifact[];
+  /**
+   * Checkpoint to commit AFTER the batch is durably ingested. Never advanced
+   * by the adapter itself (anti-pattern: advancing a checkpoint before raw
+   * data is durably committed).
+   */
+  nextCheckpoint: unknown;
+  /** True when the provider signals more pages behind this checkpoint. */
+  hasMore: boolean;
 }
 
 export interface SourceAdapter {
-  /** Machine id — matches raw_artifacts.source_type. */
-  readonly sourceType: string;
+  /** Machine id — matches raw_artifacts.source_type (one reconciled vocabulary). */
+  readonly sourceType: ArtifactSourceType;
   /**
    * When true, an artifact of this source_type may ONLY be created through an
    * authenticated provider path (the HMAC-verified `/raw/webhooks/{provider}`
@@ -42,4 +89,17 @@ export interface SourceAdapter {
     rawBody: Buffer,
     headers: Record<string, unknown>,
   ): Promise<FetchedArtifact[]>;
+  /**
+   * Partitions this adapter syncs via fetchIncremental, one per provider
+   * object type (§10 — never one cursor for the whole connection). The sync
+   * worker materializes a raw_sync_partitions row per entry per connection.
+   */
+  readonly syncObjectTypes?: ReadonlyArray<SyncObjectTypeSpec>;
+  /**
+   * Authenticated incremental pull (ingestion method 2). Retrieves ONE
+   * bounded batch behind the committed checkpoint and returns the artifacts
+   * plus the next checkpoint. Pure with respect to Brain state: no DB or
+   * blob writes — the worker owns persistence and checkpoint commit order.
+   */
+  fetchIncremental?(ctx: FetchIncrementalContext): Promise<FetchIncrementalResult>;
 }

@@ -32,6 +32,9 @@ export const ID_PREFIX = {
   // Sources (v0.3 / PLAN-FIRST #12). One row per adapter connection.
   source: "src",
   sourceSyncJob: "sjob",
+  // Ingestion architecture §10 — per-(connection, resource, object_type)
+  // sync checkpoint. One row per independently committed partition.
+  sourceSyncPartition: "spart",
   // Ledger entities (v0.3 / Layer 2). Prefixes are wire-visible — never rename.
   ledgerAccount: "acct",
   ledgerBalance: "bal",
@@ -108,6 +111,7 @@ export const newWikiRelationId = (): string => brainId(ID_PREFIX.wikiRelation);
 export const newWikiPageId = (): string => brainId(ID_PREFIX.wikiPage);
 export const newSourceId = (): string => brainId(ID_PREFIX.source);
 export const newSourceSyncJobId = (): string => brainId(ID_PREFIX.sourceSyncJob);
+export const newSourceSyncPartitionId = (): string => brainId(ID_PREFIX.sourceSyncPartition);
 export const newAccountId = (): string => brainId(ID_PREFIX.ledgerAccount);
 export const newBalanceId = (): string => brainId(ID_PREFIX.ledgerBalance);
 export const newTransactionId = (): string => brainId(ID_PREFIX.ledgerTransaction);

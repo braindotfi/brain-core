@@ -21,8 +21,15 @@ export interface PostgresSourceRepositoryDeps {
   readonly credentialKeyId?: string;
 }
 
-/** Source types whose credentials should be encrypted at rest. */
-const CREDENTIAL_SOURCE_TYPES: ReadonlySet<SourceType> = new Set<SourceType>(["plaid", "stripe"]);
+/**
+ * Does this connect payload carry anything worth encrypting? The store is
+ * source-type-agnostic (ingestion architecture Phase 1: the credential vault
+ * serves EVERY authenticated connector, not a plaid/stripe allowlist) — any
+ * non-empty credentials object is encrypted at rest under the current key.
+ */
+function hasCredentialMaterial(credentials: object | undefined): credentials is object {
+  return credentials !== undefined && Object.keys(credentials).length > 0;
+}
 
 function rowToRecord(row: Record<string, unknown>): SourceRecord {
   return {
@@ -63,30 +70,20 @@ export class PostgresSourceRepository implements SourceRepository, SourceCredent
     let encCreds: Buffer | null = null;
     let keyId: string | null = null;
 
-    // Fail-closed: if the caller passed credentials for a credential-bearing
-    // source type (plaid / stripe / ...) and no key is loaded, refuse the
-    // insert. Without this, the row lands with encrypted_credentials = NULL
-    // and a later getCredentials() call returns null — the source becomes
-    // silently unusable. Peer review caught the silent-NULL path.
-    if (
-      credentials !== undefined &&
-      CREDENTIAL_SOURCE_TYPES.has(record.type) &&
-      (this.deps.credentialKey === undefined || this.deps.credentialKeyId === undefined)
-    ) {
-      throw new Error(
-        `PostgresSourceRepository: refusing to insert ${record.type} source with NULL ` +
-          "encrypted_credentials. Credentials were provided but no credentialKey / " +
-          "credentialKeyId is configured. Wire BRAIN_SOURCE_CREDENTIAL_KEY or the Azure " +
-          "Key Vault provider in the api boot (shared/src/crypto/credential-key-provider.ts).",
-      );
-    }
-
-    if (
-      credentials !== undefined &&
-      this.deps.credentialKey !== undefined &&
-      this.deps.credentialKeyId !== undefined &&
-      CREDENTIAL_SOURCE_TYPES.has(record.type)
-    ) {
+    // Fail-closed: if the caller passed credential material (for ANY source
+    // type) and no key is loaded, refuse the insert. Without this, the row
+    // lands with encrypted_credentials = NULL and a later getCredentials()
+    // call returns null — the source becomes silently unusable. Peer review
+    // caught the silent-NULL path.
+    if (hasCredentialMaterial(credentials)) {
+      if (this.deps.credentialKey === undefined || this.deps.credentialKeyId === undefined) {
+        throw new Error(
+          `PostgresSourceRepository: refusing to insert ${record.type} source with NULL ` +
+            "encrypted_credentials. Credentials were provided but no credentialKey / " +
+            "credentialKeyId is configured. Wire BRAIN_SOURCE_CREDENTIAL_KEY or the Azure " +
+            "Key Vault provider in the api boot (shared/src/crypto/credential-key-provider.ts).",
+        );
+      }
       const result = encryptCredentials(
         credentials,
         this.deps.credentialKey,
@@ -206,5 +203,41 @@ export class PostgresSourceRepository implements SourceRepository, SourceCredent
     const row = rows[0];
     if (row === undefined || row.encrypted_credentials === null) return null;
     return decryptCredentials(row.encrypted_credentials, this.deps.credentialKey);
+  }
+
+  /**
+   * Re-encrypt and replace a connection's credentials under the CURRENT key
+   * (and key id). This is the storage-side refresh primitive: OAuth-token
+   * refresh flows (Merge, Finch, ...) call it after exchanging a refresh
+   * token, and key rotation re-stamps credential_key_id as a side effect.
+   * Returns false when the source row does not exist for this tenant.
+   */
+  public async updateCredentials(
+    tenantId: string,
+    id: string,
+    credentials: object,
+  ): Promise<boolean> {
+    if (this.deps.credentialKey === undefined || this.deps.credentialKeyId === undefined) {
+      throw new Error(
+        "PostgresSourceRepository: refusing to update credentials without a configured " +
+          "credentialKey / credentialKeyId (see credential-key-provider.ts).",
+      );
+    }
+    const { ciphertext, keyId } = encryptCredentials(
+      credentials,
+      this.deps.credentialKey,
+      this.deps.credentialKeyId,
+    );
+    const { rowCount } = await withTenantScope(this.deps.pool, tenantId, (c) =>
+      c.query(
+        `UPDATE raw_sources
+            SET encrypted_credentials = $2,
+                credential_key_id = $3,
+                updated_at = now()
+          WHERE id = $1`,
+        [id, ciphertext, keyId],
+      ),
+    );
+    return (rowCount ?? 0) > 0;
   }
 }

@@ -20,6 +20,27 @@ export const SOURCE_TYPES = [
 ] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
+/**
+ * The single artifact-level source vocabulary (`raw_artifacts.source_type`).
+ *
+ * One provider-named set: the 8 connectable source types above, plus the
+ * non-connector ingestion origins that write artifacts directly:
+ *  - `agent_contributed`: agent-derived contributions (MCP `raw.contribute`),
+ *  - `wiki_annotation`: human-declared corrections from the Wiki annotate path,
+ *  - `other`: the universal fallback for sources with no native connector.
+ *
+ * Prior to the ingestion-architecture reconciliation the adapter layer and the
+ * DB CHECK used a second, disagreeing vocabulary (`erp_netsuite`, `email`,
+ * `upload`, `chain_evm`); migration raw/0007 renames those in place.
+ */
+export const ARTIFACT_SOURCE_TYPES = [
+  ...SOURCE_TYPES,
+  "agent_contributed",
+  "wiki_annotation",
+  "other",
+] as const;
+export type ArtifactSourceType = (typeof ARTIFACT_SOURCE_TYPES)[number];
+
 /** Source-types with concrete adapter implementations in v0.3. */
 export const CONCRETE_SOURCE_TYPES: ReadonlySet<SourceType> = new Set(["plaid", "stripe"]);
 

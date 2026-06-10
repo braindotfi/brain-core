@@ -10,7 +10,11 @@ export type Provenance =
   | "inferred"
   | "ambiguous"
   | "human_confirmed"
-  | "agent_contributed";
+  | "agent_contributed"
+  // Phase 2 trust contract (ingestion architecture): generic-push and
+  // unknown-source data. Low trust: confidence capped at 0.5 and never
+  // eligible for auto-execution; corroboration promotes to "extracted".
+  | "customer_asserted";
 
 export type Currency = string; // ISO 4217 (BRL, USD, EUR, ...) or chain symbol (ETH, USDC, ...)
 

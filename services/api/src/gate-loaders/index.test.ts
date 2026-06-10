@@ -423,12 +423,12 @@ describe("makeResolveEvidence", () => {
         extracted: { b: 2 },
         extracted_at: capturedAt,
       },
-      // Authenticated upload / other first-party source ⇒ medium.
+      // Authenticated ERP / other first-party source ⇒ medium.
       {
         id: "rp_3",
         raw_artifact_id: "raw_3",
         parser: "invoice",
-        source_type: "upload",
+        source_type: "netsuite",
         extracted: { c: 3 },
         extracted_at: capturedAt,
       },

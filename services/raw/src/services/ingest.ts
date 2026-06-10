@@ -16,6 +16,7 @@ import {
 } from "@brain/shared";
 import type { Pool } from "pg";
 import { insertOrReuseArtifact } from "../repository/artifacts.js";
+import type { IngestEnvelopeFields } from "../envelope.js";
 
 export interface IngestInput {
   tenantId: string;
@@ -24,6 +25,12 @@ export interface IngestInput {
   sourceRef: Record<string, unknown>;
   body: Buffer;
   mimeType: string | undefined;
+  /**
+   * Standard ingestion envelope (§9). Declared metadata over an opaque
+   * payload — intake stores it and never parses the bytes against it, so an
+   * unknown sourceSchema still ingests and waits for a parser.
+   */
+  envelope?: IngestEnvelopeFields;
 }
 
 export interface IngestResult {
@@ -31,6 +38,7 @@ export interface IngestResult {
   sha256: string;
   bytes: number;
   sourceType: string;
+  sourceSchema: string | null;
   ingestedAt: string;
   deduplicated: boolean;
 }
@@ -69,6 +77,7 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
       mimeType: input.mimeType,
       bytes: input.body.length,
       ingestedBy: input.actor,
+      ...(input.envelope !== undefined ? { envelope: input.envelope } : {}),
     }),
   );
 
@@ -83,6 +92,12 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
       source_type: input.sourceType,
       sha256: sha,
       bytes: input.body.length,
+      ...(input.envelope?.sourceSchema !== undefined
+        ? { source_schema: input.envelope.sourceSchema }
+        : {}),
+      ...(input.envelope?.objectType !== undefined
+        ? { object_type: input.envelope.objectType }
+        : {}),
     },
     outputs: {
       raw_id: row.id,
@@ -95,6 +110,7 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
     sha256: sha,
     bytes: Number(row.bytes),
     sourceType: row.source_type,
+    sourceSchema: row.source_schema ?? null,
     ingestedAt: toIso(row.ingested_at),
     deduplicated,
   };

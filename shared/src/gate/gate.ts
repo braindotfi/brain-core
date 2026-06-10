@@ -19,7 +19,12 @@ import type { AuditEmitter } from "../audit/emitter.js";
 import type { ServiceCallContext } from "../contracts/types.js";
 import type { MetricsEmitter } from "../metrics.js";
 import { computeLedgerSnapshot } from "./snapshot.js";
-import { validateEvidence, type ResolvedEvidence, type RiskLevel } from "./evidence-validator.js";
+import {
+  validateEvidence,
+  validateLowTrustAutoExecution,
+  type ResolvedEvidence,
+  type RiskLevel,
+} from "./evidence-validator.js";
 import type { DuplicateCheckInput, DuplicateCheckResult } from "./duplicate.js";
 import type { AgentAttestationInput, AgentAttestationResult } from "./agent-attestation.js";
 import type { EscrowStateInput, ResolvedEscrowState } from "./escrow-binding.js";
@@ -297,6 +302,15 @@ export interface GateDependencies {
   resolveObligationDirection?: (
     intent: GatePaymentIntent,
   ) => Promise<"payable" | "receivable" | null>;
+  /**
+   * Reads the linked obligation's provenance for the low-trust
+   * auto-execution rule in check 9.5 (Phase 2 trust contract). A
+   * reconciliation-corroborated obligation (promoted to `extracted`) keeps
+   * document-only evidence eligible for an `allow` outcome; absent the
+   * loader (or with an uncorroborated obligation) document-only evidence
+   * fails closed on auto-execution and requires the confirm flow.
+   */
+  resolveObligationProvenance?: (intent: GatePaymentIntent) => Promise<string | null>;
   /**
    * Optional metrics sink (item 11). When wired, the gate emits at termination:
    *   - brain.gate.check.count   {check, outcome ∈ pass|fail|not_applicable, dry_run}
@@ -808,6 +822,25 @@ export async function runPreExecutionGate(
     });
     if (!evidenceResult.passed) {
       return failGate(9.5, "evidence_supports_action", { failures: evidenceResult.failures });
+    }
+    // Phase 2 trust contract: refuse AUTO-execution (outcome `allow`) when
+    // the supporting evidence is entirely low-trust (customer_asserted /
+    // uncorroborated agent_contributed). The confirm flow stays open; a
+    // corroborated linked obligation (provenance promoted to `extracted`)
+    // keeps document-only evidence eligible.
+    const obligationProvenance =
+      deps.resolveObligationProvenance !== undefined &&
+      input.intent.obligation_id !== null &&
+      input.intent.obligation_id !== undefined
+        ? await deps.resolveObligationProvenance(input.intent)
+        : null;
+    const lowTrustResult = validateLowTrustAutoExecution({
+      outcome: decision.outcome,
+      evidence: resolvedEvidence,
+      obligationProvenance,
+    });
+    if (!lowTrustResult.passed) {
+      return failGate(9.5, "evidence_supports_action", { failures: lowTrustResult.failures });
     }
     pass(checks, 9.5, "evidence_supports_action");
   } else {
