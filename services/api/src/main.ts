@@ -77,6 +77,7 @@ import {
   registerRawPlugin,
   SourceService,
   PostgresSourceRepository,
+  startInterpretWorker,
   startSyncWorker,
   type RegisterRawPluginOptions,
 } from "@brain/raw";
@@ -1971,6 +1972,12 @@ async function main(): Promise<void> {
   // -- background workers ---------------------------------------------
   const normalizeWorker = startNormalizeWorker({ pool, audit });
 
+  // Interpretation (Appendix B mechanism 2): promotes landed structured
+  // artifacts (registered source_schema) into raw_parsed, which the
+  // normalize worker then promotes to Ledger entities. Cross-tenant poll,
+  // hence privilegedPool; per-artifact writes stay tenant-scoped.
+  const interpretWorker = startInterpretWorker({ pool: privilegedPool, blob, audit });
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence privilegedPool; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2130,6 +2137,7 @@ async function main(): Promise<void> {
       const outcome = await runShutdown({
         workers: [
           normalizeWorker,
+          interpretWorker,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,
