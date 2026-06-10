@@ -14,6 +14,7 @@ import type { Pool } from "pg";
 import type { AuditEmitter, ServiceCallContext } from "@brain/shared";
 import { normalizePlaidArtifact } from "./plaid.js";
 import { normalizeDocObligationArtifact } from "./doc-obligation.js";
+import { normalizeStripeArtifact } from "./stripe.js";
 
 export interface ParserExtractInput {
   rawParsedId: string;
@@ -82,4 +83,8 @@ registerParser("doc_obligation_v1", async (pool, audit, ctx, input) =>
     payload: input.payload,
     confidence: input.confidence ?? AGENT_CONTRIBUTED_DOC_CONFIDENCE,
   }),
+);
+
+registerParser("stripe_v1", async (pool, audit, ctx, input) =>
+  normalizeStripeArtifact(pool, audit, ctx, input),
 );

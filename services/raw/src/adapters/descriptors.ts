@@ -116,7 +116,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
       "balance_transaction",
       "customer",
     ],
-    parserVersions: [],
+    parserVersions: ["stripe_v1"],
   },
   {
     connectorType: "netsuite",
