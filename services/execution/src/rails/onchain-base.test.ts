@@ -106,6 +106,41 @@ describe("OnchainBaseRail.dispatch", () => {
     });
   });
 
+  it("does NOT tag BadNonce as permanent (a racing dispatch may have moved money)", async () => {
+    const { executor } = mockExecutor({
+      executeImpl: async () => {
+        throw new Error("execution reverted: BadNonce(6, 5)");
+      },
+    });
+    const rail = new OnchainBaseRail({ executor });
+
+    await expect(rail.dispatch(dispatchInput())).rejects.toMatchObject({
+      code: "execution_rail_declined",
+      details: expect.not.objectContaining({ permanent_failure: true }),
+    });
+  });
+
+  it("tags a deterministic revert (ExceedsPerTxCap selector) as a permanent failure", async () => {
+    // The incident shape: viem cannot decode the custom error (not on the
+    // call ABI) and reports the raw 4-byte signature.
+    const { executor } = mockExecutor({
+      executeImpl: async () => {
+        throw new Error(
+          'The contract function "executeViaSessionKey" reverted with the following signature:\n0x49aeece1',
+        );
+      },
+    });
+    const rail = new OnchainBaseRail({ executor });
+
+    await expect(rail.dispatch(dispatchInput())).rejects.toMatchObject({
+      code: "execution_rail_declined",
+      details: expect.objectContaining({
+        permanent_failure: true,
+        decoded_revert: "ExceedsPerTxCap()",
+      }),
+    });
+  });
+
   it("surfaces an on-chain ReentrantCall revert as execution_rail_declined", async () => {
     const { executor } = mockExecutor({
       executeImpl: async () => {

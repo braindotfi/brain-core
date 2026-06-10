@@ -33,8 +33,14 @@ import {
   type ServiceCallContext,
   type TenantScopedClient,
 } from "@brain/shared";
-import { MAX_DISPATCH_ATTEMPTS, type OutboxService, type OutboxRow } from "./OutboxService.js";
+import {
+  MAX_DISPATCH_ATTEMPTS,
+  MAX_TOTAL_DISPATCH_ATTEMPTS,
+  type OutboxService,
+  type OutboxRow,
+} from "./OutboxService.js";
 import type { RailRegistry } from "../rails/stubs.js";
+import { permanentFailureReason } from "../rails/permanent-failure.js";
 import { railKeyForActionType, validateRailReceipt } from "../rails/receipts.js";
 
 /** Query surface for the cross-tenant (privileged) outbox operations. */
@@ -71,7 +77,7 @@ export interface OutboxWorkerDeps {
 }
 
 /** Per-row outcome (also the cycle tally keys). */
-export type RowOutcome = "settled" | "retrying" | "reconciling";
+export type RowOutcome = "settled" | "retrying" | "reconciling" | "failed";
 
 export interface CycleResult {
   claimed: number;
@@ -79,6 +85,8 @@ export interface CycleResult {
   settled: number;
   retrying: number;
   reconciling: number;
+  /** Rows terminally failed on a deterministic (permanent) rail rejection. */
+  failed: number;
 }
 
 /** System ServiceCallContext for the worker acting inside a row's tenant. */
@@ -107,6 +115,7 @@ export async function runOutboxCycle(
     settled: 0,
     retrying: 0,
     reconciling: 0,
+    failed: 0,
   };
   for (const row of rows) {
     const outcome = await processClaimedRow(deps, row);
@@ -121,6 +130,16 @@ export async function runOutboxCycle(
  * retries (up to {@link MAX_DISPATCH_ATTEMPTS}) then escalates to `reconciling`;
  * a post-dispatch receipt mismatch goes straight to `reconciling` (money may
  * have moved — never auto-fail the intent in that case).
+ *
+ * Two bounds keep a failing row from hammering the rail forever:
+ *  - a dispatch error the rail tagged PERMANENT (a deterministic contract
+ *    revert, e.g. ExceedsPerTxCap — see rails/permanent-failure.ts) skips the
+ *    retry budget entirely: the revert guarantees nothing moved, so the worker
+ *    closes the §6 audit pair with the failure outcome, fails the intent via
+ *    PaymentIntentService.failExecution, and parks the row at status=failed;
+ *  - everything else backs off exponentially (claim-side window) and stops
+ *    for good at {@link MAX_TOTAL_DISPATCH_ATTEMPTS}, where the worker emits
+ *    `execution.outbox.exhausted` and the row parks in `reconciling` for ops.
  */
 export async function processClaimedRow(
   deps: OutboxWorkerDeps,
@@ -138,8 +157,11 @@ export async function processClaimedRow(
   // so ops sees it immediately. Defence in depth, not a substitute for the gate.
   if (!row.audit_before_id || row.audit_before_id.length === 0) {
     const reason = `§6 invariant violated: outbox row has no audit_before_id; refusing to dispatch`;
-    await deps.withPrivileged((c) => deps.outbox.markReconciling(c, row.id, reason));
-    await emitStuck(deps, row, row.attempt_count, reason);
+    const attempts = await deps.withPrivileged((c) =>
+      deps.outbox.markReconciling(c, row.id, reason),
+    );
+    await emitStuck(deps, row, attempts, reason);
+    await maybeEmitExhausted(deps, row, attempts, reason);
     return "reconciling";
   }
 
@@ -156,10 +178,18 @@ export async function processClaimedRow(
     });
     receipt = result.receipt;
   } catch (err) {
+    // 1.5 — a PERMANENT dispatch failure (deterministic contract revert) can
+    // never succeed on retry; terminal-fail the row + the intent instead of
+    // burning the retry budget against a guaranteed revert.
+    const permanent = permanentFailureReason(err);
+    if (permanent !== null) {
+      return await failPermanently(deps, row, ctx, permanent);
+    }
     const message = err instanceof Error ? err.message : String(err);
     const attempts = await deps.withPrivileged((c) => deps.outbox.markFailed(c, row.id, message));
     if (attempts >= MAX_DISPATCH_ATTEMPTS) {
       await emitStuck(deps, row, attempts, message);
+      await maybeEmitExhausted(deps, row, attempts, message);
       return "reconciling";
     }
     return "retrying";
@@ -172,8 +202,11 @@ export async function processClaimedRow(
   const receiptCheck = validateRailReceipt(railKeyForActionType(actionKind), receipt);
   if (!receiptCheck.ok) {
     const reason = `invalid_rail_receipt: missing ${receiptCheck.missing.join(", ")}`;
-    await deps.withPrivileged((c) => deps.outbox.markReconciling(c, row.id, reason));
-    await emitStuck(deps, row, row.attempt_count, reason);
+    const attempts = await deps.withPrivileged((c) =>
+      deps.outbox.markReconciling(c, row.id, reason),
+    );
+    await emitStuck(deps, row, attempts, reason);
+    await maybeEmitExhausted(deps, row, attempts, reason);
     return "reconciling";
   }
 
@@ -222,6 +255,7 @@ export async function processClaimedRow(
     const attempts = await deps.withPrivileged((c) => deps.outbox.markFailed(c, row.id, message));
     if (attempts >= MAX_DISPATCH_ATTEMPTS) {
       await emitStuck(deps, row, attempts, message);
+      await maybeEmitExhausted(deps, row, attempts, message);
       return "reconciling";
     }
     return "retrying";
@@ -229,6 +263,73 @@ export async function processClaimedRow(
 
   await deps.withPrivileged((c) => deps.outbox.markSettled(c, row.id));
   return "settled";
+}
+
+/**
+ * Terminal path for a PERMANENT dispatch failure (deterministic contract
+ * revert — see rails/permanent-failure.ts). The revert guarantees the whole
+ * call reverted, so nothing moved: this is the "DEFINITIVE rail rejection"
+ * case PaymentIntentService.failExecution exists for. Order matters for crash
+ * recovery: the after-audit closes the §6 pair first, then the intent fails
+ * (dispatching → failed), and only then does the row leave the claim set — a
+ * crash in between leaves the row reclaimable, and the re-run lands in the
+ * markReconciling fallback below once the intent is no longer `dispatching`.
+ */
+async function failPermanently(
+  deps: OutboxWorkerDeps,
+  row: OutboxRow,
+  ctx: ServiceCallContext,
+  reason: string,
+): Promise<RowOutcome> {
+  // Close the §6 audit pair with the failure outcome (same shape as the
+  // aborted-handoff after-event in PaymentIntentService.execute).
+  const after = await deps.audit.emit({
+    tenantId: row.tenant_id,
+    layer: "agent",
+    actor: deps.workerId,
+    action: "payment_intent.execute.after",
+    inputs: {
+      payment_intent_id: row.payment_intent_id,
+      rail: row.rail,
+      outbox_id: row.id,
+    },
+    outputs: {
+      ok: false,
+      permanent_failure: true,
+      error: reason,
+      gate_audit_before: row.audit_before_id,
+    },
+  });
+
+  try {
+    await deps.executor.failExecution(ctx, { paymentIntentId: row.payment_intent_id });
+  } catch (err) {
+    // The intent could not be failed (e.g. it is no longer `dispatching`).
+    // Do NOT park the row as failed with the intent state unknown — hand it
+    // to ops via the normal reconciling path instead.
+    const message = `${reason}; fail_transition_failed: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+    const attempts = await deps.withPrivileged((c) =>
+      deps.outbox.markReconciling(c, row.id, message),
+    );
+    await emitStuck(deps, row, attempts, message);
+    await maybeEmitExhausted(deps, row, attempts, message);
+    return "reconciling";
+  }
+
+  await deps.withPrivileged((c) =>
+    deps.outbox.markPermanentlyFailed(c, row.id, { error: reason, auditAfterId: after.id }),
+  );
+  await deps.audit.emit({
+    tenantId: row.tenant_id,
+    layer: "agent",
+    actor: deps.workerId,
+    action: "execution.outbox.failed",
+    inputs: { outbox_id: row.id, payment_intent_id: row.payment_intent_id },
+    outputs: { attempt_count: row.attempt_count + 1, last_error: reason, status: "failed" },
+  });
+  return "failed";
 }
 
 async function emitStuck(
@@ -242,6 +343,29 @@ async function emitStuck(
     layer: "agent",
     actor: deps.workerId,
     action: "execution.outbox.stuck",
+    inputs: { outbox_id: row.id, payment_intent_id: row.payment_intent_id },
+    outputs: { attempt_count: attempts, last_error: error, status: "reconciling" },
+  });
+}
+
+/**
+ * Hard-giveup signal, emitted exactly once when a row's attempt count reaches
+ * {@link MAX_TOTAL_DISPATCH_ATTEMPTS} (claimNext stops picking the row up at
+ * the ceiling, so the count cannot grow past it). Mirrors the webhook DLQ's
+ * `audit.webhook.delivery.exhausted` so operators see the giveup, not silence.
+ */
+async function maybeEmitExhausted(
+  deps: OutboxWorkerDeps,
+  row: OutboxRow,
+  attempts: number,
+  error: string,
+): Promise<void> {
+  if (attempts < MAX_TOTAL_DISPATCH_ATTEMPTS) return;
+  await deps.audit.emit({
+    tenantId: row.tenant_id,
+    layer: "agent",
+    actor: deps.workerId,
+    action: "execution.outbox.exhausted",
     inputs: { outbox_id: row.id, payment_intent_id: row.payment_intent_id },
     outputs: { attempt_count: attempts, last_error: error, status: "reconciling" },
   });

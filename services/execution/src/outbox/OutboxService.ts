@@ -50,6 +50,8 @@ export interface OutboxRow {
   status: OutboxStatus;
   attempt_count: number;
   last_error: string | null;
+  /** Set on every failed processing attempt; drives the claim backoff window. */
+  last_attempt_at: Date | null;
   rail_receipt: Record<string, unknown> | null;
   audit_before_id: string;
   audit_after_id: string | null;
@@ -81,6 +83,33 @@ export interface EnqueueResult {
 
 /** After-the-fact stuck threshold (spec: 3 attempts → reconciling). */
 export const MAX_DISPATCH_ATTEMPTS = 3;
+
+/**
+ * Hard ceiling on TOTAL processing attempts for one row. `reconciling` rows
+ * stay claimable (the spec wants stuck rows retried), but without a ceiling a
+ * dispatch that fails deterministically cycles dispatching → reconciling on
+ * every poll forever (observed: ExceedsPerTxCap reaching attempt_count 304+ in
+ * ~10 minutes against the Base Sepolia RPC). At this count the claim query
+ * stops picking the row up; it parks in `reconciling` for ops and the worker
+ * emits `execution.outbox.exhausted` once. With the backoff schedule below the
+ * ceiling is reached after roughly 1.5 hours of slowing retries.
+ */
+export const MAX_TOTAL_DISPATCH_ATTEMPTS = 12;
+
+/**
+ * Exponential claim backoff, mirroring the webhook DLQ schedule
+ * (shared/src/webhooks/dead-letters.ts nextAttemptDelaySeconds):
+ * attempt_count = 1 → 30s, 2 → 60s, 3 → 120s, 4 → 240s, ≥5 → 480s (cap).
+ * Embedded in the claimNext SQL so the window check is atomic with the claim.
+ */
+export const RETRY_BACKOFF_BASE_SECONDS = 30;
+export const RETRY_BACKOFF_CAP_SECONDS = 480;
+
+/** SQL fragment: the row's next-attempt window has elapsed (or never failed). */
+const BACKOFF_ELAPSED_SQL =
+  `(last_attempt_at IS NULL OR last_attempt_at + ` +
+  `(LEAST(${RETRY_BACKOFF_BASE_SECONDS} * power(2, attempt_count - 1), ` +
+  `${RETRY_BACKOFF_CAP_SECONDS}) || ' seconds')::interval <= now())`;
 
 /** Stable JSON (recursively key-sorted) for a deterministic payload hash. */
 function canonicalJson(value: unknown): string {
@@ -151,6 +180,10 @@ export class OutboxService {
    * LOCKED` lets concurrent workers claim disjoint row sets without blocking;
    * the status flip removes claimed rows from the partial claim index so no
    * other poll re-picks them. Run on a privileged (cross-tenant) connection.
+   *
+   * Two claim guards bound the retry loop (see MAX_TOTAL_DISPATCH_ATTEMPTS):
+   * a row is claimable only while its exponential backoff window has elapsed
+   * AND its total attempt count is under the hard ceiling.
    */
   public async claimNext(client: OutboxClient, workerId: string, limit = 10): Promise<OutboxRow[]> {
     const { rows } = await client.query<OutboxRow>(
@@ -159,12 +192,14 @@ export class OutboxService {
         WHERE id IN (
           SELECT id FROM execution_outbox
             WHERE status IN ('pending', 'reconciling')
+              AND attempt_count < $3
+              AND ${BACKOFF_ELAPSED_SQL}
             ORDER BY created_at
             FOR UPDATE SKIP LOCKED
             LIMIT $2
         )
         RETURNING *`,
-      [workerId, limit],
+      [workerId, limit, MAX_TOTAL_DISPATCH_ATTEMPTS],
     );
     return rows;
   }
@@ -203,6 +238,7 @@ export class OutboxService {
       `UPDATE execution_outbox
           SET attempt_count = attempt_count + 1,
               last_error = $2,
+              last_attempt_at = now(),
               status = CASE
                 WHEN attempt_count + 1 >= $3 THEN 'reconciling'
                 ELSE 'pending'
@@ -215,6 +251,30 @@ export class OutboxService {
     const row = rows[0];
     if (row === undefined) throw new Error(`execution_outbox markFailed: no row ${id}`);
     return row.attempt_count;
+  }
+
+  /**
+   * Terminal failure for a DEFINITIVE rail rejection (a deterministic revert —
+   * the whole call reverted on-chain, so nothing moved and the same payload can
+   * never succeed). The row leaves the claim set permanently; the caller is
+   * responsible for failing the intent (PaymentIntentService.failExecution)
+   * and emitting the audit trail. Ambiguous failures must keep using
+   * markFailed / markReconciling instead.
+   */
+  public async markPermanentlyFailed(
+    client: OutboxClient,
+    id: string,
+    args: { error: string; auditAfterId: string },
+  ): Promise<void> {
+    await client.query(
+      `UPDATE execution_outbox
+          SET status = 'failed', attempt_count = attempt_count + 1,
+              last_error = $2, audit_after_id = $3,
+              last_attempt_at = now(), completed_at = now(),
+              locked_at = NULL, locked_by = NULL
+        WHERE id = $1`,
+      [id, args.error, args.auditAfterId],
+    );
   }
 
   /**
@@ -245,13 +305,25 @@ export class OutboxService {
     return rows;
   }
 
-  /** Force a row into `reconciling` (e.g. a post-dispatch ambiguity). */
-  public async markReconciling(client: OutboxClient, id: string, error: string): Promise<void> {
-    await client.query(
+  /**
+   * Force a row into `reconciling` (e.g. a post-dispatch ambiguity). Counts as
+   * a processing attempt and stamps the backoff clock — reconciling rows stay
+   * claimable, so without this a row that reconciles deterministically (bad
+   * receipt, missing audit_before_id) would be re-picked on every poll.
+   * Returns the new attempt_count so the caller can detect the ceiling.
+   */
+  public async markReconciling(client: OutboxClient, id: string, error: string): Promise<number> {
+    const { rows } = await client.query<{ attempt_count: number }>(
       `UPDATE execution_outbox
-          SET status = 'reconciling', last_error = $2, locked_at = NULL, locked_by = NULL
-        WHERE id = $1`,
+          SET status = 'reconciling', attempt_count = attempt_count + 1,
+              last_error = $2, last_attempt_at = now(),
+              locked_at = NULL, locked_by = NULL
+        WHERE id = $1
+        RETURNING attempt_count`,
       [id, error],
     );
+    const row = rows[0];
+    if (row === undefined) throw new Error(`execution_outbox markReconciling: no row ${id}`);
+    return row.attempt_count;
   }
 }

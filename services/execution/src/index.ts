@@ -70,6 +70,13 @@ export {
   type OnchainExecutor,
   type SessionKeyNonceReader,
 } from "./rails/onchain-base.js";
+// Deterministic-revert classification (permanent dispatch failures).
+export {
+  classifyDeterministicRevert,
+  permanentFailureReason,
+  DETERMINISTIC_SMART_ACCOUNT_REVERTS,
+  type DeterministicRevert,
+} from "./rails/permanent-failure.js";
 export {
   X402BaseRail,
   type X402BaseRailDeps,
@@ -129,6 +136,9 @@ export {
   OutboxService,
   payloadHash,
   MAX_DISPATCH_ATTEMPTS,
+  MAX_TOTAL_DISPATCH_ATTEMPTS,
+  RETRY_BACKOFF_BASE_SECONDS,
+  RETRY_BACKOFF_CAP_SECONDS,
   type OutboxRow,
   type OutboxStatus,
   type EnqueueInput,
