@@ -63,6 +63,7 @@ describe("buildWikiMemoryService.annotate", () => {
       sha256: "0".repeat(64),
       bytes: 0,
       sourceType: WIKI_ANNOTATION_SOURCE_TYPE,
+      sourceSchema: null,
       ingestedAt: "2026-01-01T00:00:00Z",
       deduplicated: false,
     });
@@ -111,6 +112,7 @@ describe("buildWikiMemoryService.annotate", () => {
       sha256: "0".repeat(64),
       bytes: 0,
       sourceType: WIKI_ANNOTATION_SOURCE_TYPE,
+      sourceSchema: null,
       ingestedAt: "2026-01-01T00:00:00Z",
       deduplicated: false,
     });

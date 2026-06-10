@@ -17,6 +17,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { brainError, fetchPublicHttps, isBrainId, requireScope, type Scope } from "@brain/shared";
 import { adapterForGenericIngest } from "../adapters/registry.js";
 import { ingestOne } from "../services/ingest.js";
+import { INGEST_OPERATIONS, type IngestEnvelopeFields } from "../envelope.js";
 import type { RawDeps } from "../deps.js";
 
 const REQUIRED_SCOPE: Scope = "raw:write";
@@ -27,6 +28,61 @@ interface JsonBody {
   source_ref?: Record<string, unknown>;
   url?: string;
   auth_header?: string;
+  source_schema?: string;
+  object_type?: string;
+  external_id?: string;
+  operation?: string;
+  effective_at?: string;
+  observed_at?: string;
+  idempotency_key?: string;
+}
+
+/**
+ * Validate the optional, caller-declared envelope fields (§9). The payload
+ * itself is never inspected — an unknown source_schema is stored verbatim and
+ * waits for a parser; only the declared metadata is shape-checked here.
+ */
+export function parseEnvelopeFields(raw: Record<string, unknown>): IngestEnvelopeFields {
+  const out: Record<string, unknown> = {};
+  const strField = (wire: string, key: string, maxLen: number): void => {
+    const v = raw[wire];
+    if (v === undefined) return;
+    if (typeof v !== "string" || v.length === 0 || v.length > maxLen) {
+      throw brainError(
+        "request_body_invalid",
+        `${wire} must be a non-empty string of at most ${maxLen} chars`,
+      );
+    }
+    out[key] = v;
+  };
+  strField("source_schema", "sourceSchema", 128);
+  strField("object_type", "objectType", 128);
+  strField("external_id", "externalId", 256);
+  strField("idempotency_key", "idempotencyKey", 256);
+
+  const op = raw["operation"];
+  if (op !== undefined) {
+    if (typeof op !== "string" || !(INGEST_OPERATIONS as readonly string[]).includes(op)) {
+      throw brainError(
+        "request_body_invalid",
+        `operation must be one of ${INGEST_OPERATIONS.join("|")}`,
+      );
+    }
+    out["operation"] = op;
+  }
+
+  const tsField = (wire: string, key: string): void => {
+    const v = raw[wire];
+    if (v === undefined) return;
+    if (typeof v !== "string" || Number.isNaN(new Date(v).getTime())) {
+      throw brainError("request_body_invalid", `${wire} must be an ISO 8601 date-time`);
+    }
+    out[key] = v;
+  };
+  tsField("effective_at", "effectiveAt");
+  tsField("observed_at", "observedAt");
+
+  return out as IngestEnvelopeFields;
 }
 
 export async function registerIngest(app: FastifyInstance, deps: RawDeps): Promise<void> {
@@ -76,6 +132,16 @@ async function handleMultipart(request: FastifyRequest, reply: FastifyReply, dep
   let source_ref: Record<string, unknown> | undefined;
   let mime_type: string | undefined;
   let file: { body: Buffer; mime: string; name: string } | undefined;
+  const envelopeWire: Record<string, unknown> = {};
+  const ENVELOPE_FIELDS = new Set([
+    "source_schema",
+    "object_type",
+    "external_id",
+    "operation",
+    "effective_at",
+    "observed_at",
+    "idempotency_key",
+  ]);
 
   for await (const part of anyRequest.parts()) {
     if (part.type === "field") {
@@ -90,6 +156,7 @@ async function handleMultipart(request: FastifyRequest, reply: FastifyReply, dep
           throw brainError("request_body_invalid", "source_ref must be JSON");
         }
       } else if (part.fieldname === "mime_type") mime_type = String(part.value);
+      else if (ENVELOPE_FIELDS.has(part.fieldname)) envelopeWire[part.fieldname] = part.value;
     } else {
       if (part.fieldname !== "file") continue;
       const body = await part.toBuffer();
@@ -107,6 +174,7 @@ async function handleMultipart(request: FastifyRequest, reply: FastifyReply, dep
   // raw_source_unsupported; a provider-authenticated-only type (plaid/stripe)
   // returns raw_source_reserved (it may only arrive via the webhook).
   adapterForGenericIngest(source_type);
+  const envelope = parseEnvelopeFields(envelopeWire);
 
   const result = await ingestOne(deps, {
     tenantId: request.principal!.tenantId,
@@ -115,6 +183,7 @@ async function handleMultipart(request: FastifyRequest, reply: FastifyReply, dep
     sourceRef: source_ref ?? {},
     body: file.body,
     mimeType: mime_type ?? file.mime,
+    envelope,
   });
 
   reply.status(result.deduplicated ? 200 : 201);
@@ -122,6 +191,7 @@ async function handleMultipart(request: FastifyRequest, reply: FastifyReply, dep
     raw_id: result.rawId,
     sha256: result.sha256,
     source_type: result.sourceType,
+    ...(result.sourceSchema !== null ? { source_schema: result.sourceSchema } : {}),
     bytes: result.bytes,
     ingested_at: result.ingestedAt,
     deduplicated: result.deduplicated,
@@ -134,6 +204,7 @@ async function handleJson(request: FastifyRequest, reply: FastifyReply, deps: Ra
     throw brainError("request_body_invalid", "source_type and url are required");
   }
   adapterForGenericIngest(body.source_type);
+  const envelope = parseEnvelopeFields(body as unknown as Record<string, unknown>);
 
   const headers: Record<string, string> = {};
   if (body.auth_header !== undefined) headers["authorization"] = body.auth_header;
@@ -150,6 +221,7 @@ async function handleJson(request: FastifyRequest, reply: FastifyReply, deps: Ra
     sourceRef: body.source_ref ?? { url: body.url },
     body: fetched.body,
     mimeType: fetched.contentType,
+    envelope,
   });
 
   reply.status(result.deduplicated ? 200 : 201);
@@ -157,6 +229,7 @@ async function handleJson(request: FastifyRequest, reply: FastifyReply, deps: Ra
     raw_id: result.rawId,
     sha256: result.sha256,
     source_type: result.sourceType,
+    ...(result.sourceSchema !== null ? { source_schema: result.sourceSchema } : {}),
     bytes: result.bytes,
     ingested_at: result.ingestedAt,
     deduplicated: result.deduplicated,

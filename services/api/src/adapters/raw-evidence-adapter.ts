@@ -28,6 +28,7 @@ export function buildRawEvidenceService(deps: RawDeps): IRawEvidenceService {
         sourceRef: req.sourceRef,
         body: req.body,
         mimeType: req.mimeType,
+        ...(req.envelope !== undefined ? { envelope: req.envelope } : {}),
       });
       return {
         rawId: result.rawId,

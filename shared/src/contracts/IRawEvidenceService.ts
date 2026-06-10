@@ -20,6 +20,25 @@ export interface RawIngestRequest {
   sourceRef: Record<string, unknown>;
   body: Buffer;
   mimeType?: string;
+  /**
+   * Standard ingestion envelope (ingestion architecture §9) — optional,
+   * declared metadata over the opaque payload. Intake never parses the body
+   * against `sourceSchema`; an unknown schema still ingests and waits for a
+   * parser.
+   */
+  envelope?: {
+    sourceSchema?: string;
+    objectType?: string;
+    externalId?: string;
+    operation?: "upsert" | "delete" | "snapshot";
+    effectiveAt?: string;
+    observedAt?: string;
+    originalSource?: string;
+    intermediaries?: readonly string[];
+    sourceId?: string;
+    sourceVersion?: string;
+    idempotencyKey?: string;
+  };
 }
 
 export interface RawIngestResult {

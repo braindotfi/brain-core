@@ -13,6 +13,7 @@
  */
 
 import type { ArtifactSourceType } from "../sources/types.js";
+import type { IngestEnvelopeFields } from "../envelope.js";
 
 export interface FetchedArtifact {
   /** Canonical bytes. Adapter may stream, but for MVP we buffer. */
@@ -21,6 +22,12 @@ export interface FetchedArtifact {
   mimeType: string | undefined;
   /** Source-specific identifiers (Plaid webhook_id, NetSuite internal_id, etc.). */
   sourceRef: Record<string, unknown>;
+  /**
+   * Standard ingestion envelope (§9): declared source_schema, the
+   * effective/observed timestamps, source chain, object coordinates, and the
+   * sync idempotency key. Optional — adapters fill what their provider exposes.
+   */
+  envelope?: IngestEnvelopeFields;
 }
 
 export interface SourceAdapter {

@@ -265,6 +265,39 @@ paths:
                 mime_type:
                   type: string
                   description: Override auto-detected MIME type
+                source_schema:
+                  type: string
+                  maxLength: 128
+                  description: >
+                    Declared payload schema tag (e.g. acme_bank.transactions.v1).
+                    Stored verbatim, never parsed at intake. An unknown schema
+                    still ingests and waits for a parser.
+                object_type:
+                  type: string
+                  maxLength: 128
+                  description: Provider object type the payload describes (e.g. invoice)
+                external_id:
+                  type: string
+                  maxLength: 256
+                  description: Provider-side id of the described object
+                operation:
+                  type: string
+                  enum: [upsert, delete, snapshot]
+                  description: What the source asserts this artifact does to the object
+                effective_at:
+                  type: string
+                  format: date-time
+                  description: When the fact applied in the real world
+                observed_at:
+                  type: string
+                  format: date-time
+                  description: When the source exposed the fact
+                idempotency_key:
+                  type: string
+                  maxLength: 256
+                  description: >
+                    Caller idempotency key (connection:resource:object:version).
+                    Unique per tenant; a re-send with different bytes still dedups.
           application/json:
             schema:
               type: object
@@ -282,6 +315,30 @@ paths:
                 auth_header:
                   type: string
                   description: Optional Authorization header value for the fetch
+                source_schema:
+                  type: string
+                  maxLength: 128
+                  description: >
+                    Declared payload schema tag (e.g. acme_bank.transactions.v1).
+                    Stored verbatim, never parsed at intake.
+                object_type:
+                  type: string
+                  maxLength: 128
+                external_id:
+                  type: string
+                  maxLength: 256
+                operation:
+                  type: string
+                  enum: [upsert, delete, snapshot]
+                effective_at:
+                  type: string
+                  format: date-time
+                observed_at:
+                  type: string
+                  format: date-time
+                idempotency_key:
+                  type: string
+                  maxLength: 256
       responses:
         '201':
           description: Artifact ingested (new)
@@ -2772,6 +2829,9 @@ components:
         raw_id: { type: string, format: uuid }
         sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
         source_type: { $ref: '#/components/schemas/RawSourceType' }
+        source_schema:
+          type: string
+          description: Declared payload schema tag, echoed when one was declared
         bytes: { type: integer }
         ingested_at: { type: string, format: date-time }
         deduplicated:
