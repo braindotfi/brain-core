@@ -1,10 +1,15 @@
 /**
- * Plaid normalization worker.
+ * Normalization worker.
  *
- * Polls raw_parsed for rows with parser = 'plaid_tx_v1' that have not yet
- * been promoted to Ledger entities, then calls LedgerService.normalizeFromRaw
- * for each one. Uses normalization_log (Ledger-owned) to track state so
- * repeated runs are idempotent.
+ * Polls raw_parsed for rows whose parser is registered in the extractor
+ * registry (extractors/registry.ts) and that have not yet been promoted to
+ * Ledger entities, then calls LedgerService.normalizeFromRaw for each one.
+ * Uses normalization_log (Ledger-owned) to track state so repeated runs are
+ * idempotent.
+ *
+ * The poll is generic over the registry (Appendix B mechanism 2): registering
+ * a new parser requires no change here; the worker picks it up on the next
+ * cycle.
  *
  * The polling query reads raw_parsed cross-service (the same controlled
  * exception documented in LedgerService.normalizeFromRaw). In production
@@ -17,6 +22,7 @@ import type { Pool } from "pg";
 import { startManagedInterval, withTenantScope, type AuditEmitter } from "@brain/shared";
 import type { ManagedWorker } from "@brain/shared";
 import { LedgerService } from "../service/LedgerService.js";
+import { registeredParsers } from "../extractors/registry.js";
 import type { LedgerDeps } from "../deps.js";
 
 /**
@@ -28,15 +34,15 @@ import type { LedgerDeps } from "../deps.js";
  */
 export async function recordNormalizationResult(
   pool: Pool,
-  row: { id: string; tenant_id: string },
+  row: { id: string; tenant_id: string; parser: string },
   errorMessage: string | null,
 ): Promise<void> {
   await withTenantScope(pool, row.tenant_id, async (c) => {
     await c.query(
       `INSERT INTO normalization_log (raw_parsed_id, tenant_id, parser, normalized_at, error)
-       VALUES ($1, $2, 'plaid_tx_v1', now(), $3)
+       VALUES ($1, $2, $3, now(), $4)
        ON CONFLICT (raw_parsed_id) DO NOTHING`,
-      [row.id, row.tenant_id, errorMessage],
+      [row.id, row.tenant_id, row.parser, errorMessage],
     );
   });
 }
@@ -64,20 +70,20 @@ export function startNormalizeWorker(
   const ledgerService = new LedgerService(ledgerDeps);
 
   async function poll(): Promise<void> {
-    let rows: Array<{ id: string; tenant_id: string }>;
+    let rows: Array<{ id: string; tenant_id: string; parser: string }>;
     try {
       // Cross-tenant poll — requires BYPASSRLS or superuser in production.
-      const result = await deps.pool.query<{ id: string; tenant_id: string }>(
-        `SELECT rp.id, rp.tenant_id
+      const result = await deps.pool.query<{ id: string; tenant_id: string; parser: string }>(
+        `SELECT rp.id, rp.tenant_id, rp.parser
            FROM raw_parsed rp
-          WHERE rp.parser = 'plaid_tx_v1'
+          WHERE rp.parser = ANY($2::text[])
             AND NOT EXISTS (
               SELECT 1 FROM normalization_log nl
                WHERE nl.raw_parsed_id = rp.id
             )
           ORDER BY rp.extracted_at ASC
           LIMIT $1`,
-        [batchSize],
+        [batchSize, registeredParsers()],
       );
       rows = result.rows;
     } catch (err) {

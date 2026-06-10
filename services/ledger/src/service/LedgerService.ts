@@ -54,15 +54,7 @@ import {
 } from "../repository/index.js";
 import type { LedgerDeps } from "../deps.js";
 import { recordTransactionRow, upsertAccountRow, upsertCounterpartyRow } from "./writes.js";
-import { normalizePlaidArtifact } from "../extractors/plaid.js";
-import { normalizeDocObligationArtifact } from "../extractors/doc-obligation.js";
-
-/**
- * Fallback confidence for a doc_obligation_v1 row whose raw_parsed.confidence
- * is null. The agent-contributed ceiling (§3.2) caps the persisted value to
- * 0.5 regardless; this is only the pre-cap default.
- */
-const AGENT_CONTRIBUTED_DOC_CONFIDENCE = 0.5;
+import { extractorForParser } from "../extractors/registry.js";
 
 export class LedgerService implements ILedgerService {
   public constructor(private readonly deps: LedgerDeps) {}
@@ -266,31 +258,23 @@ export class LedgerService implements ILedgerService {
       });
     }
 
-    switch (parsed.parser) {
-      case "plaid_tx_v1": {
-        const result = await normalizePlaidArtifact(this.deps.pool, this.deps.audit, ctx, {
-          rawParsedId: parsed.id,
-          rawArtifactId: parsed.raw_artifact_id,
-          payload: parsed.extracted,
-        });
-        return { created: result };
-      }
-      case "doc_obligation_v1": {
-        const result = await normalizeDocObligationArtifact(this.deps.pool, this.deps.audit, ctx, {
-          rawParsedId: parsed.id,
-          rawArtifactId: parsed.raw_artifact_id,
-          payload: parsed.extracted,
-          confidence: parsed.confidence ?? AGENT_CONTRIBUTED_DOC_CONFIDENCE,
-        });
-        return { created: result };
-      }
-      default:
-        throw brainError(
-          "raw_source_unsupported",
-          `no Ledger extractor registered for parser '${parsed.parser}'`,
-          { details: { parser: parsed.parser } },
-        );
+    // Dispatch through the parser registry (Appendix B mechanism 2): one
+    // table keyed by parser id, shared with the normalize worker's poll.
+    const extractor = extractorForParser(parsed.parser);
+    if (extractor === undefined) {
+      throw brainError(
+        "raw_source_unsupported",
+        `no Ledger extractor registered for parser '${parsed.parser}'`,
+        { details: { parser: parsed.parser } },
+      );
     }
+    const result = await extractor(this.deps.pool, this.deps.audit, ctx, {
+      rawParsedId: parsed.id,
+      rawArtifactId: parsed.raw_artifact_id,
+      payload: parsed.extracted,
+      confidence: parsed.confidence,
+    });
+    return { created: result };
   }
 
   // Helpers used by external callers that want to verify a row exists
