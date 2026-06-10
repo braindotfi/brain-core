@@ -135,7 +135,9 @@ describe("PostgresSourceRepository — insert / encryption", () => {
     expect(insert.params[7]).toEqual(["ext_9"]); // external_account_ids
   });
 
-  it("does NOT encrypt for a non-credential source type (eth_address)", async () => {
+  it("encrypts credential material for ANY source type (vault is type-agnostic)", async () => {
+    // The credential vault serves every authenticated connector, not a
+    // plaid/stripe allowlist (ingestion architecture Phase 1).
     const { pool, calls } = fakePool(insertReturning());
     const repo = new PostgresSourceRepository({
       pool,
@@ -144,7 +146,8 @@ describe("PostgresSourceRepository — insert / encryption", () => {
     });
     await repo.insertWithCredentials(record({ type: "eth_address" }), { secret: "x" });
     const insert = calls.find((c) => c.sql.includes("INSERT INTO raw_sources"))!;
-    expect(insert.params[4]).toBeNull();
+    expect(Buffer.isBuffer(insert.params[4])).toBe(true);
+    expect(insert.params[5]).toBe(KEY_ID);
   });
 
   it("fails closed when credentials are supplied for plaid but no credential key is configured", async () => {
@@ -166,14 +169,46 @@ describe("PostgresSourceRepository — insert / encryption", () => {
     ).rejects.toThrow(/refusing to insert stripe source/);
   });
 
-  it("permits a non-credential source type with no key (eth_address)", async () => {
-    // Non-credential types (wallets) intentionally store NULL — they have no
-    // server-side secret to encrypt. The fail-closed guard does not apply.
+  it("fails closed for any type when credential material is supplied without a key", async () => {
+    const { pool } = fakePool(insertReturning());
+    const repo = new PostgresSourceRepository({ pool }); // no key
+    await expect(
+      repo.insertWithCredentials(record({ type: "eth_address" }), { pub: "0xabc" }),
+    ).rejects.toThrow(/refusing to insert eth_address source/);
+  });
+
+  it("permits an empty credentials object with no key (public-credential sources)", async () => {
+    // Public-credential sources (watched addresses) have no server-side
+    // secret to encrypt; an empty object stores NULL without a key.
     const { pool, calls } = fakePool(insertReturning());
     const repo = new PostgresSourceRepository({ pool }); // no key
-    await repo.insertWithCredentials(record({ type: "eth_address" }), { pub: "0xabc" });
+    await repo.insertWithCredentials(record({ type: "eth_address" }), {});
     const insert = calls.find((c) => c.sql.includes("INSERT INTO raw_sources"))!;
     expect(insert.params[4]).toBeNull();
+  });
+});
+
+describe("PostgresSourceRepository — updateCredentials (refresh primitive)", () => {
+  it("re-encrypts under the current key and stamps the key id", async () => {
+    const { pool, calls } = fakePool(() => ({ rows: [], rowCount: 1 }) as never);
+    const repo = new PostgresSourceRepository({
+      pool,
+      credentialKey: KEY,
+      credentialKeyId: "rotated-key-v2",
+    });
+    const ok = await repo.updateCredentials(TENANT, "src_1", { access_token: "fresh" });
+    expect(ok).toBe(true);
+    const update = calls.find((c) => c.sql.includes("SET encrypted_credentials"))!;
+    expect(update.params[0]).toBe("src_1");
+    expect(Buffer.isBuffer(update.params[1])).toBe(true);
+    expect(update.params[2]).toBe("rotated-key-v2");
+  });
+
+  it("refuses to update without a configured key", async () => {
+    const repo = new PostgresSourceRepository({ pool: fakePool(() => ({ rows: [] })).pool });
+    await expect(repo.updateCredentials(TENANT, "src_1", { t: "x" })).rejects.toThrow(
+      /refusing to update credentials/,
+    );
   });
 });
 
