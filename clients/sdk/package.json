@@ -1,9 +1,29 @@
 {
-  "name": "@brain/sdk",
+  "name": "@brainfinance/sdk",
   "version": "0.1.0-rc.0",
-  "private": true,
   "description": "Typed client for the Brain HTTP API. Generated from Brain_API_Specification.yaml.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/braindotfi/brain-core.git",
+    "directory": "clients/sdk"
+  },
+  "homepage": "https://brain.fi",
   "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "rc"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -13,6 +33,8 @@
     }
   },
   "scripts": {
+    "prepublishOnly": "npm run clean && npm run test",
+    "prepack": "npm run build && mkdir -p dist/generated && cp src/generated/openapi.d.ts dist/generated/openapi.d.ts",
     "build": "tsc -b",
     "clean": "rm -rf dist *.tsbuildinfo",
     "codegen": "openapi-typescript ../../Brain_API_Specification.yaml -o src/generated/openapi.d.ts",

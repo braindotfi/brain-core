@@ -1,6 +1,28 @@
-# @brain/sdk
+# @brainfinance/sdk
 
 The typed HTTP client for the Brain API.
+
+## Install
+
+```bash
+npm install @brainfinance/sdk@rc
+```
+
+### Release-candidate compatibility
+
+`0.1.0-rc.0` is generated against, and tested against, the **v0.0.4
+deployment** of the Brain API (`https://api.brain.fi`). The SDK version line
+is independent of the service version; this note is the compatibility
+statement.
+
+**Known issues (RC):**
+
+- The committed generated types lag the OpenAPI spec on two points: the
+  deprecated `proposeAgentAction`/`registerAgent` endpoints now return 404 on
+  the server but the types still describe their old response shapes, and the
+  `listAgents` response type includes an `agents` array field the current
+  spec no longer declares. Both will be resolved by a full codegen refresh
+  before GA.
 
 This package is the source-of-truth client that backs every code example on
 [docs.brain.fi](https://docs.brain.fi). It exposes:
@@ -66,7 +88,7 @@ pnpm run demo:reset
 ### High-Level (`Brain` Class)
 
 ```typescript
-import { Brain } from "@brain/sdk";
+import { Brain } from "@brainfinance/sdk";
 
 const brain = new Brain({ token: process.env.BRAIN_TOKEN! });
 
@@ -173,7 +195,7 @@ For endpoints not yet wrapped by the `Brain` class, or for callers who
 want direct typed-fetch access:
 
 ```typescript
-import { createBrainHttpClient } from "@brain/sdk";
+import { createBrainHttpClient } from "@brainfinance/sdk";
 
 const http = createBrainHttpClient({
   token: process.env.BRAIN_TOKEN!,
@@ -188,21 +210,21 @@ response shapes are inferred, there is no hand-written type surface to drift.
 ## Codegen
 
 ```bash
-pnpm --filter @brain/sdk run codegen
+pnpm --filter @brainfinance/sdk run codegen
 ```
 
 Regenerates `src/generated/openapi.d.ts` from
 [`Brain_API_Specification.yaml`](../../Brain_API_Specification.yaml). The
 generated file is committed so downstream consumers don't need to run codegen
-on `pnpm install`. CI runs `codegen:check` to catch drift.
+on `pnpm install`. `codegen:check` detects drift locally; it is not yet wired
+into CI.
 
 ## Publish Target
 
-`private: true` for now. Future intent: publish to GitHub Packages with
-private access (organisation members and authorised consumers only). The
-docs commit to `npm install @brain/sdk`; until a publish workflow lands, that
-command does not yet resolve, see Step 1A in the SDK plan thread for
-sequencing.
+Published to the public npm registry as
+[`@brainfinance/sdk`](https://www.npmjs.com/package/@brainfinance/sdk) under
+the `rc` dist-tag. The package ships `dist/` (ESM + type declarations),
+this README, and the Apache-2.0 LICENSE only.
 
 ## Conventions
 
