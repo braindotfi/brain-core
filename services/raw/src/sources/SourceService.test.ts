@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { isBrainError, type ServiceCallContext } from "@brain/shared";
 import { InMemorySourceRepository, SourceService } from "./SourceService.js";
-import { SOURCE_TYPES, STUB_SOURCE_TYPES } from "./types.js";
+import { SOURCE_TYPES, STUB_SOURCE_TYPES, CONCRETE_SOURCE_TYPES } from "./types.js";
 
 const CTX: ServiceCallContext = {
   tenantId: "tnt_acme",
@@ -16,24 +16,28 @@ beforeEach(() => {
 });
 
 describe("SOURCE_TYPES coverage", () => {
-  it("ships the 8 MVP values from docs/sdk-audit.md decision K2", () => {
-    expect(SOURCE_TYPES).toEqual([
-      "plaid",
-      "stripe",
-      "netsuite",
-      "email_inbound",
-      "csv_upload",
-      "pdf_upload",
-      "alchemy_wallet",
-      "eth_address",
-    ]);
+  it("includes the 8 MVP values from docs/sdk-audit.md decision K2", () => {
+    // The set is extensible by the connector scaffold (ingestion
+    // architecture Phase 1); the K2 MVP values must always remain.
+    expect(SOURCE_TYPES).toEqual(
+      expect.arrayContaining([
+        "plaid",
+        "stripe",
+        "netsuite",
+        "email_inbound",
+        "csv_upload",
+        "pdf_upload",
+        "alchemy_wallet",
+        "eth_address",
+      ]),
+    );
   });
 
-  it("classifies six types as stubs and two as concrete", () => {
-    expect(STUB_SOURCE_TYPES.size).toBe(6);
-    // Inverse: SOURCE_TYPES \ STUB_SOURCE_TYPES has 2 entries = concrete
-    const concrete = SOURCE_TYPES.filter((t) => !STUB_SOURCE_TYPES.has(t));
-    expect(concrete).toEqual(["plaid", "stripe"]);
+  it("partitions every source type into exactly stub or concrete", () => {
+    for (const t of SOURCE_TYPES) {
+      expect(STUB_SOURCE_TYPES.has(t) !== CONCRETE_SOURCE_TYPES.has(t)).toBe(true);
+    }
+    expect([...CONCRETE_SOURCE_TYPES]).toEqual(expect.arrayContaining(["plaid", "stripe"]));
   });
 });
 

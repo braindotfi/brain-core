@@ -27,6 +27,7 @@
     "check-contract-abi-drift": "node scripts/check-contract-abi-drift.mjs",
     "check-blob-purge-callsite": "node scripts/check-blob-purge-callsite.mjs",
     "check-connector-descriptors": "node scripts/check-connector-descriptors.mjs",
+    "scaffold-connector": "node scripts/scaffold-connector.mjs",
     "production-readiness": "node scripts/production-readiness.mjs",
     "readiness-snapshot": "node scripts/readiness-snapshot.mjs",
     "readiness-trend": "node scripts/readiness-trend.mjs",
