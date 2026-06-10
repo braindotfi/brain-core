@@ -175,6 +175,22 @@ describe("upsertObligationRow (RFC 0004)", () => {
     expect(insert.values[13]).toBe(0.5); // confidence param, capped
   });
 
+  it("accepts customer_asserted and caps it at the same 0.5 ceiling (Phase 2)", async () => {
+    // Generic-push / unknown-source data cannot mint high confidence.
+    const { pool, calls } = capturingPool({
+      "INSERT INTO ledger_obligations": [{ id: "obl_3", confidence: 0.5 }],
+    });
+    const audit = new InMemoryAuditEmitter();
+    await upsertObligationRow(pool, audit, ctx, {
+      ...baseArgs,
+      provenance: "customer_asserted",
+      confidence: 0.99,
+    });
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"))!;
+    expect(insert.values[12]).toBe("customer_asserted"); // provenance accepted
+    expect(insert.values[13]).toBe(0.5); // capped
+  });
+
   it("returns the existing row (created=false) when the dedup key matches", async () => {
     const { pool } = capturingPool({
       "SELECT * FROM ledger_obligations": [{ id: "obl_existing", confidence: 0.5 }],

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   validateEvidence,
+  validateLowTrustAutoExecution,
   type EvidenceValidationInput,
   type ResolvedEvidence,
 } from "./evidence-validator.js";
@@ -207,5 +208,83 @@ describe("validateEvidence — pay_obligation", () => {
       }),
     );
     expect(r.failures.map((f) => f.rule)).toContain("obligation_status");
+  });
+});
+
+describe("validateLowTrustAutoExecution (Phase 2 trust contract)", () => {
+  const NOW2 = new Date("2026-06-01T00:00:00Z");
+  const lowEv = (id: string): ResolvedEvidence => ({
+    id,
+    kind: "doc_obligation_v1",
+    sourceArtifactId: `raw_${id}`,
+    capturedAt: NOW2,
+    trustLevel: "low",
+    extracted: {},
+  });
+  const highEv = (id: string): ResolvedEvidence => ({ ...lowEv(id), trustLevel: "high" });
+
+  it("refuses auto-execution on document-only (all low-trust) evidence", () => {
+    const r = validateLowTrustAutoExecution({
+      outcome: "allow",
+      evidence: [lowEv("1"), lowEv("2")],
+      obligationProvenance: null,
+    });
+    expect(r.passed).toBe(false);
+    expect(r.failures.map((f) => f.rule)).toContain("low_trust_auto_execution");
+  });
+
+  it("refuses when the linked obligation is still uncorroborated (agent_contributed)", () => {
+    const r = validateLowTrustAutoExecution({
+      outcome: "allow",
+      evidence: [lowEv("1")],
+      obligationProvenance: "agent_contributed",
+    });
+    expect(r.passed).toBe(false);
+  });
+
+  it("permits when reconciliation has corroborated the obligation (promoted to extracted)", () => {
+    const r = validateLowTrustAutoExecution({
+      outcome: "allow",
+      evidence: [lowEv("1")],
+      obligationProvenance: "extracted",
+    });
+    expect(r.passed).toBe(true);
+  });
+
+  it("permits human-confirmed obligations", () => {
+    expect(
+      validateLowTrustAutoExecution({
+        outcome: "allow",
+        evidence: [lowEv("1")],
+        obligationProvenance: "human_confirmed",
+      }).passed,
+    ).toBe(true);
+  });
+
+  it("leaves the confirm (human approval) flow untouched", () => {
+    expect(
+      validateLowTrustAutoExecution({
+        outcome: "confirm",
+        evidence: [lowEv("1")],
+        obligationProvenance: null,
+      }).passed,
+    ).toBe(true);
+  });
+
+  it("permits when any higher-trust observation supports the action", () => {
+    expect(
+      validateLowTrustAutoExecution({
+        outcome: "allow",
+        evidence: [lowEv("1"), highEv("2")],
+        obligationProvenance: null,
+      }).passed,
+    ).toBe(true);
+  });
+
+  it("does not fire for intents with no evidence attached (check 9 governs those)", () => {
+    expect(
+      validateLowTrustAutoExecution({ outcome: "allow", evidence: [], obligationProvenance: null })
+        .passed,
+    ).toBe(true);
   });
 });

@@ -94,6 +94,14 @@ export interface BuildPaymentIntentServiceDeps {
     ctx: ServiceCallContext,
     obligationId: string,
   ) => Promise<"payable" | "receivable" | null>;
+  // Phase 2 trust contract: provenance of the linked obligation for the
+  // gate's low-trust auto-execution rule (check 9.5). Required at the
+  // factory (same posture as resolveObligationDirection) so a missing wire
+  // is a compile error at every PI service mount.
+  resolveObligationProvenance: (
+    ctx: ServiceCallContext,
+    obligationId: string,
+  ) => Promise<string | null>;
   resolveEscrowState?: (
     ctx: ServiceCallContext,
     input: EscrowStateInput,
@@ -152,6 +160,7 @@ export function buildPaymentIntentService(
     detectDuplicates: deps.detectDuplicates,
     resolveObligationConfidence: deps.resolveObligationConfidence,
     resolveObligationDirection: deps.resolveObligationDirection,
+    resolveObligationProvenance: deps.resolveObligationProvenance,
     ...(deps.resolveEscrowState !== undefined
       ? { resolveEscrowState: deps.resolveEscrowState }
       : {}),

@@ -3219,7 +3219,13 @@ components:
 
     LedgerProvenance:
       type: string
-      enum: [extracted, inferred, ambiguous, human_confirmed, agent_contributed]
+      description: >
+        Trust contract for derived rows. `customer_asserted` marks generic-push
+        and unknown-source data: confidence is capped at 0.5 and the §6 gate
+        refuses auto-execution on it until corroboration promotes the row to
+        `extracted`.
+      enum:
+        [extracted, inferred, ambiguous, human_confirmed, agent_contributed, customer_asserted]
 
     LedgerCommonFields:
       type: object

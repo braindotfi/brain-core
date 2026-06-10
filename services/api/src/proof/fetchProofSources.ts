@@ -51,6 +51,10 @@ function sourceTrustLevel(sourceType: string | null): "high" | "medium" | "low" 
     case "alchemy_wallet":
       return "high";
     case "agent_contributed":
+    case "csv_upload":
+    case "pdf_upload":
+    case "email_inbound":
+    case "other":
       return "low";
     case null:
       return "unknown";

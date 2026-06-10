@@ -179,6 +179,68 @@ function pushTrust(failures: Failure[], ev: ResolvedEvidence, i: EvidenceValidat
   }
 }
 
+/**
+ * Provenances that count as independently corroborated for the low-trust
+ * auto-execution rule. Mirrors INDEPENDENT_PROVENANCE in the Ledger's
+ * reconciliation persist step, which promotes corroborated obligations
+ * `agent_contributed` → `extracted`.
+ */
+const CORROBORATED_PROVENANCE = new Set(["extracted", "human_confirmed"]);
+
+export interface LowTrustAutoExecutionInput {
+  /** Policy outcome for this intent (known at check 3). */
+  readonly outcome: "allow" | "confirm" | "reject";
+  readonly evidence: ReadonlyArray<ResolvedEvidence>;
+  /**
+   * Provenance of the linked obligation, when one exists and the loader is
+   * wired; null otherwise. A corroborated obligation (promoted to
+   * `extracted`) keeps low-trust document evidence eligible.
+   */
+  readonly obligationProvenance: string | null;
+}
+
+/**
+ * Phase 2 trust contract (ingestion architecture §15): the gate refuses
+ * AUTO-execution of a write rail when the supporting evidence is entirely
+ * low-trust (`customer_asserted` generic push, or uncorroborated
+ * `agent_contributed` document extraction).
+ *
+ * - outcome `confirm` is untouched: a human approval flow may proceed on
+ *   document-only evidence (check 11 enforces the approval itself);
+ * - intents with no evidence attached are governed by check 9, not here;
+ * - any single higher-trust observation (provider webhook, authenticated
+ *   pull) makes the set eligible — the refusal targets document-ONLY
+ *   auto-execution;
+ * - a linked obligation that reconciliation has corroborated (provenance
+ *   promoted to `extracted`) is eligible even on document-only evidence.
+ *
+ * Deterministic, pure; fails closed when the obligation provenance is
+ * unknown.
+ */
+export function validateLowTrustAutoExecution(
+  i: LowTrustAutoExecutionInput,
+): EvidenceValidationResult {
+  if (i.outcome !== "allow" || i.evidence.length === 0) return { passed: true, failures: [] };
+  const allLowTrust = i.evidence.every((e) => e.trustLevel === "low");
+  if (!allLowTrust) return { passed: true, failures: [] };
+  if (i.obligationProvenance !== null && CORROBORATED_PROVENANCE.has(i.obligationProvenance)) {
+    return { passed: true, failures: [] };
+  }
+  return {
+    passed: false,
+    failures: [
+      {
+        rule: "low_trust_auto_execution",
+        detail:
+          "auto-execution refused: all supporting evidence is low-trust " +
+          "(customer_asserted / uncorroborated agent_contributed) and the linked " +
+          "obligation is not corroborated; require approval (confirm) or corroborate " +
+          "the obligation against an independent source",
+      },
+    ],
+  };
+}
+
 function str(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }

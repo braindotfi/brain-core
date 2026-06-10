@@ -183,6 +183,16 @@ export interface PaymentIntentServiceDeps {
     ctx: ServiceCallContext,
     obligationId: string,
   ) => Promise<"payable" | "receivable" | null>;
+  /**
+   * Phase 2 trust contract: reads the linked obligation's provenance for the
+   * gate's low-trust auto-execution rule (check 9.5). A corroborated
+   * obligation (promoted to `extracted`) keeps document-only evidence
+   * eligible for an `allow` outcome.
+   */
+  resolveObligationProvenance?: (
+    ctx: ServiceCallContext,
+    obligationId: string,
+  ) => Promise<string | null>;
   /** Resolves the source account by id. */
   resolveAccount: (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null>;
   /** Resolves the destination counterparty by id. */
@@ -653,6 +663,17 @@ export class PaymentIntentService implements IPaymentIntentService {
               const obligationId = intent.obligation_id;
               if (obligationId === null || obligationId === undefined) return null;
               return this.deps.resolveObligationDirection!(ctx, obligationId);
+            },
+          }
+        : {}),
+      // Phase 2 trust contract: obligation provenance for the low-trust
+      // auto-execution rule (check 9.5). Same short-circuit shape as 6.7.
+      ...(this.deps.resolveObligationProvenance !== undefined
+        ? {
+            resolveObligationProvenance: async (intent: GatePaymentIntent) => {
+              const obligationId = intent.obligation_id;
+              if (obligationId === null || obligationId === undefined) return null;
+              return this.deps.resolveObligationProvenance!(ctx, obligationId);
             },
           }
         : {}),
