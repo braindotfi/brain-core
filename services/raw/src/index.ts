@@ -26,8 +26,16 @@ export {
 export {
   adapterForSourceType,
   adapterForWebhookProvider,
+  descriptorForSourceType,
   listAdapters,
+  listDescriptors,
 } from "./adapters/registry.js";
+export {
+  CONNECTOR_DESCRIPTORS,
+  type ConnectorDescriptor,
+  type ConnectorCapabilities,
+  type SourceCategory,
+} from "./adapters/descriptors.js";
 
 export {
   findArtifactById,

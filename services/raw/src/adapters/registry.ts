@@ -18,6 +18,7 @@ import {
 } from "./stubs.js";
 import type { SourceAdapter } from "./types.js";
 import { CsvUploadAdapter, PdfUploadAdapter } from "./upload.js";
+import { CONNECTOR_DESCRIPTORS, type ConnectorDescriptor } from "./descriptors.js";
 
 const ADAPTERS: ReadonlyArray<SourceAdapter> = [
   CsvUploadAdapter,
@@ -79,4 +80,21 @@ export function adapterForWebhookProvider(provider: string): SourceAdapter {
 
 export function listAdapters(): ReadonlyArray<SourceAdapter> {
   return ADAPTERS;
+}
+
+const DESCRIPTOR_BY_TYPE = new Map<string, ConnectorDescriptor>(
+  CONNECTOR_DESCRIPTORS.map((d) => [d.connectorType, d]),
+);
+
+/** The §6 descriptor for a registered connector. */
+export function descriptorForSourceType(sourceType: string): ConnectorDescriptor {
+  const d = DESCRIPTOR_BY_TYPE.get(sourceType);
+  if (d === undefined) {
+    throw brainError("raw_source_unsupported", `no connector descriptor for: ${sourceType}`);
+  }
+  return d;
+}
+
+export function listDescriptors(): ReadonlyArray<ConnectorDescriptor> {
+  return CONNECTOR_DESCRIPTORS;
 }
