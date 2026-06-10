@@ -1,9 +1,9 @@
 /**
  * POST /raw/webhooks/{provider}
  *
- * skipAuth (§3.1 exception — HMAC-signed, not bearer). Plaid signature
- * verified via the shared primitive; other providers return 501 until
- * their sig schemes are wired.
+ * skipAuth (§3.1 exception — HMAC-signed, not bearer). Plaid and Stripe
+ * signatures verified via the shared primitives; other providers return 501
+ * until their sig schemes are wired.
  *
  * A verified webhook produces one or more artifacts through the source
  * adapter, each persisted via the ingest orchestrator.
@@ -14,8 +14,10 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   brainError,
   verifyPlaidWebhook,
+  verifyStripeWebhook,
   type IdempotencyStore,
   type PlaidVerifyOptions,
+  type StripeVerifyOptions,
 } from "@brain/shared";
 import { adapterForWebhookProvider } from "../adapters/registry.js";
 import { ingestMany } from "../services/ingest.js";
@@ -71,6 +73,8 @@ export type WebhookTenantResolver = (
 
 export interface WebhookRouteOptions {
   plaidVerify: PlaidVerifyOptions;
+  /** Stripe endpoint signing verification. Absent => the stripe webhook path answers 501. */
+  stripeVerify?: StripeVerifyOptions;
   resolveTenant: WebhookTenantResolver;
   /** When set, dedup re-delivered webhooks by body hash (§5.2). */
   dedupStore?: IdempotencyStore;
@@ -100,6 +104,20 @@ export async function registerWebhook(
           throw brainError("raw_webhook_signature_invalid", "missing Plaid-Verification header");
         }
         await verifyPlaidWebhook(raw, header, opts.plaidVerify);
+      } else if (provider === "stripe") {
+        if (opts.stripeVerify === undefined) {
+          throw brainError(
+            "raw_source_unsupported",
+            "stripe webhook signing is not configured (set STRIPE_WEBHOOK_SECRET)",
+            { statusOverride: 501 },
+          );
+        }
+        const header = request.headers["stripe-signature"];
+        verifyStripeWebhook(
+          raw,
+          typeof header === "string" ? header : undefined,
+          opts.stripeVerify,
+        );
       } else {
         throw brainError(
           "raw_source_unsupported",

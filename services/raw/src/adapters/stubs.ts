@@ -28,14 +28,6 @@ function unsupportedWebhook(provider: string): NonNullable<SourceAdapter["handle
   };
 }
 
-export const StripeAdapter: SourceAdapter = {
-  sourceType: "stripe",
-  // High-trust provider: only the authenticated webhook may create stripe
-  // artifacts, never the generic caller-supplied /raw/ingest route.
-  providerAuthenticatedOnly: true,
-  handleWebhook: unsupportedWebhook("stripe"),
-};
-
 export const NetSuiteAdapter: SourceAdapter = {
   sourceType: "netsuite",
   handleWebhook: unsupportedWebhook("netsuite"),

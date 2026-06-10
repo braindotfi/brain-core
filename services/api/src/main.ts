@@ -77,6 +77,7 @@ import {
   registerRawPlugin,
   SourceService,
   PostgresSourceRepository,
+  startInterpretWorker,
   startSyncWorker,
   type RegisterRawPluginOptions,
 } from "@brain/raw";
@@ -177,6 +178,10 @@ import { createViemPolicySignerChecker } from "./policy/viemPolicySignerChecker.
 import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
+import {
+  createProviderTenantResolver,
+  createStripeTenantResolver,
+} from "./webhooks/stripeTenant.js";
 import { buildRawEvidenceService } from "./adapters/raw-evidence-adapter.js";
 import { buildWikiMemoryService } from "./adapters/wiki-memory-adapter.js";
 import { buildEvidenceProviders } from "./agents/evidence-providers.js";
@@ -1400,6 +1405,11 @@ async function main(): Promise<void> {
             },
       clockToleranceSeconds: 300,
     },
+    // Stripe endpoint signing (platform-level secret). Absent => the stripe
+    // webhook path answers 501 and ingestion relies on the pull modality.
+    ...(cfg.STRIPE_WEBHOOK_SECRET !== undefined
+      ? { stripeVerify: { signingSecret: cfg.STRIPE_WEBHOOK_SECRET, clockToleranceSeconds: 300 } }
+      : {}),
     resolveWebhookTenant: cfg.BRAIN_DEMO_MODE
       ? async (
           _provider: string,
@@ -1415,7 +1425,10 @@ async function main(): Promise<void> {
             "cannot resolve webhook tenant — use x-dev-tenant-id header in demo mode",
           );
         }
-      : createPlaidTenantResolver(pool),
+      : createProviderTenantResolver({
+          plaid: createPlaidTenantResolver(pool),
+          stripe: createStripeTenantResolver(privilegedPool),
+        }),
   };
 
   // Mount all service routes under /v1 to match Brain_API_Specification.yaml.
@@ -1971,6 +1984,12 @@ async function main(): Promise<void> {
   // -- background workers ---------------------------------------------
   const normalizeWorker = startNormalizeWorker({ pool, audit });
 
+  // Interpretation (Appendix B mechanism 2): promotes landed structured
+  // artifacts (registered source_schema) into raw_parsed, which the
+  // normalize worker then promotes to Ledger entities. Cross-tenant poll,
+  // hence privilegedPool; per-artifact writes stay tenant-scoped.
+  const interpretWorker = startInterpretWorker({ pool: privilegedPool, blob, audit });
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence privilegedPool; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2130,6 +2149,7 @@ async function main(): Promise<void> {
       const outcome = await runShutdown({
         workers: [
           normalizeWorker,
+          interpretWorker,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,

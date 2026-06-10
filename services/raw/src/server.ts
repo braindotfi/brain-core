@@ -15,6 +15,7 @@ import {
   type IdempotencyStore,
   type JwtVerifier,
   type PlaidVerifyOptions,
+  type StripeVerifyOptions,
 } from "@brain/shared";
 import { registerArtifact } from "./routes/artifact.js";
 import { registerIngest } from "./routes/ingest.js";
@@ -35,6 +36,8 @@ export interface BuildRawAppOptions {
   idempotencyStore: IdempotencyStore;
   idempotencyTtlSeconds?: number;
   plaidVerify: PlaidVerifyOptions;
+  /** Stripe endpoint signing verification. Absent => the stripe webhook path answers 501. */
+  stripeVerify?: StripeVerifyOptions;
   resolveWebhookTenant: WebhookTenantResolver;
   logger?: ReturnType<typeof Fastify>["log"];
   /**
@@ -105,6 +108,7 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
   await registerIngest(app, opts.deps);
   await registerWebhook(app, opts.deps, {
     plaidVerify: opts.plaidVerify,
+    ...(opts.stripeVerify !== undefined ? { stripeVerify: opts.stripeVerify } : {}),
     resolveTenant: opts.resolveWebhookTenant,
     dedupStore: opts.idempotencyStore,
     dedupTtlSeconds: opts.idempotencyTtlSeconds ?? 86_400,
@@ -121,6 +125,8 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
 
 export interface RegisterRawPluginOptions {
   plaidVerify: PlaidVerifyOptions;
+  /** Stripe endpoint signing verification. Absent => the stripe webhook path answers 501. */
+  stripeVerify?: StripeVerifyOptions;
   resolveWebhookTenant: WebhookTenantResolver;
   /** Shared idempotency store; when set, webhooks dedup by body hash (§5.2). */
   idempotencyStore?: IdempotencyStore;
@@ -170,6 +176,7 @@ export async function registerRawPlugin(
   await registerIngest(app, deps);
   await registerWebhook(app, deps, {
     plaidVerify: opts.plaidVerify,
+    ...(opts.stripeVerify !== undefined ? { stripeVerify: opts.stripeVerify } : {}),
     resolveTenant: opts.resolveWebhookTenant,
     ...(opts.idempotencyStore !== undefined ? { dedupStore: opts.idempotencyStore } : {}),
     ...(opts.idempotencyTtlSeconds !== undefined

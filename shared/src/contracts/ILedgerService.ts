@@ -31,7 +31,14 @@ import type {
 export interface Account extends LedgerCommonFields {
   institution: string | null;
   external_account_id: string | null;
-  account_type: "bank_checking" | "bank_savings" | "card" | "loan" | "line_of_credit" | "onchain";
+  account_type:
+    | "bank_checking"
+    | "bank_savings"
+    | "card"
+    | "loan"
+    | "line_of_credit"
+    | "onchain"
+    | "payment_processor";
   name: string;
   currency: Currency;
   current_balance: DecimalString | null;

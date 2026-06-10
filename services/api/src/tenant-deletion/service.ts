@@ -70,6 +70,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
 }> = [
   // ---- Layer 1: Raw ----
   { table: "raw_parsed", column: "tenant_id" },
+  { table: "raw_interpretation_log", column: "tenant_id" },
   { table: "raw_plaid_items", column: "tenant_id" },
   { table: "raw_artifacts", column: "tenant_id" },
   // Sync checkpoints before their connection rows (soft source_id reference).

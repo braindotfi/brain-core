@@ -93,15 +93,20 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
   },
   {
     connectorType: "stripe",
-    version: "0.2.0",
+    version: "1.0.0",
     category: "payments_revenue",
-    delivery: ["webhook"],
+    delivery: ["webhook", "cursor"],
     origin: "provider",
     format: ["structured"],
     authentication: ["api_key", "signature"],
-    // Webhook handler is a 501 stub today; the cursor pull path is the
-    // Phase 3 connector 2 build. Claims stay false until wired.
-    capabilities: NO_CAPABILITIES,
+    // Cursor pull is live (six per-object-type partitions); the webhook
+    // handler stays a 501 stub until signature verification lands.
+    capabilities: {
+      ...NO_CAPABILITIES,
+      backfill: true,
+      incremental: true,
+      updates: true,
+    },
     objectTypes: [
       "charge",
       "payout",
@@ -111,7 +116,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
       "balance_transaction",
       "customer",
     ],
-    parserVersions: [],
+    parserVersions: ["stripe_v1"],
   },
   {
     connectorType: "netsuite",

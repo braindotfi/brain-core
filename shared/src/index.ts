@@ -101,6 +101,7 @@ export {
 
 // Webhook verification (inbound Plaid) + outbound dispatcher
 export { verifyPlaidWebhook, type PlaidVerifyOptions } from "./webhooks/plaid.js";
+export { verifyStripeWebhook, type StripeVerifyOptions } from "./webhooks/stripe.js";
 export {
   WebhookDispatcher,
   WebhookAuditEmitter,
