@@ -15,6 +15,14 @@ export {
 } from "./server.js";
 export type { RawDeps } from "./deps.js";
 export { ingestOne, ingestMany, type IngestInput, type IngestResult } from "./services/ingest.js";
+export { INGEST_OPERATIONS, type IngestEnvelopeFields, type IngestOperation } from "./envelope.js";
+export {
+  startSyncWorker,
+  runSyncCycle,
+  type SyncWorker,
+  type SyncWorkerDeps,
+  type SyncWorkerOptions,
+} from "./workers/syncWorker.js";
 export {
   adapterForSourceType,
   adapterForWebhookProvider,

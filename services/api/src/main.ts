@@ -77,6 +77,7 @@ import {
   registerRawPlugin,
   SourceService,
   PostgresSourceRepository,
+  startSyncWorker,
   type RegisterRawPluginOptions,
 } from "@brain/raw";
 
@@ -1958,6 +1959,18 @@ async function main(): Promise<void> {
   // -- background workers ---------------------------------------------
   const normalizeWorker = startNormalizeWorker({ pool, audit });
 
+  // Authenticated incremental pull (ingestion architecture §10). The
+  // cross-tenant source poll needs BYPASSRLS, hence privilegedPool; all
+  // per-partition ingest writes stay tenant-scoped. Credentials are resolved
+  // narrowly per partition run via the encrypted source-credential store.
+  const syncWorker = startSyncWorker({
+    pool: privilegedPool,
+    blob,
+    audit,
+    resolveCredentials: (tenantId, sourceId) =>
+      postgresSourceRepo.resolveCredentials(tenantId, sourceId),
+  });
+
   let anchorTimer: NodeJS.Timeout | undefined;
   let anchorShutdown = false;
 
@@ -2105,6 +2118,7 @@ async function main(): Promise<void> {
       const outcome = await runShutdown({
         workers: [
           normalizeWorker,
+          syncWorker,
           outboxWorker,
           webhookDispatchWorker,
           tenantBlobPurgeWorker,
