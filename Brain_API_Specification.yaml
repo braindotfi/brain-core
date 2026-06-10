@@ -2748,14 +2748,22 @@ components:
 
     RawSourceType:
       type: string
+      description: >
+        One reconciled, provider-named artifact source vocabulary: the eight
+        connectable source types plus the non-connector ingestion origins
+        (agent contributions, human Wiki annotations, and `other`, the
+        universal fallback for sources with no native connector).
       enum:
         - plaid
-        - erp_netsuite
-        - email
-        - upload
-        - chain_evm
         - stripe
+        - netsuite
+        - email_inbound
+        - csv_upload
+        - pdf_upload
+        - alchemy_wallet
+        - eth_address
         - agent_contributed
+        - wiki_annotation
         - other
 
     RawIngestResponse:

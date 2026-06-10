@@ -63,7 +63,7 @@ describe("ingestOne", () => {
       {
         tenantId,
         actor,
-        sourceType: "upload",
+        sourceType: "other",
         sourceRef: { filename: "hello.txt" },
         body,
         mimeType: "text/plain",
@@ -73,7 +73,7 @@ describe("ingestOne", () => {
     expect(result.deduplicated).toBe(false);
     expect(result.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(result.bytes).toBe(body.length);
-    expect(result.sourceType).toBe("upload");
+    expect(result.sourceType).toBe("other");
     expect(result.rawId.startsWith("raw_")).toBe(true);
 
     // Blob contains the bytes under the tenant-prefixed path.
@@ -97,7 +97,7 @@ describe("ingestOne", () => {
       {
         tenantId: newTenantId(),
         actor: newUserId(),
-        sourceType: "upload",
+        sourceType: "other",
         sourceRef: {},
         body: Buffer.from("x"),
         mimeType: undefined,

@@ -12,6 +12,8 @@
  * dedup, and audit.
  */
 
+import type { ArtifactSourceType } from "../sources/types.js";
+
 export interface FetchedArtifact {
   /** Canonical bytes. Adapter may stream, but for MVP we buffer. */
   body: Buffer;
@@ -22,8 +24,8 @@ export interface FetchedArtifact {
 }
 
 export interface SourceAdapter {
-  /** Machine id — matches raw_artifacts.source_type. */
-  readonly sourceType: string;
+  /** Machine id — matches raw_artifacts.source_type (one reconciled vocabulary). */
+  readonly sourceType: ArtifactSourceType;
   /**
    * When true, an artifact of this source_type may ONLY be created through an
    * authenticated provider path (the HMAC-verified `/raw/webhooks/{provider}`

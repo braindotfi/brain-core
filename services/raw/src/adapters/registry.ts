@@ -9,31 +9,36 @@ import { brainError } from "@brain/shared";
 import { PlaidAdapter } from "./plaid.js";
 import {
   AgentContributedAdapter,
-  EvmAdapter,
-  GmailAdapter,
+  AlchemyWalletAdapter,
+  EmailInboundAdapter,
+  EthAddressAdapter,
   NetSuiteAdapter,
+  OtherAdapter,
   StripeAdapter,
 } from "./stubs.js";
 import type { SourceAdapter } from "./types.js";
-import { UploadAdapter } from "./upload.js";
+import { CsvUploadAdapter, PdfUploadAdapter } from "./upload.js";
 
 const ADAPTERS: ReadonlyArray<SourceAdapter> = [
-  UploadAdapter,
+  CsvUploadAdapter,
+  PdfUploadAdapter,
   PlaidAdapter,
   StripeAdapter,
   NetSuiteAdapter,
-  GmailAdapter,
-  EvmAdapter,
+  EmailInboundAdapter,
+  AlchemyWalletAdapter,
+  EthAddressAdapter,
   AgentContributedAdapter,
+  OtherAdapter,
 ];
 
-const BY_SOURCE_TYPE = new Map(ADAPTERS.map((a) => [a.sourceType, a]));
+const BY_SOURCE_TYPE = new Map<string, SourceAdapter>(ADAPTERS.map((a) => [a.sourceType, a]));
 const BY_PROVIDER: ReadonlyMap<string, SourceAdapter> = new Map([
   ["plaid", PlaidAdapter],
   ["stripe", StripeAdapter],
   ["netsuite", NetSuiteAdapter],
-  ["alchemy", EvmAdapter],
-  ["generic_hmac", UploadAdapter],
+  ["alchemy", AlchemyWalletAdapter],
+  ["generic_hmac", OtherAdapter],
 ]);
 
 export function adapterForSourceType(sourceType: string): SourceAdapter {

@@ -48,7 +48,7 @@ function sourceTrustLevel(sourceType: string | null): "high" | "medium" | "low" 
   switch (sourceType) {
     case "plaid":
     case "stripe":
-    case "chain_evm":
+    case "alchemy_wallet":
       return "high";
     case "agent_contributed":
       return "low";

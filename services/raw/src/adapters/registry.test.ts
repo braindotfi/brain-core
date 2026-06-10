@@ -8,15 +8,18 @@ import {
 } from "./registry.js";
 
 describe("adapterForSourceType", () => {
-  it("returns an adapter for every OpenAPI source_type enum value", () => {
+  it("returns an adapter for every registered source_type enum value", () => {
     const expected = [
       "plaid",
-      "erp_netsuite",
-      "email",
-      "upload",
-      "chain_evm",
       "stripe",
+      "netsuite",
+      "email_inbound",
+      "csv_upload",
+      "pdf_upload",
+      "alchemy_wallet",
+      "eth_address",
       "agent_contributed",
+      "other",
     ];
     for (const s of expected) expect(adapterForSourceType(s).sourceType).toBe(s);
   });
@@ -30,15 +33,27 @@ describe("adapterForSourceType", () => {
       if (isBrainError(err)) expect(err.code).toBe("raw_source_unsupported");
     }
   });
+
+  it("does not register the internal-only wiki_annotation type", () => {
+    // wiki_annotation artifacts are written only by the Wiki annotate path
+    // (direct ingestOne call), never assertable through the HTTP routes.
+    try {
+      adapterForSourceType("wiki_annotation");
+      expect.fail();
+    } catch (err) {
+      expect(isBrainError(err)).toBe(true);
+      if (isBrainError(err)) expect(err.code).toBe("raw_source_unsupported");
+    }
+  });
 });
 
 describe("adapterForWebhookProvider", () => {
   it("maps each provider value from the OpenAPI enum", () => {
     expect(adapterForWebhookProvider("plaid").sourceType).toBe("plaid");
     expect(adapterForWebhookProvider("stripe").sourceType).toBe("stripe");
-    expect(adapterForWebhookProvider("alchemy").sourceType).toBe("chain_evm");
-    expect(adapterForWebhookProvider("netsuite").sourceType).toBe("erp_netsuite");
-    expect(adapterForWebhookProvider("generic_hmac").sourceType).toBe("upload");
+    expect(adapterForWebhookProvider("alchemy").sourceType).toBe("alchemy_wallet");
+    expect(adapterForWebhookProvider("netsuite").sourceType).toBe("netsuite");
+    expect(adapterForWebhookProvider("generic_hmac").sourceType).toBe("other");
   });
 });
 
@@ -56,8 +71,18 @@ describe("adapterForGenericIngest (authenticated provenance, Codex P1)", () => {
   });
 
   it("permits the medium/low-trust source types on the generic route", () => {
-    for (const ok of ["upload", "email", "erp_netsuite", "chain_evm", "agent_contributed"]) {
-      expect(adapterForGenericIngest(ok).sourceType).toBe(ok);
+    const ok = [
+      "csv_upload",
+      "pdf_upload",
+      "email_inbound",
+      "netsuite",
+      "alchemy_wallet",
+      "eth_address",
+      "agent_contributed",
+      "other",
+    ];
+    for (const s of ok) {
+      expect(adapterForGenericIngest(s).sourceType).toBe(s);
     }
   });
 
@@ -74,6 +99,6 @@ describe("adapterForGenericIngest (authenticated provenance, Codex P1)", () => {
 describe("listAdapters", () => {
   it("enumerates the registered adapters", () => {
     const all = listAdapters();
-    expect(all.length).toBeGreaterThanOrEqual(7);
+    expect(all.length).toBeGreaterThanOrEqual(10);
   });
 });

@@ -22,7 +22,7 @@ POST /v1/raw/ingest
 Authorization: Bearer <token>
 Content-Type: multipart/form-data
 
-source_type=upload
+source_type=pdf_upload
 file=@invoice_8231.pdf
 mime_type=application/pdf
 ```
@@ -35,8 +35,8 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "source_type":  "plaid",
-  "url":          "https://example.com/statement.json",
+  "source_type":  "csv_upload",
+  "url":          "https://example.com/statement.csv",
   "source_ref":   { "account_id": "acct_ops" },
   "auth_header":  "Bearer <upstream-token>"
 }
@@ -48,7 +48,7 @@ Response (201 on first ingest, 200 on dedup):
 {
   "raw_id": "raw_8231",
   "sha256": "abc123...",
-  "source_type": "plaid",
+  "source_type": "csv_upload",
   "bytes": 18420,
   "ingested_at": "2026-05-28T12:00:00Z",
   "deduplicated": false
@@ -57,6 +57,8 @@ Response (201 on first ingest, 200 on dedup):
 
 Limits: 50 MB per artifact. Errors: `400`, `401`, `403`, `413`, `415`, `429`.
 
+`plaid` and `stripe` are reserved on this route: artifacts of those types may only be created through the HMAC-verified provider webhook, so a caller cannot mint high-trust evidence by labeling an upload. Asserting them here returns `raw_source_reserved`.
+
 ### Source Types
 
 The `source_type` you tag an ingested artifact with. Used for routing to the right parser.
@@ -64,13 +66,16 @@ The `source_type` you tag an ingested artifact with. Used for routing to the rig
 | `source_type`       | Typical Origin                                          |
 | ------------------- | ------------------------------------------------------- |
 | `plaid`             | Plaid bank-account artifacts (statements, transactions) |
-| `erp_netsuite`      | NetSuite SuiteTalk extracts                             |
-| `email`             | Inbound email (e.g. invoices forwarded to a mailbox)    |
-| `upload`            | Direct file upload (PDF / CSV / image)                  |
-| `chain_evm`         | On-chain EVM extractor output                           |
 | `stripe`            | Stripe API objects                                      |
+| `netsuite`          | NetSuite SuiteTalk extracts                             |
+| `email_inbound`     | Inbound email (e.g. invoices forwarded to a mailbox)    |
+| `csv_upload`        | Direct CSV file upload                                  |
+| `pdf_upload`        | Direct PDF / document upload                            |
+| `alchemy_wallet`    | On-chain EVM extractor output (Alchemy indexer)         |
+| `eth_address`       | Watched address chain events                            |
 | `agent_contributed` | Pushed by an external agent with `raw:write` scope      |
-| `other`             | Anything else                                           |
+| `wiki_annotation`   | Human corrections via the Wiki annotate path (internal) |
+| `other`             | Universal fallback: any source with no native connector |
 
 {% hint style="info" %}
 The webhook path (`POST /v1/raw/webhooks/{provider}`) accepts a separate, narrower `provider` enum: `plaid`, `stripe`, `alchemy`, `netsuite`, `generic_hmac`. Webhook signature verification replaces bearer auth on that route.

@@ -40,7 +40,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
       method: "POST",
       url: "/raw/ingest",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      payload: JSON.stringify({ source_type: "upload", url: "http://example.com/doc" }),
+      payload: JSON.stringify({ source_type: "csv_upload", url: "http://example.com/doc" }),
     });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({

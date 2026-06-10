@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { StripeAdapter, NetSuiteAdapter, GmailAdapter, EvmAdapter } from "./stubs.js";
+import {
+  StripeAdapter,
+  NetSuiteAdapter,
+  EmailInboundAdapter,
+  AlchemyWalletAdapter,
+} from "./stubs.js";
 
 describe("stub adapters", () => {
   for (const [name, adapter] of [
     ["StripeAdapter", StripeAdapter],
     ["NetSuiteAdapter", NetSuiteAdapter],
-    ["GmailAdapter", GmailAdapter],
-    ["EvmAdapter", EvmAdapter],
+    ["EmailInboundAdapter", EmailInboundAdapter],
+    ["AlchemyWalletAdapter", AlchemyWalletAdapter],
   ] as const) {
     it(`${name}.handleWebhook throws a 501 brain error`, async () => {
       const handler = adapter.handleWebhook!;
