@@ -17,6 +17,7 @@ export const SOURCE_TYPES = [
   "pdf_upload",
   "alchemy_wallet",
   "eth_address",
+  "merge_accounting",
 ] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
@@ -52,6 +53,7 @@ export const STUB_SOURCE_TYPES: ReadonlySet<SourceType> = new Set([
   "pdf_upload",
   "alchemy_wallet",
   "eth_address",
+  "merge_accounting",
 ]);
 
 export type SourceStatus = "active" | "paused" | "error" | "disconnected";

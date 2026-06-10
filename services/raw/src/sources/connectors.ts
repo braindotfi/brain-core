@@ -108,6 +108,7 @@ const REGISTRY: Readonly<Record<SourceType, Connector>> = {
   pdf_upload: stubConnector,
   alchemy_wallet: stubConnector,
   eth_address: stubConnector,
+  merge_accounting: stubConnector,
 };
 
 export function getConnector(type: SourceType): Connector {

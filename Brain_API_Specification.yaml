@@ -2840,6 +2840,7 @@ components:
         - pdf_upload
         - alchemy_wallet
         - eth_address
+        - merge_accounting
         - agent_contributed
         - wiki_annotation
         - other

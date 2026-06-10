@@ -214,4 +214,16 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     objectTypes: [],
     parserVersions: [],
   },
+  {
+    connectorType: "merge_accounting",
+    version: "0.1.0",
+    category: "other", // TODO(connector): catalog grouping
+    delivery: ["file"], // TODO(connector): declared modalities
+    origin: "provider", // TODO(connector)
+    format: ["structured"],
+    authentication: ["api_key"], // TODO(connector)
+    capabilities: NO_CAPABILITIES, // claims must match implemented methods
+    objectTypes: [], // TODO(connector): provider object types
+    parserVersions: ["merge_accounting_v1"],
+  },
 ];
