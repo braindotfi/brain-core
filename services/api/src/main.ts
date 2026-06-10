@@ -178,6 +178,10 @@ import { createViemPolicySignerChecker } from "./policy/viemPolicySignerChecker.
 import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
+import {
+  createProviderTenantResolver,
+  createStripeTenantResolver,
+} from "./webhooks/stripeTenant.js";
 import { buildRawEvidenceService } from "./adapters/raw-evidence-adapter.js";
 import { buildWikiMemoryService } from "./adapters/wiki-memory-adapter.js";
 import { buildEvidenceProviders } from "./agents/evidence-providers.js";
@@ -1401,6 +1405,11 @@ async function main(): Promise<void> {
             },
       clockToleranceSeconds: 300,
     },
+    // Stripe endpoint signing (platform-level secret). Absent => the stripe
+    // webhook path answers 501 and ingestion relies on the pull modality.
+    ...(cfg.STRIPE_WEBHOOK_SECRET !== undefined
+      ? { stripeVerify: { signingSecret: cfg.STRIPE_WEBHOOK_SECRET, clockToleranceSeconds: 300 } }
+      : {}),
     resolveWebhookTenant: cfg.BRAIN_DEMO_MODE
       ? async (
           _provider: string,
@@ -1416,7 +1425,10 @@ async function main(): Promise<void> {
             "cannot resolve webhook tenant — use x-dev-tenant-id header in demo mode",
           );
         }
-      : createPlaidTenantResolver(pool),
+      : createProviderTenantResolver({
+          plaid: createPlaidTenantResolver(pool),
+          stripe: createStripeTenantResolver(privilegedPool),
+        }),
   };
 
   // Mount all service routes under /v1 to match Brain_API_Specification.yaml.

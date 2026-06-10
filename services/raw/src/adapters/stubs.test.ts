@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { NetSuiteAdapter, EmailInboundAdapter, AlchemyWalletAdapter } from "./stubs.js";
-import { StripeAdapter } from "./stripe.js";
 
 describe("stub adapters", () => {
   for (const [name, adapter] of [
-    ["StripeAdapter", StripeAdapter],
     ["NetSuiteAdapter", NetSuiteAdapter],
     ["EmailInboundAdapter", EmailInboundAdapter],
     ["AlchemyWalletAdapter", AlchemyWalletAdapter],

@@ -156,6 +156,12 @@ const envSchema = z.object({
   PLAID_CLIENT_ID: optionalNonEmptyString(),
   PLAID_SECRET: optionalNonEmptyString(),
   PLAID_ENV: z.enum(["sandbox", "development", "production"]).default("sandbox"),
+  /**
+   * Stripe webhook endpoint signing secret (whsec_...) for the
+   * platform-level /raw/webhooks/stripe endpoint. Absent => the stripe
+   * webhook path answers 501 and ingestion relies on the pull modality.
+   */
+  STRIPE_WEBHOOK_SECRET: optionalNonEmptyString(),
 
   // ---- MCP / on-chain ----
   RPC_URL: z.string().url().default("https://sepolia.base.org"),

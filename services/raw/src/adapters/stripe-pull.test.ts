@@ -213,9 +213,29 @@ describe("StripeAdapter.fetchIncremental (cursor pull)", () => {
     ).rejects.toMatchObject({ statusCode: 502 });
   });
 
-  it("still rejects webhook ingestion with 501 until signature verification lands", async () => {
+  it("wraps a (route-verified) webhook event as an evidence artifact keyed by event id", async () => {
+    const event = {
+      id: "evt_99",
+      type: "charge.succeeded",
+      account: "acct_S1",
+      created: 1770000000,
+    };
+    const artifacts = await StripeAdapter.handleWebhook!(
+      "tnt_1",
+      Buffer.from(JSON.stringify(event)),
+      {},
+    );
+    expect(artifacts).toHaveLength(1);
+    const a = artifacts[0]!;
+    expect(a.sourceRef).toMatchObject({ event_id: "evt_99", stripe_account_id: "acct_S1" });
+    expect(a.envelope?.sourceSchema).toBe("stripe.webhook_event.v1");
+    // Stripe re-delivers events verbatim; the event id is the dedup key.
+    expect(a.envelope?.idempotencyKey).toBe("stripe:event:evt_99");
+  });
+
+  it("rejects a non-JSON webhook body", async () => {
     await expect(
-      StripeAdapter.handleWebhook!("tnt_1", Buffer.from("{}"), {}),
-    ).rejects.toMatchObject({ statusCode: 501 });
+      StripeAdapter.handleWebhook!("tnt_1", Buffer.from("not json"), {}),
+    ).rejects.toMatchObject({ code: "request_body_invalid" });
   });
 });

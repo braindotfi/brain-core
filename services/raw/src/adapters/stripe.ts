@@ -53,12 +53,11 @@ const LIST_PATHS: Readonly<Record<string, { path: string; schema: string }>> = {
   customer: { path: "/v1/customers", schema: "stripe.customers.v1" },
 };
 
-function unsupportedWebhook(): never {
-  throw brainError(
-    "raw_source_unsupported",
-    "stripe webhook ingestion is not implemented yet (signature verification pending)",
-    { statusOverride: 501 },
-  );
+interface StripeEventEnvelope {
+  id?: string;
+  type?: string;
+  account?: string;
+  created?: number;
 }
 
 export const StripeAdapter: SourceAdapter = {
@@ -67,8 +66,42 @@ export const StripeAdapter: SourceAdapter = {
   // authenticated pull may create stripe artifacts, never the generic
   // caller-supplied /raw/ingest route.
   providerAuthenticatedOnly: true,
-  async handleWebhook(): Promise<FetchedArtifact[]> {
-    return unsupportedWebhook();
+  /**
+   * Signed event push (already signature-verified by the webhook route).
+   * The event lands verbatim as evidence; webhooks normally SCHEDULE a
+   * synchronization rather than acting as the authoritative record (§8) —
+   * the pull partitions remain the canonical reader, so no interpreter
+   * promotes webhook events yet.
+   */
+  async handleWebhook(_tenantId, rawBody): Promise<FetchedArtifact[]> {
+    let parsed: StripeEventEnvelope;
+    try {
+      parsed = JSON.parse(rawBody.toString("utf8")) as StripeEventEnvelope;
+    } catch {
+      throw brainError("request_body_invalid", "Stripe webhook body was not JSON");
+    }
+    const eventId = typeof parsed.id === "string" ? parsed.id : "unknown";
+    return [
+      {
+        body: rawBody,
+        mimeType: "application/json",
+        sourceRef: {
+          provider: "stripe",
+          event_id: eventId,
+          event_type: parsed.type ?? "unknown",
+          stripe_account_id: parsed.account ?? null,
+        },
+        envelope: {
+          sourceSchema: "stripe.webhook_event.v1",
+          objectType: "event",
+          operation: "upsert",
+          observedAt: new Date().toISOString(),
+          originalSource: "stripe",
+          externalId: eventId,
+          ...(eventId !== "unknown" ? { idempotencyKey: `stripe:event:${eventId}` } : {}),
+        },
+      },
+    ];
   },
 
   syncObjectTypes: Object.keys(LIST_PATHS).map((objectType) => ({
