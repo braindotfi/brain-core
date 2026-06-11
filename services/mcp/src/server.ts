@@ -65,8 +65,10 @@ export class BrainMcpServer {
   public async handle(payload: unknown, principal: Principal): Promise<JsonRpcResponse> {
     const requestId = newRequestId();
 
-    // Verify the agent FIRST. Any failure here returns a JSON-RPC error
-    // before we even look at the method name. Batch 12: emit an audit row
+    // Verify the agent FIRST, before we even look at the method name. Any
+    // failure here is re-thrown (not shaped into a JSON-RPC error): it
+    // propagates out of the route handler and surfaces as an HTTP 401/403
+    // Brain error envelope, not a 200 JSON-RPC response. Batch 12: emit an audit row
     // on auth-verify failures too, so operators see scope-mismatch /
     // scope-hash drift / tenant-mismatch probes in the trail. We do NOT
     // have a verified ctx yet, so the audit uses the principal's CLAIMED
