@@ -130,3 +130,36 @@ for (const { schema, objectType } of STRIPE_PAGE_SCHEMAS) {
     };
   });
 }
+
+/**
+ * Merge accounting list pages -> merge_accounting_v1 payload
+ * {object_type, merge_integration, objects}. The underlying platform name
+ * comes from the artifact context (captured by the pull adapter), keeping
+ * the original source attached through interpretation.
+ */
+const MERGE_PAGE_SCHEMAS: ReadonlyArray<{ schema: string; objectType: string }> = [
+  { schema: "merge_accounting.gl_accounts.v1", objectType: "gl_account" },
+  { schema: "merge_accounting.journal_entries.v1", objectType: "journal_entry" },
+  { schema: "merge_accounting.invoices.v1", objectType: "invoice" },
+  { schema: "merge_accounting.contacts.v1", objectType: "contact" },
+  { schema: "merge_accounting.payments.v1", objectType: "payment" },
+  { schema: "merge_accounting.tax_rates.v1", objectType: "tax_rate" },
+];
+
+for (const { schema, objectType } of MERGE_PAGE_SCHEMAS) {
+  registerInterpreter(schema, (bytes, ctx) => {
+    const page = parseJson(bytes, ctx.sourceSchema);
+    const objects = Array.isArray(page["results"]) ? page["results"] : [];
+    if (objects.length === 0) return null;
+    return {
+      parser: "merge_accounting_v1",
+      parserVersion: "1.0.0",
+      extracted: {
+        object_type: objectType,
+        merge_integration: ctx.sourceRef["merge_integration"] ?? null,
+        objects,
+      },
+      confidence: null,
+    };
+  });
+}
