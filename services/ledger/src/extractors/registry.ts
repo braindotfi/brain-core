@@ -95,6 +95,6 @@ registerParser("merge_accounting_v1", async (pool, audit, ctx, input) =>
   normalizeMergeAccountingArtifact(pool, audit, ctx, input),
 );
 
-registerParser("finch_v1", async (pool, audit, ctx, input) =>
+registerParser("finch_payroll_v1", async (pool, audit, ctx, input) =>
   normalizeFinchArtifact(pool, audit, ctx, input),
 );

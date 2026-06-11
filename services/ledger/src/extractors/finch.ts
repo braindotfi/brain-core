@@ -1,5 +1,5 @@
 /**
- * Finch extractor (scaffolded): interprets `finch_v1` raw_parsed rows.
+ * Finch extractor (scaffolded): interprets `finch_payroll_v1` raw_parsed rows.
  *
  * TODO(connector): map the payload to Ledger entities through the
  * provenance-validating writers in ../service/writes.ts. Keep provider-only

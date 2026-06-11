@@ -106,6 +106,22 @@ const mergeAccountingConnector: Connector = {
   },
 };
 
+const finchConnector: Connector = {
+  async validateCredentials(ctx) {
+    const accessToken = ctx.credentials["access_token"];
+    if (typeof accessToken !== "string" || accessToken.length === 0) {
+      throw brainError("source_credential_invalid", "Finch `access_token` is required");
+    }
+  },
+  async sync(sourceId) {
+    return {
+      job_id: newSourceSyncJobId(),
+      source_id: sourceId,
+      status: "enqueued",
+    };
+  },
+};
+
 const stubConnector: Connector = {
   async validateCredentials() {
     // Stubs accept any credentials — they don't hit a real provider.
@@ -132,7 +148,7 @@ const REGISTRY: Readonly<Record<SourceType, Connector>> = {
   alchemy_wallet: stubConnector,
   eth_address: stubConnector,
   merge_accounting: mergeAccountingConnector,
-  finch: stubConnector,
+  finch: finchConnector,
 };
 
 export function getConnector(type: SourceType): Connector {

@@ -234,14 +234,29 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
   },
   {
     connectorType: "finch",
-    version: "0.1.0",
-    category: "other", // TODO(connector): catalog grouping
-    delivery: ["file"], // TODO(connector): declared modalities
-    origin: "provider", // TODO(connector)
+    version: "1.0.0",
+    category: "payroll_hr",
+    delivery: ["poll", "snapshot"],
+    origin: "aggregator",
     format: ["structured"],
-    authentication: ["api_key"], // TODO(connector)
-    capabilities: NO_CAPABILITIES, // claims must match implemented methods
-    objectTypes: [], // TODO(connector): provider object types
-    parserVersions: ["finch_v1"],
+    authentication: ["oauth2"],
+    capabilities: {
+      ...NO_CAPABILITIES,
+      backfill: true,
+      incremental: true,
+      updates: true,
+    },
+    objectTypes: [
+      "company",
+      "individual",
+      "employment",
+      "pay_run",
+      "pay_statement",
+      "deduction",
+      "contribution",
+      "benefit",
+    ],
+    parserVersions: ["finch_payroll_v1"],
+    expectedFreshness: "P1D",
   },
 ];
