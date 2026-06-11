@@ -168,7 +168,7 @@ const envSchema = z.object({
   MCP_AGENT_REGISTRY_ADDRESS: z
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
-    .default("0xd1558828ef31630164aa8942dd41bc63a4d8bed7"),
+    .default("0xcE7Ce9dd95c17E1F4E27D49249b6fdb015f3A7e0"),
   POLICY_REGISTRY_ADDRESS: z
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)

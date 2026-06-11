@@ -54,6 +54,7 @@
     "demo:golden-path": "./scripts/demo/golden-path.sh"
   },
   "devDependencies": {
+    "@brain/shared": "workspace:*",
     "@eslint/js": "^9.39.4",
     "@types/node": "^22.7.0",
     "@typescript-eslint/eslint-plugin": "^8.8.0",
@@ -63,7 +64,9 @@
     "eslint-config-prettier": "^9.1.0",
     "globals": "^17.6.0",
     "prettier": "^3.3.3",
+    "tsx": "^4.22.0",
     "typescript": "^5.6.2",
+    "viem": "^2.21.0",
     "vitest": "^4.1.8"
   }
 }

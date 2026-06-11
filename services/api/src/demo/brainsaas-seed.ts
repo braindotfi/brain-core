@@ -42,12 +42,14 @@ import {
   type CounterpartyRow,
 } from "@brain/ledger";
 import {
+  computeAgentScopeHash,
   newAgentId,
   newDocumentId,
   newInvoiceId,
   newPolicyId,
   newRawArtifactId,
   newRawParsedId,
+  PAYMENT_AGENT_SCOPES,
   withTenantScope,
   type AuditEmitter,
   type ServiceCallContext,
@@ -654,7 +656,11 @@ async function seedPolicy(
 async function seedAgent(pool: Pool, tenantId: string): Promise<string> {
   const smartAccount =
     process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ?? "0x0000000000000000000000000000000000000000";
-  const scopeHash = createHash("sha256").update(`${tenantId}:payment`).digest();
+  // keccak256 over the sorted-joined payment scope set — the SAME value the
+  // on-chain BrainMCPAgentRegistry holds (scripts/ops/register-prod-agent.ts)
+  // and that MCP auth compares against. Written as raw 32 bytes because the
+  // auth path hex-encodes this BYTEA column before the on-chain comparison.
+  const scopeHash = Buffer.from(computeAgentScopeHash(PAYMENT_AGENT_SCOPES).slice(2), "hex");
   const agentId = newAgentId();
   await withTenantScope(pool, tenantId, async (c) => {
     await c.query(`DELETE FROM agents WHERE display_name = 'Demo Payment Agent'`);
