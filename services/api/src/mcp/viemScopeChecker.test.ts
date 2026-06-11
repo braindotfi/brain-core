@@ -153,7 +153,9 @@ describe("createViemScopeChecker", () => {
     it("reports a registry failure (loud) when getAgent does not decode", async () => {
       const readContract = vi
         .fn()
-        .mockRejectedValue(Object.assign(new Error("position out of bounds"), { name: "AbiDecodingError" }));
+        .mockRejectedValue(
+          Object.assign(new Error("position out of bounds"), { name: "AbiDecodingError" }),
+        );
       vi.mocked(viem.createPublicClient).mockReturnValue({
         readContract,
       } as unknown as ReturnType<typeof viem.createPublicClient>);

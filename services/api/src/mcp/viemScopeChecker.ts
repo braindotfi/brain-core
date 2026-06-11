@@ -92,7 +92,9 @@ export function createViemScopeChecker(opts: ViemScopeCheckerOptions): ViemScope
         // Distinguish a transient RPC fault from a genuine registry mismatch so
         // the caller can pick log severity. ABI/contract problems are the loud
         // ones — they will not self-heal.
-        const transient = /Http|Timeout|Connection|fetch|network|socket/i.test(`${name} ${message}`);
+        const transient = /Http|Timeout|Connection|fetch|network|socket/i.test(
+          `${name} ${message}`,
+        );
         return { ok: false, reason: `${transient ? "rpc" : "registry"}: ${name}: ${message}` };
       }
     },
