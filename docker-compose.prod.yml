@@ -231,7 +231,7 @@ services:
       # back to the code defaults "brain-unknown" / "0.0.0-dev". SERVICE_VERSION
       # is overridable per release via .env.prod; @brain/sdk versions separately.
       SERVICE_NAME: brain-api
-      SERVICE_VERSION: ${SERVICE_VERSION:-0.0.4}
+      SERVICE_VERSION: ${SERVICE_VERSION:-0.0.5}
       # Base Sepolia testnet (scope-defining).
       BRAIN_BASE_CHAIN_ID: "84532"
       # --- auth (verify against the in-network JWKS sidecar) ---

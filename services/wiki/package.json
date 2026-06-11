@@ -1,6 +1,6 @@
 {
   "name": "@brain/wiki",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "description": "Structured memory. Postgres + pgvector. Bitemporal entity/relation graph via recursive CTE.",
   "type": "module",
