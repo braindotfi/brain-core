@@ -67,6 +67,7 @@ import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { TenantDeletionService } from "./tenant-deletion/service.js";
 import { startTenantBlobPurgeWorker } from "./tenant-deletion/blob-purge-worker.js";
 import { registerTenantDeletionRoute } from "./tenant-deletion/route.js";
+import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
 import { registerProofViewRoute } from "./proof/view.js";
 import { registerAuditHealthRoute } from "./audit-health/route.js";
 import { registerDocsRoutes } from "./docs/routes.js";
@@ -1976,6 +1977,24 @@ async function main(): Promise<void> {
             };
           },
         );
+
+        // POST /v1/demo/provision-run/:tenantId/anchor — server-side anchor
+        // trigger for the BrainSaaS playground (see demo/anchor-route.ts). Same
+        // shared-secret fence as provision-run; anchors the run's audit log
+        // on-chain immediately so the demo does not wait for the hourly
+        // background publisher. Only meaningful when the broadcaster is wired.
+        await registerDemoProvisionAnchorRoute(v1, {
+          provisionSecret,
+          // Use the app pool (brain_app, FORCE RLS), NOT privilegedPool:
+          // publishAnchor -> withTenantScope(tenantId) sets app.tenant_id and
+          // relies on RLS to scope listEventsForAnchor to this tenant. A
+          // BYPASSRLS pool would silently anchor EVERY tenant's events under
+          // this one demo tenant. Same pool the /audit/anchor/publish route uses.
+          publish:
+            anchorBroadcaster === undefined
+              ? undefined
+              : (input) => publishAnchor(pool, anchorBroadcaster, input),
+        });
       }
     },
     { prefix: "/v1" },
