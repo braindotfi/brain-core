@@ -131,4 +131,51 @@ describe("createViemScopeChecker", () => {
     const checker = createViemScopeChecker(opts);
     expect(await checker.getOnchainScopeHash("agent_abc")).toBe(scopeHashHex.slice(2));
   });
+
+  describe("selfCheck", () => {
+    it("returns ok when getAgent decodes (even for an unregistered sentinel)", async () => {
+      // A zero-filled tuple (sentinel never registered) still proves the ABI
+      // decodes against the deployed registry — that is all selfCheck asserts.
+      setupReadContract({
+        agentId: `0x${"00".repeat(32)}`,
+        agentAddress: "0x0000000000000000000000000000000000000000",
+        tenantId: `0x${"00".repeat(32)}`,
+        scopeHash: `0x${"00".repeat(32)}`,
+        behaviorHash: `0x${"00".repeat(32)}`,
+        registeredAt: 0n,
+        revokedAt: 0n,
+      });
+
+      const checker = createViemScopeChecker(opts);
+      expect(await checker.selfCheck()).toEqual({ ok: true });
+    });
+
+    it("reports a registry failure (loud) when getAgent does not decode", async () => {
+      const readContract = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error("position out of bounds"), { name: "AbiDecodingError" }));
+      vi.mocked(viem.createPublicClient).mockReturnValue({
+        readContract,
+      } as unknown as ReturnType<typeof viem.createPublicClient>);
+
+      const checker = createViemScopeChecker(opts);
+      const res = await checker.selfCheck();
+      expect(res.ok).toBe(false);
+      expect(res.reason).toMatch(/^registry:/);
+    });
+
+    it("classifies a transient RPC fault distinctly from a registry mismatch", async () => {
+      const readContract = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error("fetch failed"), { name: "HttpRequestError" }));
+      vi.mocked(viem.createPublicClient).mockReturnValue({
+        readContract,
+      } as unknown as ReturnType<typeof viem.createPublicClient>);
+
+      const checker = createViemScopeChecker(opts);
+      const res = await checker.selfCheck();
+      expect(res.ok).toBe(false);
+      expect(res.reason).toMatch(/^rpc:/);
+    });
+  });
 });

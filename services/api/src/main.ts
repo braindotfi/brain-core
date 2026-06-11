@@ -1052,13 +1052,36 @@ async function main(): Promise<void> {
           onchain_address: null,
           role: "dev",
         })
-      : new McpAuthVerifier(
-          pool,
-          createViemScopeChecker({
+      : (() => {
+          const scopeChecker = createViemScopeChecker({
             rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
             contractAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
-          }),
-        );
+          });
+          // Boot-time registry self-check. `getOnchainScopeHash` fails closed to
+          // null on an ABI/layout skew, so a stale MCP_AGENT_REGISTRY_ADDRESS
+          // would silently 401 every MCP call (agent_not_registered_onchain)
+          // instead of surfacing. Probe once at boot and log loudly on mismatch.
+          // Fire-and-forget so a slow RPC never blocks server start.
+          void scopeChecker
+            .selfCheck()
+            .then((res) => {
+              if (res.ok) {
+                log.info(
+                  { registry: cfg.MCP_AGENT_REGISTRY_ADDRESS },
+                  "MCP agent registry self-check passed",
+                );
+              } else {
+                log.error(
+                  { registry: cfg.MCP_AGENT_REGISTRY_ADDRESS, reason: res.reason },
+                  "MCP agent registry self-check FAILED — getAgent did not decode; " +
+                    "every MCP call will 401 (agent_not_registered_onchain). " +
+                    "Verify MCP_AGENT_REGISTRY_ADDRESS and the Base RPC URL.",
+                );
+              }
+            })
+            .catch((err) => log.error({ err }, "MCP agent registry self-check threw"));
+          return new McpAuthVerifier(pool, scopeChecker);
+        })();
 
   const agentService = new AgentService({
     pool,
