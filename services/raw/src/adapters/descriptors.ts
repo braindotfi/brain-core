@@ -216,14 +216,20 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
   },
   {
     connectorType: "merge_accounting",
-    version: "0.1.0",
-    category: "other", // TODO(connector): catalog grouping
-    delivery: ["file"], // TODO(connector): declared modalities
-    origin: "provider", // TODO(connector)
+    version: "1.0.0",
+    category: "accounting_erp",
+    delivery: ["cursor", "poll"],
+    origin: "aggregator",
     format: ["structured"],
-    authentication: ["api_key"], // TODO(connector)
-    capabilities: NO_CAPABILITIES, // claims must match implemented methods
-    objectTypes: [], // TODO(connector): provider object types
+    authentication: ["api_key"],
+    capabilities: {
+      ...NO_CAPABILITIES,
+      backfill: true,
+      incremental: true,
+      updates: true,
+    },
+    objectTypes: ["gl_account", "journal_entry", "invoice", "contact", "payment", "tax_rate"],
     parserVersions: ["merge_accounting_v1"],
+    expectedFreshness: "PT24H",
   },
 ];

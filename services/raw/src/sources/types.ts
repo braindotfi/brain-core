@@ -43,7 +43,11 @@ export const ARTIFACT_SOURCE_TYPES = [
 export type ArtifactSourceType = (typeof ARTIFACT_SOURCE_TYPES)[number];
 
 /** Source-types with concrete adapter implementations in v0.3. */
-export const CONCRETE_SOURCE_TYPES: ReadonlySet<SourceType> = new Set(["plaid", "stripe"]);
+export const CONCRETE_SOURCE_TYPES: ReadonlySet<SourceType> = new Set([
+  "plaid",
+  "stripe",
+  "merge_accounting",
+]);
 
 /** Source-types that ship as stub connectors. Sync returns `{notes:"stub"}`. */
 export const STUB_SOURCE_TYPES: ReadonlySet<SourceType> = new Set([
@@ -53,7 +57,6 @@ export const STUB_SOURCE_TYPES: ReadonlySet<SourceType> = new Set([
   "pdf_upload",
   "alchemy_wallet",
   "eth_address",
-  "merge_accounting",
 ]);
 
 export type SourceStatus = "active" | "paused" | "error" | "disconnected";
