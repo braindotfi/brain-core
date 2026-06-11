@@ -296,6 +296,13 @@ export class LedgerService implements ILedgerService {
     return row === null ? null : serializeObligation(row);
   }
 
+  // ILedgerService getter — mirrors getAccount/getTransaction. Delegates to
+  // findObligationById so a single-row lookup hits the indexed primary key
+  // instead of scanning a list page.
+  public async getObligation(ctx: ServiceCallContext, id: string): Promise<Obligation | null> {
+    return this.findObligationById(ctx, id);
+  }
+
   public async findInvoiceById(ctx: ServiceCallContext, id: string): Promise<Invoice | null> {
     const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) => findInvoiceById(c, id));
     return row === null ? null : serializeInvoice(row);

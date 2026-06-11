@@ -45,6 +45,7 @@ function fakeLedger(): ILedgerService {
     getTransaction: vi.fn(async () => null),
     listCounterparties: vi.fn(async () => ({ items: [], next_cursor: null })),
     listObligations: vi.fn(async () => ({ items: [], next_cursor: null })),
+    getObligation: vi.fn(async () => null),
     listInvoices: vi.fn(async () => ({ items: [], next_cursor: null })),
     listDocuments: vi.fn(async () => ({ items: [], next_cursor: null })),
     listBalances: vi.fn(async () => []),
