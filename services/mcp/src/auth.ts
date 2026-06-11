@@ -93,7 +93,7 @@ export class McpAuthVerifier implements AuthVerifier {
     const offchainHex = Buffer.from(agent.scope_hash).toString("hex");
     const onchainHex = await this.onchainScopeHashCached(agent.id);
     if (onchainHex === null) {
-      throw brainError("agent_scope_hash_mismatch", "agent not registered on-chain", {
+      throw brainError("agent_not_registered_onchain", "agent not registered on-chain", {
         details: { agent_id: agent.id },
       });
     }
