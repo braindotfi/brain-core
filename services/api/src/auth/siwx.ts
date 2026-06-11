@@ -29,7 +29,7 @@ import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fa
 import type { Redis } from "ioredis";
 import type { Pool } from "pg";
 import { SiweMessage, generateNonce } from "siwe";
-import { brainError, brainId, newAgentId, newTokenId } from "@brain/shared";
+import { brainError, brainId, newAgentId, newTokenId, PAYMENT_AGENT_SCOPES } from "@brain/shared";
 import type { JwtSigner, Scope } from "@brain/shared";
 import { OWNER_SCOPES } from "../onboarding/login.js";
 import type { ResolvedWalletIdentity } from "../onboarding/wallet-identities.js";
@@ -315,7 +315,9 @@ function scopesForRole(role: string): Scope[] {
     case "reconciliation":
       return ["ledger:read", "wiki:read", "raw:write", "execution:propose"];
     case "payment":
-      return ["ledger:read", "wiki:read", "payment_intent:propose", "execution:propose"];
+      // Canonical set shared with the demo seed + on-chain registration tooling
+      // so the JWT scopes and the on-chain scope_hash never diverge.
+      return [...PAYMENT_AGENT_SCOPES];
     case "anomaly":
       return ["ledger:read", "wiki:read"];
     case "partner":

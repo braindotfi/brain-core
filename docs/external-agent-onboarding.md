@@ -68,7 +68,7 @@ BrainMCPAgentRegistry.registerAgent(
 ```
 
 Contract addresses are in `SECURITY.md`. On Base Sepolia the registry is at
-`0xd1558828ef31630164aa8942dd41bc63a4d8bed7`.
+`0xcE7Ce9dd95c17E1F4E27D49249b6fdb015f3A7e0`.
 
 The MCP scope-check reads this on every tool call (60-second in-process
 cache; operators can flush a single agent's entry via

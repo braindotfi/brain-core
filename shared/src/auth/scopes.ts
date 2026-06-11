@@ -82,6 +82,23 @@ export const AGENT_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "execution:propose",
 ]);
 
+/**
+ * Canonical scope set for the demo `payment` agent role (a subset of
+ * AGENT_PERMITTED_SCOPES — no `raw:write`). Single source of truth shared by
+ * SIWX token issuance (scopesForRole), the BrainSaaS demo seed
+ * (services/api/src/demo/brainsaas-seed.ts), and the on-chain registration
+ * tooling (scripts/ops/register-prod-agent.ts), so the JWT scopes, the
+ * `agents.scope_hash` column, and the on-chain BrainMCPAgentRegistry scopeHash
+ * can never diverge. Order is irrelevant — `computeAgentScopeHash` sorts before
+ * hashing — but kept stable here for readability.
+ */
+export const PAYMENT_AGENT_SCOPES: readonly Scope[] = [
+  "ledger:read",
+  "wiki:read",
+  "payment_intent:propose",
+  "execution:propose",
+];
+
 export function hasScope(held: ReadonlyArray<string>, required: Scope): boolean {
   return held.includes(required) || held.includes(impliedAdmin(required));
 }
