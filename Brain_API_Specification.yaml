@@ -681,7 +681,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [merchant, vendor, customer, employer, bank, wallet, exchange, tax_authority, other]
+            enum: [merchant, vendor, customer, employer, employee, bank, wallet, exchange, tax_authority, other]
         - name: verified_status
           in: query
           schema: { type: string }
@@ -3338,7 +3338,7 @@ components:
             normalized_name: { type: [string, "null"] }
             type:
               type: string
-              enum: [merchant, vendor, customer, employer, bank, wallet, exchange, tax_authority, other]
+              enum: [merchant, vendor, customer, employer, employee, bank, wallet, exchange, tax_authority, other]
             risk_level:
               type: [string, "null"]
               enum: [low, medium, high, sanctioned]

@@ -79,6 +79,7 @@ export interface Counterparty extends LedgerCommonFields {
     | "vendor"
     | "customer"
     | "employer"
+    | "employee"
     | "bank"
     | "wallet"
     | "exchange"

@@ -163,3 +163,38 @@ for (const { schema, objectType } of MERGE_PAGE_SCHEMAS) {
     };
   });
 }
+
+/**
+ * Finch payroll pages -> finch_payroll_v1 payloads.
+ *
+ * PII minimization (connector 4 sensitive-data requirements): only the
+ * directory (names + employment linkage, no SSN/dob) and the pay-run
+ * aggregates are promoted into raw_parsed. finch.company.v1 and
+ * finch.pay_statements.v1 (per-individual compensation detail) are
+ * deliberately NOT interpreted — those bytes stay encrypted in the raw blob
+ * store only, so compensation and identity detail never reach a queryable
+ * column or model context.
+ */
+registerInterpreter("finch.directory.v1", (bytes, ctx) => {
+  const page = parseJson(bytes, ctx.sourceSchema);
+  const individuals = Array.isArray(page["individuals"]) ? page["individuals"] : [];
+  if (individuals.length === 0) return null;
+  return {
+    parser: "finch_payroll_v1",
+    parserVersion: "1.0.0",
+    extracted: { object_type: "individual", objects: individuals },
+    confidence: null,
+  };
+});
+
+registerInterpreter("finch.payments.v1", (bytes, ctx) => {
+  const page = JSON.parse(bytes.toString("utf8")) as unknown;
+  const objects = Array.isArray(page) ? page : [];
+  if (objects.length === 0) return null;
+  return {
+    parser: "finch_payroll_v1",
+    parserVersion: "1.0.0",
+    extracted: { object_type: "pay_run", objects },
+    confidence: null,
+  };
+});

@@ -150,3 +150,33 @@ describe("merge accounting interpreters", () => {
     }
   });
 });
+
+describe("finch interpreters (PII minimization)", () => {
+  it("promotes directory and payments pages but NOT company or pay statements", () => {
+    expect(registeredSchemas()).toEqual(
+      expect.arrayContaining(["finch.directory.v1", "finch.payments.v1"]),
+    );
+    // Compensation/identity detail stays encrypted in the raw blob only.
+    expect(interpreterForSchema("finch.pay_statements.v1")).toBeUndefined();
+    expect(interpreterForSchema("finch.company.v1")).toBeUndefined();
+  });
+
+  it("reshapes a directory page into individual objects", () => {
+    const out = interpreterForSchema("finch.directory.v1")!(
+      Buffer.from(JSON.stringify({ individuals: [{ id: "ind_1", first_name: "Dana" }] })),
+      ctx({ sourceSchema: "finch.directory.v1", sourceType: "finch" }),
+    );
+    expect(out!.parser).toBe("finch_payroll_v1");
+    expect(out!.extracted).toMatchObject({ object_type: "individual" });
+  });
+
+  it("reshapes a top-level payments array into pay_run objects", () => {
+    const out = interpreterForSchema("finch.payments.v1")!(
+      Buffer.from(JSON.stringify([{ id: "pay_1", pay_date: "2026-06-05" }])),
+      ctx({ sourceSchema: "finch.payments.v1", sourceType: "finch" }),
+    );
+    expect(out!.parser).toBe("finch_payroll_v1");
+    expect(out!.extracted).toMatchObject({ object_type: "pay_run" });
+    expect((out!.extracted as { objects: unknown[] }).objects).toHaveLength(1);
+  });
+});
