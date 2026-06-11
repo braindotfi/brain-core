@@ -139,13 +139,12 @@ export async function readResource(
       };
     }
     case "ledger.obligation": {
-      const list = await ctx.ledger.listObligations(ctx.ctx, { limit: 1 });
-      const match = list.items.find((o) => o.id === parsed.id);
-      if (match === undefined) throw brainError("ledger_row_not_found", "obligation not found");
+      const result = await ctx.ledger.getObligation(ctx.ctx, parsed.id);
+      if (result === null) throw brainError("ledger_row_not_found", "obligation not found");
       return {
         requiredScopes: ["ledger:read"],
         result: {
-          contents: [{ uri, mimeType: "application/json", text: JSON.stringify(match, null, 2) }],
+          contents: [{ uri, mimeType: "application/json", text: JSON.stringify(result, null, 2) }],
         },
       };
     }

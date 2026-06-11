@@ -76,7 +76,7 @@ describe("McpAuthVerifier", () => {
     stubTenantScope(activeAgent());
     const verifier = new McpAuthVerifier(makePool(), makeChecker(null));
     await expect(verifier.verify(principal())).rejects.toMatchObject({
-      code: "agent_scope_hash_mismatch",
+      code: "agent_not_registered_onchain",
     });
   });
 

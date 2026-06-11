@@ -121,6 +121,7 @@ function shapeError(id: number | string | null, err: unknown): JsonRpcResponse {
     auth_scope_insufficient: -32002,
     auth_tenant_mismatch: -32002,
     agent_not_registered: -32003,
+    agent_not_registered_onchain: -32003,
     payment_intent_gate_failed: -32004,
     // Granular gate codes that replaced the payment_intent_gate_failed umbrella
     // map to the same gate-failed JSON-RPC code.

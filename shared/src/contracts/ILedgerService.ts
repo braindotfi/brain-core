@@ -277,6 +277,7 @@ export interface ILedgerService {
     ctx: ServiceCallContext,
     f: ObligationListFilters,
   ): Promise<ListResult<Obligation>>;
+  getObligation(ctx: ServiceCallContext, id: string): Promise<Obligation | null>;
   listInvoices(
     ctx: ServiceCallContext,
     f: { status?: Invoice["status"]; counterparty_id?: string; limit?: number },

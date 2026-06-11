@@ -256,6 +256,38 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --filter='./tests/e2e' run test --if-present
 
+  external_agent_mcp_e2e:
+    name: external-agent MCP E2E
+    runs-on: ubuntu-latest
+    # Opt-in. tests/e2e/external-agent-mcp.e2e.test.ts (Series A proof 3) drives
+    # a real external agent through MCP: ping → wiki read → policy-gated payment
+    # intent → audit. It only passes once the agent is actually registered
+    # on-chain (Track 1), so it stays gated behind an explicit repo variable +
+    # token secret. Without them the test self-skips (describe.skip); gating the
+    # whole job keeps the signal honest — a green check means it really ran.
+    # Lives here (post-merge) rather than in pr.yml so PRs don't hit a live env
+    # or mint $10 ACH intents on every push.
+    if: vars.E2E_EXTERNAL_AGENT_ENABLED == 'true'
+    env:
+      # Host root WITHOUT a /v1 suffix — every e2e path already includes /v1.
+      BRAIN_BASE_URL: ${{ vars.E2E_EXTERNAL_AGENT_BASE_URL || 'https://api.sandbox.brain.fi' }}
+      BRAIN_EXTERNAL_AGENT_TOKEN: ${{ secrets.BRAIN_EXTERNAL_AGENT_TOKEN }}
+      # The 3rd case mints a fixed $10.00 ACH intent. Point these at a THROWAWAY
+      # staging tenant's source account + vendor so repeated runs don't trip the
+      # idempotency / §6 gate-check 11.5 re-run hazard on a real tenant.
+      BRAIN_TEST_SOURCE_ACCT_ID: ${{ vars.E2E_EXTERNAL_AGENT_SOURCE_ACCT_ID }}
+      BRAIN_TEST_VENDOR_ID: ${{ vars.E2E_EXTERNAL_AGENT_VENDOR_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: External-agent MCP E2E
+        run: pnpm -C tests/e2e run test external-agent-mcp.e2e.test.ts
+
   promote_production:
     name: manual promote → production
     runs-on: ubuntu-latest

@@ -72,7 +72,8 @@ struct AgentRegistration {
   bytes32 agentId;
   address agentAddress;
   bytes32 tenantId;
-  bytes32 scopeHash;     // hash of canonical scope document
+  bytes32 scopeHash;     // keccak-256 of canonical scope set
+  bytes32 behaviorHash;  // optional behaviour pin; bytes32(0) if unused
   uint256 registeredAt;
   uint256 revokedAt;     // 0 if active
 }
@@ -105,7 +106,7 @@ The canonical scope document enumerates which of these the tenant has granted to
 | `payment_intent:propose` | The `payment_intent.propose` tool                            |
 | `execution:propose`      | The `agent.action.propose` tool                              |
 
-A tenant can grant any subset. Unused scopes do not appear in the canonical document. The `scopeHash` is the SHA-256 of the canonical, lexicographically-sorted scope document.
+A tenant can grant any subset. Unused scopes do not appear in the canonical document. The `scopeHash` is the **keccak-256** of the canonical, lexicographically-sorted scope set (`computeAgentScopeHash` in `shared/src/agents/capability.ts`); it is the same hash the registration tooling writes on-chain, so the seed, JWT claim, and registry agree byte-for-byte.
 
 ### Per-Call Scope Enforcement
 
@@ -116,29 +117,49 @@ Even after the three pre-call checks pass, each tool invocation is scope-checked
   "jsonrpc": "2.0",
   "id": 1,
   "error": {
-    "code": -32004,
-    "message": "Scope insufficient",
+    "code": -32002,
+    "message": "tool 'wiki.question' requires scope 'wiki:read'",
     "data": {
-      "required_scope": "wiki:read",
-      "granted_scopes": ["ledger:read"]
+      "brain_code": "auth_scope_insufficient",
+      "details": { "required": ["wiki:read"], "held": ["ledger:read"] }
     }
   }
 }
 ```
 
-### JSON-RPC Error Codes
+Per-call scope enforcement runs **after** authentication, inside JSON-RPC dispatch, so it surfaces as a JSON-RPC `error` (HTTP `200`), unlike the pre-dispatch auth checks below.
 
-| Code     | Meaning                                      |
-| -------- | -------------------------------------------- |
-| `-32001` | JWT invalid or expired                       |
-| `-32002` | Agent record not active                      |
-| `-32003` | `scope_hash` does not match on-chain hash    |
-| `-32004` | Per-call scope insufficient                  |
-| `-32005` | Tenant mismatch (JWT tenant != agent tenant) |
-| `-32600` | Standard JSON-RPC: invalid request           |
-| `-32601` | Standard JSON-RPC: method not found          |
-| `-32602` | Standard JSON-RPC: invalid params            |
-| `-32603` | Standard JSON-RPC: internal error            |
+### Error Codes: two surfaces
+
+Brain's MCP surface fails in two distinct places, and the shape of the error differs:
+
+**1. Pre-dispatch auth failures → HTTP `401`/`403` Brain error envelope.** The route guard (`services/mcp/src/transport/http.ts`) checks the JWT and principal type; the auth verifier (`services/mcp/src/auth.ts`, run at the top of `server.handle`) checks on-chain registration, scope-hash, and tenant. All of these throw a `BrainError` that propagates out of the handler **before** any method is dispatched, so the client sees an HTTP `401`/`403` with a Brain error envelope (`{ "error_code": ..., "message": ... }`), **not** a JSON-RPC response.
+
+| `error_code`                         | HTTP | Meaning                                               |
+| ------------------------------------ | ---- | ----------------------------------------------------- |
+| `auth_token_missing/invalid/expired` | 401  | JWT absent, malformed, or expired                     |
+| `auth_scope_insufficient`            | 401  | Principal is not `principal_type=agent`               |
+| `auth_tenant_mismatch`               | 401  | JWT `tenant_id` != agent's registered tenant          |
+| `agent_not_registered`               | 401  | Agent row missing in `agents`, or not `active`        |
+| `agent_not_registered_onchain`       | 401  | Agent has no record in `BrainMCPAgentRegistry`        |
+| `agent_scope_hash_missing`           | 401  | Agent row has no on-chain scope attestation           |
+| `agent_scope_hash_mismatch`          | 401  | DB `scope_hash` differs from the on-chain `scopeHash` |
+
+**2. Post-auth JSON-RPC errors → HTTP `200` with a JSON-RPC `error`.** Once the call has authenticated, failures inside method dispatch (scope, gate, params) are carried in the JSON-RPC `error` field with `data.brain_code` set:
+
+| Code     | Meaning                                                                                   |
+| -------- | ----------------------------------------------------------------------------------------- |
+| `-32001` | JWT invalid/expired (`auth_token_*`), in-dispatch only                                    |
+| `-32002` | Scope insufficient / tenant mismatch (`auth_scope_insufficient`, `auth_tenant_mismatch`)  |
+| `-32003` | Agent not registered or inactive (`agent_not_registered`, `agent_not_registered_onchain`) |
+| `-32004` | Pre-execution gate failed (`payment_intent_gate_failed`, every `gate_*`)                  |
+| `-32005` | On-chain `scope_hash` mismatch (`agent_scope_hash_mismatch`)                              |
+| `-32600` | Standard JSON-RPC: invalid request                                                        |
+| `-32601` | Standard JSON-RPC: method not found                                                       |
+| `-32602` | Standard JSON-RPC: invalid params                                                         |
+| `-32603` | Standard JSON-RPC: internal error                                                         |
+
+The numeric mapping lives in `services/mcp/src/dispatcher.ts`. In practice the auth-class codes (`-32001`/`-32002`/`-32003`/`-32005`) are reached via the HTTP envelope above, since auth runs before dispatch; the JSON-RPC codes you will actually observe in a `200` body are `-32004` (gate), `-32002` (per-tool scope), and the standard `-326xx` family.
 
 ### Token Lifetimes
 
@@ -157,8 +178,8 @@ Two paths:
 | **Tenant in Console** | Generates EIP-712 revocation signature, calls `BrainMCPAgentRegistry.revokeAgent` |
 | **Tenant via API**    | `POST /v1/agents/{agent_id}/revoke` with the tenant's signature                   |
 
-After revocation, all calls fail with error `-32002` within the 60-second cache window.
+After revocation, the on-chain `revokedAt` becomes non-zero, so the scope read returns null and, within the 60-second cache window, all calls are rejected pre-dispatch with an HTTP `401` `agent_not_registered_onchain` envelope.
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 10 tools and their per-tool scope requirements.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 BrainMCPAgentRegistry</strong></td><td>The on-chain contract this all anchors to.</td><td><a href="../smart-contracts/brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 12 tools and their per-tool scope requirements.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 BrainMCPAgentRegistry</strong></td><td>The on-chain contract this all anchors to.</td><td><a href="../smart-contracts/brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr></tbody></table>
