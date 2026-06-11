@@ -83,6 +83,29 @@ const stripeConnector: Connector = {
  * so SDK consumers can detect that the underlying adapter is not yet
  * live. Per Architecture §3.2 reconciliation stub pattern.
  */
+const mergeAccountingConnector: Connector = {
+  async validateCredentials(ctx) {
+    const apiKey = ctx.credentials["api_key"];
+    if (typeof apiKey !== "string" || apiKey.length === 0) {
+      throw brainError("source_credential_invalid", "Merge `api_key` (platform key) is required");
+    }
+    const accountToken = ctx.credentials["account_token"];
+    if (typeof accountToken !== "string" || accountToken.length === 0) {
+      throw brainError(
+        "source_credential_invalid",
+        "Merge `account_token` (linked-account token) is required",
+      );
+    }
+  },
+  async sync(sourceId) {
+    return {
+      job_id: newSourceSyncJobId(),
+      source_id: sourceId,
+      status: "enqueued",
+    };
+  },
+};
+
 const stubConnector: Connector = {
   async validateCredentials() {
     // Stubs accept any credentials — they don't hit a real provider.
@@ -108,6 +131,7 @@ const REGISTRY: Readonly<Record<SourceType, Connector>> = {
   pdf_upload: stubConnector,
   alchemy_wallet: stubConnector,
   eth_address: stubConnector,
+  merge_accounting: mergeAccountingConnector,
 };
 
 export function getConnector(type: SourceType): Connector {

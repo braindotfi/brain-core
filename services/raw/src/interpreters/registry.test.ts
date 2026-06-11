@@ -110,3 +110,43 @@ describe("interpreter registry", () => {
     ).toThrow(/not JSON/);
   });
 });
+
+describe("merge accounting interpreters", () => {
+  it("reshapes a Merge list page into the merge_accounting_v1 payload with the integration", () => {
+    const page = {
+      next: "cur_2",
+      results: [{ id: "inv_1", type: "ACCOUNTS_PAYABLE", modified_at: "2026-06-01T00:00:00Z" }],
+    };
+    const out = interpreterForSchema("merge_accounting.invoices.v1")!(
+      Buffer.from(JSON.stringify(page)),
+      ctx({
+        sourceSchema: "merge_accounting.invoices.v1",
+        sourceType: "merge_accounting",
+        sourceRef: { merge_integration: "NetSuite" },
+        objectType: "invoice",
+      }),
+    );
+    expect(out!.parser).toBe("merge_accounting_v1");
+    expect(out!.extracted).toMatchObject({ object_type: "invoice", merge_integration: "NetSuite" });
+    expect((out!.extracted as { objects: unknown[] }).objects).toHaveLength(1);
+  });
+
+  it("registers all six Merge page schemas and yields null on empty pages", () => {
+    const schemas = [
+      "merge_accounting.gl_accounts.v1",
+      "merge_accounting.journal_entries.v1",
+      "merge_accounting.invoices.v1",
+      "merge_accounting.contacts.v1",
+      "merge_accounting.payments.v1",
+      "merge_accounting.tax_rates.v1",
+    ];
+    expect(registeredSchemas()).toEqual(expect.arrayContaining(schemas));
+    for (const schema of schemas) {
+      const out = interpreterForSchema(schema)!(
+        Buffer.from(JSON.stringify({ next: null, results: [] })),
+        ctx({ sourceSchema: schema, sourceType: "merge_accounting" }),
+      );
+      expect(out).toBeNull();
+    }
+  });
+});

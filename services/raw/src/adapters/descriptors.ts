@@ -214,4 +214,22 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     objectTypes: [],
     parserVersions: [],
   },
+  {
+    connectorType: "merge_accounting",
+    version: "1.0.0",
+    category: "accounting_erp",
+    delivery: ["cursor", "poll"],
+    origin: "aggregator",
+    format: ["structured"],
+    authentication: ["api_key"],
+    capabilities: {
+      ...NO_CAPABILITIES,
+      backfill: true,
+      incremental: true,
+      updates: true,
+    },
+    objectTypes: ["gl_account", "journal_entry", "invoice", "contact", "payment", "tax_rate"],
+    parserVersions: ["merge_accounting_v1"],
+    expectedFreshness: "PT24H",
+  },
 ];

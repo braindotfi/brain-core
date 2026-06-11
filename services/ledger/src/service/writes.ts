@@ -450,6 +450,8 @@ export interface UpsertObligationArgs {
    * unknown" (no outflow→receivable check). Batch 10 H-1.
    */
   direction?: "payable" | "receivable";
+  /** Namespaced provider extensions (e.g. { merge: { gl_account, remote_id } }). */
+  metadata?: Record<string, unknown>;
   source_ids: string[];
   evidence_ids: string[];
   provenance: string;
@@ -510,8 +512,8 @@ export async function upsertObligationRow(
       `INSERT INTO ledger_obligations
          (id, owner_id, type, counterparty_id, amount_due, minimum_due, currency,
           due_date, recurrence, status, source_ids, evidence_ids, provenance, confidence,
-          direction)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          direction, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,COALESCE($16::jsonb,'{}'::jsonb))
        RETURNING *`,
       [
         id,
@@ -529,6 +531,7 @@ export async function upsertObligationRow(
         args.provenance,
         conf,
         args.direction ?? null,
+        args.metadata !== undefined ? JSON.stringify(args.metadata) : null,
       ],
     );
     return { row: rows[0]!, created: true };

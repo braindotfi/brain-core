@@ -19,6 +19,7 @@ import { StripeAdapter } from "./stripe.js";
 import type { SourceAdapter } from "./types.js";
 import { CsvUploadAdapter, PdfUploadAdapter } from "./upload.js";
 import { CONNECTOR_DESCRIPTORS, type ConnectorDescriptor } from "./descriptors.js";
+import { MergeAccountingAdapter } from "./merge_accounting.js";
 
 const ADAPTERS: ReadonlyArray<SourceAdapter> = [
   CsvUploadAdapter,
@@ -31,6 +32,7 @@ const ADAPTERS: ReadonlyArray<SourceAdapter> = [
   EthAddressAdapter,
   AgentContributedAdapter,
   OtherAdapter,
+  MergeAccountingAdapter,
 ];
 
 const BY_SOURCE_TYPE = new Map<string, SourceAdapter>(ADAPTERS.map((a) => [a.sourceType, a]));
