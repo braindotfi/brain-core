@@ -187,7 +187,7 @@ registerInterpreter("finch.directory.v1", (bytes, ctx) => {
   };
 });
 
-registerInterpreter("finch.payments.v1", (bytes, ctx) => {
+registerInterpreter("finch.payments.v1", (bytes, _ctx) => {
   const page = JSON.parse(bytes.toString("utf8")) as unknown;
   const objects = Array.isArray(page) ? page : [];
   if (objects.length === 0) return null;
