@@ -1,6 +1,6 @@
 {
   "name": "@brain/ledger",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "description": "Normalized financial truth (Layer 2). Owns accounts, balances, transactions, counterparties, obligations, invoices, documents, categories, transfers, payment intents, reconciliation matches.",
   "type": "module",

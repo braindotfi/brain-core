@@ -1,6 +1,6 @@
 {
   "name": "@brain/api",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "description": "Public HTTP API gateway. Terminates auth, routes to internal services. Hosts shared primitives consumed by every other service (src/shared/).",
   "type": "module",

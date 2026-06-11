@@ -1,6 +1,6 @@
 {
   "name": "@brain/internal-agents",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "description": "Brain-shipped (internal) agent catalog: definitions, handlers, policy templates, and on-chain registration payloads. Consumed by @brain/agent-router; never executes.",
   "type": "module",
