@@ -78,12 +78,8 @@ function main() {
 
   console.log("Brain readiness trend");
   console.log("");
-  console.log(
-    "  tag                            overall   red yellow green  P0 P1   ΔP0",
-  );
-  console.log(
-    "  ─────────────────────────────  ────────  ─── ────── ─────  ── ──   ───",
-  );
+  console.log("  tag                            overall   red yellow green  P0 P1   ΔP0");
+  console.log("  ─────────────────────────────  ────────  ─── ────── ─────  ── ──   ───");
 
   let prevOpenP0;
   for (const s of snapshots) {

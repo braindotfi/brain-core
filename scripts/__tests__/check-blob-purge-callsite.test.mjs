@@ -28,7 +28,11 @@ function run(files) {
       });
       return { code: 0, stdout, stderr: "" };
     } catch (err) {
-      return { code: err.status ?? 1, stdout: err.stdout?.toString() ?? "", stderr: err.stderr?.toString() ?? "" };
+      return {
+        code: err.status ?? 1,
+        stdout: err.stdout?.toString() ?? "",
+        stderr: err.stderr?.toString() ?? "",
+      };
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -57,7 +61,8 @@ test("fails on a stray purgeTenant() call outside the worker", () => {
 
 test("does NOT flag adapter definitions or the interface declaration", () => {
   const r = run({
-    "shared/src/blob/memory.ts": "  public async purgeTenant(tenantId) { return { deleted: 0, failed: [] }; }\n",
+    "shared/src/blob/memory.ts":
+      "  public async purgeTenant(tenantId) { return { deleted: 0, failed: [] }; }\n",
     "shared/src/blob/azure.ts": "  async purgeTenant(tenantId) {}\n",
     "shared/src/blob/types.ts": "  purgeTenant(tenantId: string): Promise<BlobPurgeResult>;\n",
   });

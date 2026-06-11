@@ -55,15 +55,7 @@ const SKIP_DIRS = new Set([
  * docs; the parsing skip below filters them out by requiring the variable
  * assignments to be at column 0 (not indented inside a markdown code fence).
  */
-const INCLUDE_EXTENSIONS = [
-  ".env",
-  ".tf",
-  ".tfvars",
-  ".yaml",
-  ".yml",
-  ".sh",
-  ".bash",
-];
+const INCLUDE_EXTENSIONS = [".env", ".tf", ".tfvars", ".yaml", ".yml", ".sh", ".bash"];
 const INCLUDE_BASENAMES = ["env", "Dockerfile", "docker-compose.yml", "docker-compose.yaml"];
 
 function walk(dir) {
@@ -178,9 +170,9 @@ function main() {
         "(see contracts/AUDIT-SCOPE.md + composition/escrow-audit-gate.ts).\n" +
         "Set ONE of these in the same file (only after the audit has signed off\n" +
         "and the deployed bytecode is verified):\n" +
-        "  - BRAIN_ESCROW_AUDIT_RECEIPT=\"<url/filepath/hash>\" (preferred — carries\n" +
+        '  - BRAIN_ESCROW_AUDIT_RECEIPT="<url/filepath/hash>" (preferred — carries\n' +
         "    diligence metadata pointing at the audit report), or\n" +
-        "  - BRAIN_ESCROW_AUDIT_APPROVED=\"true\" (legacy bare-boolean attestation)\n" +
+        '  - BRAIN_ESCROW_AUDIT_APPROVED="true" (legacy bare-boolean attestation)\n' +
         "Or, until audit clears, either remove BRAIN_ESCROW_ADDRESS or target\n" +
         "Sepolia (BRAIN_BASE_CHAIN_ID=84532).",
     );

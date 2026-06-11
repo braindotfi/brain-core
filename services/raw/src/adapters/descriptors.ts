@@ -232,4 +232,16 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     parserVersions: ["merge_accounting_v1"],
     expectedFreshness: "PT24H",
   },
+  {
+    connectorType: "finch",
+    version: "0.1.0",
+    category: "other", // TODO(connector): catalog grouping
+    delivery: ["file"], // TODO(connector): declared modalities
+    origin: "provider", // TODO(connector)
+    format: ["structured"],
+    authentication: ["api_key"], // TODO(connector)
+    capabilities: NO_CAPABILITIES, // claims must match implemented methods
+    objectTypes: [], // TODO(connector): provider object types
+    parserVersions: ["finch_v1"],
+  },
 ];

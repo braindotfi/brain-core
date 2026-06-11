@@ -31,7 +31,7 @@ const IMMUTABLE_ARTIFACT = {
   bytecode: { object: "0x60016002600355" },
   deployedBytecode: {
     object: "0xaabbccddeeff00112233",
-    immutableReferences: { "7": [{ start: 4, length: 2 }] },
+    immutableReferences: { 7: [{ start: 4, length: 2 }] },
   },
   metadata: {
     compiler: { version: "0.8.24+commit.e11b9ed9" },
@@ -77,7 +77,11 @@ function run(root) {
     });
     return { code: 0, stdout, stderr: "" };
   } catch (err) {
-    return { code: err.status ?? 1, stdout: err.stdout?.toString() ?? "", stderr: err.stderr?.toString() ?? "" };
+    return {
+      code: err.status ?? 1,
+      stdout: err.stdout?.toString() ?? "",
+      stderr: err.stderr?.toString() ?? "",
+    };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

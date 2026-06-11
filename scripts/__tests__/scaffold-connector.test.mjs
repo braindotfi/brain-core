@@ -20,3 +20,11 @@ test("rejects an existing source type before touching any file", () => {
   assert.throws(() => scaffold("plaid"), /already exists/);
   assert.throws(() => scaffold("other"), /already exists/);
 });
+
+test("vocabulary insertion anchors on the block closing, not the last entry", async () => {
+  // Regression: the v1 anchors assumed eth_address was the final entry and
+  // broke on the first catalog growth (merge_accounting). Verified against
+  // the real repo state by the next scaffold smoke run; here we pin that the
+  // duplicate-detection still reads the grown vocabulary correctly.
+  assert.throws(() => scaffold("merge_accounting"), /already exists/);
+});

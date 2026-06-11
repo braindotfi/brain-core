@@ -150,12 +150,8 @@ if (isCli) {
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line} — missing loaders: ${v.missing.join(", ")}`);
     }
-    console.error(
-      "\nEvery production PaymentIntentService construction must thread the M2M",
-    );
-    console.error(
-      "gate loaders (attestCounterpartyAgent, sumAgentWindowSpend) so §6 checks",
-    );
+    console.error("\nEvery production PaymentIntentService construction must thread the M2M");
+    console.error("gate loaders (attestCounterpartyAgent, sumAgentWindowSpend) so §6 checks");
     console.error("5.5 and 8.5 enforce instead of degrading to `not_applicable`.\n");
     console.error("Canonical site: services/api/src/main.ts");
     console.error(

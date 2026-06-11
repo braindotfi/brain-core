@@ -67,9 +67,8 @@ function parseDoc(src) {
     const prodLine = /\|\s*Production allowed\s*\|\s*([^|]+?)\s*\|/.exec(body)?.[1] ?? "";
     const auditLine = /\|\s*Audit required\s*\|\s*([^|]+?)\s*\|/.exec(body)?.[1] ?? "";
     const envLine = /\|\s*Required env\s*\|\s*([^|]+?)\s*\|/.exec(body)?.[1] ?? "";
-    const requiredEnv = envLine
-      .match(/`([A-Z_][A-Z0-9_]*)`/g)
-      ?.map((m) => m.replaceAll("`", "")) ?? [];
+    const requiredEnv =
+      envLine.match(/`([A-Z_][A-Z0-9_]*)`/g)?.map((m) => m.replaceAll("`", "")) ?? [];
     out.push({
       name,
       // The doc uses prose like "yes" / "**no** (stub-only)" / "**yes**" — strip

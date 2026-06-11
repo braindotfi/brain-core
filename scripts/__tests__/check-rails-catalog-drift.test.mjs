@@ -66,10 +66,7 @@ test("aligned catalog + doc returns OK", () => {
 });
 
 test("rail present in catalog but missing from doc fails", () => {
-  const catalog = ALIGNED_CATALOG.replace(
-    'name: "bank_ach"',
-    'name: "x402_base"',
-  );
+  const catalog = ALIGNED_CATALOG.replace('name: "bank_ach"', 'name: "x402_base"');
   // doc still says bank_ach; catalog now says x402_base
   const r = runGuard(catalog, ALIGNED_DOC);
   assert.equal(r.code, 1);

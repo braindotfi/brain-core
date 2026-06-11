@@ -160,7 +160,9 @@ function validate(jsonRisks, mdRisks) {
   for (const r of jsonRisks) {
     const md = mdRisks.get(r.id);
     if (md === undefined) {
-      errors.push(`mirror:${r.id}: present in risk-register.json but missing from risk-register.md`);
+      errors.push(
+        `mirror:${r.id}: present in risk-register.json but missing from risk-register.md`,
+      );
       continue;
     }
     const jsonIsClosed = r.status === "closed";
@@ -173,7 +175,9 @@ function validate(jsonRisks, mdRisks) {
   }
   for (const mdId of mdRisks.keys()) {
     if (!jsonRisks.some((r) => r.id === mdId)) {
-      errors.push(`mirror:${mdId}: present in risk-register.md but missing from risk-register.json`);
+      errors.push(
+        `mirror:${mdId}: present in risk-register.md but missing from risk-register.json`,
+      );
     }
   }
 

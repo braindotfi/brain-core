@@ -51,6 +51,23 @@ function insertOnce(file, anchor, insertion, label) {
   writeFileSync(path, text.replace(anchor, insertion));
 }
 
+/**
+ * Insert a new entry before the CLOSING of a block matched by `blockRe`
+ * (capture group 1 = everything up to but excluding the closing token).
+ * Anchoring on block closings, not on whichever entry happens to be last,
+ * keeps the scaffold stable as the catalog grows (the eth_address-anchored
+ * v1 broke on the first scaffolded connector after it).
+ */
+function insertBeforeClose(file, blockRe, entry, label) {
+  const path = join(ROOT, file);
+  const text = readFileSync(path, "utf8");
+  const m = blockRe.exec(text);
+  if (m === null) {
+    throw new Error(`scaffold-connector: block not found in ${file} (${label})`);
+  }
+  writeFileSync(path, text.replace(m[0], `${m[1]}${entry}${m[2]}`));
+}
+
 function currentArtifactTypes() {
   const text = readFileSync(join(ROOT, "services/raw/src/sources/types.ts"), "utf8");
   const sourceBlock = text.match(/SOURCE_TYPES = \[([^\]]*)\] as const/s);
@@ -79,24 +96,24 @@ export function scaffold(connectorName) {
   const parserId = `${connectorName}_v1`;
 
   // 1. Source-type vocabulary (connect-time + artifact CHECK share it).
-  insertOnce(
+  insertBeforeClose(
     "services/raw/src/sources/types.ts",
-    `  "eth_address",\n] as const;`,
-    `  "eth_address",\n  "${connectorName}",\n] as const;`,
+    /(export const SOURCE_TYPES = \[\n(?:[^\]]*\n)?)(\] as const;)/,
+    `  "${connectorName}",\n`,
     "SOURCE_TYPES",
   );
-  insertOnce(
+  insertBeforeClose(
     "services/raw/src/sources/types.ts",
-    `  "eth_address",\n]);`,
-    `  "eth_address",\n  "${connectorName}",\n]);`,
+    /(export const STUB_SOURCE_TYPES: ReadonlySet<SourceType> = new Set\(\[\n(?:[^\]]*\n)?)(\]\);)/,
+    `  "${connectorName}",\n`,
     "STUB_SOURCE_TYPES",
   );
 
   // 2. Connect-time connector registry (stub credentials until implemented).
-  insertOnce(
+  insertBeforeClose(
     "services/raw/src/sources/connectors.ts",
-    "  eth_address: stubConnector,\n};",
-    `  eth_address: stubConnector,\n  ${connectorName}: stubConnector,\n};`,
+    /(const REGISTRY: Readonly<Record<SourceType, Connector>> = \{\n(?:[^}]*\n)?)(\};)/,
+    `  ${connectorName}: stubConnector,\n`,
     "connector REGISTRY",
   );
 
@@ -132,10 +149,10 @@ export const ${Pascal}Adapter: SourceAdapter = {
     `import { CONNECTOR_DESCRIPTORS, type ConnectorDescriptor } from "./descriptors.js";\nimport { ${Pascal}Adapter } from "./${connectorName}.js";`,
     "registry import",
   );
-  insertOnce(
+  insertBeforeClose(
     "services/raw/src/adapters/registry.ts",
-    "  OtherAdapter,\n];",
-    `  OtherAdapter,\n  ${Pascal}Adapter,\n];`,
+    /(const ADAPTERS: ReadonlyArray<SourceAdapter> = \[\n(?:[^\]]*\n)?)(\];)/,
+    `  ${Pascal}Adapter,\n`,
     "ADAPTERS list",
   );
 

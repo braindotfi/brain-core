@@ -15,13 +15,29 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const VALID_SCOPES = new Set([
-  "raw:read", "raw:write", "raw:admin",
-  "ledger:read", "ledger:write", "ledger:admin",
-  "wiki:read", "wiki:write", "wiki:admin",
-  "policy:read", "policy:write", "policy:admin", "policy:sign",
-  "execution:read", "execution:write", "execution:admin", "execution:propose",
-  "payment_intent:propose", "payment_intent:approve", "payment_intent:execute",
-  "audit:read", "audit:write", "audit:admin",
+  "raw:read",
+  "raw:write",
+  "raw:admin",
+  "ledger:read",
+  "ledger:write",
+  "ledger:admin",
+  "wiki:read",
+  "wiki:write",
+  "wiki:admin",
+  "policy:read",
+  "policy:write",
+  "policy:admin",
+  "policy:sign",
+  "execution:read",
+  "execution:write",
+  "execution:admin",
+  "execution:propose",
+  "payment_intent:propose",
+  "payment_intent:approve",
+  "payment_intent:execute",
+  "audit:read",
+  "audit:write",
+  "audit:admin",
 ]);
 
 // Match {word}:{word} literals but skip Node built-in module specifiers (node:*)

@@ -25,7 +25,11 @@ test(".dockerignore re-includes contracts/audit-status.json", () => {
   );
   // And the blanket `contracts` (whole-dir) exclusion is gone (it would prevent
   // descending into contracts/ to re-include a child).
-  assert.doesNotMatch(dockerignore, /^contracts\s*$/m, "blanket `contracts` exclusion must not remain");
+  assert.doesNotMatch(
+    dockerignore,
+    /^contracts\s*$/m,
+    "blanket `contracts` exclusion must not remain",
+  );
 });
 
 test("Dockerfile copies audit-status.json into the runtime image", () => {

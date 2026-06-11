@@ -181,9 +181,7 @@ function findMatchingFunction(abi, name, inputTypes) {
   for (const entry of abi) {
     if (entry.type !== "function") continue;
     if (entry.name !== name) continue;
-    const abiTypes = Array.isArray(entry.inputs)
-      ? entry.inputs.map((i) => String(i.type))
-      : [];
+    const abiTypes = Array.isArray(entry.inputs) ? entry.inputs.map((i) => String(i.type)) : [];
     if (abiTypes.length !== inputTypes.length) continue;
     let match = true;
     for (let i = 0; i < abiTypes.length; i++) {
@@ -263,9 +261,9 @@ function main() {
   if (findings.length === 0) {
     if (!quiet) {
       console.log(
-        `[check-contract-abi-drift] OK -- ${blocks.length} parseAbi block(s) verified against ${new Set(
-          blocks.map((b) => KNOWN_VARS[b.variable]),
-        ).size} contract artifact(s).`,
+        `[check-contract-abi-drift] OK -- ${blocks.length} parseAbi block(s) verified against ${
+          new Set(blocks.map((b) => KNOWN_VARS[b.variable])).size
+        } contract artifact(s).`,
       );
     }
     process.exit(0);

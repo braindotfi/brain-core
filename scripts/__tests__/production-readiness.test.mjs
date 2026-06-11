@@ -194,7 +194,10 @@ test("CI guards section includes check-audit-status and all are green", () => {
   const names = r.parsed.sections.ci_guards.map((g) => g.name);
   // Assert the expected guards are present (names, not a brittle hard count) —
   // check-audit-status was added with the R-01 control and must be reported.
-  assert.ok(names.includes("check-audit-status"), `missing check-audit-status; got ${names.join(", ")}`);
+  assert.ok(
+    names.includes("check-audit-status"),
+    `missing check-audit-status; got ${names.join(", ")}`,
+  );
   assert.ok(names.includes("check-escrow-audit-marker"));
   assert.ok(r.parsed.sections.ci_guards.length >= 11, `expected >= 11 guards, got ${names.length}`);
   for (const g of r.parsed.sections.ci_guards) {
@@ -256,7 +259,11 @@ test("closed risks (status=closed) are NOT surfaced in the live register section
   // R-05 is closed in the fixture; it should not appear as a row here.
   // (Closed risks remain documented in the .md for history.)
   const closed = r.parsed.sections.risks.find((row) => row.name.startsWith("R-05"));
-  assert.equal(closed, undefined, `closed risk leaked into live section: ${JSON.stringify(closed)}`);
+  assert.equal(
+    closed,
+    undefined,
+    `closed risk leaked into live section: ${JSON.stringify(closed)}`,
+  );
 });
 
 test("any open + P0 risk turns overall_status red and exits 1", () => {

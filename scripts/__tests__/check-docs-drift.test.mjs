@@ -17,7 +17,8 @@ function fixture(files) {
 
 test("passes on reconciled prose", () => {
   const root = fixture({
-    "protocol/g.md": "The gate runs 13 numbered checks + 4 hardening additions. Roots anchor hourly.",
+    "protocol/g.md":
+      "The gate runs 13 numbered checks + 4 hardening additions. Roots anchor hourly.",
   });
   assert.deepEqual(findViolations([join(root, "protocol")]), []);
   rmSync(root, { recursive: true, force: true });
@@ -47,7 +48,8 @@ test("flags forward-looking names stated as current", () => {
 
 test("allows forward-looking names when marked planned/roadmap", () => {
   const root = fixture({
-    "smart-contracts/s.md": "ERC-4337 / Coinbase Smart Wallet is planned (RFC 0001), not yet shipped.",
+    "smart-contracts/s.md":
+      "ERC-4337 / Coinbase Smart Wallet is planned (RFC 0001), not yet shipped.",
   });
   assert.deepEqual(findViolations([join(root, "smart-contracts")]), []);
   rmSync(root, { recursive: true, force: true });
