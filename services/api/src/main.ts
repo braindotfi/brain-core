@@ -2015,18 +2015,28 @@ async function main(): Promise<void> {
       const now = new Date();
       const periodStart = new Date(now.getTime() - intervalMs);
       try {
-        // Cross-tenant sweep: MUST use the privileged (BYPASSRLS) pool. The
-        // main pool connects as brain_app under FORCE RLS, so without a tenant
-        // scope this DISTINCT returns zero rows and the scheduled anchor would
-        // silently never fire in production (the manual endpoint works because
-        // it is request-scoped to a tenant).
+        // Cross-tenant ENUMERATION only: MUST use the privileged (BYPASSRLS)
+        // pool. The app pool connects as brain_app under FORCE RLS, so without a
+        // tenant scope this DISTINCT returns zero rows and the scheduled anchor
+        // would silently never fire in production (the manual endpoint works
+        // because it is request-scoped to a tenant).
         const res = await privilegedPool.query<{ tenant_id: string }>(
           "SELECT DISTINCT tenant_id FROM audit_events WHERE created_at >= $1",
           [periodStart],
         );
         for (const row of res.rows) {
           try {
-            await publishAnchor(privilegedPool, anchorBroadcaster, {
+            // Per-tenant PUBLISH goes through the RLS-enforced app `pool`, NOT
+            // the privileged pool. publishAnchor scopes events via
+            // withTenantScope(tenantId) + RLS — but RLS is inert for the
+            // BYPASSRLS brain_privileged role, so listEventsForAnchor (which
+            // filters only by created_at) would return EVERY tenant's events,
+            // giving each tenant's anchor an inflated event_count and a Merkle
+            // root mixed across tenants. brain_app (NOBYPASSRLS, FORCE RLS)
+            // makes withTenantScope actually isolate, matching the manual
+            // POST /v1/audit/anchor/publish route. (§1 principle 2: tenant
+            // isolation at the storage layer, not a query-layer tenant_id filter.)
+            await publishAnchor(pool, anchorBroadcaster, {
               tenantId: row.tenant_id,
               periodStart,
               periodEnd: now,
