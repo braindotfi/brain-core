@@ -1589,12 +1589,15 @@ paths:
         carried inside the `error` field).
 
         Authentication: standard Brain JWT bearer with
-        `principal_type=agent`. The MCP server additionally verifies
-        (a) the agent record is `active`, (b) the JWT's `scope_hash`
-        matches the on-chain hash registered in
-        `BrainMCPAgentRegistry`, and (c) tenant equality. Failures map
-        to JSON-RPC error codes in the -32001..-32005 range — see
-        `McpErrorCode`.
+        `principal_type=agent`. Before any method is dispatched the MCP
+        server verifies (a) the agent record is `active`, (b) the JWT's
+        `scope_hash` matches the on-chain hash registered in
+        `BrainMCPAgentRegistry`, and (c) tenant equality. These
+        pre-dispatch checks fail with an HTTP 401/403 Brain error
+        envelope — NOT a JSON-RPC response. The JSON-RPC `McpErrorCode`
+        range (-32001..-32005) is reserved for failures raised *after*
+        authentication, inside method dispatch — chiefly per-tool scope
+        checks (-32002) and §6 gate failures (-32004).
 
         Supported methods (v0.3):
           * `initialize`, `ping`
@@ -1962,6 +1965,24 @@ paths:
                     evidence_ids:
                       type: array
                       items: { type: string }
+                    pay_to:
+                      type: string
+                      pattern: '^0x[0-9a-fA-F]{40}$'
+                      description: >-
+                        x402 settlement recipient on-chain address. Required when
+                        action_type=x402_settle; ignored otherwise (RFC 0001 §6.1).
+                    escrow_id:
+                      type: string
+                      pattern: '^0x[0-9a-fA-F]{64}$'
+                      description: >-
+                        On-chain BrainEscrow id. Required when
+                        action_type=escrow_release; ignored otherwise (RFC 0001 §7.6).
+                    job_terms_hash:
+                      type: string
+                      pattern: '^0x[0-9a-fA-F]{64}$'
+                      description: >-
+                        keccak256 commitment of the escrow job terms. Required when
+                        action_type=escrow_release; ignored otherwise (RFC 0001 §7.6).
                 - title: PayInvoiceShortcut
                   type: object
                   description: >
