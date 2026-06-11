@@ -24,6 +24,7 @@
  */
 
 import { brainError } from "@brain/shared";
+import { classifyDeterministicRevert } from "./permanent-failure.js";
 import type { Rail, RailDispatchInput, RailDispatchResult } from "./types.js";
 
 /** Reads BrainSmartAccount.nonce(holder) — the next expected execute nonce. */
@@ -168,13 +169,23 @@ export class OnchainBaseRail implements Rail {
       });
     } catch (err) {
       // BadNonce (replay), ReentrantCall, cap/allowlist reverts all land here.
+      // A revert that decodes to a payload-deterministic custom error (e.g.
+      // ExceedsPerTxCap) is tagged permanent so the outbox worker fails the
+      // row instead of retrying a dispatch that can never succeed (see
+      // permanent-failure.ts for the table and the exclusions).
+      const deterministic = classifyDeterministicRevert(err);
+      const details: Record<string, unknown> = {
+        nonce: nonce.toString(),
+        policy_version: action.policy_version,
+      };
+      if (deterministic !== null) {
+        details["permanent_failure"] = true;
+        details["decoded_revert"] = deterministic;
+      }
       throw brainError(
         "execution_rail_declined",
         `on-chain execute reverted: ${revertReason(err)}`,
-        {
-          details: { nonce: nonce.toString(), policy_version: action.policy_version },
-          cause: err,
-        },
+        { details, cause: err },
       );
     }
 

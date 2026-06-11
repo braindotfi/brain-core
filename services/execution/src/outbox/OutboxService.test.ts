@@ -9,7 +9,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { newPaymentIntentId, newTenantId, type TenantScopedClient } from "@brain/shared";
-import { OutboxService, payloadHash, MAX_DISPATCH_ATTEMPTS } from "./OutboxService.js";
+import {
+  OutboxService,
+  payloadHash,
+  MAX_DISPATCH_ATTEMPTS,
+  MAX_TOTAL_DISPATCH_ATTEMPTS,
+} from "./OutboxService.js";
 
 const TENANT = newTenantId();
 const PI = newPaymentIntentId();
@@ -86,7 +91,21 @@ describe("OutboxService.claimNext", () => {
     expect(claim?.sql).toContain("FOR UPDATE SKIP LOCKED");
     expect(claim?.sql).toContain("status IN ('pending', 'reconciling')");
     expect(claim?.sql).toContain("status = 'dispatching'");
-    expect(claim?.values).toEqual(["worker_a", 5]);
+    expect(claim?.values).toEqual(["worker_a", 5, MAX_TOTAL_DISPATCH_ATTEMPTS]);
+  });
+
+  it("bounds the retry loop: backoff window + total-attempt ceiling in the claim", async () => {
+    const svc = new OutboxService();
+    const { client, calls } = fakeClient(() => []);
+    await svc.claimNext(client, "worker_a", 5);
+
+    const claim = calls[0];
+    // Hard ceiling: a row at MAX_TOTAL_DISPATCH_ATTEMPTS is never re-picked.
+    expect(claim?.sql).toContain("attempt_count < $3");
+    // Exponential backoff (mirrors the webhook DLQ schedule, 30s·2^(n-1) cap 480s);
+    // never-attempted rows (last_attempt_at NULL) stay immediately claimable.
+    expect(claim?.sql).toContain("last_attempt_at IS NULL");
+    expect(claim?.sql).toContain("LEAST(30 * power(2, attempt_count - 1), 480)");
   });
 });
 
@@ -116,7 +135,7 @@ describe("OutboxService terminal transitions", () => {
     expect(calls[0]?.sql).toContain("status = 'settled'");
   });
 
-  it("markFailed bumps attempt_count and reports it", async () => {
+  it("markFailed bumps attempt_count, stamps the backoff clock, and reports it", async () => {
     const svc = new OutboxService();
     const { client, calls } = fakeClient(() => [{ attempt_count: 1 }]);
     const n = await svc.markFailed(client, "exo_1", "rail timeout");
@@ -125,16 +144,39 @@ describe("OutboxService terminal transitions", () => {
     // Threshold logic lives in SQL so it is atomic with the increment.
     expect(q?.sql).toContain("attempt_count = attempt_count + 1");
     expect(q?.sql).toContain("'reconciling'");
+    expect(q?.sql).toContain("last_attempt_at = now()");
     expect(q?.values).toEqual(["exo_1", "rail timeout", MAX_DISPATCH_ATTEMPTS]);
   });
 
-  it("markReconciling forces the reconcile state and clears the lock", async () => {
+  it("markReconciling forces the reconcile state, counts the attempt, clears the lock", async () => {
     const svc = new OutboxService();
-    const { client, calls } = fakeClient(() => []);
-    await svc.markReconciling(client, "exo_1", "receipt failed validation");
+    const { client, calls } = fakeClient(() => [{ attempt_count: 4 }]);
+    const n = await svc.markReconciling(client, "exo_1", "receipt failed validation");
+    expect(n).toBe(4);
     const q = calls[0];
     expect(q?.sql).toContain("status = 'reconciling'");
+    expect(q?.sql).toContain("attempt_count = attempt_count + 1");
+    expect(q?.sql).toContain("last_attempt_at = now()");
     expect(q?.sql).toContain("locked_by = NULL");
+  });
+
+  it("markPermanentlyFailed parks the row terminally with the decoded reason", async () => {
+    const svc = new OutboxService();
+    const { client, calls } = fakeClient(() => []);
+    await svc.markPermanentlyFailed(client, "exo_1", {
+      error: "deterministic_revert ExceedsPerTxCap(): on-chain execute reverted",
+      auditAfterId: "evt_after",
+    });
+    const q = calls[0];
+    expect(q?.sql).toContain("status = 'failed'");
+    expect(q?.sql).toContain("attempt_count = attempt_count + 1");
+    expect(q?.sql).toContain("completed_at = now()");
+    expect(q?.sql).toContain("locked_by = NULL");
+    expect(q?.values).toEqual([
+      "exo_1",
+      "deterministic_revert ExceedsPerTxCap(): on-chain execute reverted",
+      "evt_after",
+    ]);
   });
 
   it("reclaimStale returns stale dispatching rows to pending (crash recovery)", async () => {
