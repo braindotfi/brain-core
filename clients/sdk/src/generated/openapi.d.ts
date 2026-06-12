@@ -4,6 +4,121 @@
  */
 
 export interface paths {
+    "/docs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Interactive API reference (Scalar)
+         * @description Public HTML page rendering this OpenAPI contract as an interactive
+         *     reference, with same-origin "Try it out". Served by the gateway; the
+         *     renderer bundle is loaded same-origin from `/v1/docs/scalar.js` and the
+         *     spec from `/v1/openapi.yaml`.
+         */
+        get: operations["getDocs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/openapi.yaml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * OpenAPI contract (YAML)
+         * @description Public, raw OpenAPI 3.1 document for this API — the source rendered by `/v1/docs`.
+         */
+        get: operations["getOpenApiYaml"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Self-serve tenant signup (sandbox)
+         * @description Public, rate-limited. Provisions a new **sandbox** tenant and its owner
+         *     user (email + password) and issues a single-use email-verification token.
+         *     Registered only when self-serve signup is enabled
+         *     (`BRAIN_SELF_SERVE_SIGNUP`); otherwise the route does not exist (404).
+         *     New tenants are sandbox-only and grant **no** execution capability — real
+         *     money stays behind the promotion + external-audit gates (RFC 0002).
+         */
+        post: operations["signup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/verify-email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify an owner's email
+         * @description Public, rate-limited. Consumes a single-use, short-TTL verification token
+         *     (scoped by `tenant_id`) and activates the owner. An invalid, expired, or
+         *     already-used token returns 400 (`signup_token_invalid`).
+         */
+        post: operations["verifyEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Owner password login
+         * @description Public, rate-limited. Email + password → a short-lived owner JWT carrying
+         *     **management / read / approve scopes only** — never `payment_intent:propose`,
+         *     `payment_intent:execute`, or `execution:propose` (money movement is an agent
+         *     + §6-gate concern, never a human-login capability). An unknown email and a
+         *     wrong password return the SAME 401 (no user enumeration); an unverified
+         *     account returns 403.
+         */
+        post: operations["ownerLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/raw/ingest": {
         parameters: {
             query?: never;
@@ -89,7 +204,11 @@ export interface paths {
          */
         get: operations["getRawParsed"];
         put?: never;
-        post?: never;
+        /**
+         * Write a parsed (stage-3) record for an artifact
+         * @description Records one parser-output row for the referenced artifact. Called by extraction workers and first-party extractor agents (e.g. document_extractor); it is the stage-3 producer of `raw_parsed`. Naturally idempotent on the (raw_artifact_id, parser, parser_version) tuple: re-posting the same tuple returns the existing row with 200. Writing into Ledger remains the Ledger normalize service's job; this endpoint never touches Ledger.
+         */
+        post: operations["writeRawParsed"];
         delete?: never;
         options?: never;
         head?: never;
@@ -599,7 +718,12 @@ export interface paths {
         trace?: never;
     };
     "/policy/{tenant_id}/lint": {
-        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
         get?: never;
         put?: never;
         /** Static-analyze a candidate policy before signing (H-18) */
@@ -611,7 +735,12 @@ export interface paths {
         trace?: never;
     };
     "/policy/{tenant_id}/diff": {
-        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
         get?: never;
         put?: never;
         /** Semantic diff between two policy versions (H-18) */
@@ -623,7 +752,12 @@ export interface paths {
         trace?: never;
     };
     "/policy/{tenant_id}/simulate-historical": {
-        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
         get?: never;
         put?: never;
         /** Replay the period's actions against a candidate policy (H-18) */
@@ -641,7 +775,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List agents configured for the tenant */
+        /**
+         * List agents available to the tenant (internal-agent catalog)
+         * @description Returns the first-party agent catalog (capability definitions). Internal
+         *     and external agents share these routes — kind/provenance is a metadata
+         *     field, not a separate path.
+         */
         get: operations["listAgents"];
         put?: never;
         post?: never;
@@ -658,7 +797,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Agent detail */
+        /** Agent detail (catalog definition + on-chain registration) */
         get: operations["getAgent"];
         put?: never;
         post?: never;
@@ -677,7 +816,14 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Agent proposes a non-financial action */
+        /**
+         * (Deprecated) Agent proposes a non-financial action
+         * @deprecated
+         * @description Not implemented. The proposal path is POST /agents/run (route → resolve →
+         *     persist run → propose safely behind the §6 gate); financial actions go
+         *     through POST /actions. This operation is retained only for back-compat
+         *     documentation and returns 404.
+         */
         post: operations["proposeAgentAction"];
         delete?: never;
         options?: never;
@@ -713,9 +859,12 @@ export interface paths {
         put?: never;
         /**
          * Register an external agent
-         * @description Replaces the legacy POST /execution/agents/register. Persists the
-         *     agent in `pending_onchain` until the BrainMCPAgentRegistry tx
-         *     confirms.
+         * @deprecated
+         * @description Not yet implemented under /agents/*. Registration currently goes through
+         *     the still-live legacy POST /execution/agents/register, which persists the
+         *     agent in `pending_onchain` until the BrainMCPAgentRegistry tx confirms.
+         *     This path is reserved for the v0.3 migration and is documented here for
+         *     forward reference only.
          */
         post: operations["registerAgent"];
         delete?: never;
@@ -742,20 +891,24 @@ export interface paths {
          *     carried inside the `error` field).
          *
          *     Authentication: standard Brain JWT bearer with
-         *     `principal_type=agent`. The MCP server additionally verifies
-         *     (a) the agent record is `active`, (b) the JWT's `scope_hash`
-         *     matches the on-chain hash registered in
-         *     `BrainMCPAgentRegistry`, and (c) tenant equality. Failures map
-         *     to JSON-RPC error codes in the -32001..-32005 range — see
-         *     `McpErrorCode`.
+         *     `principal_type=agent`. Before any method is dispatched the MCP
+         *     server verifies (a) the agent record is `active`, (b) the JWT's
+         *     `scope_hash` matches the on-chain hash registered in
+         *     `BrainMCPAgentRegistry`, and (c) tenant equality. These
+         *     pre-dispatch checks fail with an HTTP 401/403 Brain error
+         *     envelope — NOT a JSON-RPC response. The JSON-RPC `McpErrorCode`
+         *     range (-32001..-32005) is reserved for failures raised *after*
+         *     authentication, inside method dispatch — chiefly per-tool scope
+         *     checks (-32002) and §6 gate failures (-32004).
          *
          *     Supported methods (v0.3):
          *       * `initialize`, `ping`
-         *       * `tools/list`, `tools/call` — 10 tools across ledger, wiki,
-         *         raw evidence, payment intents, and agent action proposals
-         *       * `resources/list`, `resources/read` — 5 resource templates
-         *         (ledger accounts/transactions/payment-intents, wiki pages,
-         *         raw evidence)
+         *       * `tools/list`, `tools/call` — 12 tools across ledger, wiki,
+         *         raw evidence, payment intents (propose/cancel/list), and
+         *         agent action proposals
+         *       * `resources/list`, `resources/read` — 7 resource templates
+         *         (ledger accounts/transactions/obligations/payment-intents,
+         *         wiki pages, payments action_types catalog, action proofs)
          *       * `prompts/list`, `prompts/get` — 5 canned prompts
          *
          *     Tools enforce per-call scopes (e.g. `ledger:read`,
@@ -872,8 +1025,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Structured reason + trace bundle for a run
-         * @description The artifact CFOs / auditors / support live in — the structured router reason plus (redacted) reasoning trace, gate trace, and rail receipt.
+         * Why this agent was selected for the run (H-25)
+         * @description Which agents were candidates, why this one was selected (router multi-factor reason — score, evidence completeness, reputation, cost), and the runtime behavior hash.
          */
         get: operations["getAgentRunWhy"];
         put?: never;
@@ -925,7 +1078,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Proof for the action the run produced (H-25 -> H-07) */
+        /**
+         * Proof for the action the run produced (H-25 → H-07)
+         * @description Proxies the Proof API for the run's PaymentIntent. 404 if the run produced no on-ledger action.
+         */
         get: operations["getAgentRunProof"];
         put?: never;
         post?: never;
@@ -1072,9 +1228,13 @@ export interface paths {
         /**
          * Execute an approved PaymentIntent through its rail
          * @description Runs the deterministic 13-step pre-execution gate (§6 of Engineering
-         *     Standards) before dispatching. Returns 409 with
-         *     `payment_intent_gate_failed` if any check fails, with details listing
-         *     the failing check index.
+         *     Standards), then durably hands the action to the execution outbox
+         *     (H-04). On success the intent transitions approved → dispatching and a
+         *     `pending` outbox row is enqueued atomically; the outbox worker then
+         *     dispatches the rail and settles the intent asynchronously. Returns 202
+         *     with `status: dispatching` and the `outbox_id`; `execution_id` is null
+         *     until the worker dispatches. Returns 409 with `payment_intent_gate_failed`
+         *     if any gate check fails, with details listing the failing check index.
          */
         post: operations["executePaymentIntent"];
         delete?: never;
@@ -1322,10 +1482,87 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Canonical, verifiable proof for an action (H-07) */
+        /**
+         * Canonical, verifiable proof for an action (H-07)
+         * @description The flagship trust artifact. Assembles a single, independently
+         *     verifiable Proof for a PaymentIntent (or agent-action) from the §6 gate
+         *     trace, the evidence chain, the policy decision, and the append-only,
+         *     on-chain-anchored audit Merkle chain. Tenant-isolated: an action that
+         *     does not exist for the caller's tenant returns 404 (existence is never
+         *     leaked). `chain_anchor` is null until the containing batch is anchored
+         *     on-chain.
+         */
         get: operations["getProof"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proof/{action_id}/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Human-readable proof viewer (P0.7)
+         * @description Server-rendered HTML view of the same canonical Proof as
+         *     GET /proof/{action_id} — the compliance-/investor-facing screen. No auth
+         *     bypass: requires the same authenticated principal + audit:read scope and
+         *     is tenant-isolated (unknown/cross-tenant id → 404, no existence leak).
+         */
+        get: operations["getProofView"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/{endpoint_id}/dead-letters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List undeliverable webhook events for an endpoint (H-20)
+         * @description Outbound webhook deliveries that failed are durably recorded here
+         *     instead of being lost. Each row tracks attempt_count and the last error;
+         *     once attempt_count reaches 5 the row is exhausted (replay no longer
+         *     auto-retries it). Tenant-isolated.
+         */
+        get: operations["listWebhookDeadLetters"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/{endpoint_id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replay dead-lettered webhook events (H-20)
+         * @description Re-delivers each dead-letter still under the attempt cap. A successful
+         *     re-delivery clears the row; a failure bumps attempt_count. Idempotent
+         *     (accepts Idempotency-Key). Tenant-isolated.
+         */
+        post: operations["replayWebhookDeadLetters"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1437,13 +1674,18 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @enum {string} */
-        RawSourceType: "plaid" | "erp_netsuite" | "email" | "upload" | "chain_evm" | "stripe" | "agent_contributed" | "other";
+        /**
+         * @description One reconciled, provider-named artifact source vocabulary: the eight connectable source types plus the non-connector ingestion origins (agent contributions, human Wiki annotations, and `other`, the universal fallback for sources with no native connector).
+         * @enum {string}
+         */
+        RawSourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "agent_contributed" | "wiki_annotation" | "other";
         RawIngestResponse: {
             /** Format: uuid */
             raw_id?: string;
             sha256?: string;
             source_type?: components["schemas"]["RawSourceType"];
+            /** @description Declared payload schema tag, echoed when one was declared */
+            source_schema?: string;
             bytes?: number;
             /** Format: date-time */
             ingested_at?: string;
@@ -1705,8 +1947,11 @@ export interface components {
             /** Format: date-time */
             created_at?: string;
         };
-        /** @enum {string} */
-        LedgerProvenance: "extracted" | "inferred" | "ambiguous" | "human_confirmed" | "agent_contributed";
+        /**
+         * @description Trust contract for derived rows. `customer_asserted` marks generic-push and unknown-source data: confidence is capped at 0.5 and the §6 gate refuses auto-execution on it until corroboration promotes the row to `extracted`.
+         * @enum {string}
+         */
+        LedgerProvenance: "extracted" | "inferred" | "ambiguous" | "human_confirmed" | "agent_contributed" | "customer_asserted";
         /** @description Fields common to every Ledger entity. Composed via allOf. */
         LedgerCommonFields: {
             id?: string;
@@ -1727,7 +1972,7 @@ export interface components {
             institution?: string | null;
             external_account_id?: string | null;
             /** @enum {string} */
-            account_type: "bank_checking" | "bank_savings" | "card" | "loan" | "line_of_credit" | "onchain";
+            account_type: "bank_checking" | "bank_savings" | "card" | "loan" | "line_of_credit" | "onchain" | "payment_processor";
             name: string;
             currency: string;
             current_balance?: string | null;
@@ -1768,7 +2013,7 @@ export interface components {
             name: string;
             normalized_name?: string | null;
             /** @enum {string} */
-            type: "merchant" | "vendor" | "customer" | "employer" | "bank" | "wallet" | "exchange" | "tax_authority" | "other";
+            type: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "other";
             /** @enum {string|null} */
             risk_level?: "low" | "medium" | "high" | "sanctioned" | null;
             /** @enum {string|null} */
@@ -1843,8 +2088,11 @@ export interface components {
         };
         PaymentIntent: components["schemas"]["LedgerCommonFields"] & {
             created_by_agent_id?: string;
-            /** @enum {string} */
-            action_type: "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment" | "other";
+            /**
+             * @description `x402_settle` (USDC on Base) and `escrow_release` (BrainEscrow lock release, RFC 0001 §7.6) are gated but not yet executable (shadow-first).
+             * @enum {string}
+             */
+            action_type: "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment" | "x402_settle" | "escrow_release" | "other";
             source_account_id: string;
             destination_counterparty_id: string;
             amount: string;
@@ -2166,6 +2414,174 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getDocs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description HTML documentation page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    getOpenApiYaml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The OpenAPI document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/yaml": string;
+                };
+            };
+        };
+    };
+    signup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                    /** @description Stored as a scrypt hash; never logged or returned. */
+                    password: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Tenant + owner provisioned (owner `pending` until email verified) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tenant_id?: string;
+                        user_id?: string;
+                        /** @enum {string} */
+                        status?: "pending";
+                        /** @description Returned only OUTSIDE production (no email provider wired yet); pass to POST /auth/verify-email. */
+                        verification_token?: string;
+                        /** @description True in production (token emailed, not returned). */
+                        verification_sent?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description An account with this email already exists (signup_email_taken) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    verifyEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    tenant_id: string;
+                    token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Email verified; owner activated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        verified?: boolean;
+                        user_id?: string;
+                        /** @enum {string} */
+                        status?: "active";
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    ownerLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                    password: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Authenticated; owner JWT issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        access_token?: string;
+                        /** @enum {string} */
+                        token_type?: "Bearer";
+                        /** @description Token lifetime in seconds. */
+                        expires_in?: number;
+                        principal?: {
+                            id?: string;
+                            /** @enum {string} */
+                            type?: "user";
+                            tenantId?: string;
+                            scopes?: string[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
     ingestRaw: {
         parameters: {
             query?: never;
@@ -2188,6 +2604,29 @@ export interface operations {
                     file: string;
                     /** @description Override auto-detected MIME type */
                     mime_type?: string;
+                    /** @description Declared payload schema tag (e.g. acme_bank.transactions.v1). Stored verbatim, never parsed at intake. An unknown schema still ingests and waits for a parser. */
+                    source_schema?: string;
+                    /** @description Provider object type the payload describes (e.g. invoice) */
+                    object_type?: string;
+                    /** @description Provider-side id of the described object */
+                    external_id?: string;
+                    /**
+                     * @description What the source asserts this artifact does to the object
+                     * @enum {string}
+                     */
+                    operation?: "upsert" | "delete" | "snapshot";
+                    /**
+                     * Format: date-time
+                     * @description When the fact applied in the real world
+                     */
+                    effective_at?: string;
+                    /**
+                     * Format: date-time
+                     * @description When the source exposed the fact
+                     */
+                    observed_at?: string;
+                    /** @description Caller idempotency key (connection:resource:object:version). Unique per tenant; a re-send with different bytes still dedups. */
+                    idempotency_key?: string;
                 };
                 "application/json": {
                     source_type: components["schemas"]["RawSourceType"];
@@ -2201,6 +2640,17 @@ export interface operations {
                     url: string;
                     /** @description Optional Authorization header value for the fetch */
                     auth_header?: string;
+                    /** @description Declared payload schema tag (e.g. acme_bank.transactions.v1). Stored verbatim, never parsed at intake. */
+                    source_schema?: string;
+                    object_type?: string;
+                    external_id?: string;
+                    /** @enum {string} */
+                    operation?: "upsert" | "delete" | "snapshot";
+                    /** Format: date-time */
+                    effective_at?: string;
+                    /** Format: date-time */
+                    observed_at?: string;
+                    idempotency_key?: string;
                 };
             };
         };
@@ -2371,6 +2821,50 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    writeRawParsed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                raw_id: components["parameters"]["RawId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    parser: string;
+                    parser_version: string;
+                    extracted: {
+                        [key: string]: unknown;
+                    };
+                    confidence?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Parsed record already existed (idempotent re-post) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RawParsed"];
+                };
+            };
+            /** @description Parsed record created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RawParsed"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listAccounts: {
         parameters: {
             query?: {
@@ -2509,7 +3003,7 @@ export interface operations {
         parameters: {
             query?: {
                 q?: string;
-                type?: "merchant" | "vendor" | "customer" | "employer" | "bank" | "wallet" | "exchange" | "tax_authority" | "other";
+                type?: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "other";
                 verified_status?: string;
             };
             header?: never;
@@ -3155,17 +3649,40 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path: { tenant_id: components["parameters"]["TenantId"] };
+            path: {
+                tenant_id: components["parameters"]["TenantId"];
+            };
             cookie?: never;
         };
         requestBody: {
-            content: { "application/json": { policy_content: Record<string, unknown> } };
+            content: {
+                "application/json": {
+                    policy_content: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
         };
         responses: {
             /** @description Lint findings */
             200: {
-                headers: { [name: string]: unknown };
-                content: { "application/json": Record<string, unknown> };
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tenant_id?: string;
+                        errors?: number;
+                        warnings?: number;
+                        findings?: {
+                            code?: string;
+                            /** @enum {string} */
+                            severity?: "ERROR" | "WARN";
+                            rule_id?: string | null;
+                            message?: string;
+                        }[];
+                    };
+                };
             };
         };
     };
@@ -3173,17 +3690,34 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path: { tenant_id: components["parameters"]["TenantId"] };
+            path: {
+                tenant_id: components["parameters"]["TenantId"];
+            };
             cookie?: never;
         };
         requestBody: {
-            content: { "application/json": { from_version: number; to_version: number } };
+            content: {
+                "application/json": {
+                    from_version: number;
+                    to_version: number;
+                };
+            };
         };
         responses: {
             /** @description Rule-level diff */
             200: {
-                headers: { [name: string]: unknown };
-                content: { "application/json": Record<string, unknown> };
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        from_version?: number;
+                        to_version?: number;
+                        added?: Record<string, never>[];
+                        removed?: Record<string, never>[];
+                        modified?: Record<string, never>[];
+                    };
+                };
             };
             404: components["responses"]["NotFound"];
         };
@@ -3192,13 +3726,17 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path: { tenant_id: components["parameters"]["TenantId"] };
+            path: {
+                tenant_id: components["parameters"]["TenantId"];
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
                 "application/json": {
-                    policy_content: Record<string, unknown>;
+                    policy_content: {
+                        [key: string]: unknown;
+                    };
                     period_start: string;
                     period_end: string;
                 };
@@ -3207,28 +3745,50 @@ export interface operations {
         responses: {
             /** @description Simulation result + diff vs active */
             200: {
-                headers: { [name: string]: unknown };
-                content: { "application/json": Record<string, unknown> };
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        total?: number;
+                        would_allow?: number;
+                        would_confirm?: number;
+                        would_reject?: number;
+                        diff_vs_active?: Record<string, never>;
+                    };
+                };
             };
         };
     };
     listAgents: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Filter by provenance (e.g. internal/external). */
+                kind?: string;
+                capability?: string;
+                category?: "business" | "consumer" | "agnostic";
+                state?: "enabled" | "disabled";
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Agent list */
+            /** @description Agent catalog */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        agents?: components["schemas"]["Agent"][];
+                        agents?: {
+                            agent_key?: string;
+                            provenance?: string;
+                            category?: string;
+                            capabilities?: string[];
+                            enabled_by_default?: boolean;
+                        }[];
                     };
                 };
             };
@@ -3245,13 +3805,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Agent */
+            /** @description Agent definition and registration record */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Agent"];
+                    "application/json": {
+                        definition?: Record<string, never>;
+                        registration?: Record<string, never> | null;
+                    };
                 };
             };
         };
@@ -3506,13 +4069,30 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Run */
+            /** @description Run summary (H-25) */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AgentRun"];
+                    "application/json": {
+                        run_id?: string;
+                        tenant_id?: string;
+                        agent_id?: string;
+                        agent_key?: string;
+                        /** @enum {string} */
+                        status?: "completed" | "failed" | "shadow_completed" | "rejected";
+                        trigger?: Record<string, never>;
+                        resolved_action?: Record<string, never>;
+                        evidence_count?: number;
+                        confidence?: number;
+                        evidence_score?: number;
+                        /** @enum {string} */
+                        risk_level?: "low" | "medium" | "high" | "critical";
+                        outcome?: Record<string, never>;
+                        started_at?: string;
+                        completed_at?: string;
+                    };
                 };
             };
             404: components["responses"]["NotFound"];
@@ -3539,7 +4119,7 @@ export interface operations {
                         run_id?: string;
                         selected_agent_id?: string | null;
                         candidate_agent_ids?: string[];
-                        reason?: Record<string, unknown>;
+                        reason?: Record<string, never>;
                         behavior_hash?: string | null;
                     };
                 };
@@ -3566,7 +4146,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         run_id?: string;
-                        evidence?: Record<string, unknown>[];
+                        evidence?: Record<string, never>[];
                     };
                 };
             };
@@ -3593,7 +4173,7 @@ export interface operations {
                     "application/json": {
                         run_id?: string;
                         payment_intent_id?: string | null;
-                        gate_checks?: Record<string, unknown>[];
+                        gate_checks?: Record<string, never>[];
                     };
                 };
             };
@@ -3611,13 +4191,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The assembled proof */
+            /** @description The assembled proof (see GET /proof/{action_id}) */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, unknown>;
+                    "application/json": Record<string, never>;
                 };
             };
             404: components["responses"]["NotFound"];
@@ -3717,8 +4297,11 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @enum {string} */
-                    action_type: "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment";
+                    /**
+                     * @description Settlement rail for the intent. `x402_settle` (USDC on Base via the x402 rail) and `escrow_release` (BrainEscrow lock release, RFC 0001 §7.6) are gated but not yet executable (shadow-first).
+                     * @enum {string}
+                     */
+                    action_type: "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment" | "x402_settle" | "escrow_release";
                     source_account_id: string;
                     destination_counterparty_id: string;
                     amount: string;
@@ -3727,6 +4310,17 @@ export interface operations {
                     invoice_id?: string;
                     agent_id?: string;
                     evidence_ids?: string[];
+                    /** @description x402 settlement recipient on-chain address. Required when action_type=x402_settle; ignored otherwise (RFC 0001 §6.1). */
+                    pay_to?: string;
+                    /** @description On-chain BrainEscrow id. Required when action_type=escrow_release; ignored otherwise (RFC 0001 §7.6). */
+                    escrow_id?: string;
+                    /** @description keccak256 commitment of the escrow job terms. Required when action_type=escrow_release; ignored otherwise (RFC 0001 §7.6). */
+                    job_terms_hash?: string;
+                } | {
+                    /** @enum {string} */
+                    type: "pay_invoice";
+                    invoice_id: string;
+                    agent_id?: string;
                 };
             };
         };
@@ -3742,59 +4336,25 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             403: components["responses"]["Forbidden"];
-        };
-    };
-    getProof: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                action_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The assembled proof */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        action_id?: string;
-                        tenant_id?: string;
-                        agent_id?: string;
-                        behavior_hash?: string | null;
-                        outcome?:
-                            | "allowed"
-                            | "confirmed"
-                            | "rejected"
-                            | "executed"
-                            | "failed"
-                            | "shadow_completed";
-                        policy_version?: string;
-                        policy_hash?: string;
-                        matched_rule_id?: string | null;
-                        gate_checks?: Record<string, unknown>[];
-                        evidence?: Record<string, unknown>[];
-                        ledger_snapshot_hash?: string;
-                        audit_events?: Record<string, unknown>[];
-                        merkle_root?: string;
-                        merkle_proof?: string[];
-                        chain_anchor?: Record<string, unknown> | null;
-                        rail_receipt?: Record<string, unknown> | null;
-                        human_explanation?: string;
-                    };
-                };
-            };
-            /** @description No proof for that action (or not visible to this tenant) */
+            /** @description Invoice not found / not accessible (invoice shortcut, fails closed) */
             404: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
+            /** @description Invoice already paid or duplicate (invoice shortcut, fails closed) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["UnprocessableEntity"];
         };
     };
     getPaymentIntent: {
@@ -3881,7 +4441,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Dispatched to rail */
+            /** @description Gate passed; action enqueued to the durable outbox */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -4238,10 +4798,150 @@ export interface operations {
             };
         };
     };
+    getProof: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assembled proof */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        action_id?: string;
+                        tenant_id?: string;
+                        agent_id?: string;
+                        behavior_hash?: string | null;
+                        /** @enum {string} */
+                        outcome?: "allowed" | "confirmed" | "rejected" | "executed" | "failed" | "shadow_completed";
+                        policy_version?: string;
+                        policy_hash?: string;
+                        matched_rule_id?: string | null;
+                        gate_checks?: Record<string, never>[];
+                        evidence?: Record<string, never>[];
+                        ledger_snapshot_hash?: string;
+                        audit_events?: Record<string, never>[];
+                        merkle_root?: string;
+                        merkle_proof?: string[];
+                        chain_anchor?: Record<string, never> | null;
+                        rail_receipt?: Record<string, never> | null;
+                        human_explanation?: string;
+                    };
+                };
+            };
+            /** @description No proof for that action (or not visible to this tenant) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getProofView: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rendered proof page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description No proof for that action (or not visible to this tenant) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listWebhookDeadLetters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dead-letter list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        endpoint_id?: string;
+                        dead_letters?: {
+                            id?: string;
+                            event_id?: string;
+                            event_type?: string;
+                            last_error?: string | null;
+                            attempt_count?: number;
+                            created_at?: string;
+                            last_attempt_at?: string;
+                        }[];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    replayWebhookDeadLetters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Replay result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        endpoint_id?: string;
+                        attempted?: number;
+                        redelivered?: number;
+                        still_failing?: number;
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
     queryAuditEvents: {
         parameters: {
             query?: {
-                layer?: "raw" | "wiki" | "policy" | "execution";
+                layer?: "raw" | "ledger" | "wiki" | "policy" | "agent" | "execution" | "audit";
                 actor?: string;
                 since?: string;
                 until?: string;
@@ -4314,7 +5014,7 @@ export interface operations {
                     since: string;
                     /** Format: date-time */
                     until: string;
-                    layers?: ("raw" | "wiki" | "policy" | "execution")[];
+                    layers?: ("raw" | "ledger" | "wiki" | "policy" | "agent" | "execution" | "audit")[];
                 };
             };
         };

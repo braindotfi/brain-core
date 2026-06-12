@@ -6,14 +6,16 @@ export type CreatePaymentIntentBody = NonNullable<
   paths["/payment-intents"]["post"]["requestBody"]
 >["content"]["application/json"];
 
-export interface CreatePaymentIntentParams extends CreatePaymentIntentBody {
-  /**
-   * Caller-supplied key for deduplication. Sent as the `Idempotency-Key`
-   * HTTP header. Strongly recommended for any production caller — the
-   * server uses it to make `createPaymentIntent` retry-safe.
-   */
+/**
+ * The create body is now a UNION in the spec (standard vs on-chain
+ * settlement variants), so this composes by intersection rather than
+ * `interface extends` (which requires statically known members).
+ * `idempotencyKey` is sent as the `Idempotency-Key` HTTP header — strongly
+ * recommended; the server uses it to make `createPaymentIntent` retry-safe.
+ */
+export type CreatePaymentIntentParams = CreatePaymentIntentBody & {
   idempotencyKey?: string;
-}
+};
 
 export interface ExecutionReceipt {
   paymentIntentId: string | undefined;
@@ -40,7 +42,10 @@ export class PaymentsResource {
   constructor(private readonly http: BrainHttpClient) {}
 
   async create(params: CreatePaymentIntentParams): Promise<PaymentIntent> {
-    const { idempotencyKey, ...body } = params;
+    const { idempotencyKey, ...rest } = params;
+    // Rest-spread over an intersection-with-union widens; the runtime value
+    // is exactly the request body minus our own header-carrying key.
+    const body = rest as CreatePaymentIntentBody;
     const headers: Record<string, string> = idempotencyKey
       ? { "Idempotency-Key": idempotencyKey }
       : {};

@@ -4,6 +4,20 @@ import type { components, paths } from "../generated/openapi.js";
 
 type Agent = components["schemas"]["Agent"];
 
+// GET /agents now lists the internal-agent CATALOG (definitions +
+// enablement), and GET /agents/{id} returns {definition, registration} —
+// derive from the path responses so spec drift fails here loudly.
+type AgentsListResponse =
+  paths["/agents"]["get"]["responses"]["200"]["content"]["application/json"];
+export type AgentCatalogEntry = NonNullable<AgentsListResponse["agents"]>[number];
+export type AgentDetail =
+  paths["/agents/{agent_id}"]["get"]["responses"]["200"]["content"]["application/json"];
+type AgentRunsResponse =
+  paths["/agents/runs"]["get"]["responses"]["200"]["content"]["application/json"];
+export type AgentRunSummary = NonNullable<AgentRunsResponse["runs"]>[number];
+export type AgentRunDetail =
+  paths["/agents/runs/{run_id}"]["get"]["responses"]["200"]["content"]["application/json"];
+
 export type RegisterAgentBody = NonNullable<
   paths["/agents/register"]["post"]["requestBody"]
 >["content"]["application/json"];
@@ -47,13 +61,13 @@ function unwrap<T>(data: T | undefined, error: BrainErrorBody | undefined, statu
 export class AgentsResource {
   constructor(private readonly http: BrainHttpClient) {}
 
-  async list(): Promise<Agent[]> {
+  async list(): Promise<AgentCatalogEntry[]> {
     const { data, error, response } = await this.http.GET("/agents");
     const body = unwrap(data, error, response.status);
     return body.agents ?? [];
   }
 
-  async get(agentId: string): Promise<Agent> {
+  async get(agentId: string): Promise<AgentDetail> {
     const { data, error, response } = await this.http.GET("/agents/{agent_id}", {
       params: { path: { agent_id: agentId } },
     });
@@ -129,7 +143,7 @@ export class AgentsResource {
   }
 
   /** Agent run detail. */
-  async getRun(runId: string): Promise<AgentRun> {
+  async getRun(runId: string): Promise<AgentRunDetail> {
     const { data, error, response } = await this.http.GET("/agents/runs/{run_id}", {
       params: { path: { run_id: runId } },
     });
