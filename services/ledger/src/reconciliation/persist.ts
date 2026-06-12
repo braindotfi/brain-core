@@ -91,12 +91,16 @@ const COUNTER_SIDE_PROVENANCE_TABLES: Record<string, string> = {
   // Phase 4 entity resolution: a counterparty corroborated by another
   // observation of the same organization from an independent source.
   counterparty: "ledger_counterparties",
+  // Phase 4 entity resolution: an account corroborated by another observation
+  // of the same money pool (only ever via human-confirmed candidates).
+  account: "ledger_accounts",
 };
 
 /** Tables whose rows the corroboration lift may update, keyed by entity type. */
 const LIFTABLE_TABLES: Record<string, string> = {
   obligation: "ledger_obligations",
   counterparty: "ledger_counterparties",
+  account: "ledger_accounts",
 };
 
 async function loadCounterSideProvenance(
