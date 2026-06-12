@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from brain_agents.auth import require_inbound_auth
 from brain_agents.deps import AppDeps, get_deps
 from brain_agents.document_extractor.extract_text import (
+    DocumentTextUnavailableError,
     UnsupportedDocumentTypeError,
     extract_text,
 )
@@ -66,7 +67,7 @@ def _resolve_document_text(req: DocumentExtractRequest) -> str:
             raise HTTPException(status_code=400, detail="document_b64 is not valid base64") from exc
         try:
             return extract_text(content, req.mime_type)
-        except UnsupportedDocumentTypeError as exc:
+        except (DocumentTextUnavailableError, UnsupportedDocumentTypeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     raise HTTPException(status_code=400, detail="provide document_text or document_b64")
 
