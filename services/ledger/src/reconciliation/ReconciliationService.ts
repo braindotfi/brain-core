@@ -26,6 +26,7 @@ import {
 } from "@brain/shared";
 import type { Pool } from "pg";
 import { listReconciliationMatches } from "../repository/reconciliation_matches.js";
+import { applyCorroborationLift } from "./persist.js";
 import { InvoicePaymentMatcher } from "./invoice-payment.js";
 import { TransactionReceiptMatcher } from "./transaction-receipt.js";
 import { StatementBalanceMatcher } from "./statement-balance.js";
@@ -34,6 +35,7 @@ import { PayrollBankDebitMatcher } from "./payroll-bank-debit.js";
 import { SubscriptionChargeMatcher } from "./subscription-charge.js";
 import { CardChargeMatcher } from "./card-charge.js";
 import { OnchainSettlementMatcher } from "./onchain-settlement.js";
+import { ObligationDuplicateMatcher } from "./obligation-duplicate.js";
 import type { Matcher, MatcherResult } from "./types.js";
 
 export interface ReconciliationServiceDeps {
@@ -64,6 +66,7 @@ export class ReconciliationService implements IReconciliationService {
       new SubscriptionChargeMatcher(),
       new CardChargeMatcher(),
       new OnchainSettlementMatcher(),
+      new ObligationDuplicateMatcher(),
     ];
     this.registry = new Map(matchers.map((m) => [m.matchType, m]));
   }
@@ -92,7 +95,7 @@ export class ReconciliationService implements IReconciliationService {
     let locked = false;
     try {
       const res = await lockClient.query<{ locked: boolean }>(
-        "SELECT pg_try_advisory_lock(hash_text($1)) AS locked",
+        "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
         [ctx.tenantId],
       );
       locked = res.rows[0]?.locked === true;
@@ -155,7 +158,7 @@ export class ReconciliationService implements IReconciliationService {
       return { job_id: `recon_${Date.now().toString(36)}` };
     } finally {
       if (locked) {
-        await lockClient.query("SELECT pg_advisory_unlock(hash_text($1))", [ctx.tenantId]);
+        await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [ctx.tenantId]);
       }
       lockClient.release();
     }
@@ -182,7 +185,7 @@ export class ReconciliationService implements IReconciliationService {
     next: ReconciliationMatch["status"],
     explanation?: string,
   ): Promise<ReconciliationMatch> {
-    const updated = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+    const outcome = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
       const { rows } = await c.query<{
         id: string;
         owner_id: string;
@@ -203,12 +206,40 @@ export class ReconciliationService implements IReconciliationService {
                 explanation = COALESCE($2, explanation),
                 updated_at = now()
           WHERE id = $3
+
           RETURNING *`,
         [next, explanation ?? null, matchId],
       );
-      return rows[0] ?? null;
+      const row = rows[0] ?? null;
+      if (row === null)
+        return { row: null, promoted: [] as Array<{ id: string; confidence: number }> };
+
+      // Phase 4 (§13): a human CONFIRMING a duplicate_possible candidate is
+      // the user-review path for material ambiguity. Confirmation triggers
+      // the same corroboration lift a confident matcher run would have —
+      // upward-only, independence-gated, fully audited. Any other transition
+      // (disputed, unmatched, cleared, reversed) records the decision without
+      // touching the linked rows: observations stay reversible, never merged.
+      let promoted: Array<{ id: string; confidence: number }> = [];
+      if (next === "matched") {
+        promoted = await applyCorroborationLift(
+          c,
+          [
+            {
+              self: { type: row.left_entity_type, id: row.left_entity_id },
+              counter: { type: row.right_entity_type, id: row.right_entity_id },
+            },
+            {
+              self: { type: row.right_entity_type, id: row.right_entity_id },
+              counter: { type: row.left_entity_type, id: row.left_entity_id },
+            },
+          ],
+          row.confidence_score,
+        );
+      }
+      return { row, promoted };
     });
-    if (updated === null) {
+    if (outcome.row === null) {
       throw brainError("ledger_row_not_found", "no such reconciliation match");
     }
     await this.deps.audit.emit({
@@ -217,9 +248,19 @@ export class ReconciliationService implements IReconciliationService {
       actor: ctx.actor,
       action: "ledger.reconciliation.set_status",
       inputs: { match_id: matchId, next, explanation: explanation ?? null },
-      outputs: { match_id: matchId },
+      outputs: { match_id: matchId, promoted: outcome.promoted.length },
     });
-    return toRecord(updated);
+    for (const obligation of outcome.promoted) {
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "ledger",
+        actor: ctx.actor,
+        action: "ledger.obligation.corroborated",
+        inputs: { match_id: matchId, confirmed_by: ctx.actor },
+        outputs: { obligation_id: obligation.id, confidence: obligation.confidence },
+      });
+    }
+    return toRecord(outcome.row);
   }
 }
 

@@ -45,7 +45,12 @@ import {
   PostgresAuditEmitter,
 } from "@brain/shared";
 
-import { LedgerService, persistMatch } from "@brain/ledger";
+import {
+  LedgerService,
+  persistMatch,
+  ReconciliationService,
+  resolveObligationView,
+} from "@brain/ledger";
 import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
 
 const DB_URL = process.env.DATABASE_URL;
@@ -314,6 +319,43 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
     if (confirm.ok) expect(confirm.outcome).toBe("confirm");
   });
 
+  it("4.5 — Phase 4: the doc payable and the aggregator bill resolve into ONE reconciled fact, observations retained", async () => {
+    const docObligation = await obligationByEvidence(doc.prsId);
+    const billObligation = await obligationByEvidence(bill.prsId);
+
+    // The REAL resolution pipeline: ReconciliationService runs the
+    // obligation_duplicate matcher over Ledger state.
+    const recon = new ReconciliationService({ pool, audit });
+    await recon.run(ctx, { match_types: ["obligation_duplicate"] });
+
+    const view = await resolveObligationView(pool, ctx, docObligation.id);
+    expect(view).not.toBeNull();
+
+    // One economic event, three sources, one reconciled fact — with ALL
+    // observations retained (the Phase 4 AC).
+    expect(view!.observations.map((o) => o.obligation_id).sort()).toEqual(
+      [docObligation.id, billObligation.id].sort(),
+    );
+    expect(view!.matches).toHaveLength(1);
+
+    // Field-level authority (§13): the accounting observation owns the
+    // billing terms and GL coding.
+    expect(view!.resolved.due_date.authority_obligation_id).toBe(billObligation.id);
+    expect(view!.resolved.due_date.authority_provenance).toBe("extracted");
+    expect(view!.resolved.gl_accounts?.value).toEqual(["gl-6100-equipment"]);
+    expect(Number(view!.resolved.amount_due.value)).toBe(1250); // NUMERIC scale varies
+
+    // The due-date disagreement (document says 07-01, ERP says 07-03) is
+    // LISTED as a conflict, never overwritten on either row.
+    expect(view!.conflicts.map((c) => c.field)).toEqual(["due_date"]);
+    expect(view!.conflicts[0]!.values).toHaveLength(2);
+
+    // Resolution corroborated the doc payable from the bill (independent,
+    // extracted): provenance promoted before the bank evidence even arrives.
+    const promoted = await obligationByEvidence(doc.prsId);
+    expect(promoted.provenance).toBe("extracted");
+  });
+
   it("5 — corroboration against the bank's prior payment promotes the payable; the gate then allows", async () => {
     const docObligation = await obligationByEvidence(doc.prsId);
     const txId = await withTenantScope(pool, TENANT, async (c) => {
@@ -340,8 +382,10 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
     expect(match.created).toBe(true);
 
     const promoted = await obligationByEvidence(doc.prsId);
-    expect(promoted.provenance).toBe("extracted"); // agent_contributed -> extracted
-    expect(promoted.confidence).toBeCloseTo(0.82, 5); // lifted toward the match score
+    expect(promoted.provenance).toBe("extracted");
+    // Upward-only across BOTH corroborations (resolution lift, then bank).
+    expect(promoted.confidence).toBeGreaterThanOrEqual(0.82);
+    expect(promoted.confidence).toBeLessThanOrEqual(0.9);
 
     const result = await runPreExecutionGate(gateDeps(promoted.counterparty_id, "allow"), {
       ctx,
@@ -370,17 +414,16 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
     const matchRow = await withTenantScope(pool, TENANT, async (c) => {
       const { rows } = await c.query(
         `SELECT evidence_ids FROM ledger_reconciliation_matches
-          WHERE left_entity_id = $1 LIMIT 1`,
+          WHERE left_entity_id = $1 AND match_type = 'invoice_payment' LIMIT 1`,
         [docObligation.id],
       );
       return rows[0] as { evidence_ids: string[] };
     });
     expect(matchRow.evidence_ids).toEqual(expect.arrayContaining([doc.prsId, bank.prsId]));
 
-    // Phase 4 boundary, stated rather than hidden: the doc payable and the
-    // aggregator bill are still two obligation rows joined by the vendor;
-    // obligation-to-obligation resolution (one reconciled fact with all
-    // observations retained) is the Phase 4 resolution stage's AC.
+    // Phase 4 landed: the two rows REMAIN distinct observations (never
+    // destructively merged) and the obligation_duplicate match + resolved
+    // view (step 4.5) are what unify them into one reconciled fact.
     expect(docObligation.id).not.toBe(billObligation.id);
   });
 

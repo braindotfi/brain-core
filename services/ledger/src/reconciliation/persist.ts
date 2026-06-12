@@ -28,6 +28,13 @@ export interface PersistMatchInput {
   confidenceScore: number;
   evidenceIds: string[];
   explanation: string;
+  /**
+   * Phase 4 (§13): `matched` is a confident resolution and triggers the
+   * corroboration lift; `duplicate_possible` is a CANDIDATE held for human
+   * review (material ambiguity) — the row is recorded, nothing is promoted
+   * until ReconciliationService.setStatus confirms it. Default: matched.
+   */
+  status?: "matched" | "duplicate_possible";
 }
 
 export interface PersistMatchResult {
@@ -77,6 +84,10 @@ const COUNTER_SIDE_PROVENANCE_TABLES: Record<string, string> = {
   invoice: "ledger_invoices",
   document: "ledger_documents",
   balance: "ledger_balances",
+  // Phase 4: an obligation corroborated by ANOTHER obligation observation
+  // (document payable vs aggregator bill). Independence still gates the lift:
+  // the counter obligation must itself be extracted / human_confirmed.
+  obligation: "ledger_obligations",
 };
 
 async function loadCounterSideProvenance(
@@ -95,6 +106,48 @@ async function loadCounterSideProvenance(
   return rows[0]?.provenance ?? null;
 }
 
+export interface CorroborationSide {
+  self: { type: string; id: string };
+  counter: { type: string; id: string };
+}
+
+/**
+ * The corroboration write-back (RFC 0004 §7.1), shared by persistMatch
+ * (confident matches) and ReconciliationService.setStatus (a human confirming
+ * a duplicate_possible candidate). For each obligation side whose counter
+ * side is INDEPENDENT (extracted / human_confirmed), confidence lifts
+ * upward-only toward the match score (capped 0.9) and low-trust provenance
+ * (agent_contributed / customer_asserted) promotes to extracted.
+ */
+export async function applyCorroborationLift(
+  c: TenantScopedClient,
+  sides: CorroborationSide[],
+  confidenceScore: number,
+): Promise<Array<{ id: string; confidence: number }>> {
+  const promoted: Array<{ id: string; confidence: number }> = [];
+  for (const { self, counter } of sides) {
+    if (self.type !== "obligation") continue;
+    const counterProv = await loadCounterSideProvenance(c, counter.type, counter.id);
+    if (counterProv === null || !INDEPENDENT_PROVENANCE.has(counterProv)) {
+      // No independent corroboration; do not lift. The match row stands.
+      continue;
+    }
+    const { rows } = await c.query<{ id: string; confidence: number }>(
+      `UPDATE ledger_obligations
+          SET confidence = GREATEST(confidence, LEAST($2::real, $3::real)),
+              provenance = CASE WHEN provenance IN ('agent_contributed','customer_asserted')
+                                THEN 'extracted' ELSE provenance END,
+              updated_at = now()
+        WHERE id = $1
+        RETURNING id, confidence`,
+      [self.id, confidenceScore, CORROBORATION_CONFIDENCE_CEILING],
+    );
+    const row = rows[0];
+    if (row !== undefined) promoted.push(row);
+  }
+  return promoted;
+}
+
 export async function persistMatch(
   pool: Pool,
   audit: AuditEmitter,
@@ -102,6 +155,7 @@ export async function persistMatch(
   input: PersistMatchInput,
 ): Promise<PersistMatchResult> {
   const promoted: Array<{ id: string; confidence: number }> = [];
+  const status = input.status ?? "matched";
   const result = await withTenantScope(pool, ctx.tenantId, async (c) => {
     const existing = await findExistingMatch(c, input);
     if (existing !== null) return { matchId: existing.id, created: false };
@@ -113,7 +167,7 @@ export async function persistMatch(
           left_entity_type, left_entity_id,
           right_entity_type, right_entity_id,
           confidence_score, status, evidence_ids, explanation)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'matched',$9,$10)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         id,
         ctx.tenantId,
@@ -123,10 +177,18 @@ export async function persistMatch(
         input.rightEntityType,
         input.rightEntityId,
         input.confidenceScore,
+        status,
         input.evidenceIds,
         input.explanation,
       ],
     );
+
+    // A duplicate_possible CANDIDATE records the link and stops: no
+    // transaction marking, no corroboration lift, until a human confirms it
+    // (setStatus). Material ambiguity defers to user review (§13).
+    if (status !== "matched") {
+      return { matchId: id, created: true };
+    }
 
     // Mark the participating ledger_transactions as matched so the next
     // run skips them. Other entity types (invoices, balances, etc.) carry
@@ -165,26 +227,7 @@ export async function persistMatch(
         counter: { type: input.leftEntityType, id: input.leftEntityId },
       },
     ];
-    for (const { self, counter } of sides) {
-      if (self.type !== "obligation") continue;
-      const counterProv = await loadCounterSideProvenance(c, counter.type, counter.id);
-      if (counterProv === null || !INDEPENDENT_PROVENANCE.has(counterProv)) {
-        // No independent corroboration; do not lift. The match row stands.
-        continue;
-      }
-      const { rows } = await c.query<{ id: string; confidence: number }>(
-        `UPDATE ledger_obligations
-            SET confidence = GREATEST(confidence, LEAST($2::real, $3::real)),
-                provenance = CASE WHEN provenance = 'agent_contributed' THEN 'extracted'
-                                  ELSE provenance END,
-                updated_at = now()
-          WHERE id = $1
-          RETURNING id, confidence`,
-        [self.id, input.confidenceScore, CORROBORATION_CONFIDENCE_CEILING],
-      );
-      const row = rows[0];
-      if (row !== undefined) promoted.push(row);
-    }
+    promoted.push(...(await applyCorroborationLift(c, sides, input.confidenceScore)));
 
     return { matchId: id, created: true };
   });

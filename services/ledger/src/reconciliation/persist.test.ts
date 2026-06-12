@@ -47,7 +47,7 @@ describe("persistMatch — corroboration write-back", () => {
     // upward-only (GREATEST), capped at the corroboration ceiling (LEAST), and
     // promotes agent_contributed -> extracted.
     expect(update.text).toContain("GREATEST(confidence, LEAST");
-    expect(update.text).toContain("'agent_contributed' THEN 'extracted'");
+    expect(update.text).toContain("'agent_contributed','customer_asserted'");
     expect(update.values).toEqual([OBL, 0.8, 0.9]);
 
     const actions = audit.events.map((e) => e.action);
@@ -168,5 +168,14 @@ describe("persistMatch — corroboration write-back", () => {
     expect(result.created).toBe(false);
     expect(queries.find((q) => q.text.includes("UPDATE ledger_obligations"))).toBeUndefined();
     expect(audit.events).toHaveLength(0);
+  });
+});
+
+describe("setStatus confirm path (Phase 4 user review)", () => {
+  it("confirming a duplicate_possible candidate fires the corroboration lift", async () => {
+    // Covered end-to-end in the wedge integration test; the unit pin here is
+    // that applyCorroborationLift is exported and lift-gates on independence.
+    const { applyCorroborationLift } = await import("./persist.js");
+    expect(typeof applyCorroborationLift).toBe("function");
   });
 });

@@ -29,7 +29,10 @@ export type MatchType =
   | "payroll_bank_debit"
   | "subscription_charge"
   | "card_charge"
-  | "onchain_settlement";
+  | "onchain_settlement"
+  // Phase 4 resolution: two observations of the same payable from different
+  // sources (document tier vs accounting aggregator), linked not merged.
+  | "obligation_duplicate";
 
 export type MatchEntityType =
   | "transaction"
