@@ -32,7 +32,10 @@ export type MatchType =
   | "onchain_settlement"
   // Phase 4 resolution: two observations of the same payable from different
   // sources (document tier vs accounting aggregator), linked not merged.
-  | "obligation_duplicate";
+  | "obligation_duplicate"
+  // Phase 4 resolution: two counterparty rows naming the same real-world
+  // organization (merchant vs vendor vs customer), linked not merged.
+  | "counterparty_duplicate";
 
 export type MatchEntityType =
   | "transaction"
@@ -40,7 +43,8 @@ export type MatchEntityType =
   | "obligation"
   | "document"
   | "balance"
-  | "transfer";
+  | "transfer"
+  | "counterparty";
 
 export interface ReconciliationMatch {
   id: string;
