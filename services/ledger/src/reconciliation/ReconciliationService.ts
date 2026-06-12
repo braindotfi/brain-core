@@ -37,6 +37,7 @@ import { CardChargeMatcher } from "./card-charge.js";
 import { OnchainSettlementMatcher } from "./onchain-settlement.js";
 import { ObligationDuplicateMatcher } from "./obligation-duplicate.js";
 import { CounterpartyDuplicateMatcher } from "./counterparty-duplicate.js";
+import { AccountDuplicateMatcher } from "./account-duplicate.js";
 import type { Matcher, MatcherResult } from "./types.js";
 
 export interface ReconciliationServiceDeps {
@@ -69,6 +70,7 @@ export class ReconciliationService implements IReconciliationService {
       new OnchainSettlementMatcher(),
       new ObligationDuplicateMatcher(),
       new CounterpartyDuplicateMatcher(),
+      new AccountDuplicateMatcher(),
     ];
     this.registry = new Map(matchers.map((m) => [m.matchType, m]));
   }

@@ -60,4 +60,9 @@ export {
   type ResolvedCounterpartyView,
   type CounterpartyObservationView,
 } from "./resolution/resolveCounterparty.js";
+export {
+  resolveAccountView,
+  type ResolvedAccountView,
+  type AccountObservationView,
+} from "./resolution/resolveAccount.js";
 export { ReconciliationService } from "./reconciliation/ReconciliationService.js";

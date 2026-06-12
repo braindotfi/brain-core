@@ -35,7 +35,10 @@ export type MatchType =
   | "obligation_duplicate"
   // Phase 4 resolution: two counterparty rows naming the same real-world
   // organization (merchant vs vendor vs customer), linked not merged.
-  | "counterparty_duplicate";
+  | "counterparty_duplicate"
+  // Phase 4 resolution: two account rows describing the same money pool.
+  // ALWAYS a duplicate_possible candidate; humans confirm account identity.
+  | "account_duplicate";
 
 export type MatchEntityType =
   | "transaction"
@@ -44,7 +47,8 @@ export type MatchEntityType =
   | "document"
   | "balance"
   | "transfer"
-  | "counterparty";
+  | "counterparty"
+  | "account";
 
 export interface ReconciliationMatch {
   id: string;
