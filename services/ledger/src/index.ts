@@ -36,3 +36,13 @@ export {
   type NormalizeWorker,
   type NormalizeWorkerOptions,
 } from "./workers/normalizeWorker.js";
+
+// RFC 0004 §7.1 corroboration write-back: the sanctioned entry point for
+// recording a cross-source match and lifting the matched obligation's
+// provenance/confidence. Exported for the wedge acceptance test and the
+// Phase 4 resolution stage; matchers call it internally.
+export {
+  persistMatch,
+  type PersistMatchInput,
+  type PersistMatchResult,
+} from "./reconciliation/persist.js";
