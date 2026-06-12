@@ -47,7 +47,7 @@ describe("persistMatch — corroboration write-back", () => {
     // upward-only (GREATEST), capped at the corroboration ceiling (LEAST), and
     // promotes agent_contributed -> extracted.
     expect(update.text).toContain("GREATEST(confidence, LEAST");
-    expect(update.text).toContain("'agent_contributed' THEN 'extracted'");
+    expect(update.text).toContain("'agent_contributed','customer_asserted'");
     expect(update.values).toEqual([OBL, 0.8, 0.9]);
 
     const actions = audit.events.map((e) => e.action);
