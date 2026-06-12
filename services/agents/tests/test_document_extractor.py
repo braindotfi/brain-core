@@ -123,6 +123,23 @@ async def test_run_extracts_text_from_base64_csv_bytes(
 
 
 async def test_run_rejects_unsupported_mime_with_422(client: httpx.AsyncClient) -> None:
+    png_b64 = base64.b64encode(b"\x89PNG\r\n").decode("ascii")
+    resp = await client.post(
+        "/run/document_extract",
+        json={
+            "agent_id": "agent_x",
+            "tenant_id": "tnt_x",
+            "raw_id": "raw_x",
+            "document_b64": png_b64,
+            "mime_type": "image/png",
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_run_rejects_textless_pdf_with_422(client: httpx.AsyncClient) -> None:
+    # PDFs are a supported type now, but bytes without a readable text layer
+    # (here: malformed) must still fail loudly rather than reach the LLM step.
     pdf_b64 = base64.b64encode(b"%PDF-1.7 ...").decode("ascii")
     resp = await client.post(
         "/run/document_extract",
@@ -135,6 +152,7 @@ async def test_run_rejects_unsupported_mime_with_422(client: httpx.AsyncClient) 
         },
     )
     assert resp.status_code == 422
+    assert "no extractable text" in resp.json()["detail"]
 
 
 async def test_run_requires_a_content_source_400(client: httpx.AsyncClient) -> None:
