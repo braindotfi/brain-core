@@ -1318,7 +1318,7 @@ paths:
               type: object
               required: [policy_content]
               properties:
-                policy_content: { type: object }
+                policy_content: { type: object, additionalProperties: true }
       responses:
         '200':
           description: Lint findings
@@ -1387,7 +1387,7 @@ paths:
               type: object
               required: [policy_content, period_start, period_end]
               properties:
-                policy_content: { type: object }
+                policy_content: { type: object, additionalProperties: true }
                 period_start: { type: string }
                 period_end: { type: string }
       responses:
