@@ -95,7 +95,7 @@ export class ReconciliationService implements IReconciliationService {
     let locked = false;
     try {
       const res = await lockClient.query<{ locked: boolean }>(
-        "SELECT pg_try_advisory_lock(hash_text($1)) AS locked",
+        "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
         [ctx.tenantId],
       );
       locked = res.rows[0]?.locked === true;
@@ -158,7 +158,7 @@ export class ReconciliationService implements IReconciliationService {
       return { job_id: `recon_${Date.now().toString(36)}` };
     } finally {
       if (locked) {
-        await lockClient.query("SELECT pg_advisory_unlock(hash_text($1))", [ctx.tenantId]);
+        await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [ctx.tenantId]);
       }
       lockClient.release();
     }
