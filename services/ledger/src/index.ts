@@ -55,4 +55,9 @@ export {
   type ObligationObservationView,
   type ObligationConflict,
 } from "./resolution/resolveObligation.js";
+export {
+  resolveCounterpartyView,
+  type ResolvedCounterpartyView,
+  type CounterpartyObservationView,
+} from "./resolution/resolveCounterparty.js";
 export { ReconciliationService } from "./reconciliation/ReconciliationService.js";
