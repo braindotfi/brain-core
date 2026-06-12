@@ -65,6 +65,73 @@ jobs:
           path: production-readiness.json
           retention-days: 90
 
+  # --------- Integration suites (DB-backed) ---------
+  # Mirrors the post-merge main.yml integration steps so a green PR cannot
+  # break main: #144 merged green while its vocabulary change broke the raw
+  # integration suite, which only ran post-merge (red main, June 10-12).
+  # Schema-per-run harnesses keep suites isolated; the migrate step runs the
+  # full chain against the public schema exactly as main.yml does.
+  integration:
+    name: typescript (integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: brain
+          POSTGRES_PASSWORD: brain
+          POSTGRES_DB: brain
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://brain:brain@localhost:5432/brain
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm run build
+
+      - name: Migrate
+        # The root build excludes tools/*, so build the migrate CLI before use.
+        run: |
+          pnpm -C tools/migrate run build
+          node tools/migrate/dist/cli.js up
+
+      - name: Integration tests
+        # `--if-present` must precede the script name; after it, pnpm forwards it
+        # to vitest, which dies with `CACError: Unknown option --ifPresent`.
+        run: pnpm -r --filter='./services/**' --filter='!./services/agents' run --if-present test:integration
+
+      - name: Invariants DB-integration tests (P0.2)
+        run: pnpm -C tests/invariants run test:integration
+
+      - name: Adversarial integration tests (P1.1)
+        run: pnpm -C tests/adversarial run test:integration
+
   # --------- Python agents workspace ---------
   python:
     name: python (lint + types + unit)
