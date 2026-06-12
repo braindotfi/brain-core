@@ -49,6 +49,7 @@ import {
   LedgerService,
   persistMatch,
   ReconciliationService,
+  resolveCounterpartyView,
   resolveObligationView,
 } from "@brain/ledger";
 import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
@@ -425,6 +426,26 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
     // destructively merged) and the obligation_duplicate match + resolved
     // view (step 4.5) are what unify them into one reconciled fact.
     expect(docObligation.id).not.toBe(billObligation.id);
+  });
+
+  it("7 — entity resolution: the Plaid merchant and the vendor record resolve to ONE organization", async () => {
+    const docObligation = await obligationByEvidence(doc.prsId);
+
+    // Plaid's extractor landed the prior payment's merchant as its own
+    // counterparty row (type merchant); the vendor record came from the
+    // document + aggregator. Same organization, two observations.
+    const recon = new ReconciliationService({ pool, audit });
+    await recon.run(ctx, { match_types: ["counterparty_duplicate"] });
+
+    const view = await resolveCounterpartyView(pool, ctx, docObligation.counterparty_id);
+    expect(view).not.toBeNull();
+    expect(view!.observations.length).toBeGreaterThanOrEqual(2);
+    expect(view!.resolved.types).toEqual(expect.arrayContaining(["merchant", "vendor"]));
+    // Every observation retained; the link is reversible, nothing merged.
+    expect(view!.resolved.member_ids).toContain(docObligation.counterparty_id);
+    expect(view!.matches.length).toBeGreaterThanOrEqual(1);
+    // The canonical name comes from an independent observation with authority.
+    expect(view!.resolved.name.value).toBe(VENDOR_NAME);
   });
 
   // ---------------------------------------------------------------------

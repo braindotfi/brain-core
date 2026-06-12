@@ -88,6 +88,15 @@ const COUNTER_SIDE_PROVENANCE_TABLES: Record<string, string> = {
   // (document payable vs aggregator bill). Independence still gates the lift:
   // the counter obligation must itself be extracted / human_confirmed.
   obligation: "ledger_obligations",
+  // Phase 4 entity resolution: a counterparty corroborated by another
+  // observation of the same organization from an independent source.
+  counterparty: "ledger_counterparties",
+};
+
+/** Tables whose rows the corroboration lift may update, keyed by entity type. */
+const LIFTABLE_TABLES: Record<string, string> = {
+  obligation: "ledger_obligations",
+  counterparty: "ledger_counterparties",
 };
 
 async function loadCounterSideProvenance(
@@ -126,14 +135,16 @@ export async function applyCorroborationLift(
 ): Promise<Array<{ id: string; confidence: number }>> {
   const promoted: Array<{ id: string; confidence: number }> = [];
   for (const { self, counter } of sides) {
-    if (self.type !== "obligation") continue;
+    const table = LIFTABLE_TABLES[self.type];
+    if (table === undefined) continue;
     const counterProv = await loadCounterSideProvenance(c, counter.type, counter.id);
     if (counterProv === null || !INDEPENDENT_PROVENANCE.has(counterProv)) {
       // No independent corroboration; do not lift. The match row stands.
       continue;
     }
     const { rows } = await c.query<{ id: string; confidence: number }>(
-      `UPDATE ledger_obligations
+      // Table name whitelisted above (never user input); ids bind normally.
+      `UPDATE ${table}
           SET confidence = GREATEST(confidence, LEAST($2::real, $3::real)),
               provenance = CASE WHEN provenance IN ('agent_contributed','customer_asserted')
                                 THEN 'extracted' ELSE provenance END,
