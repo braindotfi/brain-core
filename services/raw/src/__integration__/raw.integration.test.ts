@@ -67,7 +67,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
     const boundary = "----brainBoundary";
     const body =
       `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="source_type"\r\n\r\nupload\r\n` +
+      `Content-Disposition: form-data; name="source_type"\r\n\r\nother\r\n` +
       `--${boundary}\r\n` +
       `Content-Disposition: form-data; name="file"; filename="x.txt"\r\nContent-Type: text/plain\r\n\r\n` +
       `hello\r\n` +
@@ -109,7 +109,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
     const boundary = "----brainBoundary";
     const body =
       `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="source_type"\r\n\r\nupload\r\n` +
+      `Content-Disposition: form-data; name="source_type"\r\n\r\nother\r\n` +
       `--${boundary}\r\n` +
       `Content-Disposition: form-data; name="file"; filename="f.txt"\r\nContent-Type: text/plain\r\n\r\n` +
       `signed-url-test\r\n` +
@@ -158,7 +158,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
     const boundary = "----brainBoundary";
     const body =
       `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="source_type"\r\n\r\nupload\r\n` +
+      `Content-Disposition: form-data; name="source_type"\r\n\r\nother\r\n` +
       `--${boundary}\r\n` +
       `Content-Disposition: form-data; name="file"; filename="f.txt"\r\nContent-Type: text/plain\r\n\r\n` +
       `tombstone-me\r\n` +
@@ -197,7 +197,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
     const boundary = "----brainBoundary";
     const body =
       `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="source_type"\r\n\r\nupload\r\n` +
+      `Content-Disposition: form-data; name="source_type"\r\n\r\nother\r\n` +
       `--${boundary}\r\n` +
       `Content-Disposition: form-data; name="file"; filename="f.txt"\r\nContent-Type: text/plain\r\n\r\n` +
       `parsed-empty\r\n` +
@@ -229,7 +229,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
     const boundary = "----brainBoundary";
     const body =
       `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="source_type"\r\n\r\nupload\r\n` +
+      `Content-Disposition: form-data; name="source_type"\r\n\r\nother\r\n` +
       `--${boundary}\r\n` +
       `Content-Disposition: form-data; name="file"; filename="f.txt"\r\nContent-Type: text/plain\r\n\r\n` +
       `${content}\r\n` +
