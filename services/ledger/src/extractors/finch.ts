@@ -111,7 +111,7 @@ export async function normalizeFinchArtifact(
 
   if (objectType === "pay_run") {
     const { row: account } = await upsertAccountRow(pool, audit, ctx, {
-      external_account_id: "finch:payroll",
+      external_account_id: "finch_payroll",
       institution: "Finch",
       account_type: "payment_processor",
       name: "Payroll (Finch)",

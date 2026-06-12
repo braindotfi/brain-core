@@ -54,13 +54,29 @@ const IGNORE_PATTERNS = [
 ];
 
 function walk(dir) {
+  // Iterative walk that prunes node_modules/dist at the DIRECTORY level.
+  // The previous recursive spread-push version overflowed the call stack on
+  // large installed trees; the throw was swallowed by the per-scan-dir catch
+  // and the guard silently reported OK while scanning nothing (caught when
+  // CI flagged a literal the local run missed).
   const files = [];
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      files.push(...walk(full));
-    } else if (full.endsWith(".ts") || full.endsWith(".mjs")) {
-      files.push(full);
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    for (const entry of readdirSync(current)) {
+      if (entry === "node_modules" || entry === "dist" || entry === "coverage") continue;
+      const full = join(current, entry);
+      let stat;
+      try {
+        stat = statSync(full);
+      } catch {
+        continue; // dangling symlink — skip the entry, never the tree
+      }
+      if (stat.isDirectory()) {
+        stack.push(full);
+      } else if (full.endsWith(".ts") || full.endsWith(".mjs")) {
+        files.push(full);
+      }
     }
   }
   return files;
@@ -74,8 +90,11 @@ for (const scanDir of SCAN_DIRS) {
   let files;
   try {
     files = walk(abs);
-  } catch {
-    continue;
+  } catch (err) {
+    // Only a MISSING scan dir is tolerable; anything else must fail loudly —
+    // a swallowed walk error turns the guard into a silent no-op.
+    if (err !== null && typeof err === "object" && err.code === "ENOENT") continue;
+    throw err;
   }
 
   for (const file of files) {

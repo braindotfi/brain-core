@@ -99,7 +99,7 @@ describe("normalizeFinchArtifact — finch_payroll_v1", () => {
       ]),
     );
     const acct = calls.find((c) => c.text.includes("INSERT INTO ledger_accounts"))!;
-    expect(acct.values).toContain("finch:payroll");
+    expect(acct.values).toContain("finch_payroll");
     expect(acct.values).toContain("payment_processor");
 
     const tx = calls.find((c) => c.text.includes("INSERT INTO ledger_transactions"))!;
