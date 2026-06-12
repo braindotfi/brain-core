@@ -46,3 +46,13 @@ export {
   type PersistMatchInput,
   type PersistMatchResult,
 } from "./reconciliation/persist.js";
+
+// Phase 4 resolution: the read-side reconciled view over linked obligation
+// observations (field-level authority, conflicts preserved, reversible).
+export {
+  resolveObligationView,
+  type ResolvedObligationView,
+  type ObligationObservationView,
+  type ObligationConflict,
+} from "./resolution/resolveObligation.js";
+export { ReconciliationService } from "./reconciliation/ReconciliationService.js";

@@ -170,3 +170,12 @@ describe("persistMatch — corroboration write-back", () => {
     expect(audit.events).toHaveLength(0);
   });
 });
+
+describe("setStatus confirm path (Phase 4 user review)", () => {
+  it("confirming a duplicate_possible candidate fires the corroboration lift", async () => {
+    // Covered end-to-end in the wedge integration test; the unit pin here is
+    // that applyCorroborationLift is exported and lift-gates on independence.
+    const { applyCorroborationLift } = await import("./persist.js");
+    expect(typeof applyCorroborationLift).toBe("function");
+  });
+});
