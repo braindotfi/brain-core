@@ -60,7 +60,9 @@ for (const scan of SCAN_DIRS) {
 }
 
 if (violations.length > 0) {
-  console.error("blob purge call-site guard: FAIL — purgeTenant() called outside the purge worker:");
+  console.error(
+    "blob purge call-site guard: FAIL — purgeTenant() called outside the purge worker:",
+  );
   for (const v of violations) console.error(`  ${v}`);
   console.error(
     "\nBlobAdapter.purgeTenant() hard-deletes a tenant's Raw bytes and must run ONLY from" +

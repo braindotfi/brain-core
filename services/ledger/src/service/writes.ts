@@ -81,6 +81,7 @@ export interface UpsertCounterpartyArgs {
     | "vendor"
     | "customer"
     | "employer"
+    | "employee"
     | "bank"
     | "wallet"
     | "exchange"

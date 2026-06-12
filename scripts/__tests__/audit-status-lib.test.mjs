@@ -17,7 +17,10 @@ import {
 } from "../lib/audit-status.mjs";
 
 const corpus = JSON.parse(
-  readFileSync(fileURLToPath(new URL("../lib/audit-status.fixtures.json", import.meta.url)), "utf8"),
+  readFileSync(
+    fileURLToPath(new URL("../lib/audit-status.fixtures.json", import.meta.url)),
+    "utf8",
+  ),
 );
 
 test("parity corpus: integrity + approval verdicts match the shared fixtures", () => {
@@ -29,7 +32,10 @@ test("parity corpus: integrity + approval verdicts match the shared fixtures", (
     assert.equal(approval.approved, c.approved, `${c.name}: approved`);
 
     if (c.approved === false) {
-      assert.ok(approval.reasons.length > 0, `${c.name}: a rejection must carry at least one reason`);
+      assert.ok(
+        approval.reasons.length > 0,
+        `${c.name}: a rejection must carry at least one reason`,
+      );
     }
     if (typeof c.reasonSubstr === "string") {
       assert.ok(
@@ -85,5 +91,9 @@ test("checkIntegrity passes the real committed contracts/audit-status.json", () 
     ),
   );
   const { ok, reasons } = checkIntegrity(real);
-  assert.equal(ok, true, `committed audit-status.json failed integrity: ${JSON.stringify(reasons)}`);
+  assert.equal(
+    ok,
+    true,
+    `committed audit-status.json failed integrity: ${JSON.stringify(reasons)}`,
+  );
 });

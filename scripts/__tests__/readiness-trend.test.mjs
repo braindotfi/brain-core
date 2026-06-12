@@ -174,19 +174,17 @@ test("snapshot script requires a tag arg and refuses to overwrite", () => {
     assert.match(stderr, /usage: readiness-snapshot/);
 
     // With a tag → writes a snapshot.
-    execFileSync(
-      "node",
-      [join(root, "scripts/readiness-snapshot.mjs"), "first-tag"],
-      { cwd: root, encoding: "utf8" },
-    );
+    execFileSync("node", [join(root, "scripts/readiness-snapshot.mjs"), "first-tag"], {
+      cwd: root,
+      encoding: "utf8",
+    });
     // Re-run with same tag → refuses.
     let secondErr = "";
     try {
-      execFileSync(
-        "node",
-        [join(root, "scripts/readiness-snapshot.mjs"), "first-tag"],
-        { cwd: root, encoding: "utf8" },
-      );
+      execFileSync("node", [join(root, "scripts/readiness-snapshot.mjs"), "first-tag"], {
+        cwd: root,
+        encoding: "utf8",
+      });
     } catch (err) {
       secondErr = err.stderr?.toString() ?? "";
     }
@@ -195,11 +193,10 @@ test("snapshot script requires a tag arg and refuses to overwrite", () => {
     // Invalid tag chars rejected.
     let invalidErr = "";
     try {
-      execFileSync(
-        "node",
-        [join(root, "scripts/readiness-snapshot.mjs"), "../escape"],
-        { cwd: root, encoding: "utf8" },
-      );
+      execFileSync("node", [join(root, "scripts/readiness-snapshot.mjs"), "../escape"], {
+        cwd: root,
+        encoding: "utf8",
+      });
     } catch (err) {
       invalidErr = err.stderr?.toString() ?? "";
     }

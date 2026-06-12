@@ -59,15 +59,27 @@ const CHECKS = [
         "execution_outbox",
         "ENABLE ROW LEVEL SECURITY",
       );
-      return { ok, detail: ok ? "migration 0017 present + RLS" : "missing 0017_execution_outbox.sql / RLS" };
+      return {
+        ok,
+        detail: ok ? "migration 0017 present + RLS" : "missing 0017_execution_outbox.sql / RLS",
+      };
     },
   },
   {
     id: "reservation_concurrency_test",
     label: "Live reservation writes tested (concurrent case)",
     run: ({ repo }) => {
-      const ok = contains(repo, "services/ledger/src/repository/reservations.test.ts", "concurrent");
-      return { ok, detail: ok ? "reservations.test.ts covers concurrency" : "missing concurrent reservation test" };
+      const ok = contains(
+        repo,
+        "services/ledger/src/repository/reservations.test.ts",
+        "concurrent",
+      );
+      return {
+        ok,
+        detail: ok
+          ? "reservations.test.ts covers concurrency"
+          : "missing concurrent reservation test",
+      };
     },
   },
   {
@@ -77,7 +89,10 @@ const CHECKS = [
       const ok =
         contains(repo, "services/policy/src/spend-counters.test.ts", "window") ||
         contains(repo, "services/policy/src/spend-counters.integration.test.ts", "");
-      return { ok, detail: ok ? "spend-counter test present" : "missing spend-counter integration test" };
+      return {
+        ok,
+        detail: ok ? "spend-counter test present" : "missing spend-counter integration test",
+      };
     },
   },
   {
@@ -85,7 +100,12 @@ const CHECKS = [
     label: "Rail allowlist non-empty for agent",
     run: ({ agent, rails }) => {
       const ok = rails.length > 0;
-      return { ok, detail: ok ? `${agent}: [${rails.join(", ")}]` : `${agent} has no rails in promotion-config.ts` };
+      return {
+        ok,
+        detail: ok
+          ? `${agent}: [${rails.join(", ")}]`
+          : `${agent} has no rails in promotion-config.ts`,
+      };
     },
   },
   {
@@ -96,7 +116,12 @@ const CHECKS = [
       const txt = read(repo, "services/execution/src/rails/receipts.ts") ?? "";
       const missing = rails.filter((r) => !txt.includes(`"${r}"`) && r !== "n/a");
       const ok = missing.length === 0;
-      return { ok, detail: ok ? rails.map((r) => `${r}: ✓`).join(", ") : `missing receipt schema: ${missing.join(", ")}` };
+      return {
+        ok,
+        detail: ok
+          ? rails.map((r) => `${r}: ✓`).join(", ")
+          : `missing receipt schema: ${missing.join(", ")}`,
+      };
     },
   },
   {
@@ -111,8 +136,18 @@ const CHECKS = [
     id: "evidence_validator",
     label: "Evidence semantic validator for action types (9.5)",
     run: ({ repo }) => {
-      const ok = contains(repo, "shared/src/gate/evidence-validator.ts", "pay_invoice", "pay_obligation");
-      return { ok, detail: ok ? "pay_invoice, pay_obligation registered" : "evidence validator missing action types" };
+      const ok = contains(
+        repo,
+        "shared/src/gate/evidence-validator.ts",
+        "pay_invoice",
+        "pay_obligation",
+      );
+      return {
+        ok,
+        detail: ok
+          ? "pay_invoice, pay_obligation registered"
+          : "evidence validator missing action types",
+      };
     },
   },
   {
@@ -127,7 +162,11 @@ const CHECKS = [
     id: "replay_investigation_route",
     label: "Replay-investigation endpoint reachable",
     run: ({ repo }) => {
-      const ok = contains(repo, "services/execution/src/payment-intents/routes.ts", "replay-investigation");
+      const ok = contains(
+        repo,
+        "services/execution/src/payment-intents/routes.ts",
+        "replay-investigation",
+      );
       return { ok, detail: ok ? "route registered" : "replay-investigation route missing" };
     },
   },
@@ -147,7 +186,12 @@ const CHECKS = [
     run: ({ attest }) =>
       attest.has("onchain_behavior_hash")
         ? { ok: true, detail: "operator-attested" }
-        : { ok: false, blocked: true, detail: "requires BrainMCPAgentRegistry read; --attest onchain_behavior_hash once confirmed" },
+        : {
+            ok: false,
+            blocked: true,
+            detail:
+              "requires BrainMCPAgentRegistry read; --attest onchain_behavior_hash once confirmed",
+          },
   },
   {
     id: "session_key_grants",
@@ -155,14 +199,23 @@ const CHECKS = [
     run: ({ attest }) =>
       attest.has("session_key_grants")
         ? { ok: true, detail: "operator-attested" }
-        : { ok: false, blocked: true, detail: "requires live DB read; --attest session_key_grants once confirmed" },
+        : {
+            ok: false,
+            blocked: true,
+            detail: "requires live DB read; --attest session_key_grants once confirmed",
+          },
   },
   {
     id: "adversarial_agent_tests",
     label: "Adversarial test suite covers this agent",
     run: ({ repo, agent }) => {
       const ok = has(repo, `tests/invariants/agents/${agent}.test.ts`);
-      return { ok, detail: ok ? `tests/invariants/agents/${agent}.test.ts` : `no tests/invariants/agents/${agent}.test.ts` };
+      return {
+        ok,
+        detail: ok
+          ? `tests/invariants/agents/${agent}.test.ts`
+          : `no tests/invariants/agents/${agent}.test.ts`,
+      };
     },
   },
 ];
@@ -192,7 +245,9 @@ function main() {
   };
   const agent = arg("--agent");
   if (agent === undefined) {
-    console.error("usage: check-promotion-readiness.mjs --agent <key> [--repo <dir>] [--attest a,b]");
+    console.error(
+      "usage: check-promotion-readiness.mjs --agent <key> [--repo <dir>] [--attest a,b]",
+    );
     process.exit(2);
   }
   const repo = arg("--repo") ?? process.cwd();

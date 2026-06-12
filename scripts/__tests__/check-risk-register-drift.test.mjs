@@ -41,7 +41,13 @@ function mdForClosed(id, title) {
 
 test("aligned open risk: passes", () => {
   const json = [
-    { id: "R-01", title: "Demo open risk", priority: "P0", status: "open", mitigation_summary: "x" },
+    {
+      id: "R-01",
+      title: "Demo open risk",
+      priority: "P0",
+      status: "open",
+      mitigation_summary: "x",
+    },
   ];
   const md = mdForOpen("R-01", "Demo open risk", "open");
   const r = runGuard(json, md);

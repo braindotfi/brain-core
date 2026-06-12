@@ -95,9 +95,7 @@ test("split across files (mainnet in one, escrow addr in another): silent", () =
 
 test("Terraform .tf assignment style detected", () => {
   const r = runGuard({
-    "infra/prod.tf":
-      `BRAIN_BASE_CHAIN_ID = "8453"\n` +
-      `BRAIN_ESCROW_ADDRESS = "${ADDR}"\n`,
+    "infra/prod.tf": `BRAIN_BASE_CHAIN_ID = "8453"\n` + `BRAIN_ESCROW_ADDRESS = "${ADDR}"\n`,
   });
   assert.equal(r.code, 1);
   assert.match(r.stderr, /infra\/prod\.tf/);
@@ -105,9 +103,7 @@ test("Terraform .tf assignment style detected", () => {
 
 test("YAML top-level keys detected", () => {
   const r = runGuard({
-    "deploy/values.yaml":
-      `BRAIN_BASE_CHAIN_ID: 8453\n` +
-      `BRAIN_ESCROW_ADDRESS: "${ADDR}"\n`,
+    "deploy/values.yaml": `BRAIN_BASE_CHAIN_ID: 8453\n` + `BRAIN_ESCROW_ADDRESS: "${ADDR}"\n`,
   });
   assert.equal(r.code, 1);
   assert.match(r.stderr, /deploy\/values\.yaml/);
@@ -118,17 +114,14 @@ test("indented YAML key (nested) is NOT detected (avoids false positives)", () =
   // parsing as one would yield false positives in helm charts and k8s
   // manifests where unrelated structures live in the same file.
   const r = runGuard({
-    "deploy/values.yaml":
-      `env:\n  BRAIN_BASE_CHAIN_ID: 8453\n  BRAIN_ESCROW_ADDRESS: "${ADDR}"\n`,
+    "deploy/values.yaml": `env:\n  BRAIN_BASE_CHAIN_ID: 8453\n  BRAIN_ESCROW_ADDRESS: "${ADDR}"\n`,
   });
   assert.equal(r.code, 0);
 });
 
 test("export-prefixed shell assignment detected", () => {
   const r = runGuard({
-    "deploy/run.sh":
-      `export BRAIN_BASE_CHAIN_ID=8453\n` +
-      `export BRAIN_ESCROW_ADDRESS=${ADDR}\n`,
+    "deploy/run.sh": `export BRAIN_BASE_CHAIN_ID=8453\n` + `export BRAIN_ESCROW_ADDRESS=${ADDR}\n`,
   });
   assert.equal(r.code, 1);
 });

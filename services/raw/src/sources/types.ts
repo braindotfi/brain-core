@@ -18,6 +18,7 @@ export const SOURCE_TYPES = [
   "alchemy_wallet",
   "eth_address",
   "merge_accounting",
+  "finch",
 ] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
@@ -47,6 +48,7 @@ export const CONCRETE_SOURCE_TYPES: ReadonlySet<SourceType> = new Set([
   "plaid",
   "stripe",
   "merge_accounting",
+  "finch",
 ]);
 
 /** Source-types that ship as stub connectors. Sync returns `{notes:"stub"}`. */

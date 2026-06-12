@@ -84,7 +84,14 @@ function readAuditStatus() {
  * (audit-status.json status=approved) AND an operator env attestation. Exported
  * for direct parity testing. Silent (green) on non-mainnet or no escrow address.
  */
-export function escrowAuditFence({ chainId, escrowAddr, attested, hasReceipt, auditReceipt, auditStatus }) {
+export function escrowAuditFence({
+  chainId,
+  escrowAddr,
+  attested,
+  hasReceipt,
+  auditReceipt,
+  auditStatus,
+}) {
   const name = "Escrow audit (mainnet)";
   if (chainId !== "8453" || !escrowAddr) {
     return {
@@ -101,17 +108,15 @@ export function escrowAuditFence({ chainId, escrowAddr, attested, hasReceipt, au
     };
   }
   const missing = [];
-  if (!auditStatus.approved) missing.push(`audit-status.json status=${auditStatus.status} (not approved)`);
+  if (!auditStatus.approved)
+    missing.push(`audit-status.json status=${auditStatus.status} (not approved)`);
   if (!attested) missing.push("no BRAIN_ESCROW_AUDIT_RECEIPT / BRAIN_ESCROW_AUDIT_APPROVED");
   return { name, status: "red", note: `would FAIL boot — ${missing.join("; ")}` };
 }
 
 // Parse the rail catalog (same regex as check-rails-catalog-drift).
 function loadRailCatalog() {
-  const src = readFileSync(
-    join(ROOT, "services/api/src/composition/rail-catalog.ts"),
-    "utf8",
-  );
+  const src = readFileSync(join(ROOT, "services/api/src/composition/rail-catalog.ts"), "utf8");
   const re =
     /\{\s*name:\s*"([^"]+)",[\s\S]*?productionAllowed:\s*(true|false),[\s\S]*?requiredEnv:\s*\[([^\]]*)\],[\s\S]*?evmChain:\s*(true|false),[\s\S]*?auditRequired:\s*(true|false)[\s\S]*?\}/g;
   const out = [];
@@ -137,8 +142,7 @@ function loadRailCatalog() {
 function checkRails(catalog) {
   const rows = [];
   for (const rail of catalog) {
-    const requiredPresent =
-      rail.requiredEnv.length > 0 && rail.requiredEnv.every(envSet);
+    const requiredPresent = rail.requiredEnv.length > 0 && rail.requiredEnv.every(envSet);
     let status;
     let note;
     if (!rail.productionAllowed) {
@@ -202,10 +206,7 @@ function checkBootFences(catalog) {
 
   // 3. Live rails in production
   const live = catalog.some(
-    (r) =>
-      r.productionAllowed &&
-      r.requiredEnv.length > 0 &&
-      r.requiredEnv.every(envSet),
+    (r) => r.productionAllowed && r.requiredEnv.length > 0 && r.requiredEnv.every(envSet),
   );
   if (NODE_ENV === "production" && !live) {
     fences.push({

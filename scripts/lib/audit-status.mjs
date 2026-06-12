@@ -51,8 +51,7 @@ function compilerReasons(c) {
     out.push('status "approved" requires compiler.optimizer_enabled (boolean)');
   if (!isNonNegInt(c.optimizer_runs))
     out.push('status "approved" requires compiler.optimizer_runs (non-negative integer)');
-  if (!isNonEmptyString(c.evm_version))
-    out.push('status "approved" requires compiler.evm_version');
+  if (!isNonEmptyString(c.evm_version)) out.push('status "approved" requires compiler.evm_version');
   return out;
 }
 
@@ -72,7 +71,9 @@ function isApprovedChainIds(ids) {
  * record must carry them or the fence cannot verify (and refuses to boot).
  */
 function isImmutableRefsArray(v) {
-  return Array.isArray(v) && v.every((r) => isObject(r) && isNonNegInt(r.start) && isNonNegInt(r.length));
+  return (
+    Array.isArray(v) && v.every((r) => isObject(r) && isNonNegInt(r.start) && isNonNegInt(r.length))
+  );
 }
 
 /**
@@ -101,7 +102,11 @@ export function parseAuditStatus(raw) {
   if (isObject(raw)) {
     return { ok: true, doc: raw, error: null };
   }
-  return { ok: false, doc: null, error: "audit-status input is neither a JSON string nor an object" };
+  return {
+    ok: false,
+    doc: null,
+    error: "audit-status input is neither a JSON string nor an object",
+  };
 }
 
 /**
