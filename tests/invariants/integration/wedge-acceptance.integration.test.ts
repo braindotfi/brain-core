@@ -42,8 +42,9 @@ import {
   type GatePrincipal,
   type ResolvedEvidence,
   type ServiceCallContext,
+  PostgresAuditEmitter,
 } from "@brain/shared";
-import { PostgresAuditEmitter } from "@brain/audit";
+
 import { LedgerService, persistMatch } from "@brain/ledger";
 import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
 
@@ -204,7 +205,13 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
             type: "ACCOUNTS_PAYABLE",
             contact: VENDOR_NAME,
             number: "BILL-2031",
-            due_date: "2026-07-01T00:00:00Z",
+            // Net-terms drift vs the document's stated due date: keeps the
+            // bill a distinct observation row. With IDENTICAL (counterparty,
+            // type, amount, currency, due_date) the obligation writer's dedup
+            // key collapses the two observations into one row — discovered on
+            // this test's first live run; Phase 4 resolution makes that merge
+            // explicit and evidence-preserving instead of key-coincidental.
+            due_date: "2026-07-03T00:00:00Z",
             total_amount: "1250.00",
             balance: "1250.00",
             currency: "USD",
