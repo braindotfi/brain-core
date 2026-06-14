@@ -34,3 +34,28 @@ export {
   isBalanced,
   type DirectionalAmount,
 } from "./accounting/balance.js";
+
+export {
+  MERGE_ACCOUNTING_PROJECTOR,
+  MERGE_ACCOUNTING_PARSER,
+  PROJECTABLE_OBJECT_TYPES,
+  projectGlAccount,
+  projectJournalEntry,
+  splitSignedAmount,
+  toPlainDecimal,
+  type ProjectableObjectType,
+  type ProjectionCommon,
+  type GlAccountUpsert,
+  type JournalEntryUpsert,
+  type JournalLineUpsert,
+} from "./projectors/merge-accounting.js";
+
+export { upsertGlAccount, upsertJournalEntry, type UpsertResult } from "./repository/accounting.js";
+
+export {
+  runProjectionCycle,
+  startCanonicalProjectionWorker,
+  type ProjectionWorker,
+  type ProjectionWorkerDeps,
+  type ProjectionWorkerOptions,
+} from "./projectors/worker.js";

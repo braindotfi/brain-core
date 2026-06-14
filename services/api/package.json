@@ -37,6 +37,7 @@
     "@azure/storage-blob": "^12.25.0",
     "@brain/agent-router": "workspace:*",
     "@brain/audit": "workspace:*",
+    "@brain/canonical": "workspace:*",
     "@brain/internal-agents": "workspace:*",
     "@brain/execution": "workspace:*",
     "@brain/ledger": "workspace:*",

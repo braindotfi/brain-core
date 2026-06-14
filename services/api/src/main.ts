@@ -85,6 +85,8 @@ import {
 
 import { LedgerService, registerLedgerPlugin, startNormalizeWorker } from "@brain/ledger";
 
+import { startCanonicalProjectionWorker } from "@brain/canonical";
+
 import { WikiPageService, registerWikiPlugin, loadRegistry } from "@brain/wiki";
 
 import {
@@ -2032,6 +2034,12 @@ async function main(): Promise<void> {
   // hence privilegedPool; per-artifact writes stay tenant-scoped.
   const interpretWorker = startInterpretWorker({ pool: privilegedPool, blob, audit });
 
+  // Canonical projection (ingestion architecture §12, Phase 5): promotes the
+  // rich Merge accounting pages (gl_account / journal_entry) that the compact
+  // Ledger drops into the canonical domain store. Cross-tenant poll over
+  // raw_parsed, hence privilegedPool; per-row writes stay tenant-scoped.
+  const canonicalProjectionWorker = startCanonicalProjectionWorker({ pool: privilegedPool, audit });
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence privilegedPool; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2202,6 +2210,7 @@ async function main(): Promise<void> {
         workers: [
           normalizeWorker,
           interpretWorker,
+          canonicalProjectionWorker,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,
