@@ -314,6 +314,37 @@ importers:
         specifier: '>=4.1.0'
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0)(yaml@2.9.0))
 
+  services/canonical:
+    dependencies:
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      pg:
+        specifier: ^8.13.0
+        version: 8.20.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.7.0
+        version: 22.19.19
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
+      '@vitest/coverage-v8':
+        specifier: '>=4.1.0'
+        version: 4.1.8(vitest@4.1.8)
+      eslint:
+        specifier: ^9.12.0
+        version: 9.39.4
+      fast-check:
+        specifier: ^3.23.1
+        version: 3.23.2
+      typescript:
+        specifier: ^5.6.2
+        version: 5.9.3
+      vitest:
+        specifier: '>=4.1.0'
+        version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@22.19.19)(tsx@4.22.0)(yaml@2.9.0))
+
   services/execution:
     dependencies:
       '@brain/ledger':

@@ -3,6 +3,7 @@ packages:
   - "shared"
   - "services/api"
   - "services/raw"
+  - "services/canonical"
   - "services/ledger"
   - "services/wiki"
   - "services/policy"

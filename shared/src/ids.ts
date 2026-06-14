@@ -47,6 +47,11 @@ export const ID_PREFIX = {
   ledgerInvoice: "inv",
   ledgerPaymentIntent: "pi",
   ledgerReconciliationMatch: "rcn",
+  // Canonical domain (ingestion architecture §12, Phase 5). Rich, versioned
+  // records that Ledger and Wiki project from. Accounting domain first.
+  canonicalGlAccount: "cgla",
+  canonicalJournalEntry: "cje",
+  canonicalJournalLine: "cjl",
   // Cross-layer
   policyDecision: "pd",
   approval: "appr",
@@ -123,6 +128,9 @@ export const newTransferId = (): string => brainId(ID_PREFIX.ledgerTransfer);
 export const newInvoiceId = (): string => brainId(ID_PREFIX.ledgerInvoice);
 export const newPaymentIntentId = (): string => brainId(ID_PREFIX.ledgerPaymentIntent);
 export const newReconciliationMatchId = (): string => brainId(ID_PREFIX.ledgerReconciliationMatch);
+export const newCanonicalGlAccountId = (): string => brainId(ID_PREFIX.canonicalGlAccount);
+export const newCanonicalJournalEntryId = (): string => brainId(ID_PREFIX.canonicalJournalEntry);
+export const newCanonicalJournalLineId = (): string => brainId(ID_PREFIX.canonicalJournalLine);
 export const newPolicyDecisionId = (): string => brainId(ID_PREFIX.policyDecision);
 export const newApprovalId = (): string => brainId(ID_PREFIX.approval);
 export const newWebhookEndpointId = (): string => brainId(ID_PREFIX.webhookEndpoint);
