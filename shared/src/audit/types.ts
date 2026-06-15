@@ -25,6 +25,7 @@
 
 export type AuditLayer =
   | "raw"
+  | "canonical"
   | "ledger"
   | "wiki"
   | "policy"
