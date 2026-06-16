@@ -25,6 +25,7 @@ COPY schemas/package.json schemas/tsconfig.json schemas/
 COPY shared/package.json shared/tsconfig.json shared/
 COPY services/api/package.json services/api/tsconfig.json services/api/
 COPY services/raw/package.json services/raw/tsconfig.json services/raw/
+COPY services/canonical/package.json services/canonical/tsconfig.json services/canonical/
 COPY services/ledger/package.json services/ledger/tsconfig.json services/ledger/
 COPY services/wiki/package.json services/wiki/tsconfig.json services/wiki/
 COPY services/policy/package.json services/policy/tsconfig.json services/policy/
@@ -73,6 +74,7 @@ COPY schemas/package.json schemas/
 COPY shared/package.json shared/
 COPY services/api/package.json services/api/
 COPY services/raw/package.json services/raw/
+COPY services/canonical/package.json services/canonical/
 COPY services/ledger/package.json services/ledger/
 COPY services/wiki/package.json services/wiki/
 COPY services/policy/package.json services/policy/
@@ -110,6 +112,7 @@ COPY --from=builder /app/services/api/dist services/api/dist
 # crash-loops in prod.
 COPY --from=builder /app/services/api/assets services/api/assets
 COPY --from=builder /app/services/raw/dist services/raw/dist
+COPY --from=builder /app/services/canonical/dist services/canonical/dist
 COPY --from=builder /app/services/ledger/dist services/ledger/dist
 COPY --from=builder /app/services/wiki/dist services/wiki/dist
 COPY --from=builder /app/services/policy/dist services/policy/dist
@@ -130,6 +133,7 @@ COPY --from=builder /app/tools/seed-golden-path/dist tools/seed-golden-path/dist
 # build stage's `COPY . .` does not survive into this stage.
 COPY --from=builder /app/services/api/migrations services/api/migrations
 COPY --from=builder /app/services/audit/migrations services/audit/migrations
+COPY --from=builder /app/services/canonical/migrations services/canonical/migrations
 COPY --from=builder /app/services/execution/migrations services/execution/migrations
 COPY --from=builder /app/services/ledger/migrations services/ledger/migrations
 COPY --from=builder /app/services/policy/migrations services/policy/migrations
