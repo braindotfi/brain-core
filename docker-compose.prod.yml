@@ -103,7 +103,7 @@ services:
         until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; do
           echo "waiting for minio..."; sleep 2;
         done
-        mc mb --ignore-existing "local/$$BLOB_CONTAINER"
+        mc mb --with-lock --ignore-existing "local/$$BLOB_CONTAINER"
         echo "bucket $$BLOB_CONTAINER ready"
     restart: "no"
 
