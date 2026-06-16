@@ -36,13 +36,13 @@ export class MonthlySummaryPageGenerator implements PageGenerator {
     const end = new Date(start);
     end.setUTCMonth(end.getUTCMonth() + 1);
 
-    const [totals, topInflow, topOutflow, dueSoon, lastTouches] = await Promise.all([
-      fetchTotals(deps, start, end),
-      fetchTopCounterparties(deps, start, end, "inflow"),
-      fetchTopCounterparties(deps, start, end, "outflow"),
-      fetchObligationsDueIn(deps, start, end),
-      fetchLastTouches(deps, start, end),
-    ]);
+    // Sequential reads: one shared tenant-scoped client serializes queries on a
+    // single connection anyway (pg@9 rejects concurrent client.query() calls).
+    const totals = await fetchTotals(deps, start, end);
+    const topInflow = await fetchTopCounterparties(deps, start, end, "inflow");
+    const topOutflow = await fetchTopCounterparties(deps, start, end, "outflow");
+    const dueSoon = await fetchObligationsDueIn(deps, start, end);
+    const lastTouches = await fetchLastTouches(deps, start, end);
 
     const currentTruth =
       `**Month: ${month}**\n` +

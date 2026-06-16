@@ -34,14 +34,14 @@ export class AccountPageGenerator implements PageGenerator {
       throw new Error(`account ${accountId} not found`);
     }
 
-    const [latestBalance, recentTx, openObligations, recentCps, unreconciledCount] =
-      await Promise.all([
-        fetchLatestBalance(deps, accountId),
-        fetchRecentTransactions(deps, accountId, 10),
-        fetchOpenObligations(deps, accountId),
-        fetchRecentCounterparties(deps, accountId),
-        countUnreconciled(deps, accountId),
-      ]);
+    // Sequential reads: these share one tenant-scoped client, which serializes
+    // queries on a single connection anyway (and pg@9 rejects concurrent
+    // client.query() calls), so Promise.all here only triggers a deprecation.
+    const latestBalance = await fetchLatestBalance(deps, accountId);
+    const recentTx = await fetchRecentTransactions(deps, accountId, 10);
+    const openObligations = await fetchOpenObligations(deps, accountId);
+    const recentCps = await fetchRecentCounterparties(deps, accountId);
+    const unreconciledCount = await countUnreconciled(deps, accountId);
 
     const currentTruth =
       `**${acct.name}** (${acct.account_type}) — ${acct.institution ?? "no institution"}\n` +

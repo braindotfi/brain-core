@@ -27,10 +27,10 @@ export class CounterpartyPageGenerator implements PageGenerator {
 
     const cp = await fetchCounterparty(deps, id);
     if (cp === null) throw new Error(`counterparty ${id} not found`);
-    const [openObligations, recentTx] = await Promise.all([
-      fetchOpenObligations(deps, id),
-      fetchRecentTransactions(deps, id),
-    ]);
+    // Sequential reads: one shared tenant-scoped client serializes queries on a
+    // single connection anyway (pg@9 rejects concurrent client.query() calls).
+    const openObligations = await fetchOpenObligations(deps, id);
+    const recentTx = await fetchRecentTransactions(deps, id);
 
     const currentTruth =
       `**${cp.name}** (${cp.type})\n` +

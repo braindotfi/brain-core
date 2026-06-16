@@ -29,11 +29,11 @@ export class InvoicePageGenerator implements PageGenerator {
     const inv = await fetchInvoice(deps, id);
     if (inv === null) throw new Error(`invoice ${id} not found`);
 
-    const [counterparty, linkedTransactions, linkedDocuments] = await Promise.all([
-      fetchCounterparty(deps, inv.counterparty_id),
-      fetchLinkedTransactions(deps, inv.linked_transaction_ids),
-      fetchLinkedDocuments(deps, inv.linked_document_ids),
-    ]);
+    // Sequential reads: one shared tenant-scoped client serializes queries on a
+    // single connection anyway (pg@9 rejects concurrent client.query() calls).
+    const counterparty = await fetchCounterparty(deps, inv.counterparty_id);
+    const linkedTransactions = await fetchLinkedTransactions(deps, inv.linked_transaction_ids);
+    const linkedDocuments = await fetchLinkedDocuments(deps, inv.linked_document_ids);
 
     const unpaid = parseFloat(inv.amount_due) - parseFloat(inv.amount_paid);
     const currentTruth =
