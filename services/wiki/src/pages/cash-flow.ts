@@ -37,12 +37,12 @@ export class CashFlowPageGenerator implements PageGenerator {
 
     const { start, end, label } = parsePeriod(period);
 
-    const [summary, topCounterparties, recentTxRows, obligations] = await Promise.all([
-      fetchCashFlowSummary(deps, start, end),
-      fetchTopCounterparties(deps, start, end),
-      fetchLargestTransactions(deps, start, end),
-      fetchObligationsDue(deps, start, end),
-    ]);
+    // Sequential reads: one shared tenant-scoped client serializes queries on a
+    // single connection anyway (pg@9 rejects concurrent client.query() calls).
+    const summary = await fetchCashFlowSummary(deps, start, end);
+    const topCounterparties = await fetchTopCounterparties(deps, start, end);
+    const recentTxRows = await fetchLargestTransactions(deps, start, end);
+    const obligations = await fetchObligationsDue(deps, start, end);
 
     const net = summary.inflow - summary.outflow;
     const netStr = net >= 0 ? `+${net.toFixed(2)}` : net.toFixed(2);

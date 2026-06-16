@@ -27,11 +27,11 @@ export class ObligationPageGenerator implements PageGenerator {
 
     const obl = await fetchObligation(deps, id);
     if (obl === null) throw new Error(`obligation ${id} not found`);
-    const [counterparty, linkedTransactions, openIntents] = await Promise.all([
-      fetchCounterparty(deps, obl.counterparty_id),
-      fetchLinkedTransactions(deps, obl.linked_transaction_ids),
-      fetchOpenIntentsFor(deps, id),
-    ]);
+    // Sequential reads: one shared tenant-scoped client serializes queries on a
+    // single connection anyway (pg@9 rejects concurrent client.query() calls).
+    const counterparty = await fetchCounterparty(deps, obl.counterparty_id);
+    const linkedTransactions = await fetchLinkedTransactions(deps, obl.linked_transaction_ids);
+    const openIntents = await fetchOpenIntentsFor(deps, id);
 
     const currentTruth =
       `**${obl.type}** — ${obl.amount_due} ${obl.currency}\n` +
