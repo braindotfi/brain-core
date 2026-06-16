@@ -3,10 +3,11 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 // Mock OTEL SDK before importing instrumentation — avoids loading the real
 // exporter / provider in the test process.
 const mockRegister = vi.fn();
-const mockAddSpanProcessor = vi.fn();
+const mockBatchSpanProcessor = vi.fn(function () {
+  return {};
+});
 const mockShutdown = vi.fn().mockResolvedValue(undefined);
 const mockProviderInstance = {
-  addSpanProcessor: mockAddSpanProcessor,
   register: mockRegister,
   shutdown: mockShutdown,
 };
@@ -18,9 +19,7 @@ vi.mock("@opentelemetry/sdk-trace-node", () => ({
   NodeTracerProvider: MockNodeTracerProvider,
 }));
 vi.mock("@opentelemetry/sdk-trace-base", () => ({
-  BatchSpanProcessor: vi.fn(function () {
-    return {};
-  }),
+  BatchSpanProcessor: mockBatchSpanProcessor,
 }));
 vi.mock("@opentelemetry/exporter-trace-otlp-http", () => ({
   OTLPTraceExporter: vi.fn(function () {
@@ -28,7 +27,7 @@ vi.mock("@opentelemetry/exporter-trace-otlp-http", () => ({
   }),
 }));
 vi.mock("@opentelemetry/resources", () => ({
-  Resource: vi.fn(function () {
+  resourceFromAttributes: vi.fn(function () {
     return {};
   }),
 }));
@@ -63,7 +62,7 @@ describe("initTracing", () => {
       serviceVersion: "1.0.0",
     });
     expect(MockNodeTracerProvider).toHaveBeenCalledOnce();
-    expect(mockAddSpanProcessor).toHaveBeenCalledOnce();
+    expect(mockBatchSpanProcessor).toHaveBeenCalledOnce();
     expect(mockRegister).toHaveBeenCalledOnce();
   });
 });

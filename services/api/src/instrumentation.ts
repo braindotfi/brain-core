@@ -11,7 +11,7 @@
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { Resource } from "@opentelemetry/resources";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
 import { trace } from "@opentelemetry/api";
 
@@ -24,15 +24,19 @@ export function initTracing(opts: {
 }): void {
   if (opts.otlpEndpoint === undefined) return;
 
-  const resource = new Resource({
+  const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: opts.serviceName,
     [ATTR_SERVICE_VERSION]: opts.serviceVersion,
   });
 
-  provider = new NodeTracerProvider({ resource });
-  provider.addSpanProcessor(
-    new BatchSpanProcessor(new OTLPTraceExporter({ url: `${opts.otlpEndpoint}/v1/traces` })),
-  );
+  // OTel SDK 2.x: span processors are passed to the provider constructor;
+  // the 1.x `provider.addSpanProcessor()` method was removed.
+  provider = new NodeTracerProvider({
+    resource,
+    spanProcessors: [
+      new BatchSpanProcessor(new OTLPTraceExporter({ url: `${opts.otlpEndpoint}/v1/traces` })),
+    ],
+  });
   provider.register();
 }
 
