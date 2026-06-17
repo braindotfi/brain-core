@@ -8,6 +8,11 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: ["src/**/*.test.ts"],
+    // DB-backed integration tests run only via the integration config after
+    // migrate. Without this, the unit coverage run (which executes BEFORE the
+    // migrate step in main.yml, with DATABASE_URL set) would run them against an
+    // unmigrated DB and fail. Mirrors the ledger/raw unit configs.
+    exclude: ["src/__integration__/**"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov", "html"],
