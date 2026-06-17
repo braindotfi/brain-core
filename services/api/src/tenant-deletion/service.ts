@@ -77,7 +77,16 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "raw_sync_partitions", column: "tenant_id" },
   { table: "raw_sources", column: "tenant_id" },
 
+  // ---- Layer 1.5: Canonical domain (ingestion architecture §12, Phase 5) ----
+  // Children before parents (journal_line FK -> journal_entry).
+  { table: "canonical_journal_line", column: "tenant_id" },
+  { table: "canonical_journal_entry", column: "tenant_id" },
+  { table: "canonical_gl_account", column: "tenant_id" },
+  { table: "canonical_projection_log", column: "tenant_id" },
+
   // ---- Layer 2: Ledger ----
+  // GL-account projection of canonical (soft ref to canonical_gl_account; no FK).
+  { table: "ledger_gl_accounts", column: "tenant_id" },
   { table: "ledger_counterparty_payment_instructions", column: "owner_id" },
   { table: "ledger_reservations", column: "owner_id" },
   { table: "ledger_reconciliation_matches", column: "owner_id" },
