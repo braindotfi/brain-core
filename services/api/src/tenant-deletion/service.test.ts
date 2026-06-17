@@ -281,7 +281,7 @@ function repoRoot(): string {
 }
 
 function listMigrationFiles(): string[] {
-  const services = ["api", "raw", "ledger", "wiki", "policy", "audit", "execution"];
+  const services = ["api", "raw", "canonical", "ledger", "wiki", "policy", "audit", "execution"];
   const files: string[] = [];
   for (const svc of services) {
     const dir = join(repoRoot(), "services", svc, "migrations");

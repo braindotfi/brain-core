@@ -83,7 +83,12 @@ import {
   type RegisterRawPluginOptions,
 } from "@brain/raw";
 
-import { LedgerService, registerLedgerPlugin, startNormalizeWorker } from "@brain/ledger";
+import {
+  LedgerService,
+  registerLedgerPlugin,
+  startNormalizeWorker,
+  startLedgerProjectionWorker,
+} from "@brain/ledger";
 
 import { startCanonicalProjectionWorker } from "@brain/canonical";
 
@@ -2040,6 +2045,11 @@ async function main(): Promise<void> {
   // raw_parsed, hence privilegedPool; per-row writes stay tenant-scoped.
   const canonicalProjectionWorker = startCanonicalProjectionWorker({ pool: privilegedPool, audit });
 
+  // Ledger chart-of-accounts projection (ingestion architecture §12, Phase 5):
+  // keeps ledger_gl_accounts current as canonical_gl_account grows. Cross-tenant
+  // poll over canonical, hence privilegedPool; per-row upserts stay tenant-scoped.
+  const ledgerProjectionWorker = startLedgerProjectionWorker({ pool: privilegedPool });
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence privilegedPool; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2211,6 +2221,7 @@ async function main(): Promise<void> {
           normalizeWorker,
           interpretWorker,
           canonicalProjectionWorker,
+          ledgerProjectionWorker,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,

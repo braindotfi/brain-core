@@ -47,6 +47,8 @@ export const ID_PREFIX = {
   ledgerInvoice: "inv",
   ledgerPaymentIntent: "pi",
   ledgerReconciliationMatch: "rcn",
+  // Ledger projection of the canonical chart of accounts (Phase 5 PR-C).
+  ledgerGlAccount: "lgla",
   // Canonical domain (ingestion architecture §12, Phase 5). Rich, versioned
   // records that Ledger and Wiki project from. Accounting domain first.
   canonicalGlAccount: "cgla",
@@ -128,6 +130,7 @@ export const newTransferId = (): string => brainId(ID_PREFIX.ledgerTransfer);
 export const newInvoiceId = (): string => brainId(ID_PREFIX.ledgerInvoice);
 export const newPaymentIntentId = (): string => brainId(ID_PREFIX.ledgerPaymentIntent);
 export const newReconciliationMatchId = (): string => brainId(ID_PREFIX.ledgerReconciliationMatch);
+export const newLedgerGlAccountId = (): string => brainId(ID_PREFIX.ledgerGlAccount);
 export const newCanonicalGlAccountId = (): string => brainId(ID_PREFIX.canonicalGlAccount);
 export const newCanonicalJournalEntryId = (): string => brainId(ID_PREFIX.canonicalJournalEntry);
 export const newCanonicalJournalLineId = (): string => brainId(ID_PREFIX.canonicalJournalLine);

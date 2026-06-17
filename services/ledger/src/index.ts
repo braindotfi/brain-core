@@ -66,3 +66,20 @@ export {
   type AccountObservationView,
 } from "./resolution/resolveAccount.js";
 export { ReconciliationService } from "./reconciliation/ReconciliationService.js";
+
+// Phase 5 (RFC 0005): the Ledger chart-of-accounts projection of canonical.
+export {
+  rebuildAccountingProjectionFromCanonical,
+  confirmGlAccountName,
+  upsertLedgerGlAccount,
+  toLedgerGlAccountInput,
+  type LedgerGlAccountInput,
+  type RebuildResult,
+} from "./projection/gl-accounts.js";
+export {
+  runLedgerProjectionCycle,
+  startLedgerProjectionWorker,
+  type LedgerProjectionWorker,
+  type LedgerProjectionWorkerDeps,
+  type LedgerProjectionWorkerOptions,
+} from "./projection/worker.js";
