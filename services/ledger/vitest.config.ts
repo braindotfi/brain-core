@@ -23,6 +23,8 @@ export default defineConfig({
         "src/routes/**",
         "src/cash_flows/routes.ts",
         "src/workers/**",
+        // Phase 5 projection: DB upsert/rebuild + worker, covered by integration tests.
+        "src/projection/**",
         "src/reconciliation/persist.ts",
         // Test-only scaffolding (fake pg pool) shared by the matcher *.test.ts files.
         "src/reconciliation/harness.ts",
