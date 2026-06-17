@@ -22,17 +22,20 @@ PRs produced with AI assistance must be labeled `ai-assisted` (§13.4).
 
 > The parent workspace CLAUDE.md says "five-layer", that is stale. The codebase is **six layers** as of v0.3.
 
-| #   | Layer  | Workspace                                 | Owns                                                 |
-| --- | ------ | ----------------------------------------- | ---------------------------------------------------- |
-| 1   | Raw    | `services/raw` (`@brain/raw`)             | Source evidence, immutable ingested payloads         |
-| 2   | Ledger | `services/ledger` (`@brain/ledger`)       | Machine-readable financial truth (11 typed entities) |
-| 3   | Wiki   | `services/wiki` (`@brain/wiki`)           | Human-readable memory + narrative Q&A (pgvector)     |
-| 4   | Policy | `services/policy` (`@brain/policy`)       | Deterministic rule VM, EIP-712 signing (viem)        |
-| 5   | Agent  | `services/execution` (`@brain/execution`) | PaymentIntent, ApprovalService, orchestration        |
-| 5′  | MCP    | `services/mcp` (`@brain/mcp`)             | JSON-RPC 2.0 server, external agent surface          |
-| 6   | Audit  | `services/audit` (`@brain/audit`)         | Append-only Merkle-chained log + on-chain anchor     |
+| #   | Layer     | Workspace                                 | Owns                                                                       |
+| --- | --------- | ----------------------------------------- | -------------------------------------------------------------------------- |
+| 1   | Raw       | `services/raw` (`@brain/raw`)             | Source evidence, immutable ingested payloads                               |
+| 1.5 | Canonical | `services/canonical` (`@brain/canonical`) | Rich, versioned domain records; Ledger/Wiki project from it (§12, Phase 5) |
+| 2   | Ledger    | `services/ledger` (`@brain/ledger`)       | Machine-readable financial truth (11 typed entities)                       |
+| 3   | Wiki      | `services/wiki` (`@brain/wiki`)           | Human-readable memory + narrative Q&A (pgvector)                           |
+| 4   | Policy    | `services/policy` (`@brain/policy`)       | Deterministic rule VM, EIP-712 signing (viem)                              |
+| 5   | Agent     | `services/execution` (`@brain/execution`) | PaymentIntent, ApprovalService, orchestration                              |
+| 5′  | MCP       | `services/mcp` (`@brain/mcp`)             | JSON-RPC 2.0 server, external agent surface                                |
+| 6   | Audit     | `services/audit` (`@brain/audit`)         | Append-only Merkle-chained log + on-chain anchor                           |
 
 Workspace `services/execution` implements layer 5 (Agent). The directory rename is deferred; the layer name in docs is "Agent".
+
+The Canonical layer (1.5, ingestion architecture §12, RFC 0005) sits between Raw and Ledger: it holds rich, versioned domain records and the compact Ledger (and Wiki) are rebuildable projections of it. It is downstream of Raw (reads `raw_parsed`) and upstream of Ledger (Ledger reads canonical to project); it never reads Wiki or Policy. As of Phase 5 it instantiates only the accounting domain (GL accounts, journal entries, journal lines); other §12 domains are deferred until a paying use case needs them. Not a seventh protocol layer, it is a domain store the protocol layers project from.
 
 Python agents (Plaid extractors, reasoners, three MVP agents, plus the RFC 0004 `document_extractor`) live in `services/agents/` (Python 3.12, uv-managed), outside the TS workspace.
 
@@ -44,7 +47,7 @@ Two TypeScript agent-infrastructure services sit alongside the layers (not in th
 - Every write at every layer emits an audit event.
 - **Policy and Execution never read Wiki.** Wiki is for narrative recall only; all machine-checkable preconditions come from Ledger.
 - Agents never mutate Raw/Ledger/Policy/Audit directly, always go through the owning service's API.
-- Every service owns its own DB schema. **Cross-service reads go through the owning service's API, never direct DB queries**. With sanctioned exceptions: the Wiki layer is a read-projection of Ledger and reads Ledger tables read-only (via a `TenantScopedClient`) to generate pages and answer questions, never writing Ledger or reading Wiki text in those paths (enforced by the §8.4 invariants); plus system/admin cross-tenant jobs (e.g. audit anchoring) and demo-mode sandbox resolvers. All cross-service **writes** still go through the owning service's API.
+- Every service owns its own DB schema. **Cross-service reads go through the owning service's API, never direct DB queries**. With sanctioned exceptions: the Wiki layer is a read-projection of Ledger and reads Ledger tables read-only (via a `TenantScopedClient`) to generate pages and answer questions, never writing Ledger or reading Wiki text in those paths (enforced by the §8.4 invariants); the Ledger is likewise a read-projection of Canonical for the chart of accounts and reads `canonical_*` tables read-only to project `ledger_gl_accounts` (the same pattern, one layer up; the Ledger never writes canonical); plus system/admin cross-tenant jobs (e.g. audit anchoring) and demo-mode sandbox resolvers. All cross-service **writes** still go through the owning service's API.
 
 ## The §6 Deterministic Pre-Execution Gate
 
@@ -335,6 +338,12 @@ Run `./scripts/install-hooks.sh` once, it installs a pre-commit hook that scans 
   - **Q&A**: the Wiki question endpoint already grounds in obligations; the obligation excerpt now carries `cp=` so "what do I owe and to whom" resolves the vendor.
   - **Earned autonomy** (§5.2): intent confidence is threaded into `GatePaymentIntent` → `Action.confidence`, so a tenant policy rule `agent.confidence.gte` is a live gate. A new intent's confidence is capped at the obligation it pays (`resolveObligationConfidence`), and reconciliation corroboration raises an obligation's confidence upward-only (≤ 0.9, `agent_contributed → extracted`) in `persistMatch`. The §6 gate is unchanged and still reads Ledger, never Wiki; confidence is a policy lever, not a gate check.
   - **Review-hardening follow-ups**: `resolveObligationConfidence` is a **required** factory loader (wired at every `PaymentIntentService` mount), and a third boot fence (`services/api/src/composition/payment-loaders-prod-fence.ts`) refuses to start in `NODE_ENV=production` unless the always-applicable money-path loaders (`resolveEvidence` 9.5, `detectDuplicates` 11.5, `resolveObligationConfidence`) are wired. Separately, the v0.2 `/execution/*` routes are confirmed **live** (generic action propose/approve API used by the SDK `actions` resource + the Python agents, no v0.3 replacement) and were NOT deleted; only the genuinely-inert bits were cleaned up (dead `hasRole` removed; `/execution/mcp` is an honest deprecation pointer to `/v1/agents/mcp`).
+- **Phase 5 canonical domain layer + rebuildable projections** (`docs/rfcs/0005-canonical-domain-layer-and-projections.md`). A new canonical layer (1.5, `services/canonical` / `@brain/canonical`) between Raw and Ledger holds rich, versioned domain records; Ledger and Wiki are rebuildable projections of it. Scoped (deliberately, per §12 + amendment 19.2) to the **accounting domain** only for now: GL accounts, journal entries, journal lines (the data the Merge aggregator was already landing in `raw_parsed` and the compact Ledger was dropping). Shipped:
+  - **Schema** (`services/canonical/migrations/0001`): `canonical_gl_account` / `canonical_journal_entry` / `canonical_journal_line` (shared queryable fields as columns; provider-only fields in namespaced `extensions`; provenance + source_ids/evidence_ids on every record) + `canonical_projection_log`. Idempotency key `(tenant, source_system, source_natural_key)`.
+  - **Projector** (`services/canonical/src/projectors/`, `merge_accounting_canonical_v1`): the canonical-layer analogue of the Ledger normalize worker. Reads the retained `merge_accounting_v1` gl_account/journal_entry pages from `raw_parsed` (same sanctioned cross-pipeline read), projects them idempotently, logs consumption. The Merge journal-line sign convention (±`net_amount`) is split into explicit `direction` + non-negative `amount`. Started in `main.ts` on the privileged pool.
+  - **Ledger projection** (`services/ledger/src/projection/`): `ledger_gl_accounts` (ledger/0037) is the Ledger-side read-projection of `canonical_gl_account` (soft reference, no cross-service FK). `rebuildAccountingProjectionFromCanonical(ctx)` regenerates it from canonical alone, no provider contact (the Phase 5 AC). A steady-state projection worker keeps it current. **Overlay reapplication** (RFC 0005 §4.1): a `human_confirmed` account name (`confirmGlAccountName`) survives a rebuild via an overlay-preserving upsert while provider-derived fields refresh, so rebuild is lossless w.r.t. human decisions, not just provider data.
+  - **Audit + GDPR**: new `canonical` audit layer (shared enum + `audit/0011` CHECK widening); every projected page emits `canonical.projected`. All `canonical_*` + `ledger_gl_accounts` tables are RLS-armed and registered in the tenant-deletion list; the tenant-deletion guard now scans `services/canonical` migrations.
+  - **Deferred (sequenced next)**: the deeper refactor that makes Ledger **obligations/counterparties** a projection of a canonical AP/AR domain (reapplying the Phase-4 corroboration lift / `setStatus` / `human_confirmed` overlay) is authorized but not yet built; it touches the live money path, so it lands as several small, heavily-verified PRs. Other §12 domains (tax, payroll, payments, identity) remain deferred until a paying use case.
 
 ## When in Doubt
 
