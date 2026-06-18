@@ -341,6 +341,32 @@ export async function runLedgerAparProjectionCycle(
   } catch (err) {
     console.error("[ledgerAparProjector] obligation cycle failed:", err);
   }
+
+  // Gauge the age of the oldest canonical AP/AR record not yet projected to the
+  // Ledger, so a stalled canonical->Ledger projection surfaces as rising lag.
+  if (deps.metrics !== undefined) {
+    try {
+      const { rows } = await deps.pool.query<{ lag: number }>(
+        `SELECT COALESCE(EXTRACT(EPOCH FROM now() - MIN(t.updated_at)), 0)::float8 AS lag
+           FROM (
+             SELECT cc.updated_at
+               FROM canonical_counterparty cc
+               LEFT JOIN ledger_counterparties lc
+                 ON lc.owner_id = cc.tenant_id AND lc.canonical_counterparty_id = cc.id
+              WHERE lc.id IS NULL OR lc.updated_at < cc.updated_at
+             UNION ALL
+             SELECT co.updated_at
+               FROM canonical_obligation co
+               LEFT JOIN ledger_obligations lo
+                 ON lo.owner_id = co.tenant_id AND lo.canonical_obligation_id = co.id
+              WHERE lo.id IS NULL OR lo.updated_at < co.updated_at
+           ) t`,
+      );
+      deps.metrics.gauge("brain.ledger.apar_projection.lag_seconds", rows[0]?.lag ?? 0);
+    } catch (err) {
+      console.error("[ledgerAparProjector] lag gauge query failed:", err);
+    }
+  }
 }
 
 export function startLedgerAparProjectionWorker(

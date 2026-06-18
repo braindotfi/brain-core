@@ -1,0 +1,87 @@
+{
+  "title": "Brain Canonical Projection Pipeline",
+  "uid": "brain-projection",
+  "schemaVersion": 38,
+  "version": 1,
+  "tags": ["brain", "canonical", "projection", "money-path"],
+  "timezone": "browser",
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Projection records written (per second)",
+      "description": "Rate of records projected by each money-path worker: brain_canonical_projector_records_count (raw_parsed -> canonical) and brain_ledger_apar_projection_records_count (canonical -> Ledger). A sustained flatline at zero while lag (panel 2) is rising means the obligation money-path has stalled: obligations are not reaching the Ledger and the §6 gate has nothing to gate (risk R-11).",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (projector) (rate(brain_canonical_projector_records_count[5m]))",
+          "legendFormat": "canonical:{{projector}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(brain_ledger_apar_projection_records_count[5m]))",
+          "legendFormat": "ledger:apar_projection",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Projection lag (seconds)",
+      "description": "Age of the oldest record not yet projected, per worker: brain_canonical_projector_lag_seconds (oldest unconsumed raw_parsed) and brain_ledger_apar_projection_lag_seconds (oldest canonical AP/AR row not yet in the Ledger). 0 = no backlog. Sustained high lag is the primary stall signal.",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 300 },
+              { "color": "red", "value": 600 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max(brain_canonical_projector_lag_seconds)",
+          "legendFormat": "canonical projector",
+          "refId": "A"
+        },
+        {
+          "expr": "max(brain_ledger_apar_projection_lag_seconds)",
+          "legendFormat": "ledger apar projection",
+          "refId": "B"
+        }
+      ]
+    }
+  ],
+  "__alerts": {
+    "_comment": "Unified-alerting rule definitions for this dashboard (provisioned separately from the panel JSON, mirroring infra/grafana/README.md). Two rules guard the money-path projection pipeline (risk R-11):",
+    "rules": [
+      {
+        "name": "ProjectionPipelineStalled",
+        "summary": "A canonical money-path projection worker has stalled (rising lag with no throughput).",
+        "expr": "(max(brain_canonical_projector_lag_seconds) > 600 and sum(rate(brain_canonical_projector_records_count[10m])) == 0) or (max(brain_ledger_apar_projection_lag_seconds) > 600 and sum(rate(brain_ledger_apar_projection_records_count[10m])) == 0)",
+        "for": "10m",
+        "severity": "critical"
+      },
+      {
+        "name": "ProjectionLagHigh",
+        "summary": "Canonical/Ledger projection lag is elevated; obligations may be reaching the Ledger slowly.",
+        "expr": "max(brain_canonical_projector_lag_seconds) > 300 or max(brain_ledger_apar_projection_lag_seconds) > 300",
+        "for": "15m",
+        "severity": "warning"
+      }
+    ]
+  }
+}

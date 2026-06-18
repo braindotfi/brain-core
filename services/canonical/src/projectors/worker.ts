@@ -238,6 +238,28 @@ export async function runProjectionCycle(
   }
 
   await runDocObligationPass(deps, batchSize, actor);
+  await emitProjectorLag(deps);
+}
+
+/**
+ * Gauge the age of the oldest unconsumed projectable raw_parsed row, so a
+ * stalled projector surfaces as rising lag (not just a flatlined record count).
+ * 0 when there is no backlog.
+ */
+async function emitProjectorLag(deps: ProjectionWorkerDeps): Promise<void> {
+  if (deps.metrics === undefined) return;
+  try {
+    const { rows } = await deps.pool.query<{ lag: number }>(
+      `SELECT COALESCE(EXTRACT(EPOCH FROM now() - MIN(rp.extracted_at)), 0)::float8 AS lag
+         FROM raw_parsed rp
+        WHERE ((rp.parser = $1 AND rp.extracted->>'object_type' = ANY($2::text[])) OR rp.parser = $3)
+          AND NOT EXISTS (SELECT 1 FROM canonical_projection_log pl WHERE pl.raw_parsed_id = rp.id)`,
+      [MERGE_ACCOUNTING_PARSER, [...ALL_PROJECTABLE_OBJECT_TYPES], DOC_OBLIGATION_PARSER],
+    );
+    deps.metrics.gauge("brain.canonical.projector.lag_seconds", rows[0]?.lag ?? 0);
+  } catch (err) {
+    console.error("[canonicalProjector] lag gauge query failed:", err);
+  }
 }
 
 interface PendingDocRow {
