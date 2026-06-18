@@ -85,6 +85,13 @@ export {
   toGlAccountProduct,
   type GlAccountProduct,
 } from "./query/gl-accounts.js";
+export {
+  getJournalEntryProduct,
+  listJournalEntryProducts,
+  toJournalEntryProduct,
+  type JournalEntryProduct,
+  type JournalLineView,
+} from "./query/journal-entries.js";
 
 export {
   runProjectionCycle,

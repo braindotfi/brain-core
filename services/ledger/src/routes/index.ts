@@ -214,6 +214,21 @@ export async function registerLedgerRoutes(
   );
 
   app.get(
+    "/ledger/accounts/:account_id/resolved",
+    async (request: FastifyRequest<{ Params: { account_id: string } }>, reply) => {
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, READ);
+      if (!isBrainId(request.params.account_id, "acct")) {
+        throw brainError("request_params_invalid", "malformed account_id");
+      }
+      const result = await service.resolveAccount(ctx, request.params.account_id);
+      if (result === null) throw brainError("ledger_row_not_found", "no such account");
+      reply.status(200);
+      return result;
+    },
+  );
+
+  app.get(
     "/ledger/obligations",
     async (
       request: FastifyRequest<{

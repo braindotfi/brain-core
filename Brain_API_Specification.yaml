@@ -770,6 +770,29 @@ paths:
               schema: { $ref: '#/components/schemas/ResolvedCounterpartyView' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /ledger/accounts/{account_id}/resolved:
+    get:
+      tags: [Ledger]
+      summary: Resolved money-pool view of an account (per-observation balances, links)
+      description: |
+        The reconciled money pool for one account: balances reported per
+        observation (never adjudicated), confirmed-duplicate links followed,
+        candidates pending user review. Account duplicates never auto-match
+        (Phase 4 / §13), so member links here are human-confirmed.
+      operationId: resolveAccount
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Resolved account view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolvedAccountView' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /ledger/invoices:
     get:
       tags: [Ledger]
@@ -2866,6 +2889,49 @@ paths:
               schema: { $ref: '#/components/schemas/CanonicalGlAccountProduct' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /canonical/journal-entries:
+    get:
+      tags: [Canonical]
+      summary: List canonical journal entries as governed data products
+      description: |
+        Reads the canonical double-entry journals (Phase 6 governed data
+        products). Each entry carries its debit/credit lines, provenance, and
+        freshness. Read-only; requires the `canonical:read` scope.
+      operationId: listCanonicalJournalEntries
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 500 }
+      responses:
+        '200':
+          description: Journal entry data products
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [journal_entries]
+                properties:
+                  journal_entries:
+                    type: array
+                    items: { $ref: '#/components/schemas/CanonicalJournalEntryProduct' }
+  /canonical/journal-entries/{journal_entry_id}:
+    get:
+      tags: [Canonical]
+      summary: Get one canonical journal entry (with its lines) as a governed data product
+      operationId: getCanonicalJournalEntry
+      parameters:
+        - name: journal_entry_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Journal entry data product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CanonicalJournalEntryProduct' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
 
   securitySchemes:
@@ -3018,6 +3084,33 @@ components:
           type: array
           items: { type: object, additionalProperties: true }
 
+    ResolvedAccountView:
+      type: object
+      description: |
+        One reconciled money pool. Balances are reported per observation (never
+        adjudicated); account duplicates never auto-match, so member links are
+        human-confirmed; candidates are listed pending review (§13).
+      required: [subject_account_id, observations, resolved]
+      properties:
+        subject_account_id: { type: string }
+        observations:
+          type: array
+          items: { type: object, additionalProperties: true }
+        resolved:
+          type: object
+          properties:
+            member_ids: { type: array, items: { type: string } }
+        matches:
+          type: array
+          items:
+            type: object
+            properties:
+              match_id: { type: string }
+              confidence_score: { type: number }
+        pending_review:
+          type: array
+          items: { type: object, additionalProperties: true }
+
     CanonicalGlAccountProduct:
       type: object
       description: |
@@ -3040,6 +3133,58 @@ components:
             status: { type: [string, "null"] }
             source_system: { type: string }
             source_natural_key: { type: string }
+            extensions: { type: object, additionalProperties: true }
+        provenance:
+          type: object
+          required: [provenance, source_ids, evidence_ids]
+          properties:
+            provenance:
+              type: string
+              enum: [extracted, agent_contributed, customer_asserted, human_confirmed]
+            confidence: { type: [number, "null"], minimum: 0, maximum: 1 }
+            source_ids: { type: array, items: { type: string } }
+            evidence_ids: { type: array, items: { type: string } }
+        freshness:
+          type: object
+          required: [schema_version, source_system, updated_at]
+          properties:
+            schema_version: { type: integer }
+            source_system: { type: string }
+            updated_at: { type: string, format: date-time }
+            projected_at: { type: [string, "null"], format: date-time }
+            projector: { type: [string, "null"] }
+
+    CanonicalJournalEntryProduct:
+      type: object
+      description: |
+        A canonical journal entry as a governed data product: the double-entry
+        header + its debit/credit lines, plus provenance and freshness.
+      required: [domain, record, provenance, freshness]
+      properties:
+        domain: { type: string, enum: [accounting] }
+        record:
+          type: object
+          required: [id, source_system, source_natural_key, lines]
+          properties:
+            id: { type: string }
+            posted_at: { type: [string, "null"], format: date-time }
+            memo: { type: [string, "null"] }
+            currency: { type: [string, "null"] }
+            status: { type: [string, "null"] }
+            source_system: { type: string }
+            source_natural_key: { type: string }
+            lines:
+              type: array
+              items:
+                type: object
+                properties:
+                  line_number: { type: integer }
+                  gl_account_id: { type: [string, "null"] }
+                  gl_account_key: { type: [string, "null"] }
+                  direction: { type: string, enum: [debit, credit] }
+                  amount: { type: string }
+                  currency: { type: [string, "null"] }
+                  description: { type: [string, "null"] }
             extensions: { type: object, additionalProperties: true }
         provenance:
           type: object

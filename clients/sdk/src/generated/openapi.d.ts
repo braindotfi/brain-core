@@ -380,6 +380,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ledger/accounts/{account_id}/resolved": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolved money-pool view of an account (per-observation balances, links)
+         * @description The reconciled money pool for one account: balances reported per
+         *     observation (never adjudicated), confirmed-duplicate links followed,
+         *     candidates pending user review. Account duplicates never auto-match
+         *     (Phase 4 / §13), so member links here are human-confirmed.
+         */
+        get: operations["resolveAccount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ledger/invoices": {
         parameters: {
             query?: never;
@@ -1784,6 +1807,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/canonical/journal-entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List canonical journal entries as governed data products
+         * @description Reads the canonical double-entry journals (Phase 6 governed data
+         *     products). Each entry carries its debit/credit lines, provenance, and
+         *     freshness. Read-only; requires the `canonical:read` scope.
+         */
+        get: operations["listCanonicalJournalEntries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/canonical/journal-entries/{journal_entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one canonical journal entry (with its lines) as a governed data product */
+        get: operations["getCanonicalJournalEntry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1849,6 +1911,27 @@ export interface components {
             }[];
         };
         /**
+         * @description One reconciled money pool. Balances are reported per observation (never
+         *     adjudicated); account duplicates never auto-match, so member links are
+         *     human-confirmed; candidates are listed pending review (§13).
+         */
+        ResolvedAccountView: {
+            subject_account_id: string;
+            observations: {
+                [key: string]: unknown;
+            }[];
+            resolved: {
+                member_ids?: string[];
+            };
+            matches?: {
+                match_id?: string;
+                confidence_score?: number;
+            }[];
+            pending_review?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
          * @description A canonical GL account (chart of accounts) as a governed data product:
          *     the record plus its provenance (the evidence behind it) and freshness.
          */
@@ -1865,6 +1948,53 @@ export interface components {
                 status?: string | null;
                 source_system: string;
                 source_natural_key: string;
+                extensions?: {
+                    [key: string]: unknown;
+                };
+            };
+            provenance: {
+                /** @enum {string} */
+                provenance: "extracted" | "agent_contributed" | "customer_asserted" | "human_confirmed";
+                confidence?: number | null;
+                source_ids: string[];
+                evidence_ids: string[];
+            };
+            freshness: {
+                schema_version: number;
+                source_system: string;
+                /** Format: date-time */
+                updated_at: string;
+                /** Format: date-time */
+                projected_at?: string | null;
+                projector?: string | null;
+            };
+        };
+        /**
+         * @description A canonical journal entry as a governed data product: the double-entry
+         *     header + its debit/credit lines, plus provenance and freshness.
+         */
+        CanonicalJournalEntryProduct: {
+            /** @enum {string} */
+            domain: "accounting";
+            record: {
+                id: string;
+                /** Format: date-time */
+                posted_at?: string | null;
+                memo?: string | null;
+                currency?: string | null;
+                status?: string | null;
+                source_system: string;
+                source_natural_key: string;
+                lines: {
+                    line_number?: number;
+                    gl_account_id?: string | null;
+                    gl_account_key?: string | null;
+                    /** @enum {string} */
+                    direction?: "debit" | "credit";
+                    amount?: string;
+                    currency?: string | null;
+                    description?: string | null;
+                }[];
                 extensions?: {
                     [key: string]: unknown;
                 };
@@ -3358,6 +3488,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResolvedCounterpartyView"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    resolveAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resolved account view */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolvedAccountView"];
                 };
             };
             404: components["responses"]["NotFound"];
@@ -5498,6 +5651,53 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CanonicalGlAccountProduct"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listCanonicalJournalEntries: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Journal entry data products */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        journal_entries: components["schemas"]["CanonicalJournalEntryProduct"][];
+                    };
+                };
+            };
+        };
+    };
+    getCanonicalJournalEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                journal_entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Journal entry data product */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanonicalJournalEntryProduct"];
                 };
             };
             404: components["responses"]["NotFound"];

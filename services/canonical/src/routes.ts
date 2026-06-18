@@ -18,6 +18,7 @@ import {
   listGlAccountProducts,
   type ListGlAccountsFilter,
 } from "./query/gl-accounts.js";
+import { getJournalEntryProduct, listJournalEntryProducts } from "./query/journal-entries.js";
 
 const READ: Scope = "canonical:read";
 
@@ -127,6 +128,48 @@ export async function registerCanonicalRoutes(
       );
       if (product === null) {
         throw brainError("ledger_row_not_found", `no canonical gl account: ${request.params.id}`);
+      }
+      reply.status(200);
+      return product;
+    },
+  );
+
+  // GET /canonical/journal-entries — double-entry journals as governed products.
+  app.get(
+    "/canonical/journal-entries",
+    async (request: FastifyRequest<{ Querystring: { limit?: string } }>, reply: FastifyReply) => {
+      const principal = requirePrincipal(request);
+      requireScope(principal.scopes, READ);
+      const limit = parsePositiveIntParam("limit", request.query.limit, {
+        fallback: 100,
+        max: 500,
+      });
+      const journal_entries = await listJournalEntryProducts(
+        deps.pool,
+        { tenantId: principal.tenantId, actor: principal.id },
+        limit,
+      );
+      reply.status(200);
+      return { journal_entries };
+    },
+  );
+
+  // GET /canonical/journal-entries/:id — one journal entry with its lines.
+  app.get(
+    "/canonical/journal-entries/:id",
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+      const principal = requirePrincipal(request);
+      requireScope(principal.scopes, READ);
+      const product = await getJournalEntryProduct(
+        deps.pool,
+        { tenantId: principal.tenantId, actor: principal.id },
+        request.params.id,
+      );
+      if (product === null) {
+        throw brainError(
+          "ledger_row_not_found",
+          `no canonical journal entry: ${request.params.id}`,
+        );
       }
       reply.status(200);
       return product;
