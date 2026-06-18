@@ -70,6 +70,16 @@ export {
   type DocProjection,
 } from "./projectors/doc-obligation.js";
 
+// Phase 6 governed read API.
+export { registerCanonicalRoutes } from "./routes.js";
+export type { CanonicalDeps } from "./deps.js";
+export {
+  getObligationProduct,
+  listObligationProducts,
+  toObligationProduct,
+  type ObligationProduct,
+} from "./query/obligations.js";
+
 export {
   runProjectionCycle,
   startCanonicalProjectionWorker,

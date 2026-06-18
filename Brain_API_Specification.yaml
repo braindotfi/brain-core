@@ -2727,6 +2727,53 @@ paths:
                   verified: { type: boolean }
                   onchain_block: { type: [integer, "null"] }
 
+  /canonical/obligations:
+    get:
+      tags: [Canonical]
+      summary: List canonical AP/AR obligations as governed data products
+      description: |
+        Reads the canonical obligation domain (Phase 6 governed data products).
+        Each obligation is returned with its provenance (how Brain knows it) and
+        freshness (when it was last projected, by which projector). Read-only;
+        requires the `canonical:read` scope.
+      operationId: listCanonicalObligations
+      parameters:
+        - name: direction
+          in: query
+          schema: { type: string, enum: [payable, receivable] }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 500 }
+      responses:
+        '200':
+          description: Obligation data products
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [obligations]
+                properties:
+                  obligations:
+                    type: array
+                    items: { $ref: '#/components/schemas/CanonicalObligationProduct' }
+  /canonical/obligations/{obligation_id}:
+    get:
+      tags: [Canonical]
+      summary: Get one canonical obligation as a governed data product
+      operationId: getCanonicalObligation
+      parameters:
+        - name: obligation_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Obligation data product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CanonicalObligationProduct' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
 
   securitySchemes:
@@ -2802,6 +2849,50 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+
+    CanonicalObligationProduct:
+      type: object
+      description: |
+        A canonical AP/AR obligation as a governed data product: the record plus
+        its provenance (the evidence behind the value) and freshness.
+      required: [domain, record, provenance, freshness]
+      properties:
+        domain: { type: string, enum: [ap_ar] }
+        record:
+          type: object
+          required: [id, direction, type, amount, source_system, source_natural_key]
+          properties:
+            id: { type: string }
+            direction: { type: string, enum: [payable, receivable] }
+            type: { type: string }
+            canonical_counterparty_id: { type: [string, "null"] }
+            amount: { type: string }
+            currency: { type: [string, "null"] }
+            issue_date: { type: [string, "null"], format: date-time }
+            due_date: { type: [string, "null"], format: date-time }
+            status: { type: [string, "null"] }
+            source_system: { type: string }
+            source_natural_key: { type: string }
+            extensions: { type: object, additionalProperties: true }
+        provenance:
+          type: object
+          required: [provenance, source_ids, evidence_ids]
+          properties:
+            provenance:
+              type: string
+              enum: [extracted, agent_contributed, customer_asserted, human_confirmed]
+            confidence: { type: [number, "null"], minimum: 0, maximum: 1 }
+            source_ids: { type: array, items: { type: string } }
+            evidence_ids: { type: array, items: { type: string } }
+        freshness:
+          type: object
+          required: [schema_version, source_system, updated_at]
+          properties:
+            schema_version: { type: integer }
+            source_system: { type: string }
+            updated_at: { type: string, format: date-time }
+            projected_at: { type: [string, "null"], format: date-time }
+            projector: { type: [string, "null"] }
 
     Error:
       type: object

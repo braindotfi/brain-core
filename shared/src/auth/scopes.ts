@@ -20,6 +20,7 @@ import { brainError } from "../errors.js";
 
 export const LAYERS = [
   "raw",
+  "canonical",
   "ledger",
   "wiki",
   "policy",
@@ -41,6 +42,9 @@ export const VALID_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "raw:read",
   "raw:write",
   "raw:admin",
+  "canonical:read",
+  "canonical:write",
+  "canonical:admin",
   "ledger:read",
   "ledger:write",
   "ledger:admin",
