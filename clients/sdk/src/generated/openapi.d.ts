@@ -1659,10 +1659,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/canonical/obligations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List canonical AP/AR obligations as governed data products
+         * @description Reads the canonical obligation domain (Phase 6 governed data products).
+         *     Each obligation is returned with its provenance (how Brain knows it) and
+         *     freshness (when it was last projected, by which projector). Read-only;
+         *     requires the `canonical:read` scope.
+         */
+        get: operations["listCanonicalObligations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/canonical/obligations/{obligation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one canonical obligation as a governed data product */
+        get: operations["getCanonicalObligation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description A canonical AP/AR obligation as a governed data product: the record plus
+         *     its provenance (the evidence behind the value) and freshness.
+         */
+        CanonicalObligationProduct: {
+            /** @enum {string} */
+            domain: "ap_ar";
+            record: {
+                id: string;
+                /** @enum {string} */
+                direction: "payable" | "receivable";
+                type: string;
+                canonical_counterparty_id?: string | null;
+                amount: string;
+                currency?: string | null;
+                /** Format: date-time */
+                issue_date?: string | null;
+                /** Format: date-time */
+                due_date?: string | null;
+                status?: string | null;
+                source_system: string;
+                source_natural_key: string;
+                extensions?: {
+                    [key: string]: unknown;
+                };
+            };
+            provenance: {
+                /** @enum {string} */
+                provenance: "extracted" | "agent_contributed" | "customer_asserted" | "human_confirmed";
+                confidence?: number | null;
+                source_ids: string[];
+                evidence_ids: string[];
+            };
+            freshness: {
+                schema_version: number;
+                source_system: string;
+                /** Format: date-time */
+                updated_at: string;
+                /** Format: date-time */
+                projected_at?: string | null;
+                projector?: string | null;
+            };
+        };
         Error: {
             /** @description Machine-readable error code (see Engineering Standards section 3) */
             code: string;
@@ -5093,6 +5176,54 @@ export interface operations {
                     };
                 };
             };
+        };
+    };
+    listCanonicalObligations: {
+        parameters: {
+            query?: {
+                direction?: "payable" | "receivable";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Obligation data products */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        obligations: components["schemas"]["CanonicalObligationProduct"][];
+                    };
+                };
+            };
+        };
+    };
+    getCanonicalObligation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                obligation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Obligation data product */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanonicalObligationProduct"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
 }

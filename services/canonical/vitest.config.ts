@@ -21,9 +21,12 @@ export default defineConfig({
         "src/**/*.test.ts",
         "src/**/*.d.ts",
         "src/**/types.ts",
-        // DB + worker plumbing: covered by *.integration.test.ts (CI integration job).
+        // DB + worker + HTTP plumbing: covered by *.integration.test.ts (CI integration job).
         "src/repository/**",
         "src/projectors/worker.ts",
+        "src/routes.ts",
+        "src/query/**",
+        "src/deps.ts",
         "src/index.ts",
       ],
       thresholds: {

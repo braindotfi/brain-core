@@ -91,7 +91,7 @@ import {
   startLedgerAparProjectionWorker,
 } from "@brain/ledger";
 
-import { startCanonicalProjectionWorker } from "@brain/canonical";
+import { registerCanonicalRoutes, startCanonicalProjectionWorker } from "@brain/canonical";
 
 import { WikiPageService, registerWikiPlugin, loadRegistry } from "@brain/wiki";
 
@@ -1470,6 +1470,7 @@ async function main(): Promise<void> {
       await v1.register(async (child) =>
         registerLedgerPlugin(child, ledgerDeps, { enqueue: routingEnqueue }),
       );
+      await v1.register(async (child) => registerCanonicalRoutes(child, { pool }));
       await v1.register(async (child) => registerWikiPlugin(child, wikiDeps));
       await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
       await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));

@@ -326,6 +326,9 @@ importers:
       '@brain/shared':
         specifier: workspace:*
         version: link:../../shared
+      fastify:
+        specifier: ^5.0.0
+        version: 5.8.5
       pg:
         specifier: ^8.13.0
         version: 8.20.0
