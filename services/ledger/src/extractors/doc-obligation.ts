@@ -15,7 +15,6 @@
 
 import { brainError, type AuditEmitter, type ServiceCallContext } from "@brain/shared";
 import type { Pool } from "pg";
-import { upsertCounterpartyRow, upsertObligationRow } from "../service/writes.js";
 
 const OBLIGATION_TYPES = [
   "bill",
@@ -165,53 +164,21 @@ export function parseDocObligationPayload(raw: Record<string, unknown>): DocObli
 }
 
 /**
- * Extract a document payload into a counterparty + obligation. Returns the
- * created/deduplicated rows. Idempotent: re-running against the same
- * raw_parsed row dedups on both the counterparty and obligation keys.
+ * Validate a document payload. As of the canonical cutover (RFC 0005) this is a
+ * NO-OP for the Ledger: document obligations now flow Raw -> canonical (the
+ * doc_obligation canonical projector, provenance agent_contributed, confidence
+ * capped) -> Ledger projection, the same path the Merge connector uses. The
+ * parser stays registered (validating, then returning no rows) so
+ * LedgerService.normalize records the raw_parsed row as consumed in
+ * normalization_log; the canonical projector consumes it independently. A
+ * malformed payload still throws here rather than landing silently.
  */
 export async function normalizeDocObligationArtifact(
-  pool: Pool,
-  audit: AuditEmitter,
-  ctx: ServiceCallContext,
+  _pool: Pool,
+  _audit: AuditEmitter,
+  _ctx: ServiceCallContext,
   input: DocObligationExtractInput,
 ): Promise<ExtractedObligationRow[]> {
-  const doc = parseDocObligationPayload(input.payload);
-  const created: ExtractedObligationRow[] = [];
-  const sourceIds = [input.rawArtifactId];
-  const evidenceIds = [input.rawParsedId];
-
-  // 1. Resolve the named party. payable => a vendor we owe; receivable => a
-  //    customer who owes us.
-  const counterpartyType = doc.direction === "receivable" ? "customer" : "vendor";
-  const { row: counterparty } = await upsertCounterpartyRow(pool, audit, ctx, {
-    name: doc.counterparty_name,
-    type: counterpartyType,
-    source_ids: sourceIds,
-    evidence_ids: evidenceIds,
-    provenance: "agent_contributed",
-    confidence: input.confidence,
-  });
-  created.push({ entity: "counterparty", id: counterparty.id });
-
-  // 2. Write the obligation referencing that counterparty. `direction` lands
-  // verbatim from the parsed payload so the §6 gate can reject an outflow
-  // targeting a receivable (batch 10 H-1).
-  const { row: obligation } = await upsertObligationRow(pool, audit, ctx, {
-    type: doc.type,
-    counterparty_id: counterparty.id,
-    amount_due: doc.amount,
-    ...(doc.minimum_due !== undefined ? { minimum_due: doc.minimum_due } : {}),
-    currency: doc.currency,
-    due_date: doc.due_date,
-    ...(doc.recurrence !== undefined ? { recurrence: doc.recurrence } : {}),
-    status: doc.status,
-    direction: doc.direction,
-    source_ids: sourceIds,
-    evidence_ids: evidenceIds,
-    provenance: "agent_contributed",
-    confidence: input.confidence,
-  });
-  created.push({ entity: "obligation", id: obligation.id });
-
-  return created;
+  parseDocObligationPayload(input.payload); // validate; throws on malformed
+  return [];
 }

@@ -36,9 +36,27 @@ import {
 import type { Pool } from "pg";
 import { normalizeName } from "../service/writes.js";
 
-const PROJECTED_COUNTERPARTY_CONFIDENCE = 0.8;
-const PROJECTED_OBLIGATION_CONFIDENCE = 0.85;
 const EPOCH_ISO = new Date(0).toISOString();
+
+/** Per-provenance default when a canonical record carries no explicit confidence. */
+const DEFAULT_CONFIDENCE: Readonly<Record<string, number>> = {
+  extracted: 0.85,
+  human_confirmed: 1.0,
+  agent_contributed: 0.5,
+  customer_asserted: 0.5,
+};
+
+/**
+ * The confidence to project, carrying canonical's trust through with the §3.2
+ * agent ceiling applied (agent_contributed / customer_asserted cap at 0.5), so a
+ * document-extracted obligation stays low-trust and the §6 gate still refuses it.
+ */
+function projectedConfidence(provenance: string, confidence: number | null): number {
+  const base = confidence ?? DEFAULT_CONFIDENCE[provenance] ?? 0.5;
+  return provenance === "agent_contributed" || provenance === "customer_asserted"
+    ? Math.min(base, 0.5)
+    : base;
+}
 
 interface CanonicalCounterpartyRow {
   id: string;
@@ -47,6 +65,8 @@ interface CanonicalCounterpartyRow {
   normalized_name: string | null;
   type: string;
   email: string | null;
+  provenance: string;
+  confidence: number | null;
   source_ids: string[];
   evidence_ids: string[];
 }
@@ -62,6 +82,8 @@ interface CanonicalObligationRow {
   issue_date: string | null;
   due_date: string | null;
   status: string | null;
+  provenance: string;
+  confidence: number | null;
   source_ids: string[];
   evidence_ids: string[];
   extensions: Record<string, unknown>;
@@ -91,7 +113,7 @@ export async function projectCanonicalCounterparty(
     `INSERT INTO ledger_counterparties
        (id, owner_id, name, normalized_name, type, source_ids, evidence_ids,
         provenance, confidence, metadata, canonical_counterparty_id)
-     VALUES ($1,$2,$3,$4,$5,$6::text[],$7::text[],'extracted',$8,$9::jsonb,$10)
+     VALUES ($1,$2,$3,$4,$5,$6::text[],$7::text[],$8,$9,$10::jsonb,$11)
      ON CONFLICT (owner_id, canonical_counterparty_id) WHERE canonical_counterparty_id IS NOT NULL
      DO UPDATE SET
         normalized_name = EXCLUDED.normalized_name,
@@ -101,8 +123,10 @@ export async function projectCanonicalCounterparty(
         metadata = EXCLUDED.metadata,
         name = CASE WHEN ledger_counterparties.provenance = 'human_confirmed'
                     THEN ledger_counterparties.name ELSE EXCLUDED.name END,
-        provenance = CASE WHEN ledger_counterparties.provenance = 'human_confirmed'
-                          THEN 'human_confirmed' ELSE EXCLUDED.provenance END,
+        -- Monotonic trust: never demote a human_confirmed or corroboration-
+        -- promoted (extracted) row back to the provider-projected provenance.
+        provenance = CASE WHEN ledger_counterparties.provenance IN ('human_confirmed','extracted')
+                          THEN ledger_counterparties.provenance ELSE EXCLUDED.provenance END,
         confidence = GREATEST(ledger_counterparties.confidence, EXCLUDED.confidence),
         updated_at = now()
      RETURNING id`,
@@ -114,7 +138,8 @@ export async function projectCanonicalCounterparty(
       row.type,
       row.source_ids,
       row.evidence_ids,
-      PROJECTED_COUNTERPARTY_CONFIDENCE,
+      row.provenance,
+      projectedConfidence(row.provenance, row.confidence),
       JSON.stringify(metadata),
       row.id,
     ],
@@ -148,7 +173,7 @@ export async function projectCanonicalObligation(
     `INSERT INTO ledger_obligations
        (id, owner_id, type, counterparty_id, amount_due, currency, due_date, status,
         direction, source_ids, evidence_ids, provenance, confidence, metadata, canonical_obligation_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text[],$11::text[],'extracted',$12,$13::jsonb,$14)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text[],$11::text[],$12,$13,$14::jsonb,$15)
      ON CONFLICT (owner_id, canonical_obligation_id) WHERE canonical_obligation_id IS NOT NULL
      DO UPDATE SET
         type = EXCLUDED.type,
@@ -161,8 +186,11 @@ export async function projectCanonicalObligation(
         source_ids = EXCLUDED.source_ids,
         evidence_ids = EXCLUDED.evidence_ids,
         metadata = EXCLUDED.metadata,
-        provenance = CASE WHEN ledger_obligations.provenance = 'human_confirmed'
-                          THEN 'human_confirmed' ELSE EXCLUDED.provenance END,
+        -- Monotonic trust: a corroboration lift (agent_contributed -> extracted)
+        -- or human confirmation survives a rebuild; never demote to the
+        -- provider-projected provenance. Confidence rises only.
+        provenance = CASE WHEN ledger_obligations.provenance IN ('human_confirmed','extracted')
+                          THEN ledger_obligations.provenance ELSE EXCLUDED.provenance END,
         confidence = GREATEST(ledger_obligations.confidence, EXCLUDED.confidence),
         updated_at = now()`,
     [
@@ -177,7 +205,8 @@ export async function projectCanonicalObligation(
       row.direction,
       row.source_ids,
       row.evidence_ids,
-      PROJECTED_OBLIGATION_CONFIDENCE,
+      row.provenance,
+      projectedConfidence(row.provenance, row.confidence),
       JSON.stringify(row.extensions),
       row.id,
     ],
@@ -191,10 +220,10 @@ export interface AparRebuildResult {
 }
 
 const SELECT_CANONICAL_COUNTERPARTY =
-  "id, tenant_id, name, normalized_name, type, email, source_ids, evidence_ids";
+  "id, tenant_id, name, normalized_name, type, email, provenance, confidence, source_ids, evidence_ids";
 const SELECT_CANONICAL_OBLIGATION =
   "id, tenant_id, direction, type, canonical_counterparty_id, amount, currency, " +
-  "issue_date, due_date, status, source_ids, evidence_ids, " +
+  "issue_date, due_date, status, provenance, confidence, source_ids, evidence_ids, " +
   "COALESCE(extensions, '{}'::jsonb) AS extensions";
 
 /**
@@ -263,7 +292,7 @@ export async function runLedgerAparProjectionCycle(
   try {
     const { rows: cps } = await deps.pool.query<CanonicalCounterpartyRow>(
       `SELECT cc.id, cc.tenant_id, cc.name, cc.normalized_name, cc.type, cc.email,
-              cc.source_ids, cc.evidence_ids
+              cc.provenance, cc.confidence, cc.source_ids, cc.evidence_ids
          FROM canonical_counterparty cc
          LEFT JOIN ledger_counterparties lc
            ON lc.owner_id = cc.tenant_id AND lc.canonical_counterparty_id = cc.id
@@ -285,7 +314,8 @@ export async function runLedgerAparProjectionCycle(
     const { rows: obls } = await deps.pool.query<CanonicalObligationRow>(
       `SELECT co.id, co.tenant_id, co.direction, co.type, co.canonical_counterparty_id,
               co.amount, co.currency, co.issue_date, co.due_date, co.status,
-              co.source_ids, co.evidence_ids, COALESCE(co.extensions, '{}'::jsonb) AS extensions
+              co.provenance, co.confidence, co.source_ids, co.evidence_ids,
+              COALESCE(co.extensions, '{}'::jsonb) AS extensions
          FROM canonical_obligation co
          LEFT JOIN ledger_obligations lo
            ON lo.owner_id = co.tenant_id AND lo.canonical_obligation_id = co.id

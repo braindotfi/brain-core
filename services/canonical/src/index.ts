@@ -65,6 +65,12 @@ export {
 export { upsertCanonicalCounterparty, upsertCanonicalObligation } from "./repository/apar.js";
 
 export {
+  projectDocObligation,
+  DOCUMENT_SOURCE_SYSTEM,
+  type DocProjection,
+} from "./projectors/doc-obligation.js";
+
+export {
   runProjectionCycle,
   startCanonicalProjectionWorker,
   type ProjectionWorker,
