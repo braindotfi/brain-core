@@ -77,12 +77,15 @@ describe("parseDocObligationPayload", () => {
   });
 });
 
-describe("normalizeDocObligationArtifact", () => {
-  it("creates a vendor counterparty + obligation that references it, both agent_contributed", async () => {
-    const { pool, calls } = capturingPool({
-      "INSERT INTO ledger_counterparties": [{ id: "cp_vendor", type: "vendor" }],
-      "INSERT INTO ledger_obligations": [{ id: "obl_1", confidence: 0.5 }],
-    });
+// Canonical cutover (RFC 0005): document obligations now flow Raw -> canonical
+// -> Ledger projection. normalizeDocObligationArtifact validates and writes
+// nothing to the Ledger (stays registered so normalize consumes the row; the
+// canonical projector consumes it independently and preserves the low-trust
+// agent_contributed provenance so the §6 gate still refuses document-only
+// evidence).
+describe("normalizeDocObligationArtifact (post-canonical-cutover)", () => {
+  it("validates the payload but writes NO Ledger rows", async () => {
+    const { pool, calls } = capturingPool();
     const audit = new InMemoryAuditEmitter();
 
     const created = await normalizeDocObligationArtifact(pool, audit, ctx, {
@@ -92,41 +95,20 @@ describe("normalizeDocObligationArtifact", () => {
       confidence: 0.8,
     });
 
-    expect(created).toEqual([
-      { entity: "counterparty", id: "cp_vendor" },
-      { entity: "obligation", id: "obl_1" },
-    ]);
-
-    const oblInsert = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"))!;
-    // INSERT columns: id, owner_id, type, counterparty_id, amount_due, minimum_due,
-    // currency, due_date, recurrence, status, source_ids, evidence_ids, provenance, confidence
-    expect(oblInsert.values[3]).toBe("cp_vendor"); // counterparty_id references the new party
-    expect(oblInsert.values[11]).toEqual(["prs_1"]); // evidence_ids = [raw_parsed_id]
-    expect(oblInsert.values[12]).toBe("agent_contributed");
-
-    const cpInsert = calls.find((c) => c.text.includes("INSERT INTO ledger_counterparties"))!;
-    expect(cpInsert.values[4]).toBe("vendor"); // type column ($5)
-
-    const actions = audit.events.map((e) => e.action);
-    expect(actions).toContain("ledger.counterparty.created");
-    expect(actions).toContain("ledger.obligation.created");
+    expect(created).toEqual([]);
+    expect(calls.some((c) => c.text.startsWith("INSERT"))).toBe(false);
+    expect(audit.events).toHaveLength(0);
   });
 
-  it("resolves a customer counterparty for a receivable", async () => {
-    const { pool, calls } = capturingPool({
-      "INSERT INTO ledger_counterparties": [{ id: "cp_cust", type: "customer" }],
-      "INSERT INTO ledger_obligations": [{ id: "obl_2", confidence: 0.5 }],
-    });
-    const audit = new InMemoryAuditEmitter();
-
-    await normalizeDocObligationArtifact(pool, audit, ctx, {
-      rawParsedId: "prs_2",
-      rawArtifactId: "raw_2",
-      payload: { ...validPayload, direction: "receivable", type: "invoice" },
-      confidence: 0.9,
-    });
-
-    const cpInsert = calls.find((c) => c.text.includes("INSERT INTO ledger_counterparties"))!;
-    expect(cpInsert.values[4]).toBe("customer");
+  it("still throws on a malformed payload (validation preserved)", async () => {
+    const { pool } = capturingPool();
+    await expect(
+      normalizeDocObligationArtifact(pool, new InMemoryAuditEmitter(), ctx, {
+        rawParsedId: "prs_x",
+        rawArtifactId: "raw_x",
+        payload: { ...validPayload, direction: "sideways" },
+        confidence: 0.5,
+      }),
+    ).rejects.toThrow();
   });
 });

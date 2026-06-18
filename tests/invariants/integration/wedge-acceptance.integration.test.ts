@@ -187,11 +187,17 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
       },
       confidence: 0.45,
     });
+    // Post-cutover (RFC 0005): the document obligation projects through canonical
+    // too (Raw -> canonical -> Ledger), staying low-trust so the §6 gate still
+    // refuses it. normalizeFromRaw validates + consumes the row but writes no
+    // Ledger rows; the projection materializes the obligation + counterparty.
     await ledger.normalizeFromRaw(ctx, doc.prsId);
+    await runProjectionCycle({ pool, audit }, { batchSize: 50 });
+    await rebuildAparProjectionFromCanonical(pool, audit, ctx);
 
     const obligation = await obligationByEvidence(doc.prsId);
     expect(obligation.provenance).toBe("agent_contributed");
-    expect(obligation.confidence).toBeLessThanOrEqual(0.5); // §3.2 ceiling
+    expect(obligation.confidence).toBeLessThanOrEqual(0.5); // §3.2 ceiling preserved through canonical
     expect(obligation.direction).toBe("payable");
     // Evidence references: the payable traces to the invoice document.
     expect(obligation.source_ids).toContain(doc.rawId);
