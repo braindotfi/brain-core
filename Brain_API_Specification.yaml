@@ -2820,6 +2820,52 @@ paths:
               schema: { $ref: '#/components/schemas/CanonicalObligationProduct' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /canonical/gl-accounts:
+    get:
+      tags: [Canonical]
+      summary: List canonical GL accounts (chart of accounts) as governed data products
+      description: |
+        Reads the canonical chart of accounts (Phase 6 governed data products).
+        Each account is returned with its provenance and freshness. Read-only;
+        requires the `canonical:read` scope.
+      operationId: listCanonicalGlAccounts
+      parameters:
+        - name: classification
+          in: query
+          schema: { type: string, enum: [asset, liability, equity, revenue, expense, unknown] }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 500 }
+      responses:
+        '200':
+          description: GL account data products
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [gl_accounts]
+                properties:
+                  gl_accounts:
+                    type: array
+                    items: { $ref: '#/components/schemas/CanonicalGlAccountProduct' }
+  /canonical/gl-accounts/{gl_account_id}:
+    get:
+      tags: [Canonical]
+      summary: Get one canonical GL account as a governed data product
+      operationId: getCanonicalGlAccount
+      parameters:
+        - name: gl_account_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: GL account data product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CanonicalGlAccountProduct' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
 
   securitySchemes:
@@ -2971,6 +3017,49 @@ components:
         pending_review:
           type: array
           items: { type: object, additionalProperties: true }
+
+    CanonicalGlAccountProduct:
+      type: object
+      description: |
+        A canonical GL account (chart of accounts) as a governed data product:
+        the record plus its provenance (the evidence behind it) and freshness.
+      required: [domain, record, provenance, freshness]
+      properties:
+        domain: { type: string, enum: [accounting] }
+        record:
+          type: object
+          required: [id, name, classification, source_system, source_natural_key]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            classification:
+              type: string
+              enum: [asset, liability, equity, revenue, expense, unknown]
+            account_number: { type: [string, "null"] }
+            currency: { type: [string, "null"] }
+            status: { type: [string, "null"] }
+            source_system: { type: string }
+            source_natural_key: { type: string }
+            extensions: { type: object, additionalProperties: true }
+        provenance:
+          type: object
+          required: [provenance, source_ids, evidence_ids]
+          properties:
+            provenance:
+              type: string
+              enum: [extracted, agent_contributed, customer_asserted, human_confirmed]
+            confidence: { type: [number, "null"], minimum: 0, maximum: 1 }
+            source_ids: { type: array, items: { type: string } }
+            evidence_ids: { type: array, items: { type: string } }
+        freshness:
+          type: object
+          required: [schema_version, source_system, updated_at]
+          properties:
+            schema_version: { type: integer }
+            source_system: { type: string }
+            updated_at: { type: string, format: date-time }
+            projected_at: { type: [string, "null"], format: date-time }
+            projector: { type: [string, "null"] }
 
     CanonicalObligationProduct:
       type: object

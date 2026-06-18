@@ -13,6 +13,11 @@ import {
   listObligationProducts,
   type ListObligationsFilter,
 } from "./query/obligations.js";
+import {
+  getGlAccountProduct,
+  listGlAccountProducts,
+  type ListGlAccountsFilter,
+} from "./query/gl-accounts.js";
 
 const READ: Scope = "canonical:read";
 
@@ -74,6 +79,54 @@ export async function registerCanonicalRoutes(
       );
       if (product === null) {
         throw brainError("obligation_not_found", `no canonical obligation: ${request.params.id}`);
+      }
+      reply.status(200);
+      return product;
+    },
+  );
+
+  // GET /canonical/gl-accounts — the chart of accounts as a governed data product.
+  app.get(
+    "/canonical/gl-accounts",
+    async (
+      request: FastifyRequest<{ Querystring: { classification?: string; limit?: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const principal = requirePrincipal(request);
+      requireScope(principal.scopes, READ);
+      const limit = parsePositiveIntParam("limit", request.query.limit, {
+        fallback: 100,
+        max: 500,
+      });
+      const filter: ListGlAccountsFilter = {
+        limit,
+        ...(request.query.classification !== undefined
+          ? { classification: request.query.classification }
+          : {}),
+      };
+      const gl_accounts = await listGlAccountProducts(
+        deps.pool,
+        { tenantId: principal.tenantId, actor: principal.id },
+        filter,
+      );
+      reply.status(200);
+      return { gl_accounts };
+    },
+  );
+
+  // GET /canonical/gl-accounts/:id — one GL account with provenance + freshness.
+  app.get(
+    "/canonical/gl-accounts/:id",
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+      const principal = requirePrincipal(request);
+      requireScope(principal.scopes, READ);
+      const product = await getGlAccountProduct(
+        deps.pool,
+        { tenantId: principal.tenantId, actor: principal.id },
+        request.params.id,
+      );
+      if (product === null) {
+        throw brainError("ledger_row_not_found", `no canonical gl account: ${request.params.id}`);
       }
       reply.status(200);
       return product;

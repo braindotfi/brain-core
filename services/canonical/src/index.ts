@@ -79,6 +79,12 @@ export {
   toObligationProduct,
   type ObligationProduct,
 } from "./query/obligations.js";
+export {
+  getGlAccountProduct,
+  listGlAccountProducts,
+  toGlAccountProduct,
+  type GlAccountProduct,
+} from "./query/gl-accounts.js";
 
 export {
   runProjectionCycle,

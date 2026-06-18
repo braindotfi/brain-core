@@ -20,6 +20,8 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import { getObligationProduct, listObligationProducts } from "../query/obligations.js";
+import { getGlAccountProduct, listGlAccountProducts } from "../query/gl-accounts.js";
+import { newCanonicalGlAccountId } from "@brain/shared";
 
 const DESCRIBE = process.env.DATABASE_URL !== undefined ? describe : describe.skip;
 
@@ -30,6 +32,8 @@ DESCRIBE("canonical read API query layer (requires DATABASE_URL)", () => {
   const payableId = newCanonicalObligationId();
   const receivableId = newCanonicalObligationId();
   const evidenceId = newRawParsedId();
+  const glId = newCanonicalGlAccountId();
+  const glEvidenceId = newRawParsedId();
 
   async function seedObligation(
     id: string,
@@ -51,17 +55,26 @@ DESCRIBE("canonical read API query layer (requires DATABASE_URL)", () => {
     pool = new Pool({ connectionString: process.env.DATABASE_URL });
     await seedObligation(payableId, tenant, "payable", [evidenceId]);
     await seedObligation(receivableId, tenant, "receivable", []);
-    // A projection-log row backing the payable's evidence supplies freshness.
+    await pool.query(
+      `INSERT INTO canonical_gl_account
+         (id, tenant_id, source_system, source_natural_key, name, classification, account_number,
+          currency, status, provenance, confidence, source_ids, evidence_ids)
+       VALUES ($1,$2,'netsuite','acct_equip','Equipment','asset','6100','USD','ACTIVE','extracted',NULL,
+               $3::text[],$4::text[])`,
+      [glId, tenant, [newRawArtifactId()], [glEvidenceId]],
+    );
+    // Projection-log rows backing the obligation + GL evidence supply freshness.
     await pool.query(
       `INSERT INTO canonical_projection_log (raw_parsed_id, tenant_id, projector, domain, records_written)
-       VALUES ($1,$2,'merge_accounting_canonical_v1','ap_ar',1)`,
-      [evidenceId, tenant],
+       VALUES ($1,$2,'merge_accounting_canonical_v1','ap_ar',1), ($3,$2,'merge_accounting_canonical_v1','accounting',1)`,
+      [evidenceId, tenant, glEvidenceId],
     );
   }, 60_000);
 
   afterAll(async () => {
     if (pool === undefined) return;
     await pool.query(`DELETE FROM canonical_obligation WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM canonical_gl_account WHERE tenant_id = $1`, [tenant]);
     await pool.query(`DELETE FROM canonical_projection_log WHERE tenant_id = $1`, [tenant]);
     await pool.end();
   });
@@ -89,5 +102,27 @@ DESCRIBE("canonical read API query layer (requires DATABASE_URL)", () => {
 
   it("returns null for an unknown id", async () => {
     expect(await getObligationProduct(pool, ctx, "cob_does_not_exist")).toBeNull();
+  });
+
+  it("returns a GL account as a governed product with provenance + freshness", async () => {
+    const p = await getGlAccountProduct(pool, ctx, glId);
+    expect(p).not.toBeNull();
+    expect(p!.domain).toBe("accounting");
+    expect(p!.record.classification).toBe("asset");
+    expect(p!.record.account_number).toBe("6100");
+    expect(p!.provenance.provenance).toBe("extracted");
+    expect(p!.freshness.projector).toBe("merge_accounting_canonical_v1");
+    expect(p!.freshness.projected_at).not.toBeNull();
+  });
+
+  it("lists GL accounts and filters by classification", async () => {
+    const assets = await listGlAccountProducts(pool, ctx, { classification: "asset", limit: 50 });
+    expect(assets.some((p) => p.record.id === glId)).toBe(true);
+    expect(assets.every((p) => p.record.classification === "asset")).toBe(true);
+    const expenses = await listGlAccountProducts(pool, ctx, {
+      classification: "expense",
+      limit: 50,
+    });
+    expect(expenses.some((p) => p.record.id === glId)).toBe(false);
   });
 });
