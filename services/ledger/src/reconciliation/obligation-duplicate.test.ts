@@ -91,7 +91,7 @@ describe("ObligationDuplicateMatcher — scan filters", () => {
     expect(result.candidatesScanned).toBe(0);
   });
 
-  it("constrains the independent side to same counterparty/currency/direction and excludes self", async () => {
+  it("constrains the independent side to the resolved counterparty set/currency/direction and excludes self", async () => {
     const { pool, queries } = fakePool({
       [LOW_TRUST]: [docObservation()],
       [INDEPENDENT]: [],
@@ -100,7 +100,11 @@ describe("ObligationDuplicateMatcher — scan filters", () => {
     await new ObligationDuplicateMatcher().run(deps, makeInput());
     const q = findQuery(queries, INDEPENDENT)!;
     expect(q.text).toContain("id <> $1");
-    expect(q.text).toContain("counterparty_id = $2");
+    // Candidate counterparties = the left's own id OR any linked by a confirmed
+    // counterparty_duplicate match (link-don't-merge cross-source matching).
+    expect(q.text).toContain("counterparty_id IN (");
+    expect(q.text).toContain("SELECT $2::text");
+    expect(q.text).toContain("match_type = 'counterparty_duplicate'");
     expect(q.text).toContain("currency = $3");
     expect(q.text).toContain("direction IS NOT DISTINCT FROM $4");
   });

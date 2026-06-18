@@ -136,11 +136,26 @@ async function loadIndependentObservations(
 ): Promise<ObligationObservation[]> {
   return withTenantScope(pool, ctx.tenantId, async (c) => {
     const { rows } = await c.query<ObligationObservation>(
+      // Candidate counterparties: the left's own counterparty OR any
+      // counterparty linked to it by a confirmed counterparty_duplicate match
+      // (1 hop). Under canonical projection, observations of one vendor from
+      // different sources are DISTINCT counterparty rows (link, don't merge), so
+      // matching by a literal counterparty_id would miss cross-source payables;
+      // we match across the resolved counterparty set instead. Requires
+      // counterparty_duplicate to have run first (the reconciliation order).
       `SELECT id, counterparty_id, amount_due::TEXT, currency, due_date, direction
          FROM ledger_obligations
         WHERE provenance IN ('extracted','human_confirmed')
           AND id <> $1
-          AND counterparty_id = $2
+          AND counterparty_id IN (
+            SELECT $2::text
+            UNION
+            SELECT CASE WHEN m.left_entity_id = $2 THEN m.right_entity_id ELSE m.left_entity_id END
+              FROM ledger_reconciliation_matches m
+             WHERE m.match_type = 'counterparty_duplicate'
+               AND m.status = 'matched'
+               AND (m.left_entity_id = $2 OR m.right_entity_id = $2)
+          )
           AND currency = $3
           AND (direction IS NOT DISTINCT FROM $4)
           AND due_date >= ($5::timestamptz - make_interval(days => $6))
