@@ -178,18 +178,15 @@
       "id": "R-11",
       "title": "Canonical cutover moved the obligation money-path from synchronous to two async workers",
       "priority": "P1",
-      "status": "mitigating",
-      "mitigation_summary": "Phase 5 (RFC 0005) made ledger_obligations/counterparties a projection of canonical: a Merge or document obligation no longer reaches the Ledger synchronously in normalizeFromRaw, but via two scheduled workers in sequence (startCanonicalProjectionWorker raw_parsed->canonical, then startLedgerAparProjectionWorker canonical->Ledger). If either stalls, obligations silently never reach the Ledger and the gate has no obligation to gate. Mitigations shipped: (i) an end-to-end integration test drives BOTH worker cycles and asserts an obligation reaches ledger_obligations (the wired path the wedge's synchronous calls did not cover); (ii) both workers emit a records-projected counter (brain.canonical.projector.records.count, brain.ledger.apar_projection.records.count) so a flatline while raw_parsed grows is alertable; (iii) projections are idempotent and replayable, so a recovered worker catches up without data loss.",
-      "exit_criteria": [
-        "Grafana alert on a projection-records flatline with non-empty unconsumed backlog",
-        "A projection-lag gauge (oldest unconsumed raw_parsed age) per worker",
-        "Optional: a boot fence / liveness probe for the two projection workers in production"
-      ],
-      "owner": "engineering",
+      "status": "closed",
+      "closed_at": "2026-06-19",
+      "closed_by": "projection observability close-out",
+      "mitigation_summary": "Phase 5 (RFC 0005) made ledger_obligations/counterparties a projection of canonical: a Merge or document obligation no longer reaches the Ledger synchronously in normalizeFromRaw, but via two scheduled workers in sequence (startCanonicalProjectionWorker raw_parsed->canonical, then startLedgerAparProjectionWorker canonical->Ledger). Closed: (i) an end-to-end integration test drives BOTH worker cycles and asserts an obligation reaches ledger_obligations (the wired path the wedge's synchronous calls did not cover); (ii) both workers emit a records-projected counter AND a lag gauge (brain.canonical.projector.lag_seconds / brain.ledger.apar_projection.lag_seconds = age of the oldest un-projected record); (iii) infra/grafana/projection.json defines two alerts -- ProjectionPipelineStalled (lag>600s with zero throughput) and ProjectionLagHigh (lag>300s) -- so a stalled money-path worker pages instead of silently dropping obligations; (iv) projections are idempotent and replayable, so a recovered worker catches up without data loss. The optional in-process liveness probe is unnecessary given the lag-with-zero-throughput alert already detects a wedged worker.",
       "evidence": [
         "tests/invariants/integration/canonical-pipeline.integration.test.ts",
-        "services/canonical/src/projectors/worker.ts",
-        "services/ledger/src/projection/obligations.ts"
+        "services/canonical/src/projectors/worker.ts (records counter + lag gauge)",
+        "services/ledger/src/projection/obligations.ts (records counter + lag gauge)",
+        "infra/grafana/projection.json (stall + lag alerts)"
       ]
     }
   ]
