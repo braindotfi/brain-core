@@ -1,44 +1,40 @@
 /**
  * Ledger AP/AR projection from the canonical domain (Phase 5 deep refactor,
- * PR-F, RFC 0005).
+ * RFC 0005). ledger_obligations / ledger_counterparties are a rebuildable
+ * projection of canonical_obligation / canonical_counterparty (canonical/0002).
  *
- * ledger_obligations and ledger_counterparties become a rebuildable projection
- * of canonical_obligation / canonical_counterparty (canonical/0002), the same
- * read-projection move ledger_gl_accounts made for the chart of accounts. The
- * Ledger reads canonical_* read-only (sanctioned cross-layer read; it never
- * writes canonical).
+ * As of the cutover (PR-G) this is the PRIMARY path for Merge-sourced
+ * obligations/counterparties: the merge_accounting extractor no longer writes
+ * them to the Ledger directly; they flow Raw -> canonical projector -> canonical
+ * -> this projection. (Stripe / Finch / Plaid / doc_obligation paths are
+ * unchanged and still write the Ledger directly.)
  *
- * Overlay reapplication (RFC 0005 §4.1) is richer here than for GL accounts,
- * because these rows accrue Phase-4 reconciliation state:
- *   - confidence is lifted UPWARD-ONLY: GREATEST(existing, projected) preserves
- *     a corroboration lift (a matched obligation rises toward 0.9) across a
- *     rebuild rather than resetting to the provider-projected 0.85.
- *   - provenance: a human_confirmed row stays human_confirmed; otherwise it
- *     refreshes to the provider value ('extracted'). Corroboration promotes
- *     low-trust provenance TO extracted, which the projection also writes, so
- *     the two never disagree.
- *   - a human_confirmed counterparty NAME survives; provider fields refresh.
- *   - the Ledger row id is STABLE across rebuild (upsert on the canonical key),
- *     so ledger_reconciliation_matches that reference it are never orphaned.
+ * Identity is canonical-source-keyed, NOT name-deduped: a Merge vendor and a
+ * document vendor with the same name are DISTINCT observations here, linked by
+ * the Phase-4 counterparty_duplicate resolver (link, don't merge). This is the
+ * §13 model; it differs from the old extractor's creation-time name dedup.
  *
- * Projected confidence/provenance match the live merge_accounting_v1 extractor
- * (counterparty 0.8, obligation 0.85, provenance 'extracted') so the eventual
- * cutover is behaviour-preserving.
- *
- * NOTE: this module is callable + tested but NOT wired to a worker. The live
- * extractor still writes the Ledger directly; running a projection worker in
- * parallel would double-write. The cutover is a separate PR.
+ * Overlay reapplication (RFC 0005 §4.1): confidence rises only
+ * (GREATEST(existing, projected)) so a Phase-4 corroboration lift survives a
+ * rebuild; human_confirmed provenance + a confirmed counterparty name survive;
+ * the Ledger row id is stable on the canonical key so reconciliation match rows
+ * are never orphaned. Projected confidence/provenance match the old extractor
+ * (cp 0.8, obl 0.85, extracted) so the cutover is behaviour-preserving except
+ * for the deliberate identity change above.
  */
 
 import {
   newCounterpartyId,
   newObligationId,
+  startManagedInterval,
   withTenantScope,
   type AuditEmitter,
+  type ManagedWorker,
   type ServiceCallContext,
   type TenantScopedClient,
 } from "@brain/shared";
 import type { Pool } from "pg";
+import { normalizeName } from "../service/writes.js";
 
 const PROJECTED_COUNTERPARTY_CONFIDENCE = 0.8;
 const PROJECTED_OBLIGATION_CONFIDENCE = 0.85;
@@ -46,6 +42,7 @@ const EPOCH_ISO = new Date(0).toISOString();
 
 interface CanonicalCounterpartyRow {
   id: string;
+  tenant_id: string;
   name: string;
   normalized_name: string | null;
   type: string;
@@ -56,6 +53,7 @@ interface CanonicalCounterpartyRow {
 
 interface CanonicalObligationRow {
   id: string;
+  tenant_id: string;
   direction: string;
   type: string;
   canonical_counterparty_id: string | null;
@@ -69,13 +67,13 @@ interface CanonicalObligationRow {
   extensions: Record<string, unknown>;
 }
 
-/** Map a provider obligation status to the compact Ledger status enum. */
 function ledgerStatus(canonicalStatus: string | null, dueDate: string | null): string {
   if (canonicalStatus !== null && canonicalStatus.toUpperCase() === "PAID") return "paid";
   return dueDate !== null ? "due" : "upcoming";
 }
 
-async function upsertProjectedCounterparty(
+/** Upsert one canonical counterparty into the Ledger projection; returns the Ledger id. */
+export async function projectCanonicalCounterparty(
   c: TenantScopedClient,
   tenantId: string,
   row: CanonicalCounterpartyRow,
@@ -83,6 +81,12 @@ async function upsertProjectedCounterparty(
   const metadata = {
     canonical: { id: row.id, ...(row.email !== null ? { email: row.email } : {}) },
   };
+  // Re-normalize with the LEDGER's normalizeName so the projected row's
+  // normalized_name is consistent with every other ledger counterparty -- the
+  // counterparty_duplicate matcher compares normalized_name equality, so this
+  // is what links a projected Merge vendor to a doc/Plaid observation of the
+  // same org (canonical's own normalized_name may use a coarser algorithm).
+  const normalized = normalizeName(row.name) || null;
   const { rows } = await c.query<{ id: string }>(
     `INSERT INTO ledger_counterparties
        (id, owner_id, name, normalized_name, type, source_ids, evidence_ids,
@@ -95,7 +99,6 @@ async function upsertProjectedCounterparty(
         source_ids = EXCLUDED.source_ids,
         evidence_ids = EXCLUDED.evidence_ids,
         metadata = EXCLUDED.metadata,
-        -- overlay: human-confirmed name + provenance survive; confidence rises only.
         name = CASE WHEN ledger_counterparties.provenance = 'human_confirmed'
                     THEN ledger_counterparties.name ELSE EXCLUDED.name END,
         provenance = CASE WHEN ledger_counterparties.provenance = 'human_confirmed'
@@ -107,7 +110,7 @@ async function upsertProjectedCounterparty(
       newCounterpartyId(),
       tenantId,
       row.name,
-      row.normalized_name,
+      normalized,
       row.type,
       row.source_ids,
       row.evidence_ids,
@@ -117,18 +120,31 @@ async function upsertProjectedCounterparty(
     ],
   );
   const out = rows[0];
-  if (out === undefined) throw new Error("upsertProjectedCounterparty returned no row");
+  if (out === undefined) throw new Error("projectCanonicalCounterparty returned no row");
   return out.id;
 }
 
-async function upsertProjectedObligation(
+/**
+ * Upsert one canonical obligation into the Ledger projection. Resolves its
+ * counterparty via the canonical link; returns false (skipped) if that
+ * counterparty has not been projected yet (a later pass resolves it).
+ */
+export async function projectCanonicalObligation(
   c: TenantScopedClient,
   tenantId: string,
   row: CanonicalObligationRow,
-  counterpartyId: string,
-): Promise<string> {
+): Promise<boolean> {
+  if (row.canonical_counterparty_id === null) return false;
+  const { rows: cp } = await c.query<{ id: string }>(
+    `SELECT id FROM ledger_counterparties
+      WHERE owner_id = $1 AND canonical_counterparty_id = $2`,
+    [tenantId, row.canonical_counterparty_id],
+  );
+  const counterpartyId = cp[0]?.id;
+  if (counterpartyId === undefined) return false;
+
   const dueDate = row.due_date ?? row.issue_date ?? EPOCH_ISO;
-  const { rows } = await c.query<{ id: string }>(
+  await c.query(
     `INSERT INTO ledger_obligations
        (id, owner_id, type, counterparty_id, amount_due, currency, due_date, status,
         direction, source_ids, evidence_ids, provenance, confidence, metadata, canonical_obligation_id)
@@ -145,13 +161,10 @@ async function upsertProjectedObligation(
         source_ids = EXCLUDED.source_ids,
         evidence_ids = EXCLUDED.evidence_ids,
         metadata = EXCLUDED.metadata,
-        -- overlay: human_confirmed provenance sticks; confidence rises only
-        -- (preserves the Phase-4 corroboration lift across a rebuild).
         provenance = CASE WHEN ledger_obligations.provenance = 'human_confirmed'
                           THEN 'human_confirmed' ELSE EXCLUDED.provenance END,
         confidence = GREATEST(ledger_obligations.confidence, EXCLUDED.confidence),
-        updated_at = now()
-     RETURNING id`,
+        updated_at = now()`,
     [
       newObligationId(),
       tenantId,
@@ -169,9 +182,7 @@ async function upsertProjectedObligation(
       row.id,
     ],
   );
-  const out = rows[0];
-  if (out === undefined) throw new Error("upsertProjectedObligation returned no row");
-  return out.id;
+  return true;
 }
 
 export interface AparRebuildResult {
@@ -179,10 +190,17 @@ export interface AparRebuildResult {
   obligations: number;
 }
 
+const SELECT_CANONICAL_COUNTERPARTY =
+  "id, tenant_id, name, normalized_name, type, email, source_ids, evidence_ids";
+const SELECT_CANONICAL_OBLIGATION =
+  "id, tenant_id, direction, type, canonical_counterparty_id, amount, currency, " +
+  "issue_date, due_date, status, source_ids, evidence_ids, " +
+  "COALESCE(extensions, '{}'::jsonb) AS extensions";
+
 /**
  * Rebuild the Ledger AP/AR projection for one tenant from canonical alone, no
- * provider contact (the Phase 5 AC). Counterparties first so obligations
- * resolve their counterparty. Idempotent; preserves human/corroboration overlays.
+ * provider contact (the Phase 5 AC). Counterparties first so obligations resolve
+ * their link. Idempotent; preserves human/corroboration overlays.
  */
 export async function rebuildAparProjectionFromCanonical(
   pool: Pool,
@@ -190,36 +208,19 @@ export async function rebuildAparProjectionFromCanonical(
   ctx: ServiceCallContext,
 ): Promise<AparRebuildResult> {
   const result = await withTenantScope(pool, ctx.tenantId, async (c) => {
-    // Sanctioned cross-layer read of the canonical store this projects from.
     const { rows: cps } = await c.query<CanonicalCounterpartyRow>(
-      `SELECT id, name, normalized_name, type, email, source_ids, evidence_ids
-         FROM canonical_counterparty WHERE tenant_id = $1`,
+      `SELECT ${SELECT_CANONICAL_COUNTERPARTY} FROM canonical_counterparty WHERE tenant_id = $1`,
       [ctx.tenantId],
     );
-    const ledgerIdByCanonical = new Map<string, string>();
-    for (const cp of cps) {
-      ledgerIdByCanonical.set(cp.id, await upsertProjectedCounterparty(c, ctx.tenantId, cp));
-    }
+    for (const cp of cps) await projectCanonicalCounterparty(c, ctx.tenantId, cp);
 
     const { rows: obls } = await c.query<CanonicalObligationRow>(
-      `SELECT id, direction, type, canonical_counterparty_id, amount, currency,
-              issue_date, due_date, status, source_ids, evidence_ids,
-              COALESCE(extensions, '{}'::jsonb) AS extensions
-         FROM canonical_obligation WHERE tenant_id = $1`,
+      `SELECT ${SELECT_CANONICAL_OBLIGATION} FROM canonical_obligation WHERE tenant_id = $1`,
       [ctx.tenantId],
     );
     let obligationCount = 0;
     for (const obl of obls) {
-      const counterpartyId =
-        obl.canonical_counterparty_id === null
-          ? undefined
-          : ledgerIdByCanonical.get(obl.canonical_counterparty_id);
-      // An obligation whose counterparty has not been projected is skipped this
-      // pass; a replay (or fixing the canonical link) resolves it. Never write a
-      // null counterparty_id (NOT NULL in ledger_obligations).
-      if (counterpartyId === undefined) continue;
-      await upsertProjectedObligation(c, ctx.tenantId, obl, counterpartyId);
-      obligationCount += 1;
+      if (await projectCanonicalObligation(c, ctx.tenantId, obl)) obligationCount += 1;
     }
     return { counterparties: cps.length, obligations: obligationCount };
   });
@@ -233,4 +234,84 @@ export async function rebuildAparProjectionFromCanonical(
     outputs: result,
   });
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Steady-state incremental worker: keeps the Ledger AP/AR projection current as
+// canonical grows. Cross-tenant poll (privileged pool); per-row upserts
+// tenant-scoped. Counterparties project ahead of obligations each cycle; an
+// obligation whose counterparty is not yet projected is retried next cycle.
+// ---------------------------------------------------------------------------
+
+export interface LedgerAparProjectionWorkerDeps {
+  pool: Pool;
+}
+
+export interface LedgerAparProjectionWorkerOptions {
+  intervalMs?: number;
+  batchSize?: number;
+}
+
+export type LedgerAparProjectionWorker = ManagedWorker;
+
+export async function runLedgerAparProjectionCycle(
+  deps: LedgerAparProjectionWorkerDeps,
+  opts?: LedgerAparProjectionWorkerOptions,
+): Promise<void> {
+  const batchSize = opts?.batchSize ?? 50;
+
+  try {
+    const { rows: cps } = await deps.pool.query<CanonicalCounterpartyRow>(
+      `SELECT cc.id, cc.tenant_id, cc.name, cc.normalized_name, cc.type, cc.email,
+              cc.source_ids, cc.evidence_ids
+         FROM canonical_counterparty cc
+         LEFT JOIN ledger_counterparties lc
+           ON lc.owner_id = cc.tenant_id AND lc.canonical_counterparty_id = cc.id
+        WHERE lc.id IS NULL OR lc.updated_at < cc.updated_at
+        ORDER BY cc.updated_at ASC
+        LIMIT $1`,
+      [batchSize],
+    );
+    for (const cp of cps) {
+      await withTenantScope(deps.pool, cp.tenant_id, (c) =>
+        projectCanonicalCounterparty(c, cp.tenant_id, cp),
+      );
+    }
+  } catch (err) {
+    console.error("[ledgerAparProjector] counterparty cycle failed:", err);
+  }
+
+  try {
+    const { rows: obls } = await deps.pool.query<CanonicalObligationRow>(
+      `SELECT co.id, co.tenant_id, co.direction, co.type, co.canonical_counterparty_id,
+              co.amount, co.currency, co.issue_date, co.due_date, co.status,
+              co.source_ids, co.evidence_ids, COALESCE(co.extensions, '{}'::jsonb) AS extensions
+         FROM canonical_obligation co
+         LEFT JOIN ledger_obligations lo
+           ON lo.owner_id = co.tenant_id AND lo.canonical_obligation_id = co.id
+        WHERE lo.id IS NULL OR lo.updated_at < co.updated_at
+        ORDER BY co.updated_at ASC
+        LIMIT $1`,
+      [batchSize],
+    );
+    for (const obl of obls) {
+      await withTenantScope(deps.pool, obl.tenant_id, (c) =>
+        projectCanonicalObligation(c, obl.tenant_id, obl),
+      );
+    }
+  } catch (err) {
+    console.error("[ledgerAparProjector] obligation cycle failed:", err);
+  }
+}
+
+export function startLedgerAparProjectionWorker(
+  deps: LedgerAparProjectionWorkerDeps,
+  opts?: LedgerAparProjectionWorkerOptions,
+): LedgerAparProjectionWorker {
+  const intervalMs = opts?.intervalMs ?? 15_000;
+  return startManagedInterval(() => runLedgerAparProjectionCycle(deps, opts), intervalMs, {
+    name: "ledger-apar-projection",
+    runImmediately: true,
+    onError: (err) => console.error("[ledgerAparProjector] cycle failed:", err),
+  });
 }

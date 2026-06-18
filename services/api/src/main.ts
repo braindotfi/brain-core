@@ -88,6 +88,7 @@ import {
   registerLedgerPlugin,
   startNormalizeWorker,
   startLedgerProjectionWorker,
+  startLedgerAparProjectionWorker,
 } from "@brain/ledger";
 
 import { startCanonicalProjectionWorker } from "@brain/canonical";
@@ -2050,6 +2051,11 @@ async function main(): Promise<void> {
   // poll over canonical, hence privilegedPool; per-row upserts stay tenant-scoped.
   const ledgerProjectionWorker = startLedgerProjectionWorker({ pool: privilegedPool });
 
+  // Ledger AP/AR projection (Phase 5 cutover): obligations + counterparties for
+  // Merge-sourced data now project from canonical (the extractor no longer
+  // writes them directly). Cross-tenant poll, hence privilegedPool.
+  const ledgerAparProjectionWorker = startLedgerAparProjectionWorker({ pool: privilegedPool });
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence privilegedPool; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2222,6 +2228,7 @@ async function main(): Promise<void> {
           interpretWorker,
           canonicalProjectionWorker,
           ledgerProjectionWorker,
+          ledgerAparProjectionWorker,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,

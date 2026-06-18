@@ -15,11 +15,11 @@
  * runPreExecutionGate with SQL-backed evidence/provenance loaders mirroring
  * the api composition.
  *
- * Phase 4 entry point (flagged, not hidden): no matcher yet joins the
- * document-extracted obligation to the aggregator bill obligation-to-
- * obligation; today they meet at the shared vendor counterparty and the
- * corroboration path runs obligation-vs-bank-transaction. The final
- * assertion documents that boundary.
+ * Canonical cutover (RFC 0005): the aggregator bill no longer writes the
+ * Ledger directly; it projects Raw -> canonical -> Ledger. Vendor identity is
+ * canonical-source-keyed and link-not-merge, so the doc and bill vendors are
+ * distinct observations unified by Phase-4 counterparty_duplicate resolution,
+ * and obligation_duplicate matches across that resolved counterparty link.
  */
 
 import { createHash } from "node:crypto";
@@ -49,9 +49,11 @@ import {
   LedgerService,
   persistMatch,
   ReconciliationService,
+  rebuildAparProjectionFromCanonical,
   resolveCounterpartyView,
   resolveObligationView,
 } from "@brain/ledger";
+import { runProjectionCycle } from "@brain/canonical";
 import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
 
 const DB_URL = process.env.DATABASE_URL;
@@ -196,7 +198,26 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
     expect(obligation.evidence_ids).toContain(doc.prsId);
   });
 
-  it("2 — the aggregator's open bill lands as an extracted payable with GL coding, on the SAME vendor", async () => {
+  it("2 — the aggregator's open bill PROJECTS from canonical as an extracted payable with GL coding", async () => {
+    // Post-cutover (RFC 0005): Merge invoices/contacts no longer write the
+    // Ledger directly. They land in raw_parsed, the canonical projector promotes
+    // them to the rich AP/AR domain, and the Ledger projection materializes the
+    // obligation + counterparty. The aggregator syncs a contacts partition, so
+    // the vendor arrives as its own contact page (the obligation references it
+    // by the Merge contact id, not an embedded name).
+    await landParsedArtifact({
+      sourceType: "merge_accounting",
+      sourceSchema: "merge_accounting.contacts.v1",
+      parser: "merge_accounting_v1",
+      extracted: {
+        object_type: "contact",
+        merge_integration: "NetSuite",
+        objects: [
+          { id: "merge_con_acme", remote_id: "ns-301", name: VENDOR_NAME, is_supplier: true },
+        ],
+      },
+      confidence: null,
+    });
     bill = await landParsedArtifact({
       sourceType: "merge_accounting",
       sourceSchema: "merge_accounting.invoices.v1",
@@ -209,14 +230,10 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
             id: "merge_inv_77",
             remote_id: "netsuite-4411",
             type: "ACCOUNTS_PAYABLE",
-            contact: VENDOR_NAME,
+            contact: "merge_con_acme",
             number: "BILL-2031",
-            // Net-terms drift vs the document's stated due date: keeps the
-            // bill a distinct observation row. With IDENTICAL (counterparty,
-            // type, amount, currency, due_date) the obligation writer's dedup
-            // key collapses the two observations into one row — discovered on
-            // this test's first live run; Phase 4 resolution makes that merge
-            // explicit and evidence-preserving instead of key-coincidental.
+            // Net-terms drift vs the document's stated due date keeps the bill a
+            // distinct observation; Phase 4 resolution (step 4.5) unifies them.
             due_date: "2026-07-03T00:00:00Z",
             total_amount: "1250.00",
             balance: "1250.00",
@@ -228,7 +245,10 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
       },
       confidence: null,
     });
-    await ledger.normalizeFromRaw(ctx, bill.prsId);
+
+    // Drive the real projection pipeline: Raw -> canonical -> Ledger.
+    await runProjectionCycle({ pool, audit }, { batchSize: 50 });
+    await rebuildAparProjectionFromCanonical(pool, audit, ctx);
 
     const billObligation = await obligationByEvidence(bill.prsId);
     expect(billObligation.provenance).toBe("extracted");
@@ -237,10 +257,20 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
     expect(merge["gl_accounts"]).toEqual(["gl-6100-equipment"]); // GL coding preserved
     expect(merge["remote_id"]).toBe("netsuite-4411"); // original source visible
 
-    // The vendor record: document tier and aggregator resolved to ONE
-    // counterparty (normalized-name + type dedup) — the wedge's join point.
+    // Identity is canonical-source-keyed and link-not-merge (§13): the bill's
+    // vendor is a DISTINCT observation from the document tier's, sharing a
+    // normalized name. Phase 4 counterparty resolution (step 7) unifies them
+    // into one organization — they are no longer collapsed at creation time.
     const docObligation = await obligationByEvidence(doc.prsId);
-    expect(billObligation.counterparty_id).toBe(docObligation.counterparty_id);
+    expect(billObligation.counterparty_id).not.toBe(docObligation.counterparty_id);
+    const names = await withTenantScope(pool, TENANT, async (c) => {
+      const { rows } = await c.query<{ normalized_name: string }>(
+        `SELECT normalized_name FROM ledger_counterparties WHERE id = ANY($1::text[])`,
+        [[billObligation.counterparty_id, docObligation.counterparty_id]],
+      );
+      return rows.map((r) => r.normalized_name);
+    });
+    expect(new Set(names).size).toBe(1); // same normalized name = the resolution join key
   });
 
   it("3 — Plaid lands the live cash position and prior payments to the vendor as extracted truth", async () => {
@@ -327,6 +357,10 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
     // The REAL resolution pipeline: ReconciliationService runs the
     // obligation_duplicate matcher over Ledger state.
     const recon = new ReconciliationService({ pool, audit });
+    // Counterparty resolution first: under canonical projection the doc and bill
+    // vendors are distinct observations, so obligation matching across sources
+    // follows the resolved counterparty link (link, don't merge).
+    await recon.run(ctx, { match_types: ["counterparty_duplicate"] });
     await recon.run(ctx, { match_types: ["obligation_duplicate"] });
 
     const view = await resolveObligationView(pool, ctx, docObligation.id);
@@ -408,9 +442,10 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
     // One review surface, three sources:
     //  - the invoice document backs the doc payable,
     expect(docObligation.evidence_ids).toContain(doc.prsId);
-    //  - the aggregator bill backs the extracted payable on the same vendor,
+    //  - the aggregator bill backs the extracted payable (a distinct vendor
+    //    observation, unified with the doc vendor by Phase-4 resolution),
     expect(billObligation.evidence_ids).toContain(bill.prsId);
-    expect(billObligation.counterparty_id).toBe(docObligation.counterparty_id);
+    expect(billObligation.counterparty_id).not.toBe(docObligation.counterparty_id);
     //  - and the bank's prior payment backs the corroboration match row.
     const matchRow = await withTenantScope(pool, TENANT, async (c) => {
       const { rows } = await c.query(

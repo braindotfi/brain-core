@@ -759,6 +759,9 @@ importers:
       '@brain/audit':
         specifier: workspace:*
         version: link:../../services/audit
+      '@brain/canonical':
+        specifier: workspace:*
+        version: link:../../services/canonical
       '@brain/execution':
         specifier: workspace:*
         version: link:../../services/execution

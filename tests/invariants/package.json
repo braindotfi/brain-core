@@ -19,6 +19,7 @@
   "dependencies": {
     "@brain/shared": "workspace:*",
     "@brain/audit": "workspace:*",
+    "@brain/canonical": "workspace:*",
     "@brain/ledger": "workspace:*",
     "@brain/execution": "workspace:*",
     "@brain/internal-agents": "workspace:*",
