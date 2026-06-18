@@ -54,6 +54,10 @@ export const ID_PREFIX = {
   canonicalGlAccount: "cgla",
   canonicalJournalEntry: "cje",
   canonicalJournalLine: "cjl",
+  // Canonical AP/AR + identity (Phase 5 deep refactor). Ledger obligations and
+  // counterparties become projections of these.
+  canonicalObligation: "cob",
+  canonicalCounterparty: "ccp",
   // Cross-layer
   policyDecision: "pd",
   approval: "appr",
@@ -134,6 +138,8 @@ export const newLedgerGlAccountId = (): string => brainId(ID_PREFIX.ledgerGlAcco
 export const newCanonicalGlAccountId = (): string => brainId(ID_PREFIX.canonicalGlAccount);
 export const newCanonicalJournalEntryId = (): string => brainId(ID_PREFIX.canonicalJournalEntry);
 export const newCanonicalJournalLineId = (): string => brainId(ID_PREFIX.canonicalJournalLine);
+export const newCanonicalObligationId = (): string => brainId(ID_PREFIX.canonicalObligation);
+export const newCanonicalCounterpartyId = (): string => brainId(ID_PREFIX.canonicalCounterparty);
 export const newPolicyDecisionId = (): string => brainId(ID_PREFIX.policyDecision);
 export const newApprovalId = (): string => brainId(ID_PREFIX.approval);
 export const newWebhookEndpointId = (): string => brainId(ID_PREFIX.webhookEndpoint);
