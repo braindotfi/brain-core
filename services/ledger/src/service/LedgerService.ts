@@ -55,9 +55,39 @@ import {
 import type { LedgerDeps } from "../deps.js";
 import { recordTransactionRow, upsertAccountRow, upsertCounterpartyRow } from "./writes.js";
 import { extractorForParser } from "../extractors/registry.js";
+import {
+  resolveObligationView,
+  type ResolvedObligationView,
+} from "../resolution/resolveObligation.js";
+import {
+  resolveCounterpartyView,
+  type ResolvedCounterpartyView,
+} from "../resolution/resolveCounterparty.js";
 
 export class LedgerService implements ILedgerService {
   public constructor(private readonly deps: LedgerDeps) {}
+
+  // ----- Resolved views (Phase 4 / Phase 6 governed reads) ---------------
+
+  /** The reconciled cross-source view of an obligation: every observation
+   *  retained, field-level authority, conflicts listed, candidates pending
+   *  review. Null when the obligation does not exist for the tenant. */
+  public async resolveObligation(
+    ctx: ServiceCallContext,
+    obligationId: string,
+  ): Promise<ResolvedObligationView | null> {
+    return resolveObligationView(this.deps.pool, ctx, obligationId);
+  }
+
+  /** The reconciled organization view of a counterparty: linked observations,
+   *  unioned facets, name variants, candidates pending review. Null when the
+   *  counterparty does not exist for the tenant. */
+  public async resolveCounterparty(
+    ctx: ServiceCallContext,
+    counterpartyId: string,
+  ): Promise<ResolvedCounterpartyView | null> {
+    return resolveCounterpartyView(this.deps.pool, ctx, counterpartyId);
+  }
 
   // ----- Reads -----------------------------------------------------------
 

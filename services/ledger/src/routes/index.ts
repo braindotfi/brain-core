@@ -180,6 +180,39 @@ export async function registerLedgerRoutes(
     },
   );
 
+  // Phase 6 governed read: the reconciled cross-source view (every observation
+  // retained, field-level authority, conflicts listed, candidates pending
+  // review) -- the "explain this number, including where sources disagree" surface.
+  app.get(
+    "/ledger/obligations/:obligation_id/resolved",
+    async (request: FastifyRequest<{ Params: { obligation_id: string } }>, reply) => {
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, READ);
+      if (!isBrainId(request.params.obligation_id, "obl")) {
+        throw brainError("request_params_invalid", "malformed obligation_id");
+      }
+      const result = await service.resolveObligation(ctx, request.params.obligation_id);
+      if (result === null) throw brainError("ledger_row_not_found", "no such obligation");
+      reply.status(200);
+      return result;
+    },
+  );
+
+  app.get(
+    "/ledger/counterparties/:counterparty_id/resolved",
+    async (request: FastifyRequest<{ Params: { counterparty_id: string } }>, reply) => {
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, READ);
+      if (!isBrainId(request.params.counterparty_id, "cp")) {
+        throw brainError("request_params_invalid", "malformed counterparty_id");
+      }
+      const result = await service.resolveCounterparty(ctx, request.params.counterparty_id);
+      if (result === null) throw brainError("ledger_row_not_found", "no such counterparty");
+      reply.status(200);
+      return result;
+    },
+  );
+
   app.get(
     "/ledger/obligations",
     async (
