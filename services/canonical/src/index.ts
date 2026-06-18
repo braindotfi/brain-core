@@ -53,6 +53,18 @@ export {
 export { upsertGlAccount, upsertJournalEntry, type UpsertResult } from "./repository/accounting.js";
 
 export {
+  projectMergeContact,
+  projectMergeInvoice,
+  normalizeName,
+  type CounterpartyType,
+  type ObligationDirection,
+  type CounterpartyUpsert,
+  type ObligationUpsert,
+} from "./projectors/merge-apar.js";
+
+export { upsertCanonicalCounterparty, upsertCanonicalObligation } from "./repository/apar.js";
+
+export {
   runProjectionCycle,
   startCanonicalProjectionWorker,
   type ProjectionWorker,

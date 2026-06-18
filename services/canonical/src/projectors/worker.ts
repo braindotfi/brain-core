@@ -39,6 +39,8 @@ import {
   projectJournalEntry,
   type ProjectionCommon,
 } from "./merge-accounting.js";
+import { projectMergeContact, projectMergeInvoice } from "./merge-apar.js";
+import { upsertCanonicalCounterparty, upsertCanonicalObligation } from "../repository/apar.js";
 
 export interface ProjectionWorkerDeps {
   pool: Pool;
@@ -63,7 +65,20 @@ interface PendingParsedRow {
   extracted: { object_type?: string; merge_integration?: string | null };
 }
 
-const DOMAIN = "accounting";
+// Object types this worker projects, across both canonical domains served by
+// the merge_accounting_v1 parser. Counterparty/GL pages sort ahead of the
+// obligation/journal pages that reference them (object_type ASC: contact,
+// gl_account, invoice, journal_entry), so references resolve in one cycle.
+const ALL_PROJECTABLE_OBJECT_TYPES: readonly string[] = [
+  ...PROJECTABLE_OBJECT_TYPES,
+  "invoice",
+  "contact",
+];
+
+/** Projection-log domain label per object type. */
+function domainFor(objectType: string | undefined): string {
+  return objectType === "invoice" || objectType === "contact" ? "ap_ar" : "accounting";
+}
 
 function sourceSystemOf(mergeIntegration: string | null | undefined): string {
   return typeof mergeIntegration === "string" && mergeIntegration.length > 0
@@ -75,6 +90,7 @@ async function recordProjection(
   pool: Pool,
   tenantId: string,
   rawParsedId: string,
+  domain: string,
   recordsWritten: number,
   errorMessage: string | null,
 ): Promise<void> {
@@ -84,7 +100,7 @@ async function recordProjection(
          (raw_parsed_id, tenant_id, projector, domain, records_written, error)
        VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT (raw_parsed_id) DO NOTHING`,
-      [rawParsedId, tenantId, MERGE_ACCOUNTING_PROJECTOR, DOMAIN, recordsWritten, errorMessage],
+      [rawParsedId, tenantId, MERGE_ACCOUNTING_PROJECTOR, domain, recordsWritten, errorMessage],
     );
   });
 }
@@ -111,7 +127,7 @@ export async function runProjectionCycle(
           )
         ORDER BY rp.extracted->>'object_type' ASC, rp.extracted_at ASC
         LIMIT $3`,
-      [MERGE_ACCOUNTING_PARSER, [...PROJECTABLE_OBJECT_TYPES], batchSize],
+      [MERGE_ACCOUNTING_PARSER, [...ALL_PROJECTABLE_OBJECT_TYPES], batchSize],
     );
     rows = result.rows;
   } catch (err) {
@@ -146,6 +162,16 @@ export async function runProjectionCycle(
             if (input === null) continue;
             await upsertJournalEntry(c, row.tenant_id, input);
             count += 1;
+          } else if (objectType === "contact") {
+            const input = projectMergeContact(obj, sourceSystem, common);
+            if (input === null) continue;
+            await upsertCanonicalCounterparty(c, row.tenant_id, input);
+            count += 1;
+          } else if (objectType === "invoice") {
+            const input = projectMergeInvoice(obj, sourceSystem, common);
+            if (input === null) continue;
+            await upsertCanonicalObligation(c, row.tenant_id, input);
+            count += 1;
           }
         }
         // Same transaction as the writes: log + data commit or roll back together.
@@ -154,7 +180,7 @@ export async function runProjectionCycle(
              (raw_parsed_id, tenant_id, projector, domain, records_written, error)
            VALUES ($1,$2,$3,$4,$5,NULL)
            ON CONFLICT (raw_parsed_id) DO NOTHING`,
-          [row.id, row.tenant_id, MERGE_ACCOUNTING_PROJECTOR, DOMAIN, count],
+          [row.id, row.tenant_id, MERGE_ACCOUNTING_PROJECTOR, domainFor(objectType), count],
         );
         return count;
       });
@@ -167,7 +193,7 @@ export async function runProjectionCycle(
         inputs: {
           raw_parsed_id: row.id,
           projector: MERGE_ACCOUNTING_PROJECTOR,
-          domain: DOMAIN,
+          domain: domainFor(objectType),
           object_type: objectType ?? null,
           source_system: sourceSystem,
           extracted_sha256: sha256Hex(Buffer.from(JSON.stringify(row.extracted))),
@@ -178,7 +204,7 @@ export async function runProjectionCycle(
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[canonicalProjector] projection failed for ${row.id}:`, message);
       try {
-        await recordProjection(deps.pool, row.tenant_id, row.id, 0, message);
+        await recordProjection(deps.pool, row.tenant_id, row.id, domainFor(objectType), 0, message);
       } catch (logErr) {
         console.error(`[canonicalProjector] failed to log projection for ${row.id}:`, logErr);
       }
