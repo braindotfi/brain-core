@@ -63,6 +63,13 @@ export {
   type ListParsedFilters,
 } from "./repository/parsed.js";
 
+// Connector SDK — conformance/certification harness (Phase 6).
+export {
+  assertStaticConformance,
+  assertFetchConformance,
+  type FetchConformanceInput,
+} from "./conformance/harness.js";
+
 export {
   SourceService,
   InMemorySourceRepository,
