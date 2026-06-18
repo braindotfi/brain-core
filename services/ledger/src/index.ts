@@ -83,3 +83,8 @@ export {
   type LedgerProjectionWorkerDeps,
   type LedgerProjectionWorkerOptions,
 } from "./projection/worker.js";
+// Phase 5 deep refactor (PR-F): the Ledger AP/AR projection of canonical.
+export {
+  rebuildAparProjectionFromCanonical,
+  type AparRebuildResult,
+} from "./projection/obligations.js";
