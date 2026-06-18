@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import {
   InMemoryAuditEmitter,
+  newAccountId,
   newCounterpartyId,
   newObligationId,
   newTenantId,
@@ -28,6 +29,7 @@ DESCRIBE("ledger resolved-view service methods (requires DATABASE_URL)", () => {
   const ctx: ServiceCallContext = { tenantId: tenant, actor: "user_test" };
   const cpId = newCounterpartyId();
   const oblId = newObligationId();
+  const acctId = newAccountId();
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -36,6 +38,11 @@ DESCRIBE("ledger resolved-view service methods (requires DATABASE_URL)", () => {
       `INSERT INTO ledger_counterparties (id, owner_id, name, normalized_name, type, provenance, confidence)
        VALUES ($1,$2,'Acme Industrial Supply','acme_industrial_supply','vendor','extracted',0.8)`,
       [cpId, tenant],
+    );
+    await pool.query(
+      `INSERT INTO ledger_accounts (id, owner_id, account_type, name, currency, status, provenance, confidence)
+       VALUES ($1,$2,'bank_checking','Operating Checking','USD','active','extracted',0.9)`,
+      [acctId, tenant],
     );
     await pool.query(
       `INSERT INTO ledger_obligations
@@ -49,6 +56,7 @@ DESCRIBE("ledger resolved-view service methods (requires DATABASE_URL)", () => {
   afterAll(async () => {
     if (pool === undefined) return;
     await pool.query(`DELETE FROM ledger_obligations WHERE owner_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM ledger_accounts WHERE owner_id = $1`, [tenant]);
     await pool.query(`DELETE FROM ledger_counterparties WHERE owner_id = $1`, [tenant]);
     await pool.end();
   });
@@ -70,8 +78,15 @@ DESCRIBE("ledger resolved-view service methods (requires DATABASE_URL)", () => {
     expect(view!.resolved.types).toContain("vendor");
   });
 
+  it("resolveAccount returns the account with the subject as a member", async () => {
+    const view = await service.resolveAccount(ctx, acctId);
+    expect(view).not.toBeNull();
+    expect(view!.resolved.member_ids).toContain(acctId);
+  });
+
   it("returns null for an unknown id", async () => {
     expect(await service.resolveObligation(ctx, newObligationId())).toBeNull();
     expect(await service.resolveCounterparty(ctx, newCounterpartyId())).toBeNull();
+    expect(await service.resolveAccount(ctx, newAccountId())).toBeNull();
   });
 });

@@ -63,6 +63,7 @@ import {
   resolveCounterpartyView,
   type ResolvedCounterpartyView,
 } from "../resolution/resolveCounterparty.js";
+import { resolveAccountView, type ResolvedAccountView } from "../resolution/resolveAccount.js";
 
 export class LedgerService implements ILedgerService {
   public constructor(private readonly deps: LedgerDeps) {}
@@ -87,6 +88,16 @@ export class LedgerService implements ILedgerService {
     counterpartyId: string,
   ): Promise<ResolvedCounterpartyView | null> {
     return resolveCounterpartyView(this.deps.pool, ctx, counterpartyId);
+  }
+
+  /** The resolved money-pool view of an account: balances reported per
+   *  observation (never adjudicated), confirmed-duplicate links followed,
+   *  candidates pending review. Null when the account does not exist. */
+  public async resolveAccount(
+    ctx: ServiceCallContext,
+    accountId: string,
+  ): Promise<ResolvedAccountView | null> {
+    return resolveAccountView(this.deps.pool, ctx, accountId);
   }
 
   // ----- Reads -----------------------------------------------------------
