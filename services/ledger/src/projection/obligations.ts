@@ -30,6 +30,7 @@ import {
   withTenantScope,
   type AuditEmitter,
   type ManagedWorker,
+  type MetricsEmitter,
   type ServiceCallContext,
   type TenantScopedClient,
 } from "@brain/shared";
@@ -274,6 +275,9 @@ export async function rebuildAparProjectionFromCanonical(
 
 export interface LedgerAparProjectionWorkerDeps {
   pool: Pool;
+  /** Optional: emits brain.ledger.apar_projection.records.count so a stalled
+   *  canonical->Ledger obligation projection is observable. No-op when absent. */
+  metrics?: MetricsEmitter;
 }
 
 export interface LedgerAparProjectionWorkerOptions {
@@ -324,10 +328,15 @@ export async function runLedgerAparProjectionCycle(
         LIMIT $1`,
       [batchSize],
     );
+    let projected = 0;
     for (const obl of obls) {
-      await withTenantScope(deps.pool, obl.tenant_id, (c) =>
+      const ok = await withTenantScope(deps.pool, obl.tenant_id, (c) =>
         projectCanonicalObligation(c, obl.tenant_id, obl),
       );
+      if (ok) projected += 1;
+    }
+    if (projected > 0) {
+      deps.metrics?.increment("brain.ledger.apar_projection.records.count", undefined, projected);
     }
   } catch (err) {
     console.error("[ledgerAparProjector] obligation cycle failed:", err);

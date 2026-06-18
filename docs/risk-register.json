@@ -173,6 +173,24 @@
       "closed_by": "batch 8 P2",
       "mitigation_summary": "BrainSmartAccount.sol contract NatSpec rewritten: now describes the actual design ('Smart account with directly-called session keys. Not ERC-4337: there is no EntryPoint, no UserOperation, no paymaster'). AUDIT-SCOPE.md mirror updated. Surfaced by Opus 4.8 (F-11).",
       "evidence": ["contracts/src/BrainSmartAccount.sol:4-30", "contracts/AUDIT-SCOPE.md:131-145"]
+    },
+    {
+      "id": "R-11",
+      "title": "Canonical cutover moved the obligation money-path from synchronous to two async workers",
+      "priority": "P1",
+      "status": "mitigating",
+      "mitigation_summary": "Phase 5 (RFC 0005) made ledger_obligations/counterparties a projection of canonical: a Merge or document obligation no longer reaches the Ledger synchronously in normalizeFromRaw, but via two scheduled workers in sequence (startCanonicalProjectionWorker raw_parsed->canonical, then startLedgerAparProjectionWorker canonical->Ledger). If either stalls, obligations silently never reach the Ledger and the gate has no obligation to gate. Mitigations shipped: (i) an end-to-end integration test drives BOTH worker cycles and asserts an obligation reaches ledger_obligations (the wired path the wedge's synchronous calls did not cover); (ii) both workers emit a records-projected counter (brain.canonical.projector.records.count, brain.ledger.apar_projection.records.count) so a flatline while raw_parsed grows is alertable; (iii) projections are idempotent and replayable, so a recovered worker catches up without data loss.",
+      "exit_criteria": [
+        "Grafana alert on a projection-records flatline with non-empty unconsumed backlog",
+        "A projection-lag gauge (oldest unconsumed raw_parsed age) per worker",
+        "Optional: a boot fence / liveness probe for the two projection workers in production"
+      ],
+      "owner": "engineering",
+      "evidence": [
+        "tests/invariants/integration/canonical-pipeline.integration.test.ts",
+        "services/canonical/src/projectors/worker.ts",
+        "services/ledger/src/projection/obligations.ts"
+      ]
     }
   ]
 }

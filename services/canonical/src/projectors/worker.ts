@@ -29,6 +29,7 @@ import {
   withTenantScope,
   type AuditEmitter,
   type ManagedWorker,
+  type MetricsEmitter,
 } from "@brain/shared";
 import { upsertGlAccount, upsertJournalEntry } from "../repository/accounting.js";
 import {
@@ -61,6 +62,10 @@ function mergeConfidence(objectType: string | undefined): number | null {
 export interface ProjectionWorkerDeps {
   pool: Pool;
   audit: AuditEmitter;
+  /** Optional: emits brain.canonical.projector.records.count so a stalled
+   *  money-path projector (records flatlining while raw_parsed grows) is
+   *  observable. No-op when absent. */
+  metrics?: MetricsEmitter;
 }
 
 export interface ProjectionWorkerOptions {
@@ -216,6 +221,11 @@ export async function runProjectionCycle(
         },
         outputs: { records_written: written },
       });
+      deps.metrics?.increment(
+        "brain.canonical.projector.records.count",
+        { projector: MERGE_ACCOUNTING_PROJECTOR, object_type: objectType ?? "unknown" },
+        written,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[canonicalProjector] projection failed for ${row.id}:`, message);
@@ -308,6 +318,11 @@ async function runDocObligationPass(
         },
         outputs: { records_written: written },
       });
+      deps.metrics?.increment(
+        "brain.canonical.projector.records.count",
+        { projector: DOC_OBLIGATION_PROJECTOR, object_type: "doc_obligation" },
+        written,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[canonicalProjector] doc projection failed for ${row.id}:`, message);

@@ -2045,7 +2045,11 @@ async function main(): Promise<void> {
   // rich Merge accounting pages (gl_account / journal_entry) that the compact
   // Ledger drops into the canonical domain store. Cross-tenant poll over
   // raw_parsed, hence privilegedPool; per-row writes stay tenant-scoped.
-  const canonicalProjectionWorker = startCanonicalProjectionWorker({ pool: privilegedPool, audit });
+  const canonicalProjectionWorker = startCanonicalProjectionWorker({
+    pool: privilegedPool,
+    audit,
+    metrics,
+  });
 
   // Ledger chart-of-accounts projection (ingestion architecture §12, Phase 5):
   // keeps ledger_gl_accounts current as canonical_gl_account grows. Cross-tenant
@@ -2055,7 +2059,10 @@ async function main(): Promise<void> {
   // Ledger AP/AR projection (Phase 5 cutover): obligations + counterparties for
   // Merge-sourced data now project from canonical (the extractor no longer
   // writes them directly). Cross-tenant poll, hence privilegedPool.
-  const ledgerAparProjectionWorker = startLedgerAparProjectionWorker({ pool: privilegedPool });
+  const ledgerAparProjectionWorker = startLedgerAparProjectionWorker({
+    pool: privilegedPool,
+    metrics,
+  });
 
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence privilegedPool; all
