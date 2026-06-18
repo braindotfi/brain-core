@@ -334,6 +334,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ledger/obligations/{obligation_id}/resolved": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolved cross-source view of an obligation (observations, authority, conflicts)
+         * @description The reconciled fact for one obligation: every source observation
+         *     retained, field-level authority (which source owns each field),
+         *     conflicts listed where sources disagree, and duplicate candidates
+         *     pending user review. The "explain this number, including where sources
+         *     disagree" surface (Phase 4 resolution / §13).
+         */
+        get: operations["resolveObligation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/counterparties/{counterparty_id}/resolved": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolved organization view of a counterparty (linked observations, facets)
+         * @description The reconciled organization for one counterparty: linked observations
+         *     across sources/types unioned into facets, name variants listed, and
+         *     duplicate candidates pending user review (Phase 4 resolution / §13).
+         */
+        get: operations["resolveCounterparty"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ledger/invoices": {
         parameters: {
             query?: never;
@@ -1703,6 +1749,66 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description One reconciled obligation fact. All observations retained; field-level
+         *     authority; conflicts listed; duplicate candidates pending review (§13).
+         */
+        ResolvedObligationView: {
+            subject_obligation_id: string;
+            observations: {
+                [key: string]: unknown;
+            }[];
+            /** @description Field-level authority — which observation owns each field. */
+            resolved: {
+                [key: string]: unknown;
+            };
+            /** @description Fields where observations disagree, with the competing values. */
+            conflicts: {
+                field?: string;
+                values?: {
+                    [key: string]: unknown;
+                }[];
+            }[];
+            matches: {
+                match_id?: string;
+                status?: string;
+                confidence_score?: number;
+            }[];
+            /** @description duplicate_possible candidates awaiting user confirmation. */
+            pending_review?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * @description One reconciled organization. Linked observations unioned into facets;
+         *     name variants listed; duplicate candidates pending review (§13).
+         */
+        ResolvedCounterpartyView: {
+            subject_counterparty_id: string;
+            observations: {
+                [key: string]: unknown;
+            }[];
+            resolved: {
+                name?: {
+                    value?: string;
+                    authority_counterparty_id?: string;
+                    authority_provenance?: string;
+                };
+                types?: string[];
+                member_ids?: string[];
+            };
+            name_variants?: {
+                value?: string;
+                counterparty_id?: string;
+            }[];
+            matches: {
+                match_id?: string;
+                confidence_score?: number;
+            }[];
+            pending_review?: {
+                [key: string]: unknown;
+            }[];
+        };
         /**
          * @description A canonical AP/AR obligation as a governed data product: the record plus
          *     its provenance (the evidence behind the value) and freshness.
@@ -3132,6 +3238,52 @@ export interface operations {
                     };
                 };
             };
+        };
+    };
+    resolveObligation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                obligation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resolved obligation view */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolvedObligationView"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    resolveCounterparty: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                counterparty_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resolved counterparty view */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolvedCounterpartyView"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     listInvoices: {

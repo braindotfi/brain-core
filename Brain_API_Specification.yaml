@@ -724,6 +724,52 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Obligation' }
 
+  /ledger/obligations/{obligation_id}/resolved:
+    get:
+      tags: [Ledger]
+      summary: Resolved cross-source view of an obligation (observations, authority, conflicts)
+      description: |
+        The reconciled fact for one obligation: every source observation
+        retained, field-level authority (which source owns each field),
+        conflicts listed where sources disagree, and duplicate candidates
+        pending user review. The "explain this number, including where sources
+        disagree" surface (Phase 4 resolution / §13).
+      operationId: resolveObligation
+      parameters:
+        - name: obligation_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Resolved obligation view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolvedObligationView' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /ledger/counterparties/{counterparty_id}/resolved:
+    get:
+      tags: [Ledger]
+      summary: Resolved organization view of a counterparty (linked observations, facets)
+      description: |
+        The reconciled organization for one counterparty: linked observations
+        across sources/types unioned into facets, name variants listed, and
+        duplicate candidates pending user review (Phase 4 resolution / §13).
+      operationId: resolveCounterparty
+      parameters:
+        - name: counterparty_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Resolved counterparty view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolvedCounterpartyView' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /ledger/invoices:
     get:
       tags: [Ledger]
@@ -2849,6 +2895,82 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+
+    ResolvedObligationView:
+      type: object
+      description: |
+        One reconciled obligation fact. All observations retained; field-level
+        authority; conflicts listed; duplicate candidates pending review (§13).
+      required: [subject_obligation_id, observations, resolved, conflicts, matches]
+      properties:
+        subject_obligation_id: { type: string }
+        observations:
+          type: array
+          items: { type: object, additionalProperties: true }
+        resolved:
+          type: object
+          description: Field-level authority — which observation owns each field.
+          additionalProperties: true
+        conflicts:
+          type: array
+          description: Fields where observations disagree, with the competing values.
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              values: { type: array, items: { type: object, additionalProperties: true } }
+        matches:
+          type: array
+          items:
+            type: object
+            properties:
+              match_id: { type: string }
+              status: { type: string }
+              confidence_score: { type: number }
+        pending_review:
+          type: array
+          description: duplicate_possible candidates awaiting user confirmation.
+          items: { type: object, additionalProperties: true }
+
+    ResolvedCounterpartyView:
+      type: object
+      description: |
+        One reconciled organization. Linked observations unioned into facets;
+        name variants listed; duplicate candidates pending review (§13).
+      required: [subject_counterparty_id, observations, resolved, matches]
+      properties:
+        subject_counterparty_id: { type: string }
+        observations:
+          type: array
+          items: { type: object, additionalProperties: true }
+        resolved:
+          type: object
+          properties:
+            name:
+              type: object
+              properties:
+                value: { type: string }
+                authority_counterparty_id: { type: string }
+                authority_provenance: { type: string }
+            types: { type: array, items: { type: string } }
+            member_ids: { type: array, items: { type: string } }
+        name_variants:
+          type: array
+          items:
+            type: object
+            properties:
+              value: { type: string }
+              counterparty_id: { type: string }
+        matches:
+          type: array
+          items:
+            type: object
+            properties:
+              match_id: { type: string }
+              confidence_score: { type: number }
+        pending_review:
+          type: array
+          items: { type: object, additionalProperties: true }
 
     CanonicalObligationProduct:
       type: object
