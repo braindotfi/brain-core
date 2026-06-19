@@ -35,6 +35,29 @@ import { withTenantScope } from "@brain/shared";
 import type { Pool } from "pg";
 import type { ServiceCallContext } from "@brain/shared";
 
+/**
+ * Canonical tumbling-window start (R-09). The SINGLE source of truth for the
+ * window boundary that both enforcers key on:
+ *   - the off-chain SQL above:  floor(extract(epoch from now()) / p) * p
+ *   - on-chain BrainSmartAccount: (block.timestamp / p) * p   (uint division)
+ *
+ * Both reduce to integer floor-division `floor(ts / p) * p`. Computed in
+ * BigInt here so it is exact (no float rounding) and faithfully models the
+ * Solidity uint arithmetic. Property tests in agent-window-spend.windows.test.ts
+ * prove this equals the on-chain formula at the boundary (T, T-1, T+1) and that
+ * the off-chain double-precision intermediate (`extract(epoch ...)`) does not
+ * diverge across the realistic epoch range.
+ *
+ * `periodSeconds === 0n` disables period accounting (mirrors the contract's
+ * `periodSeconds == 0` short-circuit); the window start is then undefined and
+ * this returns 0n.
+ */
+export function tumblingWindowStartSeconds(epochSeconds: bigint, periodSeconds: bigint): bigint {
+  if (periodSeconds <= 0n) return 0n;
+  if (epochSeconds < 0n) throw new Error("epochSeconds must be non-negative");
+  return (epochSeconds / periodSeconds) * periodSeconds;
+}
+
 export function makeSumAgentWindowSpend(
   pool: Pool,
 ): (ctx: ServiceCallContext, agentId: string, windowSeconds: number) => Promise<string> {
