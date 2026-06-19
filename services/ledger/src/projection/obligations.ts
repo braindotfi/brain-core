@@ -27,6 +27,7 @@ import {
   newCounterpartyId,
   newObligationId,
   startManagedInterval,
+  leasedCycle,
   withTenantScope,
   type AuditEmitter,
   type ManagedWorker,
@@ -374,9 +375,20 @@ export function startLedgerAparProjectionWorker(
   opts?: LedgerAparProjectionWorkerOptions,
 ): LedgerAparProjectionWorker {
   const intervalMs = opts?.intervalMs ?? 15_000;
-  return startManagedInterval(() => runLedgerAparProjectionCycle(deps, opts), intervalMs, {
-    name: "ledger-apar-projection",
-    runImmediately: true,
-    onError: (err) => console.error("[ledgerAparProjector] cycle failed:", err),
-  });
+  // Advisory lease: only one replica projects at a time (multi-replica safe).
+  return startManagedInterval(
+    leasedCycle({
+      pool: deps.pool,
+      lockKey: "brain_worker:ledger_apar_projection",
+      cycle: () => runLedgerAparProjectionCycle(deps, opts),
+      name: "ledger-apar-projection",
+      metrics: deps.metrics,
+    }),
+    intervalMs,
+    {
+      name: "ledger-apar-projection",
+      runImmediately: true,
+      onError: (err) => console.error("[ledgerAparProjector] cycle failed:", err),
+    },
+  );
 }

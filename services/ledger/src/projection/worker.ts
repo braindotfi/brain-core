@@ -15,7 +15,12 @@
  */
 
 import type { Pool } from "pg";
-import { startManagedInterval, withTenantScope, type ManagedWorker } from "@brain/shared";
+import {
+  startManagedInterval,
+  leasedCycle,
+  withTenantScope,
+  type ManagedWorker,
+} from "@brain/shared";
 import { toLedgerGlAccountInput, upsertLedgerGlAccount } from "./gl-accounts.js";
 
 export interface LedgerProjectionWorkerDeps {
@@ -93,9 +98,19 @@ export function startLedgerProjectionWorker(
   opts?: LedgerProjectionWorkerOptions,
 ): LedgerProjectionWorker {
   const intervalMs = opts?.intervalMs ?? 15_000;
-  return startManagedInterval(() => runLedgerProjectionCycle(deps, opts), intervalMs, {
-    name: "ledger-projection",
-    runImmediately: true,
-    onError: (err) => console.error("[ledgerProjectionWorker] cycle failed:", err),
-  });
+  // Advisory lease: only one replica projects at a time (multi-replica safe).
+  return startManagedInterval(
+    leasedCycle({
+      pool: deps.pool,
+      lockKey: "brain_worker:ledger_gl_projection",
+      cycle: () => runLedgerProjectionCycle(deps, opts),
+      name: "ledger-projection",
+    }),
+    intervalMs,
+    {
+      name: "ledger-projection",
+      runImmediately: true,
+      onError: (err) => console.error("[ledgerProjectionWorker] cycle failed:", err),
+    },
+  );
 }

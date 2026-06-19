@@ -26,6 +26,7 @@ import type { Pool } from "pg";
 import {
   sha256Hex,
   startManagedInterval,
+  leasedCycle,
   withTenantScope,
   type AuditEmitter,
   type ManagedWorker,
@@ -509,9 +510,20 @@ export function startCanonicalProjectionWorker(
   opts?: ProjectionWorkerOptions,
 ): ProjectionWorker {
   const intervalMs = opts?.intervalMs ?? 15_000;
-  return startManagedInterval(() => runProjectionCycle(deps, opts), intervalMs, {
-    name: "canonical-projector",
-    runImmediately: true,
-    onError: (err) => console.error("[canonicalProjector] cycle failed:", err),
-  });
+  // Advisory lease: only one replica projects at a time (multi-replica safe).
+  return startManagedInterval(
+    leasedCycle({
+      pool: deps.pool,
+      lockKey: "brain_worker:canonical_projection",
+      cycle: () => runProjectionCycle(deps, opts),
+      name: "canonical-projector",
+      metrics: deps.metrics,
+    }),
+    intervalMs,
+    {
+      name: "canonical-projector",
+      runImmediately: true,
+      onError: (err) => console.error("[canonicalProjector] cycle failed:", err),
+    },
+  );
 }
