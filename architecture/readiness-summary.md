@@ -12,7 +12,7 @@ One page. What's production-ready, what's pilot-ready, what's testnet-only, and 
 - **§6 deterministic pre-execution gate**. 22 checks (13 numbered + 9 hardening), no LLM judgement, no Wiki reads, no skip paths.
 - **Append-only audit chain** with Merkle anchoring to Base. `/v1/audit/verify` is unauthenticated. Verifiable without trusting Brain.
 - **External-agent MCP surface** (JSON-RPC 2.0) with HMAC handshake and per-tenant rate limits.
-- **Postgres RLS + privileged-role separation** at the storage layer; cross-tenant access is impossible by construction once `infra/db-roles.sql` is applied.
+- **Postgres RLS + least-privilege role separation** at the storage layer: the request path runs as `brain_app` (`FORCE ROW LEVEL SECURITY`) and every cross-tenant job/resolver runs under one of eight scoped `BYPASSRLS` roles (each limited to its layer's tables), so cross-tenant access is impossible by construction once `infra/db-roles.sql` is applied.
 - **AES-256-GCM credential encryption** at rest (Azure Key Vault in production).
 - **5 fail-closed boot fences**. Misconfigured deploys CrashLoopBackoff rather than running degraded.
 - **Tenant deletion** (GDPR Article 17 database scope).
@@ -40,7 +40,7 @@ Suitable for controlled-pilot use under SLA, not yet for unrestricted production
 
 ## What requires customer deployment work
 
-- Applying `infra/db-roles.sql` to the production Postgres instance (separates `brain_app` from `brain_privileged`).
+- Applying `infra/db-roles.sql` to the production Postgres instance (creates `brain_app`, `brain_wiki_reader`, and the eight least-privilege cross-tenant roles) and provisioning each role's `BRAIN_*_DB_URL` (all required at boot in production).
 - Configuring Azure Key Vault credentials for `BRAIN_SOURCE_CREDENTIAL_KEY` and the session key.
 - Setting `BRAIN_ESCROW_AUDIT_RECEIPT` to the audit report URL/hash (or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"`) once the audit completes and bytecode is verified.
 - Running the existing `pnpm run production-readiness` check against the customer env before promotion.
