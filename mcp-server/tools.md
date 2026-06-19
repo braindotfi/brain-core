@@ -164,17 +164,17 @@ Confidence on derived Ledger rows is capped at **0.5** for `provenance=agent_con
 
 Propose a financial action. Brain creates a `PaymentIntent` row in the Ledger in `proposed` status, runs Policy, and returns a decision. **No execute path on MCP.**
 
-| Argument                      | Type    | Description                                                                                                   |
-| ----------------------------- | ------- | ------------------------------------------------------------------------------------------------------------- |
-| `tenant_id`                   | string  | Required                                                                                                      |
+| Argument                      | Type    | Description                                                                                                                                                                                                                                                                |
+| ----------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tenant_id`                   | string  | Required                                                                                                                                                                                                                                                                   |
 | `action_type`                 | string  | Required: `ach_outbound`, `ach_inbound`, `wire`, `onchain_transfer`, `erp_writeback`, `card_payment`, `x402_settle`, `escrow_release` (same enum as the HTTP API). `x402_settle` additionally requires `pay_to`; `escrow_release` requires `escrow_id` + `job_terms_hash`. |
-| `source_account_id`           | string  | Required                                                                                                      |
-| `destination_counterparty_id` | string  | Required                                                                                                      |
-| `amount`                      | decimal | Required                                                                                                      |
-| `currency`                    | string  | Required                                                                                                      |
-| `obligation_id`               | string  | Optional: links the intent to an obligation                                                                   |
-| `invoice_id`                  | string  | Optional                                                                                                      |
-| `idempotency_key`             | string  | Required: caller-supplied unique key per intent                                                               |
+| `source_account_id`           | string  | Required                                                                                                                                                                                                                                                                   |
+| `destination_counterparty_id` | string  | Required                                                                                                                                                                                                                                                                   |
+| `amount`                      | decimal | Required                                                                                                                                                                                                                                                                   |
+| `currency`                    | string  | Required                                                                                                                                                                                                                                                                   |
+| `obligation_id`               | string  | Optional: links the intent to an obligation                                                                                                                                                                                                                                |
+| `invoice_id`                  | string  | Optional                                                                                                                                                                                                                                                                   |
+| `idempotency_key`             | string  | Required: caller-supplied unique key per intent                                                                                                                                                                                                                            |
 
 Response includes the `payment_intent_id`, the `PolicyDecision`, and the next-step instruction (`pending_approval` with required approvers, or `approved` if policy returned `auto`).
 

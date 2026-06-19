@@ -96,10 +96,10 @@ You'll meet each of these underneath as you go deeper. For now, they're just fiv
 
 Error codes are lowercase `snake_case` (see the [full registry](../resources/errors.md)).
 
-| Problem            | Fix                                                                                                                   |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `auth_invalid_key` | Check `.env`. Sandbox keys start with `brain_sk_test_`, production with `brain_sk_live_`.                             |
-| `tenant_not_found` | Create a tenant in the Console first. Tenant IDs are case-sensitive.                                                  |
+| Problem            | Fix                                                                                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth_invalid_key` | Check `.env`. Sandbox keys start with `brain_sk_test_`, production with `brain_sk_live_`.                                                                            |
+| `tenant_not_found` | Create a tenant in the Console first. Tenant IDs are case-sensitive.                                                                                                 |
 | `rate_limited`     | You hit your tier's per-minute limit. Honour the `Retry-After` header and retry. See [rate limits](../api-reference/overview.md#rate-limits) for the per-tier table. |
 
 [**→ Full error reference**](../resources/errors.md)

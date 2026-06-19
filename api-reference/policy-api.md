@@ -180,10 +180,10 @@ Casing is **lowercase**. `allow | confirm | reject`. The historical-simulation c
 `allow | confirm | reject` is the canonical protocol decision. The rule-level `execute` field and the SDK use aliases that map 1:1; the PaymentIntent status reflects the same outcome:
 
 | Protocol decision (HTTP/MCP) | Rule-level `execute` | SDK `decision.outcome` / `action.status` | Resulting PaymentIntent status |
-| ---------------------------- | -------------------- | ----------------------------------------- | ------------------------------ |
-| `allow`                      | `auto`               | `auto`                                    | `approved`                     |
-| `confirm`                    | `confirm`            | `needs_approval`                          | `pending_approval`             |
-| `reject`                     | `reject`             | `rejected`                                | `rejected`                     |
+| ---------------------------- | -------------------- | ---------------------------------------- | ------------------------------ |
+| `allow`                      | `auto`               | `auto`                                   | `approved`                     |
+| `confirm`                    | `confirm`            | `needs_approval`                         | `pending_approval`             |
+| `reject`                     | `reject`             | `rejected`                               | `rejected`                     |
 
 Compare against `allow | confirm | reject` over HTTP/MCP; the `auto | needs_approval | rejected` triple is an SDK alias, not the protocol vocabulary.
 

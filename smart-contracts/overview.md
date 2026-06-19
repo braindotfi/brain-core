@@ -25,12 +25,12 @@ The four core contracts. (The escrow + reputation contracts below are newer **UN
 
 All six contracts are deployed on **Base Sepolia (chain `84532`)**. There is **no mainnet deployment**; mainnet is blocked on the external smart-contract audit. A `brain.proof()` result anchors to `BrainAuditAnchor`; look the anchor tx up on the explorer to verify it independently.
 
-| Contract                  | Base Sepolia address                                                                                                       | Base mainnet           |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `BrainAuditAnchor`        | [`0xb900add824064098342c869ff83efdeb05eb95ce`](https://sepolia.basescan.org/address/0xb900add824064098342c869ff83efdeb05eb95ce) | pending external audit |
-| `BrainPolicyRegistry`     | [`0x92d1CC5c46eAE229C8A9dD95a334cec0cE33CAD9`](https://sepolia.basescan.org/address/0x92d1CC5c46eAE229C8A9dD95a334cec0cE33CAD9) | pending external audit |
-| `BrainSmartAccount`       | [`0x8cC094d03676d29c8cE0267480f58188E7F1E23D`](https://sepolia.basescan.org/address/0x8cC094d03676d29c8cE0267480f58188E7F1E23D) | pending external audit |
-| `BrainMCPAgentRegistry`   | [`0xcE7Ce9dd95c17E1F4E27D49249b6fdb015f3A7e0`](https://sepolia.basescan.org/address/0xcE7Ce9dd95c17E1F4E27D49249b6fdb015f3A7e0) | pending external audit |
+| Contract                  | Base Sepolia address                                                                                                            | Base mainnet                               |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `BrainAuditAnchor`        | [`0xb900add824064098342c869ff83efdeb05eb95ce`](https://sepolia.basescan.org/address/0xb900add824064098342c869ff83efdeb05eb95ce) | pending external audit                     |
+| `BrainPolicyRegistry`     | [`0x92d1CC5c46eAE229C8A9dD95a334cec0cE33CAD9`](https://sepolia.basescan.org/address/0x92d1CC5c46eAE229C8A9dD95a334cec0cE33CAD9) | pending external audit                     |
+| `BrainSmartAccount`       | [`0x8cC094d03676d29c8cE0267480f58188E7F1E23D`](https://sepolia.basescan.org/address/0x8cC094d03676d29c8cE0267480f58188E7F1E23D) | pending external audit                     |
+| `BrainMCPAgentRegistry`   | [`0xcE7Ce9dd95c17E1F4E27D49249b6fdb015f3A7e0`](https://sepolia.basescan.org/address/0xcE7Ce9dd95c17E1F4E27D49249b6fdb015f3A7e0) | pending external audit                     |
 | `BrainEscrow`             | [`0x5924BD26Bc827FB3cAd6f3a0DBDC793562555Cc0`](https://sepolia.basescan.org/address/0x5924BD26Bc827FB3cAd6f3a0DBDC793562555Cc0) | pending external audit (UNAUDITED testnet) |
 | `BrainReputationRegistry` | [`0xcEf6C25aE3DF9c5cfC0B3E11D031eAAa2c26026C`](https://sepolia.basescan.org/address/0xcEf6C25aE3DF9c5cfC0B3E11D031eAAa2c26026C) | pending external audit (UNAUDITED testnet) |
 

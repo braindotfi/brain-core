@@ -13,17 +13,17 @@ Both routes are tenant-isolated. The `endpoint_id` belongs to the calling tenant
 
 Brain forwards a fixed set of audit actions to registered endpoints. These are the only `event_type` values an outbound webhook carries:
 
-| `event_type`                   | Fires when                                            |
-| ------------------------------ | ----------------------------------------------------- |
-| `payment_intent.created`       | A PaymentIntent is proposed                           |
-| `payment_intent.approved`      | All required approvals are in (or Policy said `allow`) |
-| `payment_intent.rejected`      | Policy or an approver rejected                        |
+| `event_type`                   | Fires when                                              |
+| ------------------------------ | ------------------------------------------------------- |
+| `payment_intent.created`       | A PaymentIntent is proposed                             |
+| `payment_intent.approved`      | All required approvals are in (or Policy said `allow`)  |
+| `payment_intent.rejected`      | Policy or an approver rejected                          |
 | `payment_intent.execute.after` | The §6 gate ran and the intent was dispatched to a rail |
-| `ledger.counterparty.created`  | A counterparty row was created                        |
-| `ledger.transaction.created`   | A transaction row was created                         |
-| `ledger.obligation.created`    | An obligation row was created                         |
-| `policy.evaluate`              | A policy decision was recorded                        |
-| `raw.ingest.completed`         | A Raw ingestion finished                              |
+| `ledger.counterparty.created`  | A counterparty row was created                          |
+| `ledger.transaction.created`   | A transaction row was created                           |
+| `ledger.obligation.created`    | An obligation row was created                           |
+| `policy.evaluate`              | A policy decision was recorded                          |
+| `raw.ingest.completed`         | A Raw ingestion finished                                |
 
 There is no `payment_intent.settled` / `payment_intent.failed` event: rail settlement is async and confirmed via the rail-specific provider webhook plus the proof endpoint. The legacy `action.*` names are **not** emitted.
 
