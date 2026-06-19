@@ -96,6 +96,8 @@ export {
 export {
   runProjectionCycle,
   startCanonicalProjectionWorker,
+  replayQuarantined,
+  isQuarantined,
   type ProjectionWorker,
   type ProjectionWorkerDeps,
   type ProjectionWorkerOptions,
