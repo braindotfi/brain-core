@@ -473,23 +473,25 @@ if [[ "${BRAIN_DEMO_E2E_FULL:-false}" == "true" ]]; then
   fi
 
   # (e) AUDIT BEFORE -> AFTER LINKAGE (R-04 EC4). The §6 gate emits a mandatory
-  # payment_intent.execute.before event, and a successful execution emits a
-  # payment_intent.execute.after event. Both must be present in the executed
-  # PI's proof, the before must precede the after, and the after must be linked
-  # into the tamper-evident hash chain (non-empty prev_event_hash) — i.e. the
-  # pair is chained, not free-floating. The PI is terminal (executed + anchored)
-  # by this point, so re-fetch a fresh proof.
+  # payment_intent.execute.before event; a successful execution emits a
+  # payment_intent.execute.after event. The after event is written by the async
+  # rail-receipt path (outbox worker), so it can lag the terminal status by a
+  # moment — poll the proof until it appears (it is on the SAME hash chain as
+  # before, keyed on this PI). Then assert: before precedes after (oldest-first
+  # ordering) and the after is chained into the tamper-evident log (non-empty
+  # prev_event_hash) — the pair is linked, not free-floating.
   start_step
+  if ! poll_until "execute.after audit event" \
+    "curl -s '$V1/proof/$PI_ID' -H 'Authorization: Bearer $TOKEN'" \
+    '([.audit_events[]?.action] | index("payment_intent.execute.after")) // empty | tostring'; then
+    record "audit_linkage" fail ""
+    exit 1
+  fi
   LINK_PROOF=$(curl -s "$V1/proof/$PI_ID" -H "Authorization: Bearer $TOKEN")
   BEFORE_IDX=$(echo "$LINK_PROOF" | jq '[.audit_events[]?.action] | index("payment_intent.execute.before")')
   AFTER_IDX=$(echo "$LINK_PROOF" | jq '[.audit_events[]?.action] | index("payment_intent.execute.after")')
   if [[ "$BEFORE_IDX" == "null" || -z "$BEFORE_IDX" ]]; then
     fail "audit linkage: no payment_intent.execute.before event in the proof"
-    record "audit_linkage" fail ""
-    exit 1
-  fi
-  if [[ "$AFTER_IDX" == "null" || -z "$AFTER_IDX" ]]; then
-    fail "audit linkage: no payment_intent.execute.after event in the proof (execution did not audit)"
     record "audit_linkage" fail ""
     exit 1
   fi
