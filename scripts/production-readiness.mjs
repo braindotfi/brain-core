@@ -168,23 +168,35 @@ function checkRails(catalog) {
 function checkBootFences(catalog) {
   const fences = [];
 
-  // 1. DB isolation
-  const wikiDb = envSet("BRAIN_WIKI_DB_URL");
-  const privDb = envSet("DATABASE_PRIVILEGED_URL");
-  if (NODE_ENV === "production" && (!wikiDb || !privDb)) {
+  // 1. DB isolation: Wiki reader + the eight §4 least-privilege role URLs.
+  const PRIVILEGED_ROLE_URLS = [
+    "BRAIN_RAW_WORKER_DB_URL",
+    "BRAIN_CANONICAL_PROJECTOR_DB_URL",
+    "BRAIN_LEDGER_PROJECTOR_DB_URL",
+    "BRAIN_EXECUTION_WORKER_DB_URL",
+    "BRAIN_AUDIT_VERIFIER_DB_URL",
+    "BRAIN_AUDIT_PUBLISHER_DB_URL",
+    "BRAIN_RESOLVER_DB_URL",
+    "BRAIN_TENANT_DELETION_DB_URL",
+  ];
+  const missing = [
+    ...(envSet("BRAIN_WIKI_DB_URL") ? [] : ["BRAIN_WIKI_DB_URL"]),
+    ...PRIVILEGED_ROLE_URLS.filter((n) => !envSet(n)),
+  ];
+  if (NODE_ENV === "production" && missing.length > 0) {
     fences.push({
       name: "DB isolation",
       status: "red",
-      note: `would FAIL boot — missing ${[!wikiDb && "BRAIN_WIKI_DB_URL", !privDb && "DATABASE_PRIVILEGED_URL"].filter(Boolean).join(" + ")}`,
+      note: `would FAIL boot — missing ${missing.join(" + ")}`,
     });
-  } else if (!wikiDb || !privDb) {
+  } else if (missing.length > 0) {
     fences.push({
       name: "DB isolation",
       status: "yellow",
-      note: "would warn (set both URLs for production)",
+      note: "would warn (set the wiki + 8 least-privilege role URLs for production)",
     });
   } else {
-    fences.push({ name: "DB isolation", status: "green", note: "both URLs set" });
+    fences.push({ name: "DB isolation", status: "green", note: "wiki + 8 role URLs set" });
   }
 
   // 2. Escrow audit — uses the same two-part rule as the runtime fence.

@@ -7,7 +7,21 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { assertDbIsolationFences } from "./composition/db-isolation.js";
+import { assertDbIsolationFences, type PrivilegedRoleUrls } from "./composition/db-isolation.js";
+
+/** All eight §4 role URLs present. Tests blank out individual ones to fence. */
+function allRoleUrls(): PrivilegedRoleUrls {
+  return {
+    BRAIN_RAW_WORKER_DB_URL: "postgres://raw@host/db",
+    BRAIN_CANONICAL_PROJECTOR_DB_URL: "postgres://canon@host/db",
+    BRAIN_LEDGER_PROJECTOR_DB_URL: "postgres://ledger@host/db",
+    BRAIN_EXECUTION_WORKER_DB_URL: "postgres://exec@host/db",
+    BRAIN_AUDIT_VERIFIER_DB_URL: "postgres://verifier@host/db",
+    BRAIN_AUDIT_PUBLISHER_DB_URL: "postgres://publisher@host/db",
+    BRAIN_RESOLVER_DB_URL: "postgres://resolver@host/db",
+    BRAIN_TENANT_DELETION_DB_URL: "postgres://deletion@host/db",
+  };
+}
 
 describe("assertDbIsolationFences — BRAIN_WIKI_DB_URL", () => {
   it("throws in NODE_ENV=production when unset", () => {
@@ -15,7 +29,7 @@ describe("assertDbIsolationFences — BRAIN_WIKI_DB_URL", () => {
       assertDbIsolationFences({
         nodeEnv: "production",
         wikiDbUrl: undefined,
-        privilegedDbUrl: "postgres://priv@host/db",
+        privilegedRoleUrls: allRoleUrls(),
       }),
     ).toThrow(/BRAIN_WIKI_DB_URL is required in NODE_ENV=production/);
   });
@@ -25,7 +39,7 @@ describe("assertDbIsolationFences — BRAIN_WIKI_DB_URL", () => {
       assertDbIsolationFences({
         nodeEnv: "production",
         wikiDbUrl: "",
-        privilegedDbUrl: "postgres://priv@host/db",
+        privilegedRoleUrls: allRoleUrls(),
       }),
     ).toThrow(/BRAIN_WIKI_DB_URL is required in NODE_ENV=production/);
   });
@@ -35,19 +49,19 @@ describe("assertDbIsolationFences — BRAIN_WIKI_DB_URL", () => {
     const warnings = assertDbIsolationFences({
       nodeEnv: "development",
       wikiDbUrl: undefined,
-      privilegedDbUrl: "postgres://priv@host/db",
+      privilegedRoleUrls: allRoleUrls(),
       warn,
     });
     expect(warn).toHaveBeenCalledOnce();
     expect(warnings[0]).toMatch(/BRAIN_WIKI_DB_URL unset/);
   });
 
-  it("is silent in production when both URLs are set", () => {
+  it("is silent in production when wiki + all eight role URLs are set", () => {
     const warn = vi.fn();
     const warnings = assertDbIsolationFences({
       nodeEnv: "production",
       wikiDbUrl: "postgres://reader@host/db",
-      privilegedDbUrl: "postgres://priv@host/db",
+      privilegedRoleUrls: allRoleUrls(),
       warn,
     });
     expect(warn).not.toHaveBeenCalled();
@@ -55,59 +69,67 @@ describe("assertDbIsolationFences — BRAIN_WIKI_DB_URL", () => {
   });
 });
 
-describe("assertDbIsolationFences — DATABASE_PRIVILEGED_URL", () => {
-  it("throws in NODE_ENV=production when unset", () => {
+describe("assertDbIsolationFences — §4 role URLs", () => {
+  it("throws in NODE_ENV=production when any one role URL is unset", () => {
     expect(() =>
       assertDbIsolationFences({
         nodeEnv: "production",
         wikiDbUrl: "postgres://reader@host/db",
-        privilegedDbUrl: undefined,
+        privilegedRoleUrls: { ...allRoleUrls(), BRAIN_LEDGER_PROJECTOR_DB_URL: undefined },
       }),
-    ).toThrow(/DATABASE_PRIVILEGED_URL is required in NODE_ENV=production/);
+    ).toThrow(/BRAIN_LEDGER_PROJECTOR_DB_URL is required in NODE_ENV=production/);
   });
 
-  it("throws in NODE_ENV=production when empty string", () => {
+  it("throws in NODE_ENV=production when a role URL is an empty string", () => {
     expect(() =>
       assertDbIsolationFences({
         nodeEnv: "production",
         wikiDbUrl: "postgres://reader@host/db",
-        privilegedDbUrl: "",
+        privilegedRoleUrls: { ...allRoleUrls(), BRAIN_TENANT_DELETION_DB_URL: "" },
       }),
-    ).toThrow(/DATABASE_PRIVILEGED_URL is required in NODE_ENV=production/);
+    ).toThrow(/BRAIN_TENANT_DELETION_DB_URL is required in NODE_ENV=production/);
   });
 
-  it("warns rather than throws in dev when unset", () => {
+  it("warns rather than throws in dev when a role URL is unset", () => {
     const warn = vi.fn();
     const warnings = assertDbIsolationFences({
       nodeEnv: "test",
       wikiDbUrl: "postgres://reader@host/db",
-      privilegedDbUrl: undefined,
+      privilegedRoleUrls: { ...allRoleUrls(), BRAIN_RAW_WORKER_DB_URL: undefined },
       warn,
     });
     expect(warn).toHaveBeenCalledOnce();
-    expect(warnings[0]).toMatch(/DATABASE_PRIVILEGED_URL unset/);
+    expect(warnings[0]).toMatch(/BRAIN_RAW_WORKER_DB_URL unset/);
   });
 
-  it("emits both warnings when both are missing in dev", () => {
+  it("emits a warning per missing URL in dev (wiki + all eight)", () => {
     const warn = vi.fn();
+    const blank: PrivilegedRoleUrls = {
+      BRAIN_RAW_WORKER_DB_URL: undefined,
+      BRAIN_CANONICAL_PROJECTOR_DB_URL: undefined,
+      BRAIN_LEDGER_PROJECTOR_DB_URL: undefined,
+      BRAIN_EXECUTION_WORKER_DB_URL: undefined,
+      BRAIN_AUDIT_VERIFIER_DB_URL: undefined,
+      BRAIN_AUDIT_PUBLISHER_DB_URL: undefined,
+      BRAIN_RESOLVER_DB_URL: undefined,
+      BRAIN_TENANT_DELETION_DB_URL: undefined,
+    };
     const warnings = assertDbIsolationFences({
       nodeEnv: "development",
       wikiDbUrl: undefined,
-      privilegedDbUrl: undefined,
+      privilegedRoleUrls: blank,
       warn,
     });
-    expect(warn).toHaveBeenCalledTimes(2);
-    expect(warnings).toHaveLength(2);
+    expect(warn).toHaveBeenCalledTimes(9); // wiki + 8 role URLs
+    expect(warnings).toHaveLength(9);
   });
 
-  it("throws on the FIRST missing URL in production (does not collect a list)", () => {
-    // Defensive: if main.ts ever wants both messages it should refactor; today
-    // a single throw on the first failure is enough to fail fast at boot.
+  it("throws on the FIRST missing URL in production (wiki checked first)", () => {
     expect(() =>
       assertDbIsolationFences({
         nodeEnv: "production",
         wikiDbUrl: undefined,
-        privilegedDbUrl: undefined,
+        privilegedRoleUrls: { ...allRoleUrls(), BRAIN_RAW_WORKER_DB_URL: undefined },
       }),
     ).toThrow(/BRAIN_WIKI_DB_URL is required/);
   });

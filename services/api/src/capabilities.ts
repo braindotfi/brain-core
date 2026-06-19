@@ -84,10 +84,10 @@ export interface BootCapabilities {
    */
   wikiDbIsolation: boolean;
   /**
-   * Whether cross-tenant operations use the BYPASSRLS privileged role
-   * (DATABASE_PRIVILEGED_URL set). False ⇒ outbox/tenant-deletion/Plaid
-   * resolvers run as the same app role and silently match zero rows in any
-   * RLS-armed table. Required true in production.
+   * Whether cross-tenant operations use the least-privilege BYPASSRLS roles
+   * (all eight §4 role URLs set; infra/db-roles.sql). False ⇒ the
+   * workers/resolvers run as the same app role and silently match zero rows in
+   * any RLS-armed table. Required true in production.
    */
   privilegedDbIsolation: boolean;
   /**

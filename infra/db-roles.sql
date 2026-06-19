@@ -57,6 +57,43 @@ DO $$ BEGIN
 END $$;
 ALTER ROLE brain_wiki_reader WITH LOGIN PASSWORD :'brain_wiki_reader_password' NOBYPASSRLS;
 
+-- 4. Least-privilege cross-tenant roles (replace the single broad brain_privileged
+--    for the API runtime). Each is BYPASSRLS (its job is genuinely cross-tenant)
+--    but receives only the table grants in the matrix below, so a confused-deputy
+--    bug or compromise in one privileged path cannot reach another layer's tables.
+--    brain_privileged remains ONLY for the deploy-time seed one-shot
+--    (docker-compose `seed`), never the running API runtime (the broadest surface).
+--      brain_raw_worker          sync + interpret workers     (raw_* tables)
+--      brain_canonical_projector canonical projection worker  (canonical_* + read raw_parsed)
+--      brain_ledger_projector    ledger projection workers     (ledger projections + read canonical_*)
+--      brain_execution_worker    outbox drain worker           (execution_outbox claim/mark only)
+--      brain_audit_verifier      audit consistency verifier    (audit_events read + verifier state)
+--      brain_audit_publisher     anchor tenant enumeration     (audit_events read only)
+--      brain_resolver            webhook/SIWX/login resolvers  (cross-tenant SELECT only)
+--      brain_tenant_deletion     GDPR erasure svc + blob-purge (broad DELETE, route-gated)
+DO $$
+DECLARE
+  rolename text;
+BEGIN
+  FOREACH rolename IN ARRAY ARRAY[
+    'brain_raw_worker', 'brain_canonical_projector', 'brain_ledger_projector',
+    'brain_execution_worker', 'brain_audit_verifier', 'brain_audit_publisher',
+    'brain_resolver', 'brain_tenant_deletion'
+  ] LOOP
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = rolename) THEN
+      EXECUTE format('CREATE ROLE %I LOGIN', rolename);
+    END IF;
+  END LOOP;
+END $$;
+ALTER ROLE brain_raw_worker          WITH LOGIN PASSWORD :'brain_raw_worker_password' BYPASSRLS;
+ALTER ROLE brain_canonical_projector WITH LOGIN PASSWORD :'brain_canonical_projector_password' BYPASSRLS;
+ALTER ROLE brain_ledger_projector    WITH LOGIN PASSWORD :'brain_ledger_projector_password' BYPASSRLS;
+ALTER ROLE brain_execution_worker    WITH LOGIN PASSWORD :'brain_execution_worker_password' BYPASSRLS;
+ALTER ROLE brain_audit_verifier      WITH LOGIN PASSWORD :'brain_audit_verifier_password' BYPASSRLS;
+ALTER ROLE brain_audit_publisher     WITH LOGIN PASSWORD :'brain_audit_publisher_password' BYPASSRLS;
+ALTER ROLE brain_resolver            WITH LOGIN PASSWORD :'brain_resolver_password' BYPASSRLS;
+ALTER ROLE brain_tenant_deletion     WITH LOGIN PASSWORD :'brain_tenant_deletion_password' BYPASSRLS;
+
 -- brain_app + brain_privileged get full DML on the application schema; neither
 -- owns the tables (the migration/owner role does), so RLS applies to brain_app.
 GRANT USAGE ON SCHEMA public TO brain_app, brain_privileged, brain_wiki_reader;
@@ -87,6 +124,88 @@ BEGIN
 END
 $$;
 
+-- ---------------------------------------------------------------------------
+-- Least-privilege grant matrix for the §4 roles. Each role starts with NO
+-- table privileges (it is absent from the blanket grant above) and receives
+-- only what its consumer touches (footprints verified against the worker
+-- source). Prefix-pattern loops mirror the wiki_reader pattern so re-applying
+-- db-roles.sql after a new migration keeps a role's layer current.
+-- ---------------------------------------------------------------------------
+GRANT USAGE ON SCHEMA public TO
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+  brain_resolver, brain_tenant_deletion;
+-- Writer roles may hit serial-backed tables; read-only roles (publisher,
+-- resolver) get no sequence access.
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_tenant_deletion;
+
+-- brain_raw_worker: full DML on the raw layer (sync + interpret workers).
+DO $$
+DECLARE t regclass;
+BEGIN
+  FOR t IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'raw\_%'
+  LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO brain_raw_worker', t); END LOOP;
+END $$;
+
+-- brain_canonical_projector: full DML on canonical_*, SELECT on raw_parsed (input).
+DO $$
+DECLARE t regclass;
+BEGIN
+  FOR t IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'canonical\_%'
+  LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO brain_canonical_projector', t); END LOOP;
+END $$;
+GRANT SELECT ON raw_parsed TO brain_canonical_projector;
+
+-- brain_ledger_projector: SELECT on canonical_* (input); DML ONLY on the three
+-- ledger projection targets (NOT the money-path ledger_* tables).
+DO $$
+DECLARE t regclass;
+BEGIN
+  FOR t IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'canonical\_%'
+  LOOP EXECUTE format('GRANT SELECT ON %s TO brain_ledger_projector', t); END LOOP;
+END $$;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties
+  TO brain_ledger_projector;
+
+-- brain_execution_worker: cross-tenant claim/reclaim/mark on the outbox only.
+-- The per-row settle re-enters tenant scope on brain_app, so this role needs no
+-- money-path (ledger_*) grants at all.
+GRANT SELECT, INSERT, UPDATE ON execution_outbox TO brain_execution_worker;
+
+-- brain_audit_verifier: read audit_events; advance the verifier cursor; append
+-- findings (no UPDATE/DELETE on findings — a detected break is un-erasable).
+GRANT SELECT ON audit_events TO brain_audit_verifier;
+GRANT SELECT, INSERT, UPDATE ON audit_verifier_checkpoint TO brain_audit_verifier;
+GRANT SELECT, INSERT ON audit_integrity_findings TO brain_audit_verifier;
+
+-- brain_audit_publisher: cross-tenant audit_events enumeration only (the
+-- per-tenant publish runs on brain_app under RLS).
+GRANT SELECT ON audit_events TO brain_audit_publisher;
+
+-- brain_resolver: cross-tenant SELECT only, for the webhook/SIWX/login resolvers.
+GRANT SELECT ON raw_sync_partitions, wallet_identities, users TO brain_resolver;
+
+-- brain_tenant_deletion: GDPR Article 17 erasure (route-gated) + blob-purge
+-- worker. Broad DELETE across tenant-scoped (RLS) tables — that IS the erasure
+-- concern — plus the tenant registry and the purge bookkeeping. audit_events /
+-- audit_anchors are preserved (the append-only REVOKE below strips DELETE).
+DO $$
+DECLARE t regclass;
+BEGIN
+  FOR t IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity
+  LOOP EXECUTE format('GRANT SELECT, DELETE ON %s TO brain_tenant_deletion', t); END LOOP;
+END $$;
+GRANT SELECT, DELETE ON tenants TO brain_tenant_deletion;
+GRANT SELECT, UPDATE ON raw_artifacts TO brain_tenant_deletion;
+GRANT SELECT, INSERT, UPDATE ON tenant_blob_purge_jobs, tenant_blob_purge_audit_outbox
+  TO brain_tenant_deletion;
+
 -- §1.4 audit append-only: the audit log must be IMMUTABLE to every runtime role.
 -- The blanket DML grant above (and the default privileges) hand brain_app +
 -- brain_privileged UPDATE/DELETE on every table, and `REVOKE ... FROM PUBLIC` in
@@ -97,8 +216,14 @@ $$;
 -- unenforced at the DB level. Only the migration/owner role retains the ability
 -- to administratively repair audit data, through a separately controlled, audited
 -- procedure. (Codex 307161b P1 #1.)
+-- Includes the §4 roles: brain_tenant_deletion's broad RLS-table DELETE would
+-- otherwise cover audit_events (it is RLS-scoped), which must stay preserved;
+-- the audit verifier/publisher keep their SELECT (only mutation is stripped).
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
-  FROM brain_app, brain_privileged, brain_wiki_reader;
+  FROM brain_app, brain_privileged, brain_wiki_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion;
 
 -- Audit-verifier FORENSIC state (audit_verifier_checkpoint, audit_integrity_findings):
 -- global, RLS-exempt tables that PROVE tamper detection. Only the privileged verifier
@@ -111,12 +236,18 @@ REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
 -- checkpoint SELECT/INSERT/UPDATE (the cursor advances) and findings SELECT/INSERT.
 -- A controlled resolution path (a later change) will grant finding UPDATE to a
 -- dedicated recovery role, not to the broad runtime roles. (Codex 9389568 P1.)
+-- brain_audit_verifier is the only §4 role that touches the forensic tables; it
+-- gets the same confinement brain_privileged had (cursor S/I/U + findings S/I,
+-- but no erase). Every other §4 role is stripped entirely (defense in depth —
+-- the forensic tables are RLS-exempt so they were never in any grant loop).
 REVOKE ALL ON audit_verifier_checkpoint, audit_integrity_findings
-  FROM brain_app, brain_wiki_reader;
+  FROM brain_app, brain_wiki_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_publisher, brain_resolver, brain_tenant_deletion;
 REVOKE DELETE, TRUNCATE ON audit_verifier_checkpoint
-  FROM brain_privileged;
+  FROM brain_privileged, brain_audit_verifier;
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_integrity_findings
-  FROM brain_privileged;
+  FROM brain_privileged, brain_audit_verifier;
 
 -- Defence in depth: FORCE RLS on every tenant-scoped table so even a connection
 -- that happens to be the table owner is still subject to the tenant_isolation
@@ -137,9 +268,18 @@ END
 $$;
 
 -- Deploy wiring (env): request-path services connect with brain_app via
--- DATABASE_URL; the cross-tenant readers listed above connect with
--- brain_privileged via DATABASE_PRIVILEGED_URL; the Wiki projection connects
--- with brain_wiki_reader via BRAIN_WIKI_DB_URL. In NODE_ENV=production the api
--- fails to boot if DATABASE_PRIVILEGED_URL or BRAIN_WIKI_DB_URL is unset
--- (services/api/src/composition/db-isolation.ts). Migrations run as the
--- owner/superuser role (its own DATABASE_URL), not as any of these three.
+-- DATABASE_URL; the Wiki projection connects with brain_wiki_reader via
+-- BRAIN_WIKI_DB_URL; each §4 cross-tenant role connects via its own URL:
+--   brain_raw_worker          BRAIN_RAW_WORKER_DB_URL
+--   brain_canonical_projector BRAIN_CANONICAL_PROJECTOR_DB_URL
+--   brain_ledger_projector    BRAIN_LEDGER_PROJECTOR_DB_URL
+--   brain_execution_worker    BRAIN_EXECUTION_WORKER_DB_URL
+--   brain_audit_verifier      BRAIN_AUDIT_VERIFIER_DB_URL
+--   brain_audit_publisher     BRAIN_AUDIT_PUBLISHER_DB_URL
+--   brain_resolver            BRAIN_RESOLVER_DB_URL
+--   brain_tenant_deletion     BRAIN_TENANT_DELETION_DB_URL
+-- In NODE_ENV=production the api fails to boot if BRAIN_WIKI_DB_URL or any of
+-- the eight §4 URLs is unset (services/api/src/composition/db-isolation.ts);
+-- in dev/test each falls back to DATABASE_URL with a warning. The API runtime
+-- no longer uses brain_privileged; it survives ONLY for the deploy-time seed
+-- one-shot (docker-compose `seed`). Migrations run as the owner/superuser role.

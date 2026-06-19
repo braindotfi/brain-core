@@ -290,7 +290,16 @@ async function main(): Promise<void> {
   assertDbIsolationFences({
     nodeEnv: cfg.NODE_ENV,
     wikiDbUrl: cfg.BRAIN_WIKI_DB_URL,
-    privilegedDbUrl: cfg.DATABASE_PRIVILEGED_URL,
+    privilegedRoleUrls: {
+      BRAIN_RAW_WORKER_DB_URL: cfg.BRAIN_RAW_WORKER_DB_URL,
+      BRAIN_CANONICAL_PROJECTOR_DB_URL: cfg.BRAIN_CANONICAL_PROJECTOR_DB_URL,
+      BRAIN_LEDGER_PROJECTOR_DB_URL: cfg.BRAIN_LEDGER_PROJECTOR_DB_URL,
+      BRAIN_EXECUTION_WORKER_DB_URL: cfg.BRAIN_EXECUTION_WORKER_DB_URL,
+      BRAIN_AUDIT_VERIFIER_DB_URL: cfg.BRAIN_AUDIT_VERIFIER_DB_URL,
+      BRAIN_AUDIT_PUBLISHER_DB_URL: cfg.BRAIN_AUDIT_PUBLISHER_DB_URL,
+      BRAIN_RESOLVER_DB_URL: cfg.BRAIN_RESOLVER_DB_URL,
+      BRAIN_TENANT_DELETION_DB_URL: cfg.BRAIN_TENANT_DELETION_DB_URL,
+    },
   });
 
   // Partner-connector in-process isolation: refuse to boot if a partner-tier
@@ -869,18 +878,31 @@ async function main(): Promise<void> {
     resolveInvoiceShortcut: invoiceShortcut,
   };
 
-  // Outbox worker + tenant-deletion service use the privileged (BYPASSRLS)
-  // pool for cross-tenant claim/mark/delete. Production fence is enforced
-  // up at boot by assertDbIsolationFences (composition/db-isolation.ts).
-  let privilegedPool = pool;
-  if (cfg.DATABASE_PRIVILEGED_URL !== undefined) {
-    privilegedPool = createPool({
-      connectionString: cfg.DATABASE_PRIVILEGED_URL,
-      max: 3,
-      statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
-      applicationName: `${cfg.SERVICE_NAME}-privileged`,
-    });
-  }
+  // Least-privilege cross-tenant pools (replace the single broad brain_privileged
+  // pool). Each connects as its own BYPASSRLS role scoped to one layer's tables
+  // (infra/db-roles.sql §4). Falls back to the main pool in dev/test with a
+  // warning; production presence is fenced above by assertDbIsolationFences.
+  const makeRolePool = (url: string | undefined, suffix: string): typeof pool =>
+    url === undefined
+      ? pool
+      : createPool({
+          connectionString: url,
+          max: 3,
+          statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
+          applicationName: `${cfg.SERVICE_NAME}-${suffix}`,
+        });
+
+  const rawWorkerPool = makeRolePool(cfg.BRAIN_RAW_WORKER_DB_URL, "raw-worker");
+  const canonicalProjectorPool = makeRolePool(
+    cfg.BRAIN_CANONICAL_PROJECTOR_DB_URL,
+    "canonical-projector",
+  );
+  const ledgerProjectorPool = makeRolePool(cfg.BRAIN_LEDGER_PROJECTOR_DB_URL, "ledger-projector");
+  const executionWorkerPool = makeRolePool(cfg.BRAIN_EXECUTION_WORKER_DB_URL, "execution-worker");
+  const auditVerifierPool = makeRolePool(cfg.BRAIN_AUDIT_VERIFIER_DB_URL, "audit-verifier");
+  const auditPublisherPool = makeRolePool(cfg.BRAIN_AUDIT_PUBLISHER_DB_URL, "audit-publisher");
+  const resolverPool = makeRolePool(cfg.BRAIN_RESOLVER_DB_URL, "resolver");
+  const tenantDeletionPool = makeRolePool(cfg.BRAIN_TENANT_DELETION_DB_URL, "tenant-deletion");
 
   // Verify each pool actually connects with the intended role, not just that its
   // URL is set (db-isolation.ts only checks presence). Checks RLS posture, the
@@ -913,19 +935,109 @@ async function main(): Promise<void> {
             { table: "audit_integrity_findings", privilege: "SELECT" },
           ],
         },
+        // §4 least-privilege pools. Each is BYPASSRLS (cross-tenant) but the
+        // `forbidden` list proves it cannot reach another layer's tables — the
+        // confused-deputy confinement that replaces the single broad role.
         {
-          label: "privileged",
-          query: asQuery(privilegedPool),
+          label: "raw-worker",
+          query: asQuery(rawWorkerPool),
           mustBypassRls: true,
-          expectedRole: "brain_privileged",
-          // The verifier runs on this pool, so it keeps findings SELECT/INSERT and
-          // checkpoint SELECT/INSERT/UPDATE — but a detected break must be
-          // un-erasable: assert it can neither UPDATE nor DELETE findings.
+          expectedRole: "brain_raw_worker",
+          forbidden: [
+            { table: "canonical_journal_entry", privilege: "INSERT" },
+            { table: "ledger_payment_intents", privilege: "INSERT" },
+            { table: "audit_integrity_findings", privilege: "SELECT" },
+          ],
+        },
+        {
+          label: "canonical-projector",
+          query: asQuery(canonicalProjectorPool),
+          mustBypassRls: true,
+          expectedRole: "brain_canonical_projector",
+          forbidden: [
+            { table: "raw_parsed", privilege: "INSERT" }, // input is read-only
+            { table: "ledger_payment_intents", privilege: "INSERT" },
+            { table: "execution_outbox", privilege: "INSERT" },
+            { table: "audit_integrity_findings", privilege: "SELECT" },
+          ],
+        },
+        {
+          label: "ledger-projector",
+          query: asQuery(ledgerProjectorPool),
+          mustBypassRls: true,
+          expectedRole: "brain_ledger_projector",
+          forbidden: [
+            { table: "ledger_payment_intents", privilege: "INSERT" }, // money path, not a projection target
+            { table: "canonical_journal_entry", privilege: "INSERT" }, // input is read-only
+            { table: "execution_outbox", privilege: "INSERT" },
+            { table: "audit_integrity_findings", privilege: "SELECT" },
+          ],
+        },
+        {
+          label: "execution-worker",
+          query: asQuery(executionWorkerPool),
+          mustBypassRls: true,
+          expectedRole: "brain_execution_worker",
+          // Claim/mark the outbox only; the settle re-enters tenant scope on
+          // brain_app, so this role must reach no money-path table directly.
+          forbidden: [
+            { table: "ledger_payment_intents", privilege: "INSERT" },
+            { table: "ledger_transactions", privilege: "INSERT" },
+            { table: "raw_parsed", privilege: "SELECT" },
+            { table: "audit_integrity_findings", privilege: "SELECT" },
+          ],
+        },
+        {
+          label: "audit-verifier",
+          query: asQuery(auditVerifierPool),
+          mustBypassRls: true,
+          expectedRole: "brain_audit_verifier",
+          // Keeps findings SELECT/INSERT + checkpoint SELECT/INSERT/UPDATE, but a
+          // detected break must be un-erasable, and it touches nothing else.
           forbidden: [
             { table: "audit_events", privilege: "UPDATE" },
             { table: "audit_events", privilege: "DELETE" },
             { table: "audit_integrity_findings", privilege: "UPDATE" },
             { table: "audit_integrity_findings", privilege: "DELETE" },
+            { table: "ledger_payment_intents", privilege: "INSERT" },
+          ],
+        },
+        {
+          label: "audit-publisher",
+          query: asQuery(auditPublisherPool),
+          mustBypassRls: true,
+          expectedRole: "brain_audit_publisher",
+          // Read-only audit_events enumeration; no writes, no other tables.
+          forbidden: [
+            { table: "audit_events", privilege: "INSERT" },
+            { table: "audit_integrity_findings", privilege: "SELECT" },
+            { table: "ledger_payment_intents", privilege: "SELECT" },
+          ],
+        },
+        {
+          label: "resolver",
+          query: asQuery(resolverPool),
+          mustBypassRls: true,
+          expectedRole: "brain_resolver",
+          // Cross-tenant SELECT only on the resolution tables; never writes.
+          forbidden: [
+            { table: "wallet_identities", privilege: "INSERT" },
+            { table: "users", privilege: "UPDATE" },
+            { table: "ledger_payment_intents", privilege: "SELECT" },
+            { table: "audit_integrity_findings", privilege: "SELECT" },
+          ],
+        },
+        {
+          label: "tenant-deletion",
+          query: asQuery(tenantDeletionPool),
+          mustBypassRls: true,
+          expectedRole: "brain_tenant_deletion",
+          // Broad DELETE for GDPR erasure, but audit history stays preserved and
+          // forensic state is off-limits.
+          forbidden: [
+            { table: "audit_events", privilege: "DELETE" },
+            { table: "audit_events", privilege: "UPDATE" },
+            { table: "audit_integrity_findings", privilege: "SELECT" },
           ],
         },
         {
@@ -946,10 +1058,12 @@ async function main(): Promise<void> {
     );
   }
 
+  // Outbox drain claims/marks execution_outbox cross-tenant on the execution
+  // role; the per-row settle re-enters tenant scope on brain_app separately.
   const withPrivileged = async <T>(
     fn: (client: Pick<TenantScopedClient, "query">) => Promise<T>,
   ): Promise<T> => {
-    const pgClient = await privilegedPool.connect();
+    const pgClient = await executionWorkerPool.connect();
     try {
       return await fn(pgClient as unknown as Pick<TenantScopedClient, "query">);
     } finally {
@@ -992,7 +1106,7 @@ async function main(): Promise<void> {
   // retries + a dead-letter state. Harmless when idle.
   const tenantBlobPurgeWorker = startTenantBlobPurgeWorker(
     {
-      privilegedPool,
+      privilegedPool: tenantDeletionPool,
       blob,
       audit,
       metrics,
@@ -1041,7 +1155,10 @@ async function main(): Promise<void> {
   // run through the BYPASSRLS privileged pool. On the request-path `pool` (the
   // FORCE-RLS `brain_app` role) the queries would match zero rows and report a
   // permanent false-clean (doc A P1.1).
-  const auditConsistencyVerifier = startAuditConsistencyVerifier({ privilegedPool, metrics });
+  const auditConsistencyVerifier = startAuditConsistencyVerifier({
+    privilegedPool: auditVerifierPool,
+    metrics,
+  });
 
   // Exposed for POST /v1/demo/anchor/trigger — set when anchorBroadcaster is configured.
   let triggerAnchor: (() => Promise<void>) | undefined;
@@ -1413,7 +1530,7 @@ async function main(): Promise<void> {
   // Operator audit-health snapshot (90eade5 doc 5.10): auth + audit:admin, queries
   // the global verifier tables via the privileged pool. Root-mounted (not /v1) so
   // it stays an internal operational surface outside the public OpenAPI contract.
-  registerAuditHealthRoute(app, { privilegedPool });
+  registerAuditHealthRoute(app, { privilegedPool: auditVerifierPool });
 
   // Service layer route registrations — all under /v1 to match OpenAPI spec.
   // Raw: also registers content-type parsers + multipart inside registerRawPlugin.
@@ -1466,7 +1583,7 @@ async function main(): Promise<void> {
         }
       : createProviderTenantResolver({
           plaid: createPlaidTenantResolver(pool),
-          stripe: createStripeTenantResolver(privilegedPool),
+          stripe: createStripeTenantResolver(resolverPool),
         }),
   };
 
@@ -1536,11 +1653,11 @@ async function main(): Promise<void> {
       // GET /v1/openapi.yaml. Read-only projection of Brain_API_Specification.yaml;
       // route-scoped CSP relaxation lives inside the plugin (docs/routes.ts).
       await v1.register(async (child) => registerDocsRoutes(child));
-      // GDPR right-to-erasure. The privileged pool BYPASSes RLS so cross-
+      // GDPR right-to-erasure. The tenant-deletion role BYPASSes RLS so cross-
       // tenant rows are reachable for cleanup; auth + tenant-match are
       // enforced at the route boundary.
       const tenantDeletionService = new TenantDeletionService({
-        privilegedPool,
+        privilegedPool: tenantDeletionPool,
         audit,
       });
       await v1.register(async (child) =>
@@ -1627,7 +1744,7 @@ async function main(): Promise<void> {
       // owner JWT (email-or-wallet login). Cross-tenant read ⇒ privileged pool.
       // Always wired — additive and harmless (returns null absent any link, so
       // sign-in falls through to the agent path).
-      const walletIdentityReader = new PostgresWalletIdentityReader(privilegedPool);
+      const walletIdentityReader = new PostgresWalletIdentityReader(resolverPool);
       await v1.register(async (child) =>
         registerSiwxRoutes(child, {
           signer: siwxSigner,
@@ -1653,7 +1770,7 @@ async function main(): Promise<void> {
         // Owner password login → short-lived management JWT. The email→user
         // lookup is cross-tenant, so it uses the brain_privileged pool (the same
         // sanctioned entry point as the SIWX address→agent lookup).
-        const credentialReader = new PostgresUserCredentialReader(privilegedPool);
+        const credentialReader = new PostgresUserCredentialReader(resolverPool);
         await v1.register(async (child) =>
           registerPasswordLoginRoute(child, {
             resolveUserByEmail: (email) => credentialReader.resolveByEmail(email),
@@ -2024,7 +2141,7 @@ async function main(): Promise<void> {
         // background publisher. Only meaningful when the broadcaster is wired.
         await registerDemoProvisionAnchorRoute(v1, {
           provisionSecret,
-          // Use the app pool (brain_app, FORCE RLS), NOT privilegedPool:
+          // Use the app pool (brain_app, FORCE RLS), NOT a BYPASSRLS pool:
           // publishAnchor -> withTenantScope(tenantId) sets app.tenant_id and
           // relies on RLS to scope listEventsForAnchor to this tenant. A
           // BYPASSRLS pool would silently anchor EVERY tenant's events under
@@ -2045,38 +2162,38 @@ async function main(): Promise<void> {
   // Interpretation (Appendix B mechanism 2): promotes landed structured
   // artifacts (registered source_schema) into raw_parsed, which the
   // normalize worker then promotes to Ledger entities. Cross-tenant poll,
-  // hence privilegedPool; per-artifact writes stay tenant-scoped.
-  const interpretWorker = startInterpretWorker({ pool: privilegedPool, blob, audit });
+  // hence the raw-worker role; per-artifact writes stay tenant-scoped.
+  const interpretWorker = startInterpretWorker({ pool: rawWorkerPool, blob, audit });
 
   // Canonical projection (ingestion architecture §12, Phase 5): promotes the
   // rich Merge accounting pages (gl_account / journal_entry) that the compact
   // Ledger drops into the canonical domain store. Cross-tenant poll over
-  // raw_parsed, hence privilegedPool; per-row writes stay tenant-scoped.
+  // raw_parsed, hence the canonical-projector role; per-row writes stay scoped.
   const canonicalProjectionWorker = startCanonicalProjectionWorker({
-    pool: privilegedPool,
+    pool: canonicalProjectorPool,
     audit,
     metrics,
   });
 
   // Ledger chart-of-accounts projection (ingestion architecture §12, Phase 5):
   // keeps ledger_gl_accounts current as canonical_gl_account grows. Cross-tenant
-  // poll over canonical, hence privilegedPool; per-row upserts stay tenant-scoped.
-  const ledgerProjectionWorker = startLedgerProjectionWorker({ pool: privilegedPool });
+  // poll over canonical, hence the ledger-projector role; upserts stay scoped.
+  const ledgerProjectionWorker = startLedgerProjectionWorker({ pool: ledgerProjectorPool });
 
   // Ledger AP/AR projection (Phase 5 cutover): obligations + counterparties for
   // Merge-sourced data now project from canonical (the extractor no longer
-  // writes them directly). Cross-tenant poll, hence privilegedPool.
+  // writes them directly). Cross-tenant poll, hence the ledger-projector role.
   const ledgerAparProjectionWorker = startLedgerAparProjectionWorker({
-    pool: privilegedPool,
+    pool: ledgerProjectorPool,
     metrics,
   });
 
   // Authenticated incremental pull (ingestion architecture §10). The
-  // cross-tenant source poll needs BYPASSRLS, hence privilegedPool; all
+  // cross-tenant source poll needs BYPASSRLS, hence the raw-worker role; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
   // narrowly per partition run via the encrypted source-credential store.
   const syncWorker = startSyncWorker({
-    pool: privilegedPool,
+    pool: rawWorkerPool,
     blob,
     audit,
     resolveCredentials: (tenantId, sourceId) =>
@@ -2096,12 +2213,13 @@ async function main(): Promise<void> {
       const now = new Date();
       const periodStart = new Date(now.getTime() - intervalMs);
       try {
-        // Cross-tenant ENUMERATION only: MUST use the privileged (BYPASSRLS)
-        // pool. The app pool connects as brain_app under FORCE RLS, so without a
-        // tenant scope this DISTINCT returns zero rows and the scheduled anchor
-        // would silently never fire in production (the manual endpoint works
-        // because it is request-scoped to a tenant).
-        const res = await privilegedPool.query<{ tenant_id: string }>(
+        // Cross-tenant ENUMERATION only: MUST use a BYPASSRLS pool (the
+        // audit-publisher role, scoped to SELECT on audit_events). The app pool
+        // connects as brain_app under FORCE RLS, so without a tenant scope this
+        // DISTINCT returns zero rows and the scheduled anchor would silently
+        // never fire in production (the manual endpoint works because it is
+        // request-scoped to a tenant).
+        const res = await auditPublisherPool.query<{ tenant_id: string }>(
           "SELECT DISTINCT tenant_id FROM audit_events WHERE created_at >= $1",
           [periodStart],
         );
@@ -2205,11 +2323,20 @@ async function main(): Promise<void> {
       mcpProofBuilder: true,
       sourceCredentialEncryption: sourceCredential !== undefined,
       sourceCredentialKeyProvider: credentialKeyProvider.source,
-      // Storage isolation: BRAIN_WIKI_DB_URL / DATABASE_PRIVILEGED_URL set ⇒
-      // dedicated roles in front of Wiki + cross-tenant operations. Required
-      // true in production by assertDbIsolationFences (above, ~line 244).
+      // Storage isolation: BRAIN_WIKI_DB_URL + the eight §4 role URLs set ⇒
+      // dedicated least-privilege roles in front of Wiki + every cross-tenant
+      // operation. Required true in production by assertDbIsolationFences.
       wikiDbIsolation: cfg.BRAIN_WIKI_DB_URL !== undefined,
-      privilegedDbIsolation: cfg.DATABASE_PRIVILEGED_URL !== undefined,
+      privilegedDbIsolation: [
+        cfg.BRAIN_RAW_WORKER_DB_URL,
+        cfg.BRAIN_CANONICAL_PROJECTOR_DB_URL,
+        cfg.BRAIN_LEDGER_PROJECTOR_DB_URL,
+        cfg.BRAIN_EXECUTION_WORKER_DB_URL,
+        cfg.BRAIN_AUDIT_VERIFIER_DB_URL,
+        cfg.BRAIN_AUDIT_PUBLISHER_DB_URL,
+        cfg.BRAIN_RESOLVER_DB_URL,
+        cfg.BRAIN_TENANT_DELETION_DB_URL,
+      ].every((u) => u !== undefined),
       // Python brain-agents inbound auth (peer-review batch 2, P1+P2).
       // The Python side fails closed in production; this flag surfaces whether
       // we're signing on the way out.
@@ -2254,7 +2381,19 @@ async function main(): Promise<void> {
         workerDrainMs: WORKER_DRAIN_MS,
         closeApp: () => app.close(),
         closeAgentRouteWorker: () => agentRouteWorker.close(),
-        closePools: () => closeAllPools([pool, wikiPool, privilegedPool]),
+        closePools: () =>
+          closeAllPools([
+            pool,
+            wikiPool,
+            rawWorkerPool,
+            canonicalProjectorPool,
+            ledgerProjectorPool,
+            executionWorkerPool,
+            auditVerifierPool,
+            auditPublisherPool,
+            resolverPool,
+            tenantDeletionPool,
+          ]),
         disconnectRedis: () => redis.disconnect(),
         shutdownTracing: () => shutdownTracing(),
         log,
