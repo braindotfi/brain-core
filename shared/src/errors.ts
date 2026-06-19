@@ -473,7 +473,10 @@ export function toErrorEnvelope(err: BrainError, requestId: string): ErrorEnvelo
 }
 
 export function docsUrlFor(code: BrainErrorCode): string {
-  return `https://docs.brain.fi/errors/${code}`;
+  // The published error reference lives at /resources/errors (grouped by
+  // domain). The `#${code}` fragment lands on the page and is forward-
+  // compatible if per-code anchors are added; an unknown fragment is ignored.
+  return `https://docs.brain.fi/resources/errors#${code}`;
 }
 
 // ---------------------------------------------------------------------------

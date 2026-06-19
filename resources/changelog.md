@@ -6,6 +6,14 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.6 (docs-accuracy remediation + error `docs_url`)
+
+Documentation-accuracy pass across the published docs, reconciling them to the code as the source of truth: the §6 gate-check count (13 numbered + 10 hardening = 23), the MCP scope error code (`-32002`, not `-32004`), the route migration table (`/execution/*` propose/register stay live; `/agents/{id}/propose` and `/agents/register` 404), the MCP surface size (12 tools / 7 resources / 5 prompts), the self-serve signup path (`POST /v1/signup`), the credential model (`brain_sk_` is the bearer service token), the decision/status vocabularies (`allow|confirm|reject` and their SDK aliases), the webhook event catalog (`payment_intent.*`), and the deployed Base Sepolia contract addresses. No API / MCP / SDK behavior changed except the item below.
+
+#### Changed. Error envelope `docs_url`
+
+- **`error.docs_url` now points at the published error reference.** It previously emitted `https://docs.brain.fi/errors/{code}`, a path with no page (every self-help link 404'd). It now emits `https://docs.brain.fi/resources/errors#{code}`, which lands on the canonical error registry.
+
 ### v0.5.5 (GDPR erasure hardening)
 
 Second-pass review remediation of the tenant blob-purge workflow (RFC 0003). Compliance- and diligence-facing; the internal worker/test detail is omitted.
@@ -82,7 +90,7 @@ Two additive tracks: **machine-to-machine (M2M) agent commerce** (RFC 0001) and 
 
 #### Added. Self-serve onboarding (RFC 0002)
 
-- `POST /v1/auth/signup`. Open, sandbox-first tenant + owner creation (email + password). Returns a verification token directly only outside production (no email provider wired yet).
+- `POST /v1/signup`. Open, sandbox-first tenant + owner creation (email + password). Returns a verification token directly only outside production (no email provider wired yet). Registered only when `BRAIN_SELF_SERVE_SIGNUP` is enabled; returns 404 when the flag is off.
 - `POST /v1/auth/verify-email`. Verify the owner's email with the issued token.
 - `POST /v1/auth/login`. Email + password login for the human owner; mints an owner JWT.
 - `POST /v1/tenants/{tenant_id}/wallets`. Link a wallet to a tenant; a linked wallet can then sign in over SIWX as the owner.
@@ -166,8 +174,8 @@ The current release introduces a Normalized Ledger between Raw and Wiki, splits 
 
 - **Normalized Ledger layer.** Eleven entities: accounts, balances, transactions, counterparties, obligations, documents, categories, transfers, invoices, payment intents, reconciliation matches.
 - **Payment Intents.** Agent-proposed financial actions live as Ledger rows, queryable like any other entity.
-- **Pre-execution gate.** Deterministic 13-step check against live Ledger state before any payment executes.
-- **MCP server.** `POST /v1/agents/mcp`, JSON-RPC 2.0 over single-shot HTTP. 10 tools, 5 resource templates, 5 canned prompts.
+- **Pre-execution gate.** Deterministic check against live Ledger state before any payment executes: 13 numbered checks plus 10 hardening additions (23 entries total; several record `not_applicable` until their loaders are wired). See [the pre-execution gate](../protocol/the-pre-execution-gate.md).
+- **MCP server.** `POST /v1/agents/mcp`, JSON-RPC 2.0 over single-shot HTTP. 12 tools, 7 resource templates, 5 canned prompts.
 - **Agent contributions.** External agents with `raw:write` scope can push artifacts into the Raw layer with cryptographic attribution.
 - **`/v1/audit/entity/{type}/{id}` endpoint.** Pull every audit event that touched a specific Ledger row.
 
@@ -176,7 +184,7 @@ The current release introduces a Normalized Ledger between Raw and Wiki, splits 
 - **Ledger is now the source of truth.** Wiki is downstream of Ledger and regenerable from Ledger plus Raw at any time.
 - **Wiki no longer authoritative for financial state.** Wiki holds human-readable memory only; balances, transactions, and obligations come from Ledger.
 - **Execution renamed to Agent.** The Agent layer covers proposal, scope enforcement, and the propose-only MCP surface.
-- **Routes renamed.** `/agents/*`, `/payment-intents/*`, and `/agents/mcp` are the canonical paths. Legacy `/execution/*` routes continue to work with deprecation headers.
+- **Routes added.** `/payment-intents/*`, `/agents/run`, and `/agents/mcp` are the v0.3 paths that are mounted today. The legacy `/execution/*` routes remain **live and fully supported**: the generic propose/approve flow (`/execution/propose`, `/execution/approve`) and external-agent registration (`/execution/agents/register`) still run through them and have no v0.3 replacement. The reserved `/agents/{id}/propose` and `/agents/register` paths appear in the OpenAPI spec but are **not yet implemented and return 404**; do not migrate to them.
 
 ### Six Layers (Was Five)
 
@@ -185,16 +193,16 @@ The current release introduces a Normalized Ledger between Raw and Wiki, splits 
 
 ## Migration from the Previous Version
 
-| If you were using              | Use instead                        |
-| ------------------------------ | ---------------------------------- |
-| `/execution/propose`           | `/agents/{id}/propose`             |
-| `/execution/execute`           | `/payment-intents/{id}/execute`    |
-| `/execution/agents/*`          | `/agents/*`                        |
-| `/execution/mcp`               | `/agents/mcp`                      |
-| Wiki for current balances      | `brain.accounts.list` (Ledger)     |
-| Wiki for transaction filtering | `brain.transactions.list` (Ledger) |
+| If you were using              | Use instead                                                              |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| `/execution/propose`           | Still live (no replacement); or `/agents/run` for routed agent proposals |
+| `/execution/execute`           | `/payment-intents/{id}/execute`                                          |
+| `/execution/agents/register`   | Still live (no replacement); `/agents/register` is not yet implemented   |
+| `/execution/mcp`               | `/agents/mcp`                                                            |
+| Wiki for current balances      | `brain.accounts.list` (Ledger)                                           |
+| Wiki for transaction filtering | `brain.transactions.list` (Ledger)                                       |
 
-Legacy routes are supported through 2026-Q2 with `Deprecation` and `Sunset` headers attached to every response.
+Only `/execution/execute` and `/execution/mcp` have v0.3 replacements; both carry `Deprecation`/`Sunset` headers. The propose/approve and agent-registration routes under `/execution/*` are **not deprecated** and remain the supported path.
 
 ## Earlier: Five-Layer Protocol
 

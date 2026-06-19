@@ -21,6 +21,21 @@ The four core contracts. (The escrow + reputation contracts below are newer **UN
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📦 BrainEscrow</strong></td><td>Custodial USDC escrow for conditional M2M settlement: lock against a hashed job commitment, then <strong>incremental</strong> release/refund (milestones + arbiter dispute-splits). UNAUDITED, testnet only.</td><td><a href="escrow-and-x402.md">escrow-and-x402.md</a></td><td></td></tr><tr><td><strong>🏅 BrainReputationRegistry</strong></td><td>ERC-8004-style per-agent reputation <strong>pointer</strong> (Merkle root); read by Policy as a tighten-only threshold input. Never a money gate. Non-custodial. UNAUDITED, testnet only.</td><td><a href="brainreputationregistry.md">brainreputationregistry.md</a></td><td></td></tr><tr><td><strong>⚡ x402 Settlement</strong></td><td>HTTP-native machine payments (USDC on Base) for per-call API access, settled through the §6 gate.</td><td><a href="escrow-and-x402.md">escrow-and-x402.md</a></td><td></td></tr></tbody></table>
 
+### Deployed Addresses
+
+All six contracts are deployed on **Base Sepolia (chain `84532`)**. There is **no mainnet deployment**; mainnet is blocked on the external smart-contract audit. A `brain.proof()` result anchors to `BrainAuditAnchor`; look the anchor tx up on the explorer to verify it independently.
+
+| Contract                  | Base Sepolia address                                                                                                       | Base mainnet           |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `BrainAuditAnchor`        | [`0xb900add824064098342c869ff83efdeb05eb95ce`](https://sepolia.basescan.org/address/0xb900add824064098342c869ff83efdeb05eb95ce) | pending external audit |
+| `BrainPolicyRegistry`     | [`0x92d1CC5c46eAE229C8A9dD95a334cec0cE33CAD9`](https://sepolia.basescan.org/address/0x92d1CC5c46eAE229C8A9dD95a334cec0cE33CAD9) | pending external audit |
+| `BrainSmartAccount`       | [`0x8cC094d03676d29c8cE0267480f58188E7F1E23D`](https://sepolia.basescan.org/address/0x8cC094d03676d29c8cE0267480f58188E7F1E23D) | pending external audit |
+| `BrainMCPAgentRegistry`   | [`0xcE7Ce9dd95c17E1F4E27D49249b6fdb015f3A7e0`](https://sepolia.basescan.org/address/0xcE7Ce9dd95c17E1F4E27D49249b6fdb015f3A7e0) | pending external audit |
+| `BrainEscrow`             | [`0x5924BD26Bc827FB3cAd6f3a0DBDC793562555Cc0`](https://sepolia.basescan.org/address/0x5924BD26Bc827FB3cAd6f3a0DBDC793562555Cc0) | pending external audit (UNAUDITED testnet) |
+| `BrainReputationRegistry` | [`0xcEf6C25aE3DF9c5cfC0B3E11D031eAAa2c26026C`](https://sepolia.basescan.org/address/0xcEf6C25aE3DF9c5cfC0B3E11D031eAAa2c26026C) | pending external audit (UNAUDITED testnet) |
+
+(Authoritative copy lives in `SECURITY.md`.)
+
 ### Standards Composed
 
 | Standard                      | Role in Brain                                                                                                                                                       |

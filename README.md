@@ -28,7 +28,7 @@ Brain is not a bank, a custodian, an accounting tool, an agent marketplace, or a
 ```typescript
 import { Brain } from "@brain/sdk";
 
-const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY });
+const brain = new Brain({ token: process.env.BRAIN_API_KEY });
 
 // Ask a grounded question about a tenant's money.
 const answer = await brain.ask("acme", "What's our cash position right now?");
@@ -41,6 +41,8 @@ const proof = await brain.proof(action.id);
 ```
 
 That covers most of what a typical integration touches; no on-chain knowledge is required to use any of it.
+
+> **Staging / controlled pilot.** Autonomous execution and on-chain proof are wired end-to-end, but Brain runs on **Base Sepolia** behind smart contracts **pending an external audit**; a `brain_sk_live_` key uses the same code path yet does not move real money on mainnet today. See the [Readiness Summary](architecture/readiness-summary.md).
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🚀 Quickstart</strong></td><td>Five minutes from <code>npm install</code> to a working integration.</td><td><a href="introduction/quickstart.md">quickstart.md</a></td><td></td></tr><tr><td><strong>🛠 Build</strong></td><td>Task-shaped guides. The patterns most apps need in their first hour.</td><td><a href="build/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>📐 Concepts</strong></td><td>The mental model. Memory, policy, agents, proof.</td><td><a href="concepts/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>📦 Protocol</strong></td><td>The deep stack. Six layers, smart contracts, on-chain anchoring.</td><td><a href="protocol/overview.md">overview.md</a></td><td></td></tr></tbody></table>
 
@@ -94,7 +96,7 @@ npm install @brain/sdk
 ```typescript
 import { Brain } from "@brain/sdk";
 
-const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY });
+const brain = new Brain({ token: process.env.BRAIN_API_KEY });
 
 const tenant = await brain.tenants.get("acme");
 console.log(tenant.displayName);

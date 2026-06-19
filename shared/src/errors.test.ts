@@ -202,7 +202,7 @@ describe("httpStatusForCode", () => {
 describe("docsUrlFor", () => {
   it("points at the Brain docs site", () => {
     expect(docsUrlFor("policy_rule_invalid")).toBe(
-      "https://docs.brain.fi/errors/policy_rule_invalid",
+      "https://docs.brain.fi/resources/errors#policy_rule_invalid",
     );
   });
 });
@@ -257,7 +257,7 @@ describe("toErrorEnvelope", () => {
         message: "bad rule",
         details: { rule_id: "abc" },
         request_id: "req_TEST",
-        docs_url: "https://docs.brain.fi/errors/policy_rule_invalid",
+        docs_url: "https://docs.brain.fi/resources/errors#policy_rule_invalid",
       },
     });
   });

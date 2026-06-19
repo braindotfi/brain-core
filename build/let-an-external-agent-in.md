@@ -25,14 +25,20 @@ Agent owners register once. Tenants do not see this step.
 ```typescript
 const agent = await brain.agents.register({
   address:        "0xAgentAddress",
-  identityRoot:   "0x...",         // ERC-8004 identity root (planned. RFC 0001)
-  mcpEndpoint:    "https://my-agent.example.com/mcp",
   capabilities:   ["read", "propose_payment", "propose_action"],
+  // Planned (RFC 0001), NOT yet anchored on-chain; accepted by the SDK but
+  // dropped before the on-chain write:
+  identityRoot:   "0x...",                          // ERC-8004 identity root (planned, RFC 0001)
+  mcpEndpoint:    "https://my-agent.example.com/mcp",
 });
 
 console.log(agent.id);       // ag_8231
 console.log(agent.txHash);   // BrainMCPAgentRegistry registration on Base
 ```
+
+{% hint style="warning" %}
+**What actually lands on-chain.** The deployed `BrainMCPAgentRegistry` struct stores only `agentId`, `agentAddress`, `tenantId`, `scopeHash`, and `behaviorHash`. `identityRoot`, `mcpEndpoint`, and `capabilities[]` are the **planned** ERC-8004 target (RFC 0001) and are not anchored today. Your `capabilities` are not written as a list; the SDK compiles them (together with the scope grant in Step 2) into the single `scopeHash` the contract stores, and the agent's JWT `scope_hash` claim must equal it. Under the hood this is a tenant-signed registration via `POST /v1/execution/agents/register`. See [BrainMCPAgentRegistry](../smart-contracts/brainmcpagentregistry.md).
+{% endhint %}
 
 ### Step 2: Grant the Agent Scope
 
@@ -61,8 +67,21 @@ The tenant signs an EIP-712 message under the hood; the SDK handles it. The gran
 | `execution:propose`      | Propose non-financial actions (reconciliation matches, anomaly flags)    |
 
 {% hint style="warning" %}
-External agents can **propose** but cannot **execute**. Execution is reserved for internal Brain workers running under tenant policy. This is the safety guarantee that makes external agents safe to authorize.
+External agents only ever **propose**; they never **execute**. Once an action is approved (Policy returned `allow`, or all required human approvals are in), Brain's internal settlement path runs the §6 gate and dispatches it. The proposing agent never moves the money itself, and a human approval supplies a signature, not a settlement call. That separation is the safety guarantee that makes external agents safe to authorize.
 {% endhint %}
+
+#### One permission, three vocabularies
+
+The same grant is spelled three ways depending on the surface. They map 1:1:
+
+| SDK `register` capability | SDK `grantScope` scope    | HTTP `allowed_actions` / `action_types_proposable` |
+| ------------------------- | ------------------------- | -------------------------------------------------- |
+| `read`                    | `ledger:read`, `wiki:read` | `read_wiki` (+ `read_ledger`, `read_audit`)        |
+| `propose_payment`         | `payment_intent:propose`  | `action_types_proposable: ["outbound_payment", …]` |
+| `propose_action`          | `execution:propose`       | `propose_action`                                   |
+| (contribute evidence)     | `raw:write`               | `write_raw`                                        |
+
+The SDK `register` capabilities are the coarse intent; `grantScope` scopes are the canonical `{layer}:{verb}` strings the gate checks; the [HTTP `POST /v1/execution/agents/register`](../api-reference/agents-api.md#register-an-external-agent) body uses `allowed_actions` + `action_types_proposable`. Pick the vocabulary for your surface; Brain stores them all as one `scopeHash`.
 
 ### Step 3: the Agent Connects
 

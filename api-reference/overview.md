@@ -112,7 +112,7 @@ All errors share a common shape.
     "message": "Counterparty not approved",
     "details": { "counterparty_id": "cp_x", "policy_version": 3 },
     "request_id": "req_8f3a92...",
-    "docs_url": "https://docs.brain.fi/errors/policy_denied"
+    "docs_url": "https://docs.brain.fi/resources/errors#policy_denied"
   }
 }
 ```

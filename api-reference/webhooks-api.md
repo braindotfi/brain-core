@@ -9,6 +9,24 @@ Inspect and replay failed deliveries on Brain's outbound webhook endpoints. This
 
 Both routes are tenant-isolated. The `endpoint_id` belongs to the calling tenant; a cross-tenant id returns `404`.
 
+### Event Types
+
+Brain forwards a fixed set of audit actions to registered endpoints. These are the only `event_type` values an outbound webhook carries:
+
+| `event_type`                   | Fires when                                            |
+| ------------------------------ | ----------------------------------------------------- |
+| `payment_intent.created`       | A PaymentIntent is proposed                           |
+| `payment_intent.approved`      | All required approvals are in (or Policy said `allow`) |
+| `payment_intent.rejected`      | Policy or an approver rejected                        |
+| `payment_intent.execute.after` | The §6 gate ran and the intent was dispatched to a rail |
+| `ledger.counterparty.created`  | A counterparty row was created                        |
+| `ledger.transaction.created`   | A transaction row was created                         |
+| `ledger.obligation.created`    | An obligation row was created                         |
+| `policy.evaluate`              | A policy decision was recorded                        |
+| `raw.ingest.completed`         | A Raw ingestion finished                              |
+
+There is no `payment_intent.settled` / `payment_intent.failed` event: rail settlement is async and confirmed via the rail-specific provider webhook plus the proof endpoint. The legacy `action.*` names are **not** emitted.
+
 ### How Dead-Lettering Works
 
 Brain dispatches webhook deliveries asynchronously. Each row in the dead-letter table tracks an `attempt_count`; the delivery worker retries with exponential backoff up to **5 attempts**, after which the row is marked exhausted and stops auto-retrying. Replay (below) is the manual escape hatch.
@@ -27,7 +45,7 @@ Authorization: Bearer <token>
     {
       "id": "dl_001",
       "event_id": "audit_evt_xyz",
-      "event_type": "payment_intent.executed",
+      "event_type": "payment_intent.execute.after",
       "last_error": "503 Service Unavailable",
       "attempt_count": 5,
       "created_at": "2026-05-27T08:15:00Z",

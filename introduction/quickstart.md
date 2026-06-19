@@ -21,7 +21,7 @@ npm install @brain/sdk
 
 ### Get a Key
 
-Sign up at [console.brain.dev](https://console.brain.dev), create a tenant, and copy your sandbox API key (`brain_sk_test_...`).
+Sign up at [console.brain.fi](https://console.brain.fi), create a tenant, and copy your sandbox API key (`brain_sk_test_...`).
 
 ```bash
 # .env
@@ -29,7 +29,11 @@ BRAIN_API_KEY=brain_sk_test_...
 ```
 
 {% hint style="info" %}
-Sandbox uses test credentials and Base Sepolia for on-chain anchoring. No real money moves. Production keys (`brain_sk_live_...`) work the same way against `console.brain.fi`.
+Sandbox uses test credentials and Base Sepolia for on-chain anchoring; no real money moves. The Console lives at `console.brain.fi`; API requests go to `https://api.sandbox.brain.fi` (sandbox) and `https://api.brain.fi` (production). See [API base URLs](../api-reference/overview.md#base-urls).
+{% endhint %}
+
+{% hint style="warning" %}
+**Production keys (`brain_sk_live_...`) use the identical code path, but Brain is in staging / controlled pilot today.** Settlement rails run on **Base Sepolia** behind smart contracts **pending an external audit**, so a live key does not yet move real money on mainnet. See [Readiness Summary](../architecture/readiness-summary.md) before treating `brain_sk_live_` as production-ready.
 {% endhint %}
 {% endstep %}
 
@@ -40,7 +44,7 @@ Sandbox uses test credentials and Base Sepolia for on-chain anchoring. No real m
 ```typescript
 import { Brain } from "@brain/sdk";
 
-const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY });
+const brain = new Brain({ token: process.env.BRAIN_API_KEY });
 
 // Connect a sandbox source (Plaid test data lands in seconds).
 await brain.sources.connect("acme", { type: "plaid", credentials: { sandbox: true } });
@@ -90,10 +94,12 @@ You'll meet each of these underneath as you go deeper. For now, they're just fiv
 
 ### Stuck?
 
-| Problem             | Fix                                                                                       |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| `AUTH_INVALID_KEY`  | Check `.env`. Sandbox keys start with `brain_sk_test_`, production with `brain_sk_live_`. |
-| `TENANT_NOT_FOUND`  | Create a tenant in the Console first. Tenant IDs are case-sensitive.                      |
-| `SOURCE_RATE_LIMIT` | Sandbox limits are 60 rpm. Wait and retry.                                                |
+Error codes are lowercase `snake_case` (see the [full registry](../resources/errors.md)).
+
+| Problem            | Fix                                                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `auth_invalid_key` | Check `.env`. Sandbox keys start with `brain_sk_test_`, production with `brain_sk_live_`.                             |
+| `tenant_not_found` | Create a tenant in the Console first. Tenant IDs are case-sensitive.                                                  |
+| `rate_limited`     | You hit your tier's per-minute limit. Honour the `Retry-After` header and retry. See [rate limits](../api-reference/overview.md#rate-limits) for the per-tier table. |
 
 [**→ Full error reference**](../resources/errors.md)

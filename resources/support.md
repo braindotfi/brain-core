@@ -15,13 +15,13 @@ hidden: true
 
 ### When Opening a Ticket
 
-The single most useful thing you can include is a **trace ID**. Every API and MCP response carries one. Pasting a trace ID lets the support team pull the exact request, the policy version that evaluated it, and the audit event that recorded it.
+The single most useful thing you can include is a **request ID** (the `request_id` field on every error envelope; `err.requestId` in the SDK). Every API and MCP response carries one. Pasting a request ID lets the support team pull the exact request, the policy version that evaluated it, and the audit event that recorded it.
 
 ```typescript
 try {
   await brain.pay("acme", { invoiceId: "inv_8231" });
 } catch (err) {
-  console.log(err.traceId); // include this in the ticket
+  console.log(err.requestId); // include this in the ticket
 }
 ```
 

@@ -9,7 +9,7 @@ In Brain, an **agent** is any non-human caller that proposes or executes actions
 | Caller                                    | Credential                                  |
 | ----------------------------------------- | ------------------------------------------- |
 | **Human**                                 | Email + password, or a linked wallet (SIWX) |
-| **Internal agent** (your backend)         | Server API key                              |
+| **Internal agent** (your backend)         | Server API key (the `brain_sk_…` service token) |
 | **External agent** (third-party software) | JWT, anchored to an on-chain registration   |
 
 All three hit the same endpoints, run through Policy, and land in the Audit log.
@@ -58,7 +58,7 @@ Tenant-granted scopes determine what an external agent sees and can do.
 A tenant can grant any subset. Unused scopes don't appear in the agent's available tools.
 
 {% hint style="warning" %}
-External agents can **propose** but cannot **execute**. Execution is reserved for internal Brain workers running under tenant policy. This is the safety guarantee that makes external agents safe to authorize.
+External agents only ever **propose**; they never **execute**. Once an action is approved (Policy returned `allow`, or all required human approvals are in), Brain's internal settlement path runs the §6 gate and dispatches it. The proposing agent never moves the money itself, and a human approval supplies a signature, not a settlement call. That separation is the safety guarantee that makes external agents safe to authorize.
 {% endhint %}
 
 ### How External Agents Stay Accountable

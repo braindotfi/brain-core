@@ -17,6 +17,10 @@ console.log(action.status);
 // "rejected"       → policy said no
 ```
 
+{% hint style="info" %}
+`action.status` uses the SDK aliases `auto | needs_approval | rejected`. The HTTP PaymentIntent lifecycle uses `approved | pending_approval | rejected | executed | …` for the same states (`auto` ⇒ `approved`/`executed`). See the [mapping table](../api-reference/payment-intents-api.md#status-lifecycle).
+{% endhint %}
+
 ### Handling All Three Outcomes
 
 ```typescript
@@ -46,7 +50,7 @@ switch (action.status) {
 await brain.approve(actionId, { as: "user_cfo" });
 ```
 
-`approve` records the typed signature and immediately attempts execution. The action's status moves from `needs_approval` to `auto` once all required approvers have signed.
+`approve` records the typed signature. Once all required approvers have signed, the intent becomes `approved` and Brain's internal settlement path runs the §6 gate and dispatches it; you do not call a separate execute step, and the approver's signature is not itself a settlement call. The action's status moves from `needs_approval` to `auto`.
 
 For multi-approver policies, every required approver calls `brain.approve`. Brain holds the action in `needs_approval` until the last one lands.
 
@@ -108,21 +112,26 @@ If your service crashes mid-call and your retry handler fires, you'll get the sa
 
 Most ACH and wire payments don't settle instantly. Subscribe to the action's lifecycle.
 
-| Event             | When                               |
-| ----------------- | ---------------------------------- |
-| `action.proposed` | Just after `brain.pay` returns     |
-| `action.approved` | All required approvers have signed |
-| `action.executed` | Dispatched to the rail             |
-| `action.settled`  | Rail confirmed settlement          |
-| `action.failed`   | Rail rejected or dispatch errored  |
+Outbound webhooks use the `payment_intent.*` event names (the same `event_type` values the [Webhooks API](../api-reference/webhooks-api.md) lists), not an `action.*` namespace:
+
+| `event_type`                   | When                                                                        |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| `payment_intent.created`       | Just after `brain.pay` returns (intent proposed)                            |
+| `payment_intent.approved`      | All required approvers have signed (or Policy returned `allow`)             |
+| `payment_intent.rejected`      | Policy or an approver rejected                                              |
+| `payment_intent.execute.after` | The §6 gate ran and the intent was dispatched to its rail                   |
+
+{% hint style="info" %}
+Settlement is asynchronous and there is **no** dedicated `payment_intent.settled` / `payment_intent.failed` outbound event today. `payment_intent.execute.after` fires when the intent is dispatched; final rail settlement (or failure) is observed via the rail-specific provider webhook and confirmed through [`GET /v1/proof/{action_id}`](../api-reference/proof-api.md) / replay-investigation.
+{% endhint %}
 
 ```typescript
 // Webhook handler
 app.post("/webhooks/brain", verifyBrainSig, (req, res) => {
   const event = req.body;
-  switch (event.type) {
-    case "action.settled":
-      markInvoicePaid(event.data.invoiceId);
+  switch (event.event_type) {
+    case "payment_intent.execute.after":
+      markInvoiceDispatched(event.data.invoiceId);
       break;
   }
   res.sendStatus(200);

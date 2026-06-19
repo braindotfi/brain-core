@@ -84,6 +84,8 @@ Returns the same `PaymentIntent` shape as above. `404` if unknown or tenant-isol
 
 Plus three transient states surfaced only by the immediate `execute` response: `dispatching`, `dispatched`, `in_flight` (outbox-row states; settlement is async).
 
+**SDK status aliases.** The SDK's higher-level `action.status` collapses these HTTP states onto the policy-decision triple: `proposed` / `approved` → **`auto`**, `pending_approval` → **`needs_approval`**, `rejected` → **`rejected`**; `executed`, `failed`, and `cancelled` pass through unchanged. So SDK code branching on `"auto"` is matching the same state HTTP code sees as `approved`. See [Policy → decision vocabulary across surfaces](policy-api.md#decision-vocabulary-across-surfaces).
+
 ### Approve a `pending_approval` Intent
 
 ```http

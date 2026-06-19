@@ -15,7 +15,7 @@ Brain **never** returns HTTP 200 with an error in the body. A non-2xx status alw
     "message": "Counterparty not in the approved allowlist",
     "details": { "counterparty_id": "cp_x", "policy_version": 3 },
     "request_id": "req_8f3a92...",
-    "docs_url": "https://docs.brain.fi/errors/policy_denied"
+    "docs_url": "https://docs.brain.fi/resources/errors#policy_denied"
   }
 }
 ```

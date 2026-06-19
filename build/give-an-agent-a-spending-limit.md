@@ -21,6 +21,10 @@ await brain.policy.activate(policy.id);
 
 That's the whole flow. From this point on, every `brain.pay` call evaluates against this policy.
 
+{% hint style="warning" %}
+**Plain-English authoring is the intended experience, but not yet wired.** Today, policies are authored as **structured JSON DSL**, not prose; there is no natural-language compile step on either the SDK or the HTTP API. The real SDK call is `brain.policy.compose(tenantId, dsl)` (also exposed as `create`): it **validates the DSL** and returns the EIP-712 signing payload, which you then submit via `brain.policy.sign(...)` (also exposed as `activate`, which takes signatures, not a policy id). Non-SDK callers POST the same DSL to `/policy/{tenant_id}/compose`. See the [Policy API](../api-reference/policy-api.md#compose-a-candidate-policy) for the JSON shape. Treat the `{ text: "…" }` form below as illustrative of intent until NL authoring ships.
+{% endhint %}
+
 ### Reviewing What Got Compiled
 
 The compiler returns the structured rules and a human-readable explanation. Always review before activating.
@@ -60,6 +64,10 @@ console.log(decision.approvers);   // populated if needs_approval
 ```
 
 `evaluate` doesn't create a payment intent. It just shows you what would happen. Useful for testing edge cases before activating.
+
+{% hint style="info" %}
+`decision.outcome` returns the SDK aliases `auto | needs_approval | rejected`. Over HTTP/MCP the same decision is the canonical `allow | confirm | reject`, and the rule's `then` (`execute`) field uses `auto | confirm | reject`. The three vocabularies map 1:1; see [Policy → decision vocabulary across surfaces](../api-reference/policy-api.md#decision-vocabulary-across-surfaces).
+{% endhint %}
 
 ### Approvers
 

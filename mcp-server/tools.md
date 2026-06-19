@@ -20,7 +20,7 @@ Brain's MCP surface exposes **12 tools** across four capability groups. Each too
 | `agent.action.propose`       | Agent action   | `execution:propose`      | Yes (writes Proposal)                |
 
 {% hint style="warning" %}
-**There is no `payment_intent.execute` tool.** External agents propose; humans (or internal Brain workers under an `auto` policy decision) execute. The pre-execution gate (13 numbered checks + 4 hardening additions) is the only path to settlement.
+**There is no `payment_intent.execute` tool.** External agents only ever propose. Execution is Brain-internal: an approved intent is dispatched by Brain's own settlement path, never by the proposing agent. A human (or a signed `allow` policy decision) supplies the approval that an intent needs before that internal path runs it; the human does not call a settlement endpoint. Every execution, attended or unattended, passes the same [deterministic pre-execution gate](../protocol/the-pre-execution-gate.md): 13 numbered checks plus 10 hardening additions (23 entries total; several record `not_applicable` until their loaders are wired, so the canonical happy path is the 13 numbered checks). It is the only path to settlement.
 {% endhint %}
 
 ### Ledger Reads
@@ -167,7 +167,7 @@ Propose a financial action. Brain creates a `PaymentIntent` row in the Ledger in
 | Argument                      | Type    | Description                                                                                                   |
 | ----------------------------- | ------- | ------------------------------------------------------------------------------------------------------------- |
 | `tenant_id`                   | string  | Required                                                                                                      |
-| `action_type`                 | string  | Required: `ach_outbound`, `ach_inbound`, `wire`, `onchain_transfer`, `erp_writeback`, `card_payment`, `other` |
+| `action_type`                 | string  | Required: `ach_outbound`, `ach_inbound`, `wire`, `onchain_transfer`, `erp_writeback`, `card_payment`, `x402_settle`, `escrow_release` (same enum as the HTTP API). `x402_settle` additionally requires `pay_to`; `escrow_release` requires `escrow_id` + `job_terms_hash`. |
 | `source_account_id`           | string  | Required                                                                                                      |
 | `destination_counterparty_id` | string  | Required                                                                                                      |
 | `amount`                      | decimal | Required                                                                                                      |
@@ -198,7 +198,7 @@ The proposal goes through Policy and lands as a `proposals` row. Approval and di
 
 ### Per-Call Scope Enforcement
 
-Even with the right top-level scope, each tool call is scope-checked at invocation. A token with `ledger:read` cannot call `wiki.question`. A token with `wiki:read` cannot call `raw.contribute`. The MCP layer rejects scope mismatches with JSON-RPC error `-32004` (scope insufficient).
+Even with the right top-level scope, each tool call is scope-checked at invocation. A token with `ledger:read` cannot call `wiki.question`. A token with `wiki:read` cannot call `raw.contribute`. The MCP layer rejects scope mismatches with JSON-RPC error `-32002` (scope insufficient / tenant mismatch). `-32004` is reserved for pre-execution gate failures; see the [error reference](../resources/errors.md).
 
 ### Idempotency
 
