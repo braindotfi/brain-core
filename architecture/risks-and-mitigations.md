@@ -47,11 +47,12 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 
 **Mitigation.**
 
-| Mechanism                        | How It Helps                                                      |
-| -------------------------------- | ----------------------------------------------------------------- |
-| Idempotent ingestion             | Repeated webhooks or pulls produce the same Raw artifact          |
-| Retries with exponential backoff | Transient failures recover automatically                          |
-| Replay from Raw                  | If an extractor needs to re-run, no need to re-pull from upstream |
+| Mechanism                        | How It Helps                                                                                                                                                            |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Idempotent ingestion             | Repeated webhooks or pulls produce the same Raw artifact                                                                                                                |
+| Retries with exponential backoff | Transient failures recover automatically                                                                                                                                |
+| Replay from Raw                  | If an extractor needs to re-run, no need to re-pull from upstream                                                                                                       |
+| Poison-record quarantine         | One malformed record is retried, then quarantined (never silently dropped) and surfaced via metrics; siblings keep projecting and an operator can replay it after a fix |
 
 ### Smart Contract Risk
 
