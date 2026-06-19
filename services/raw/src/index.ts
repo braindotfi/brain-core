@@ -70,6 +70,14 @@ export {
   type FetchConformanceInput,
 } from "./conformance/harness.js";
 
+// Partner-connector in-process isolation invariant.
+export {
+  assertPartnerConnectorIsolation,
+  assertRegistryPartnerIsolation,
+  type PartnerIsolationInput,
+} from "./adapters/isolation.js";
+export type { ConnectorTrustTier } from "./adapters/descriptors.js";
+
 export {
   SourceService,
   InMemorySourceRepository,

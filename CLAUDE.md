@@ -79,7 +79,7 @@ pnpm run demo:reset               # reset demo state (alias for tools/demo-reset
 pnpm run plaid:sandbox            # start the Plaid sandbox tool
 ```
 
-`pnpm run lint` bundles 15 individually runnable CI guard scripts. Each can be called standalone:
+`pnpm run lint` bundles 16 individually runnable CI guard scripts. Each can be called standalone:
 
 ```bash
 pnpm run check-scope-vocab
@@ -97,6 +97,7 @@ pnpm run check-risk-register-drift
 pnpm run check-contract-abi-drift
 pnpm run check-blob-purge-callsite
 pnpm run check-connector-descriptors
+pnpm run check-partner-connector-isolation
 ```
 
 `pnpm run scaffold-connector <snake_case_name>` generates a fully wired new
@@ -344,6 +345,7 @@ Run `./scripts/install-hooks.sh` once, it installs a pre-commit hook that scans 
   - **Ledger projection** (`services/ledger/src/projection/`): `ledger_gl_accounts` (ledger/0037) is the Ledger-side read-projection of `canonical_gl_account` (soft reference, no cross-service FK). `rebuildAccountingProjectionFromCanonical(ctx)` regenerates it from canonical alone, no provider contact (the Phase 5 AC). A steady-state projection worker keeps it current. **Overlay reapplication** (RFC 0005 §4.1): a `human_confirmed` account name (`confirmGlAccountName`) survives a rebuild via an overlay-preserving upsert while provider-derived fields refresh, so rebuild is lossless w.r.t. human decisions, not just provider data.
   - **Audit + GDPR**: new `canonical` audit layer (shared enum + `audit/0011` CHECK widening); every projected page emits `canonical.projected`. All `canonical_*` + `ledger_gl_accounts` tables are RLS-armed and registered in the tenant-deletion list; the tenant-deletion guard now scans `services/canonical` migrations.
   - **Deferred (sequenced next)**: the deeper refactor that makes Ledger **obligations/counterparties** a projection of a canonical AP/AR domain (reapplying the Phase-4 corroboration lift / `setStatus` / `human_confirmed` overlay) is authorized but not yet built; it touches the live money path, so it lands as several small, heavily-verified PRs. Other §12 domains (tax, payroll, payments, identity) remain deferred until a paying use case.
+- **Connector SDK: conformance + partner-isolation landed**. (a) A vitest-free conformance/certification harness (`services/raw/src/conformance/harness.ts`, exported from `@brain/raw`): `assertStaticConformance` (descriptor completeness, semver, capability↔implementation parity, checkpoint-type validity, active-connector parser presence) + `assertFetchConformance` (§10 result shape, §9 envelope, retry-stable idempotency keys). `conformance.test.ts` runs the static contract over every registered adapter. (b) **Partner-connector isolation** (`docs/partner-connector-isolation.md`): `ConnectorDescriptor.trustTier` (`first_party | partner`) declares the code-authorship trust boundary (distinct from `origin`). A `partner`-tier connector must not run in-process: no registered adapter, no `parserVersions`, no webhook delivery; it reaches Raw only via `/raw/ingest` as an `api_partner` principal → low-trust `customer_asserted` evidence (§6 check 9.5). Enforced at three layers (`assertPartnerConnectorIsolation` in `services/raw/src/adapters/isolation.ts`): api boot fence, the conformance suite, and the `check-partner-connector-isolation` CI guard. Every shipped connector is `first_party` today (fence/guard are no-ops). The remaining half, **runtime hosting of partner code in an isolated operated runtime**, is deferred to the R-03 Azure deploy substrate. §12 tax/payroll domains remain deferred until a paying use case.
 
 ## When in Doubt
 

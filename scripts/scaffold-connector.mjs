@@ -168,6 +168,7 @@ export const ${Pascal}Adapter: SourceAdapter = {
     category: "other", // TODO(connector): catalog grouping
     delivery: ["file"], // TODO(connector): declared modalities
     origin: "provider", // TODO(connector)
+    trustTier: "first_party", // scaffolded connectors run in-process; partner-tier connectors are not scaffolded
     format: ["structured"],
     authentication: ["api_key"], // TODO(connector)
     capabilities: NO_CAPABILITIES, // claims must match implemented methods
