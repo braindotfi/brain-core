@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  WORKER_GROUPS,
-  parseWorkerSelection,
-  resolveComposition,
-} from "./process-roles.js";
+import { WORKER_GROUPS, parseWorkerSelection, resolveComposition } from "./process-roles.js";
 
 describe("parseWorkerSelection", () => {
   it('"all" selects every worker group', () => {
