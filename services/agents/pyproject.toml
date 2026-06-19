@@ -20,7 +20,7 @@ dependencies = [
   # CSV/plain text need only the stdlib; XLSX via openpyxl; text-layer PDFs
   # via pypdf. Scanned/image PDFs (OCR) remain a deferred follow-up.
   "openpyxl>=3.1.0",
-  "pypdf>=5.1.0",
+  "pypdf>=6.13.3",  # >=6.13.3: GHSA-jm82-fx9c-mx94 (PDF stream-length memory exhaustion)
 ]
 
 [project.optional-dependencies]
