@@ -743,6 +743,16 @@ importers:
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.3(@types/node@22.19.19)(tsx@4.22.0)(yaml@2.9.0))
 
   tests/e2e:
+    dependencies:
+      '@brain/execution':
+        specifier: workspace:*
+        version: link:../../services/execution
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      viem:
+        specifier: ^2.21.0
+        version: 2.49.2(typescript@5.9.3)(zod@4.4.3)
     devDependencies:
       '@types/node':
         specifier: ^22.7.0

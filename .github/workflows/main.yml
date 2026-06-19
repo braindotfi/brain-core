@@ -288,6 +288,40 @@ jobs:
       - name: External-agent MCP E2E
         run: pnpm -C tests/e2e run test external-agent-mcp.e2e.test.ts
 
+  testnet_onchain_executor_e2e:
+    name: testnet on-chain executor E2E
+    runs-on: ubuntu-latest
+    # Opt-in (Review 3 P0 8.1). Drives the real OnchainBaseRail against a deployed
+    # BrainSmartAccount on Base Sepolia. Stays gated behind an explicit repo
+    # variable + RPC/key secrets; without them the test self-skips (describe.skip),
+    # and gating the whole job keeps the signal honest — a green check means it
+    # really ran. Needs a deployed smart-account address + a gas-funded throwaway
+    # session key; the value-moving success case additionally needs a GRANTED key
+    # (BRAIN_TESTNET_SUCCESS_ENABLED). See tests/e2e/README.md.
+    if: vars.TESTNET_ONCHAIN_E2E_ENABLED == 'true'
+    env:
+      BRAIN_TESTNET_RPC_URL: ${{ secrets.BRAIN_TESTNET_RPC_URL }}
+      BRAIN_TESTNET_SESSION_KEY: ${{ secrets.BRAIN_TESTNET_SESSION_KEY }}
+      BRAIN_TESTNET_SMART_ACCOUNT: ${{ vars.BRAIN_TESTNET_SMART_ACCOUNT }}
+      BRAIN_TESTNET_TARGET: ${{ vars.BRAIN_TESTNET_TARGET }}
+      BRAIN_TESTNET_CHAIN_ID: ${{ vars.BRAIN_TESTNET_CHAIN_ID || '84532' }}
+      BRAIN_TESTNET_POLICY_VERSION: ${{ vars.BRAIN_TESTNET_POLICY_VERSION }}
+      BRAIN_TESTNET_SUCCESS_ENABLED: ${{ vars.BRAIN_TESTNET_SUCCESS_ENABLED }}
+      BRAIN_TESTNET_SUCCESS_DATA: ${{ vars.BRAIN_TESTNET_SUCCESS_DATA }}
+      BRAIN_TESTNET_SUCCESS_VALUE: ${{ vars.BRAIN_TESTNET_SUCCESS_VALUE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The test imports the real rail; build the workspaces it resolves.
+      - run: pnpm --filter @brain/shared run build && pnpm --filter @brain/execution run build
+      - name: Testnet on-chain executor E2E
+        run: pnpm -C tests/e2e run test onchain-executor.testnet.e2e.test.ts
+
   promote_production:
     name: manual promote → production
     runs-on: ubuntu-latest
