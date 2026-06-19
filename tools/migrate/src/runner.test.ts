@@ -131,6 +131,48 @@ describe("applyAll", () => {
   });
 });
 
+describe("advisory lock", () => {
+  it("acquires the lock before any work and releases it after", async () => {
+    const { client, log } = makeFakeClient();
+    await applyAll(client, [m("audit", "0001_audit_events.sql", "-- audit sql")]);
+
+    const lockIdx = log.findIndex((l) =>
+      l.includes("pg_advisory_lock(hashtext('brain_migrations')"),
+    );
+    const unlockIdx = log.findIndex((l) =>
+      l.includes("pg_advisory_unlock(hashtext('brain_migrations')"),
+    );
+    const createIdx = log.findIndex((l) =>
+      l.includes("CREATE TABLE IF NOT EXISTS brain_migrations"),
+    );
+
+    expect(lockIdx).toBeGreaterThanOrEqual(0);
+    expect(unlockIdx).toBeGreaterThanOrEqual(0);
+    // lock first, bookkeeping after, unlock last.
+    expect(lockIdx).toBeLessThan(createIdx);
+    expect(unlockIdx).toBeGreaterThan(createIdx);
+  });
+
+  it("releases the lock even when a migration fails", async () => {
+    const log: string[] = [];
+    const client = {
+      query: vi.fn(async (text: string) => {
+        const upper = text.trim().toUpperCase();
+        log.push(text.trim().split("\n")[0]!.trim());
+        if (upper.startsWith("SELECT")) return { rows: [], rowCount: 0 };
+        if (text.includes("DROP BAD")) throw new Error("syntax error");
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+    await expect(applyAll(client, [m("raw", "0001_broken.sql", "DROP BAD;")])).rejects.toThrow(
+      /migration raw\/0001_broken\.sql failed/,
+    );
+    expect(log.some((l) => l.includes("pg_advisory_unlock(hashtext('brain_migrations')"))).toBe(
+      true,
+    );
+  });
+});
+
 describe("status", () => {
   it("classifies each discovered migration as pending / applied / drifted", async () => {
     const appliedOk = "-- applied";

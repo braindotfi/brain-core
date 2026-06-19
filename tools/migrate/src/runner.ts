@@ -57,6 +57,28 @@ export function contentSha(sql: string): Buffer {
   return createHash("sha256").update(sql, "utf8").digest();
 }
 
+/**
+ * Stable advisory-lock key for the migration runner. `hashtext` maps the
+ * label to the int4 that `pg_advisory_lock(bigint)` consumes; every caller
+ * computes the same key, so concurrent runners serialize on it.
+ */
+const MIGRATION_LOCK_EXPR = "hashtext('brain_migrations')";
+
+/**
+ * Acquire the session-level migration advisory lock. Blocks until granted, so
+ * concurrent runners (e.g. parallel integration-test schemas) apply migrations
+ * one at a time instead of racing global DDL such as role/grant statements
+ * (`tuple concurrently updated`). Must be released on the same connection.
+ */
+export async function acquireMigrationLock(client: RunnerClient): Promise<void> {
+  await client.query(`SELECT pg_advisory_lock(${MIGRATION_LOCK_EXPR})`);
+}
+
+/** Release the session-level migration advisory lock acquired above. */
+export async function releaseMigrationLock(client: RunnerClient): Promise<void> {
+  await client.query(`SELECT pg_advisory_unlock(${MIGRATION_LOCK_EXPR})`);
+}
+
 /** Ensures the `brain_migrations` bookkeeping table exists. Idempotent. */
 export async function ensureBookkeeping(client: RunnerClient): Promise<void> {
   await client.query(`
@@ -96,52 +118,65 @@ export async function applyAll(
   options: { appliedBy?: string } = {},
 ): Promise<RunResult> {
   const appliedBy = options.appliedBy ?? process.env.USER ?? "unknown";
-  await ensureBookkeeping(client);
-  const applied = await listApplied(client);
 
-  const result: RunResult = { applied: [], skipped: [] };
+  // Serialize the whole apply pass behind a session advisory lock. Migrations
+  // include global DDL (role/grant) that races under concurrent runners; the
+  // lock makes accidental concurrent invocations safe even outside CI.
+  await acquireMigrationLock(client);
+  try {
+    await ensureBookkeeping(client);
+    const applied = await listApplied(client);
 
-  for (const m of discovered) {
-    const seen = applied.get(m.key);
-    const sha = contentSha(m.sql);
-    if (seen !== undefined) {
-      if (!bufferEquals(seen.content_sha, sha)) {
+    const result: RunResult = { applied: [], skipped: [] };
+
+    for (const m of discovered) {
+      const seen = applied.get(m.key);
+      const sha = contentSha(m.sql);
+      if (seen !== undefined) {
+        if (!bufferEquals(seen.content_sha, sha)) {
+          throw new Error(
+            `migration ${m.key} previously applied with a different content hash; ` +
+              `applied sha=${toHex(seen.content_sha)} discovered sha=${toHex(sha)}`,
+          );
+        }
+        result.skipped.push(m);
+        continue;
+      }
+
+      await client.query("BEGIN");
+      try {
+        await client.query(m.sql);
+        await client.query(
+          `INSERT INTO brain_migrations
+             (key, service, name, sequence, content_sha, applied_by)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [m.key, m.service, m.name, m.sequence, sha, appliedBy],
+        );
+        await client.query("COMMIT");
+      } catch (err) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          /* swallow */
+        }
         throw new Error(
-          `migration ${m.key} previously applied with a different content hash; ` +
-            `applied sha=${toHex(seen.content_sha)} discovered sha=${toHex(sha)}`,
+          `migration ${m.key} failed: ${err instanceof Error ? err.message : String(err)}`,
+          {
+            cause: err instanceof Error ? err : undefined,
+          },
         );
       }
-      result.skipped.push(m);
-      continue;
+      result.applied.push(m);
     }
 
-    await client.query("BEGIN");
+    return result;
+  } finally {
     try {
-      await client.query(m.sql);
-      await client.query(
-        `INSERT INTO brain_migrations
-           (key, service, name, sequence, content_sha, applied_by)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [m.key, m.service, m.name, m.sequence, sha, appliedBy],
-      );
-      await client.query("COMMIT");
-    } catch (err) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        /* swallow */
-      }
-      throw new Error(
-        `migration ${m.key} failed: ${err instanceof Error ? err.message : String(err)}`,
-        {
-          cause: err instanceof Error ? err : undefined,
-        },
-      );
+      await releaseMigrationLock(client);
+    } catch {
+      /* best-effort: the lock is released on connection close regardless */
     }
-    result.applied.push(m);
   }
-
-  return result;
 }
 
 export async function status(
