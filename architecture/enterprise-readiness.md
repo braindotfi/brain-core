@@ -136,7 +136,7 @@ This is how the readiness story stays falsifiable: every claim has a code anchor
 {% endhint %}
 
 1. **External smart-contract audit.** `contracts/AUDIT-SCOPE.md` is ready. Engagement is pending. Until the audit clears and the deployed bytecode is verified, the boot fence (#2 above) refuses mainnet escrow.
-2. **Azure production deploy.** The codebase ships with GitHub Actions, the OIDC secrets are not yet provisioned, and the deploy chain has not been exercised against a live Azure environment.
+2. **Azure production deploy.** The codebase ships with GitHub Actions, the OIDC secrets are not yet provisioned, and the deploy chain has not been exercised against a live Azure environment. The ordered, turnkey path to light up staging (provision, secrets/vars, the infra gaps to close, verification) is documented in `docs/r03-staging-deploy-runbook.md`.
 
 The on-chain executor has a **testnet E2E** that drives the real rail against a deployed `BrainSmartAccount` on Base Sepolia (`tests/e2e/onchain-executor.testnet.e2e.test.ts`, CI job `testnet_onchain_executor_e2e`); it is gated behind a repo variable + RPC/key secrets and runs once those testnet fixtures are provisioned (production-readiness reports the row). This overlaps blocker #2 (the same deploy/provisioning substrate).
 
