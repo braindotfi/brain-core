@@ -19,7 +19,12 @@
  */
 
 import type { Pool } from "pg";
-import { startManagedInterval, withTenantScope, type AuditEmitter } from "@brain/shared";
+import {
+  startManagedInterval,
+  leasedCycle,
+  withTenantScope,
+  type AuditEmitter,
+} from "@brain/shared";
 import type { ManagedWorker } from "@brain/shared";
 import { LedgerService } from "../service/LedgerService.js";
 import { registeredParsers } from "../extractors/registry.js";
@@ -111,9 +116,19 @@ export function startNormalizeWorker(
     }
   }
 
-  return startManagedInterval(poll, intervalMs, {
-    name: "normalize",
-    runImmediately: true,
-    onError: (err) => console.error("[normalizeWorker] cycle failed:", err),
-  });
+  // Advisory lease: only one replica normalizes at a time (multi-replica safe).
+  return startManagedInterval(
+    leasedCycle({
+      pool: deps.pool,
+      lockKey: "brain_worker_normalize",
+      cycle: poll,
+      name: "normalize",
+    }),
+    intervalMs,
+    {
+      name: "normalize",
+      runImmediately: true,
+      onError: (err) => console.error("[normalizeWorker] cycle failed:", err),
+    },
+  );
 }

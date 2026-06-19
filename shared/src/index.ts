@@ -179,3 +179,4 @@ export {
   type ManagedWorker,
   type ManagedIntervalOptions,
 } from "./workers/managed-interval.js";
+export { leasedCycle, type LeasedCycleOptions } from "./workers/advisory-lease.js";

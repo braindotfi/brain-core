@@ -26,6 +26,7 @@ import {
   incrementDeadLetterAttempt,
   MAX_WEBHOOK_DELIVERY_ATTEMPTS,
   startManagedInterval,
+  leasedCycle,
   withTenantScope,
   type AuditEmitter,
   type ManagedWorker,
@@ -156,10 +157,18 @@ export function startWebhookDispatchWorker(
   const cycleOpts: { limit?: number } = {};
   if (opts.limit !== undefined) cycleOpts.limit = opts.limit;
 
+  // Advisory lease: only one replica drains the dead-letter queue at a time
+  // (multi-replica safe; no double-delivery across replicas).
   return startManagedInterval(
-    async () => {
-      await runWebhookDispatchCycle(deps, cycleOpts);
-    },
+    leasedCycle({
+      pool: deps.pool,
+      lockKey: "brain_worker_webhook_dispatch",
+      cycle: async () => {
+        await runWebhookDispatchCycle(deps, cycleOpts);
+      },
+      name: "webhook-dispatch",
+      metrics: deps.metrics,
+    }),
     intervalMs,
     {
       name: "webhook-dispatch",

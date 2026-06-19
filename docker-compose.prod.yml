@@ -297,8 +297,9 @@ services:
   # This decouples worker uptime from api deploys/restarts and keeps the
   # worker-only DB credentials out of the public api runtime. To scale a single
   # concern independently, copy this service with BRAIN_WORKERS=<group> and only
-  # that group's role URL(s). Single replica: the canonical/ledger/normalize/
-  # webhook workers are idempotent but not lease-protected.
+  # that group's role URL(s). Multi-replica safe: every worker holds a per-worker
+  # pg advisory lease (one active at a time, failover on crash), so running >1
+  # replica gives availability without double-work.
   worker:
     build:
       context: .
