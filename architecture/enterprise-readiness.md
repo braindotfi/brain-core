@@ -32,7 +32,7 @@ Single diligence-facing index for fintech, bank, and platform buyers. For each e
 
 ### Tenant isolation at the storage layer
 
-**Database.** Postgres Row-Level Security is `ENABLE`d on every tenant table by migration. Enforcement requires `infra/db-roles.sql` to be applied in production (separates `brain_app` from `brain_privileged` with `BYPASSRLS`). A boot fence (`composition/db-isolation.ts`) refuses to start the api in `NODE_ENV=production` when `BRAIN_WIKI_DB_URL` or `DATABASE_PRIVILEGED_URL` is missing.
+**Database.** Postgres Row-Level Security is `ENABLE`d on every tenant table by migration. Enforcement requires `infra/db-roles.sql` to be applied in production. The request path runs as the non-owner `brain_app` role (`FORCE ROW LEVEL SECURITY`), and every cross-tenant background job/resolver runs under one of **eight least-privilege `BYPASSRLS` roles**, each granted only its layer's tables (raw worker, canonical projector, ledger projector, execution-outbox worker, audit verifier, audit publisher, resolver, tenant deletion) so a confused-deputy bug in one path cannot reach another layer. A boot fence (`composition/db-isolation.ts`) refuses to start the api in `NODE_ENV=production` when `BRAIN_WIKI_DB_URL` or any of the eight role URLs is missing, and a boot-time role check asserts each pool connects as its expected role with a forbidden-privilege list.
 
 **Blob storage.** Every object lives under `<tenantId>/yyyy/mm/dd/sha256`. Paths are built by `blobPath()` in `shared/src/blob/types.ts` and never concatenated by hand. An RLS test against the non-owner `brain_app` role pins the boundary.
 
@@ -73,7 +73,7 @@ Append-only `audit_events` table. Periodic Merkle anchor publication to Base via
 
 ### Tenant deletion (GDPR Article 17)
 
-`DELETE /v1/tenants/{id}` walks every tenant-scoped table across the six layers in one transaction (`brain_privileged` role, BYPASSRLS). Returns per-table row counts + the list of `raw_artifacts.blob_uri` that require out-of-band purging (the database deletion is in-band; blob byte deletion is **deferred** to the privileged purge worker).
+`DELETE /v1/tenants/{id}` walks every tenant-scoped table across the six layers in one transaction (`brain_tenant_deletion` role, BYPASSRLS, scoped to erasure). Returns per-table row counts + the list of `raw_artifacts.blob_uri` that require out-of-band purging (the database deletion is in-band; blob byte deletion is **deferred** to the privileged purge worker).
 
 ### Blob purge (deferred)
 
@@ -93,7 +93,7 @@ Until phase B lands, operators run a separate cleanup pass against the URI list 
 
 Five fail-closed boot fences. A misconfigured production deploy fails to start (CrashLoopBackoff in k8s) rather than running degraded:
 
-1. **DB isolation** (`composition/db-isolation.ts`). Wiki + privileged DB URLs required.
+1. **DB isolation** (`composition/db-isolation.ts`). Wiki + eight least-privilege role DB URLs required.
 2. **Escrow audit** (`composition/escrow-audit-gate.ts`). Mainnet escrow requires `BRAIN_ESCROW_AUDIT_RECEIPT` (preferred. URL/filepath/hash pointing at the audit report) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` boolean.
 3. **Live rails** (`composition/rails-prod-fence.ts`). At least one production rail must register.
 4. **AES-256-GCM**. Source-credential KMS provider must be configured.

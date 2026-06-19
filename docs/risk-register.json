@@ -196,6 +196,23 @@
         "services/ledger/src/projection/obligations.ts (records counter + lag gauge)",
         "infra/grafana/projection.json (stall + lag alerts)"
       ]
+    },
+    {
+      "id": "R-12",
+      "title": "Single broad brain_privileged BYPASSRLS role for all cross-tenant API work",
+      "priority": "P1",
+      "status": "closed",
+      "closed_at": "2026-06-19",
+      "closed_by": "least-privilege DB role split",
+      "mitigation_summary": "Three reviews flagged that the API runtime used ONE broad brain_privileged BYPASSRLS role for every cross-tenant background job and resolver, so a confused-deputy bug or compromise in any one privileged path had the cross-tenant power of all of them (raw, canonical, ledger, audit, execution, tenant-deletion). Closed by replacing it with eight least-privilege BYPASSRLS roles (infra/db-roles.sql §4), each granted only its layer's tables: brain_raw_worker (raw_*), brain_canonical_projector (canonical_* + read raw_parsed), brain_ledger_projector (read canonical_*, write only the three ledger projection targets, NOT the money-path ledger_* tables), brain_execution_worker (execution_outbox claim/mark only; the settle re-enters tenant scope on brain_app), brain_audit_verifier (audit_events read + verifier cursor/findings, findings un-erasable), brain_audit_publisher (audit_events read only), brain_resolver (cross-tenant SELECT only), brain_tenant_deletion (GDPR erasure broad DELETE, route-gated; audit_events/anchors preserved). Each connects via its own BRAIN_*_DB_URL (all eight required in production, fenced by db-isolation.ts; dev falls back to DATABASE_URL with a warning). The boot-time assertDbRoles check proves each pool connects as its expected role with a forbidden-privilege list (e.g. the ledger projector cannot INSERT ledger_payment_intents; tenant_deletion cannot DELETE audit_events). brain_privileged no longer runs in the API runtime; it survives only for the deploy-time seed one-shot. The audit append-only and forensic-table REVOKEs were extended to every new role. Remaining (follow-up): a runtime-as-role integration test that runs each worker as its role against a live DB to also prove the grants are not too tight.",
+      "evidence": [
+        "infra/db-roles.sql (§4 roles + per-role grant matrix + REVOKEs)",
+        "services/api/src/composition/db-isolation.ts (eight-URL production fence)",
+        "services/api/src/main.ts (per-role pools + per-pool boot role assertions)",
+        "services/api/src/composition/db-roles-sql.test.ts (grant-matrix drift guard)",
+        "services/api/src/db-isolation-fences.test.ts (fence unit tests)",
+        "docker-compose.prod.yml (db-roles passwords + api role URLs)"
+      ]
     }
   ]
 }

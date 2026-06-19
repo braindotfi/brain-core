@@ -43,11 +43,19 @@ const envSchema = z.object({
   // `brain_wiki_reader` role (SELECT anywhere; write only wiki_* tables). When
   // unset the Wiki falls back to DATABASE_URL (dev/test) with a boot warning.
   BRAIN_WIKI_DB_URL: z.string().url().optional(),
-  // Outbox worker: cross-tenant claim/mark operations run as brain_privileged
-  // (BYPASSRLS). In production, set this to a connection string for that role.
-  // When unset, the worker falls back to DATABASE_URL with a boot warning —
-  // safe in dev/testnet where RLS is not strictly enforced.
-  DATABASE_PRIVILEGED_URL: z.string().url().optional(),
+  // Least-privilege cross-tenant role URLs (replace the single broad
+  // DATABASE_PRIVILEGED_URL). Each connects as its own BYPASSRLS role scoped to
+  // one layer's tables (infra/db-roles.sql §4). In production all eight are
+  // required (db-isolation.ts fence); when unset each falls back to DATABASE_URL
+  // with a boot warning — safe in dev/testnet where the role model is not applied.
+  BRAIN_RAW_WORKER_DB_URL: z.string().url().optional(),
+  BRAIN_CANONICAL_PROJECTOR_DB_URL: z.string().url().optional(),
+  BRAIN_LEDGER_PROJECTOR_DB_URL: z.string().url().optional(),
+  BRAIN_EXECUTION_WORKER_DB_URL: z.string().url().optional(),
+  BRAIN_AUDIT_VERIFIER_DB_URL: z.string().url().optional(),
+  BRAIN_AUDIT_PUBLISHER_DB_URL: z.string().url().optional(),
+  BRAIN_RESOLVER_DB_URL: z.string().url().optional(),
+  BRAIN_TENANT_DELETION_DB_URL: z.string().url().optional(),
 
   // ---- Redis ----
   REDIS_URL: z.string().url(),
