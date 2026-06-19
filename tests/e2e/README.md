@@ -29,3 +29,28 @@ fail CI, but staging runs that are missing any variable should.
 - `external-agent-mcp.e2e.test.ts`, external agent via MCP: ping +
   wiki:read + execution:propose, each gated by the same policy and
   logged to the same audit chain as an internal agent.
+- `onchain-executor.testnet.e2e.test.ts`, drives the real
+  `OnchainBaseRail` against a deployed `BrainSmartAccount` on Base
+  Sepolia (no HTTP server). Read path (nonce) needs only RPC + the
+  smart-account address; the revert path (surfaces a real on-chain
+  revert as `execution_rail_declined`, gas only) also needs a
+  gas-funded throwaway session key + a target; the value-moving
+  success + replay-guard case is double-gated behind
+  `BRAIN_TESTNET_SUCCESS_ENABLED` and needs a **granted** session key
+  (target + selector allowlisted, cap ≥ value, matching
+  `policy_version`) on a funded account. CI job:
+  `testnet_onchain_executor_e2e` (gated on
+  `vars.TESTNET_ONCHAIN_E2E_ENABLED`).
+
+### Testnet on-chain executor env
+
+| Variable                                | Required by        | Notes                                                         |
+| --------------------------------------- | ------------------ | ------------------------------------------------------------- |
+| `BRAIN_TESTNET_RPC_URL`                 | all on-chain cases | Base Sepolia RPC URL.                                         |
+| `BRAIN_TESTNET_SMART_ACCOUNT`           | all on-chain cases | Deployed `BrainSmartAccount` address.                         |
+| `BRAIN_TESTNET_CHAIN_ID`                | optional           | Default `84532` (Base Sepolia).                               |
+| `BRAIN_TESTNET_SESSION_KEY`             | revert + success   | 0x 32-byte priv key; the holder/signer. Gas-funded throwaway. |
+| `BRAIN_TESTNET_TARGET`                  | revert + success   | Call target address.                                          |
+| `BRAIN_TESTNET_POLICY_VERSION`          | optional           | 0x 32-byte policy digest the key is bound to.                 |
+| `BRAIN_TESTNET_SUCCESS_ENABLED`         | success case       | `"true"` to run the value-moving case (granted-key fixture).  |
+| `BRAIN_TESTNET_SUCCESS_DATA` / `_VALUE` | success case       | Calldata / wei for the granted action.                        |

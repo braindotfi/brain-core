@@ -286,6 +286,25 @@ function checkBootFences(catalog) {
     fences.push({ name: "Python agent HMAC secret", status: "green", note: "both set" });
   }
 
+  // 6. On-chain executor testnet E2E (Review 3 P0 8.1). Evidence row, not a boot
+  // fence: green once the gated CI job is wired (vars.TESTNET_ONCHAIN_E2E_ENABLED),
+  // else yellow — the executor has only unit/mocked coverage until the testnet
+  // job runs against a deployed BrainSmartAccount. Yellow (not red) so the
+  // dev-default aggregate is not broken; the mainnet profile treats it as required.
+  if (env.TESTNET_ONCHAIN_E2E_ENABLED === "true") {
+    fences.push({
+      name: "On-chain executor testnet E2E",
+      status: "green",
+      note: "testnet executor E2E job wired (Base Sepolia)",
+    });
+  } else {
+    fences.push({
+      name: "On-chain executor testnet E2E",
+      status: "yellow",
+      note: "not yet exercised — set vars.TESTNET_ONCHAIN_E2E_ENABLED + testnet secrets",
+    });
+  }
+
   return fences;
 }
 
