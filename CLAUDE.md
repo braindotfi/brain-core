@@ -118,6 +118,18 @@ Add `--json` for machine-readable output (CI / dashboards). Exit 1 on
 any red. The PR CI workflow uploads the `--json` output as a per-commit
 build artifact (`production-readiness-${sha}`, 90-day retention).
 
+Every row is also tagged with a deploy-stage **tier** (`demo` < `staging`
+< `mainnet`), and the output carries a `profiles` block reporting each
+stage's status (a profile is the worst status among the rows it requires).
+This keeps a dev/demo run honest for diligence: `demo` is GREEN (code +
+seed), `staging` YELLOW (needs testnet rails + the deploy chain),
+`mainnet` RED (needs the external audit, R-01). `--profile demo|staging|
+mainnet` scopes the rendered view + exit code to one stage (e.g.
+`--profile demo` exits 0 in dev; a staging gate runs `--profile staging`).
+`overall_status` and the flat sections are unchanged (`overall_status`
+equals the `mainnet` profile); the tier policy lives in the script
+(`RISK_TIER` + `tierForRow`), not the risk register.
+
 `pnpm run readiness-snapshot <tag>` captures a per-tag snapshot of the
 aggregator JSON to `docs/readiness-history/<tag>.json` (used at release
 tag push). `pnpm run readiness-trend` reads every snapshot and prints

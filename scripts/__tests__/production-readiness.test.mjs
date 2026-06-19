@@ -294,6 +294,50 @@ test("closed risks (status=closed) are NOT surfaced in the live register section
   );
 });
 
+// ---- deploy-stage profiles (Review 2 P2 #2.7) ----
+
+test("profiles split: demo green, mainnet red (R-01 open P0), overall unchanged", () => {
+  const r = runWithEnv({ NODE_ENV: "development" });
+  // demo tier = code-correctness guards only; never blocked by a production risk.
+  assert.equal(r.parsed.profiles.demo.status, "green", JSON.stringify(r.parsed.profiles.demo));
+  // mainnet requires everything; R-01 (external audit, P0 open) keeps it red.
+  assert.equal(r.parsed.profiles.mainnet.status, "red");
+  assert.ok(
+    r.parsed.profiles.mainnet.blockers.red.some((n) => n.startsWith("R-01")),
+    `mainnet should be blocked by R-01: ${JSON.stringify(r.parsed.profiles.mainnet.blockers.red)}`,
+  );
+  // Back-compat: the flat overall_status still equals the worst-of-all (mainnet).
+  assert.equal(r.parsed.overall_status, "red");
+  assert.equal(r.parsed.profile, null);
+});
+
+test("every readiness row carries a valid tier", () => {
+  const r = runWithEnv({ NODE_ENV: "development" });
+  const all = Object.values(r.parsed.sections).flat();
+  assert.ok(all.length > 0);
+  for (const row of all) {
+    assert.ok(
+      ["demo", "staging", "mainnet"].includes(row.tier),
+      `${row.name} has invalid tier ${row.tier}`,
+    );
+  }
+});
+
+test("--profile scopes the exit code to that stage", () => {
+  // demo is green in dev → exit 0 even though the flat aggregate is red.
+  const demo = runWithEnv({ NODE_ENV: "development" }, ["--json", "--profile=demo"]);
+  assert.equal(demo.code, 0);
+  assert.equal(demo.parsed.profile, "demo");
+  // mainnet is red (R-01) → exit 1.
+  const mainnet = runWithEnv({ NODE_ENV: "development" }, ["--json", "--profile=mainnet"]);
+  assert.equal(mainnet.code, 1);
+});
+
+test("an unknown --profile fails fast (exit 2)", () => {
+  const r = runWithEnv({ NODE_ENV: "development" }, ["--json", "--profile=bogus"]);
+  assert.equal(r.code, 2);
+});
+
 test("any open + P0 risk turns overall_status red and exits 1", () => {
   // Sanity check against the real register: at the time of writing R-01
   // (escrow audit) is open + P0, so the overall MUST be red until the
