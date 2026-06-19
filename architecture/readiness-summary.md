@@ -43,7 +43,7 @@ Suitable for controlled-pilot use under SLA, not yet for unrestricted production
 - Applying `infra/db-roles.sql` to the production Postgres instance (creates `brain_app`, `brain_wiki_reader`, and the eight least-privilege cross-tenant roles) and provisioning each role's `BRAIN_*_DB_URL` (all required at boot in production).
 - Configuring Azure Key Vault credentials for `BRAIN_SOURCE_CREDENTIAL_KEY` and the session key.
 - Setting `BRAIN_ESCROW_AUDIT_RECEIPT` to the audit report URL/hash (or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"`) once the audit completes and bytecode is verified.
-- Running the existing `pnpm run production-readiness` check against the customer env before promotion.
+- Running the existing `pnpm run production-readiness` check against the customer env before promotion. It reports readiness **per deploy stage** (`demo` / `staging` / `mainnet`), so the staged story is explicit rather than one aggregate: demo is ready today, staging needs testnet rails + the deploy chain, mainnet needs the external contract audit. Scope a gate with `--profile <stage>`.
 
 ## How to verify any claim on this page
 

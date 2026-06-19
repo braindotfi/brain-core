@@ -12,6 +12,13 @@
  * check is green; 1 if any required check is red. Use --json for the
  * machine-readable form (CI / dashboards consume this).
  *
+ * Every row is tagged with a deploy-stage tier (demo < staging < mainnet) and
+ * the output reports a per-stage `profiles` block (a profile's status is the
+ * worst status among the rows it requires), so a dev/demo run reads honestly
+ * for diligence instead of one blunt red. `--profile demo|staging|mainnet`
+ * scopes the rendered view + exit code to one stage; without it, exit stays the
+ * legacy any-red behavior (== the mainnet profile).
+ *
  * Categories:
  *   - rails posture            (per-rail required_env_present + production_allowed)
  *   - boot fences              (would each fence pass given current env?)
@@ -30,8 +37,71 @@ import { pathToFileURL } from "node:url";
 import { evaluateApproval } from "./lib/audit-status.mjs";
 
 const ROOT = process.cwd();
-const ARGS = new Set(process.argv.slice(2));
+const RAW_ARGS = process.argv.slice(2);
+const ARGS = new Set(RAW_ARGS);
 const JSON_MODE = ARGS.has("--json");
+
+// Deploy-stage profiles (Review 2 P2). Each readiness row is tagged with the
+// lowest stage that REQUIRES it; a profile's status is the worst status among
+// the rows it requires. demo < staging < mainnet (mainnet requires everything).
+const PROFILES = ["demo", "staging", "mainnet"];
+const TIER_RANK = { demo: 0, staging: 1, mainnet: 2 };
+
+/** `--profile X` or `--profile=X`: scopes the rendered view + exit code to one stage. */
+function parseProfileArg() {
+  const eq = RAW_ARGS.find((a) => a.startsWith("--profile="));
+  if (eq !== undefined) return eq.slice("--profile=".length);
+  const i = RAW_ARGS.indexOf("--profile");
+  if (i >= 0 && RAW_ARGS[i + 1] !== undefined) return RAW_ARGS[i + 1];
+  return undefined;
+}
+const PROFILE = parseProfileArg();
+if (PROFILE !== undefined && !PROFILES.includes(PROFILE)) {
+  console.error(`Unknown --profile "${PROFILE}". Use one of: ${PROFILES.join(", ")}.`);
+  process.exit(2);
+}
+
+// Risks that are stage-scoped rather than universal: the external audit + the
+// escrow/GDPR custody risk only block MAINNET, not demo/staging. Unlisted open
+// risks default to `staging` (a production-posture concern, never a demo blocker).
+const RISK_TIER = { "R-01": "mainnet", "R-02": "mainnet" };
+
+/** The lowest deploy stage that requires a given readiness row. */
+function tierForRow(section, name) {
+  switch (section) {
+    case "guards":
+      return "demo"; // code correctness matters everywhere
+    case "rails":
+      return "staging";
+    case "deferred":
+      return "mainnet";
+    case "risks": {
+      const id = name.split(" ")[0];
+      return RISK_TIER[id] ?? "staging";
+    }
+    case "fences":
+      return name === "Escrow audit (mainnet)" || name === "Live rails (production)"
+        ? "mainnet"
+        : "staging";
+    default:
+      return "staging";
+  }
+}
+
+/** Per-profile status: worst status among the rows that profile requires. */
+function computeProfiles(rows) {
+  const out = {};
+  for (const p of PROFILES) {
+    const required = rows.filter((r) => TIER_RANK[r.tier] <= TIER_RANK[p]);
+    const red = required.filter((r) => r.status === "red").map((r) => r.name);
+    const yellow = required.filter((r) => r.status === "yellow").map((r) => r.name);
+    out[p] = {
+      status: red.length > 0 ? "red" : yellow.length > 0 ? "yellow" : "green",
+      blockers: { red, yellow },
+    };
+  }
+  return out;
+}
 
 const env = process.env;
 const NODE_ENV = env.NODE_ENV ?? "unset";
@@ -455,6 +525,25 @@ function renderSection(title, rows) {
   return lines.join("\n");
 }
 
+/** Per-stage readiness, each with the first few blockers that hold it back. */
+function renderProfiles(profiles) {
+  const lines = ["", color("bold", color("cyan", "── Readiness profiles ──"))];
+  for (const p of PROFILES) {
+    const { status, blockers } = profiles[p];
+    const cfg = STATUS[status];
+    const glyph = color(cfg.color, cfg.glyph);
+    const hold = [...blockers.red, ...blockers.yellow];
+    const hint =
+      hold.length === 0
+        ? "ready"
+        : `blocked by ${hold.slice(0, 3).join(", ")}${hold.length > 3 ? `, +${hold.length - 3} more` : ""}`;
+    lines.push(
+      `  ${glyph} ${p.padEnd(10)} ${color(cfg.color, status.toUpperCase().padEnd(7))} ${color("dim", hint)}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function main() {
   const catalog = loadRailCatalog();
   const railResult = checkRails(catalog);
@@ -463,39 +552,50 @@ function main() {
   const deferred = checkDeferredItems();
   const risks = checkRiskRegister();
 
+  // Tag every row with the section + the deploy stage that requires it, so the
+  // same rows feed both the flat sections (back-compat) and the profiles.
+  const tag = (rows, section) =>
+    rows.map((r) => ({ ...r, section, tier: tierForRow(section, r.name) }));
+  const sectioned = {
+    rails: tag(railResult.rows, "rails"),
+    fences: tag(fences, "fences"),
+    ci_guards: tag(guards, "guards"),
+    deferred: tag(deferred, "deferred"),
+    risks: tag(risks, "risks"),
+  };
   const allRows = [
-    ...railResult.rows.map((r) => ({ ...r, section: "rails" })),
-    ...fences.map((r) => ({ ...r, section: "fences" })),
-    ...guards.map((r) => ({ ...r, section: "guards" })),
-    ...deferred.map((r) => ({ ...r, section: "deferred" })),
-    ...risks.map((r) => ({ ...r, section: "risks" })),
+    ...sectioned.rails,
+    ...sectioned.fences,
+    ...sectioned.ci_guards,
+    ...sectioned.deferred,
+    ...sectioned.risks,
   ];
+  const profiles = computeProfiles(allRows);
 
   if (JSON_MODE) {
     const summary = {
       node_env: NODE_ENV,
+      // Unchanged (back-compat): worst status across ALL rows == mainnet profile.
       overall_status: allRows.some((r) => r.status === "red")
         ? "red"
         : allRows.some((r) => r.status === "yellow")
           ? "yellow"
           : "green",
-      sections: {
-        rails: railResult.rows,
-        fences,
-        ci_guards: guards,
-        deferred,
-        risks,
-      },
+      profile: PROFILE ?? null,
+      profiles,
+      sections: sectioned,
     };
     console.log(JSON.stringify(summary, null, 2));
   } else {
     console.log(color("bold", "\nBrain production readiness"));
     console.log(`  NODE_ENV = ${color("cyan", NODE_ENV)}`);
-    console.log(renderSection("Rails posture", railResult.rows));
-    console.log(renderSection("Boot fences (would a fresh boot pass?)", fences));
-    console.log(renderSection("CI guards", guards));
-    console.log(renderSection("Deferred / external blockers", deferred));
-    console.log(renderSection("Open risks (from docs/risk-register.json)", risks));
+    console.log(renderSection("Rails posture", sectioned.rails));
+    console.log(renderSection("Boot fences (would a fresh boot pass?)", sectioned.fences));
+    console.log(renderSection("CI guards", sectioned.ci_guards));
+    console.log(renderSection("Deferred / external blockers", sectioned.deferred));
+    console.log(renderSection("Open risks (from docs/risk-register.json)", sectioned.risks));
+    console.log(renderProfiles(profiles));
+
     const overall = allRows.some((r) => r.status === "red")
       ? "RED"
       : allRows.some((r) => r.status === "yellow")
@@ -503,17 +603,28 @@ function main() {
         : "GREEN";
     const c = overall === "RED" ? "red" : overall === "YELLOW" ? "yellow" : "green";
     console.log("\n" + color("bold", color(c, `Overall: ${overall}`)));
+    if (PROFILE !== undefined) {
+      const ps = profiles[PROFILE].status.toUpperCase();
+      const pc = ps === "RED" ? "red" : ps === "YELLOW" ? "yellow" : "green";
+      console.log(color("bold", color(pc, `Profile ${PROFILE}: ${ps}`)));
+    }
     if (overall === "RED") {
       console.log(
         color(
           "dim",
-          "Run with --json for machine output. Set NODE_ENV=production to evaluate as a production boot.",
+          "Run with --json for machine output, or --profile demo|staging|mainnet to scope.",
         ),
       );
     }
   }
 
-  if (allRows.some((r) => r.status === "red")) process.exit(1);
+  // Exit reflects the selected profile when one is given; otherwise the legacy
+  // any-red behavior (== mainnet profile) so existing callers/CI are unchanged.
+  if (PROFILE !== undefined) {
+    if (profiles[PROFILE].status === "red") process.exit(1);
+  } else if (allRows.some((r) => r.status === "red")) {
+    process.exit(1);
+  }
 }
 
 // Run only when invoked directly (node scripts/production-readiness.mjs), so the
