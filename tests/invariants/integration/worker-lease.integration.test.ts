@@ -29,7 +29,7 @@ suite("worker advisory lease (integration -- requires DATABASE_URL)", () => {
 
   it("runs only one of two concurrent cycles, then frees the lock for the next", async () => {
     // Unique key per run so parallel test files on the same DB never collide.
-    const key = `brain_worker:lease_it_${process.pid}_${String(Math.trunc(performance.now()))}`;
+    const key = `brain_worker_lease_it_${process.pid}_${String(Math.trunc(performance.now()))}`;
     let runs = 0;
     const slowCycle = async (): Promise<void> => {
       runs += 1;

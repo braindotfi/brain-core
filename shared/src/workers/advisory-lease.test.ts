@@ -30,7 +30,7 @@ describe("leasedCycle", () => {
   it("runs the cycle, then unlocks and releases, when the lock is granted", async () => {
     const { pool, client, queries } = fakePool(true);
     const cycle = vi.fn(async () => {});
-    await leasedCycle({ pool, lockKey: "brain_worker:test", cycle })();
+    await leasedCycle({ pool, lockKey: "brain_worker_test", cycle })();
 
     expect(cycle).toHaveBeenCalledOnce();
     expect(queries.some((q) => q.includes("pg_try_advisory_lock"))).toBe(true);
@@ -42,13 +42,13 @@ describe("leasedCycle", () => {
     const { pool, client, queries } = fakePool(false);
     const cycle = vi.fn(async () => {});
     const metrics = metricsSpy();
-    await leasedCycle({ pool, lockKey: "brain_worker:test", cycle, metrics })();
+    await leasedCycle({ pool, lockKey: "brain_worker_test", cycle, metrics })();
 
     expect(cycle).not.toHaveBeenCalled();
     expect(queries.some((q) => q.includes("pg_advisory_unlock"))).toBe(false);
     expect(client.release).toHaveBeenCalledOnce();
     expect(metrics.increment).toHaveBeenCalledWith("brain.worker.lease.skipped", {
-      worker: "brain_worker:test",
+      worker: "brain_worker_test",
     });
   });
 
@@ -58,7 +58,7 @@ describe("leasedCycle", () => {
     await expect(
       leasedCycle({
         pool,
-        lockKey: "brain_worker:test",
+        lockKey: "brain_worker_test",
         cycle: async () => {
           throw boom;
         },

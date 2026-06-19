@@ -514,7 +514,7 @@ export function startCanonicalProjectionWorker(
   return startManagedInterval(
     leasedCycle({
       pool: deps.pool,
-      lockKey: "brain_worker:canonical_projection",
+      lockKey: "brain_worker_canonical_projection",
       cycle: () => runProjectionCycle(deps, opts),
       name: "canonical-projector",
       metrics: deps.metrics,

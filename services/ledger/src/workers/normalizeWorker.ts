@@ -120,7 +120,7 @@ export function startNormalizeWorker(
   return startManagedInterval(
     leasedCycle({
       pool: deps.pool,
-      lockKey: "brain_worker:normalize",
+      lockKey: "brain_worker_normalize",
       cycle: poll,
       name: "normalize",
     }),

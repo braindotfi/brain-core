@@ -102,7 +102,7 @@ export function startLedgerProjectionWorker(
   return startManagedInterval(
     leasedCycle({
       pool: deps.pool,
-      lockKey: "brain_worker:ledger_gl_projection",
+      lockKey: "brain_worker_ledger_gl_projection",
       cycle: () => runLedgerProjectionCycle(deps, opts),
       name: "ledger-projection",
     }),

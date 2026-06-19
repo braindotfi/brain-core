@@ -162,7 +162,7 @@ export function startWebhookDispatchWorker(
   return startManagedInterval(
     leasedCycle({
       pool: deps.pool,
-      lockKey: "brain_worker:webhook_dispatch",
+      lockKey: "brain_worker_webhook_dispatch",
       cycle: async () => {
         await runWebhookDispatchCycle(deps, cycleOpts);
       },

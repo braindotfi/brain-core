@@ -379,7 +379,7 @@ export function startLedgerAparProjectionWorker(
   return startManagedInterval(
     leasedCycle({
       pool: deps.pool,
-      lockKey: "brain_worker:ledger_apar_projection",
+      lockKey: "brain_worker_ledger_apar_projection",
       cycle: () => runLedgerAparProjectionCycle(deps, opts),
       name: "ledger-apar-projection",
       metrics: deps.metrics,

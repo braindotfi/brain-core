@@ -25,7 +25,7 @@ import type { MetricsEmitter } from "../metrics.js";
 export interface LeasedCycleOptions {
   /** Pool to draw the lease client from (the worker's own pool). */
   pool: Pool;
-  /** Stable per-worker key, e.g. "brain_worker:canonical_projection". */
+  /** Stable per-worker key, e.g. "brain_worker_canonical_projection". */
   lockKey: string;
   /** The worker cycle to run only when this process holds the lease. */
   cycle: () => Promise<void>;
