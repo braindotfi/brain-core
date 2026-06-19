@@ -29,6 +29,16 @@ export default defineConfig({
         functions: 80,
         branches: 75,
         statements: 80,
+        // Per-file gates on the money-touching rail adapters (R-08): a global
+        // aggregate can stay >=80% while a single adapter silently regresses.
+        // Each glob key matches exactly one file, so the gate is per-adapter.
+        // Gated on lines/functions/statements (R-08's exit criterion is line-
+        // coverage parity with the gate); branch coverage stays under the
+        // aggregate gate, since e.g. plaidClient's error-mapping branches are
+        // intentionally not all exercised.
+        "src/rails/onchainExecutor.ts": { lines: 80, functions: 80, statements: 80 },
+        "src/rails/plaidClient.ts": { lines: 80, functions: 80, statements: 80 },
+        "src/rails/x402Client.ts": { lines: 80, functions: 80, statements: 80 },
       },
     },
   },
