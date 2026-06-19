@@ -80,6 +80,7 @@ import {
   PostgresSourceRepository,
   startInterpretWorker,
   startSyncWorker,
+  assertRegistryPartnerIsolation,
   type RegisterRawPluginOptions,
 } from "@brain/raw";
 
@@ -291,6 +292,12 @@ async function main(): Promise<void> {
     wikiDbUrl: cfg.BRAIN_WIKI_DB_URL,
     privilegedDbUrl: cfg.DATABASE_PRIVILEGED_URL,
   });
+
+  // Partner-connector in-process isolation: refuse to boot if a partner-tier
+  // connector (authored outside Brain's trust boundary) has an in-process
+  // SourceAdapter, a Ledger parser, or webhook delivery registered. Structural
+  // invariant (not env-gated); a no-op while every connector is first-party.
+  assertRegistryPartnerIsolation();
 
   // Refuse to boot against Base mainnet (chainId=8453) with BRAIN_ESCROW_ADDRESS
   // configured unless BOTH the committed audit record (contracts/audit-status.json

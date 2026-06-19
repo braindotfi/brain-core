@@ -13,6 +13,7 @@ import { MergeAccountingAdapter } from "../adapters/merge_accounting.js";
 import type { ConnectorDescriptor } from "../adapters/descriptors.js";
 import type { SourceAdapter } from "../adapters/types.js";
 import { assertStaticConformance, assertFetchConformance } from "./harness.js";
+import { assertRegistryPartnerIsolation } from "../adapters/isolation.js";
 
 describe("connector conformance — static contract (registry-wide)", () => {
   for (const adapter of listAdapters()) {
@@ -21,6 +22,12 @@ describe("connector conformance — static contract (registry-wide)", () => {
       expect(() => assertStaticConformance(adapter, descriptor)).not.toThrow();
     });
   }
+
+  it("partner-tier connectors are isolated out of process", () => {
+    // Certification also covers the trust boundary: no partner-tier connector
+    // may run in-process (no adapter, no Ledger parser, no webhook delivery).
+    expect(() => assertRegistryPartnerIsolation()).not.toThrow();
+  });
 });
 
 describe("connector conformance — behavioral contract (Merge pull adapter)", () => {

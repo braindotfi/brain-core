@@ -29,6 +29,23 @@ export type SourceCategory =
 
 export type DeliveryMethod = "webhook" | "poll" | "cursor" | "snapshot" | "file" | "stream";
 export type ConnectorOrigin = "provider" | "aggregator" | "customer" | "agent" | "public";
+
+/**
+ * Who AUTHORED the connector code, which fixes the trust boundary it runs in
+ * (distinct from `origin`, which describes the nature of the data SOURCE):
+ *  - `first_party`: Brain-authored and audited. May run in-process as a
+ *    registered SourceAdapter, hold provider credentials, and register a
+ *    Ledger parser that mints `extracted` (high-trust) evidence.
+ *  - `partner`: authored outside Brain's trust boundary. MUST NOT run
+ *    in-process: no registered adapter, no Ledger parser. It reaches Raw only
+ *    through the authenticated generic-ingest boundary (`/raw/ingest`) as an
+ *    `api_partner` principal, so its artifacts resolve as low evidence trust
+ *    (`customer_asserted`) and the §6 gate (check 9.5) refuses to settle on
+ *    them uncorroborated. Runtime hosting of partner code in an isolated
+ *    operated runtime is deferred to the R-03 deploy substrate; this tier
+ *    declares and enforces the in-process exclusion that is buildable today.
+ */
+export type ConnectorTrustTier = "first_party" | "partner";
 export type PayloadFormat = "structured" | "document" | "image" | "chain_event";
 export type AuthenticationMethod = "oauth2" | "api_key" | "signature" | "service_account" | "none";
 
@@ -50,6 +67,8 @@ export interface ConnectorDescriptor {
   category: SourceCategory;
   delivery: ReadonlyArray<DeliveryMethod>;
   origin: ConnectorOrigin;
+  /** Code-authorship trust boundary; gates whether the connector may run in-process. */
+  trustTier: ConnectorTrustTier;
   format: ReadonlyArray<PayloadFormat>;
   authentication: ReadonlyArray<AuthenticationMethod>;
   capabilities: ConnectorCapabilities;
@@ -77,6 +96,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "banking_cash",
     delivery: ["webhook", "cursor", "snapshot"],
     origin: "aggregator",
+    trustTier: "first_party",
     format: ["structured"],
     authentication: ["oauth2"],
     capabilities: {
@@ -97,6 +117,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "payments_revenue",
     delivery: ["webhook", "cursor"],
     origin: "provider",
+    trustTier: "first_party",
     format: ["structured"],
     authentication: ["api_key", "signature"],
     // Cursor pull is live (six per-object-type partitions); the webhook
@@ -124,6 +145,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "accounting_erp",
     delivery: ["webhook", "poll"],
     origin: "provider",
+    trustTier: "first_party",
     format: ["structured"],
     authentication: ["oauth2"],
     capabilities: NO_CAPABILITIES, // stub; superseded by the accounting aggregator in Phase 3
@@ -136,6 +158,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "documents_email",
     delivery: ["webhook"],
     origin: "customer",
+    trustTier: "first_party",
     format: ["document"],
     authentication: ["signature"],
     capabilities: NO_CAPABILITIES, // stub until the verified inbound-email path lands
@@ -148,6 +171,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "documents_email",
     delivery: ["file"],
     origin: "customer",
+    trustTier: "first_party",
     format: ["document"],
     authentication: ["none"], // RBAC-scoped bearer auth on the route itself
     capabilities: NO_CAPABILITIES,
@@ -160,6 +184,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "documents_email",
     delivery: ["file"],
     origin: "customer",
+    trustTier: "first_party",
     format: ["document"],
     authentication: ["none"], // RBAC-scoped bearer auth on the route itself
     capabilities: NO_CAPABILITIES,
@@ -172,6 +197,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "digital_assets",
     delivery: ["webhook", "poll"],
     origin: "aggregator",
+    trustTier: "first_party",
     format: ["chain_event"],
     authentication: ["api_key"],
     capabilities: NO_CAPABILITIES, // stub
@@ -184,6 +210,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "digital_assets",
     delivery: ["poll"],
     origin: "public",
+    trustTier: "first_party",
     format: ["chain_event"],
     authentication: ["none"],
     capabilities: NO_CAPABILITIES, // stub
@@ -196,6 +223,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "agent_internal",
     delivery: ["stream"],
     origin: "agent",
+    trustTier: "first_party",
     format: ["structured", "document"],
     authentication: ["none"], // MCP auth chain governs the route
     capabilities: NO_CAPABILITIES,
@@ -208,6 +236,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "other",
     delivery: ["file", "stream"],
     origin: "customer",
+    trustTier: "first_party",
     format: ["structured", "document", "image"],
     authentication: ["none"], // RBAC-scoped bearer auth on the route itself
     capabilities: NO_CAPABILITIES,
@@ -220,6 +249,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "accounting_erp",
     delivery: ["cursor", "poll"],
     origin: "aggregator",
+    trustTier: "first_party",
     format: ["structured"],
     authentication: ["api_key"],
     capabilities: {
@@ -238,6 +268,7 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     category: "payroll_hr",
     delivery: ["poll", "snapshot"],
     origin: "aggregator",
+    trustTier: "first_party",
     format: ["structured"],
     authentication: ["oauth2"],
     capabilities: {
