@@ -471,6 +471,42 @@ if [[ "${BRAIN_DEMO_E2E_FULL:-false}" == "true" ]]; then
     record "missing_approval_negative" fail ""
     exit 1
   fi
+
+  # (e) AUDIT BEFORE -> AFTER LINKAGE (R-04 EC4). The §6 gate emits a mandatory
+  # payment_intent.execute.before event, and a successful execution emits a
+  # payment_intent.execute.after event. Both must be present in the executed
+  # PI's proof, the before must precede the after, and the after must be linked
+  # into the tamper-evident hash chain (non-empty prev_event_hash) — i.e. the
+  # pair is chained, not free-floating. The PI is terminal (executed + anchored)
+  # by this point, so re-fetch a fresh proof.
+  start_step
+  LINK_PROOF=$(curl -s "$V1/proof/$PI_ID" -H "Authorization: Bearer $TOKEN")
+  BEFORE_IDX=$(echo "$LINK_PROOF" | jq '[.audit_events[]?.action] | index("payment_intent.execute.before")')
+  AFTER_IDX=$(echo "$LINK_PROOF" | jq '[.audit_events[]?.action] | index("payment_intent.execute.after")')
+  if [[ "$BEFORE_IDX" == "null" || -z "$BEFORE_IDX" ]]; then
+    fail "audit linkage: no payment_intent.execute.before event in the proof"
+    record "audit_linkage" fail ""
+    exit 1
+  fi
+  if [[ "$AFTER_IDX" == "null" || -z "$AFTER_IDX" ]]; then
+    fail "audit linkage: no payment_intent.execute.after event in the proof (execution did not audit)"
+    record "audit_linkage" fail ""
+    exit 1
+  fi
+  # audit_events are oldest-first: before must precede after.
+  if (( BEFORE_IDX >= AFTER_IDX )); then
+    fail "audit linkage: execute.before (idx $BEFORE_IDX) does not precede execute.after (idx $AFTER_IDX)"
+    record "audit_linkage" fail ""
+    exit 1
+  fi
+  AFTER_PREV=$(echo "$LINK_PROOF" | jq -r '[.audit_events[]? | select(.action=="payment_intent.execute.after")][0].prev_event_hash // ""')
+  if [[ -z "$AFTER_PREV" || "$AFTER_PREV" == "null" ]]; then
+    fail "audit linkage: execute.after has no prev_event_hash (not chained into the audit log)"
+    record "audit_linkage" fail ""
+    exit 1
+  fi
+  ok "audit before->after linkage: before idx $BEFORE_IDX precedes after idx $AFTER_IDX, after chained (prev ${AFTER_PREV:0:12}…)"
+  record "audit_linkage" ok ""
 fi
 
 # ── 12. Summary ──────────────────────────────────────────────────────────────
