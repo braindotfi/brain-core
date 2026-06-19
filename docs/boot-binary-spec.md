@@ -52,10 +52,23 @@ process: brain-server
     └── plugin: mcpRoute               → /agents/mcp
 ```
 
-Why single-process: PoC simplicity. Multi-process + reverse proxy
-is post-MVP and changes nothing about the wire contract. Each
-layer's routes are encapsulated, so splitting later is a packaging
-change, not a re-architecture.
+Why single-process by default: PoC simplicity, and nothing about the
+wire contract depends on it. As of the worker/process separation
+(R-13), the **same binary** can also run as an HTTP-only api or as
+HTTP-disabled worker processes, selected by env without a code change:
+
+- `BRAIN_HTTP_ENABLED` (default `true`) gates the `/v1` surface
+  (`GET /health` is always served, so a worker process still answers a
+  probe).
+- `BRAIN_WORKERS` (default `all`; `all` | `none` | CSV of worker
+  groups) selects which background-worker groups this process runs.
+
+`composition/process-roles.ts` (`resolveComposition`) maps the env to
+which routes, workers, and least-privilege DB pools are active. The
+default (HTTP + all workers) is the historical single process;
+`docker-compose.prod.yml` runs an `api` (workers off) and a `worker`
+(HTTP off) off the one image. Splitting further is config, not a
+re-architecture.
 
 ## Required Refactor: `register*Routes` Exports per Service
 
