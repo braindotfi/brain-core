@@ -53,6 +53,18 @@ const MERGE_COUNTERPARTY_CONFIDENCE = 0.8;
 /** Fallback when a document's raw_parsed row carries no confidence (capped agent ceiling). */
 const DOC_DEFAULT_CONFIDENCE = 0.5;
 
+/**
+ * Failed projections are retried up to this many times before they are
+ * quarantined (moved aside). Keeps one poison record from wedging a tenant's
+ * lane, while still surviving transient failures (deadlock / FK race / blip).
+ */
+const DEFAULT_MAX_PROJECTION_ATTEMPTS = 5;
+
+/** A failed projection becomes quarantined once it has used its retry budget. */
+export function isQuarantined(attempts: number, maxAttempts: number): boolean {
+  return attempts >= maxAttempts;
+}
+
 function mergeConfidence(objectType: string | undefined): number | null {
   if (objectType === "invoice") return MERGE_OBLIGATION_CONFIDENCE;
   if (objectType === "contact") return MERGE_COUNTERPARTY_CONFIDENCE;
@@ -75,6 +87,8 @@ export interface ProjectionWorkerOptions {
   batchSize?: number;
   /** Actor id attributed to projection audit events. */
   actor?: string;
+  /** Failed projections quarantined after this many attempts. Default: 5. */
+  maxAttempts?: number;
 }
 
 export type ProjectionWorker = ManagedWorker;
@@ -107,22 +121,50 @@ function sourceSystemOf(mergeIntegration: string | null | undefined): string {
     : "merge";
 }
 
-async function recordProjection(
+/**
+ * SQL fragment (alias `rp`) that excludes raw_parsed rows already handled to a
+ * terminal state — successfully projected (`error IS NULL`) or quarantined. A
+ * failed-but-not-quarantined row is intentionally NOT excluded, so the next
+ * cycle retries it. Used by every poll + the lag gauge so they agree on what
+ * "pending" means.
+ */
+const PENDING_EXCLUSION = `NOT EXISTS (
+            SELECT 1 FROM canonical_projection_log pl
+             WHERE pl.raw_parsed_id = rp.id
+               AND (pl.error IS NULL OR pl.quarantined)
+          )`;
+
+/**
+ * Record a failed projection: increment the attempt counter and, once the retry
+ * budget is exhausted, quarantine the row. Returns the post-update state so the
+ * caller can emit a quarantine metric on the transition. Runs in its own
+ * tenant-scoped transaction (the data transaction has already rolled back).
+ */
+async function recordFailure(
   pool: Pool,
   tenantId: string,
   rawParsedId: string,
+  projector: string,
   domain: string,
-  recordsWritten: number,
-  errorMessage: string | null,
-): Promise<void> {
-  await withTenantScope(pool, tenantId, async (c) => {
-    await c.query(
+  errorMessage: string,
+  maxAttempts: number,
+): Promise<{ attempts: number; quarantined: boolean }> {
+  return withTenantScope(pool, tenantId, async (c) => {
+    const { rows } = await c.query<{ attempts: number; quarantined: boolean }>(
       `INSERT INTO canonical_projection_log
-         (raw_parsed_id, tenant_id, projector, domain, records_written, error)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (raw_parsed_id) DO NOTHING`,
-      [rawParsedId, tenantId, MERGE_ACCOUNTING_PROJECTOR, domain, recordsWritten, errorMessage],
+         (raw_parsed_id, tenant_id, projector, domain, records_written, error, attempts, quarantined)
+       VALUES ($1,$2,$3,$4,0,$5,1, 1 >= $6)
+       ON CONFLICT (raw_parsed_id) DO UPDATE SET
+         error = EXCLUDED.error,
+         projector = EXCLUDED.projector,
+         domain = EXCLUDED.domain,
+         attempts = canonical_projection_log.attempts + 1,
+         quarantined = (canonical_projection_log.attempts + 1) >= $6,
+         projected_at = now()
+       RETURNING attempts, quarantined`,
+      [rawParsedId, tenantId, projector, domain, errorMessage, maxAttempts],
     );
+    return rows[0] ?? { attempts: 1, quarantined: isQuarantined(1, maxAttempts) };
   });
 }
 
@@ -133,6 +175,7 @@ export async function runProjectionCycle(
 ): Promise<void> {
   const batchSize = opts?.batchSize ?? 20;
   const actor = opts?.actor ?? "sys_canonical_projector";
+  const maxAttempts = opts?.maxAttempts ?? DEFAULT_MAX_PROJECTION_ATTEMPTS;
 
   let rows: PendingParsedRow[];
   try {
@@ -143,9 +186,7 @@ export async function runProjectionCycle(
          FROM raw_parsed rp
         WHERE rp.parser = $1
           AND rp.extracted->>'object_type' = ANY($2::text[])
-          AND NOT EXISTS (
-            SELECT 1 FROM canonical_projection_log pl WHERE pl.raw_parsed_id = rp.id
-          )
+          AND ${PENDING_EXCLUSION}
         ORDER BY rp.extracted->>'object_type' ASC, rp.extracted_at ASC
         LIMIT $3`,
       [MERGE_ACCOUNTING_PARSER, [...ALL_PROJECTABLE_OBJECT_TYPES], batchSize],
@@ -195,12 +236,20 @@ export async function runProjectionCycle(
             count += 1;
           }
         }
-        // Same transaction as the writes: log + data commit or roll back together.
+        // Same transaction as the writes: log + data commit or roll back
+        // together. On conflict (a prior failed attempt left a row) clear the
+        // error/quarantine so a retry that finally succeeds is marked terminal.
         await c.query(
           `INSERT INTO canonical_projection_log
-             (raw_parsed_id, tenant_id, projector, domain, records_written, error)
-           VALUES ($1,$2,$3,$4,$5,NULL)
-           ON CONFLICT (raw_parsed_id) DO NOTHING`,
+             (raw_parsed_id, tenant_id, projector, domain, records_written, error, quarantined)
+           VALUES ($1,$2,$3,$4,$5,NULL,false)
+           ON CONFLICT (raw_parsed_id) DO UPDATE SET
+             projector = EXCLUDED.projector,
+             domain = EXCLUDED.domain,
+             records_written = EXCLUDED.records_written,
+             error = NULL,
+             quarantined = false,
+             projected_at = now()`,
           [row.id, row.tenant_id, MERGE_ACCOUNTING_PROJECTOR, domainFor(objectType), count],
         );
         return count;
@@ -229,16 +278,61 @@ export async function runProjectionCycle(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[canonicalProjector] projection failed for ${row.id}:`, message);
-      try {
-        await recordProjection(deps.pool, row.tenant_id, row.id, domainFor(objectType), 0, message);
-      } catch (logErr) {
-        console.error(`[canonicalProjector] failed to log projection for ${row.id}:`, logErr);
-      }
+      await handleProjectionFailure(
+        deps,
+        row.tenant_id,
+        row.id,
+        MERGE_ACCOUNTING_PROJECTOR,
+        domainFor(objectType),
+        objectType ?? "unknown",
+        message,
+        maxAttempts,
+      );
     }
   }
 
-  await runDocObligationPass(deps, batchSize, actor);
+  await runDocObligationPass(deps, batchSize, actor, maxAttempts);
   await emitProjectorLag(deps);
+}
+
+/**
+ * Persist a projection failure and, when it tips a row into quarantine, surface
+ * it via metrics + log so a poison record is visible rather than silently
+ * dropped. Swallows logging errors (best effort; the row stays pollable).
+ */
+async function handleProjectionFailure(
+  deps: ProjectionWorkerDeps,
+  tenantId: string,
+  rawParsedId: string,
+  projector: string,
+  domain: string,
+  objectType: string,
+  message: string,
+  maxAttempts: number,
+): Promise<void> {
+  try {
+    const state = await recordFailure(
+      deps.pool,
+      tenantId,
+      rawParsedId,
+      projector,
+      domain,
+      message,
+      maxAttempts,
+    );
+    if (state.quarantined) {
+      console.error(
+        `[canonicalProjector] quarantined ${rawParsedId} after ${state.attempts} attempts: ${message}`,
+      );
+      deps.metrics?.increment(
+        "brain.canonical.projector.quarantine.count",
+        { projector, object_type: objectType },
+        1,
+      );
+    }
+  } catch (logErr) {
+    console.error(`[canonicalProjector] failed to log projection for ${rawParsedId}:`, logErr);
+  }
 }
 
 /**
@@ -249,16 +343,27 @@ export async function runProjectionCycle(
 async function emitProjectorLag(deps: ProjectionWorkerDeps): Promise<void> {
   if (deps.metrics === undefined) return;
   try {
+    // Lag counts rows still pending (not yet terminal). Quarantined rows are
+    // terminal, so a poison record no longer inflates lag forever — its backlog
+    // moves to the quarantine-depth gauge below instead.
     const { rows } = await deps.pool.query<{ lag: number }>(
       `SELECT COALESCE(EXTRACT(EPOCH FROM now() - MIN(rp.extracted_at)), 0)::float8 AS lag
          FROM raw_parsed rp
         WHERE ((rp.parser = $1 AND rp.extracted->>'object_type' = ANY($2::text[])) OR rp.parser = $3)
-          AND NOT EXISTS (SELECT 1 FROM canonical_projection_log pl WHERE pl.raw_parsed_id = rp.id)`,
+          AND ${PENDING_EXCLUSION}`,
       [MERGE_ACCOUNTING_PARSER, [...ALL_PROJECTABLE_OBJECT_TYPES], DOC_OBLIGATION_PARSER],
     );
     deps.metrics.gauge("brain.canonical.projector.lag_seconds", rows[0]?.lag ?? 0);
   } catch (err) {
     console.error("[canonicalProjector] lag gauge query failed:", err);
+  }
+  try {
+    const { rows } = await deps.pool.query<{ depth: number }>(
+      `SELECT count(*)::int AS depth FROM canonical_projection_log WHERE quarantined`,
+    );
+    deps.metrics.gauge("brain.canonical.projector.quarantine.depth", rows[0]?.depth ?? 0);
+  } catch (err) {
+    console.error("[canonicalProjector] quarantine depth gauge query failed:", err);
   }
 }
 
@@ -279,6 +384,7 @@ async function runDocObligationPass(
   deps: ProjectionWorkerDeps,
   batchSize: number,
   actor: string,
+  maxAttempts: number,
 ): Promise<void> {
   let rows: PendingDocRow[];
   try {
@@ -286,9 +392,7 @@ async function runDocObligationPass(
       `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted, rp.confidence
          FROM raw_parsed rp
         WHERE rp.parser = $1
-          AND NOT EXISTS (
-            SELECT 1 FROM canonical_projection_log pl WHERE pl.raw_parsed_id = rp.id
-          )
+          AND ${PENDING_EXCLUSION}
         ORDER BY rp.extracted_at ASC
         LIMIT $2`,
       [DOC_OBLIGATION_PARSER, batchSize],
@@ -317,9 +421,14 @@ async function runDocObligationPass(
         }
         await c.query(
           `INSERT INTO canonical_projection_log
-             (raw_parsed_id, tenant_id, projector, domain, records_written, error)
-           VALUES ($1,$2,$3,'ap_ar',$4,NULL)
-           ON CONFLICT (raw_parsed_id) DO NOTHING`,
+             (raw_parsed_id, tenant_id, projector, domain, records_written, error, quarantined)
+           VALUES ($1,$2,$3,'ap_ar',$4,NULL,false)
+           ON CONFLICT (raw_parsed_id) DO UPDATE SET
+             projector = EXCLUDED.projector,
+             records_written = EXCLUDED.records_written,
+             error = NULL,
+             quarantined = false,
+             projected_at = now()`,
           [row.id, row.tenant_id, DOC_OBLIGATION_PROJECTOR, count],
         );
         return count;
@@ -348,13 +457,51 @@ async function runDocObligationPass(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[canonicalProjector] doc projection failed for ${row.id}:`, message);
-      try {
-        await recordProjection(deps.pool, row.tenant_id, row.id, "ap_ar", 0, message);
-      } catch (logErr) {
-        console.error(`[canonicalProjector] failed to log doc projection for ${row.id}:`, logErr);
-      }
+      await handleProjectionFailure(
+        deps,
+        row.tenant_id,
+        row.id,
+        DOC_OBLIGATION_PROJECTOR,
+        "ap_ar",
+        "doc_obligation",
+        message,
+        maxAttempts,
+      );
     }
   }
+}
+
+/**
+ * Bounded replay/drain of quarantined projection rows: clears the quarantine
+ * flag and resets the retry budget so the next cycle re-attempts them (the
+ * `error` is kept non-null so the row stays pollable until that attempt
+ * overwrites it). Run after fixing the projector bug that caused the poison.
+ * Returns the number of rows released.
+ *
+ * With `tenantId` the drain is tenant-scoped (RLS-enforced); without it the
+ * drain is cross-tenant (privileged pool) for a platform-operator sweep.
+ */
+export async function replayQuarantined(
+  deps: ProjectionWorkerDeps,
+  opts?: { tenantId?: string; limit?: number },
+): Promise<number> {
+  const limit = opts?.limit ?? 100;
+  const sql = `UPDATE canonical_projection_log
+                  SET quarantined = false, attempts = 0
+                WHERE raw_parsed_id IN (
+                  SELECT raw_parsed_id FROM canonical_projection_log
+                   WHERE quarantined = true
+                   ORDER BY projected_at ASC
+                   LIMIT $1
+                )`;
+  if (opts?.tenantId !== undefined) {
+    return withTenantScope(deps.pool, opts.tenantId, async (c) => {
+      const res = await c.query(sql, [limit]);
+      return res.rowCount ?? 0;
+    });
+  }
+  const res = await deps.pool.query(sql, [limit]);
+  return res.rowCount ?? 0;
 }
 
 export function startCanonicalProjectionWorker(
