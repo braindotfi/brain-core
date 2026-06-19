@@ -152,8 +152,8 @@
       "id": "R-09",
       "title": "On-chain tumbling vs off-chain rolling spend windows can diverge",
       "priority": "P2",
-      "status": "mitigating",
-      "mitigation_summary": "Batch 8 P3: off-chain agent-window-spend loader switched from a trailing rolling window to a tumbling window using the same floor((ts/period)*period) formula as BrainSmartAccount._windowSpent. Off-chain (agent-budget, check 8.5) and on-chain (session-key budget) now agree at boundaries. The misleading 'mirror' comment in shared/src/gate/gate.ts was corrected. Approve-as-spend concern is structurally NA off-chain (only executed intents are summed; approve never reaches executed).",
+      "status": "closed",
+      "mitigation_summary": "Batch 8 P3: off-chain agent-window-spend loader switched from a trailing rolling window to a tumbling window using the same floor((ts/period)*period) formula as BrainSmartAccount._windowSpent. Off-chain (agent-budget, check 8.5) and on-chain (session-key budget) now agree at boundaries. The misleading 'mirror' comment in shared/src/gate/gate.ts was corrected. Approve-as-spend concern is structurally NA off-chain (only executed intents are summed; approve never reaches executed). CLOSED: fast-check property tests (services/policy/src/agent-window-spend.windows.test.ts) prove the canonical tumblingWindowStartSeconds equals an independent derivation of the on-chain Solidity integer-division window (ts - ts%p) at T-1/T/T+1, that the off-chain double-precision epoch intermediate does not diverge across the realistic epoch range, and the containment/monotonicity invariants. The remaining criterion (rationalize on-chain approve-as-spend) was explicitly optional and stays deferred (current behavior is conservative).",
       "exit_criteria": [
         "Property tests proving off-chain SQL window matches on-chain Solidity window at boundary T = floor(now/period)*period and T-1, T+1",
         "Optional: rationalize approve-as-spend on-chain (defer; current is conservative)"
@@ -162,8 +162,12 @@
       "evidence": [
         "services/policy/src/agent-window-spend.ts (tumbling SQL)",
         "shared/src/gate/gate.ts:696-702 (comment corrected)",
-        "contracts/src/BrainSmartAccount.sol:265-270 (on-chain reference)"
-      ]
+        "contracts/src/BrainSmartAccount.sol:265-270 (on-chain reference)",
+        "services/policy/src/agent-window-spend.windows.test.ts",
+        "services/policy/src/agent-window-spend.ts"
+      ],
+      "closed_at": "2026-06-19",
+      "closed_by": "R-09 window-agreement property tests"
     },
     {
       "id": "R-10",
