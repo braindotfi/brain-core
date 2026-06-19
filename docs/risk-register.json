@@ -214,6 +214,22 @@
         "tests/invariants/integration/db-role-grants.integration.test.ts (runtime-as-role grant matrix)",
         "docker-compose.prod.yml (db-roles passwords + api role URLs)"
       ]
+    },
+    {
+      "id": "R-13",
+      "title": "All background workers run inside the public API process",
+      "priority": "P1",
+      "status": "closed",
+      "closed_at": "2026-06-19",
+      "closed_by": "worker/process separation",
+      "mitigation_summary": "Review 2 flagged that the monolithic main() ran ten background workers (ingestion sync/interpret, canonical + ledger projection, execution-outbox drain, webhook dispatch, blob purge, audit verifier + anchor scheduler/reconciler, agent-route) plus the anchor scheduler inside the same process that serves the public HTTP API, so an api deploy/restart bounced ingestion + execution, horizontal api scaling multiplied workers, and the public api runtime held every worker's privileged DB credential. Closed by one-image, role-via-env separation: BRAIN_HTTP_ENABLED gates the /v1 surface (health always on) and BRAIN_WORKERS (all|none|CSV of nine groups) selects which workers a process runs; composition/process-roles.ts (resolveComposition) is the pure source of truth mapping env -> {/v1, workers, least-privilege role pools}. The db-isolation fence and boot role-assertion only require/check the pools a process actually uses, and an unset role URL aliases brain_app, so an api process (BRAIN_WORKERS=none) holds no worker DB credentials. Defaults (HTTP + all workers) reproduce the historical all-in-one process; docker-compose.prod.yml runs an api service (workers=none) and a worker service (http disabled, workers=all) off the same image. Remaining (deferred to R-03 Azure substrate): per-group autoscaling + leases for the idempotent-but-not-lease-protected canonical/ledger/normalize/webhook workers (run single-replica today).",
+      "evidence": [
+        "services/api/src/composition/process-roles.ts (env -> composition) + .test.ts",
+        "services/api/src/main.ts (gated /v1 block, workers, pools; dynamic shutdown set)",
+        "services/api/src/composition/db-isolation.ts (requireWiki + requiredEnv scoping)",
+        "services/api/src/db-isolation-fences.test.ts (composition-scoping fence tests)",
+        "docker-compose.prod.yml (api service + worker service off one image)"
+      ]
     }
   ]
 }

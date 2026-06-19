@@ -134,3 +134,54 @@ describe("assertDbIsolationFences — §4 role URLs", () => {
     ).toThrow(/BRAIN_WIKI_DB_URL is required/);
   });
 });
+
+describe("assertDbIsolationFences — composition scoping (worker/process separation)", () => {
+  const blank: PrivilegedRoleUrls = {
+    BRAIN_RAW_WORKER_DB_URL: undefined,
+    BRAIN_CANONICAL_PROJECTOR_DB_URL: undefined,
+    BRAIN_LEDGER_PROJECTOR_DB_URL: undefined,
+    BRAIN_EXECUTION_WORKER_DB_URL: undefined,
+    BRAIN_AUDIT_VERIFIER_DB_URL: undefined,
+    BRAIN_AUDIT_PUBLISHER_DB_URL: undefined,
+    BRAIN_RESOLVER_DB_URL: undefined,
+    BRAIN_TENANT_DELETION_DB_URL: undefined,
+  };
+
+  it("requireWiki:false does not require the wiki URL in production (worker process)", () => {
+    expect(() =>
+      assertDbIsolationFences({
+        nodeEnv: "production",
+        wikiDbUrl: undefined,
+        requireWiki: false,
+        requiredEnv: new Set(["BRAIN_RAW_WORKER_DB_URL"]),
+        privilegedRoleUrls: { ...blank, BRAIN_RAW_WORKER_DB_URL: "postgres://raw@host/db" },
+      }),
+    ).not.toThrow();
+  });
+
+  it("only fences the URLs in requiredEnv (a single-worker process)", () => {
+    // Raw worker: only BRAIN_RAW_WORKER_DB_URL is required; the other seven unset
+    // URLs must NOT throw in production.
+    expect(() =>
+      assertDbIsolationFences({
+        nodeEnv: "production",
+        wikiDbUrl: undefined,
+        requireWiki: false,
+        requiredEnv: new Set(["BRAIN_RAW_WORKER_DB_URL"]),
+        privilegedRoleUrls: { ...blank, BRAIN_RAW_WORKER_DB_URL: "postgres://raw@host/db" },
+      }),
+    ).not.toThrow();
+  });
+
+  it("throws when a URL named in requiredEnv is missing in production", () => {
+    expect(() =>
+      assertDbIsolationFences({
+        nodeEnv: "production",
+        wikiDbUrl: undefined,
+        requireWiki: false,
+        requiredEnv: new Set(["BRAIN_RAW_WORKER_DB_URL"]),
+        privilegedRoleUrls: blank,
+      }),
+    ).toThrow(/BRAIN_RAW_WORKER_DB_URL is required/);
+  });
+});

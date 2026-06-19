@@ -36,6 +36,10 @@ Single diligence-facing index for fintech, bank, and platform buyers. For each e
 
 **Blob storage.** Every object lives under `<tenantId>/yyyy/mm/dd/sha256`. Paths are built by `blobPath()` in `shared/src/blob/types.ts` and never concatenated by hand. An RLS test against the non-owner `brain_app` role pins the boundary.
 
+### Process isolation (api vs workers)
+
+The same image runs as an HTTP-only api and as separate background-worker processes (`BRAIN_HTTP_ENABLED` + `BRAIN_WORKERS` select the role; `composition/process-roles.ts`). Workers (ingestion, projection, execution-outbox drain, audit verification/anchoring, blob purge) restart and scale independently of api deploys, and the worker-only least-privilege DB credentials are never handed to the public api runtime. `docker-compose.prod.yml` ships this split (an `api` service with `BRAIN_WORKERS=none` and a `worker` service with `BRAIN_HTTP_ENABLED=false`).
+
 ### Wiki / Policy boundary
 
 Brain's safety story rests on Policy reading **Ledger only**, never Wiki.

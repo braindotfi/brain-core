@@ -35,6 +35,17 @@ const envSchema = z.object({
   SERVICE_VERSION: z.string().default("0.0.0-dev"),
   PORT: z.coerce.number().int().positive().default(3000),
 
+  // ---- Process role (worker/process separation) ----
+  // One image, role via env. BRAIN_HTTP_ENABLED gates the /v1 API surface;
+  // BRAIN_WORKERS selects which background-worker groups this process runs
+  // ("all" | "none" | CSV of groups, e.g. "raw,canonical"). Defaults reproduce
+  // the all-in-one process. See services/api/src/composition/process-roles.ts.
+  BRAIN_HTTP_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  BRAIN_WORKERS: z.string().min(1).default("all"),
+
   // ---- Postgres ----
   DATABASE_URL: z.string().url(),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),

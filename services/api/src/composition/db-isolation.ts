@@ -29,22 +29,35 @@ export interface PrivilegedRoleUrls {
 export interface DbIsolationCheckInput {
   nodeEnv: string | undefined;
   wikiDbUrl: string | undefined;
-  /** The seven §4 role connection strings. */
+  /** The eight §4 role connection strings. */
   privilegedRoleUrls: PrivilegedRoleUrls;
+  /**
+   * Whether this process serves the Wiki (HTTP /v1). When false (a worker
+   * process), BRAIN_WIKI_DB_URL is not required. Defaults to true (the api).
+   */
+  requireWiki?: boolean;
+  /**
+   * Env var names of the role URLs this process actually needs (worker/process
+   * separation): only these are fenced. When omitted, all are required (the
+   * historical all-in-one process).
+   */
+  requiredEnv?: ReadonlySet<string>;
   /** Sink for non-fatal warnings; defaults to console.warn. Injectable for tests. */
   warn?: (msg: string) => void;
 }
 
 /**
  * Throws when production is missing a required isolation URL. Returns the
- * list of warnings emitted (or empty in production-with-all-set).
+ * list of warnings emitted (or empty in production-with-all-set). Only the URLs
+ * this process role needs are fenced (see requireWiki / requiredEnv).
  */
 export function assertDbIsolationFences(input: DbIsolationCheckInput): string[] {
   const warn = input.warn ?? ((m: string) => console.warn(m));
   const warnings: string[] = [];
   const isProd = input.nodeEnv === "production";
+  const requireWiki = input.requireWiki ?? true;
 
-  if (input.wikiDbUrl === undefined || input.wikiDbUrl.length === 0) {
+  if (requireWiki && (input.wikiDbUrl === undefined || input.wikiDbUrl.length === 0)) {
     if (isProd) {
       throw new Error(
         "BRAIN_WIKI_DB_URL is required in NODE_ENV=production (H-14, Standards §1.2). " +
@@ -59,6 +72,7 @@ export function assertDbIsolationFences(input: DbIsolationCheckInput): string[] 
   }
 
   for (const [name, url] of Object.entries(input.privilegedRoleUrls)) {
+    if (input.requiredEnv !== undefined && !input.requiredEnv.has(name)) continue;
     if (url !== undefined && url.length > 0) continue;
     if (isProd) {
       throw new Error(
