@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
-import { InMemoryAuditEmitter, type BlobAdapter, type BlobPurgeResult } from "@brain/shared";
+import {
+  InMemoryAuditEmitter,
+  MemoryBlobAdapter,
+  type BlobAdapter,
+  type BlobPurgeResult,
+} from "@brain/shared";
 import { runBlobPurgeCycle } from "./blob-purge-worker.js";
 import type { BlobPurgeJobRow } from "./blob-purge-repo.js";
 
@@ -348,5 +353,44 @@ describe("runBlobPurgeCycle", () => {
       "brain.tenant.blob_purge.audit_publish_failed.count",
       expect.objectContaining({ tenant_id: "tnt_01TESTTENANT" }),
     );
+  });
+});
+
+/**
+ * End-to-end erasure proof (R-02 exit criterion). The other tests in this file
+ * mock `purgeTenant`, so they verify the worker's control flow but never that
+ * bytes actually disappear. This drives `runBlobPurgeCycle` against a REAL
+ * MemoryBlobAdapter seeded with two tenants' objects and asserts the deleted
+ * tenant's bytes are gone, a co-resident tenant's bytes survive, and the
+ * reported count matches what was erased — the erasure itself, not just the
+ * orchestration. (S3/Azure version-aware erasure is proven separately in
+ * shared/src/blob/purge-versions.test.ts.)
+ */
+describe("runBlobPurgeCycle — real-adapter erasure (end-to-end)", () => {
+  it("erases the deleted tenant's blobs and preserves a co-resident tenant's", async () => {
+    const blob = new MemoryBlobAdapter();
+    const put = (path: string): Promise<unknown> =>
+      blob.put(path, Buffer.from(`bytes:${path}`), { contentType: "application/octet-stream" });
+    // Target tenant (the one being deleted) + a co-resident tenant that must survive.
+    await put("tnt_01TESTTENANT/raw/a.json");
+    await put("tnt_01TESTTENANT/raw/b.pdf");
+    await put("tnt_01TESTTENANT/raw/nested/c.csv");
+    await put("tnt_OTHERTENANT/raw/keep.json");
+    expect(blob.objects.size).toBe(4);
+
+    const { pool } = fakePool([job({ blob_artifact_count: 3 })]);
+    const audit = new InMemoryAuditEmitter();
+
+    const tally = await runBlobPurgeCycle({ privilegedPool: pool, blob, audit });
+
+    expect(tally).toMatchObject({ claimed: 1, completed: 1, retried: 0, exhausted: 0 });
+    // Erasure actually happened: every object under the tenant prefix is gone...
+    expect([...blob.objects.keys()].filter((k) => k.startsWith("tnt_01TESTTENANT/"))).toEqual([]);
+    // ...and the co-resident tenant is untouched.
+    expect(blob.objects.has("tnt_OTHERTENANT/raw/keep.json")).toBe(true);
+    expect(blob.objects.size).toBe(1);
+    // The audit trail records the true count of erased objects.
+    const completed = audit.events.find((e) => e.action === "tenant_blob.purge_completed");
+    expect(completed?.outputs).toMatchObject({ deleted: 3 });
   });
 });

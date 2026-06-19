@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.brain.fi/schemas/risk-register-v1.json",
   "schema_version": "v1",
-  "comment": "Machine-readable mirror of docs/risk-register.md. Read by scripts/production-readiness.mjs. Open + P0 → red row in the aggregator; open + P1 → yellow; mitigating + P0 → yellow; closed → not surfaced. When this file changes, update the .md mirror in the same PR.",
+  "comment": "Machine-readable mirror of docs/risk-register.md. Read by scripts/production-readiness.mjs. Open + P0 \u2192 red row in the aggregator; open + P1 \u2192 yellow; mitigating + P0 \u2192 yellow; closed \u2192 not surfaced. When this file changes, update the .md mirror in the same PR.",
   "risks": [
     {
       "id": "R-01",
@@ -30,7 +30,7 @@
       "title": "Tenant blob purge not implemented (GDPR Article 17 gap)",
       "priority": "P0",
       "status": "mitigating",
-      "mitigation_summary": "RFC 0003 phase B shipped: tenant deletion enqueues a durable tenant_blob_purge_jobs row in the deletion transaction; a privileged worker (blob-purge-worker.ts) drains it via BlobAdapter.purgeTenant with bounded backoff, a dead-letter state, and version-aware permanent erasure (S3 all object versions + delete markers; Azure versions + snapshots), restricted to the worker by a CI call-site guard (check-blob-purge-callsite). 2026-06-07 review hardening shipped: (i) crash-safe lease recovery (stale 'purging' jobs reclaimed past a lease timeout; every status write fenced on a unique lock token, so a crashed worker cannot strand a job); (ii) structured failure classification (transient / authorization / unknown errors are retried, only a confirmed WORM / object-lock is the terminal blocked_legal_hold, so a 503 no longer masquerades as a legal hold); (iii) a transactional audit outbox (each state transition writes its audit intent in the same transaction and a publisher delivers it idempotently, removing the emit-before-write orphan and the 'audit-emit-failed' sentinel). Remaining: a production-shaped integration test against live S3/Azure proving permanent erasure.",
+      "mitigation_summary": "RFC 0003 phase B shipped: tenant deletion enqueues a durable tenant_blob_purge_jobs row in the deletion transaction; a privileged worker (blob-purge-worker.ts) drains it via BlobAdapter.purgeTenant with bounded backoff, a dead-letter state, and version-aware permanent erasure (S3 all object versions + delete markers; Azure versions + snapshots), restricted to the worker by a CI call-site guard (check-blob-purge-callsite). 2026-06-07 review hardening shipped: (i) crash-safe lease recovery (stale 'purging' jobs reclaimed past a lease timeout; every status write fenced on a unique lock token, so a crashed worker cannot strand a job); (ii) structured failure classification (transient / authorization / unknown errors are retried, only a confirmed WORM / object-lock is the terminal blocked_legal_hold, so a 503 no longer masquerades as a legal hold); (iii) a transactional audit outbox (each state transition writes its audit intent in the same transaction and a publisher delivers it idempotently, removing the emit-before-write orphan and the 'audit-emit-failed' sentinel). An end-to-end erasure test now drives runBlobPurgeCycle against a real MemoryBlobAdapter (not a mocked purgeTenant), asserting the deleted tenant's bytes are erased and a co-resident tenant's survive. Remaining: a production-shaped integration test against live S3/Azure (localstack-in-CI) proving permanent erasure on the deployed adapters.",
       "exit_criteria": [
         "tenant_blob_purge_jobs migration",
         "BlobAdapter.purge() on memory/s3/azure",
@@ -45,7 +45,8 @@
         "services/api/src/tenant-deletion/blob-purge-repo.ts",
         "services/api/src/tenant-deletion/blob-purge-audit-outbox.ts",
         "shared/src/blob/purge-classify.ts",
-        "services/api/src/tenant-deletion/service.test.ts"
+        "services/api/src/tenant-deletion/service.test.ts",
+        "services/api/src/tenant-deletion/blob-purge-worker.test.ts"
       ]
     },
     {
@@ -72,12 +73,12 @@
       "title": "Full money-movement E2E not yet enforced in CI",
       "priority": "P1",
       "status": "mitigating",
-      "mitigation_summary": "A money_movement_e2e job now runs on EVERY PR (.github/workflows/pr.yml) against a real pg+redis stack + booted demo API: the full chain provision->ingest->normalize->propose->policy->execute, plus assertions that the §6 gate ran checks 8/9.5/11.5 (none not_applicable, read from the proof's gate_checks) and that three negatives are actively rejected (duplicate payment, excessive-amount policy reject, missing-approval). Remaining: full strict-proof (on-chain merkle anchor) mode needs a CI-available Base RPC; audit-before->after linkage and receivable-direction / low-confidence negatives are layerable follow-ups.",
+      "mitigation_summary": "A money_movement_e2e job now runs on EVERY PR (.github/workflows/pr.yml) against a real pg+redis stack + booted demo API: the full chain provision->ingest->normalize->propose->policy->execute, plus assertions that the \u00a76 gate ran checks 8/9.5/11.5 (none not_applicable, read from the proof's gate_checks) and that three negatives are actively rejected (duplicate payment, excessive-amount policy reject, missing-approval). audit-before->after linkage is now asserted in strict mode (the executed PI's proof must contain payment_intent.execute.before preceding payment_intent.execute.after, with the after event chained via prev_event_hash). Remaining: localstack-in-CI for the blob path (EC1) and full strict-proof (on-chain merkle anchor) mode, which needs a CI-available Base RPC; receivable-direction / low-confidence negatives are layerable follow-ups.",
       "exit_criteria": [
         "deterministic local-stack-in-CI (pg+redis+localstack+boot binary in GH Actions)",
         "golden-path demo runs in strict mode on every PR",
-        "any §6 check 8 / 9.5 / 11.5 going not_applicable fails the build",
-        "audit-before → audit-after linkage asserted"
+        "any \u00a76 check 8 / 9.5 / 11.5 going not_applicable fails the build",
+        "audit-before \u2192 audit-after linkage asserted"
       ],
       "owner": "engineering+infra",
       "evidence": [
@@ -136,7 +137,7 @@
       "status": "mitigating",
       "mitigation_summary": "Batch 8 P5: error-path coverage added to onchainExecutor (read/write error propagation, receipt-hash sourcing), plaidClient (Plaid API error verbatim), and x402Client (full lifecycle: decimals read, transfer revert, receipt timeout, facilitator 5xx + network error, idempotency-key forwarding, chain selection). PostgresSourceRepository was already at 16-test coverage (reviewer's claim of near-zero was stale). 23 rail-adapter unit tests now pass (was 6).",
       "exit_criteria": [
-        "Coverage parity with the §6 gate measured at >=80% line coverage on the adapter files (next step: wire coverage gates into test:coverage)",
+        "Coverage parity with the \u00a76 gate measured at >=80% line coverage on the adapter files (next step: wire coverage gates into test:coverage)",
         "Integration tests on testnet for at least the onchain executor end-to-end"
       ],
       "owner": "engineering",

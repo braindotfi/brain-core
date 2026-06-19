@@ -471,6 +471,44 @@ if [[ "${BRAIN_DEMO_E2E_FULL:-false}" == "true" ]]; then
     record "missing_approval_negative" fail ""
     exit 1
   fi
+
+  # (e) AUDIT BEFORE -> AFTER LINKAGE (R-04 EC4). The §6 gate emits a mandatory
+  # payment_intent.execute.before event; a successful execution emits a
+  # payment_intent.execute.after event. The after event is written by the async
+  # rail-receipt path (outbox worker), so it can lag the terminal status by a
+  # moment — poll the proof until it appears (it is on the SAME hash chain as
+  # before, keyed on this PI). Then assert: before precedes after (oldest-first
+  # ordering) and the after is chained into the tamper-evident log (non-empty
+  # prev_event_hash) — the pair is linked, not free-floating.
+  start_step
+  if ! poll_until "execute.after audit event" \
+    "curl -s '$V1/proof/$PI_ID' -H 'Authorization: Bearer $TOKEN'" \
+    '([.audit_events[]?.action] | index("payment_intent.execute.after")) // empty | tostring'; then
+    record "audit_linkage" fail ""
+    exit 1
+  fi
+  LINK_PROOF=$(curl -s "$V1/proof/$PI_ID" -H "Authorization: Bearer $TOKEN")
+  BEFORE_IDX=$(echo "$LINK_PROOF" | jq '[.audit_events[]?.action] | index("payment_intent.execute.before")')
+  AFTER_IDX=$(echo "$LINK_PROOF" | jq '[.audit_events[]?.action] | index("payment_intent.execute.after")')
+  if [[ "$BEFORE_IDX" == "null" || -z "$BEFORE_IDX" ]]; then
+    fail "audit linkage: no payment_intent.execute.before event in the proof"
+    record "audit_linkage" fail ""
+    exit 1
+  fi
+  # audit_events are oldest-first: before must precede after.
+  if (( BEFORE_IDX >= AFTER_IDX )); then
+    fail "audit linkage: execute.before (idx $BEFORE_IDX) does not precede execute.after (idx $AFTER_IDX)"
+    record "audit_linkage" fail ""
+    exit 1
+  fi
+  AFTER_PREV=$(echo "$LINK_PROOF" | jq -r '[.audit_events[]? | select(.action=="payment_intent.execute.after")][0].prev_event_hash // ""')
+  if [[ -z "$AFTER_PREV" || "$AFTER_PREV" == "null" ]]; then
+    fail "audit linkage: execute.after has no prev_event_hash (not chained into the audit log)"
+    record "audit_linkage" fail ""
+    exit 1
+  fi
+  ok "audit before->after linkage: before idx $BEFORE_IDX precedes after idx $AFTER_IDX, after chained (prev ${AFTER_PREV:0:12}…)"
+  record "audit_linkage" ok ""
 fi
 
 # ── 12. Summary ──────────────────────────────────────────────────────────────
