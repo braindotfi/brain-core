@@ -212,7 +212,7 @@ import {
 } from "./gate-loaders/index.js";
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
-import { assertDbRoles, type RoleQuery } from "./composition/db-roles.js";
+import { assertDbRoles, type RoleQuery, type PoolRoleExpectation } from "./composition/db-roles.js";
 import {
   assertDeployedEscrowBytecode,
   assertEscrowAuditApproved,
@@ -224,6 +224,7 @@ import { makeBaseGetCode } from "./composition/eth-getcode.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
 import { closeAllPools } from "./composition/close-pools.js";
 import { runShutdown } from "./composition/shutdown.js";
+import { resolveComposition, POOL_ENV, type PoolName } from "./composition/process-roles.js";
 import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
@@ -273,6 +274,18 @@ async function main(): Promise<void> {
     pretty: cfg.LOG_PRETTY,
   });
 
+  // Process role (worker/process separation): which of the /v1 API surface,
+  // background-worker groups, and least-privilege role pools this process runs.
+  // Defaults (HTTP on + all workers) reproduce the all-in-one process.
+  const composition = resolveComposition({
+    httpEnabled: cfg.BRAIN_HTTP_ENABLED,
+    workers: cfg.BRAIN_WORKERS,
+  });
+  log.info(
+    { httpEnabled: composition.httpEnabled, workers: [...composition.workers].sort() },
+    "process role resolved",
+  );
+
   // -- shared infra ----------------------------------------------------
   const pool = createPool({
     connectionString: cfg.DATABASE_URL,
@@ -287,9 +300,14 @@ async function main(): Promise<void> {
   // error. Falls back to the main pool in dev/test with a warning.
   // Fail-closed in NODE_ENV=production for both DB-isolation URLs; warn
   // in dev/test. Logic + tests live in composition/db-isolation.ts.
+  // Only fence the URLs this process role actually needs (worker/process
+  // separation): an api-only or single-worker process must not require the
+  // other roles' URLs. requireWiki only when serving the /v1 Wiki routes.
   assertDbIsolationFences({
     nodeEnv: cfg.NODE_ENV,
     wikiDbUrl: cfg.BRAIN_WIKI_DB_URL,
+    requireWiki: composition.httpEnabled,
+    requiredEnv: new Set([...composition.pools].map((p) => POOL_ENV[p])),
     privilegedRoleUrls: {
       BRAIN_RAW_WORKER_DB_URL: cfg.BRAIN_RAW_WORKER_DB_URL,
       BRAIN_CANONICAL_PROJECTOR_DB_URL: cfg.BRAIN_CANONICAL_PROJECTOR_DB_URL,
@@ -916,144 +934,164 @@ async function main(): Promise<void> {
       (p: typeof pool): RoleQuery =>
       (s, params) =>
         p.query(s, params === undefined ? undefined : [...params]);
+    const allRoleExpectations: PoolRoleExpectation[] = [
+      {
+        label: "request",
+        query: asQuery(pool),
+        mustBypassRls: false,
+        expectedRole: "brain_app",
+        // The audit log is append-only: no runtime role may mutate it. Catches a
+        // deployment that did not apply the db-roles.sql REVOKE (Codex 307161b P1 #1).
+        // The request role must also have NO access to the global, RLS-exempt
+        // verifier forensic tables — a SELECT there would already be a cross-tenant
+        // read of integrity findings (Codex 9389568 P1).
+        forbidden: [
+          { table: "audit_events", privilege: "UPDATE" },
+          { table: "audit_events", privilege: "DELETE" },
+          { table: "audit_verifier_checkpoint", privilege: "SELECT" },
+          { table: "audit_integrity_findings", privilege: "SELECT" },
+        ],
+      },
+      // §4 least-privilege pools. Each is BYPASSRLS (cross-tenant) but the
+      // `forbidden` list proves it cannot reach another layer's tables — the
+      // confused-deputy confinement that replaces the single broad role.
+      {
+        label: "raw-worker",
+        query: asQuery(rawWorkerPool),
+        mustBypassRls: true,
+        expectedRole: "brain_raw_worker",
+        forbidden: [
+          { table: "canonical_journal_entry", privilege: "INSERT" },
+          { table: "ledger_payment_intents", privilege: "INSERT" },
+          { table: "audit_integrity_findings", privilege: "SELECT" },
+        ],
+      },
+      {
+        label: "canonical-projector",
+        query: asQuery(canonicalProjectorPool),
+        mustBypassRls: true,
+        expectedRole: "brain_canonical_projector",
+        forbidden: [
+          { table: "raw_parsed", privilege: "INSERT" }, // input is read-only
+          { table: "ledger_payment_intents", privilege: "INSERT" },
+          { table: "execution_outbox", privilege: "INSERT" },
+          { table: "audit_integrity_findings", privilege: "SELECT" },
+        ],
+      },
+      {
+        label: "ledger-projector",
+        query: asQuery(ledgerProjectorPool),
+        mustBypassRls: true,
+        expectedRole: "brain_ledger_projector",
+        forbidden: [
+          { table: "ledger_payment_intents", privilege: "INSERT" }, // money path, not a projection target
+          { table: "canonical_journal_entry", privilege: "INSERT" }, // input is read-only
+          { table: "execution_outbox", privilege: "INSERT" },
+          { table: "audit_integrity_findings", privilege: "SELECT" },
+        ],
+      },
+      {
+        label: "execution-worker",
+        query: asQuery(executionWorkerPool),
+        mustBypassRls: true,
+        expectedRole: "brain_execution_worker",
+        // Claim/mark the outbox only; the settle re-enters tenant scope on
+        // brain_app, so this role must reach no money-path table directly.
+        forbidden: [
+          { table: "ledger_payment_intents", privilege: "INSERT" },
+          { table: "ledger_transactions", privilege: "INSERT" },
+          { table: "raw_parsed", privilege: "SELECT" },
+          { table: "audit_integrity_findings", privilege: "SELECT" },
+        ],
+      },
+      {
+        label: "audit-verifier",
+        query: asQuery(auditVerifierPool),
+        mustBypassRls: true,
+        expectedRole: "brain_audit_verifier",
+        // Keeps findings SELECT/INSERT + checkpoint SELECT/INSERT/UPDATE, but a
+        // detected break must be un-erasable, and it touches nothing else.
+        forbidden: [
+          { table: "audit_events", privilege: "UPDATE" },
+          { table: "audit_events", privilege: "DELETE" },
+          { table: "audit_integrity_findings", privilege: "UPDATE" },
+          { table: "audit_integrity_findings", privilege: "DELETE" },
+          { table: "ledger_payment_intents", privilege: "INSERT" },
+        ],
+      },
+      {
+        label: "audit-publisher",
+        query: asQuery(auditPublisherPool),
+        mustBypassRls: true,
+        expectedRole: "brain_audit_publisher",
+        // Read-only audit_events enumeration; no writes, no other tables.
+        forbidden: [
+          { table: "audit_events", privilege: "INSERT" },
+          { table: "audit_integrity_findings", privilege: "SELECT" },
+          { table: "ledger_payment_intents", privilege: "SELECT" },
+        ],
+      },
+      {
+        label: "resolver",
+        query: asQuery(resolverPool),
+        mustBypassRls: true,
+        expectedRole: "brain_resolver",
+        // Cross-tenant SELECT only on the resolution tables; never writes.
+        forbidden: [
+          { table: "wallet_identities", privilege: "INSERT" },
+          { table: "users", privilege: "UPDATE" },
+          { table: "ledger_payment_intents", privilege: "SELECT" },
+          { table: "audit_integrity_findings", privilege: "SELECT" },
+        ],
+      },
+      {
+        label: "tenant-deletion",
+        query: asQuery(tenantDeletionPool),
+        mustBypassRls: true,
+        expectedRole: "brain_tenant_deletion",
+        // Broad DELETE for GDPR erasure, but audit history stays preserved and
+        // forensic state is off-limits.
+        forbidden: [
+          { table: "audit_events", privilege: "DELETE" },
+          { table: "audit_events", privilege: "UPDATE" },
+          { table: "audit_integrity_findings", privilege: "SELECT" },
+        ],
+      },
+      {
+        label: "wiki",
+        query: asQuery(wikiPool),
+        mustBypassRls: false,
+        expectedRole: "brain_wiki_reader",
+        // The wiki reader must never be able to write Ledger truth, nor read the
+        // global verifier forensic tables.
+        forbidden: [
+          { table: "ledger_counterparties", privilege: "INSERT" },
+          { table: "audit_verifier_checkpoint", privilege: "SELECT" },
+          { table: "audit_integrity_findings", privilege: "SELECT" },
+        ],
+      },
+    ];
+    // Worker/process separation: only assert the pools this process actually
+    // creates distinctly. A role pool whose URL is unset aliases brain_app (so
+    // it would fail its expectedRole check) and is not part of this role.
+    const LABEL_TO_POOL: Record<string, PoolName> = {
+      "raw-worker": "raw_worker",
+      "canonical-projector": "canonical_projector",
+      "ledger-projector": "ledger_projector",
+      "execution-worker": "execution_worker",
+      "audit-verifier": "audit_verifier",
+      "audit-publisher": "audit_publisher",
+      resolver: "resolver",
+      "tenant-deletion": "tenant_deletion",
+    };
     await assertDbRoles(
-      [
-        {
-          label: "request",
-          query: asQuery(pool),
-          mustBypassRls: false,
-          expectedRole: "brain_app",
-          // The audit log is append-only: no runtime role may mutate it. Catches a
-          // deployment that did not apply the db-roles.sql REVOKE (Codex 307161b P1 #1).
-          // The request role must also have NO access to the global, RLS-exempt
-          // verifier forensic tables — a SELECT there would already be a cross-tenant
-          // read of integrity findings (Codex 9389568 P1).
-          forbidden: [
-            { table: "audit_events", privilege: "UPDATE" },
-            { table: "audit_events", privilege: "DELETE" },
-            { table: "audit_verifier_checkpoint", privilege: "SELECT" },
-            { table: "audit_integrity_findings", privilege: "SELECT" },
-          ],
-        },
-        // §4 least-privilege pools. Each is BYPASSRLS (cross-tenant) but the
-        // `forbidden` list proves it cannot reach another layer's tables — the
-        // confused-deputy confinement that replaces the single broad role.
-        {
-          label: "raw-worker",
-          query: asQuery(rawWorkerPool),
-          mustBypassRls: true,
-          expectedRole: "brain_raw_worker",
-          forbidden: [
-            { table: "canonical_journal_entry", privilege: "INSERT" },
-            { table: "ledger_payment_intents", privilege: "INSERT" },
-            { table: "audit_integrity_findings", privilege: "SELECT" },
-          ],
-        },
-        {
-          label: "canonical-projector",
-          query: asQuery(canonicalProjectorPool),
-          mustBypassRls: true,
-          expectedRole: "brain_canonical_projector",
-          forbidden: [
-            { table: "raw_parsed", privilege: "INSERT" }, // input is read-only
-            { table: "ledger_payment_intents", privilege: "INSERT" },
-            { table: "execution_outbox", privilege: "INSERT" },
-            { table: "audit_integrity_findings", privilege: "SELECT" },
-          ],
-        },
-        {
-          label: "ledger-projector",
-          query: asQuery(ledgerProjectorPool),
-          mustBypassRls: true,
-          expectedRole: "brain_ledger_projector",
-          forbidden: [
-            { table: "ledger_payment_intents", privilege: "INSERT" }, // money path, not a projection target
-            { table: "canonical_journal_entry", privilege: "INSERT" }, // input is read-only
-            { table: "execution_outbox", privilege: "INSERT" },
-            { table: "audit_integrity_findings", privilege: "SELECT" },
-          ],
-        },
-        {
-          label: "execution-worker",
-          query: asQuery(executionWorkerPool),
-          mustBypassRls: true,
-          expectedRole: "brain_execution_worker",
-          // Claim/mark the outbox only; the settle re-enters tenant scope on
-          // brain_app, so this role must reach no money-path table directly.
-          forbidden: [
-            { table: "ledger_payment_intents", privilege: "INSERT" },
-            { table: "ledger_transactions", privilege: "INSERT" },
-            { table: "raw_parsed", privilege: "SELECT" },
-            { table: "audit_integrity_findings", privilege: "SELECT" },
-          ],
-        },
-        {
-          label: "audit-verifier",
-          query: asQuery(auditVerifierPool),
-          mustBypassRls: true,
-          expectedRole: "brain_audit_verifier",
-          // Keeps findings SELECT/INSERT + checkpoint SELECT/INSERT/UPDATE, but a
-          // detected break must be un-erasable, and it touches nothing else.
-          forbidden: [
-            { table: "audit_events", privilege: "UPDATE" },
-            { table: "audit_events", privilege: "DELETE" },
-            { table: "audit_integrity_findings", privilege: "UPDATE" },
-            { table: "audit_integrity_findings", privilege: "DELETE" },
-            { table: "ledger_payment_intents", privilege: "INSERT" },
-          ],
-        },
-        {
-          label: "audit-publisher",
-          query: asQuery(auditPublisherPool),
-          mustBypassRls: true,
-          expectedRole: "brain_audit_publisher",
-          // Read-only audit_events enumeration; no writes, no other tables.
-          forbidden: [
-            { table: "audit_events", privilege: "INSERT" },
-            { table: "audit_integrity_findings", privilege: "SELECT" },
-            { table: "ledger_payment_intents", privilege: "SELECT" },
-          ],
-        },
-        {
-          label: "resolver",
-          query: asQuery(resolverPool),
-          mustBypassRls: true,
-          expectedRole: "brain_resolver",
-          // Cross-tenant SELECT only on the resolution tables; never writes.
-          forbidden: [
-            { table: "wallet_identities", privilege: "INSERT" },
-            { table: "users", privilege: "UPDATE" },
-            { table: "ledger_payment_intents", privilege: "SELECT" },
-            { table: "audit_integrity_findings", privilege: "SELECT" },
-          ],
-        },
-        {
-          label: "tenant-deletion",
-          query: asQuery(tenantDeletionPool),
-          mustBypassRls: true,
-          expectedRole: "brain_tenant_deletion",
-          // Broad DELETE for GDPR erasure, but audit history stays preserved and
-          // forensic state is off-limits.
-          forbidden: [
-            { table: "audit_events", privilege: "DELETE" },
-            { table: "audit_events", privilege: "UPDATE" },
-            { table: "audit_integrity_findings", privilege: "SELECT" },
-          ],
-        },
-        {
-          label: "wiki",
-          query: asQuery(wikiPool),
-          mustBypassRls: false,
-          expectedRole: "brain_wiki_reader",
-          // The wiki reader must never be able to write Ledger truth, nor read the
-          // global verifier forensic tables.
-          forbidden: [
-            { table: "ledger_counterparties", privilege: "INSERT" },
-            { table: "audit_verifier_checkpoint", privilege: "SELECT" },
-            { table: "audit_integrity_findings", privilege: "SELECT" },
-          ],
-        },
-      ],
+      allRoleExpectations.filter((e) =>
+        e.label === "request"
+          ? true
+          : e.label === "wiki"
+            ? composition.httpEnabled
+            : composition.pools.has(LABEL_TO_POOL[e.label] as PoolName),
+      ),
       { enforce: true, log: (msg, ctx) => log.info(ctx, msg) },
     );
   }
@@ -1071,50 +1109,56 @@ async function main(): Promise<void> {
     }
   };
 
-  const outboxWorker = startOutboxWorker(
-    {
-      outbox: new OutboxService(),
-      rails,
-      executor: paymentIntentService,
-      audit,
-      withPrivileged,
-      workerId: `outbox-worker-${process.pid}`,
-    },
-    { intervalMs: 1_000 },
-  );
-  log.info("outbox worker started");
+  const outboxWorker = composition.workers.has("execution")
+    ? startOutboxWorker(
+        {
+          outbox: new OutboxService(),
+          rails,
+          executor: paymentIntentService,
+          audit,
+          withPrivileged,
+          workerId: `outbox-worker-${process.pid}`,
+        },
+        { intervalMs: 1_000 },
+      )
+    : undefined;
+  if (outboxWorker !== undefined) log.info("outbox worker started");
 
   // Item 13: drain webhook_dead_letters with exponential backoff so failed
   // deliveries retry without /replay being invoked manually. The first inline
   // dispatch attempt still happens in WebhookDispatcher; this worker handles
   // attempts 2..MAX and emits the dlq.count metric + exhausted audit event on
   // hard giveup.
-  const webhookDispatchWorker = startWebhookDispatchWorker(
-    {
-      pool,
-      audit,
-      metrics,
-      workerId: `webhook-dispatch-worker-${process.pid}`,
-    },
-    { intervalMs: 5_000 },
-  );
-  log.info("webhook dispatch worker started");
+  const webhookDispatchWorker = composition.workers.has("webhook")
+    ? startWebhookDispatchWorker(
+        {
+          pool,
+          audit,
+          metrics,
+          workerId: `webhook-dispatch-worker-${process.pid}`,
+        },
+        { intervalMs: 5_000 },
+      )
+    : undefined;
+  if (webhookDispatchWorker !== undefined) log.info("webhook dispatch worker started");
 
   // RFC 0003: drain the durable tenant blob purge queue. Jobs belong to
   // already-deleted tenants, so the worker uses the privileged (BYPASSRLS) pool
   // and erases the Raw bytes via the configured BlobAdapter, with bounded
   // retries + a dead-letter state. Harmless when idle.
-  const tenantBlobPurgeWorker = startTenantBlobPurgeWorker(
-    {
-      privilegedPool: tenantDeletionPool,
-      blob,
-      audit,
-      metrics,
-      workerId: `tenant-blob-purge-worker-${process.pid}`,
-    },
-    { intervalMs: 30_000 },
-  );
-  log.info("tenant blob purge worker started");
+  const tenantBlobPurgeWorker = composition.workers.has("blob_purge")
+    ? startTenantBlobPurgeWorker(
+        {
+          privilegedPool: tenantDeletionPool,
+          blob,
+          audit,
+          metrics,
+          workerId: `tenant-blob-purge-worker-${process.pid}`,
+        },
+        { intervalMs: 30_000 },
+      )
+    : undefined;
+  if (tenantBlobPurgeWorker !== undefined) log.info("tenant blob purge worker started");
 
   const anchorBroadcaster =
     cfg.AUDIT_PUBLISHER_KEY !== undefined
@@ -1136,7 +1180,9 @@ async function main(): Promise<void> {
   // anchor contract address and an RPC URL are configured (no publisher key).
   const anchorRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
   const anchorReconciler =
-    cfg.AUDIT_ANCHOR_ADDRESS !== undefined && anchorRpcUrl !== undefined
+    composition.workers.has("audit") &&
+    cfg.AUDIT_ANCHOR_ADDRESS !== undefined &&
+    anchorRpcUrl !== undefined
       ? startAnchorReconciler({
           pool,
           audit,
@@ -1155,10 +1201,12 @@ async function main(): Promise<void> {
   // run through the BYPASSRLS privileged pool. On the request-path `pool` (the
   // FORCE-RLS `brain_app` role) the queries would match zero rows and report a
   // permanent false-clean (doc A P1.1).
-  const auditConsistencyVerifier = startAuditConsistencyVerifier({
-    privilegedPool: auditVerifierPool,
-    metrics,
-  });
+  const auditConsistencyVerifier = composition.workers.has("audit")
+    ? startAuditConsistencyVerifier({
+        privilegedPool: auditVerifierPool,
+        metrics,
+      })
+    : undefined;
 
   // Exposed for POST /v1/demo/anchor/trigger — set when anchorBroadcaster is configured.
   let triggerAnchor: (() => Promise<void>) | undefined;
@@ -1527,683 +1575,709 @@ async function main(): Promise<void> {
     service: cfg.SERVICE_NAME,
   }));
 
-  // Operator audit-health snapshot (90eade5 doc 5.10): auth + audit:admin, queries
-  // the global verifier tables via the privileged pool. Root-mounted (not /v1) so
-  // it stays an internal operational surface outside the public OpenAPI contract.
-  registerAuditHealthRoute(app, { privilegedPool: auditVerifierPool });
+  // Worker/process separation: the public HTTP surface (audit-health snapshot +
+  // the whole /v1 tree) is registered only when this process serves HTTP. A
+  // worker-only process still exposes /health (above) for orchestrator probes.
+  if (composition.httpEnabled) {
+    // Operator audit-health snapshot (90eade5 doc 5.10): auth + audit:admin, queries
+    // the global verifier tables via the privileged pool. Root-mounted (not /v1) so
+    // it stays an internal operational surface outside the public OpenAPI contract.
+    registerAuditHealthRoute(app, { privilegedPool: auditVerifierPool });
 
-  // Service layer route registrations — all under /v1 to match OpenAPI spec.
-  // Raw: also registers content-type parsers + multipart inside registerRawPlugin.
-  const rawOpts: RegisterRawPluginOptions = {
-    idempotencyStore,
-    idempotencyTtlSeconds: cfg.IDEMPOTENCY_TTL_SECONDS,
-    sourceRepository: postgresSourceRepo,
-    sourceCredentialStore: postgresSourceRepo,
-    plaidVerify: {
-      keyResolver: cfg.BRAIN_DEMO_MODE
-        ? async (_kid: string): Promise<never> => {
-            throw brainError(
-              "raw_webhook_signature_invalid",
-              "Plaid webhook signing not configured — use /raw/ingest in demo mode",
-            );
-          }
-        : cfg.PLAID_CLIENT_ID !== undefined && cfg.PLAID_SECRET !== undefined
-          ? createPlaidKeyResolver({
-              clientId: cfg.PLAID_CLIENT_ID,
-              secret: cfg.PLAID_SECRET,
-              env: cfg.PLAID_ENV,
-            })
-          : async (): Promise<never> => {
+    // Service layer route registrations — all under /v1 to match OpenAPI spec.
+    // Raw: also registers content-type parsers + multipart inside registerRawPlugin.
+    const rawOpts: RegisterRawPluginOptions = {
+      idempotencyStore,
+      idempotencyTtlSeconds: cfg.IDEMPOTENCY_TTL_SECONDS,
+      sourceRepository: postgresSourceRepo,
+      sourceCredentialStore: postgresSourceRepo,
+      plaidVerify: {
+        keyResolver: cfg.BRAIN_DEMO_MODE
+          ? async (_kid: string): Promise<never> => {
               throw brainError(
                 "raw_webhook_signature_invalid",
-                "Plaid webhook signing not configured — set PLAID_CLIENT_ID and PLAID_SECRET",
-              );
-            },
-      clockToleranceSeconds: 300,
-    },
-    // Stripe endpoint signing (platform-level secret). Absent => the stripe
-    // webhook path answers 501 and ingestion relies on the pull modality.
-    ...(cfg.STRIPE_WEBHOOK_SECRET !== undefined
-      ? { stripeVerify: { signingSecret: cfg.STRIPE_WEBHOOK_SECRET, clockToleranceSeconds: 300 } }
-      : {}),
-    resolveWebhookTenant: cfg.BRAIN_DEMO_MODE
-      ? async (
-          _provider: string,
-          _body: Buffer,
-          headers: Record<string, unknown>,
-        ): Promise<string> => {
-          const devTenantHeader = headers["x-dev-tenant-id"];
-          if (typeof devTenantHeader === "string" && devTenantHeader.length > 0) {
-            return devTenantHeader;
-          }
-          throw brainError(
-            "auth_tenant_mismatch",
-            "cannot resolve webhook tenant — use x-dev-tenant-id header in demo mode",
-          );
-        }
-      : createProviderTenantResolver({
-          plaid: createPlaidTenantResolver(pool),
-          stripe: createStripeTenantResolver(resolverPool),
-        }),
-  };
-
-  // Mount all service routes under /v1 to match Brain_API_Specification.yaml.
-  await app.register(
-    async (v1) => {
-      await v1.register(async (child) => registerRawPlugin(child, rawDeps, rawOpts));
-      await v1.register(async (child) =>
-        registerLedgerPlugin(child, ledgerDeps, { enqueue: routingEnqueue }),
-      );
-      await v1.register(async (child) => registerCanonicalRoutes(child, { pool }));
-      await v1.register(async (child) => registerWikiPlugin(child, wikiDeps));
-      await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
-      await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
-      await v1.register(async (child) => {
-        // PaymentIntentService has its own approval sub-service; create a fresh
-        // instance scoped to this plugin so it doesn't share mutable state.
-        const piApprovals = new ApprovalService({
-          pool,
-          audit,
-          resolveRole,
-          isApproverActive,
-          resolveSubjectOwnerTenant,
-          resolveActivePolicyVersion,
-        });
-        const piService = buildPaymentIntentService({
-          pool,
-          audit,
-          approvals: piApprovals,
-          resolveAgent,
-          resolveTenantFlags,
-          resolveAccount,
-          resolveCounterparty,
-          evaluatePolicy: evaluatePaymentIntent,
-          resolvePrincipal,
-          attestCounterpartyAgent,
-          sumAgentWindowSpend,
-          sumActiveReservations,
-          resolveEvidence,
-          detectDuplicates,
-          resolveObligationConfidence,
-          resolveObligationDirection,
-          resolveObligationProvenance,
-          ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
-          ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
-          sourceCredentialResolver,
-          metrics,
-          enqueue: routingEnqueue,
-          recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
-        });
-        await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
-      });
-      await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
-      // H-20 webhook dead-letter + replay: /v1/webhooks/{endpoint_id}/{dead-letters,replay}.
-      await v1.register(async (child) => registerWebhookRoutes(child, { pool }));
-      // H-07 Proof API — GET /v1/proof/{action_id}. Flagship trust artifact:
-      // one verifiable proof per action, assembled across Ledger/Policy/Audit/Raw.
-      // Shared with the H-25 run-history /proof sub-resource below AND with the
-      // MCP brain://proofs/{action_id} resource (item 17). `proofBuilder` is
-      // hoisted above where the MCP server is constructed; reused here.
-      await v1.register(async (child) => registerProofRoutes(child, { buildProof: proofBuilder }));
-      // P0.7 human-readable proof viewer — GET /v1/proof/{id}/view → text/html.
-      await v1.register(async (child) =>
-        registerProofViewRoute(child, { buildProof: proofBuilder }),
-      );
-      // Public interactive API reference — GET /v1/docs (Scalar UI) +
-      // GET /v1/openapi.yaml. Read-only projection of Brain_API_Specification.yaml;
-      // route-scoped CSP relaxation lives inside the plugin (docs/routes.ts).
-      await v1.register(async (child) => registerDocsRoutes(child));
-      // GDPR right-to-erasure. The tenant-deletion role BYPASSes RLS so cross-
-      // tenant rows are reachable for cleanup; auth + tenant-match are
-      // enforced at the route boundary.
-      const tenantDeletionService = new TenantDeletionService({
-        privilegedPool: tenantDeletionPool,
-        audit,
-      });
-      await v1.register(async (child) =>
-        registerTenantDeletionRoute(child, { service: tenantDeletionService }),
-      );
-      await v1.register(async (child) =>
-        registerMcpRoute(child, mcpServer, {
-          skipPrincipalTypeCheck: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,
-          // Per-tenant rate limit so a single misbehaving agent cannot crowd
-          // out other tenants on the shared MCP surface (peer review).
-          tenantRateLimiter: new RedisSlidingWindowRateLimiter(redis, {
-            windowSeconds: cfg.BRAIN_MCP_TENANT_RATE_WINDOW_SECONDS,
-            limit: cfg.BRAIN_MCP_TENANT_RATE_LIMIT,
-          }),
-        }),
-      );
-      // /v1/agents/* — unified agent API surface (Agent Autonomy v3, 1a.6):
-      // list/get, route, run (shadow-aware), events, runs, why, routing-decisions.
-      await v1.register(async (child) =>
-        registerAgentApiRoutes(child, {
-          catalog: () => internalAgentCatalog,
-          router: agentRouter,
-          runService: agentRunService,
-          reads: agentApiReads,
-          isShadowed,
-          // H-25: run-history sub-resources (evidence / gate-trace / proof / why).
-          runHistory: makeRunLoaders(pool, proofBuilder),
-          // H-09: release an agent's contribution quarantine.
-          releaseAgentQuarantine: (ctx, agentId) =>
-            withTenantScope(pool, ctx.tenantId, (c) => releaseAgentQuarantine(c, agentId)),
-          enqueueRouteJob: async (jobCtx, payload) => {
-            if (payload.event === undefined || !isDomainEvent(payload.event)) {
-              throw brainError(
-                "request_body_invalid",
-                "`event` must be a known domain event for the events queue",
+                "Plaid webhook signing not configured — use /raw/ingest in demo mode",
               );
             }
-            await routingEnqueue({
-              tenantId: jobCtx.tenantId,
-              ...(jobCtx.requestId !== undefined ? { requestId: jobCtx.requestId } : {}),
-              payload: {
-                event: payload.event,
-                ...(payload.context !== undefined ? { context: payload.context } : {}),
+          : cfg.PLAID_CLIENT_ID !== undefined && cfg.PLAID_SECRET !== undefined
+            ? createPlaidKeyResolver({
+                clientId: cfg.PLAID_CLIENT_ID,
+                secret: cfg.PLAID_SECRET,
+                env: cfg.PLAID_ENV,
+              })
+            : async (): Promise<never> => {
+                throw brainError(
+                  "raw_webhook_signature_invalid",
+                  "Plaid webhook signing not configured — set PLAID_CLIENT_ID and PLAID_SECRET",
+                );
               },
-            });
-            return { jobId: jobCtx.requestId ?? brainId("req") };
-          },
-          haltAgent: async (haltCtx, agentId) => {
-            // Pause all in-flight intents from the agent, then quarantine it.
-            const { paused } = await paymentIntentService.pauseByAgent(haltCtx, agentId);
-            let quarantined = false;
-            await withTenantScope(pool, haltCtx.tenantId, async (c) => {
-              const agent = await findAgent(c, agentId);
-              if (agent !== null && agent.state === "active") {
-                await transitionAgent(c, agentId, "active", "quarantined");
-                quarantined = true;
-              }
-            });
-            return { paused, quarantined };
-          },
-        }),
-      );
-      // SIWX (agent auth) — always wired. Production requires AUTH_SIGN_KEY
-      // (a JWK JSON string) backed by Azure Key Vault.
-      if (cfg.NODE_ENV === "production" && cfg.AUTH_SIGN_KEY === undefined) {
-        throw new Error(
-          "AUTH_SIGN_KEY must be set in production — configure a JWK signing key in Azure Key Vault",
-        );
-      }
-      const siwxJwk =
-        cfg.AUTH_SIGN_KEY !== undefined
-          ? (JSON.parse(cfg.AUTH_SIGN_KEY) as { kty: string; alg?: string; [k: string]: unknown })
-          : { kty: "oct", k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"), alg: "HS256" };
-      const siwxSigner = new JwtSigner({
-        issuer: cfg.AUTH_ISSUER,
-        audience: cfg.AUTH_AUDIENCE,
-        key: siwxJwk,
-        algorithm: typeof siwxJwk.alg === "string" ? siwxJwk.alg : "HS256",
-      });
-      const agentRegistry = cfg.BRAIN_DEMO_MODE
-        ? new StubAgentRegistry()
-        : new PostgresAgentRegistry(pool);
-      // RFC 0002 Phase D: SIWX resolves a wallet linked to a HUMAN owner to an
-      // owner JWT (email-or-wallet login). Cross-tenant read ⇒ privileged pool.
-      // Always wired — additive and harmless (returns null absent any link, so
-      // sign-in falls through to the agent path).
-      const walletIdentityReader = new PostgresWalletIdentityReader(resolverPool);
-      await v1.register(async (child) =>
-        registerSiwxRoutes(child, {
-          signer: siwxSigner,
-          registry: agentRegistry,
-          resolveWalletIdentity: (addr) => walletIdentityReader.resolveByAddress(addr),
-          redis,
-          ...(cfg.BRAIN_DEMO_MODE ? { demoMode: true } : {}),
-        }),
-      );
+        clockToleranceSeconds: 300,
+      },
+      // Stripe endpoint signing (platform-level secret). Absent => the stripe
+      // webhook path answers 501 and ingestion relies on the pull modality.
+      ...(cfg.STRIPE_WEBHOOK_SECRET !== undefined
+        ? { stripeVerify: { signingSecret: cfg.STRIPE_WEBHOOK_SECRET, clockToleranceSeconds: 300 } }
+        : {}),
+      resolveWebhookTenant: cfg.BRAIN_DEMO_MODE
+        ? async (
+            _provider: string,
+            _body: Buffer,
+            headers: Record<string, unknown>,
+          ): Promise<string> => {
+            const devTenantHeader = headers["x-dev-tenant-id"];
+            if (typeof devTenantHeader === "string" && devTenantHeader.length > 0) {
+              return devTenantHeader;
+            }
+            throw brainError(
+              "auth_tenant_mismatch",
+              "cannot resolve webhook tenant — use x-dev-tenant-id header in demo mode",
+            );
+          }
+        : createProviderTenantResolver({
+            plaid: createPlaidTenantResolver(pool),
+            stripe: createStripeTenantResolver(resolverPool),
+          }),
+    };
 
-      // Public self-serve onboarding (RFC 0002) — registered ONLY when the flag
-      // is on; absent it the routes do not exist. New tenants are sandbox-only
-      // and grant no execution capability. The raw verification token is exposed
-      // in the response outside production (no email provider wired yet).
-      if (cfg.BRAIN_SELF_SERVE_SIGNUP) {
+    // Mount all service routes under /v1 to match Brain_API_Specification.yaml.
+    await app.register(
+      async (v1) => {
+        await v1.register(async (child) => registerRawPlugin(child, rawDeps, rawOpts));
         await v1.register(async (child) =>
-          registerOnboardingRoutes(child, {
+          registerLedgerPlugin(child, ledgerDeps, { enqueue: routingEnqueue }),
+        );
+        await v1.register(async (child) => registerCanonicalRoutes(child, { pool }));
+        await v1.register(async (child) => registerWikiPlugin(child, wikiDeps));
+        await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
+        await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
+        await v1.register(async (child) => {
+          // PaymentIntentService has its own approval sub-service; create a fresh
+          // instance scoped to this plugin so it doesn't share mutable state.
+          const piApprovals = new ApprovalService({
             pool,
             audit,
-            exposeVerificationToken: cfg.NODE_ENV !== "production",
-          }),
-        );
-        // Owner password login → short-lived management JWT. The email→user
-        // lookup is cross-tenant, so it uses the brain_privileged pool (the same
-        // sanctioned entry point as the SIWX address→agent lookup).
-        const credentialReader = new PostgresUserCredentialReader(resolverPool);
-        await v1.register(async (child) =>
-          registerPasswordLoginRoute(child, {
-            resolveUserByEmail: (email) => credentialReader.resolveByEmail(email),
-            signer: siwxSigner,
+            resolveRole,
+            isApproverActive,
+            resolveSubjectOwnerTenant,
+            resolveActivePolicyVersion,
+          });
+          const piService = buildPaymentIntentService({
+            pool,
             audit,
-            tokenTtlSeconds: 15 * 60,
+            approvals: piApprovals,
+            resolveAgent,
+            resolveTenantFlags,
+            resolveAccount,
+            resolveCounterparty,
+            evaluatePolicy: evaluatePaymentIntent,
+            resolvePrincipal,
+            attestCounterpartyAgent,
+            sumAgentWindowSpend,
+            sumActiveReservations,
+            resolveEvidence,
+            detectDuplicates,
+            resolveObligationConfidence,
+            resolveObligationDirection,
+            resolveObligationProvenance,
+            ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
+            ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
+            sourceCredentialResolver,
+            metrics,
+            enqueue: routingEnqueue,
+            recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
+          });
+          await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
+        });
+        await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
+        // H-20 webhook dead-letter + replay: /v1/webhooks/{endpoint_id}/{dead-letters,replay}.
+        await v1.register(async (child) => registerWebhookRoutes(child, { pool }));
+        // H-07 Proof API — GET /v1/proof/{action_id}. Flagship trust artifact:
+        // one verifiable proof per action, assembled across Ledger/Policy/Audit/Raw.
+        // Shared with the H-25 run-history /proof sub-resource below AND with the
+        // MCP brain://proofs/{action_id} resource (item 17). `proofBuilder` is
+        // hoisted above where the MCP server is constructed; reused here.
+        await v1.register(async (child) =>
+          registerProofRoutes(child, { buildProof: proofBuilder }),
+        );
+        // P0.7 human-readable proof viewer — GET /v1/proof/{id}/view → text/html.
+        await v1.register(async (child) =>
+          registerProofViewRoute(child, { buildProof: proofBuilder }),
+        );
+        // Public interactive API reference — GET /v1/docs (Scalar UI) +
+        // GET /v1/openapi.yaml. Read-only projection of Brain_API_Specification.yaml;
+        // route-scoped CSP relaxation lives inside the plugin (docs/routes.ts).
+        await v1.register(async (child) => registerDocsRoutes(child));
+        // GDPR right-to-erasure. The tenant-deletion role BYPASSes RLS so cross-
+        // tenant rows are reachable for cleanup; auth + tenant-match are
+        // enforced at the route boundary.
+        const tenantDeletionService = new TenantDeletionService({
+          privilegedPool: tenantDeletionPool,
+          audit,
+        });
+        await v1.register(async (child) =>
+          registerTenantDeletionRoute(child, { service: tenantDeletionService }),
+        );
+        await v1.register(async (child) =>
+          registerMcpRoute(child, mcpServer, {
+            skipPrincipalTypeCheck: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,
+            // Per-tenant rate limit so a single misbehaving agent cannot crowd
+            // out other tenants on the shared MCP surface (peer review).
+            tenantRateLimiter: new RedisSlidingWindowRateLimiter(redis, {
+              windowSeconds: cfg.BRAIN_MCP_TENANT_RATE_WINDOW_SECONDS,
+              limit: cfg.BRAIN_MCP_TENANT_RATE_LIMIT,
+            }),
           }),
         );
-        // Authenticated wallet-link route (owner JWT) → wallet_identities.
-        await v1.register(async (child) => registerWalletRoutes(child, { pool }));
-      }
-
-      if (cfg.BRAIN_DEMO_MODE) {
-        // GET /v1/demo/token — mints a short-lived read-heavy demo JWT for the
-        // golden-path tenant. Scoped to the minimum needed for the quickstart;
-        // audit:admin and payment_intent:execute are intentionally excluded.
-        v1.get(
-          "/demo/token",
-          { config: { skipAuth: true, rateLimit: { max: 5, timeWindow: "1 minute" } } },
-          async (_req, reply) => {
-            const DEMO_TTL_S = 15 * 60; // 15 minutes
-            const token = await siwxSigner.sign({
-              id: DEMO_GOLDEN_USER,
-              type: "user",
-              tenantId: DEMO_GOLDEN_TENANT,
-              tokenId: newTokenId(),
-              expiresAt: Math.floor(Date.now() / 1000) + DEMO_TTL_S,
-              scopes: [
-                "ledger:read",
-                "wiki:read",
-                "raw:read",
-                "raw:write",
-                "policy:read",
-                "policy:write",
-                "execution:read",
-                "execution:propose",
-                "payment_intent:propose",
-                "payment_intent:approve",
-                "payment_intent:execute",
-                "audit:read",
-              ],
-            });
-            return reply.send({
-              token,
-              tenant_id: DEMO_GOLDEN_TENANT,
-              expires_in: DEMO_TTL_S,
-            });
-          },
-        );
-
-        // POST /v1/demo/policy/activate — inserts a 3-rule demo policy as
-        // active for the requester's tenant. Bypasses the EIP-712 signing
-        // ceremony so investors/demo operators can activate a policy with a
-        // single curl. Only available in BRAIN_DEMO_MODE=true.
-        const DEMO_POLICY: PolicyDocument = {
-          version: 1,
-          rules: [
-            {
-              id: "auto-small-payment",
-              applies_to: ["outbound_payment"],
-              when: { "amount.lte": { currency: "USD", value: "1000.00" } },
-              execute: "auto",
-            },
-            {
-              id: "reject-excessive-payment",
-              applies_to: ["outbound_payment"],
-              when: { "amount.gt": { currency: "USD", value: "10000.00" } },
-              execute: "reject",
-            },
-            {
-              id: "confirm-mid-payment",
-              applies_to: ["outbound_payment"],
-              when: {
-                "amount.gt": { currency: "USD", value: "1000.00" },
-                "amount.lte": { currency: "USD", value: "10000.00" },
-              },
-              require: "owner_approval",
-              execute: "confirm",
-            },
-            {
-              id: "auto-agent-action",
-              applies_to: ["agent_action"],
-              when: {},
-              execute: "auto",
-            },
-            {
-              id: "auto-onchain-tx",
-              applies_to: ["onchain_tx"],
-              when: {},
-              execute: "auto",
-            },
-          ],
-        };
-
-        v1.post("/demo/policy/activate", { config: { skipAuth: false } }, async (req, reply) => {
-          if (req.principal === undefined) {
-            throw brainError("auth_token_missing", "principal required");
-          }
-          if (!req.principal.scopes.includes("policy:write")) {
-            throw brainError("auth_scope_insufficient", "policy:write required");
-          }
-
-          const body = req.body as { content?: PolicyDocument } | undefined;
-          const content: PolicyDocument = body?.content ?? DEMO_POLICY;
-
-          if (typeof content.version !== "number" || !Array.isArray(content.rules)) {
-            throw brainError("policy_rule_invalid", "content must be { version, rules[] }");
-          }
-
-          const hash = contentHash(content);
-
-          // ── Idempotency: same content hash already active and on-chain ──
-          type ExistingRow = {
-            id: string;
-            version: number;
-            onchain_tx: string;
-            onchain_version: number;
-          };
-          const existingReg = await withTenantScope(pool, req.principal.tenantId, async (c) => {
-            const res = await c.query<ExistingRow>(
-              `SELECT id, version, onchain_tx, onchain_version FROM policies
-               WHERE state = 'active' AND content_hash = $1 AND onchain_tx IS NOT NULL
-               LIMIT 1`,
-              [hash],
-            );
-            return res.rows[0] ?? null;
-          });
-
-          if (existingReg !== null) {
-            reply.status(200);
-            return {
-              policy_id: existingReg.id,
-              state: "active",
-              version: content.version,
-              rules: content.rules,
-              onchain_policy_tx: existingReg.onchain_tx,
-              onchain_policy_version: existingReg.onchain_version,
-              chain: "base-sepolia",
-            };
-          }
-
-          const id = newPolicyId();
-
-          await withTenantScope(pool, req.principal.tenantId, async (c) => {
-            await c.query(
-              `UPDATE policies SET state = 'deactivated', deactivated_at = now() WHERE state = 'active'`,
-            );
-            const versionRes = await c.query<{ next_version: number }>(
-              `SELECT COALESCE(MAX(version) + 1, 1) AS next_version FROM policies WHERE tenant_id = $1`,
-              [req.principal!.tenantId],
-            );
-            const nextVersion = versionRes.rows[0]?.next_version ?? 1;
-            await c.query(
-              `INSERT INTO policies
-                 (id, tenant_id, version, content, content_hash, quorum_required,
-                  state, created_by, activated_at)
-               VALUES ($1,$2,$3,$4,$5,1,'active',$6,now())`,
-              [
-                id,
-                req.principal!.tenantId,
-                nextVersion,
-                JSON.stringify(content),
-                hash,
-                req.principal!.id,
-              ],
-            );
-          });
-
-          // ── On-chain policy registration (best-effort) ─────────────────
-          let onchainPolicyTx: string | undefined;
-          let onchainPolicyVersion: number | undefined;
-          if (policyRegistrar !== undefined) {
-            try {
-              const reg = await policyRegistrar.registerPolicy(req.principal.tenantId, hash);
-              onchainPolicyTx = reg.tx_hash;
-              onchainPolicyVersion = reg.version;
-              await withTenantScope(pool, req.principal.tenantId, async (c) => {
-                await c.query(
-                  `UPDATE policies SET onchain_tx = $1, onchain_version = $2 WHERE id = $3`,
-                  [onchainPolicyTx, onchainPolicyVersion ?? null, id],
+        // /v1/agents/* — unified agent API surface (Agent Autonomy v3, 1a.6):
+        // list/get, route, run (shadow-aware), events, runs, why, routing-decisions.
+        await v1.register(async (child) =>
+          registerAgentApiRoutes(child, {
+            catalog: () => internalAgentCatalog,
+            router: agentRouter,
+            runService: agentRunService,
+            reads: agentApiReads,
+            isShadowed,
+            // H-25: run-history sub-resources (evidence / gate-trace / proof / why).
+            runHistory: makeRunLoaders(pool, proofBuilder),
+            // H-09: release an agent's contribution quarantine.
+            releaseAgentQuarantine: (ctx, agentId) =>
+              withTenantScope(pool, ctx.tenantId, (c) => releaseAgentQuarantine(c, agentId)),
+            enqueueRouteJob: async (jobCtx, payload) => {
+              if (payload.event === undefined || !isDomainEvent(payload.event)) {
+                throw brainError(
+                  "request_body_invalid",
+                  "`event` must be a known domain event for the events queue",
                 );
+              }
+              await routingEnqueue({
+                tenantId: jobCtx.tenantId,
+                ...(jobCtx.requestId !== undefined ? { requestId: jobCtx.requestId } : {}),
+                payload: {
+                  event: payload.event,
+                  ...(payload.context !== undefined ? { context: payload.context } : {}),
+                },
               });
-            } catch (err) {
-              log.warn({ err }, "on-chain policy registration failed — demo continues off-chain");
-            }
-          }
-
-          await audit.emit({
-            tenantId: req.principal.tenantId,
-            layer: "policy",
-            actor: req.principal.id,
-            action: "policy.activate",
-            inputs: {
-              version: content.version,
-              policy_hash: hash.toString("hex"),
-              demo_bypass: true,
-              onchain_tx: onchainPolicyTx ?? null,
+              return { jobId: jobCtx.requestId ?? brainId("req") };
             },
-            outputs: { policy_id: id, state: "active" },
-          });
-
-          reply.status(200);
-          return {
-            policy_id: id,
-            state: "active",
-            version: content.version,
-            rules: content.rules,
-            ...(onchainPolicyTx !== undefined && {
-              onchain_policy_tx: onchainPolicyTx,
-              onchain_policy_version: onchainPolicyVersion,
-              chain: "base-sepolia",
-            }),
-          };
-        });
-
-        // POST /v1/demo/anchor/trigger — immediately publishes a Merkle anchor
-        // to BrainAuditAnchor on Base Sepolia without waiting for the hourly timer.
-        // Requires AUDIT_PUBLISHER_KEY to be set. Demo mode only.
-        v1.post("/demo/anchor/trigger", { config: { skipAuth: false } }, async (req, reply) => {
-          if (req.principal === undefined) {
-            throw brainError("auth_token_missing", "principal required");
-          }
-          if (triggerAnchor === undefined) {
-            throw brainError(
-              "internal_server_error",
-              "anchor publisher not configured — set AUDIT_PUBLISHER_KEY in .env and restart",
-            );
-          }
-          await triggerAnchor();
-          reply.status(200);
-          return {
-            triggered: true,
-            message: "anchor published — check GET /v1/audit/anchor/latest",
-          };
-        });
-      }
-
-      // ── GET /v1/reference/yield-venues ───────────────────────────────
-      // Public DeFi yield-venue catalog — same for every tenant, no truth or
-      // tenant coupling, so it is a static reference module served always-on
-      // (outside BRAIN_DEMO_MODE and the provisioning flag). Consumed by the
-      // BrainSaaS Treasury scenario to split idle cash across venues.
-      v1.get(
-        "/reference/yield-venues",
-        { config: { skipAuth: true, rateLimit: { max: 60, timeWindow: "1 minute" } } },
-        async (_req, reply) => {
-          reply.status(200);
-          return { venues: YIELD_VENUES, chain: "base-sepolia" };
-        },
-      );
-
-      // ── POST /v1/demo/provision-run ──────────────────────────────────
-      // The BrainSaaS "Brain Playground" fresh-tenant-per-run provisioner.
-      // Creates a brand-new tenant, seeds the 3-scenario business into it
-      // (tenant-scoped via the app role, RLS on, so each run is isolated and
-      // the §6 gate's no-duplicate-payment check never collides across runs),
-      // and returns a scoped agent JWT the demo runners use to drive one full
-      // policy → payment-intent → audit-anchor flow.
-      //
-      // Auth (batch 10 C-1): no longer skipAuth. Callers MUST send
-      // X-Demo-Provision-Auth equal to BRAIN_DEMO_PROVISION_SECRET. The fence
-      // above guarantees the secret is present when this branch registers.
-      //
-      // Scopes (batch 10 C-1): READ + PROPOSE only. The minted token does
-      // NOT include payment_intent:execute, audit:admin, or policy:write.
-      // Execution and anchor publication run via tenant-scoped service paths,
-      // not via the demo token. Removes the "fresh-tenant drain" footgun a
-      // leaked playground token would otherwise represent.
-      //
-      // Prod-capable: gated by BRAIN_DEMO_PROVISION_ENABLED + the boot fence
-      // (which requires BRAIN_DEMO_PROVISION_TESTNET_ATTESTED=true in
-      // NODE_ENV=production).
-      if (cfg.BRAIN_DEMO_PROVISION_ENABLED) {
-        // The fence guarantees this is set when provisioning is enabled, but
-        // narrow the type for the closure below.
-        const provisionSecret = cfg.BRAIN_DEMO_PROVISION_SECRET;
-        if (provisionSecret === undefined || provisionSecret.length === 0) {
+            haltAgent: async (haltCtx, agentId) => {
+              // Pause all in-flight intents from the agent, then quarantine it.
+              const { paused } = await paymentIntentService.pauseByAgent(haltCtx, agentId);
+              let quarantined = false;
+              await withTenantScope(pool, haltCtx.tenantId, async (c) => {
+                const agent = await findAgent(c, agentId);
+                if (agent !== null && agent.state === "active") {
+                  await transitionAgent(c, agentId, "active", "quarantined");
+                  quarantined = true;
+                }
+              });
+              return { paused, quarantined };
+            },
+          }),
+        );
+        // SIWX (agent auth) — always wired. Production requires AUTH_SIGN_KEY
+        // (a JWK JSON string) backed by Azure Key Vault.
+        if (cfg.NODE_ENV === "production" && cfg.AUTH_SIGN_KEY === undefined) {
           throw new Error(
-            "internal: BRAIN_DEMO_PROVISION_SECRET missing after fence passed (should be unreachable)",
+            "AUTH_SIGN_KEY must be set in production — configure a JWK signing key in Azure Key Vault",
           );
         }
-        v1.post(
-          "/demo/provision-run",
-          { config: { skipAuth: true, rateLimit: { max: 10, timeWindow: "1 minute" } } },
-          async (req, reply) => {
-            // Shared-secret header check. skipAuth: true above bypasses JWT
-            // verification (provisioning issues a JWT, the caller doesn't have
-            // one yet), but the route is NOT public: it requires the operator
-            // header. Constant-time comparison so timing doesn't leak the
-            // secret a byte at a time.
-            const headerRaw = req.headers["x-demo-provision-auth"];
-            const provided = Array.isArray(headerRaw) ? headerRaw[0] : headerRaw;
-            const expectedBuf = Buffer.from(provisionSecret, "utf8");
-            const providedBuf = Buffer.from(provided ?? "", "utf8");
-            const ok =
-              providedBuf.length === expectedBuf.length &&
-              timingSafeEqual(providedBuf, expectedBuf);
-            if (!ok) {
-              reply.status(401);
-              return {
-                error: {
-                  code: "auth_header_invalid",
-                  message:
-                    "X-Demo-Provision-Auth header missing or does not match BRAIN_DEMO_PROVISION_SECRET",
-                  request_id: req.id ?? null,
-                  docs_url: "https://docs.brain.fi/build/playground",
+        const siwxJwk =
+          cfg.AUTH_SIGN_KEY !== undefined
+            ? (JSON.parse(cfg.AUTH_SIGN_KEY) as { kty: string; alg?: string; [k: string]: unknown })
+            : { kty: "oct", k: Buffer.from(DEMO_SIGN_SECRET).toString("base64url"), alg: "HS256" };
+        const siwxSigner = new JwtSigner({
+          issuer: cfg.AUTH_ISSUER,
+          audience: cfg.AUTH_AUDIENCE,
+          key: siwxJwk,
+          algorithm: typeof siwxJwk.alg === "string" ? siwxJwk.alg : "HS256",
+        });
+        const agentRegistry = cfg.BRAIN_DEMO_MODE
+          ? new StubAgentRegistry()
+          : new PostgresAgentRegistry(pool);
+        // RFC 0002 Phase D: SIWX resolves a wallet linked to a HUMAN owner to an
+        // owner JWT (email-or-wallet login). Cross-tenant read ⇒ privileged pool.
+        // Always wired — additive and harmless (returns null absent any link, so
+        // sign-in falls through to the agent path).
+        const walletIdentityReader = new PostgresWalletIdentityReader(resolverPool);
+        await v1.register(async (child) =>
+          registerSiwxRoutes(child, {
+            signer: siwxSigner,
+            registry: agentRegistry,
+            resolveWalletIdentity: (addr) => walletIdentityReader.resolveByAddress(addr),
+            redis,
+            ...(cfg.BRAIN_DEMO_MODE ? { demoMode: true } : {}),
+          }),
+        );
+
+        // Public self-serve onboarding (RFC 0002) — registered ONLY when the flag
+        // is on; absent it the routes do not exist. New tenants are sandbox-only
+        // and grant no execution capability. The raw verification token is exposed
+        // in the response outside production (no email provider wired yet).
+        if (cfg.BRAIN_SELF_SERVE_SIGNUP) {
+          await v1.register(async (child) =>
+            registerOnboardingRoutes(child, {
+              pool,
+              audit,
+              exposeVerificationToken: cfg.NODE_ENV !== "production",
+            }),
+          );
+          // Owner password login → short-lived management JWT. The email→user
+          // lookup is cross-tenant, so it uses the brain_privileged pool (the same
+          // sanctioned entry point as the SIWX address→agent lookup).
+          const credentialReader = new PostgresUserCredentialReader(resolverPool);
+          await v1.register(async (child) =>
+            registerPasswordLoginRoute(child, {
+              resolveUserByEmail: (email) => credentialReader.resolveByEmail(email),
+              signer: siwxSigner,
+              audit,
+              tokenTtlSeconds: 15 * 60,
+            }),
+          );
+          // Authenticated wallet-link route (owner JWT) → wallet_identities.
+          await v1.register(async (child) => registerWalletRoutes(child, { pool }));
+        }
+
+        if (cfg.BRAIN_DEMO_MODE) {
+          // GET /v1/demo/token — mints a short-lived read-heavy demo JWT for the
+          // golden-path tenant. Scoped to the minimum needed for the quickstart;
+          // audit:admin and payment_intent:execute are intentionally excluded.
+          v1.get(
+            "/demo/token",
+            { config: { skipAuth: true, rateLimit: { max: 5, timeWindow: "1 minute" } } },
+            async (_req, reply) => {
+              const DEMO_TTL_S = 15 * 60; // 15 minutes
+              const token = await siwxSigner.sign({
+                id: DEMO_GOLDEN_USER,
+                type: "user",
+                tenantId: DEMO_GOLDEN_TENANT,
+                tokenId: newTokenId(),
+                expiresAt: Math.floor(Date.now() / 1000) + DEMO_TTL_S,
+                scopes: [
+                  "ledger:read",
+                  "wiki:read",
+                  "raw:read",
+                  "raw:write",
+                  "policy:read",
+                  "policy:write",
+                  "execution:read",
+                  "execution:propose",
+                  "payment_intent:propose",
+                  "payment_intent:approve",
+                  "payment_intent:execute",
+                  "audit:read",
+                ],
+              });
+              return reply.send({
+                token,
+                tenant_id: DEMO_GOLDEN_TENANT,
+                expires_in: DEMO_TTL_S,
+              });
+            },
+          );
+
+          // POST /v1/demo/policy/activate — inserts a 3-rule demo policy as
+          // active for the requester's tenant. Bypasses the EIP-712 signing
+          // ceremony so investors/demo operators can activate a policy with a
+          // single curl. Only available in BRAIN_DEMO_MODE=true.
+          const DEMO_POLICY: PolicyDocument = {
+            version: 1,
+            rules: [
+              {
+                id: "auto-small-payment",
+                applies_to: ["outbound_payment"],
+                when: { "amount.lte": { currency: "USD", value: "1000.00" } },
+                execute: "auto",
+              },
+              {
+                id: "reject-excessive-payment",
+                applies_to: ["outbound_payment"],
+                when: { "amount.gt": { currency: "USD", value: "10000.00" } },
+                execute: "reject",
+              },
+              {
+                id: "confirm-mid-payment",
+                applies_to: ["outbound_payment"],
+                when: {
+                  "amount.gt": { currency: "USD", value: "1000.00" },
+                  "amount.lte": { currency: "USD", value: "10000.00" },
                 },
+                require: "owner_approval",
+                execute: "confirm",
+              },
+              {
+                id: "auto-agent-action",
+                applies_to: ["agent_action"],
+                when: {},
+                execute: "auto",
+              },
+              {
+                id: "auto-onchain-tx",
+                applies_to: ["onchain_tx"],
+                when: {},
+                execute: "auto",
+              },
+            ],
+          };
+
+          v1.post("/demo/policy/activate", { config: { skipAuth: false } }, async (req, reply) => {
+            if (req.principal === undefined) {
+              throw brainError("auth_token_missing", "principal required");
+            }
+            if (!req.principal.scopes.includes("policy:write")) {
+              throw brainError("auth_scope_insufficient", "policy:write required");
+            }
+
+            const body = req.body as { content?: PolicyDocument } | undefined;
+            const content: PolicyDocument = body?.content ?? DEMO_POLICY;
+
+            if (typeof content.version !== "number" || !Array.isArray(content.rules)) {
+              throw brainError("policy_rule_invalid", "content must be { version, rules[] }");
+            }
+
+            const hash = contentHash(content);
+
+            // ── Idempotency: same content hash already active and on-chain ──
+            type ExistingRow = {
+              id: string;
+              version: number;
+              onchain_tx: string;
+              onchain_version: number;
+            };
+            const existingReg = await withTenantScope(pool, req.principal.tenantId, async (c) => {
+              const res = await c.query<ExistingRow>(
+                `SELECT id, version, onchain_tx, onchain_version FROM policies
+               WHERE state = 'active' AND content_hash = $1 AND onchain_tx IS NOT NULL
+               LIMIT 1`,
+                [hash],
+              );
+              return res.rows[0] ?? null;
+            });
+
+            if (existingReg !== null) {
+              reply.status(200);
+              return {
+                policy_id: existingReg.id,
+                state: "active",
+                version: content.version,
+                rules: content.rules,
+                onchain_policy_tx: existingReg.onchain_tx,
+                onchain_policy_version: existingReg.onchain_version,
+                chain: "base-sepolia",
               };
             }
 
-            const PROVISION_TTL_S = 30 * 60; // 30 min, long enough for one run.
-            const tenantId = newTenantId();
-            const actor = newUserId();
+            const id = newPolicyId();
 
-            // Off-the-record seed: provisioning must not pollute the tenant's
-            // audit chain (only the run's actions should anchor).
-            const seed = await seedBrainSaasDemo(pool, new InMemoryAuditEmitter(), tenantId, actor);
-
-            // The token acts AS the seeded payment agent (type "agent") so the
-            // §6 gate's agent-identity check passes when the run later proposes
-            // a payment-intent. Read + propose scopes ONLY. Execute, audit
-            // admin, and policy write are deliberately excluded (batch 10 C-1):
-            // the demo token can drive UI flows but cannot, on its own, settle
-            // a payment or rewrite policy.
-            const token = await siwxSigner.sign({
-              id: seed.agentId,
-              type: "agent",
-              tenantId,
-              tokenId: newTokenId(),
-              expiresAt: Math.floor(Date.now() / 1000) + PROVISION_TTL_S,
-              scopes: [
-                "ledger:read",
-                "wiki:read",
-                "raw:read",
-                "raw:write",
-                "policy:read",
-                "execution:read",
-                "execution:propose",
-                "payment_intent:propose",
-                "payment_intent:approve",
-                "audit:read",
-              ],
+            await withTenantScope(pool, req.principal.tenantId, async (c) => {
+              await c.query(
+                `UPDATE policies SET state = 'deactivated', deactivated_at = now() WHERE state = 'active'`,
+              );
+              const versionRes = await c.query<{ next_version: number }>(
+                `SELECT COALESCE(MAX(version) + 1, 1) AS next_version FROM policies WHERE tenant_id = $1`,
+                [req.principal!.tenantId],
+              );
+              const nextVersion = versionRes.rows[0]?.next_version ?? 1;
+              await c.query(
+                `INSERT INTO policies
+                 (id, tenant_id, version, content, content_hash, quorum_required,
+                  state, created_by, activated_at)
+               VALUES ($1,$2,$3,$4,$5,1,'active',$6,now())`,
+                [
+                  id,
+                  req.principal!.tenantId,
+                  nextVersion,
+                  JSON.stringify(content),
+                  hash,
+                  req.principal!.id,
+                ],
+              );
             });
 
-            reply.status(201);
-            return {
-              tenant_id: tenantId,
-              agent_id: seed.agentId,
-              actor,
-              token,
-              expires_in: PROVISION_TTL_S,
-              scenario: {
-                vendors: seed.vendors,
-                customers: seed.customers,
-                accounts: seed.accounts,
-                ap_invoices: seed.apInvoices,
-                ar_invoices: seed.arInvoices,
-                policy_id: seed.policyId,
+            // ── On-chain policy registration (best-effort) ─────────────────
+            let onchainPolicyTx: string | undefined;
+            let onchainPolicyVersion: number | undefined;
+            if (policyRegistrar !== undefined) {
+              try {
+                const reg = await policyRegistrar.registerPolicy(req.principal.tenantId, hash);
+                onchainPolicyTx = reg.tx_hash;
+                onchainPolicyVersion = reg.version;
+                await withTenantScope(pool, req.principal.tenantId, async (c) => {
+                  await c.query(
+                    `UPDATE policies SET onchain_tx = $1, onchain_version = $2 WHERE id = $3`,
+                    [onchainPolicyTx, onchainPolicyVersion ?? null, id],
+                  );
+                });
+              } catch (err) {
+                log.warn({ err }, "on-chain policy registration failed — demo continues off-chain");
+              }
+            }
+
+            await audit.emit({
+              tenantId: req.principal.tenantId,
+              layer: "policy",
+              actor: req.principal.id,
+              action: "policy.activate",
+              inputs: {
+                version: content.version,
+                policy_hash: hash.toString("hex"),
+                demo_bypass: true,
+                onchain_tx: onchainPolicyTx ?? null,
               },
+              outputs: { policy_id: id, state: "active" },
+            });
+
+            reply.status(200);
+            return {
+              policy_id: id,
+              state: "active",
+              version: content.version,
+              rules: content.rules,
+              ...(onchainPolicyTx !== undefined && {
+                onchain_policy_tx: onchainPolicyTx,
+                onchain_policy_version: onchainPolicyVersion,
+                chain: "base-sepolia",
+              }),
             };
+          });
+
+          // POST /v1/demo/anchor/trigger — immediately publishes a Merkle anchor
+          // to BrainAuditAnchor on Base Sepolia without waiting for the hourly timer.
+          // Requires AUDIT_PUBLISHER_KEY to be set. Demo mode only.
+          v1.post("/demo/anchor/trigger", { config: { skipAuth: false } }, async (req, reply) => {
+            if (req.principal === undefined) {
+              throw brainError("auth_token_missing", "principal required");
+            }
+            if (triggerAnchor === undefined) {
+              throw brainError(
+                "internal_server_error",
+                "anchor publisher not configured — set AUDIT_PUBLISHER_KEY in .env and restart",
+              );
+            }
+            await triggerAnchor();
+            reply.status(200);
+            return {
+              triggered: true,
+              message: "anchor published — check GET /v1/audit/anchor/latest",
+            };
+          });
+        }
+
+        // ── GET /v1/reference/yield-venues ───────────────────────────────
+        // Public DeFi yield-venue catalog — same for every tenant, no truth or
+        // tenant coupling, so it is a static reference module served always-on
+        // (outside BRAIN_DEMO_MODE and the provisioning flag). Consumed by the
+        // BrainSaaS Treasury scenario to split idle cash across venues.
+        v1.get(
+          "/reference/yield-venues",
+          { config: { skipAuth: true, rateLimit: { max: 60, timeWindow: "1 minute" } } },
+          async (_req, reply) => {
+            reply.status(200);
+            return { venues: YIELD_VENUES, chain: "base-sepolia" };
           },
         );
 
-        // POST /v1/demo/provision-run/:tenantId/anchor — server-side anchor
-        // trigger for the BrainSaaS playground (see demo/anchor-route.ts). Same
-        // shared-secret fence as provision-run; anchors the run's audit log
-        // on-chain immediately so the demo does not wait for the hourly
-        // background publisher. Only meaningful when the broadcaster is wired.
-        await registerDemoProvisionAnchorRoute(v1, {
-          provisionSecret,
-          // Use the app pool (brain_app, FORCE RLS), NOT a BYPASSRLS pool:
-          // publishAnchor -> withTenantScope(tenantId) sets app.tenant_id and
-          // relies on RLS to scope listEventsForAnchor to this tenant. A
-          // BYPASSRLS pool would silently anchor EVERY tenant's events under
-          // this one demo tenant. Same pool the /audit/anchor/publish route uses.
-          publish:
-            anchorBroadcaster === undefined
-              ? undefined
-              : (input) => publishAnchor(pool, anchorBroadcaster, input),
-        });
-      }
-    },
-    { prefix: "/v1" },
-  );
+        // ── POST /v1/demo/provision-run ──────────────────────────────────
+        // The BrainSaaS "Brain Playground" fresh-tenant-per-run provisioner.
+        // Creates a brand-new tenant, seeds the 3-scenario business into it
+        // (tenant-scoped via the app role, RLS on, so each run is isolated and
+        // the §6 gate's no-duplicate-payment check never collides across runs),
+        // and returns a scoped agent JWT the demo runners use to drive one full
+        // policy → payment-intent → audit-anchor flow.
+        //
+        // Auth (batch 10 C-1): no longer skipAuth. Callers MUST send
+        // X-Demo-Provision-Auth equal to BRAIN_DEMO_PROVISION_SECRET. The fence
+        // above guarantees the secret is present when this branch registers.
+        //
+        // Scopes (batch 10 C-1): READ + PROPOSE only. The minted token does
+        // NOT include payment_intent:execute, audit:admin, or policy:write.
+        // Execution and anchor publication run via tenant-scoped service paths,
+        // not via the demo token. Removes the "fresh-tenant drain" footgun a
+        // leaked playground token would otherwise represent.
+        //
+        // Prod-capable: gated by BRAIN_DEMO_PROVISION_ENABLED + the boot fence
+        // (which requires BRAIN_DEMO_PROVISION_TESTNET_ATTESTED=true in
+        // NODE_ENV=production).
+        if (cfg.BRAIN_DEMO_PROVISION_ENABLED) {
+          // The fence guarantees this is set when provisioning is enabled, but
+          // narrow the type for the closure below.
+          const provisionSecret = cfg.BRAIN_DEMO_PROVISION_SECRET;
+          if (provisionSecret === undefined || provisionSecret.length === 0) {
+            throw new Error(
+              "internal: BRAIN_DEMO_PROVISION_SECRET missing after fence passed (should be unreachable)",
+            );
+          }
+          v1.post(
+            "/demo/provision-run",
+            { config: { skipAuth: true, rateLimit: { max: 10, timeWindow: "1 minute" } } },
+            async (req, reply) => {
+              // Shared-secret header check. skipAuth: true above bypasses JWT
+              // verification (provisioning issues a JWT, the caller doesn't have
+              // one yet), but the route is NOT public: it requires the operator
+              // header. Constant-time comparison so timing doesn't leak the
+              // secret a byte at a time.
+              const headerRaw = req.headers["x-demo-provision-auth"];
+              const provided = Array.isArray(headerRaw) ? headerRaw[0] : headerRaw;
+              const expectedBuf = Buffer.from(provisionSecret, "utf8");
+              const providedBuf = Buffer.from(provided ?? "", "utf8");
+              const ok =
+                providedBuf.length === expectedBuf.length &&
+                timingSafeEqual(providedBuf, expectedBuf);
+              if (!ok) {
+                reply.status(401);
+                return {
+                  error: {
+                    code: "auth_header_invalid",
+                    message:
+                      "X-Demo-Provision-Auth header missing or does not match BRAIN_DEMO_PROVISION_SECRET",
+                    request_id: req.id ?? null,
+                    docs_url: "https://docs.brain.fi/build/playground",
+                  },
+                };
+              }
 
-  // -- background workers ---------------------------------------------
-  const normalizeWorker = startNormalizeWorker({ pool, audit });
+              const PROVISION_TTL_S = 30 * 60; // 30 min, long enough for one run.
+              const tenantId = newTenantId();
+              const actor = newUserId();
+
+              // Off-the-record seed: provisioning must not pollute the tenant's
+              // audit chain (only the run's actions should anchor).
+              const seed = await seedBrainSaasDemo(
+                pool,
+                new InMemoryAuditEmitter(),
+                tenantId,
+                actor,
+              );
+
+              // The token acts AS the seeded payment agent (type "agent") so the
+              // §6 gate's agent-identity check passes when the run later proposes
+              // a payment-intent. Read + propose scopes ONLY. Execute, audit
+              // admin, and policy write are deliberately excluded (batch 10 C-1):
+              // the demo token can drive UI flows but cannot, on its own, settle
+              // a payment or rewrite policy.
+              const token = await siwxSigner.sign({
+                id: seed.agentId,
+                type: "agent",
+                tenantId,
+                tokenId: newTokenId(),
+                expiresAt: Math.floor(Date.now() / 1000) + PROVISION_TTL_S,
+                scopes: [
+                  "ledger:read",
+                  "wiki:read",
+                  "raw:read",
+                  "raw:write",
+                  "policy:read",
+                  "execution:read",
+                  "execution:propose",
+                  "payment_intent:propose",
+                  "payment_intent:approve",
+                  "audit:read",
+                ],
+              });
+
+              reply.status(201);
+              return {
+                tenant_id: tenantId,
+                agent_id: seed.agentId,
+                actor,
+                token,
+                expires_in: PROVISION_TTL_S,
+                scenario: {
+                  vendors: seed.vendors,
+                  customers: seed.customers,
+                  accounts: seed.accounts,
+                  ap_invoices: seed.apInvoices,
+                  ar_invoices: seed.arInvoices,
+                  policy_id: seed.policyId,
+                },
+              };
+            },
+          );
+
+          // POST /v1/demo/provision-run/:tenantId/anchor — server-side anchor
+          // trigger for the BrainSaaS playground (see demo/anchor-route.ts). Same
+          // shared-secret fence as provision-run; anchors the run's audit log
+          // on-chain immediately so the demo does not wait for the hourly
+          // background publisher. Only meaningful when the broadcaster is wired.
+          await registerDemoProvisionAnchorRoute(v1, {
+            provisionSecret,
+            // Use the app pool (brain_app, FORCE RLS), NOT a BYPASSRLS pool:
+            // publishAnchor -> withTenantScope(tenantId) sets app.tenant_id and
+            // relies on RLS to scope listEventsForAnchor to this tenant. A
+            // BYPASSRLS pool would silently anchor EVERY tenant's events under
+            // this one demo tenant. Same pool the /audit/anchor/publish route uses.
+            publish:
+              anchorBroadcaster === undefined
+                ? undefined
+                : (input) => publishAnchor(pool, anchorBroadcaster, input),
+          });
+        }
+      },
+      { prefix: "/v1" },
+    );
+  } // end if (composition.httpEnabled)
+
+  // -- background workers (each gated by its BRAIN_WORKERS group) ------
+  const normalizeWorker = composition.workers.has("normalize")
+    ? startNormalizeWorker({ pool, audit })
+    : undefined;
 
   // Interpretation (Appendix B mechanism 2): promotes landed structured
   // artifacts (registered source_schema) into raw_parsed, which the
   // normalize worker then promotes to Ledger entities. Cross-tenant poll,
   // hence the raw-worker role; per-artifact writes stay tenant-scoped.
-  const interpretWorker = startInterpretWorker({ pool: rawWorkerPool, blob, audit });
+  const interpretWorker = composition.workers.has("raw")
+    ? startInterpretWorker({ pool: rawWorkerPool, blob, audit })
+    : undefined;
 
   // Canonical projection (ingestion architecture §12, Phase 5): promotes the
   // rich Merge accounting pages (gl_account / journal_entry) that the compact
   // Ledger drops into the canonical domain store. Cross-tenant poll over
   // raw_parsed, hence the canonical-projector role; per-row writes stay scoped.
-  const canonicalProjectionWorker = startCanonicalProjectionWorker({
-    pool: canonicalProjectorPool,
-    audit,
-    metrics,
-  });
+  const canonicalProjectionWorker = composition.workers.has("canonical")
+    ? startCanonicalProjectionWorker({
+        pool: canonicalProjectorPool,
+        audit,
+        metrics,
+      })
+    : undefined;
 
   // Ledger chart-of-accounts projection (ingestion architecture §12, Phase 5):
   // keeps ledger_gl_accounts current as canonical_gl_account grows. Cross-tenant
   // poll over canonical, hence the ledger-projector role; upserts stay scoped.
-  const ledgerProjectionWorker = startLedgerProjectionWorker({ pool: ledgerProjectorPool });
+  const ledgerProjectionWorker = composition.workers.has("ledger")
+    ? startLedgerProjectionWorker({ pool: ledgerProjectorPool })
+    : undefined;
 
   // Ledger AP/AR projection (Phase 5 cutover): obligations + counterparties for
   // Merge-sourced data now project from canonical (the extractor no longer
   // writes them directly). Cross-tenant poll, hence the ledger-projector role.
-  const ledgerAparProjectionWorker = startLedgerAparProjectionWorker({
-    pool: ledgerProjectorPool,
-    metrics,
-  });
+  const ledgerAparProjectionWorker = composition.workers.has("ledger")
+    ? startLedgerAparProjectionWorker({
+        pool: ledgerProjectorPool,
+        metrics,
+      })
+    : undefined;
 
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence the raw-worker role; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
   // narrowly per partition run via the encrypted source-credential store.
-  const syncWorker = startSyncWorker({
-    pool: rawWorkerPool,
-    blob,
-    audit,
-    resolveCredentials: (tenantId, sourceId) =>
-      postgresSourceRepo.resolveCredentials(tenantId, sourceId),
-  });
+  const syncWorker = composition.workers.has("raw")
+    ? startSyncWorker({
+        pool: rawWorkerPool,
+        blob,
+        audit,
+        resolveCredentials: (tenantId, sourceId) =>
+          postgresSourceRepo.resolveCredentials(tenantId, sourceId),
+      })
+    : undefined;
 
   let anchorTimer: NodeJS.Timeout | undefined;
   let anchorShutdown = false;
 
-  if (anchorBroadcaster !== undefined) {
+  // The scheduled cross-tenant anchor publisher is part of the "audit" worker
+  // group (the demo trigger endpoint, when HTTP is on, drives runAnchor too).
+  if (composition.workers.has("audit") && anchorBroadcaster !== undefined) {
     const intervalMs = cfg.AUDIT_ANCHOR_INTERVAL_MS;
     let anchorRunning = false;
 
@@ -2269,22 +2343,24 @@ async function main(): Promise<void> {
   // the existing path (never executes). Domain-event producers are still
   // integration markers, so the queue stays idle until they emit. The
   // reconciliation override delegates to the Python agent when configured.
-  const agentRouteWorker = createAgentRouteWorker({
-    router: agentRouter,
-    handlers: internalAgentHandlers,
-    definitions: internalAgentDefinitions,
-    actionResolver,
-    evidence: agentEvidence,
-    propose: { agents: agentService, paymentIntents: paymentIntentService },
-    // Same shadow gate as /agents/run — a shadowed agent's financial proposal
-    // terminates as shadow_completed and creates no PaymentIntent.
-    isShadowed,
-    checkRail,
-    agentOverrides,
-    redisUrl: cfg.REDIS_URL,
-    actor: "agent_router_worker",
-  });
-  log.info("agent-route worker started");
+  const agentRouteWorker = composition.workers.has("agent_route")
+    ? createAgentRouteWorker({
+        router: agentRouter,
+        handlers: internalAgentHandlers,
+        definitions: internalAgentDefinitions,
+        actionResolver,
+        evidence: agentEvidence,
+        propose: { agents: agentService, paymentIntents: paymentIntentService },
+        // Same shadow gate as /agents/run — a shadowed agent's financial proposal
+        // terminates as shadow_completed and creates no PaymentIntent.
+        isShadowed,
+        checkRail,
+        agentOverrides,
+        redisUrl: cfg.REDIS_URL,
+        actor: "agent_router_worker",
+      })
+    : undefined;
+  if (agentRouteWorker !== undefined) log.info("agent-route worker started");
 
   // -- capability snapshot (item 5) ------------------------------------
   // One structured log line that answers "what's actually wired in this
@@ -2365,6 +2441,8 @@ async function main(): Promise<void> {
       if (anchorTimer !== undefined) clearTimeout(anchorTimer);
 
       const outcome = await runShutdown({
+        // Only the workers this process actually started (worker/process
+        // separation); the rest are undefined and filtered out.
         workers: [
           normalizeWorker,
           interpretWorker,
@@ -2376,11 +2454,11 @@ async function main(): Promise<void> {
           webhookDispatchWorker,
           tenantBlobPurgeWorker,
           auditConsistencyVerifier,
-          ...(anchorReconciler !== undefined ? [anchorReconciler] : []),
-        ],
+          anchorReconciler,
+        ].filter((w): w is NonNullable<typeof w> => w !== undefined),
         workerDrainMs: WORKER_DRAIN_MS,
         closeApp: () => app.close(),
-        closeAgentRouteWorker: () => agentRouteWorker.close(),
+        closeAgentRouteWorker: () => agentRouteWorker?.close() ?? Promise.resolve(),
         closePools: () =>
           closeAllPools([
             pool,

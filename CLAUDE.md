@@ -272,6 +272,15 @@ New v0.3 routes live under `/agents/*`, `/payment-intents/*`, `/agents/mcp`. The
 - Every successful tool/resource call emits `agent.mcp.tool_called`; mutating tools also emit the same inner audit events as the HTTP API.
 - Wired into the execution Fastify app via an optional `registerMcp` callback, `services/execution` does not depend on `@brain/mcp` (no workspace cycle).
 
+## Process roles (worker/process separation)
+
+One image, role via env. `services/api/src/main.ts` boots the same `brain-core` image as an HTTP-only api and/or background-worker processes, so workers restart/scale independently of api deploys and the worker-only DB credentials stay out of the public api runtime.
+
+- **`BRAIN_HTTP_ENABLED`** (default `true`): gate the `/v1` API surface. `/health` is always served (so worker processes expose a probe).
+- **`BRAIN_WORKERS`** (default `all`): `all` | `none` | CSV of groups: `raw` (sync + interpret), `normalize`, `canonical`, `ledger` (gl + ap/ar), `execution` (outbox), `audit` (verifier + anchor scheduler/reconciler), `webhook`, `blob_purge`, `agent_route`. Unknown group → fail-closed at boot.
+- `composition/process-roles.ts` (`resolveComposition`) is the pure source of truth mapping env → which `/v1` block, workers, and least-privilege role pools (R-12) are active. The db-isolation fence and the boot role-assertion only require/check the pools this process actually uses; an unset role URL aliases `brain_app` (so an api process holds no worker creds).
+- Defaults reproduce the historical all-in-one process (HTTP + every worker). `docker-compose.prod.yml` runs the api (`BRAIN_WORKERS=none`) and a `worker` service (`BRAIN_HTTP_ENABLED=false`, `BRAIN_WORKERS=all`) off the one image; split a concern out by copying the worker service with `BRAIN_WORKERS=<group>`. The canonical/ledger/normalize/webhook workers are idempotent but not lease-protected, so run them single-replica.
+
 ## Autonomy Modes (shadow / recommend / confirm / live)
 
 `shared/src/agents/autonomy.ts` collapses three orthogonal axes (LIVE_AGENTS promotion, `default_authority`, policy outcome) into one observable label so the surface vocabulary lines up with the pitch deck. Use `deriveAutonomyMode({ isLive, defaultAuthority, policyMaxOutcome })`. Truth table (first matching row wins):

@@ -33,6 +33,29 @@
 
 name: brain-prod
 
+# Common runtime env shared by the api and worker processes (worker/process
+# separation). The role-specific bits (BRAIN_HTTP_ENABLED / BRAIN_WORKERS and the
+# least-privilege role URLs) are set per service so the api never receives the
+# worker-only DB credentials.
+x-brain-common-env: &brain-common-env
+  NODE_ENV: production
+  PORT: "3000"
+  SERVICE_VERSION: ${SERVICE_VERSION:-0.0.5}
+  BRAIN_BASE_CHAIN_ID: "84532"
+  AUTH_JWKS_URL: http://jwks:8085/.well-known/jwks.json
+  AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
+  AUTH_AUDIENCE: ${AUTH_AUDIENCE:-brain-api}
+  DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:-brain_app}@postgres:5432/brain
+  DATABASE_SSL: disable
+  REDIS_URL: redis://redis:6379
+  BLOB_BACKEND: s3
+  BLOB_CONTAINER: ${BLOB_CONTAINER:-brain-artifacts}
+  S3_ENDPOINT: http://minio:9000
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-brainminio}
+  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-brainminio}
+  S3_FORCE_PATH_STYLE: "true"
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -234,41 +257,17 @@ services:
       - path: .env.prod
         required: false
     environment:
-      NODE_ENV: production
-      PORT: "3000"
-      # Service identity reported by GET /health. Without these the api falls
-      # back to the code defaults "brain-unknown" / "0.0.0-dev". SERVICE_VERSION
-      # is overridable per release via .env.prod; @brain/sdk versions separately.
+      <<: *brain-common-env
       SERVICE_NAME: brain-api
-      SERVICE_VERSION: ${SERVICE_VERSION:-0.0.5}
-      # Base Sepolia testnet (scope-defining).
-      BRAIN_BASE_CHAIN_ID: "84532"
-      # --- auth (verify against the in-network JWKS sidecar) ---
-      AUTH_JWKS_URL: http://jwks:8085/.well-known/jwks.json
-      AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
-      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-brain-api}
-      # --- datastores (in-network; no TLS on the compose bridge) ---
-      DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:-brain_app}@postgres:5432/brain
+      # HTTP-only (worker/process separation): serves /v1 + /health, runs NO
+      # background workers (those live in the `worker` service). Only the role
+      # pools its routes use are provided — never the worker-only DB credentials.
+      BRAIN_HTTP_ENABLED: "true"
+      BRAIN_WORKERS: none
       BRAIN_WIKI_DB_URL: postgres://brain_wiki_reader:${BRAIN_WIKI_DB_PASSWORD:-brain_wiki_reader}@postgres:5432/brain
-      # §4 least-privilege cross-tenant role URLs (replace DATABASE_PRIVILEGED_URL).
-      BRAIN_RAW_WORKER_DB_URL: postgres://brain_raw_worker:${BRAIN_RAW_WORKER_DB_PASSWORD:-brain_raw_worker}@postgres:5432/brain
-      BRAIN_CANONICAL_PROJECTOR_DB_URL: postgres://brain_canonical_projector:${BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD:-brain_canonical_projector}@postgres:5432/brain
-      BRAIN_LEDGER_PROJECTOR_DB_URL: postgres://brain_ledger_projector:${BRAIN_LEDGER_PROJECTOR_DB_PASSWORD:-brain_ledger_projector}@postgres:5432/brain
-      BRAIN_EXECUTION_WORKER_DB_URL: postgres://brain_execution_worker:${BRAIN_EXECUTION_WORKER_DB_PASSWORD:-brain_execution_worker}@postgres:5432/brain
-      BRAIN_AUDIT_VERIFIER_DB_URL: postgres://brain_audit_verifier:${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:-brain_audit_verifier}@postgres:5432/brain
-      BRAIN_AUDIT_PUBLISHER_DB_URL: postgres://brain_audit_publisher:${BRAIN_AUDIT_PUBLISHER_DB_PASSWORD:-brain_audit_publisher}@postgres:5432/brain
       BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}@postgres:5432/brain
       BRAIN_TENANT_DELETION_DB_URL: postgres://brain_tenant_deletion:${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}@postgres:5432/brain
-      DATABASE_SSL: disable
-      REDIS_URL: redis://redis:6379
-      # --- blob store (S3 / MinIO) ---
-      BLOB_BACKEND: s3
-      BLOB_CONTAINER: ${BLOB_CONTAINER:-brain-artifacts}
-      S3_ENDPOINT: http://minio:9000
-      S3_REGION: ${S3_REGION:-us-east-1}
-      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-brainminio}
-      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-brainminio}
-      S3_FORCE_PATH_STYLE: "true"
+      BRAIN_AUDIT_VERIFIER_DB_URL: postgres://brain_audit_verifier:${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:-brain_audit_verifier}@postgres:5432/brain
     depends_on:
       postgres:
         condition: service_healthy
@@ -282,6 +281,59 @@ services:
         condition: service_completed_successfully
       jwks:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+
+  # Background workers (worker/process separation). Same image as the api, but
+  # HTTP-disabled and running every worker group; the api process runs none.
+  # This decouples worker uptime from api deploys/restarts and keeps the
+  # worker-only DB credentials out of the public api runtime. To scale a single
+  # concern independently, copy this service with BRAIN_WORKERS=<group> and only
+  # that group's role URL(s). Single replica: the canonical/ledger/normalize/
+  # webhook workers are idempotent but not lease-protected.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brain-core:${BRAIN_IMAGE_TAG:-prod}
+    container_name: brain-prod-worker
+    restart: unless-stopped
+    command: ["node", "services/api/dist/main.js"]
+    env_file:
+      - path: .env.prod
+        required: false
+    environment:
+      <<: *brain-common-env
+      SERVICE_NAME: brain-worker
+      BRAIN_HTTP_ENABLED: "false"
+      BRAIN_WORKERS: all
+      # Worker-only role URLs (no resolver: that is request-path only).
+      BRAIN_RAW_WORKER_DB_URL: postgres://brain_raw_worker:${BRAIN_RAW_WORKER_DB_PASSWORD:-brain_raw_worker}@postgres:5432/brain
+      BRAIN_CANONICAL_PROJECTOR_DB_URL: postgres://brain_canonical_projector:${BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD:-brain_canonical_projector}@postgres:5432/brain
+      BRAIN_LEDGER_PROJECTOR_DB_URL: postgres://brain_ledger_projector:${BRAIN_LEDGER_PROJECTOR_DB_PASSWORD:-brain_ledger_projector}@postgres:5432/brain
+      BRAIN_EXECUTION_WORKER_DB_URL: postgres://brain_execution_worker:${BRAIN_EXECUTION_WORKER_DB_PASSWORD:-brain_execution_worker}@postgres:5432/brain
+      BRAIN_AUDIT_VERIFIER_DB_URL: postgres://brain_audit_verifier:${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:-brain_audit_verifier}@postgres:5432/brain
+      BRAIN_AUDIT_PUBLISHER_DB_URL: postgres://brain_audit_publisher:${BRAIN_AUDIT_PUBLISHER_DB_PASSWORD:-brain_audit_publisher}@postgres:5432/brain
+      BRAIN_TENANT_DELETION_DB_URL: postgres://brain_tenant_deletion:${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}@postgres:5432/brain
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      db-roles:
+        condition: service_completed_successfully
+      minio-setup:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD
