@@ -88,6 +88,24 @@ function tierForRow(section, name) {
   }
 }
 
+/**
+ * How much of this row's claim is actually *proven*, distinct from its status:
+ *   exercised  — really runs (CI guards that gate every build; an enabled job)
+ *   configured — env/config present, but this pre-deploy check does not run it
+ *   scaffolded — code/test exists but is gated/not run (e.g. the testnet E2E job)
+ *   missing    — not present / would fail
+ * Keeps "scaffolded but green-looking" honest for diligence (Review 053af35 P2).
+ */
+function evidenceStateFor(section, name, status) {
+  if (name === "On-chain executor testnet E2E") {
+    return env.TESTNET_ONCHAIN_E2E_ENABLED === "true" ? "exercised" : "scaffolded";
+  }
+  if (section === "guards") return status === "green" ? "exercised" : "missing";
+  if (status === "green") return "configured";
+  if (status === "yellow") return "scaffolded";
+  return "missing";
+}
+
 /** Per-profile status: worst status among the rows that profile requires. */
 function computeProfiles(rows) {
   const out = {};
@@ -555,7 +573,12 @@ function main() {
   // Tag every row with the section + the deploy stage that requires it, so the
   // same rows feed both the flat sections (back-compat) and the profiles.
   const tag = (rows, section) =>
-    rows.map((r) => ({ ...r, section, tier: tierForRow(section, r.name) }));
+    rows.map((r) => ({
+      ...r,
+      section,
+      tier: tierForRow(section, r.name),
+      evidence_state: evidenceStateFor(section, r.name, r.status),
+    }));
   const sectioned = {
     rails: tag(railResult.rows, "rails"),
     fences: tag(fences, "fences"),

@@ -338,6 +338,21 @@ test("an unknown --profile fails fast (exit 2)", () => {
   assert.equal(r.code, 2);
 });
 
+test("every row carries a valid evidence_state; gated testnet E2E reads scaffolded", () => {
+  const r = runWithEnv({ NODE_ENV: "development" });
+  const all = Object.values(r.parsed.sections).flat();
+  for (const row of all) {
+    assert.ok(
+      ["exercised", "configured", "scaffolded", "missing"].includes(row.evidence_state),
+      `${row.name} has invalid evidence_state ${row.evidence_state}`,
+    );
+  }
+  // The dormant testnet executor E2E must not read as proven evidence.
+  const testnet = r.parsed.sections.fences.find((f) => f.name === "On-chain executor testnet E2E");
+  assert.ok(testnet, "expected the testnet E2E fence row");
+  assert.equal(testnet.evidence_state, "scaffolded");
+});
+
 test("any open + P0 risk turns overall_status red and exits 1", () => {
   // Sanity check against the real register: at the time of writing R-01
   // (escrow audit) is open + P0, so the overall MUST be red until the
