@@ -142,15 +142,16 @@ revertGate("on-chain executor testnet — revert path (gas only, no value moved)
 const successGate = revertGate === describe && SUCCESS_ENABLED ? describe : describe.skip;
 
 successGate(
-  "on-chain executor testnet — success + replay (value-moving; granted-key fixture)",
+  "on-chain executor testnet — success + on-chain replay guard (granted-key fixture)",
   () => {
     // Requires a GRANTED session key (target + selector allowlisted, cap >= value,
     // policy_version matching) on a funded BrainSmartAccount. See tests/e2e/README.md.
     const SUCCESS_DATA = process.env.BRAIN_TESTNET_SUCCESS_DATA ?? "0x";
     const SUCCESS_VALUE = process.env.BRAIN_TESTNET_SUCCESS_VALUE ?? "0";
 
-    it("lands a real receipt and a same-nonce re-dispatch reverts (replay guard)", async () => {
-      const rail = new OnchainBaseRail({ executor: buildExecutor(SESSION_KEY!) });
+    it("executes once, then a re-send at the CONSUMED nonce reverts (replay guard)", async () => {
+      const executor = buildExecutor(SESSION_KEY!);
+      const rail = new OnchainBaseRail({ executor });
       const action = {
         smart_account: SMART_ACCOUNT!,
         holder: privateKeyToAccount(SESSION_KEY!).address,
@@ -159,27 +160,32 @@ successGate(
         data: SUCCESS_DATA,
         policy_version: POLICY_VERSION,
       };
+
+      // First dispatch executes and consumes nonce N (the rail reads the live
+      // nonce and threads it into executeViaSessionKey).
       const result = await rail.dispatch(railInput(action));
       expect(result.receipt.rail).toBe("onchain");
-      expect(typeof result.receipt.tx_hash).toBe("string");
       expect(String(result.receipt.tx_hash).startsWith("0x")).toBe(true);
+      const consumedNonce = BigInt(String(result.receipt.nonce));
 
-      // The on-chain replay guard (H-03) backs the outbox's exactly-once: a second
-      // dispatch reads the now-advanced nonce, but a re-send at the consumed nonce
-      // reverts BadNonce. Re-dispatching the same action surfaces a decline.
-      let replayErr: unknown;
-      try {
-        await rail.dispatch(railInput(action));
-      } catch (err) {
-        replayErr = err;
-      }
-      // Either the fresh-nonce re-send succeeds (new nonce) or it declines; the
-      // invariant we assert is that money never moves twice silently — a second
-      // identical dispatch does not throw an UNHANDLED error, it returns a receipt
-      // or a classified decline.
-      if (replayErr !== undefined) {
-        expect(isBrainError(replayErr) && replayErr.code === "execution_rail_declined").toBe(true);
-      }
+      // The replay guard, asserted DIRECTLY: re-send at the CONSUMED nonce N
+      // (bypassing the rail's live-nonce read, which would otherwise pick up the
+      // advanced N+1). The on-chain H-03 nonce guard MUST revert (BadNonce), so
+      // the same signed call can never land twice. This is the real exactly-once
+      // backstop — NOT re-calling rail.dispatch (which reads a fresh nonce and
+      // would simply do a second transfer). Outbox idempotency (same
+      // idempotency_key -> one economic effect) is proved separately in the
+      // execution outbox suite, not here.
+      await expect(
+        executor.execute({
+          smartAccount: SMART_ACCOUNT!,
+          holder: action.holder,
+          nonce: consumedNonce,
+          target: TARGET!,
+          value: BigInt(SUCCESS_VALUE),
+          data: SUCCESS_DATA,
+        }),
+      ).rejects.toThrow();
     });
   },
 );

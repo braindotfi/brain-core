@@ -34,11 +34,13 @@ fail CI, but staging runs that are missing any variable should.
   Sepolia (no HTTP server). Read path (nonce) needs only RPC + the
   smart-account address; the revert path (surfaces a real on-chain
   revert as `execution_rail_declined`, gas only) also needs a
-  gas-funded throwaway session key + a target; the value-moving
-  success + replay-guard case is double-gated behind
-  `BRAIN_TESTNET_SUCCESS_ENABLED` and needs a **granted** session key
-  (target + selector allowlisted, cap ≥ value, matching
-  `policy_version`) on a funded account. CI job:
+  gas-funded throwaway session key + a target; the success case
+  (executes once, then asserts the on-chain replay guard by re-sending
+  at the **consumed** nonce and requiring a revert) is double-gated
+  behind `BRAIN_TESTNET_SUCCESS_ENABLED` and needs a **granted** session
+  key (target + selector allowlisted, cap ≥ value, matching
+  `policy_version`) on a funded account. (Outbox idempotency is proved
+  separately in the execution outbox suite, not here.) CI job:
   `testnet_onchain_executor_e2e` (gated on
   `vars.TESTNET_ONCHAIN_E2E_ENABLED`).
 

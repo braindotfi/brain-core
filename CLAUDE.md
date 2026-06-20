@@ -128,7 +128,10 @@ mainnet` scopes the rendered view + exit code to one stage (e.g.
 `--profile demo` exits 0 in dev; a staging gate runs `--profile staging`).
 `overall_status` and the flat sections are unchanged (`overall_status`
 equals the `mainnet` profile); the tier policy lives in the script
-(`RISK_TIER` + `tierForRow`), not the risk register.
+(`RISK_TIER` + `tierForRow`), not the risk register. Each row also carries
+`evidence_state` (`exercised` | `configured` | `scaffolded` | `missing`),
+distinct from status, so gated-but-green-looking items (e.g. the testnet
+executor E2E) read as `scaffolded`, not proven.
 
 `pnpm run readiness-snapshot <tag>` captures a per-tag snapshot of the
 aggregator JSON to `docs/readiness-history/<tag>.json` (used at release
