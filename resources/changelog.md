@@ -6,6 +6,36 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.7 (money-path reservation lifecycle)
+
+Safety hardening for the PaymentIntent execution path. No API, MCP, or SDK
+surface changed.
+
+#### Fixed. Reservation-backed execution handoff
+
+- **Balance reservations now have a live lifecycle.** For ledger-account-backed
+  payments, `execute()` creates a reservation in the same transaction that moves
+  the PaymentIntent from `approved` to `dispatching` and enqueues the durable
+  outbox row. The outbox row stores `reservation_id`; settlement consumes the
+  reservation, and deterministic rail failure releases it. Check #8 already
+  subtracted active reservations, so this closes the concurrent double-spend
+  gap between gate pass and async rail settlement.
+- **Outbox and PaymentIntent state races fail closed.** Settlement now verifies
+  that `dispatching -> executed` actually updated the PaymentIntent before
+  appending the execution receipt, consuming the reservation, or recording
+  spend. Deterministic failure similarly verifies `dispatching -> failed` before
+  releasing a reservation. A lost race routes the worker to retry/reconcile
+  instead of producing a mismatched outbox/PaymentIntent state.
+- **Outbox idempotency fallback is tenant-scoped.** The conflict lookup now
+  selects by both `tenant_id` and `idempotency_key`, matching the unique index
+  and preserving correctness outside strict RLS test environments.
+
+#### Changed. Boot composition
+
+- Production DB role expectations moved out of `services/api/src/main.ts` into
+  a focused composition module. Runtime behavior is unchanged; the boot binary
+  is smaller and the role matrix is easier to review.
+
 ### v0.5.6 (docs-accuracy remediation + error `docs_url`)
 
 Documentation-accuracy pass across the published docs, reconciling them to the code as the source of truth: the §6 gate-check count (13 numbered + 10 hardening = 23), the MCP scope error code (`-32002`, not `-32004`), the route migration table (`/execution/*` propose/register stay live; `/agents/{id}/propose` and `/agents/register` 404), the MCP surface size (12 tools / 7 resources / 5 prompts), the self-serve signup path (`POST /v1/signup`), the credential model (`brain_sk_` is the bearer service token), the decision/status vocabularies (`allow|confirm|reject` and their SDK aliases), the webhook event catalog (`payment_intent.*`), and the deployed Base Sepolia contract addresses. No API / MCP / SDK behavior changed except the item below.

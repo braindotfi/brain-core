@@ -190,8 +190,10 @@ describe("PaymentIntentService.execute — durable hand-off (approved → dispat
     const audit = new InMemoryAuditEmitter();
 
     const dispatchingRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "dispatching" };
+    const reservationIds: string[] = [];
+    const outboxReservationIds: unknown[] = [];
 
-    const pool = makeFakePool((sql) => {
+    const pool = makeFakePool((sql, values) => {
       // findPaymentIntentById (requireIntent + gate approvals read)
       if (sql.includes("FROM ledger_payment_intents WHERE id")) {
         return { rows: [APPROVED_INTENT_ROW], rowCount: 1 };
@@ -200,8 +202,13 @@ describe("PaymentIntentService.execute — durable hand-off (approved → dispat
       if (sql.includes("UPDATE ledger_payment_intents")) {
         return { rows: [dispatchingRow], rowCount: 1 };
       }
+      if (sql.includes("INSERT INTO ledger_reservations")) {
+        reservationIds.push(String(values[0]));
+        return { rows: [{ id: values[0] }], rowCount: 1 };
+      }
       // outbox enqueue (idempotent insert RETURNING id)
       if (sql.includes("INSERT INTO execution_outbox")) {
+        outboxReservationIds.push(values[8]);
         return { rows: [{ id: "exo_test" }], rowCount: 1 };
       }
       // approvals.signedRoles (SELECT approval_ids)
@@ -220,6 +227,9 @@ describe("PaymentIntentService.execute — durable hand-off (approved → dispat
     expect(result.execution_id).toBeNull();
     expect(result.outbox_id).toBe("exo_test");
     expect(result.rail).toBe("bank_ach");
+    expect(reservationIds).toHaveLength(1);
+    expect(reservationIds[0]).toMatch(/^rsv_/);
+    expect(outboxReservationIds).toEqual(reservationIds);
 
     const actions = audit.events.map((e) => e.action);
     // Gate emits audit-before; execute records the dispatching write…
@@ -239,12 +249,15 @@ describe("PaymentIntentService.execute — durable hand-off (approved → dispat
     const lowConfRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, confidence: 0.4 };
     const dispatchingRow: PaymentIntentRow = { ...lowConfRow, status: "dispatching" };
 
-    const pool = makeFakePool((sql) => {
+    const pool = makeFakePool((sql, values) => {
       if (sql.includes("FROM ledger_payment_intents WHERE id")) {
         return { rows: [lowConfRow], rowCount: 1 };
       }
       if (sql.includes("UPDATE ledger_payment_intents")) {
         return { rows: [dispatchingRow], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO ledger_reservations")) {
+        return { rows: [{ id: values[0] }], rowCount: 1 };
       }
       if (sql.includes("INSERT INTO execution_outbox")) {
         return { rows: [{ id: "exo_test" }], rowCount: 1 };
@@ -280,13 +293,18 @@ describe("PaymentIntentService.execute — durable hand-off (approved → dispat
 
   it("aborts without enqueuing when the intent was paused between gate and hand-off", async () => {
     const audit = new InMemoryAuditEmitter();
-    const pool = makeFakePool((sql) => {
+    const reservationInsert = vi.fn();
+    const pool = makeFakePool((sql, values) => {
       if (sql.includes("FROM ledger_payment_intents WHERE id")) {
         return { rows: [APPROVED_INTENT_ROW], rowCount: 1 };
       }
       // The conditional approved → dispatching UPDATE matches no row (paused).
       if (sql.includes("UPDATE ledger_payment_intents")) {
         return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("INSERT INTO ledger_reservations")) {
+        reservationInsert();
+        return { rows: [{ id: values[0] }], rowCount: 1 };
       }
       if (sql.includes("approval_ids")) {
         return { rows: [APPROVED_INTENT_ROW], rowCount: 1 };
@@ -302,6 +320,7 @@ describe("PaymentIntentService.execute — durable hand-off (approved → dispat
     // Aborted hand-off must NOT enqueue and must NOT claim success.
     const actions = audit.events.map((e) => e.action);
     expect(actions).not.toContain("payment_intent.execute.enqueued");
+    expect(reservationInsert).not.toHaveBeenCalled();
     const after = audit.events.find((e) => e.action === "payment_intent.execute.after");
     expect(after?.outputs.aborted).toBe(true);
   });
@@ -311,7 +330,8 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
   it("completeExecution settles dispatching → executed", async () => {
     const dispatchingRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "dispatching" };
     const executedRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "executed" };
-    const pool = makeFakePool((sql) => {
+    const consumedReservations: unknown[] = [];
+    const pool = makeFakePool((sql, values) => {
       if (sql.includes("FROM ledger_payment_intents WHERE id")) {
         return { rows: [dispatchingRow], rowCount: 1 };
       }
@@ -324,6 +344,10 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
       if (sql.includes("UPDATE executions") || sql.includes("UPDATE ledger_payment_intents")) {
         return { rows: [executedRow], rowCount: 1 };
       }
+      if (sql.includes("UPDATE ledger_reservations")) {
+        consumedReservations.push(values[1]);
+        return { rows: [], rowCount: 1 };
+      }
       return { rows: [], rowCount: 0 };
     });
     const service = makeService(pool, new InMemoryAuditEmitter());
@@ -334,8 +358,10 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
         rail: "bank_ach",
         railReceipt: { rail: "ach", ach_trace: "t" },
         idempotencyKey: `pi:${PI_ID}:${PD_ID}`,
+        reservationId: "rsv_1",
       }),
     ).resolves.toBeUndefined();
+    expect(consumedReservations).toEqual(["rsv_1"]);
   });
 
   it("completeExecution is a no-op when the intent is already executed (idempotent replay)", async () => {
@@ -398,6 +424,45 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
     });
     // Must reject BEFORE any execution row is inserted.
     expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it("completeExecution rejects when dispatching → executed loses the state race", async () => {
+    const dispatchingRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "dispatching" };
+    const receiptAppendSpy = vi.fn();
+    const pool = makeFakePool((sql) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [dispatchingRow], rowCount: 1 };
+      }
+      if (sql.includes("INTO executions")) {
+        return { rows: [{ id: "exec_1" }], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE executions")) {
+        return { rows: [{ id: "exec_race", status: "in_flight" }], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE ledger_payment_intents") && sql.includes("status = $1")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("array_append(execution_receipt_ids")) {
+        receiptAppendSpy();
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const service = makeService(pool, new InMemoryAuditEmitter());
+
+    await expect(
+      service.completeExecution(ctx, {
+        paymentIntentId: PI_ID,
+        executionId: "exec_race",
+        rail: "bank_ach",
+        railReceipt: { rail: "ach", ach_trace: "t" },
+        idempotencyKey: `pi:${PI_ID}:${PD_ID}`,
+      }),
+    ).rejects.toMatchObject({
+      code: "payment_intent_invalid_state",
+      message: expect.stringContaining("moved before executed transition"),
+    });
+    expect(receiptAppendSpy).not.toHaveBeenCalled();
   });
 
   it("completeExecution accumulates the agent spend counter on the executed path (R-21)", async () => {
@@ -469,13 +534,45 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
 
   it("failExecution moves dispatching → failed", async () => {
     const failedRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "failed" };
-    const pool = makeFakePool((sql) =>
-      sql.includes("UPDATE ledger_payment_intents")
-        ? { rows: [failedRow], rowCount: 1 }
-        : { rows: [], rowCount: 0 },
-    );
+    const releasedReservations: unknown[] = [];
+    const pool = makeFakePool((sql, values) => {
+      if (sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [failedRow], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE ledger_reservations")) {
+        releasedReservations.push(values[1]);
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
     const service = makeService(pool, new InMemoryAuditEmitter());
-    await expect(service.failExecution(ctx, { paymentIntentId: PI_ID })).resolves.toBeUndefined();
+    await expect(
+      service.failExecution(ctx, { paymentIntentId: PI_ID, reservationId: "rsv_1" }),
+    ).resolves.toBeUndefined();
+    expect(releasedReservations).toEqual(["rsv_1"]);
+  });
+
+  it("failExecution rejects when dispatching → failed loses the state race", async () => {
+    const releasedReservations: unknown[] = [];
+    const pool = makeFakePool((sql, values) => {
+      if (sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("UPDATE ledger_reservations")) {
+        releasedReservations.push(values[1]);
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const service = makeService(pool, new InMemoryAuditEmitter());
+
+    await expect(
+      service.failExecution(ctx, { paymentIntentId: PI_ID, reservationId: "rsv_1" }),
+    ).rejects.toMatchObject({
+      code: "payment_intent_invalid_state",
+      message: expect.stringContaining("moved before failed transition"),
+    });
+    expect(releasedReservations).toEqual([]);
   });
 });
 
@@ -640,6 +737,47 @@ describe("PaymentIntentService.execute — x402 gate-loader pass-through (2C-C)"
     });
     expect(spendCalls).toEqual([{ agentId: AGENT_ID, windowSeconds: 3600 }]);
   });
+
+  it("does not create a ledger balance reservation for a successful x402 hand-off", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const reservationInsert = vi.fn();
+    const outboxReservationIds: unknown[] = [];
+    const pool = makeFakePool((sql, values) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [X402_ROW], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [{ ...X402_ROW, status: "dispatching" }], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO ledger_reservations")) {
+        reservationInsert();
+        return { rows: [{ id: values[0] }], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO execution_outbox")) {
+        outboxReservationIds.push(values[8]);
+        return { rows: [{ id: "exo_x402" }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals: new ApprovalService({ pool, audit, resolveRole: async () => null }),
+      resolveAgent: async () => GATE_AGENT,
+      resolveAccount: async () => USDC_ACCOUNT,
+      resolveCounterparty: async () => AGENT_CP,
+      evaluatePolicy: async () => POLICY_DECISION,
+      resolvePrincipal: async () => GATE_PRINCIPAL,
+      attestCounterpartyAgent: async () => ({ attested: true, registered: true, paused: false }),
+    });
+
+    const result = await service.execute(ctx, PI_ID);
+    expect(result.status).toBe("dispatching");
+    expect(result.rail).toBe("x402_base");
+    expect(reservationInsert).not.toHaveBeenCalled();
+    expect(outboxReservationIds).toEqual([null]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -769,12 +907,15 @@ describe("PaymentIntentService.execute — core safety loader pass-through (chec
       ...APPROVED_INTENT_ROW,
       evidence_ids: ["prs_test_evidence"],
     };
-    const pool = makeFakePool((sql) => {
+    const pool = makeFakePool((sql, values) => {
       if (sql.includes("FROM ledger_payment_intents WHERE id")) {
         return { rows: [WITH_EVIDENCE], rowCount: 1 };
       }
       if (sql.includes("UPDATE ledger_payment_intents")) {
         return { rows: [{ ...WITH_EVIDENCE, status: "dispatching" }], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO ledger_reservations")) {
+        return { rows: [{ id: values[0] }], rowCount: 1 };
       }
       if (sql.includes("INSERT INTO execution_outbox")) {
         return { rows: [{ id: "exo_evid" }], rowCount: 1 };

@@ -60,9 +60,13 @@ export interface OutboxExecutor {
       rail: string;
       railReceipt: Record<string, unknown>;
       idempotencyKey: string;
+      reservationId?: string | null;
     },
   ): Promise<void>;
-  failExecution(ctx: ServiceCallContext, args: { paymentIntentId: string }): Promise<void>;
+  failExecution(
+    ctx: ServiceCallContext,
+    args: { paymentIntentId: string; reservationId?: string | null },
+  ): Promise<void>;
 }
 
 export interface OutboxWorkerDeps {
@@ -249,6 +253,7 @@ export async function processClaimedRow(
       rail: row.rail,
       railReceipt: receipt,
       idempotencyKey: row.idempotency_key,
+      reservationId: row.reservation_id,
     });
   } catch (err) {
     const message = `settle_failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -302,7 +307,10 @@ async function failPermanently(
   });
 
   try {
-    await deps.executor.failExecution(ctx, { paymentIntentId: row.payment_intent_id });
+    await deps.executor.failExecution(ctx, {
+      paymentIntentId: row.payment_intent_id,
+      reservationId: row.reservation_id,
+    });
   } catch (err) {
     // The intent could not be failed (e.g. it is no longer `dispatching`).
     // Do NOT park the row as failed with the intent state unknown — hand it

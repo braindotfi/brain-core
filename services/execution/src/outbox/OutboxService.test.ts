@@ -62,13 +62,18 @@ describe("OutboxService.enqueue", () => {
 
   it("is idempotent: on conflict returns the existing row id with created:false", async () => {
     const svc = new OutboxService();
-    const { client } = fakeClient((sql) => {
+    const { client, calls } = fakeClient((sql) => {
       if (sql.includes("INSERT INTO execution_outbox")) return []; // DO NOTHING → no row
       if (sql.includes("SELECT id FROM execution_outbox")) return [{ id: "exo_existing" }];
       return [];
     });
     const r = await svc.enqueue(client, TENANT, enqueueInput);
     expect(r).toEqual({ id: "exo_existing", created: false });
+
+    const select = calls.find((c) => c.sql.includes("SELECT id FROM execution_outbox"));
+    expect(select?.sql).toContain("tenant_id = $1");
+    expect(select?.sql).toContain("idempotency_key = $2");
+    expect(select?.values).toEqual([TENANT, enqueueInput.idempotencyKey]);
   });
 
   it("throws if the conflict path finds no existing row (should be impossible)", async () => {

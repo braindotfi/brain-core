@@ -4,7 +4,7 @@ Before any PaymentIntent can execute, it must pass a **deterministic pre-executi
 
 | Property       | Value                                                        |
 | -------------- | ------------------------------------------------------------ |
-| **Runs at**    | The boundary between `approved` and `executed`               |
+| **Runs at**    | The boundary before `approved -> dispatching`                |
 | **Reads from** | The live Ledger (current balance, counterparty status, etc.) |
 | **Emits**      | An audit event before each step and after each pass/fail     |
 
@@ -134,7 +134,19 @@ Check 1.5 sits between identity and authorization: the runtime agent `behaviorHa
 
 ### Net of Reservations
 
-Check #8 (balance) now subtracts active balance reservations: `available_balance − Σ(active reservations) ≥ amount`. With several money-movers live, parallel proposers can't double-spend the same balance.
+Check #8 (balance) subtracts active balance reservations:
+`available_balance - Σ(active reservations) ≥ amount`. With several
+money-movers live, parallel proposers cannot double-spend the same balance.
+
+The live execution path creates the reservation in the same transaction that
+moves a PaymentIntent from `approved` to `dispatching` and enqueues the outbox
+row. The outbox row carries `reservation_id` across the async boundary. On a
+successful rail receipt, `completeExecution()` consumes the reservation inside
+the same transaction as `dispatching -> executed`; on a deterministic rail
+rejection, `failExecution()` releases it inside the same transaction as
+`dispatching -> failed`. `x402_settle` and `escrow_release` remain
+`not_applicable` for this check because their spend is enforced by on-chain
+wallet or escrow state, not by an off-chain ledger-account hold.
 
 ### What's Next
 

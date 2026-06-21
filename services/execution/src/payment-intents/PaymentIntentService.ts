@@ -44,10 +44,11 @@ import {
   type DuplicateCheckResult,
   type MetricsEmitter,
   emitDomainEvent,
+  newLedgerReservationId,
   type RoutingEnqueue,
   type TenantScopedClient,
 } from "@brain/shared";
-import { LedgerPaymentIntents, type PaymentIntentRow } from "@brain/ledger";
+import { LedgerPaymentIntents, LedgerReservations, type PaymentIntentRow } from "@brain/ledger";
 import type { Pool } from "pg";
 import { assertPaymentIntentTransition, type PaymentIntentState } from "./state-machine.js";
 import type { ApprovalService } from "../approvals/ApprovalService.js";
@@ -59,6 +60,12 @@ import {
   type ExecutionRow,
 } from "../repository.js";
 import type { OutboxService } from "../outbox/OutboxService.js";
+
+const EXECUTION_RESERVATION_TTL_MS = 24 * 60 * 60 * 1000;
+
+function requiresExecutionReservation(actionType: string): boolean {
+  return actionType !== "x402_settle" && actionType !== "escrow_release";
+}
 
 // ---------- Dependency hooks ----------------------------------------------
 
@@ -931,14 +938,28 @@ export class PaymentIntentService implements IPaymentIntentService {
         const cur = await LedgerPaymentIntents.findById(c, intent.id);
         return { ok: false as const, status: cur?.status ?? "missing" };
       }
+      const reservation = requiresExecutionReservation(intent.action_type)
+        ? await LedgerReservations.insert(c, {
+            id: newLedgerReservationId(),
+            ownerId: ctx.tenantId,
+            accountId: intent.source_account_id,
+            amount: intent.amount,
+            currency: intent.currency,
+            paymentIntentId: intent.id,
+            policyDecisionId: gate.policyDecisionId,
+            reservingAgentId: intent.created_by_agent_id ?? principal.id,
+            reservedUntil: new Date(Date.now() + EXECUTION_RESERVATION_TTL_MS),
+          })
+        : null;
       const enq = await this.deps.outbox.enqueue(c, ctx.tenantId, {
         paymentIntentId: intent.id,
         rail: railName,
         idempotencyKey,
         payload,
         auditBeforeId: gate.auditBeforeEventId,
+        ...(reservation !== null ? { reservationId: reservation.id } : {}),
       });
-      return { ok: true as const, outboxId: enq.id };
+      return { ok: true as const, outboxId: enq.id, reservationId: reservation?.id ?? null };
     });
 
     if (!handoff.ok) {
@@ -971,6 +992,7 @@ export class PaymentIntentService implements IPaymentIntentService {
         ok: true,
         status: "dispatching",
         outbox_id: handoff.outboxId,
+        reservation_id: handoff.reservationId,
         gate_audit_before: gate.auditBeforeEventId,
       },
       policyDecisionId: gate.policyDecisionId,
@@ -1007,6 +1029,7 @@ export class PaymentIntentService implements IPaymentIntentService {
       rail: string;
       railReceipt: Record<string, unknown>;
       idempotencyKey: string;
+      reservationId?: string | null;
     },
   ): Promise<void> {
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
@@ -1049,12 +1072,26 @@ export class PaymentIntentService implements IPaymentIntentService {
       await setExecutionReceipt(c, args.executionId, args.railReceipt);
       await transitionExecution(c, args.executionId, "dispatched", "in_flight");
       assertPaymentIntentTransition("dispatching", "executed");
-      await LedgerPaymentIntents.transition(c, args.paymentIntentId, "dispatching", "executed");
+      const executed = await LedgerPaymentIntents.transition(
+        c,
+        args.paymentIntentId,
+        "dispatching",
+        "executed",
+      );
+      if (executed === null) {
+        throw brainError(
+          "payment_intent_invalid_state",
+          `completeExecution: intent ${args.paymentIntentId} moved before executed transition`,
+        );
+      }
       await LedgerPaymentIntents.appendExecutionReceiptId(
         c,
         args.paymentIntentId,
         args.executionId,
       );
+      if (args.reservationId !== undefined && args.reservationId !== null) {
+        await LedgerReservations.consume(c, args.reservationId);
+      }
       // R-21: accumulate the agent's window spend/tx counters in the SAME
       // transaction as the executed transition, so a settle either records the
       // spend and advances state together or rolls back together. Agent-less
@@ -1079,11 +1116,25 @@ export class PaymentIntentService implements IPaymentIntentService {
    */
   public async failExecution(
     ctx: ServiceCallContext,
-    args: { paymentIntentId: string },
+    args: { paymentIntentId: string; reservationId?: string | null },
   ): Promise<void> {
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
       assertPaymentIntentTransition("dispatching", "failed");
-      await LedgerPaymentIntents.transition(c, args.paymentIntentId, "dispatching", "failed");
+      const failed = await LedgerPaymentIntents.transition(
+        c,
+        args.paymentIntentId,
+        "dispatching",
+        "failed",
+      );
+      if (failed === null) {
+        throw brainError(
+          "payment_intent_invalid_state",
+          `failExecution: intent ${args.paymentIntentId} moved before failed transition`,
+        );
+      }
+      if (args.reservationId !== undefined && args.reservationId !== null) {
+        await LedgerReservations.release(c, args.reservationId);
+      }
     });
   }
 

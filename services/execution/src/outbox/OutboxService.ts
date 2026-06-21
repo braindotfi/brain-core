@@ -164,8 +164,8 @@ export class OutboxService {
     }
     // Conflict: a row for this (tenant, idempotency_key) already exists.
     const existing = await client.query<{ id: string }>(
-      `SELECT id FROM execution_outbox WHERE idempotency_key = $1 LIMIT 1`,
-      [input.idempotencyKey],
+      `SELECT id FROM execution_outbox WHERE tenant_id = $1 AND idempotency_key = $2 LIMIT 1`,
+      [tenantId, input.idempotencyKey],
     );
     const row = existing.rows[0];
     if (row === undefined) {

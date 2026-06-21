@@ -14,6 +14,7 @@ export * from "./repository/index.js";
 // The sanctioned cross-service surface for PaymentIntent ops (services/execution
 // uses this, not the raw repository functions — enforced by no-restricted-imports).
 export { LedgerPaymentIntents } from "./payment-intents-facade.js";
+export { LedgerReservations } from "./reservations-facade.js";
 
 // Phase 3: extractor + write paths exported so other workers (BullMQ
 // extractor jobs, the /wiki/annotate write-through path) can call into

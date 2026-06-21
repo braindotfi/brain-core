@@ -144,10 +144,14 @@ function makeDeps(opts: {
 describe("processClaimedRow", () => {
   it("settles a clean dispatch: receipt valid → audit-after + completeExecution + markSettled", async () => {
     const { deps, outbox, executor, audit } = makeDeps({});
-    const outcome = await processClaimedRow(deps, makeRow());
+    const outcome = await processClaimedRow(deps, makeRow({ reservation_id: "rsv_1" }));
 
     expect(outcome).toBe("settled");
     expect(executor.completeExecution).toHaveBeenCalledTimes(1);
+    expect(executor.completeExecution.mock.calls[0]?.[1]).toMatchObject({
+      paymentIntentId: PI,
+      reservationId: "rsv_1",
+    });
     expect(outbox.markDispatched).toHaveBeenCalledTimes(1);
     expect(outbox.markSettled).toHaveBeenCalledTimes(1);
 
@@ -223,11 +227,15 @@ describe("processClaimedRow", () => {
         throw permanentRevertError();
       },
     });
-    const outcome = await processClaimedRow(deps, makeRow());
+    const outcome = await processClaimedRow(deps, makeRow({ reservation_id: "rsv_1" }));
 
     expect(outcome).toBe("failed");
     // Definitive rejection (nothing moved) → the intent is failed, not retried.
     expect(executor.failExecution).toHaveBeenCalledTimes(1);
+    expect(executor.failExecution.mock.calls[0]?.[1]).toEqual({
+      paymentIntentId: PI,
+      reservationId: "rsv_1",
+    });
     expect(executor.completeExecution).not.toHaveBeenCalled();
     expect(outbox.markPermanentlyFailed).toHaveBeenCalledTimes(1);
     expect(outbox.markFailed).not.toHaveBeenCalled();

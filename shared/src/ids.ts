@@ -144,6 +144,7 @@ export const newPolicyDecisionId = (): string => brainId(ID_PREFIX.policyDecisio
 export const newApprovalId = (): string => brainId(ID_PREFIX.approval);
 export const newWebhookEndpointId = (): string => brainId(ID_PREFIX.webhookEndpoint);
 export const newExecutionOutboxId = (): string => brainId(ID_PREFIX.executionOutbox);
+export const newLedgerReservationId = (): string => brainId(ID_PREFIX.ledgerReservation);
 export const newWebhookDeadLetterId = (): string => brainId(ID_PREFIX.webhookDeadLetter);
 
 /**

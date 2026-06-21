@@ -212,7 +212,7 @@ import {
 } from "./gate-loaders/index.js";
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
-import { assertDbRoles, type RoleQuery, type PoolRoleExpectation } from "./composition/db-roles.js";
+import { assertRuntimeDbRoles } from "./composition/runtime-db-roles.js";
 import {
   assertDeployedEscrowBytecode,
   assertEscrowAuditApproved,
@@ -224,7 +224,7 @@ import { makeBaseGetCode } from "./composition/eth-getcode.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
 import { closeAllPools } from "./composition/close-pools.js";
 import { runShutdown } from "./composition/shutdown.js";
-import { resolveComposition, POOL_ENV, type PoolName } from "./composition/process-roles.js";
+import { resolveComposition, POOL_ENV } from "./composition/process-roles.js";
 import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
@@ -922,179 +922,23 @@ async function main(): Promise<void> {
   const resolverPool = makeRolePool(cfg.BRAIN_RESOLVER_DB_URL, "resolver");
   const tenantDeletionPool = makeRolePool(cfg.BRAIN_TENANT_DELETION_DB_URL, "tenant-deletion");
 
-  // Verify each pool actually connects with the intended role, not just that its
-  // URL is set (db-isolation.ts only checks presence). Checks RLS posture, the
-  // exact role NAME (so a swapped request/wiki URL is caught), and a
-  // representative forbidden privilege. Production-only: the isolation fence
-  // above guarantees the three pools are distinct there; in dev/test they alias
-  // one (often superuser) connection, so there is nothing meaningful to enforce.
-  // (Codex c96283d P2 / fca9ac8 P2 #4.)
-  if (cfg.NODE_ENV === "production") {
-    const asQuery =
-      (p: typeof pool): RoleQuery =>
-      (s, params) =>
-        p.query(s, params === undefined ? undefined : [...params]);
-    const allRoleExpectations: PoolRoleExpectation[] = [
-      {
-        label: "request",
-        query: asQuery(pool),
-        mustBypassRls: false,
-        expectedRole: "brain_app",
-        // The audit log is append-only: no runtime role may mutate it. Catches a
-        // deployment that did not apply the db-roles.sql REVOKE (Codex 307161b P1 #1).
-        // The request role must also have NO access to the global, RLS-exempt
-        // verifier forensic tables — a SELECT there would already be a cross-tenant
-        // read of integrity findings (Codex 9389568 P1).
-        forbidden: [
-          { table: "audit_events", privilege: "UPDATE" },
-          { table: "audit_events", privilege: "DELETE" },
-          { table: "audit_verifier_checkpoint", privilege: "SELECT" },
-          { table: "audit_integrity_findings", privilege: "SELECT" },
-        ],
-      },
-      // §4 least-privilege pools. Each is BYPASSRLS (cross-tenant) but the
-      // `forbidden` list proves it cannot reach another layer's tables — the
-      // confused-deputy confinement that replaces the single broad role.
-      {
-        label: "raw-worker",
-        query: asQuery(rawWorkerPool),
-        mustBypassRls: true,
-        expectedRole: "brain_raw_worker",
-        forbidden: [
-          { table: "canonical_journal_entry", privilege: "INSERT" },
-          { table: "ledger_payment_intents", privilege: "INSERT" },
-          { table: "audit_integrity_findings", privilege: "SELECT" },
-        ],
-      },
-      {
-        label: "canonical-projector",
-        query: asQuery(canonicalProjectorPool),
-        mustBypassRls: true,
-        expectedRole: "brain_canonical_projector",
-        forbidden: [
-          { table: "raw_parsed", privilege: "INSERT" }, // input is read-only
-          { table: "ledger_payment_intents", privilege: "INSERT" },
-          { table: "execution_outbox", privilege: "INSERT" },
-          { table: "audit_integrity_findings", privilege: "SELECT" },
-        ],
-      },
-      {
-        label: "ledger-projector",
-        query: asQuery(ledgerProjectorPool),
-        mustBypassRls: true,
-        expectedRole: "brain_ledger_projector",
-        forbidden: [
-          { table: "ledger_payment_intents", privilege: "INSERT" }, // money path, not a projection target
-          { table: "canonical_journal_entry", privilege: "INSERT" }, // input is read-only
-          { table: "execution_outbox", privilege: "INSERT" },
-          { table: "audit_integrity_findings", privilege: "SELECT" },
-        ],
-      },
-      {
-        label: "execution-worker",
-        query: asQuery(executionWorkerPool),
-        mustBypassRls: true,
-        expectedRole: "brain_execution_worker",
-        // Claim/mark the outbox only; the settle re-enters tenant scope on
-        // brain_app, so this role must reach no money-path table directly.
-        forbidden: [
-          { table: "ledger_payment_intents", privilege: "INSERT" },
-          { table: "ledger_transactions", privilege: "INSERT" },
-          { table: "raw_parsed", privilege: "SELECT" },
-          { table: "audit_integrity_findings", privilege: "SELECT" },
-        ],
-      },
-      {
-        label: "audit-verifier",
-        query: asQuery(auditVerifierPool),
-        mustBypassRls: true,
-        expectedRole: "brain_audit_verifier",
-        // Keeps findings SELECT/INSERT + checkpoint SELECT/INSERT/UPDATE, but a
-        // detected break must be un-erasable, and it touches nothing else.
-        forbidden: [
-          { table: "audit_events", privilege: "UPDATE" },
-          { table: "audit_events", privilege: "DELETE" },
-          { table: "audit_integrity_findings", privilege: "UPDATE" },
-          { table: "audit_integrity_findings", privilege: "DELETE" },
-          { table: "ledger_payment_intents", privilege: "INSERT" },
-        ],
-      },
-      {
-        label: "audit-publisher",
-        query: asQuery(auditPublisherPool),
-        mustBypassRls: true,
-        expectedRole: "brain_audit_publisher",
-        // Read-only audit_events enumeration; no writes, no other tables.
-        forbidden: [
-          { table: "audit_events", privilege: "INSERT" },
-          { table: "audit_integrity_findings", privilege: "SELECT" },
-          { table: "ledger_payment_intents", privilege: "SELECT" },
-        ],
-      },
-      {
-        label: "resolver",
-        query: asQuery(resolverPool),
-        mustBypassRls: true,
-        expectedRole: "brain_resolver",
-        // Cross-tenant SELECT only on the resolution tables; never writes.
-        forbidden: [
-          { table: "wallet_identities", privilege: "INSERT" },
-          { table: "users", privilege: "UPDATE" },
-          { table: "ledger_payment_intents", privilege: "SELECT" },
-          { table: "audit_integrity_findings", privilege: "SELECT" },
-        ],
-      },
-      {
-        label: "tenant-deletion",
-        query: asQuery(tenantDeletionPool),
-        mustBypassRls: true,
-        expectedRole: "brain_tenant_deletion",
-        // Broad DELETE for GDPR erasure, but audit history stays preserved and
-        // forensic state is off-limits.
-        forbidden: [
-          { table: "audit_events", privilege: "DELETE" },
-          { table: "audit_events", privilege: "UPDATE" },
-          { table: "audit_integrity_findings", privilege: "SELECT" },
-        ],
-      },
-      {
-        label: "wiki",
-        query: asQuery(wikiPool),
-        mustBypassRls: false,
-        expectedRole: "brain_wiki_reader",
-        // The wiki reader must never be able to write Ledger truth, nor read the
-        // global verifier forensic tables.
-        forbidden: [
-          { table: "ledger_counterparties", privilege: "INSERT" },
-          { table: "audit_verifier_checkpoint", privilege: "SELECT" },
-          { table: "audit_integrity_findings", privilege: "SELECT" },
-        ],
-      },
-    ];
-    // Worker/process separation: only assert the pools this process actually
-    // creates distinctly. A role pool whose URL is unset aliases brain_app (so
-    // it would fail its expectedRole check) and is not part of this role.
-    const LABEL_TO_POOL: Record<string, PoolName> = {
-      "raw-worker": "raw_worker",
-      "canonical-projector": "canonical_projector",
-      "ledger-projector": "ledger_projector",
-      "execution-worker": "execution_worker",
-      "audit-verifier": "audit_verifier",
-      "audit-publisher": "audit_publisher",
-      resolver: "resolver",
-      "tenant-deletion": "tenant_deletion",
-    };
-    await assertDbRoles(
-      allRoleExpectations.filter((e) =>
-        e.label === "request"
-          ? true
-          : e.label === "wiki"
-            ? composition.httpEnabled
-            : composition.pools.has(LABEL_TO_POOL[e.label] as PoolName),
-      ),
-      { enforce: true, log: (msg, ctx) => log.info(ctx, msg) },
-    );
-  }
+  await assertRuntimeDbRoles({
+    nodeEnv: cfg.NODE_ENV,
+    composition,
+    pools: {
+      request: pool,
+      rawWorker: rawWorkerPool,
+      canonicalProjector: canonicalProjectorPool,
+      ledgerProjector: ledgerProjectorPool,
+      executionWorker: executionWorkerPool,
+      auditVerifier: auditVerifierPool,
+      auditPublisher: auditPublisherPool,
+      resolver: resolverPool,
+      tenantDeletion: tenantDeletionPool,
+      wiki: wikiPool,
+    },
+    log: (msg, ctx) => log.info(ctx, msg),
+  });
 
   // Outbox drain claims/marks execution_outbox cross-tenant on the execution
   // role; the per-row settle re-enters tenant scope on brain_app separately.

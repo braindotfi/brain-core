@@ -19,7 +19,7 @@ Agents propose; the §6 gate is the only execution path. Policy is signed (EIP-7
 
 ## Phase 1b. Execution preconditions
 
-- **Balance reservations** (`ledger_reservations`). Gate check #8 subtracts active reservations so parallel money-movers can't double-spend.
+- **Balance reservations** (`ledger_reservations`). Gate check #8 subtracts active reservations so parallel money-movers cannot double-spend. The live `execute()` handoff creates the reservation atomically with `approved -> dispatching` and outbox enqueue; the worker consumes it on `executed` or releases it on deterministic rail failure.
 - **Aggregate spend envelopes** (`policy_spend_counters`). DSL `agent.spend_in_window` / `agent.tx_count_in_window`, evaluated against tumbling-window counters.
 - **Kill-switch**. PaymentIntent `paused` state + `/pause` `/resume` (re-runs the live gate) `/halt` (quarantine) `/halt-category`; rail dispatcher aborts on `paused`. On-chain: `BrainSmartAccount.pauseSessionKey` (disable, preserve state) vs `revokeSessionKey` (permanent).
 - **`resolveFinalExecutionMode`**. One resolver applying every hard constraint in order (behaviorHash mismatch → reject; dry-run reject; `critical_missing`; high-risk caps at confirm; risky counterparty ≥ confirm; tenant + agent authority caps; `execute` only when fully eligible).
@@ -45,7 +45,7 @@ Agents propose; the §6 gate is the only execution path. Policy is signed (EIP-7
 ## Known seams (follow-ups)
 
 - Money-mover go-live is a deliberate `StaticPromotionPolicy` change (default all-shadowed).
-- Live reservation/counter write at gate-commit, rail-failure rollback, the `brain.gate.spend_envelope.utilization` metric, and the nightly reservation sweep activate at promotion time.
+- Spend-counter utilization metrics and the nightly reservation sweep activate at promotion time.
 - High-risk finding emission from the run path + the override HTTP endpoint; counterparty handler-boundary enforcement + recipient-from-Ledger + escalation cap; saga row persistence; per-task on-chain grant/revoke orchestration.
 - Foundry tests for `pauseSessionKey` + the registry `behaviorHash` run in CI (forge not run locally).
 - `Brain_MVP_Architecture.md` → v0.4 (Appendix A) is a separate PR.

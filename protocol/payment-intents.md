@@ -2,12 +2,12 @@
 
 A **PaymentIntent** is an agent-proposed financial action that lives as a row in the Ledger. It is the only path to financial execution in Brain. There is no shortcut.
 
-| Property             | Value                                                                                                 |
-| -------------------- | ----------------------------------------------------------------------------------------------------- |
-| **Layer**            | Ledger row, lifecycle owned by Agent layer                                                            |
-| **Created by**       | Internal or external agents                                                                           |
-| **Executes through** | Provider rails (ACH via Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain)               |
-| **Gates**            | Policy decision plus the pre-execution gate (13 numbered checks + 4 hardening additions = 17 entries) |
+| Property             | Value                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Layer**            | Ledger row, lifecycle owned by Agent layer                                                             |
+| **Created by**       | Internal or external agents                                                                            |
+| **Executes through** | Provider rails (ACH via Plaid Transfer, NetSuite SuiteTalk, BrainSmartAccount on-chain)                |
+| **Gates**            | Policy decision plus the pre-execution gate (13 numbered checks + 10 hardening additions = 23 entries) |
 
 {% hint style="info" %}
 PaymentIntents are the **second of two controlled write paths** into the Ledger. The first is Raw extraction. PaymentIntents are the only Ledger write that doesn't originate from a Raw artifact, by design.
@@ -66,42 +66,52 @@ proposed
 
 approved
   │
-  │ 13 numbered checks (+4 hardening additions)
+  │ 13 numbered checks (+10 hardening additions)
   │
-  ├──► gate passes ────► dispatched to rail
+  ├──► gate passes ────► dispatching
   │                       │
   │                       ├──► success ────► executed
   │                       │
   │                       └──► rail failure ► failed
   │
-  └──► gate fails ─────► failed
+  └──► gate fails ─────► aborts before outbox handoff
 ```
 
 [**→ The Pre-Execution Gate**](the-pre-execution-gate.md)
 
 ### Rails
 
-A gate-passed intent is dispatched through a durable outbox to the rail named by its `action_type`. Two rails are real:
+A gate-passed intent is handed to a durable outbox in the same database
+transaction that moves the intent from `approved` to `dispatching`. For
+ledger-account payments, that transaction also creates a balance reservation and
+stores its `reservation_id` on the outbox row. The outbox worker later consumes
+the reservation when the intent reaches `executed`, or releases it when a
+deterministic rail rejection moves the intent to `failed`.
+
+Two rails are real:
 
 | Rail           | Implementation                           | Settlement                                                                                                        |
 | -------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `bank_ach`     | Plaid Transfer (authorization → create)  | **Async**. `dispatch` returns `pending`; a Plaid `TRANSFER_EVENTS_UPDATE` webhook settles or fails the outbox row |
 | `onchain_base` | `BrainSmartAccount.executeViaSessionKey` | On-chain receipt; the rail threads the per-holder session-key nonce and signs via Azure Key Vault                 |
 
-Both are idempotency-keyed by the outbox row so a crash-retry never moves money twice. `erp_writeback` (NetSuite) remains a fail-closed stub. The M2M settlement action types `x402_settle` / `escrow_release` map to the `x402_base` / `escrow_base` rails (USDC on Base / `BrainEscrow`), which are **fail-closed and unregistered at boot** until promoted. They throw rather than fake-settle. The live SDK wiring (Plaid / viem+KMS) and the sandbox/anvil round-trips are a follow-up; see `services/execution/README.md`.
+Both are idempotency-keyed by the outbox row so a crash-retry never moves money twice. `erp_writeback` (NetSuite) remains a fail-closed stub. The M2M settlement action types `x402_settle` / `escrow_release` map to the `x402_base` / `escrow_base` rails (USDC on Base / `BrainEscrow`). They do not create ledger balance reservations because their spend is enforced by the settlement wallet or locked escrow state rather than by an off-chain ledger account hold. The live SDK wiring (Plaid / viem+KMS) and the sandbox/anvil round-trips are a follow-up; see `services/execution/README.md`.
 
 ### State Transitions
 
-| From               | To                 | Trigger                                               |
-| ------------------ | ------------------ | ----------------------------------------------------- |
-| `proposed`         | `pending_approval` | Policy returned `confirm`; approvers required         |
-| `proposed`         | `approved`         | Policy returned `auto`; no human in the loop          |
-| `proposed`         | `rejected`         | Policy returned `reject`                              |
-| `pending_approval` | `approved`         | All required approvers signed                         |
-| `pending_approval` | `rejected`         | Approver explicitly rejected                          |
-| `pending_approval` | `cancelled`        | Tenant cancelled before approval                      |
-| `approved`         | `executed`         | Pre-execution gate passed and rail dispatch succeeded |
-| `approved`         | `failed`           | Pre-execution gate failed or rail dispatch errored    |
+| From               | To                 | Trigger                                                                  |
+| ------------------ | ------------------ | ------------------------------------------------------------------------ |
+| `proposed`         | `pending_approval` | Policy returned `confirm`; approvers required                            |
+| `proposed`         | `approved`         | Policy returned `auto`; no human in the loop                             |
+| `proposed`         | `rejected`         | Policy returned `reject`                                                 |
+| `pending_approval` | `approved`         | All required approvers signed                                            |
+| `pending_approval` | `rejected`         | Approver explicitly rejected                                             |
+| `pending_approval` | `cancelled`        | Tenant cancelled before approval                                         |
+| `approved`         | `dispatching`      | Gate passed; outbox row and any balance reservation committed atomically |
+| `approved`         | `paused`           | Tenant or halt-category kill-switch paused execution                     |
+| `paused`           | `approved`         | Resume re-ran and passed the live gate                                   |
+| `dispatching`      | `executed`         | Outbox worker received and validated a successful rail receipt           |
+| `dispatching`      | `failed`           | Deterministic rail rejection where the worker can prove no money moved   |
 
 Every transition emits an audit event. The full history of any PaymentIntent is reconstructable from `audit_events` ordered by `created_at`.
 
