@@ -122,7 +122,8 @@ brain.runtime.capabilities { ..., rails: [ {name, live, production_allowed,
 
 Beyond the runtime guarantees above, Brain ships repeatable operator and reviewer tooling that turns "is this safe to promote?" into a runnable check:
 
-- **`pnpm run production-readiness`** evaluates the current env against every boot fence, every rail's `required_env_present`, every CI guard's wiring, and every open risk in the register. Exit 1 (red) when any P0 risk is open or any fence would fail. Add `--json` for machine output.
+- **`pnpm run production-readiness`** evaluates the current env against every boot fence, every rail's `required_env_present`, every CI guard's wiring, and every open risk in the register. Each row includes `evidence_state`, separate from status, so a configured-but-unexercised control cannot masquerade as proven. Exit 1 (red) when any P0 risk is open, any fence would fail, or the selected profile's evidence minimum is not met. Add `--json` for machine output.
+- **`pnpm run readiness:evidence -- --profile staging`** emits a diligence-ready markdown report with status, evidence state, testnet E2E posture, audit status, rail posture, connector certification guards, and known limitations. Use it as the release-candidate attachment for staging and mainnet reviews.
 - **Machine-readable risk register** at `docs/risk-register.json` (mirrors `docs/risk-register.md`). The aggregator reads it directly; an open `P0` risk in the register automatically pins promotion to red.
 - **CI artifact** uploaded per commit on the PR workflow (`production-readiness-${sha}`, 90-day retention). Diligence reviewers can pull any commit's readiness JSON without rebuilding.
 - **Git-native trend tracking** at `docs/readiness-history/<tag>.json`. Per-release snapshots committed to the repo; `pnpm run readiness-trend` prints the trajectory (open P0 count, red/yellow/green counts, ΔP0 vs prior). No external dashboard required.
@@ -138,7 +139,7 @@ This is how the readiness story stays falsifiable: every claim has a code anchor
 1. **External smart-contract audit.** `contracts/AUDIT-SCOPE.md` is ready. Engagement is pending. Until the audit clears and the deployed bytecode is verified, the boot fence (#2 above) refuses mainnet escrow.
 2. **Azure production deploy.** The codebase ships with GitHub Actions, the OIDC secrets are not yet provisioned, and the deploy chain has not been exercised against a live Azure environment. The ordered, turnkey path to light up staging (provision, secrets/vars, the infra gaps to close, verification) is documented in `docs/r03-staging-deploy-runbook.md`.
 
-The on-chain executor has a **testnet E2E** that drives the real rail against a deployed `BrainSmartAccount` on Base Sepolia (`tests/e2e/onchain-executor.testnet.e2e.test.ts`, CI job `testnet_onchain_executor_e2e`); it is gated behind a repo variable + RPC/key secrets and runs once those testnet fixtures are provisioned (production-readiness reports the row). This overlaps blocker #2 (the same deploy/provisioning substrate).
+The on-chain executor has a **testnet E2E** that drives the real rail against a deployed `BrainSmartAccount` on Base Sepolia (`tests/e2e/onchain-executor.testnet.e2e.test.ts`, CI job `testnet_onchain_executor_e2e`); it is gated behind a repo variable + RPC/key secrets and runs once those testnet fixtures are provisioned. `production-readiness --profile staging` treats this as required exercised evidence, so the scaffolded job no longer passes a release-candidate gate by itself. This overlaps blocker #2 (the same deploy/provisioning substrate).
 
 ## How to verify any one of these claims
 

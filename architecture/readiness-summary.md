@@ -26,7 +26,7 @@ Suitable for controlled-pilot use under SLA, not yet for unrestricted production
 - **Document ingestion without Plaid** (RFC 0004): an uploaded document (CSV / text / XLSX; PDF deferred) flows through `POST /raw/{id}/parsed` → the `document_extractor` agent → `doc_obligation_v1` normalize → a candidate obligation (confidence ≤ 0.5), answerable by the Wiki question endpoint. The components are wired; the upload-to-extract auto-trigger is a follow-up.
 - **Earned-autonomy confidence gate** (RFC 0004 §5.2): a tenant policy rule `agent.confidence.gte` gates a payment on the confidence of the evidence it rests on. A document-extracted obligation starts low-confidence and must be corroborated (reconciliation lifts it upward-only, ≤ 0.9) or confirmed before it can drive an unattended payment. The §6 gate is unchanged and still reads Ledger, never Wiki.
 - **Investor-grade demo**: `pnpm run demo:golden-path` with `BRAIN_DEMO_STRICT_PROOF=true` proves the full chain end-to-end (propose → gate → execute → anchor → verify) in one command.
-- **Operator readiness tools**: `pnpm run production-readiness` aggregates per-rail + per-fence + per-guard status (and reads `docs/risk-register.json`) into a single go/no-go readout. Open `P0` risks pin the result to red. The PR CI workflow uploads the JSON as a per-commit artifact; `pnpm run readiness-trend` prints the per-release trajectory from `docs/readiness-history/`.
+- **Operator readiness tools**: `pnpm run production-readiness` aggregates per-rail + per-fence + per-guard status (and reads `docs/risk-register.json`) into a single go/no-go readout. Open `P0` risks pin the result to red. Each row also carries `evidence_state` (`exercised`, `configured`, `scaffolded`, or `missing`), and profile gates fail when staging/mainnet evidence is too weak. The PR CI workflow uploads the JSON as a per-commit artifact; `pnpm run readiness-trend` prints the per-release trajectory from `docs/readiness-history/`. `pnpm run readiness:evidence -- --profile staging` emits a diligence-ready markdown report.
 
 ## What's testnet-only
 
@@ -44,6 +44,7 @@ Suitable for controlled-pilot use under SLA, not yet for unrestricted production
 - Configuring Azure Key Vault credentials for `BRAIN_SOURCE_CREDENTIAL_KEY` and the session key.
 - Setting `BRAIN_ESCROW_AUDIT_RECEIPT` to the audit report URL/hash (or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"`) once the audit completes and bytecode is verified.
 - Running the existing `pnpm run production-readiness` check against the customer env before promotion. It reports readiness **per deploy stage** (`demo` / `staging` / `mainnet`), so the staged story is explicit rather than one aggregate: demo is ready today, staging needs testnet rails + the deploy chain, mainnet needs the external contract audit. Scope a gate with `--profile <stage>`.
+- Running `pnpm run readiness:evidence -- --profile staging` for every release candidate. The report lists row status, evidence state, promotion blockers, audit status, rail posture, connector guard status, and known limitations. Staging fails if core safety rows remain scaffolded rather than exercised.
 
 ## How to verify any claim on this page
 
