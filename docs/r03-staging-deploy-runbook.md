@@ -11,6 +11,9 @@ current Terraform/workflow scaffolding does not yet cover.
 
 - Readiness signal for this work: `pnpm run production-readiness --profile staging`
   against the staging env should go GREEN (see `scripts/production-readiness.mjs`).
+- Diligence evidence artifact: `pnpm run readiness:evidence -- --profile staging`
+  emits the profile blockers, row evidence states, audit status, rail posture,
+  connector-certification guards, and known limitations.
 - Cross-references (do not duplicate): infra commands `infra/README.md`;
   rollback `docs/rollback.md`; mainnet money-path sequencing
   `docs/v0.4-go-live-runbook.md`; secrets policy Engineering Standards §10.
@@ -165,6 +168,9 @@ jobs are no longer skipped.
 
 - `pnpm run production-readiness --profile staging` sourced against the staging
   env → expect GREEN (DB isolation + rails + AES key + testnet executor row).
+- `pnpm run readiness:evidence -- --profile staging` → attach the generated
+  evidence report to the release candidate. Staging fails if core safety rows
+  remain scaffolded rather than exercised.
 - The api boot log line `brain.runtime.capabilities` reports per-rail + per-fence
   - `wikiDbIsolation` / `privilegedDbIsolation` true.
 - `GET /health` returns ok; one gated payment + one audit anchor succeed

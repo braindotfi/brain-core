@@ -938,8 +938,8 @@ export class PaymentIntentService implements IPaymentIntentService {
         const cur = await LedgerPaymentIntents.findById(c, intent.id);
         return { ok: false as const, status: cur?.status ?? "missing" };
       }
-      const reservation = requiresExecutionReservation(intent.action_type)
-        ? await LedgerReservations.insert(c, {
+      const reservationResult = requiresExecutionReservation(intent.action_type)
+        ? await LedgerReservations.reserveIfAvailable(c, {
             id: newLedgerReservationId(),
             ownerId: ctx.tenantId,
             accountId: intent.source_account_id,
@@ -951,6 +951,27 @@ export class PaymentIntentService implements IPaymentIntentService {
             reservedUntil: new Date(Date.now() + EXECUTION_RESERVATION_TTL_MS),
           })
         : null;
+      if (reservationResult !== null && !reservationResult.ok) {
+        const code =
+          reservationResult.reason === "available_balance_missing" ||
+          reservationResult.reason === "account_not_found"
+            ? "ledger_balance_unavailable"
+            : "insufficient_balance";
+        throw brainError(
+          code,
+          `execute aborted: unable to reserve funds (${reservationResult.reason})`,
+          {
+            details: {
+              reason: reservationResult.reason,
+              source_account_id: intent.source_account_id,
+              available_balance: reservationResult.availableBalance,
+              reserved: reservationResult.reserved,
+              required: reservationResult.required,
+            },
+          },
+        );
+      }
+      const reservation = reservationResult?.reservation ?? null;
       const enq = await this.deps.outbox.enqueue(c, ctx.tenantId, {
         paymentIntentId: intent.id,
         rail: railName,

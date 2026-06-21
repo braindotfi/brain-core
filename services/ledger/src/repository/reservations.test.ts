@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TenantScopedClient } from "@brain/shared";
 import {
   insertReservation,
+  reserveIfAvailable,
   sumActiveReservations,
   consumeReservation,
   releaseReservation,
@@ -11,12 +12,17 @@ import {
 type FakeClient = TenantScopedClient & { _log: { sql: string; values: unknown[] }[] };
 
 function fakeClient(rows: unknown[] = [], rowCount = 0): FakeClient {
+  return queuedFakeClient([{ rows, rowCount }]);
+}
+
+function queuedFakeClient(results: Array<{ rows: unknown[]; rowCount: number }>): FakeClient {
   const log: { sql: string; values: unknown[] }[] = [];
   const client = {
     _log: log,
     query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
       log.push({ sql, values: Array.from(values ?? []) });
-      return { rows: [...rows], rowCount };
+      const next = results.shift() ?? { rows: [], rowCount: 0 };
+      return { rows: [...next.rows], rowCount: next.rowCount };
     }),
   };
   return client as unknown as FakeClient;
@@ -53,8 +59,9 @@ describe("insertReservation", () => {
     const sql = _log[0]!.sql;
     expect(sql).toContain("INSERT INTO ledger_reservations");
     expect(sql).toContain("RETURNING *");
-    // reservedUntil defaults to COALESCE($9, now() + interval '60 seconds')
-    expect(sql).toContain("COALESCE($9, now() + interval '60 seconds')");
+    // reservedUntil defaults to a stale-row operations TTL; active reservations
+    // still count until explicit consume/release/expire.
+    expect(sql).toContain("COALESCE($9, now() + interval '24 hours')");
   });
 
   it("accepts an explicit reservedUntil", async () => {
@@ -72,6 +79,62 @@ describe("insertReservation", () => {
   });
 });
 
+describe("reserveIfAvailable", () => {
+  it("locks the account and latest balance, rechecks active reservations, then inserts", async () => {
+    const { _log, ...client } = queuedFakeClient([
+      {
+        rows: [
+          { id: "acct_01", status: "active", currency: "USD", available_balance: "1000.00" },
+        ],
+        rowCount: 1,
+      },
+      { rows: [{ currency: "USD", available_balance: "900.00" }], rowCount: 1 },
+      { rows: [{ total: "300.00" }], rowCount: 1 },
+      { rows: [BASE_ROW], rowCount: 1 },
+    ]);
+
+    const result = await reserveIfAvailable(client, BASE_INPUT);
+
+    expect(result).toMatchObject({
+      ok: true,
+      availableBalance: "900.00",
+      reserved: "300.00",
+      required: "800",
+    });
+    expect(_log[0]!.sql).toContain("FROM ledger_accounts");
+    expect(_log[0]!.sql).toContain("FOR UPDATE");
+    expect(_log[1]!.sql).toContain("FROM ledger_balances");
+    expect(_log[1]!.sql).toContain("FOR UPDATE");
+    expect(_log[2]!.sql).toContain("FROM ledger_reservations");
+    expect(_log[3]!.sql).toContain("INSERT INTO ledger_reservations");
+  });
+
+  it("fails closed without inserting when the locked recheck finds insufficient balance", async () => {
+    const { _log, ...client } = queuedFakeClient([
+      {
+        rows: [
+          { id: "acct_01", status: "active", currency: "USD", available_balance: "1000.00" },
+        ],
+        rowCount: 1,
+      },
+      { rows: [{ currency: "USD", available_balance: "700.00" }], rowCount: 1 },
+      { rows: [{ total: "300.00" }], rowCount: 1 },
+    ]);
+
+    const result = await reserveIfAvailable(client, BASE_INPUT);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "insufficient_balance",
+      availableBalance: "700.00",
+      reserved: "300.00",
+      required: "800",
+    });
+    expect(_log).toHaveLength(3);
+    expect(_log.some((q) => q.sql.includes("INSERT INTO ledger_reservations"))).toBe(false);
+  });
+});
+
 describe("sumActiveReservations", () => {
   it("sums active non-expired reservations for the given account", async () => {
     const { _log, ...client } = fakeClient([{ total: "1200.00" }]);
@@ -79,7 +142,7 @@ describe("sumActiveReservations", () => {
     expect(total).toBe("1200.00");
     const sql = _log[0]!.sql;
     expect(sql).toContain("status = 'active'");
-    expect(sql).toContain("reserved_until > now()");
+    expect(sql).not.toContain("reserved_until > now()");
     expect(_log[0]!.values).toContain("acct_01");
   });
 
@@ -89,7 +152,7 @@ describe("sumActiveReservations", () => {
   });
 
   /**
-   * Concurrent reservation guard: two parallel gate windows each insert a
+   * Concurrent reservation guard: two parallel handoffs each insert a
    * reservation; sumActiveReservations must reflect both so gate check #8
    * (balance - reserved) prevents double-spending. The DB enforces this via
    * SUM over the indexed (account_id, status, reserved_until) — we assert

@@ -328,6 +328,17 @@ test("--profile scopes the exit code to that stage", () => {
   const demo = runWithEnv({ NODE_ENV: "development" }, ["--json", "--profile=demo"]);
   assert.equal(demo.code, 0);
   assert.equal(demo.parsed.profile, "demo");
+  // staging now enforces minimum evidence levels, so an unexercised Base
+  // Sepolia executor E2E blocks a release-candidate profile even though the
+  // test scaffold exists.
+  const staging = runWithEnv({ NODE_ENV: "development" }, ["--json", "--profile=staging"]);
+  assert.equal(staging.code, 1);
+  assert.ok(
+    staging.parsed.profiles.staging.blockers.red.some((b) =>
+      b.includes("On-chain executor testnet E2E evidence scaffolded < exercised"),
+    ),
+    JSON.stringify(staging.parsed.profiles.staging.blockers.red),
+  );
   // mainnet is red (R-01) → exit 1.
   const mainnet = runWithEnv({ NODE_ENV: "development" }, ["--json", "--profile=mainnet"]);
   assert.equal(mainnet.code, 1);

@@ -8,11 +8,13 @@ import {
   consumeReservation,
   insertReservation,
   releaseReservation,
+  reserveIfAvailable,
   sumActiveReservations,
 } from "./repository/reservations.js";
 
 export const LedgerReservations = {
   insert: insertReservation,
+  reserveIfAvailable,
   sumActive: sumActiveReservations,
   consume: consumeReservation,
   release: releaseReservation,

@@ -46,6 +46,7 @@ const JSON_MODE = ARGS.has("--json");
 // the rows it requires. demo < staging < mainnet (mainnet requires everything).
 const PROFILES = ["demo", "staging", "mainnet"];
 const TIER_RANK = { demo: 0, staging: 1, mainnet: 2 };
+const EVIDENCE_RANK = { missing: 0, scaffolded: 1, configured: 2, exercised: 3 };
 
 /** `--profile X` or `--profile=X`: scopes the rendered view + exit code to one stage. */
 function parseProfileArg() {
@@ -100,10 +101,51 @@ function evidenceStateFor(section, name, status) {
   if (name === "On-chain executor testnet E2E") {
     return env.TESTNET_ONCHAIN_E2E_ENABLED === "true" ? "exercised" : "scaffolded";
   }
+  if (name === "DB isolation") {
+    if (status !== "green") return status === "yellow" ? "scaffolded" : "missing";
+    return env.BRAIN_DB_ROLES_EXERCISED === "true" ? "exercised" : "configured";
+  }
+  if (name === "Live rails (production)") {
+    if (status !== "green") return status === "yellow" ? "scaffolded" : "missing";
+    return env.BRAIN_RAILS_E2E_EXERCISED === "true" ? "exercised" : "configured";
+  }
+  if (section === "rails") {
+    if (status !== "green") return status === "yellow" ? "scaffolded" : "missing";
+    const key = `BRAIN_RAIL_${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_EXERCISED`;
+    return env[key] === "true" || env.BRAIN_RAILS_E2E_EXERCISED === "true"
+      ? "exercised"
+      : "configured";
+  }
+  if (name === "External smart-contract audit (BrainEscrow)") {
+    return status === "green" ? "exercised" : "scaffolded";
+  }
+  if (name === "Escrow audit (mainnet)") {
+    return status === "green" && env.BRAIN_ESCROW_AUDIT_RECEIPT ? "exercised" : "configured";
+  }
   if (section === "guards") return status === "green" ? "exercised" : "missing";
   if (status === "green") return "configured";
   if (status === "yellow") return "scaffolded";
   return "missing";
+}
+
+function requiredEvidenceFor(profile, row) {
+  if (profile === "demo") {
+    return row.section === "guards" ? "exercised" : "scaffolded";
+  }
+  if (profile === "staging") {
+    if (row.section === "guards") return "exercised";
+    if (row.name === "On-chain executor testnet E2E") return "exercised";
+    if (row.name === "DB isolation") return "configured";
+    return "scaffolded";
+  }
+  if (row.section === "guards") return "exercised";
+  if (row.section === "rails") return "exercised";
+  if (row.name === "Live rails (production)") return "exercised";
+  if (row.name === "On-chain executor testnet E2E") return "exercised";
+  if (row.name === "DB isolation") return "exercised";
+  if (row.name === "Escrow audit (mainnet)") return "exercised";
+  if (row.name === "External smart-contract audit (BrainEscrow)") return "exercised";
+  return "configured";
 }
 
 /** Per-profile status: worst status among the rows that profile requires. */
@@ -111,11 +153,21 @@ function computeProfiles(rows) {
   const out = {};
   for (const p of PROFILES) {
     const required = rows.filter((r) => TIER_RANK[r.tier] <= TIER_RANK[p]);
-    const red = required.filter((r) => r.status === "red").map((r) => r.name);
+    const evidence = required
+      .map((r) => {
+        const minimum = requiredEvidenceFor(p, r);
+        const actual = r.evidence_state ?? "missing";
+        return { row: r, minimum, actual };
+      })
+      .filter((e) => EVIDENCE_RANK[e.actual] < EVIDENCE_RANK[e.minimum]);
+    const red = [
+      ...required.filter((r) => r.status === "red").map((r) => r.name),
+      ...evidence.map((e) => `${e.row.name} evidence ${e.actual} < ${e.minimum}`),
+    ];
     const yellow = required.filter((r) => r.status === "yellow").map((r) => r.name);
     out[p] = {
       status: red.length > 0 ? "red" : yellow.length > 0 ? "yellow" : "green",
-      blockers: { red, yellow },
+      blockers: { red, yellow, evidence },
     };
   }
   return out;
@@ -408,6 +460,12 @@ const REQUIRED_GUARDS = [
   "check-rails-catalog-drift",
   "check-escrow-audit-marker",
   "check-audit-status",
+  "check-risk-register-drift",
+  "check-contract-abi-drift",
+  "check-blob-purge-callsite",
+  "check-connector-descriptors",
+  "check-partner-connector-isolation",
+  "check-dockerfile-workspaces",
 ];
 
 function checkCiGuards() {

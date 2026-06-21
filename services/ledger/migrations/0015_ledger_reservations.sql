@@ -1,4 +1,5 @@
--- ledger_reservations — balance reservations held during the §6 gate window
+-- ledger_reservations — balance reservations held from durable handoff until
+-- terminal settlement/failure
 -- (Agent Autonomy v3, 1b.1). With multiple money-movers active, parallel
 -- proposers race on available_balance; an active reservation makes gate check #8
 -- subtract in-flight commitments. owner_id is the tenant column on Ledger tables.
@@ -14,7 +15,7 @@ CREATE TABLE IF NOT EXISTS ledger_reservations (
   payment_intent_id   TEXT        NOT NULL,
   policy_decision_id  TEXT        NOT NULL,
   reserving_agent_id  TEXT        NOT NULL,
-  reserved_until      TIMESTAMPTZ NOT NULL,                -- gate TTL, default now() + 60s
+  reserved_until      TIMESTAMPTZ NOT NULL,                -- stale-row ops TTL, not settlement hold
   status              TEXT        NOT NULL                 -- active|consumed|released|expired
                        CHECK (status IN ('active', 'consumed', 'released', 'expired')),
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now()

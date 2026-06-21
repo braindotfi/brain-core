@@ -83,10 +83,12 @@ approved
 
 A gate-passed intent is handed to a durable outbox in the same database
 transaction that moves the intent from `approved` to `dispatching`. For
-ledger-account payments, that transaction also creates a balance reservation and
-stores its `reservation_id` on the outbox row. The outbox worker later consumes
-the reservation when the intent reaches `executed`, or releases it when a
-deterministic rail rejection moves the intent to `failed`.
+ledger-account payments, that transaction also locks the source account, locks
+the latest balance snapshot, rechecks available balance net of active
+reservations, creates a balance reservation, and stores its `reservation_id` on
+the outbox row. The outbox worker later consumes the reservation when the intent
+reaches `executed`, or releases it when a deterministic rail rejection moves the
+intent to `failed`.
 
 Two rails are real:
 

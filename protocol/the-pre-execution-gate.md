@@ -138,14 +138,17 @@ Check #8 (balance) subtracts active balance reservations:
 `available_balance - Σ(active reservations) ≥ amount`. With several
 money-movers live, parallel proposers cannot double-spend the same balance.
 
-The live execution path creates the reservation in the same transaction that
-moves a PaymentIntent from `approved` to `dispatching` and enqueues the outbox
-row. The outbox row carries `reservation_id` across the async boundary. On a
-successful rail receipt, `completeExecution()` consumes the reservation inside
-the same transaction as `dispatching -> executed`; on a deterministic rail
-rejection, `failExecution()` releases it inside the same transaction as
-`dispatching -> failed`. `x402_settle` and `escrow_release` remain
-`not_applicable` for this check because their spend is enforced by on-chain
+The live execution path treats the gate as a preflight and then performs the
+authoritative reserve in the handoff transaction. It locks the source account,
+locks the latest balance snapshot, rechecks `available_balance - active
+reservations >= amount`, creates the reservation, moves a PaymentIntent from
+`approved` to `dispatching`, and enqueues the outbox row. The outbox row carries
+`reservation_id` across the async boundary. On a successful rail receipt,
+`completeExecution()` consumes the reservation inside the same transaction as
+`dispatching -> executed`; on a deterministic rail rejection, `failExecution()`
+releases it inside the same transaction as `dispatching -> failed`.
+`x402_settle` and `escrow_release` remain `not_applicable` for this check because
+their spend is enforced by on-chain
 wallet or escrow state, not by an off-chain ledger-account hold.
 
 ### What's Next

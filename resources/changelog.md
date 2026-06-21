@@ -14,12 +14,13 @@ surface changed.
 #### Fixed. Reservation-backed execution handoff
 
 - **Balance reservations now have a live lifecycle.** For ledger-account-backed
-  payments, `execute()` creates a reservation in the same transaction that moves
-  the PaymentIntent from `approved` to `dispatching` and enqueues the durable
-  outbox row. The outbox row stores `reservation_id`; settlement consumes the
-  reservation, and deterministic rail failure releases it. Check #8 already
-  subtracted active reservations, so this closes the concurrent double-spend
-  gap between gate pass and async rail settlement.
+  payments, `execute()` locks the source account, locks the latest balance
+  snapshot, rechecks available balance net of active reservations, then creates a
+  reservation in the same transaction that moves the PaymentIntent from
+  `approved` to `dispatching` and enqueues the durable outbox row. The outbox row
+  stores `reservation_id`; settlement consumes the reservation, and deterministic
+  rail failure releases it. Check #8 already subtracted active reservations, and
+  the locked recheck makes the handoff race-free.
 - **Outbox and PaymentIntent state races fail closed.** Settlement now verifies
   that `dispatching -> executed` actually updated the PaymentIntent before
   appending the execution receipt, consuming the reservation, or recording
@@ -29,6 +30,13 @@ surface changed.
 - **Outbox idempotency fallback is tenant-scoped.** The conflict lookup now
   selects by both `tenant_id` and `idempotency_key`, matching the unique index
   and preserving correctness outside strict RLS test environments.
+- **Readiness evidence is profile-gated.** `production-readiness --profile`
+  now treats evidence strength as a release gate, not only a display field.
+  Staging requires exercised core safety rows such as Base Sepolia on-chain E2E;
+  mainnet requires exercised money-path, rail, audit, and contract evidence. A
+  new `pnpm run readiness:evidence -- --profile staging` command emits a
+  diligence-ready report with row status, evidence state, blockers, and known
+  limitations.
 
 #### Changed. Boot composition
 

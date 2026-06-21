@@ -42,6 +42,7 @@
     "scaffold-connector": "node scripts/scaffold-connector.mjs",
     "check-sdk-codegen": "pnpm -C clients/sdk run codegen:check",
     "production-readiness": "node scripts/production-readiness.mjs",
+    "readiness:evidence": "node scripts/readiness-evidence.mjs",
     "readiness-snapshot": "node scripts/readiness-snapshot.mjs",
     "readiness-trend": "node scripts/readiness-trend.mjs",
     "test:scripts": "node --test scripts/__tests__/*.test.mjs",

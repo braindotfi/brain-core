@@ -19,7 +19,7 @@ Agents propose; the §6 gate is the only execution path. Policy is signed (EIP-7
 
 ## Phase 1b. Execution preconditions
 
-- **Balance reservations** (`ledger_reservations`). Gate check #8 subtracts active reservations so parallel money-movers cannot double-spend. The live `execute()` handoff creates the reservation atomically with `approved -> dispatching` and outbox enqueue; the worker consumes it on `executed` or releases it on deterministic rail failure.
+- **Balance reservations** (`ledger_reservations`). Gate check #8 subtracts active reservations so parallel money-movers cannot double-spend. The live `execute()` handoff locks the source account, locks the latest balance snapshot, rechecks `available_balance - active_reservations >= amount`, then creates the reservation atomically with `approved -> dispatching` and outbox enqueue; the worker consumes it on `executed` or releases it on deterministic rail failure.
 - **Aggregate spend envelopes** (`policy_spend_counters`). DSL `agent.spend_in_window` / `agent.tx_count_in_window`, evaluated against tumbling-window counters.
 - **Kill-switch**. PaymentIntent `paused` state + `/pause` `/resume` (re-runs the live gate) `/halt` (quarantine) `/halt-category`; rail dispatcher aborts on `paused`. On-chain: `BrainSmartAccount.pauseSessionKey` (disable, preserve state) vs `revokeSessionKey` (permanent).
 - **`resolveFinalExecutionMode`**. One resolver applying every hard constraint in order (behaviorHash mismatch → reject; dry-run reject; `critical_missing`; high-risk caps at confirm; risky counterparty ≥ confirm; tenant + agent authority caps; `execute` only when fully eligible).

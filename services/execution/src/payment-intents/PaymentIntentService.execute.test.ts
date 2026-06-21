@@ -98,7 +98,31 @@ function makeFakePool(
       ) {
         return Promise.resolve({ rows: [], rowCount: 0 });
       }
-      return Promise.resolve(queryFn(sql, values ?? []));
+      const handled = queryFn(sql, values ?? []);
+      if (handled.rows.length > 0 || handled.rowCount > 0) return Promise.resolve(handled);
+      if (sql.includes("FROM ledger_accounts") && sql.includes("FOR UPDATE")) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: values?.[0] ?? ACCT_ID,
+              status: "active",
+              currency: "USD",
+              available_balance: "5000.00",
+            },
+          ],
+          rowCount: 1,
+        });
+      }
+      if (sql.includes("FROM ledger_balances") && sql.includes("FOR UPDATE")) {
+        return Promise.resolve({
+          rows: [{ currency: "USD", available_balance: "5000.00" }],
+          rowCount: 1,
+        });
+      }
+      if (sql.includes("FROM ledger_reservations") && sql.includes("COALESCE(SUM(amount)")) {
+        return Promise.resolve({ rows: [{ total: "0" }], rowCount: 1 });
+      }
+      return Promise.resolve(handled);
     }),
     release: vi.fn(),
   };
