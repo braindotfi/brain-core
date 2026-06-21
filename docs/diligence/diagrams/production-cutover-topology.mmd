@@ -1,0 +1,22 @@
+flowchart LR
+  GH["GitHub Actions\nOIDC"] --> ACR["Azure Container Registry\nbrain-core image"]
+  GH --> Deploy["Deploy workflow\nDEPLOY_ENABLED"]
+  ACR --> API["Container App: API\nBRAIN_HTTP_ENABLED=true\nBRAIN_WORKERS=none"]
+  ACR --> Worker["Container App(s): workers\nHTTP=false\nBRAIN_WORKERS=<groups>"]
+
+  FrontDoor["Front Door / WAF"] --> API
+  API --> Redis["Redis\nidempotency / queues"]
+  Worker --> Redis
+  API --> PG["Postgres Flexible Server\nRLS + FORCE RLS"]
+  Worker --> PG
+  API --> KV["Key Vault\nsecrets via managed identity"]
+  Worker --> KV
+  Worker --> Blob["Storage\nraw artifacts + audit material"]
+  Worker --> Base["Base Sepolia / Base\nanchor + on-chain rails"]
+
+  PG --> Roles["brain_app + wiki reader + 8 least-privilege BYPASSRLS roles"]
+  KV --> RoleUrls["BRAIN_*_DB_URL secrets"]
+  Deploy --> E2E["Staging E2E\nmoney path + audit proof + Base Sepolia executor"]
+
+  E2E --> Evidence["readiness:evidence artifact\nattached to RC"]
+

@@ -1,0 +1,45 @@
+flowchart LR
+  subgraph Evidence["Evidence and state"]
+    Sources["Banks / ERP / Stripe / wallets"] --> Raw["Raw\nraw_artifacts / raw_parsed"]
+    Raw --> Canonical["Canonical\nrich domain records"]
+    Canonical --> Ledger["Ledger\naccounts, balances, obligations, PaymentIntents"]
+    Canonical --> Wiki["Wiki\nhuman-readable memory"]
+  end
+
+  subgraph Propose["Proposal path"]
+    Agent["Agent / MCP\nread + propose only"] --> PI["PaymentIntent\nproposed / approved"]
+    PI --> Policy["Policy VM\nreads Ledger, never Wiki"]
+    Policy --> Gate["Pre-execution gate\n13 numbered + 10 hardening checks"]
+    Ledger --> Gate
+  end
+
+  subgraph Handoff["Authoritative handoff transaction"]
+    Gate -->|pass| Tx["Tenant transaction"]
+    Tx --> T1["approved -> dispatching"]
+    T1 --> LockAcct["Lock source account\nSELECT ... FOR UPDATE"]
+    LockAcct --> LockBal["Lock latest balance snapshot\nSELECT ... FOR UPDATE"]
+    LockBal --> Recheck["Recheck available - active reservations >= amount"]
+    Recheck --> Reserve["Insert ledger_reservations(active)"]
+    Reserve --> Outbox["Insert execution_outbox(reservation_id)"]
+  end
+
+  subgraph Worker["Outbox worker"]
+    Outbox --> Claim["Claim row\nFOR UPDATE SKIP LOCKED"]
+    Claim --> Dispatch["Dispatch rail"]
+    Dispatch --> Receipt{"Typed receipt valid?"}
+    Receipt -->|success| Execute["dispatching -> executed\nappend receipt\nconsume reservation"]
+    Receipt -->|deterministic no money moved| Fail["dispatching -> failed\nrelease reservation"]
+    Receipt -->|ambiguous| Recon["retry / reconciling\nkeep PaymentIntent dispatching"]
+  end
+
+  subgraph Proof["Proof"]
+    Gate --> AuditBefore["audit-before"]
+    Dispatch --> AuditAfter["audit-after"]
+    AuditBefore --> Audit["Append-only audit chain"]
+    AuditAfter --> Audit
+    Audit --> Anchor["Merkle root -> Base"]
+    Anchor --> ProofApi["Proof API"]
+  end
+
+  Recheck -->|insufficient or missing balance| Abort["Abort transaction\nno outbox row"]
+

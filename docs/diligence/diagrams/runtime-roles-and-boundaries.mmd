@@ -1,0 +1,28 @@
+flowchart TB
+  subgraph API["Public API process"]
+    Routes["/v1 routes"]
+    AppRole["brain_app\nNOBYPASSRLS + FORCE RLS"]
+    WikiReader["brain_wiki_reader"]
+    Resolver["brain_resolver"]
+    AuditVerifier["brain_audit_verifier"]
+    TenantDeletion["brain_tenant_deletion\ncurrent API route pool\nmove to control plane"]
+  end
+
+  subgraph Workers["Worker process groups"]
+    RawW["raw -> brain_raw_worker"]
+    CanonW["canonical -> brain_canonical_projector"]
+    LedgerW["ledger -> brain_ledger_projector"]
+    ExecW["execution -> brain_execution_worker"]
+    AuditW["audit -> brain_audit_verifier / brain_audit_publisher"]
+    BlobW["blob_purge -> brain_tenant_deletion"]
+    TenantScopedW["normalize / webhook / agent_route -> brain_app"]
+  end
+
+  API --> PG["Postgres\nRLS armed + FORCE RLS"]
+  Workers --> PG
+  Workers --> Lease["per-worker advisory lease\none active replica per group"]
+
+  Partner["Partner connector code"] --> External["Out-of-process runtime\nfuture production requirement"]
+  External --> RawIngest["/raw/ingest as api_partner\nlow-trust evidence"]
+  RawIngest --> PG
+

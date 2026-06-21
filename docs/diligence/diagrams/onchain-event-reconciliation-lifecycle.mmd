@@ -1,0 +1,31 @@
+sequenceDiagram
+  autonumber
+  participant Chain as Base contract logs
+  participant Watcher as Event watcher
+  participant Cursor as Durable cursor
+  participant Decoder as Event decoder
+  participant Store as Brain DB
+  participant Recon as Reconciliation job
+  participant Dash as Readiness dashboard
+  participant DLQ as Dead letter
+
+  Watcher->>Cursor: Load last confirmed block per contract
+  Watcher->>Chain: Fetch logs after cursor with confirmation depth
+  Chain-->>Watcher: Logs by block and tx
+  loop each log
+    Watcher->>Decoder: Decode by contract ABI and topic
+    alt decoded and canonical
+      Decoder->>Store: Upsert by chain_id, contract, tx_hash, log_index
+      Store->>Recon: Correlate to PaymentIntent, proof, policy, agent, or escrow state
+      Recon->>Dash: Update lag, health, and correlation metrics
+    else decode failed or unexpected
+      Decoder->>DLQ: Record raw log, block, tx, topic, error
+      DLQ->>Dash: Increment dead-letter metric
+    end
+  end
+  Watcher->>Cursor: Advance only after durable writes
+  alt reorg detected
+    Watcher->>Store: Mark affected derived rows uncertain
+    Watcher->>Cursor: Rewind to safe block
+    Watcher->>Chain: Replay canonical logs
+  end

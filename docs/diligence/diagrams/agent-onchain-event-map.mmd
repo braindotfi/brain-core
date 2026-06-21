@@ -1,0 +1,58 @@
+flowchart LR
+  subgraph AgentSurfaces["Agent surfaces"]
+    InternalAgents["Internal agents\nservices/internal-agents"]
+    AgentRouter["Agent router\nagent_runs and routing"]
+    ExternalMcp["External MCP agents\nread and propose only"]
+    RawContrib["raw.contribute\nlow-trust evidence"]
+  end
+
+  subgraph OffchainCore["Off-chain Brain core"]
+    McpAuth["MCP auth verifier\nagent, tenant, scope, scope_hash"]
+    McpAudit["Audit event\nagent.mcp.tool_called"]
+    PaymentIntent["ledger_payment_intents"]
+    Gate["Pre-execution gate"]
+    Outbox["Execution outbox\nreservation_id bound"]
+    Receipt["Rail receipt and audit proof"]
+    Quarantine["Raw quarantine and corroboration"]
+  end
+
+  subgraph Chain["Base contracts"]
+    AgentRegistry["BrainMCPAgentRegistry\nAgentRegistered, AgentRevoked,\nAgentBehaviorUpdated"]
+    PolicyRegistry["BrainPolicyRegistry\nPolicyRegistered"]
+    SmartAccount["BrainSmartAccount\nSessionKeyGranted,\nAgentActionExecuted"]
+    AuditAnchor["BrainAuditAnchor\nAnchorPublished"]
+    Escrow["BrainEscrow\nEscrowLocked, Released, Refunded"]
+    Reputation["BrainReputationRegistry\nReputationPublished"]
+  end
+
+  subgraph Ops["Operations"]
+    Watchers["Event watchers\ncursor, finality, replay"]
+    Reconcile["Receipt and state reconciliation"]
+    Dashboards["Readiness dashboards"]
+    Incident["Incident controls\nrevoke, pause, quarantine"]
+  end
+
+  InternalAgents --> AgentRouter --> PaymentIntent
+  ExternalMcp --> McpAuth --> McpAudit
+  McpAuth --> PaymentIntent
+  RawContrib --> Quarantine
+
+  AgentRegistry -. "scope and behavior proof" .-> McpAuth
+  PolicyRegistry -. "policy hash/version" .-> Gate
+  PaymentIntent --> Gate --> Outbox --> SmartAccount --> Receipt
+  Outbox --> Escrow
+  Receipt --> AuditAnchor
+  Reputation -. "policy input only" .-> Gate
+
+  AgentRegistry --> Watchers
+  PolicyRegistry --> Watchers
+  SmartAccount --> Watchers
+  AuditAnchor --> Watchers
+  Escrow --> Watchers
+  Reputation --> Watchers
+
+  Watchers --> Reconcile --> Dashboards
+  Watchers --> Incident
+  McpAudit --> Dashboards
+  Quarantine --> Dashboards
+

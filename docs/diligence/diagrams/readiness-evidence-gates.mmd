@@ -1,0 +1,18 @@
+flowchart TB
+  Rows["Readiness rows\nrails, fences, guards, risks, deferred items"] --> Status["status\ngreen / yellow / red"]
+  Rows --> Evidence["evidence_state\nexercised / configured / scaffolded / missing"]
+
+  Status --> Profiles["Profiles\ndemo / staging / mainnet"]
+  Evidence --> Profiles
+
+  Profiles --> Demo["demo\nCI guards exercised\nscaffolded non-critical rows allowed"]
+  Profiles --> Staging["staging\ncore safety evidence must be exercised\nDB roles at least configured"]
+  Profiles --> Mainnet["mainnet\nmoney-path, rails, audit, contract evidence must be exercised"]
+
+  Staging --> StagingBlockers["Current local blockers\nDB isolation evidence scaffolded < configured\nBase Sepolia E2E scaffolded < exercised"]
+  Mainnet --> MainnetBlockers["Current blockers\nR-01 external audit open\nrail evidence not exercised\ncontract/audit evidence not exercised"]
+
+  Demo --> Cmd1["production-readiness --profile demo"]
+  Staging --> Cmd2["production-readiness --profile staging\nreadiness:evidence -- --profile staging"]
+  Mainnet --> Cmd3["production-readiness --profile mainnet\nverify-audited-build"]
+
