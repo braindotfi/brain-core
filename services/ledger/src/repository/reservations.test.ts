@@ -83,9 +83,7 @@ describe("reserveIfAvailable", () => {
   it("locks the account and latest balance, rechecks active reservations, then inserts", async () => {
     const { _log, ...client } = queuedFakeClient([
       {
-        rows: [
-          { id: "acct_01", status: "active", currency: "USD", available_balance: "1000.00" },
-        ],
+        rows: [{ id: "acct_01", status: "active", currency: "USD", available_balance: "1000.00" }],
         rowCount: 1,
       },
       { rows: [{ currency: "USD", available_balance: "900.00" }], rowCount: 1 },
@@ -112,9 +110,7 @@ describe("reserveIfAvailable", () => {
   it("fails closed without inserting when the locked recheck finds insufficient balance", async () => {
     const { _log, ...client } = queuedFakeClient([
       {
-        rows: [
-          { id: "acct_01", status: "active", currency: "USD", available_balance: "1000.00" },
-        ],
+        rows: [{ id: "acct_01", status: "active", currency: "USD", available_balance: "1000.00" }],
         rowCount: 1,
       },
       { rows: [{ currency: "USD", available_balance: "700.00" }], rowCount: 1 },
