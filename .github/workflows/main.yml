@@ -89,12 +89,14 @@ jobs:
       # resolves cross-package types from the built .d.ts files. Mirrors pr.yml.
       - run: pnpm run build
       - run: pnpm run typecheck
-      - run: pnpm run test:coverage
       - name: Migrate
+        # DATABASE_URL is present during coverage, so DB-backed tests participate
+        # there too. Migrate before coverage, not only before the integration pass.
         # The root build excludes tools/*, so build the migrate CLI before use.
         run: |
           pnpm -C tools/migrate run build
           node tools/migrate/dist/cli.js up
+      - run: pnpm run test:coverage
       - name: Integration tests
         # `--if-present` must precede the script name; after it, pnpm forwards it
         # to vitest, which dies with `CACError: Unknown option --ifPresent`.
