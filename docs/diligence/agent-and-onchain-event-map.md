@@ -30,13 +30,13 @@ response.
 
 ## Agent Runtime Surfaces
 
-| Surface | Code anchor | Production stance |
-| --- | --- | --- |
-| Internal business agents | `services/internal-agents/src/*` and `services/agent-router/src/*` | Agents propose actions and persist run history. Financial proposals go through PaymentIntent and the pre-execution gate. |
-| MCP external agents | `services/mcp/src/*` | Read and propose only. `payment_intent.execute` is deliberately not exposed through MCP. |
-| Raw contribution agents | `services/mcp/src/tools/raw.ts`, `protocol/agent-contributions.md` | Agent-supplied raw evidence is low-trust, provenance-capped, and subject to quarantine/corroboration before it can influence automation. |
-| On-chain registered agents | `contracts/src/BrainMCPAgentRegistry.sol` | Third-party agents are registered with tenant scope hash and behavior hash. Runtime auth must match the on-chain registration. |
-| On-chain session-key executor | `contracts/src/BrainSmartAccount.sol` | Session keys are scoped by policy version, target allowlist, selector allowlist, amount caps, period caps, nonce, and pause state. |
+| Surface                       | Code anchor                                                        | Production stance                                                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Internal business agents      | `services/internal-agents/src/*` and `services/agent-router/src/*` | Agents propose actions and persist run history. Financial proposals go through PaymentIntent and the pre-execution gate.                 |
+| MCP external agents           | `services/mcp/src/*`                                               | Read and propose only. `payment_intent.execute` is deliberately not exposed through MCP.                                                 |
+| Raw contribution agents       | `services/mcp/src/tools/raw.ts`, `protocol/agent-contributions.md` | Agent-supplied raw evidence is low-trust, provenance-capped, and subject to quarantine/corroboration before it can influence automation. |
+| On-chain registered agents    | `contracts/src/BrainMCPAgentRegistry.sol`                          | Third-party agents are registered with tenant scope hash and behavior hash. Runtime auth must match the on-chain registration.           |
+| On-chain session-key executor | `contracts/src/BrainSmartAccount.sol`                              | Session keys are scoped by policy version, target allowlist, selector allowlist, amount caps, period caps, nonce, and pause state.       |
 
 ## Agent Event And State Flow
 
@@ -70,27 +70,27 @@ movement directly.
 These are the contract events that should be listed in runbooks, dashboards, and
 release evidence.
 
-| Contract | Event | Meaning | Operational use |
-| --- | --- | --- | --- |
-| `BrainMCPAgentRegistry` | `AgentRegistered` | Tenant authorized an external MCP agent with scope hash and behavior hash. | Agent onboarding evidence, scope drift checks, auth verifier cache validation. |
-| `BrainMCPAgentRegistry` | `AgentRevoked` | Tenant revoked an external agent. | Incident response, access disablement, cache invalidation, SIEM alert. |
-| `BrainMCPAgentRegistry` | `AgentBehaviorUpdated` | Tenant updated the registered behavior hash. | Runtime behavior-hash gate evidence and deployment-change tracking. |
-| `BrainMCPAgentRegistry` | `TenantSignerSet` | Tenant signer added or removed. | Admin audit, onboarding/offboarding evidence. |
-| `BrainPolicyRegistry` | `PolicyRegistered` | Tenant policy hash/version registered on-chain. | Policy provenance, policy-version binding for execution. |
-| `BrainPolicyRegistry` | `TenantSignerSet` | Policy signer added or removed. | Admin audit and policy-control evidence. |
-| `BrainSmartAccount` | `SessionKeyGranted` | Root owner granted a scoped session key. | Rail enablement evidence, key inventory. |
-| `BrainSmartAccount` | `SessionKeyRevoked` | Session key permanently revoked. | Incident response, rail disablement proof. |
-| `BrainSmartAccount` | `SessionKeyPaused` / `SessionKeyResumed` | Session key kill switch toggled. | Operational halt/resume evidence. |
-| `BrainSmartAccount` | `AccountPaused` / `AccountResumed` | Account-wide kill switch toggled. | Emergency stop evidence. |
-| `BrainSmartAccount` | `OwnershipTransferStarted` / `OwnershipTransferred` | Root owner rotation started/completed. | Custody and key-management audit. |
-| `BrainSmartAccount` | `AgentActionExecuted` | Session key executed an allowed action with tenant, agent, policy version, target, selector, amount, and calldata hash. | On-chain receipt correlation, nonce replay proof, rail reconciliation. |
-| `BrainAuditAnchor` | `AnchorPublished` | Per-tenant audit Merkle root published. | Tamper-evidence proof and audit verifier evidence. |
-| `BrainAuditAnchor` | `PublisherTransferStarted` / `PublisherChanged` | Anchor publisher rotation started/completed. | Anchoring operations and custody audit. |
-| `IBrainEscrow` | `EscrowLocked` | x402/M2M escrow funded. | Escrow state binding and payment lifecycle evidence. |
-| `IBrainEscrow` | `EscrowReleased` | Escrow released to payee, possibly partially. | Settlement proof and dispute/milestone evidence. |
-| `IBrainEscrow` | `EscrowRefunded` | Escrow refunded to payer, possibly partially. | Refund/dispute evidence. |
-| `IBrainReputationRegistry` | `ReputationPublished` | Agent reputation pointer root published. | Policy input only. It must not replace deterministic money gates. |
-| `IBrainReputationRegistry` | `AttestorChanged` | Reputation attestor rotated. | Reputation-source custody audit. |
+| Contract                   | Event                                               | Meaning                                                                                                                 | Operational use                                                                |
+| -------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `BrainMCPAgentRegistry`    | `AgentRegistered`                                   | Tenant authorized an external MCP agent with scope hash and behavior hash.                                              | Agent onboarding evidence, scope drift checks, auth verifier cache validation. |
+| `BrainMCPAgentRegistry`    | `AgentRevoked`                                      | Tenant revoked an external agent.                                                                                       | Incident response, access disablement, cache invalidation, SIEM alert.         |
+| `BrainMCPAgentRegistry`    | `AgentBehaviorUpdated`                              | Tenant updated the registered behavior hash.                                                                            | Runtime behavior-hash gate evidence and deployment-change tracking.            |
+| `BrainMCPAgentRegistry`    | `TenantSignerSet`                                   | Tenant signer added or removed.                                                                                         | Admin audit, onboarding/offboarding evidence.                                  |
+| `BrainPolicyRegistry`      | `PolicyRegistered`                                  | Tenant policy hash/version registered on-chain.                                                                         | Policy provenance, policy-version binding for execution.                       |
+| `BrainPolicyRegistry`      | `TenantSignerSet`                                   | Policy signer added or removed.                                                                                         | Admin audit and policy-control evidence.                                       |
+| `BrainSmartAccount`        | `SessionKeyGranted`                                 | Root owner granted a scoped session key.                                                                                | Rail enablement evidence, key inventory.                                       |
+| `BrainSmartAccount`        | `SessionKeyRevoked`                                 | Session key permanently revoked.                                                                                        | Incident response, rail disablement proof.                                     |
+| `BrainSmartAccount`        | `SessionKeyPaused` / `SessionKeyResumed`            | Session key kill switch toggled.                                                                                        | Operational halt/resume evidence.                                              |
+| `BrainSmartAccount`        | `AccountPaused` / `AccountResumed`                  | Account-wide kill switch toggled.                                                                                       | Emergency stop evidence.                                                       |
+| `BrainSmartAccount`        | `OwnershipTransferStarted` / `OwnershipTransferred` | Root owner rotation started/completed.                                                                                  | Custody and key-management audit.                                              |
+| `BrainSmartAccount`        | `AgentActionExecuted`                               | Session key executed an allowed action with tenant, agent, policy version, target, selector, amount, and calldata hash. | On-chain receipt correlation, nonce replay proof, rail reconciliation.         |
+| `BrainAuditAnchor`         | `AnchorPublished`                                   | Per-tenant audit Merkle root published.                                                                                 | Tamper-evidence proof and audit verifier evidence.                             |
+| `BrainAuditAnchor`         | `PublisherTransferStarted` / `PublisherChanged`     | Anchor publisher rotation started/completed.                                                                            | Anchoring operations and custody audit.                                        |
+| `IBrainEscrow`             | `EscrowLocked`                                      | x402/M2M escrow funded.                                                                                                 | Escrow state binding and payment lifecycle evidence.                           |
+| `IBrainEscrow`             | `EscrowReleased`                                    | Escrow released to payee, possibly partially.                                                                           | Settlement proof and dispute/milestone evidence.                               |
+| `IBrainEscrow`             | `EscrowRefunded`                                    | Escrow refunded to payer, possibly partially.                                                                           | Refund/dispute evidence.                                                       |
+| `IBrainReputationRegistry` | `ReputationPublished`                               | Agent reputation pointer root published.                                                                                | Policy input only. It must not replace deterministic money gates.              |
+| `IBrainReputationRegistry` | `AttestorChanged`                                   | Reputation attestor rotated.                                                                                            | Reputation-source custody audit.                                               |
 
 ## Event Consumption Rules
 
@@ -102,7 +102,7 @@ Use these rules for production services and runbooks:
   proof that must be reconciled to off-chain state.
 - Never rely on an event watcher as an unguarded money executor.
 - Every chain event consumer must be idempotent by `(chain_id, contract_address,
-  tx_hash, log_index)`.
+tx_hash, log_index)`.
 - Every watcher must store a durable cursor per chain and contract.
 - Confirmations must be profile-specific. Staging may use a short confirmation
   window; mainnet must use an explicit finality policy.
@@ -116,14 +116,14 @@ Use these rules for production services and runbooks:
 
 ## Correlation Keys
 
-| Flow | Primary off-chain key | On-chain key | Required correlation |
-| --- | --- | --- | --- |
-| Audit anchoring | Audit window id, tenant id, Merkle root | `AnchorPublished(tenantId, root, period*)` | Root and event count must match the published proof bundle. |
-| MCP agent registration | Agent id, tenant id, scope hash, behavior hash | `AgentRegistered(agentId, tenantId, scopeHash, behaviorHash)` | Runtime auth verifier must reject drift between JWT/off-chain record and registry state. |
-| Payment rail execution | PaymentIntent id, outbox id, receipt id, reservation id | `AgentActionExecuted(tenantId, agentId, policyVersion, target, selector, amount, calldataHash)` | Receipt must match target, selector, value/amount, calldata hash, nonce, and transaction hash. |
-| Escrow lock/release/refund | PaymentIntent id, escrow id, job terms hash | `EscrowLocked`, `EscrowReleased`, `EscrowRefunded` | Escrow id, token, amount, payee/payer, terms hash, and settlement totals must match expected state. |
-| Policy registration | Tenant id, policy version, policy hash | `PolicyRegistered(tenantId, version, policyHash)` | Execution policy version must be traceable to registered policy hash. |
-| Reputation update | Agent id, score root, epoch | `ReputationPublished(agentId, scoreRoot, epoch)` | Reputation may tighten policy decisions, but cannot authorize a money movement. |
+| Flow                       | Primary off-chain key                                   | On-chain key                                                                                    | Required correlation                                                                                |
+| -------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Audit anchoring            | Audit window id, tenant id, Merkle root                 | `AnchorPublished(tenantId, root, period*)`                                                      | Root and event count must match the published proof bundle.                                         |
+| MCP agent registration     | Agent id, tenant id, scope hash, behavior hash          | `AgentRegistered(agentId, tenantId, scopeHash, behaviorHash)`                                   | Runtime auth verifier must reject drift between JWT/off-chain record and registry state.            |
+| Payment rail execution     | PaymentIntent id, outbox id, receipt id, reservation id | `AgentActionExecuted(tenantId, agentId, policyVersion, target, selector, amount, calldataHash)` | Receipt must match target, selector, value/amount, calldata hash, nonce, and transaction hash.      |
+| Escrow lock/release/refund | PaymentIntent id, escrow id, job terms hash             | `EscrowLocked`, `EscrowReleased`, `EscrowRefunded`                                              | Escrow id, token, amount, payee/payer, terms hash, and settlement totals must match expected state. |
+| Policy registration        | Tenant id, policy version, policy hash                  | `PolicyRegistered(tenantId, version, policyHash)`                                               | Execution policy version must be traceable to registered policy hash.                               |
+| Reputation update          | Agent id, score root, epoch                             | `ReputationPublished(agentId, scoreRoot, epoch)`                                                | Reputation may tighten policy decisions, but cannot authorize a money movement.                     |
 
 ## Production Gaps To Track
 
@@ -146,4 +146,3 @@ readiness evidence until closed:
 
 - `docs/diligence/diagrams/agent-onchain-event-map.mmd`
 - `docs/diligence/diagrams/onchain-event-reconciliation-lifecycle.mmd`
-

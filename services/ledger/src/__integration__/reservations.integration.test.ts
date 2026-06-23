@@ -2,8 +2,10 @@
  * Real-DB regression for ledger_reservations.
  *
  * Requires a migrated Postgres via DATABASE_URL; skipped otherwise. Unit tests
- * assert SQL shape, while this verifies NUMERIC storage, expiry filtering, and
- * active -> consumed/released transitions against the real table.
+ * assert SQL shape, while this verifies NUMERIC storage and active ->
+ * consumed/released transitions against the real table. An elapsed
+ * reserved_until does not release funds by itself; the expiry sweep performs
+ * that state transition.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -37,7 +39,7 @@ DESCRIBE("ledger reservations integration (requires DATABASE_URL)", () => {
     await pool.end();
   });
 
-  it("sums active non-expired holds and removes consumed/released reservations", async () => {
+  it("sums every active hold until its status reaches a terminal state", async () => {
     const accountId = newAccountId();
     const agentId = newAgentId();
     const first = newLedgerReservationId();
@@ -80,13 +82,13 @@ DESCRIBE("ledger reservations integration (requires DATABASE_URL)", () => {
       });
     });
 
-    await expect(activeTotal(accountId)).resolves.toBe(300);
+    await expect(activeTotal(accountId)).resolves.toBe(1299);
 
     await withTenantScope(pool, tenant, (c) => LedgerReservations.consume(c, first));
-    await expect(activeTotal(accountId)).resolves.toBe(200);
+    await expect(activeTotal(accountId)).resolves.toBe(1199);
 
     await withTenantScope(pool, tenant, (c) => LedgerReservations.release(c, second));
-    await expect(activeTotal(accountId)).resolves.toBe(0);
+    await expect(activeTotal(accountId)).resolves.toBe(999);
   });
 
   async function activeTotal(accountId: string): Promise<number> {
