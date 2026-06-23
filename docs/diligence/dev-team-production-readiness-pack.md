@@ -54,11 +54,11 @@ node scripts/production-readiness.mjs --json --profile=staging
 node scripts/production-readiness.mjs --json --profile=mainnet
 ```
 
-| Profile | Status | Why |
-| --- | --- | --- |
-| `demo` | green | Code, guards, seeded demo path, and demo-scope evidence pass. |
-| `staging` | red | DB isolation evidence is still scaffolded/configuration-only locally, and Base Sepolia on-chain executor E2E is not exercised. |
-| `mainnet` | red | External BrainEscrow audit is pending, money-path rail evidence is not exercised, live rail evidence is not exercised, and mainnet operational proof is absent. |
+| Profile   | Status | Why                                                                                                                                                             |
+| --------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `demo`    | green  | Code, guards, seeded demo path, and demo-scope evidence pass.                                                                                                   |
+| `staging` | red    | DB isolation evidence is still scaffolded/configuration-only locally, and Base Sepolia on-chain executor E2E is not exercised.                                  |
+| `mainnet` | red    | External BrainEscrow audit is pending, money-path rail evidence is not exercised, live rail evidence is not exercised, and mainnet operational proof is absent. |
 
 The key shift is that status and evidence are separate. A row can be configured
 or scaffolded and still fail a staging/mainnet profile if that profile requires
@@ -169,15 +169,15 @@ exercised for the target profile.
 
 ## Production Workstreams
 
-| Workstream | Owner | Exit criteria |
-| --- | --- | --- |
-| External contract audit | Security/Protocol | Auditor engaged, report delivered, zero open critical/high findings, `audit-status.json` approved, audited build verified. |
-| Azure staging deploy | Platform | Terraform applied, role URLs wired through Key Vault, API/worker split deployed, staging E2E green. |
-| Base Sepolia fixtures | Protocol/Platform | RPC, deployed smart account, funded throwaway key, granted session key, target contract/data, CI vars/secrets set. |
-| ACH/Plaid settlement proof | Integrations | Plaid sandbox transfer and webhook settlement verified end to end, or ACH remains explicitly dispatch/reconcile-only. |
-| Runtime dashboards | Platform/Ops | Dashboards for worker leases, projection lag, outbox age, reservations age, audit verifier health, dead letters, and rail failure rates. |
-| Tenant deletion control-plane | Platform/Security | Broad tenant-deletion role removed from public API runtime; deletion is routed through operator/control-plane workflow. |
-| Partner connector runtime | Integrations/Security | Out-of-process partner runtime with signed manifests, resource limits, network restrictions, revocation, and low-trust provenance until corroborated. |
+| Workstream                    | Owner                 | Exit criteria                                                                                                                                         |
+| ----------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| External contract audit       | Security/Protocol     | Auditor engaged, report delivered, zero open critical/high findings, `audit-status.json` approved, audited build verified.                            |
+| Azure staging deploy          | Platform              | Terraform applied, role URLs wired through Key Vault, API/worker split deployed, staging E2E green.                                                   |
+| Base Sepolia fixtures         | Protocol/Platform     | RPC, deployed smart account, funded throwaway key, granted session key, target contract/data, CI vars/secrets set.                                    |
+| ACH/Plaid settlement proof    | Integrations          | Plaid sandbox transfer and webhook settlement verified end to end, or ACH remains explicitly dispatch/reconcile-only.                                 |
+| Runtime dashboards            | Platform/Ops          | Dashboards for worker leases, projection lag, outbox age, reservations age, audit verifier health, dead letters, and rail failure rates.              |
+| Tenant deletion control-plane | Platform/Security     | Broad tenant-deletion role removed from public API runtime; deletion is routed through operator/control-plane workflow.                               |
+| Partner connector runtime     | Integrations/Security | Out-of-process partner runtime with signed manifests, resource limits, network restrictions, revocation, and low-trust provenance until corroborated. |
 
 ## Code Anchors
 
