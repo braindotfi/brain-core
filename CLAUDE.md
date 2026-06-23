@@ -18,6 +18,12 @@ Read the relevant document before implementing or modifying anything in its doma
 
 PRs produced with AI assistance must be labeled `ai-assisted` (§13.4).
 
+## Public Agent Skills Sync
+
+`tools/skills-spec/generate.ts` exports public-safe fields from the internal-agent
+catalog. Its JSON output is copied to `spec/brain-agents.json` in the public
+`braindotfi/brain-skills` repository, where the skill drift check consumes it.
+
 ## Architecture, Six Layers
 
 > The parent workspace CLAUDE.md says "five-layer", that is stale. The codebase is **six layers** as of v0.3.
