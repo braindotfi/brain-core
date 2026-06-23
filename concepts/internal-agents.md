@@ -54,7 +54,10 @@ Brain ships a library of business-category internal agents. Every one follows th
 | **Compliance**           | `compliance_monitor`   | high   | notify_only / confirm    |
 | **Revenue Intelligence** | `revenue_intel`        | low    | notify_only              |
 
-A high-risk agent never auto-executes: even at high confidence, its actions resolve to `confirm` (or `reject`), because `execution_mode` only reaches `execute` for low-risk actions.
+High-risk boundaries are agent-specific. Vendor Risk and Compliance have a
+confirm/reject ceiling. Fraud and Anomaly is notify-only by default; its
+consequential `freeze_card` action is explicit-request-only and never selected
+from a trigger.
 
 ## The Consumer Agent Library
 
@@ -95,7 +98,7 @@ The embedding strategy keeps the **rules classifier as a live fallback**: when a
 The library is hardened for production autonomous execution, with money-movement off by default:
 
 - **Shadow mode + graduated promotion.** Every agent is shadowed by default. A financial proposal terminates as `shadow_completed` and moves no money. Going live is a deliberate, per-agent promotion gated by strict caps (signed spend envelopes + `approval_required_above`) and an allowlisted rail. The five money-movers (Treasury, Payment, Bill Management, Savings, Debt Optimization) are promoted one at a time.
-- **Action resolution.** Within a selected agent, the action is resolved explicit → event-map → intent-map → opt-in default; unresolved actions persist as `missing_action`, never a silent default. Money-movers/high-risk agents have no default action.
+- **Action resolution.** Within a selected agent, the action is resolved explicit → event-map → intent-map → opt-in default; unresolved actions persist as `missing_action`, never a silent default. Money-movers have no default action. Vendor Risk and Compliance also omit one; Fraud and Anomaly may default only to its non-consequential `notify` action.
 - **Behavior pinning.** Each agent registers a `behaviorHash`; the gate (check 1.5) rejects a runtime model/prompt/tool drift. Promotion to a new behavior needs tenant re-attestation.
 - **High-risk agents** (Vendor Risk, Compliance) emit auditable **findings** before any block/confirm, with a tenant-root override-and-document path.
 - **Counterparty-facing agents** (Collections, Dispute, Subscription) send only **tenant-approved message templates** from the signed policy doc. No free-form prose to customers/vendors.
@@ -111,3 +114,4 @@ See the API reference for the `/v1/agents/run`, `/why`, and kill-switch endpoint
 | How agent actions are gated    | [Policy](policy.md)                                                  |
 | The agent layer in depth       | [Protocol: Agents](../protocol/agents.md)                            |
 | The on-chain identity contract | [BrainMCPAgentRegistry](../smart-contracts/brainmcpagentregistry.md) |
+| Portable agent skill recipes   | [Use Brain Agent Skills](../build/use-brain-agent-skills.md)         |
