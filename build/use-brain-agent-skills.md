@@ -45,9 +45,44 @@ their frontmatter descriptions. Credentials are not stored in the plugin; the
 host resolves the operator's Brain token at runtime.
 
 The current package version is `0.1.0-beta.1`. Its manifests, skills, drift
-checks, and isolated installation tests are complete. The MCP hostname is a
-release gate: live tool calls will become available after
-`https://mcp.brain.fi` is deployed.
+checks, isolated installation tests, and static security review are complete.
+Live availability remains gated on the human Phase 0 proof described below.
+
+## OAuth and Runtime Authentication
+
+The plugin stores no credential. An unauthenticated MCP connection is expected
+to receive an HTTP `401` challenge that points to Brain's OAuth protected-resource
+metadata at:
+
+```text
+https://mcp.brain.fi/.well-known/oauth-protected-resource
+```
+
+The host uses that metadata to discover the authorization server, show the
+requested scopes, obtain user consent, and receive a runtime bearer token. Brain
+then verifies the token's tenant and scopes, including the on-chain
+`scope_hash`, before accepting a tool call.
+
+This is the required server contract, not a claim that the public OAuth flow has
+passed launch verification. Phase 0 must prove discovery, consent, token
+issuance, an authorized read, and a confirm/reject proposal from both supported
+hosts.
+
+## Install a Standalone Skill in Agensi
+
+Agensi installs standalone skill archives and does not carry the Claude
+plugin's root `.mcp.json`. Build the archives from the reviewed source:
+
+```bash
+git clone https://github.com/braindotfi/brain-skills.git
+cd brain-skills
+npm run build:agensi
+```
+
+This produces 11 archives under `dist/agensi/`. The directory is generated and
+gitignored; ZIP files are not stored in the repository. Each built `SKILL.md`
+includes the prerequisite to connect `https://mcp.brain.fi` manually before
+use.
 
 ## Verify the Package
 
@@ -60,9 +95,23 @@ npm test
 ```
 
 The test suite validates the plugin and marketplace manifests, checks all 11
-skills against Brain's generated public specification, performs an isolated
-Claude marketplace installation, and confirms that the installation discovers
-11 skills and one MCP server. The live server test is opt-in until deployment.
+skills against Brain's generated public specification, verifies that every MCP
+reference copy is byte-identical, enforces money-mover and frontmatter safety
+invariants, builds all 11 Agensi archives, and performs an isolated Claude
+marketplace installation.
+
+The generated specification must be no more than 30 days old. Changes to Brain's
+internal agent definitions trigger a private `brain-core` workflow that
+regenerates the public-safe specification and opens or updates a reviewable pull
+request in `brain-skills`.
+
+The repository also includes:
+
+- `SECURITY.md` and a file-grounded eight-point static review;
+- injection-rejection examples for untrusted documents, instructions, and
+  payment destinations;
+- `scripts/verify-phase0.mjs` and a two-host human verification runbook;
+- listing drafts that remain blocked until Phase 0 passes.
 
 ## Runtime Contract
 
@@ -97,6 +146,21 @@ These fields are generated from Brain's internal-agent definitions into a
 public-safe specification. The skill repository's CI compares every
 `brain-meta.json` file with that specification and rejects drift.
 
+## Phase 0 Launch Gate
+
+Phase 0 is not an automated CI claim. A human must use a dedicated sandbox
+tenant to prove:
+
+1. installation in Claude Code and standalone-skill installation in Agensi;
+2. OAuth metadata discovery, scope review, and user consent;
+3. an authorized `ledger.accounts.list` call;
+4. a `payment_intent.propose` result ending in `pending_approval` or `rejected`;
+5. absence of execute, settle, or sign tools; and
+6. no balance or settlement change.
+
+The exact checklist and evidence requirements live in
+[`docs/phase0-runbook.md`](https://github.com/braindotfi/brain-skills/blob/main/docs/phase0-runbook.md).
+
 ## Updating the Skills
 
 The private source of truth remains the internal-agent catalog. The sync path is:
@@ -109,7 +173,10 @@ brain-core internal-agent definitions
 ```
 
 When an agent definition changes, regenerate the specification, update the
-affected skill copy, and run the drift check before publishing.
+affected skill copy, and run the drift check before publishing. The automated
+cross-repository workflow requires a human-provisioned
+`BRAIN_SKILLS_PUSH_TOKEN`; the token is referenced by name and is never embedded
+in source or generated output.
 
 ## Related
 
