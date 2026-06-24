@@ -16,7 +16,7 @@
 - [Give an Agent a Spending Limit](build/give-an-agent-a-spending-limit.md)
 - [Audit Every Action](build/audit-every-action.md)
 - [Let an External Agent In](build/let-an-external-agent-in.md)
-- [Use Brain Agent Skills](build/use-brain-agent-skills.md)
+- [Install the Brain Finance Plugin](build/use-brain-agent-skills.md)
 
 ## Concepts
 
