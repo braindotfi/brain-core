@@ -1,0 +1,97 @@
+name: publish skills spec
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "services/internal-agents/src/**/definition.ts"
+      - "services/internal-agents/src/registry.ts"
+      - "schemas/agent-definition.ts"
+      - "tools/skills-spec/**"
+      - ".github/workflows/skills-spec.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check publication credential
+        id: auth
+        env:
+          BRAIN_SKILLS_PUSH_TOKEN: ${{ secrets.BRAIN_SKILLS_PUSH_TOKEN }}
+        run: |
+          if [ -n "${BRAIN_SKILLS_PUSH_TOKEN}" ]; then
+            echo "configured=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "configured=false" >> "${GITHUB_OUTPUT}"
+            echo "BRAIN_SKILLS_PUSH_TOKEN is not provisioned; skipping publication."
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.auth.outputs.configured == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.auth.outputs.configured == 'true'
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - name: Install
+        if: steps.auth.outputs.configured == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate public specification
+        if: steps.auth.outputs.configured == 'true'
+        run: pnpm tsx tools/skills-spec/generate.ts > "${RUNNER_TEMP}/brain-agents.json"
+
+      - name: Check out public skills repository
+        if: steps.auth.outputs.configured == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: braindotfi/brain-skills
+          path: brain-skills
+          token: ${{ secrets.BRAIN_SKILLS_PUSH_TOKEN }}
+          fetch-depth: 0
+
+      - name: Validate and publish through a pull request
+        if: steps.auth.outputs.configured == 'true'
+        working-directory: brain-skills
+        env:
+          GH_TOKEN: ${{ secrets.BRAIN_SKILLS_PUSH_TOKEN }}
+          SPEC_BRANCH: automation/skills-spec
+        run: |
+          if node - "${RUNNER_TEMP}/brain-agents.json" <<'NODE'
+          const fs = require("node:fs");
+          const current = JSON.parse(fs.readFileSync("spec/brain-agents.json", "utf8"));
+          const generated = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          delete current.generated_at;
+          delete generated.generated_at;
+          process.exit(JSON.stringify(current) === JSON.stringify(generated) ? 0 : 1);
+          NODE
+          then
+            echo "Public specification is already current."
+            exit 0
+          fi
+
+          git config user.name "brain-skills-spec[bot]"
+          git config user.email "brain-skills-spec[bot]@users.noreply.github.com"
+          git checkout -B "${SPEC_BRANCH}" origin/main
+          cp "${RUNNER_TEMP}/brain-agents.json" spec/brain-agents.json
+          node scripts/check-drift.mjs
+          git add spec/brain-agents.json
+          git commit -m "chore: sync agent skills specification"
+          git push --force-with-lease origin "${SPEC_BRANCH}"
+
+          if [ "$(gh pr list --head "${SPEC_BRANCH}" --state open --json number --jq length)" = "0" ]; then
+            gh pr create \
+              --base main \
+              --head "${SPEC_BRANCH}" \
+              --title "Sync agent skills specification" \
+              --body "Automated public-safe specification update from brain-core. Review and merge manually."
+          fi
