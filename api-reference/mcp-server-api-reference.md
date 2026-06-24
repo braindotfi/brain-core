@@ -1,21 +1,22 @@
 # MCP Server (API Reference)
 
-The MCP server is exposed at `POST /v1/agents/mcp`, JSON-RPC 2.0 over single-shot HTTP. This page is the API-style summary; for the full reference (tool list, resources, prompts, on-chain auth flow), see the dedicated MCP Server section.
+The MCP server is reachable at the canonical host `https://mcp.brain.fi` (which maps root traffic onto the internal `POST /v1/agents/mcp` route), JSON-RPC 2.0 over single-shot HTTP. This page is the API-style summary; for the full reference (tool list, resources, prompts, on-chain auth flow), see the dedicated MCP Server section.
 
 ### Endpoint
 
 ```
-POST /v1/agents/mcp
+POST /
+Host: mcp.brain.fi
 Authorization: Bearer <jwt>
 Content-Type: application/json
 ```
 
-There is **no separate MCP hostname**. The surface is a JSON-RPC endpoint on the same API host.
+The canonical public host is **`mcp.brain.fi`**, which maps root traffic onto the internal `/v1/agents/mcp` route. Either form reaches the same JSON-RPC surface; new integrations should use the canonical host.
 
-| Environment    | URL                                          |
-| -------------- | -------------------------------------------- |
-| **Production** | `https://api.brain.fi/v1/agents/mcp`         |
-| **Sandbox**    | `https://api.sandbox.brain.fi/v1/agents/mcp` |
+| Environment    | Canonical host          | Internal / compatibility route               |
+| -------------- | ----------------------- | -------------------------------------------- |
+| **Production** | `https://mcp.brain.fi`  | `https://api.brain.fi/v1/agents/mcp`         |
+| **Sandbox**    | `https://mcp.brain.dev` | `https://api.sandbox.brain.fi/v1/agents/mcp` |
 
 Sandbox is wired to Base Sepolia; production is wired to Base mainnet.
 
@@ -99,7 +100,8 @@ The mapping is enforced in `services/mcp/src/types.ts` and `dispatcher.ts`. Ever
 ### A First Call
 
 ```http
-POST /v1/agents/mcp HTTP/1.1
+POST / HTTP/1.1
+Host: mcp.brain.fi
 Authorization: Bearer <jwt>
 Content-Type: application/json
 

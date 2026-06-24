@@ -286,7 +286,7 @@ New v0.3 routes live under `/agents/*`, `/payment-intents/*`, `/agents/mcp`. The
 
 ## MCP Server (`@brain/mcp`)
 
-- Mount: `POST /v1/agents/mcp`, JSON-RPC 2.0, single-shot HTTP, no SSE/streaming, no session state (v0.3).
+- Mount: `POST /v1/agents/mcp`, JSON-RPC 2.0, single-shot HTTP, no SSE/streaming, no session state (v0.3). Canonical public host is `https://mcp.brain.fi` (sandbox `https://mcp.brain.dev`): a DNS A record to the api VM, Caddy maps root traffic onto `/v1/agents/mcp`. The `/v1/agents/mcp` path stays the internal / compatibility route. RFC 9728 discovery: `GET /.well-known/oauth-protected-resource` advertises the authorization server, and MCP 401s carry a `WWW-Authenticate: Bearer resource_metadata="…"` challenge (`MCP_PUBLIC_RESOURCE_URL`).
 - Surface: **12 tools** (ledger reads ×5, wiki reads ×2, `raw.contribute` ×1, propose/cancel/list payment actions ×3, agent action propose ×1), **7 resource URIs** (`brain://…`. Ledger accounts/transactions/obligations/payment-intents, wiki pages, `payments/action_types` catalog, `proofs/{action_id}`), 5 prompts. `payment_intent.propose` accepts the on-chain settlement action types `x402_settle` and `escrow_release` by name (with the required `pay_to` / `escrow_id` + `job_terms_hash` fields).
 - **No `payment_intent.execute` tool, ever.** Execution is Brain-internal behind the §6 gate. `payment_intent.cancel` is the only state-mutating MCP tool besides `propose`; it is restricted to the proposing agent and to `proposed` / `pending_approval` states.
 - Auth chain: Fastify JWT plugin → agent record `active` → JWT `scope_hash` matches on-chain `BrainMCPAgentRegistry` (60s cache, Base RPC fallback) → tool scope → tenant equality.

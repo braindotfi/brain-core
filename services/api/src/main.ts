@@ -50,6 +50,7 @@ import {
   newTenantId,
   newUserId,
   InMemoryAuditEmitter,
+  AGENT_PERMITTED_SCOPES,
   type ServiceCallContext,
   type TenantCategory,
 } from "@brain/shared";
@@ -70,6 +71,10 @@ import { registerTenantDeletionRoute } from "./tenant-deletion/route.js";
 import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
 import { registerProofViewRoute } from "./proof/view.js";
 import { registerAuditHealthRoute } from "./audit-health/route.js";
+import {
+  registerOAuthProtectedResourceRoute,
+  resourceMetadataUrl,
+} from "./well-known/oauth-protected-resource.js";
 import { registerDocsRoutes } from "./docs/routes.js";
 import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
@@ -1428,6 +1433,18 @@ async function main(): Promise<void> {
     // it stays an internal operational surface outside the public OpenAPI contract.
     registerAuditHealthRoute(app, { privilegedPool: auditVerifierPool });
 
+    // OAuth 2.0 protected-resource metadata (RFC 9728) for the MCP surface.
+    // Root-mounted + public so the canonical `mcp.brain.fi` host (Caddy proxies
+    // `/.well-known/oauth-protected-resource` straight through) advertises where
+    // the authorization server lives. The MCP 401 challenge points clients here.
+    await app.register(async (child) =>
+      registerOAuthProtectedResourceRoute(child, {
+        resource: cfg.MCP_PUBLIC_RESOURCE_URL,
+        authorizationServers: [cfg.AUTH_ISSUER],
+        scopesSupported: [...AGENT_PERMITTED_SCOPES],
+      }),
+    );
+
     // Service layer route registrations — all under /v1 to match OpenAPI spec.
     // Raw: also registers content-type parsers + multipart inside registerRawPlugin.
     const rawOpts: RegisterRawPluginOptions = {
@@ -1570,6 +1587,9 @@ async function main(): Promise<void> {
               windowSeconds: cfg.BRAIN_MCP_TENANT_RATE_WINDOW_SECONDS,
               limit: cfg.BRAIN_MCP_TENANT_RATE_LIMIT,
             }),
+            // RFC 9728 discovery: 401s carry a WWW-Authenticate challenge that
+            // points clients at the protected-resource metadata above.
+            resourceMetadataUrl: resourceMetadataUrl(cfg.MCP_PUBLIC_RESOURCE_URL),
           }),
         );
         // /v1/agents/* — unified agent API surface (Agent Autonomy v3, 1a.6):

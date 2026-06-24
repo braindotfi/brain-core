@@ -200,6 +200,15 @@ const envSchema = z.object({
    */
   BRAIN_MCP_TENANT_RATE_LIMIT: z.coerce.number().int().positive().default(600),
   BRAIN_MCP_TENANT_RATE_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  /**
+   * Canonical public origin the MCP surface is reachable at (the host Caddy maps
+   * onto `/v1/agents/mcp`). Advertised verbatim as the `resource` value of the
+   * RFC 9728 OAuth protected-resource metadata document and embedded in the
+   * `WWW-Authenticate: Bearer resource_metadata="…"` challenge on MCP 401s, so
+   * MCP clients can discover the authorization server. Sandbox overrides this to
+   * `https://mcp.brain.dev`.
+   */
+  MCP_PUBLIC_RESOURCE_URL: z.string().url().default("https://mcp.brain.fi"),
 
   // ---- Python agents service (brain-agents) ----
   /**

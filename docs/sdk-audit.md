@@ -480,8 +480,11 @@ the SDK can ship behind whichever mapping is picked.
 - `mcp-server/api-reference.md`: `POST /v1/agents/mcp` on `api.brain.fi` (matches OpenAPI spec).
 - `build/let-an-external-agent-in.md`: production `mcp.brain.fi`, sandbox `mcp.brain.dev`.
 
-Possibly compatible if `mcp.brain.fi` is a CNAME to `api.brain.fi/v1/agents/mcp`,
-but ambiguous. Resolution required.
+**Resolved (v0.0.6):** `mcp.brain.fi` is the canonical public host and `mcp.brain.dev`
+the sandbox host. Each is a DNS A record to the api VM; Caddy maps root traffic onto
+the internal `/v1/agents/mcp` route. `/v1/agents/mcp` on `api.brain.fi` remains valid
+as the internal / compatibility route. Both forms reach the same JSON-RPC surface,
+so the OpenAPI spec (which documents the internal path) is unaffected.
 
 ### Conflict I, Authentication Model
 
