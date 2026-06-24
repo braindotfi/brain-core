@@ -171,6 +171,11 @@ BEGIN
 END $$;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties
   TO brain_ledger_projector;
+-- The ledger_counterparties writer trigger (ledger/0027) is plain plpgsql and
+-- runs as the invoking role, INSERTing into ledger_counterparty_payment_instructions.
+-- The AP/AR canonical projector (Phase 5) writes counterparties as
+-- brain_ledger_projector, so it needs INSERT on the trigger target table too.
+GRANT INSERT ON ledger_counterparty_payment_instructions TO brain_ledger_projector;
 
 -- brain_execution_worker: cross-tenant claim/reclaim/mark on the outbox only.
 -- The per-row settle re-enters tenant scope on brain_app, so this role needs no
