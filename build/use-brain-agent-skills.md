@@ -1,13 +1,13 @@
 ---
-description: Install portable skills that teach an agent to use Brain's MCP surface for a specific finance outcome.
+description: Install all 11 Brain Finance skills and the official MCP connection as one Claude plugin.
 ---
 
-# Use Brain Agent Skills
+# Install the Brain Finance Plugin
 
-Brain Agent Skills are portable `SKILL.md` recipes for MCP-compatible agent
-hosts. Each skill teaches a host agent how to gather the evidence required for a
-finance task, call Brain's existing MCP tools, return the policy result, and stop
-at the proposal boundary.
+The `brain-finance` plugin packages 11 portable `SKILL.md` recipes and the
+official Brain MCP connection in one installation. Each skill teaches Claude
+Code how to gather the evidence required for a finance task, call Brain's MCP
+tools, return the policy result, and stop at the proposal boundary.
 
 The skills add no protocol behavior. Brain remains the source of financial data,
 policy decisions, approvals, and audit records.
@@ -32,24 +32,44 @@ policy decisions, approvals, and audit records.
 
 The skill repository is
 [`braindotfi/brain-skills`](https://github.com/braindotfi/brain-skills).
-Installation syntax depends on the agent host. A host that supports marketplace
-commands can install the repository and then select a skill:
+In Claude Code, add Brain's public marketplace and install the single plugin:
 
 ```text
 /plugin marketplace add braindotfi/brain-skills
-/plugin install brain-reconciliation@brain-skills
+/plugin install brain-finance@brain-skills
 ```
 
-The skill activates when the user's task matches its frontmatter description.
-Credentials are not stored in the skill. The host resolves the operator's Brain
-JWT at runtime.
+The installation adds all 11 skills and configures the `brain` MCP server at
+`https://mcp.brain.fi`. Individual skills activate when the user's task matches
+their frontmatter descriptions. Credentials are not stored in the plugin; the
+host resolves the operator's Brain token at runtime.
+
+The current package version is `0.1.0-beta.1`. Its manifests, skills, drift
+checks, and isolated installation tests are complete. The MCP hostname is a
+release gate: live tool calls will become available after
+`https://mcp.brain.fi` is deployed.
+
+## Verify the Package
+
+The public repository contains the source and package checks:
+
+```bash
+git clone https://github.com/braindotfi/brain-skills.git
+cd brain-skills
+npm test
+```
+
+The test suite validates the plugin and marketplace manifests, checks all 11
+skills against Brain's generated public specification, performs an isolated
+Claude marketplace installation, and confirms that the installation discovers
+11 skills and one MCP server. The live server test is opt-in until deployment.
 
 ## Runtime Contract
 
 Every skill follows the same sequence:
 
-1. Connect to `POST /v1/agents/mcp` using JSON-RPC 2.0.
-2. Authenticate with the operator's runtime-supplied Brain JWT.
+1. Connect to `https://mcp.brain.fi` using MCP over HTTP.
+2. Authenticate with the operator's runtime-supplied Brain token.
 3. Read only the scopes declared by the selected agent.
 4. Gather the agent's required evidence.
 5. Respect the agent's minimum-confidence floor and authority boundary.
@@ -66,8 +86,7 @@ matched event with complete evidence.
 
 High risk does not imply one shared default-action rule:
 
-- Vendor Risk and Compliance have no default action and have a confirm/reject
-  ceiling.
+- Vendor Risk and Compliance have a confirm/reject ceiling.
 - Fraud and Anomaly legitimately defaults to `notify`; notification changes
   nothing. Its consequential `freeze_card` action is explicit-request-only and
   never selected from an anomaly trigger.
@@ -86,7 +105,7 @@ The private source of truth remains the internal-agent catalog. The sync path is
 brain-core internal-agent definitions
   -> tools/skills-spec/generate.ts
   -> brain-skills/spec/brain-agents.json
-  -> scripts/check-drift.mjs
+  -> brain-skills/scripts/check-drift.mjs
 ```
 
 When an agent definition changes, regenerate the specification, update the
