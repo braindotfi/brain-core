@@ -37,6 +37,7 @@ services:
     environment:
       BRAIN_DEMO_MODE: "true"
       DATABASE_URL: postgres://brain:brain@db:5432/brain
+      DATABASE_SSL: "disable"
       REDIS_URL: redis://redis:6379
       AUTH_JWKS_URL: https://auth.brain.fi/.well-known/jwks.json
       PORT: "3000"
