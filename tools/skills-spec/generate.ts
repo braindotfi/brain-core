@@ -13,7 +13,7 @@
 import type { InternalAgentDefinition } from "@brain/schemas";
 import { internalAgentCatalog } from "../../services/internal-agents/src/registry.js";
 
-const LAUNCH_KEYS = new Set([
+const LAUNCH_KEYS = [
   "reconciliation",
   "subscription",
   "vendor_risk",
@@ -25,7 +25,8 @@ const LAUNCH_KEYS = new Set([
   "treasury",
   "revenue_intel",
   "compliance",
-]);
+] as const;
+const LAUNCH_KEY_SET = new Set<string>(LAUNCH_KEYS);
 
 function publicFields(def: InternalAgentDefinition) {
   return {
@@ -47,14 +48,16 @@ function publicFields(def: InternalAgentDefinition) {
 function main() {
   const agents: Record<string, ReturnType<typeof publicFields>> = {};
   for (const def of internalAgentCatalog) {
-    if (!LAUNCH_KEYS.has(def.agent_key)) continue;
+    if (!LAUNCH_KEY_SET.has(def.agent_key)) continue;
+    if (def.agent_key in agents) {
+      throw new Error(`Duplicate launch agent in catalog: ${def.agent_key}`);
+    }
     agents[def.agent_key] = publicFields(def);
   }
 
-  const missing = [...LAUNCH_KEYS].filter((key) => !(key in agents));
+  const missing = LAUNCH_KEYS.filter((key) => !(key in agents));
   if (missing.length > 0) {
-    console.error(`Missing launch agents in catalog: ${missing.join(", ")}`);
-    process.exit(1);
+    throw new Error(`Missing launch agents in catalog: ${missing.join(", ")}`);
   }
 
   const spec = {
