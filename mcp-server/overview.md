@@ -4,11 +4,11 @@ Brain exposes a **Model Context Protocol (MCP) server** so agents can read finan
 
 Agents propose actions. Policies decide what runs. Humans stay in control where the policy says they should.
 
-| Property      | Value                                                            |
-| ------------- | ---------------------------------------------------------------- |
-| **Endpoint**  | `POST /v1/agents/mcp`                                            |
-| **Transport** | JSON-RPC 2.0 over single-shot HTTP                               |
-| **Backed by** | The same Ledger, Wiki, and PaymentIntent surface as the HTTP API |
+| Property      | Value                                                             |
+| ------------- | ----------------------------------------------------------------- |
+| **Endpoint**  | `https://mcp.brain.fi` (canonical; maps to `POST /v1/agents/mcp`) |
+| **Transport** | JSON-RPC 2.0 over single-shot HTTP                                |
+| **Backed by** | The same Ledger, Wiki, and PaymentIntent surface as the HTTP API  |
 
 {% hint style="info" %}
 The MCP surface uses single-shot HTTP. One request, one response, one audit event. Streaming transports may follow once we see a use case that needs them.
@@ -89,8 +89,8 @@ The MCP tools call the same Ledger, Wiki, and PaymentIntent code paths that back
 ### A First Call
 
 ```http
-POST /v1/agents/mcp HTTP/1.1
-Host: api.brain.fi
+POST / HTTP/1.1
+Host: mcp.brain.fi
 Authorization: Bearer <jwt>
 Content-Type: application/json
 

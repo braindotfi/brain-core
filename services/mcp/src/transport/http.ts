@@ -25,6 +25,13 @@ export interface McpRouteOptions {
    * QPS to the api process; this limiter adds tenant fairness on top.
    */
   tenantRateLimiter?: SlidingWindowRateLimiter;
+  /**
+   * RFC 9728 protected-resource metadata URL. When supplied, every 401 from
+   * this route carries a `WWW-Authenticate: Bearer resource_metadata="…"`
+   * challenge so MCP clients can discover Brain's authorization server and
+   * begin an OAuth flow. Omit (e.g. in unit tests) to skip the header.
+   */
+  resourceMetadataUrl?: string;
 }
 
 /**
@@ -39,6 +46,21 @@ export async function registerMcpRoute(
   opts: McpRouteOptions = {},
 ): Promise<void> {
   const path = opts.path ?? "/agents/mcp";
+
+  // RFC 9728 §5.1: a protected resource SHOULD signal where its metadata lives
+  // on auth failures. Pre-dispatch auth failures throw BrainErrors that the
+  // shared error handler turns into a 401/403 envelope; this encapsulated hook
+  // attaches the discovery challenge to those responses without touching the
+  // global handler (so only the MCP surface advertises OAuth discovery).
+  const resourceMetadataUrl = opts.resourceMetadataUrl;
+  if (resourceMetadataUrl !== undefined) {
+    app.addHook("onSend", async (_request, reply, payload) => {
+      if (reply.statusCode === 401 || reply.statusCode === 403) {
+        reply.header("www-authenticate", `Bearer resource_metadata="${resourceMetadataUrl}"`);
+      }
+      return payload;
+    });
+  }
 
   app.post(path, async (request: FastifyRequest, reply) => {
     if (request.principal === undefined) {

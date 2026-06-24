@@ -56,12 +56,16 @@ async function withFakeAuth(app: FastifyInstance): Promise<void> {
 
 async function buildApp(opts: {
   tenantRateLimiter?: InMemorySlidingWindowRateLimiter;
+  resourceMetadataUrl?: string;
 }): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
   await withFakeAuth(app);
   await registerMcpRoute(app, mockServer(), {
     ...(opts.tenantRateLimiter !== undefined ? { tenantRateLimiter: opts.tenantRateLimiter } : {}),
+    ...(opts.resourceMetadataUrl !== undefined
+      ? { resourceMetadataUrl: opts.resourceMetadataUrl }
+      : {}),
   });
   return app;
 }
@@ -182,6 +186,58 @@ describe("registerMcpRoute — principal_type and missing-principal guards", () 
       expect(r.statusCode).toBe(401);
       const body = r.json() as { error: { code: string } };
       expect(body.error.code).toBe("auth_token_missing");
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("registerMcpRoute — RFC 9728 WWW-Authenticate discovery", () => {
+  const META_URL = "https://mcp.brain.fi/.well-known/oauth-protected-resource";
+
+  it("attaches the resource_metadata challenge to a 401", async () => {
+    const app = await buildApp({ resourceMetadataUrl: META_URL });
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: { "x-test-skip-principal": "1", "content-type": "application/json" },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(401);
+      expect(r.headers["www-authenticate"]).toBe(`Bearer resource_metadata="${META_URL}"`);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not attach the challenge on a 200", async () => {
+    const app = await buildApp({ resourceMetadataUrl: META_URL });
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: { "x-test-tenant": TENANT_A, "content-type": "application/json" },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(200);
+      expect(r.headers["www-authenticate"]).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("omits the header entirely when no metadata URL is configured", async () => {
+    const app = await buildApp({});
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: { "x-test-skip-principal": "1", "content-type": "application/json" },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(401);
+      expect(r.headers["www-authenticate"]).toBeUndefined();
     } finally {
       await app.close();
     }

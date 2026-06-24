@@ -95,13 +95,13 @@ Standard JSON-RPC 2.0. Authorization: bearer JWT from step 3.
 
 ```bash
 # tools/list. Returns the 12-tool catalog
-curl -X POST https://api.brain.fi/v1/agents/mcp \
+curl -X POST https://mcp.brain.fi \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 
 # payment_intent.propose. Propose an x402 settlement
-curl -X POST https://api.brain.fi/v1/agents/mcp \
+curl -X POST https://mcp.brain.fi \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{
