@@ -1,4 +1,4 @@
-import type { ApprovalDecisionStore, DecisionClaim, TerminalDecisionRecord } from "@brain/surfaces";
+import type { ApprovalDecisionStore, DecisionClaim, TerminalDecisionInput } from "@brain/surfaces";
 import type { DecisionStore } from "../internal/services.js";
 
 /**
@@ -9,11 +9,11 @@ import type { DecisionStore } from "../internal/services.js";
 export class CoreApprovalDecisionStore implements ApprovalDecisionStore {
   constructor(private readonly store: DecisionStore) {}
 
-  async claimTerminal(record: TerminalDecisionRecord): Promise<DecisionClaim> {
+  async claimTerminal(record: TerminalDecisionInput): Promise<DecisionClaim> {
     return this.store.claimTerminal(record);
   }
 
-  async markTerminalApplied(record: TerminalDecisionRecord): Promise<void> {
+  async markTerminalApplied(record: TerminalDecisionInput): Promise<void> {
     await this.store.markTerminalApplied(record);
   }
 }

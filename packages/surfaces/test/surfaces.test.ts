@@ -33,10 +33,13 @@ function memoryDecisions(): BrainCorePorts["decisions"] {
       const key = `${record.tenantId}:${record.proposalId}`;
       const existing = records.get(key);
       if (existing) return { status: "already_decided", record: existing };
-      records.set(key, record);
+      records.set(key, { ...record, applied: false });
       return { status: "claimed" };
     },
-    async markTerminalApplied() {},
+    async markTerminalApplied(record) {
+      const key = `${record.tenantId}:${record.proposalId}`;
+      records.set(key, { ...record, applied: true });
+    },
   };
 }
 
@@ -146,7 +149,14 @@ test("approval pipeline audits before it ever hands off", async () => {
         order.push("execute");
       },
     },
-    decisions: memoryDecisions(),
+    decisions: {
+      async claimTerminal() {
+        return { status: "claimed" };
+      },
+      async markTerminalApplied() {
+        order.push("mark");
+      },
+    },
   };
 
   const registry = new SurfaceRegistry();
@@ -161,7 +171,7 @@ test("approval pipeline audits before it ever hands off", async () => {
   });
 
   assert.equal(outcome.status, "applied");
-  assert.deepEqual(order, ["audit", "execute"]);
+  assert.deepEqual(order, ["audit", "execute", "mark"]);
 });
 
 test("approval pipeline makes terminal decisions idempotent", async () => {
@@ -209,4 +219,116 @@ test("approval pipeline makes terminal decisions idempotent", async () => {
   assert.equal(second.status, "already_decided");
   assert.equal(auditCount, 1);
   assert.equal(executionCount, 1);
+});
+
+test("approval pipeline re-drives unapplied approved terminal decisions", async () => {
+  const proposal = withContentHash(sampleProposal());
+  const order: string[] = [];
+  const stored: TerminalDecisionRecord = {
+    proposalId: proposal.id,
+    tenantId: proposal.tenantId,
+    decision: "approved",
+    actorId: toActorId("a_original"),
+    decidedAt: new Date().toISOString(),
+    applied: false,
+  };
+
+  const ports: BrainCorePorts = {
+    identity: {
+      async resolve() {
+        return { actorId: toActorId("a_1"), roles: ["ap_lead"] };
+      },
+    },
+    policy: {
+      async canDecide() {
+        return { allowed: true };
+      },
+    },
+    audit: {
+      async record() {
+        order.push("audit");
+      },
+    },
+    execution: {
+      async enqueue() {
+        order.push("execute");
+      },
+    },
+    decisions: {
+      async claimTerminal() {
+        return { status: "already_decided", record: stored };
+      },
+      async markTerminalApplied() {
+        order.push("mark");
+      },
+    },
+  };
+
+  const service = new ApprovalService(ports, new SurfaceRegistry(), async () => proposal);
+  const outcome = await service.handle({
+    surface: "slack",
+    proposalId: proposal.id,
+    tenantId: proposal.tenantId,
+    externalActorId: "U_slack",
+    decision: "approved",
+  });
+
+  assert.equal(outcome.status, "already_decided");
+  assert.deepEqual(order, ["audit", "execute", "mark"]);
+});
+
+test("approval pipeline does not re-drive applied terminal decisions", async () => {
+  const proposal = withContentHash(sampleProposal());
+  const order: string[] = [];
+  const stored: TerminalDecisionRecord = {
+    proposalId: proposal.id,
+    tenantId: proposal.tenantId,
+    decision: "approved",
+    actorId: toActorId("a_original"),
+    decidedAt: new Date().toISOString(),
+    applied: true,
+  };
+
+  const ports: BrainCorePorts = {
+    identity: {
+      async resolve() {
+        return { actorId: toActorId("a_1"), roles: ["ap_lead"] };
+      },
+    },
+    policy: {
+      async canDecide() {
+        return { allowed: true };
+      },
+    },
+    audit: {
+      async record() {
+        order.push("audit");
+      },
+    },
+    execution: {
+      async enqueue() {
+        order.push("execute");
+      },
+    },
+    decisions: {
+      async claimTerminal() {
+        return { status: "already_decided", record: stored };
+      },
+      async markTerminalApplied() {
+        order.push("mark");
+      },
+    },
+  };
+
+  const service = new ApprovalService(ports, new SurfaceRegistry(), async () => proposal);
+  const outcome = await service.handle({
+    surface: "slack",
+    proposalId: proposal.id,
+    tenantId: proposal.tenantId,
+    externalActorId: "U_slack",
+    decision: "approved",
+  });
+
+  assert.equal(outcome.status, "already_decided");
+  assert.deepEqual(order, []);
 });

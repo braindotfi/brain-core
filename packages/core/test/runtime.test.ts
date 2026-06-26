@@ -40,6 +40,7 @@ function fakeServices(
       decision: "approved" | "rejected";
       actorId: ReturnType<typeof toActorId>;
       decidedAt: string;
+      applied: boolean;
     }
   >();
   return {
@@ -68,10 +69,13 @@ function fakeServices(
         const key = `${input.tenantId}:${input.proposalId}`;
         const existing = decisions.get(key);
         if (existing) return { status: "already_decided", record: existing };
-        decisions.set(key, input);
+        decisions.set(key, { ...input, applied: false });
         return { status: "claimed" };
       },
-      async markTerminalApplied() {},
+      async markTerminalApplied(input) {
+        const key = `${input.tenantId}:${input.proposalId}`;
+        decisions.set(key, { ...input, applied: true });
+      },
     },
     proposals: {
       async load() {

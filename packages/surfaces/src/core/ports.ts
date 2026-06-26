@@ -78,12 +78,16 @@ export interface ExecutionHandoff {
   enqueue(input: { proposal: Proposal; actorId: ActorId }): Promise<void>;
 }
 
-export interface TerminalDecisionRecord {
+export interface TerminalDecisionInput {
   proposalId: string;
   tenantId: string;
   decision: Exclude<Decision, "pending" | "expired">;
   actorId: ActorId;
   decidedAt: string;
+}
+
+export interface TerminalDecisionRecord extends TerminalDecisionInput {
+  applied: boolean;
 }
 
 export type DecisionClaim =
@@ -97,8 +101,8 @@ export type DecisionClaim =
  * tenantId/proposalId.
  */
 export interface ApprovalDecisionStore {
-  claimTerminal(record: TerminalDecisionRecord): Promise<DecisionClaim>;
-  markTerminalApplied(record: TerminalDecisionRecord): Promise<void>;
+  claimTerminal(record: TerminalDecisionInput): Promise<DecisionClaim>;
+  markTerminalApplied(record: TerminalDecisionInput): Promise<void>;
 }
 
 export const SURFACE_NAMES = ["slack", "teams", "email"] as const;

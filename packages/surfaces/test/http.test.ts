@@ -7,14 +7,18 @@ import {
   SurfaceRegistry,
   buildInvoiceProposal,
   handleEmailApproval,
+  handleSlackInteraction,
   signToken,
   toActorId,
+  toPlainOutcome,
   verifySlackRequest,
   withContentHash,
+  type ApprovalOutcome,
   type BrainCorePorts,
   type Proposal,
   type TerminalDecisionRecord,
 } from "../src/index.js";
+import { encodeAction } from "../src/surfaces/slack/blockkit.js";
 
 const SIGNING_SECRET = "slack_secret";
 
@@ -40,6 +44,25 @@ function makeSlackSignature(rawBody: string, timestamp: string): string {
     .digest("hex")}`;
 }
 
+function slackBody(proposal: Proposal, responseUrl = "https://hooks.slack.test/response"): string {
+  const payload = {
+    user: { id: "U_slack" },
+    channel: { id: "C_ap" },
+    message: { ts: "1700000000.000100" },
+    response_url: responseUrl,
+    actions: [{ action_id: encodeAction("approve", proposal), value: proposal.id }],
+  };
+  return new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+}
+
+function fakeApprovals(handle: ApprovalService["handle"]): ApprovalService {
+  return { handle } as unknown as ApprovalService;
+}
+
+async function flushBackground(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function decisions(): BrainCorePorts["decisions"] {
   const records = new Map<string, TerminalDecisionRecord>();
   return {
@@ -47,10 +70,13 @@ function decisions(): BrainCorePorts["decisions"] {
       const key = `${record.tenantId}:${record.proposalId}`;
       const existing = records.get(key);
       if (existing) return { status: "already_decided", record: existing };
-      records.set(key, record);
+      records.set(key, { ...record, applied: false });
       return { status: "claimed" };
     },
-    async markTerminalApplied() {},
+    async markTerminalApplied(record) {
+      const key = `${record.tenantId}:${record.proposalId}`;
+      records.set(key, { ...record, applied: true });
+    },
   };
 }
 
@@ -129,8 +155,155 @@ test("Slack request verification rejects stale and tampered requests", () => {
   );
 });
 
-test("Email approval token accepts valid links", async () => {
+test("Slack interaction acks before approval handling settles", async () => {
   const proposal = sampleProposal();
+  const rawBody = slackBody(proposal);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  let settled = false;
+  let release!: (outcome: ApprovalOutcome) => void;
+  const approvalPromise = new Promise<ApprovalOutcome>((resolve) => {
+    release = resolve;
+  });
+
+  const response = await handleSlackInteraction({
+    rawBody,
+    headers: {
+      "x-slack-request-timestamp": timestamp,
+      "x-slack-signature": makeSlackSignature(rawBody, timestamp),
+    },
+    signingSecret: SIGNING_SECRET,
+    approvals: fakeApprovals(async () => {
+      const outcome = await approvalPromise;
+      settled = true;
+      return outcome;
+    }),
+    async outcomePoster() {},
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(settled, false);
+  release({ status: "applied", decision: "approved", actorLabel: "a_1" });
+  await flushBackground();
+  assert.equal(settled, true);
+});
+
+test("Slack interaction catches and logs approval errors", async () => {
+  const proposal = sampleProposal();
+  const rawBody = slackBody(proposal);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const logged: unknown[] = [];
+
+  const response = await handleSlackInteraction({
+    rawBody,
+    headers: {
+      "x-slack-request-timestamp": timestamp,
+      "x-slack-signature": makeSlackSignature(rawBody, timestamp),
+    },
+    signingSecret: SIGNING_SECRET,
+    approvals: fakeApprovals(async () => {
+      throw new Error("boom");
+    }),
+    logger: {
+      error(_message, error) {
+        logged.push(error);
+      },
+    },
+    async outcomePoster() {
+      throw new Error("should_not_post");
+    },
+  });
+
+  assert.equal(response.status, 200);
+  await flushBackground();
+  assert.equal(logged.length, 1);
+});
+
+test("Slack interaction posts mapped outcomes", async () => {
+  const proposal = sampleProposal();
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const outcomes: ApprovalOutcome[] = [
+    { status: "applied", decision: "approved", actorLabel: "a_1" },
+    { status: "denied", reason: "not authorized" },
+    { status: "expired" },
+    {
+      status: "already_decided",
+      decision: "approved",
+      actorLabel: "a_2",
+      decidedAt: new Date().toISOString(),
+    },
+  ];
+  const expected = [/Approved/, /Denied. not authorized/, /Expired/, /Already decided by a_2/];
+
+  for (const [index, outcome] of outcomes.entries()) {
+    const posted: string[] = [];
+    const rawBody = slackBody(proposal, `https://hooks.slack.test/${index}`);
+    const response = await handleSlackInteraction({
+      rawBody,
+      headers: {
+        "x-slack-request-timestamp": timestamp,
+        "x-slack-signature": makeSlackSignature(rawBody, timestamp),
+      },
+      signingSecret: SIGNING_SECRET,
+      approvals: fakeApprovals(async () => outcome),
+      async outcomePoster(input) {
+        posted.push(input.message.text);
+      },
+    });
+
+    assert.equal(response.status, 200);
+    await flushBackground();
+    assert.equal(posted.length, 1);
+    assert.match(posted[0] ?? "", expected[index] ?? /$a/);
+  }
+});
+
+test("Email approval GET confirms without applying and POST applies", async () => {
+  const proposal = sampleProposal();
+  const counters = { audit: 0, execute: 0 };
+  const token = signToken(
+    {
+      tenantId: proposal.tenantId,
+      proposalId: proposal.id,
+      decision: "approved",
+      recipient: "ap@example.com",
+      exp: Math.floor(Date.now() / 1000) + 60,
+    },
+    "email_secret",
+  );
+
+  const getResponse = await handleEmailApproval({
+    method: "GET",
+    url: `https://approvals.example.test/?t=${encodeURIComponent(token)}`,
+    tokenSecret: "email_secret",
+    approvals: approvalService({ proposal, counters }),
+    async loadProposalTitle() {
+      return proposal.title;
+    },
+  });
+
+  assert.equal(getResponse.status, 200);
+  assert.match(getResponse.body, /Confirm approve/);
+  assert.match(getResponse.body, new RegExp(proposal.title));
+  assert.equal(counters.audit, 0);
+  assert.equal(counters.execute, 0);
+
+  const postResponse = await handleEmailApproval({
+    method: "POST",
+    url: "https://approvals.example.test/",
+    body: new URLSearchParams({ t: token }),
+    tokenSecret: "email_secret",
+    approvals: approvalService({ proposal, counters }),
+  });
+
+  assert.equal(postResponse.status, 200);
+  assert.match(postResponse.body, /Approved/);
+  assert.equal(counters.audit, 1);
+  assert.equal(counters.execute, 1);
+});
+
+test("Email approval HEAD confirms without applying", async () => {
+  const proposal = sampleProposal();
+  const counters = { audit: 0, execute: 0 };
   const token = signToken(
     {
       tenantId: proposal.tenantId,
@@ -143,13 +316,16 @@ test("Email approval token accepts valid links", async () => {
   );
 
   const response = await handleEmailApproval({
+    method: "HEAD",
     url: `https://approvals.example.test/?t=${encodeURIComponent(token)}`,
     tokenSecret: "email_secret",
-    approvals: approvalService({ proposal }),
+    approvals: approvalService({ proposal, counters }),
   });
 
   assert.equal(response.status, 200);
-  assert.match(response.body, /Approved/);
+  assert.equal(response.body, "");
+  assert.equal(counters.audit, 0);
+  assert.equal(counters.execute, 0);
 });
 
 test("Email approval token rejects expired, wrong-secret, and tampered links", async () => {
@@ -177,17 +353,28 @@ test("Email approval token rejects expired, wrong-secret, and tampered links", a
 
   const service = approvalService({ proposal });
   const expiredResponse = await handleEmailApproval({
+    method: "GET",
     url: `https://approvals.example.test/?t=${expired}`,
     tokenSecret: "email_secret",
     approvals: service,
   });
   const wrongSecretResponse = await handleEmailApproval({
+    method: "POST",
     url: `https://approvals.example.test/?t=${valid}`,
+    body: new URLSearchParams({ t: valid }),
     tokenSecret: "wrong",
     approvals: service,
   });
   const tamperedResponse = await handleEmailApproval({
-    url: `https://approvals.example.test/?t=${valid.slice(0, -1)}x`,
+    method: "POST",
+    url: "https://approvals.example.test/",
+    body: new URLSearchParams({ t: `${valid.slice(0, -1)}x` }),
+    tokenSecret: "email_secret",
+    approvals: service,
+  });
+  const missingResponse = await handleEmailApproval({
+    method: "POST",
+    url: "https://approvals.example.test/",
     tokenSecret: "email_secret",
     approvals: service,
   });
@@ -195,6 +382,8 @@ test("Email approval token rejects expired, wrong-secret, and tampered links", a
   assert.equal(expiredResponse.status, 400);
   assert.equal(wrongSecretResponse.status, 400);
   assert.equal(tamperedResponse.status, 400);
+  assert.equal(missingResponse.status, 400);
+  assert.match(missingResponse.body, /Unknown/);
 });
 
 test("Dual approval does not enqueue until policy returns terminal approval", async () => {
@@ -221,6 +410,7 @@ test("Dual approval does not enqueue until policy returns terminal approval", as
   assert.equal(outcome.status, "awaiting_second_approval");
   assert.equal(counters.audit, 1);
   assert.equal(counters.execute, 0);
+  assert.equal(toPlainOutcome(outcome), "pending");
 });
 
 test("Expired proposal clicks do not audit or enqueue", async () => {
