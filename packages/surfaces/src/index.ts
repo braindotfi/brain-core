@@ -32,8 +32,18 @@ export { signToken, verifyToken } from "./surfaces/email/token.js";
 export type { TokenClaims } from "./surfaces/email/token.js";
 
 // Inbound HTTP helpers
-export { verifySlackRequest, handleSlackInteraction } from "./http/slack.js";
-export type { SlackVerificationResult, SlackInteractionResponse } from "./http/slack.js";
+export {
+  handleSlackInteraction,
+  postSlackOutcome,
+  slackOutcomeMessage,
+  verifySlackRequest,
+} from "./http/slack.js";
+export type {
+  SlackInteractionResponse,
+  SlackOutcomeMessage,
+  SlackOutcomePoster,
+  SlackVerificationResult,
+} from "./http/slack.js";
 export { handleEmailApproval } from "./http/email.js";
 export type { EmailApprovalResponse } from "./http/email.js";
 export { handleTeamsSubmit } from "./http/teams.js";
@@ -45,6 +55,7 @@ export { SlackWebApiClient } from "./clients/slack.js";
 export { HttpEmailClient } from "./clients/email.js";
 export type { HttpEmailClientOptions } from "./clients/email.js";
 export {
+  BotFrameworkTeamsActivityVerifier,
   InMemoryConversationReferenceStore,
   TeamsBotFrameworkClient,
   rememberConversationReference,
