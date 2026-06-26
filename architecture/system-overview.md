@@ -7,7 +7,7 @@ Brain is a layered protocol where information flows up and control flows down. E
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │                    Clients (humans, agents)                    │
-│         Dashboard · Internal services · External MCP           │
+│   Dashboard · Internal services · External MCP · Surfaces      │
 └────────────────────────────────────────────────────────────────┘
                               ↓ Auth (email/password · SIWX)
 ┌────────────────────────────────────────────────────────────────┐
@@ -76,6 +76,16 @@ The same API surface serves humans, internal agents, and external agents. Auth d
 | **Audit**  | `GET /v1/audit/{id}`, `GET /v1/audit/{id}/proof`         |
 
 [**→ Full API reference**](../api-reference/overview.md)
+
+### Approval Surfaces
+
+Agent proposals can be delivered to Slack, Microsoft Teams, and email through
+`@brain/surfaces`. These surfaces are not execution rails. They render
+proposals, capture human decisions, and send every decision through the same
+Brain approval pipeline: expiry, tenant-scoped identity, policy re-check,
+terminal-decision idempotency, audit, then execution handoff.
+
+[**→ Surface approval adapters**](surface-approval-adapters.md)
 
 ### Networks
 

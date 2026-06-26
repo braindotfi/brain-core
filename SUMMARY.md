@@ -46,6 +46,7 @@
 - [System Overview](architecture/system-overview.md)
 - [Data Flow](architecture/data-flow.md)
 - [Write Paths](architecture/write-paths.md)
+- [Surface Approval Adapters](architecture/surface-approval-adapters.md)
 - [Tenant Isolation](architecture/tenant-isolation.md)
 - [Security and Compliance](architecture/security-and-compliance.md)
 - [Risks and Mitigations](architecture/risks-and-mitigations.md)

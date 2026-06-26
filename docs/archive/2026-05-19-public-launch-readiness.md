@@ -1,5 +1,11 @@
 # Brain, Public Launch Readiness & Next Steps
 
+> Historical note: this memo was written on 2026-05-19 and is retained for
+> provenance only. It is not the current launch or production-readiness plan.
+> Use `architecture/readiness-summary.md`,
+> `architecture/enterprise-readiness.md`, and
+> `docs/diligence/dev-team-production-readiness-pack.md` for the current state.
+
 **Audience**: CTO
 **Author**: engineering
 **Date**: 2026-05-19

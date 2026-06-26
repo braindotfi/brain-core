@@ -1,5 +1,6 @@
 packages:
   - "schemas"
+  - "packages/*"
   - "shared"
   - "services/api"
   - "services/raw"

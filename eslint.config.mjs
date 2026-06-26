@@ -38,6 +38,8 @@ export default [
           "./services/*/tsconfig.typecheck.json",
           "./clients/*/tsconfig.json",
           "./clients/*/tsconfig.typecheck.json",
+          "./packages/*/tsconfig.json",
+          "./packages/*/tsconfig.typecheck.json",
         ],
         tsconfigRootDir: import.meta.dirname,
       },
@@ -110,6 +112,15 @@ export default [
           ],
         },
       ],
+    },
+  },
+  {
+    files: ["packages/**/*.{ts,tsx}"],
+    languageOptions: {
+      parserOptions: {
+        project: ["./packages/*/tsconfig.json"],
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
   },
   prettier,
