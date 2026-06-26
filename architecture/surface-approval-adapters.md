@@ -1,13 +1,10 @@
 # Surface Approval Adapters
 
-Brain surface adapters deliver agent proposals to the places where operators
-already work: Slack, Microsoft Teams, and email. They are approval surfaces, not
-execution rails.
+Brain surface adapters deliver agent proposals to the places where operators already work: Slack, Microsoft Teams, and email. They are approval surfaces, not execution rails.
 
 ## Current Code
 
-The implementation lives in `packages/surfaces` with core bindings in
-`packages/core`.
+The implementation lives in `packages/surfaces` with core bindings in `packages/core`.
 
 | Area                        | Location                                   | Responsibility                                                                  |
 | --------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
@@ -19,12 +16,11 @@ The implementation lives in `packages/surfaces` with core bindings in
 | Live clients                | `packages/surfaces/src/clients`            | Slack Web API, generic HTTP email provider, and Bot Framework Teams client      |
 | Core bindings               | `packages/core/src/bindings`               | Adapter layer from Brain services into surface ports                            |
 
-`@brain/surfaces` does not import `@brain/core`. The root
-`check-surface-acyclic` script enforces the dependency direction.
+`@brain/surfaces` does not import `@brain/core`. The root `check-surface-acyclic` script enforces the dependency direction.
 
 ## Runtime Flow
 
-```text
+```
 Agent finding
   -> Proposal factory
   -> Dispatcher
@@ -36,9 +32,7 @@ Agent finding
   -> ExecutionHandoff enqueue
 ```
 
-The dispatcher computes the proposal content hash once at emit time. That hash
-is the value later recorded in audit, so the audit record proves what was shown
-to the approver.
+The dispatcher computes the proposal content hash once at emit time. That hash is the value later recorded in audit, so the audit record proves what was shown to the approver.
 
 ## Approval Safety Model
 
@@ -52,23 +46,14 @@ All surfaces share the same approval pipeline:
 6. Enqueue execution only for approved proposals.
 7. Update the original surface message on a best-effort basis.
 
-Slack, Teams, and email are therefore input channels to the same policy and
-audit path. A surface button cannot become a direct money movement path.
+Slack, Teams, and email are therefore input channels to the same policy and audit path. A surface button cannot become a direct money movement path.
 
 ## Deployment Notes
 
-The package provides framework-neutral handlers. A production deployable still
-needs to host those handlers behind the real API edge:
+The package provides framework-neutral handlers. A production deployable still needs to host those handlers behind the real API edge:
 
-- Slack interactivity endpoint with raw-body preservation.
-- Teams bot endpoint with Bot Framework verification.
-- Email approval endpoint with HTTPS-only signed token links.
-- Persistent proposal storage and delivered-message refs in Brain core storage.
-- A real `ApprovalDecisionStore` backed by an atomic tenant/proposal uniqueness
-  constraint.
-
-## GitBook Sync
-
-This page is part of the GitBook source tree through `SUMMARY.md`. GitBook
-syncs from `main`, so changes land in the published developer docs when this
-branch is merged.
+* Slack interactivity endpoint with raw-body preservation.
+* Teams bot endpoint with Bot Framework verification.
+* Email approval endpoint with HTTPS-only signed token links.
+* Persistent proposal storage and delivered-message refs in Brain core storage.
+* A real `ApprovalDecisionStore` backed by an atomic tenant/proposal uniqueness constraint.
