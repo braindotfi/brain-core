@@ -1,5 +1,11 @@
 # brain-core Audit Index
 
+> Historical audit note: this tree captures an engineering audit that started on
+> 2026-05-26 against `audit/full-system-audit`. It is retained for provenance
+> and regression context. Do not treat individual findings as current without
+> checking the latest code, `docs/risk-register.md`, and
+> `architecture/enterprise-readiness.md`.
+
 **Started:** 2026-05-26
 **Branch:** `audit/full-system-audit`
 **Mapped from:** `main` HEAD `ff6d046` (audit branch merged `origin/main` at `daf2c63` before audit #15)
@@ -188,4 +194,5 @@ Justify.
 
 ---
 
-_This index is updated after each subsystem turn completes. Risk register items are marked Verified when the corresponding report provides live evidence. The system-map is the authoritative structural reference._
+_Historical note: this index was updated during the May 2026 audit. The
+system-map is authoritative only for that audit snapshot._

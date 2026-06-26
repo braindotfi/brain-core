@@ -1,52 +1,27 @@
 # Brain Core Developer Production Readiness Pack
 
-Review target: `review-brain-core-codebase` at `386e8da`  
-Baseline merged main: `origin/main` at `f75c467`  
+Current main: `1bf2160`  
 Audience: Brain engineering and deployment owners  
-Last updated: 2026-06-21
+Last updated: 2026-06-22
 
 This pack is the developer-facing source of truth for the current technical
 state, the production-readiness gap, and the diagrams the team should maintain
 as code changes.
 
-## Assessment Of The Attached Docs
+## How To Use This Pack
 
-The attached documents are a strong starting set for engineering alignment:
+Use this file as the current internal engineering packet. It supersedes ad hoc
+review notes, old launch memos, and generated document exports. The public
+readiness summary remains `architecture/readiness-summary.md`; the broader
+diligence index remains `architecture/enterprise-readiness.md`.
 
-- `Brain-Technical-Architecture.pdf` gives a useful five-page overview of the
-  six-layer model, money path, process topology, security model, and deployment
-  target.
-- The standalone architecture, money-path, MCP, deployment, and process-role
-  diagrams are readable and mostly match the code shape.
-- `Brain-Core-Production-Readiness.docx` has the right structure for a dev-team
-  status memo: executive snapshot, architecture brief, hardening state,
-  production path, risk register, CI posture, and open checklist.
-
-They should not be treated as final production docs without updates:
-
-- The Word summary contains literal `[object Object]` in status cells. That is a
-  generation bug and makes the status tables unsafe to send.
-- The docs are anchored to `main @ f75c467` on 2026-06-20. The current working
-  branch is `386e8da` and includes reservation hardening plus profile evidence
-  gates.
-- The readiness status changed from "staging yellow" to "staging red" under the
-  stricter branch logic because required evidence is still scaffolded:
-  DB-role evidence is not configured in this environment and Base Sepolia E2E is
-  not exercised.
-- The money-path diagram does not show the new authoritative reservation handoff:
-  lock source account, lock latest balance snapshot, recheck available balance
-  net of active reservations, reserve, transition, enqueue.
-- The process/DB-role diagram is accurate, but the dev-team version should call
-  out the deferred hardening item: tenant deletion should move behind a
-  control-plane path so the broad deletion role is not part of the public API
-  process.
-- The readiness docs should explicitly point to
-  `pnpm run readiness:evidence -- --profile staging` as the release-candidate
-  diligence artifact.
+This pack intentionally keeps generated PDFs/DOCX out of the source of truth.
+When a PDF or Word export is needed, generate it from these Markdown and Mermaid
+sources after the source docs have been reviewed.
 
 ## Current Readiness
 
-Local command results on this branch:
+Current command posture:
 
 ```bash
 node scripts/production-readiness.mjs --json --profile=demo
@@ -218,7 +193,8 @@ pnpm run readiness:evidence -- --profile staging
 
 ## Verdict
 
-The attached docs are good conceptual drafts, but they are not yet sufficient as
-the developer production-readiness packet. They need the current branch state,
-the locked reservation handoff, profile evidence gates, and corrected status
-tables. This pack and the Mermaid sources below fill those gaps.
+Brain Core is credible for demo and controlled-pilot work, but unrestricted
+production/mainnet claims remain blocked on exercised staging evidence,
+external contract audit, live deployment proof, and operational dashboards.
+This pack is the current engineering checklist for closing those gaps without
+overclaiming readiness.

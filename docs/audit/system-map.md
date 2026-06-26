@@ -1,5 +1,11 @@
 # brain-core System Map
 
+> Historical audit note: this map was produced for the May 2026
+> `audit/full-system-audit` branch. It is useful context, but the current system
+> shape is documented in `architecture/system-overview.md`,
+> `architecture/enterprise-readiness.md`, and
+> `docs/diligence/dev-team-production-readiness-pack.md`.
+
 **Audit branch:** `audit/full-system-audit`
 **Mapped from:** `main` HEAD `ff6d046` (2026-05-26)
 **Prior baseline:** [`_archive/2026-05-25-runtime-reality-audit.md`](./_archive/2026-05-25-runtime-reality-audit.md) (monolithic, rev 6)

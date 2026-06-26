@@ -1,8 +1,8 @@
 # Agent And On-Chain Event Map
 
 Audience: Brain engineering, protocol, platform, and on-call owners  
-Last updated: 2026-06-21  
-Code review target: `review-brain-core-codebase` at `386e8da`
+Last updated: 2026-06-22  
+Current main: `1bf2160`
 
 This document closes the gap between the agent docs, MCP docs, audit docs, and
 contract docs. It names the agent surfaces, the off-chain events they emit, the
