@@ -4,14 +4,15 @@ Each tenant has its own logical instance of every layer, with hard isolation at 
 
 ### Isolation by Layer
 
-| Layer      | Isolation Mechanism                                                                           |
-| ---------- | --------------------------------------------------------------------------------------------- |
-| **Raw**    | Azure Blob paths namespaced by `tenantId`. Every artifact encrypted with a tenant-scoped DEK. |
-| **Ledger** | Logical partitions in Postgres. All queries forced through tenant scope.                      |
-| **Wiki**   | Separate graph per tenant. Embeddings indexed within tenant scope only.                       |
-| **Policy** | One active policy per tenant. Policy verdicts include `tenantId` in their signed payload.     |
-| **Agent**  | Scope grants are per-tenant. An agent active for tenant A has zero visibility into tenant B.  |
-| **Audit**  | Per-tenant hash chains. Per-tenant Merkle trees. Per-tenant anchored roots.                   |
+| Layer        | Isolation Mechanism                                                                           |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| **Raw**      | Azure Blob paths namespaced by `tenantId`. Every artifact encrypted with a tenant-scoped DEK. |
+| **Ledger**   | Logical partitions in Postgres. All queries forced through tenant scope.                      |
+| **Wiki**     | Separate graph per tenant. Embeddings indexed within tenant scope only.                       |
+| **Policy**   | One active policy per tenant. Policy verdicts include `tenantId` in their signed payload.     |
+| **Agent**    | Scope grants are per-tenant. An agent active for tenant A has zero visibility into tenant B.  |
+| **Audit**    | Per-tenant hash chains. Per-tenant Merkle trees. Per-tenant anchored roots.                   |
+| **Surfaces** | Slack, Teams, and email identities link to Brain actors through tenant-scoped RLS tables.     |
 
 ### Encryption Hierarchy
 
@@ -62,6 +63,19 @@ ALLOW / ESCALATE / DENY
 | **Human**          | User ID              | Email + password, or wallet (SIWX) |
 | **Internal agent** | Service principal ID | Service credentials                |
 | **External agent** | Agent address        | SIWX (EIP-4361 over Base)          |
+
+### Surface Gateway Role
+
+Slack, Teams, and email approval webhooks run in `services/surface-gateway`, not
+inside the core API process. The production role is `brain_surface_gateway`:
+
+| Property      | Detail                                                                         |
+| ------------- | ------------------------------------------------------------------------------ |
+| **RLS**       | Enabled and forced on surface tables. The role has no `BYPASSRLS`.             |
+| **Writes**    | `surface_*` tables and approval rows only.                                     |
+| **Reads**     | Linked surface identities, users, and active policy rows.                      |
+| **No access** | No Ledger money-path grants and no `execution_outbox` grants.                  |
+| **Secrets**   | Slack, Teams, and email provider credentials stay out of the core API process. |
 
 ### On-Chain Isolation
 

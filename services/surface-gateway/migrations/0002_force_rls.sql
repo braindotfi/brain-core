@@ -1,0 +1,9 @@
+BEGIN;
+
+ALTER TABLE surface_external_identities FORCE ROW LEVEL SECURITY;
+ALTER TABLE surface_proposals FORCE ROW LEVEL SECURITY;
+ALTER TABLE surface_delivered_refs FORCE ROW LEVEL SECURITY;
+ALTER TABLE surface_decisions FORCE ROW LEVEL SECURITY;
+ALTER TABLE surface_teams_conversation_refs FORCE ROW LEVEL SECURITY;
+
+COMMIT;

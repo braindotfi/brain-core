@@ -180,6 +180,7 @@ services:
           -v brain_audit_publisher_password="${BRAIN_AUDIT_PUBLISHER_DB_PASSWORD:-brain_audit_publisher}" \
           -v brain_resolver_password="${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}" \
           -v brain_tenant_deletion_password="${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}" \
+          -v brain_surface_gateway_password="${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:-brain_surface_gateway}" \
           -f /db-roles.sql
     depends_on:
       migrate:
@@ -341,6 +342,60 @@ services:
         - node
         - -e
         - "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+
+  surface-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brain-core:${BRAIN_IMAGE_TAG:-prod}
+    container_name: brain-prod-surface-gateway
+    restart: unless-stopped
+    command: ["node", "services/surface-gateway/dist/main.js"]
+    ports:
+      - "3002:3000"
+    env_file:
+      - path: .env.prod
+        required: false
+    environment:
+      <<: *brain-common-env
+      SERVICE_NAME: brain-surface-gateway
+      BRAIN_SURFACE_GATEWAY_DB_URL: postgres://brain_surface_gateway:${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:-brain_surface_gateway}@postgres:5432/brain
+      BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}@postgres:5432/brain
+      SLACK_ENABLED: ${SLACK_ENABLED:-false}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      TEAMS_ENABLED: ${TEAMS_ENABLED:-false}
+      TEAMS_APP_ID: ${TEAMS_APP_ID:-}
+      TEAMS_APP_PASSWORD: ${TEAMS_APP_PASSWORD:-}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      EMAIL_APPROVAL_BASE_URL: ${EMAIL_APPROVAL_BASE_URL:-https://api.brain.fi/surfaces/email/approve}
+      EMAIL_TOKEN_SECRET: ${EMAIL_TOKEN_SECRET:-}
+      EMAIL_ENDPOINT: ${EMAIL_ENDPOINT:-}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      BRAIN_SURFACE_SMOKE_ENABLED: ${BRAIN_SURFACE_SMOKE_ENABLED:-false}
+      BRAIN_SURFACE_SMOKE_SECRET: ${BRAIN_SURFACE_SMOKE_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      db-roles:
+        condition: service_completed_successfully
+      jwks:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 10s
       timeout: 5s
       start_period: 40s

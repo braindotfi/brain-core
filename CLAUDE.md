@@ -11,22 +11,27 @@ Private workspace, UNLICENSED.
   nothing in core. Defines the four ports as interfaces.
 - `packages/core` (@brain/core): implements those ports against brain-core's
   internal services and hosts the composition root. Depends on @brain/surfaces.
+- `services/surface-gateway` (@brain/surface-gateway): Fastify v5 deployable for
+  Slack, Teams, and email approval webhooks. Depends on @brain/core,
+  @brain/surfaces, and existing policy, audit, and execution services.
 
 Dependency is one-directional and acyclic: core -> surfaces. A CI check should
 fail the build if anything under packages/surfaces imports @brain/core.
 
 ## Branch
 
-`fix/surface-approval-hardening`. Branch from latest `origin/main`. The surface
-packages are merged into brain-core; remaining work should preserve the acyclic
-core -> surfaces dependency.
+`feat/surface-gateway`. Branch from latest `origin/main`. The surface webhook
+deployable is being wired as a separate least-privilege service while preserving
+the acyclic core -> surfaces dependency.
 
 ## Commands (from root)
 
 - `pnpm --filter @brain/surfaces run typecheck`
 - `pnpm --filter @brain/core run typecheck`
+- `pnpm --filter @brain/surface-gateway run typecheck`
 - `pnpm --filter @brain/surfaces run test`
 - `pnpm --filter @brain/core run test`
+- `pnpm --filter @brain/surface-gateway run test`
 - `pnpm run check-surface-acyclic`
 - `pnpm typecheck`
 - `pnpm test`
@@ -68,18 +73,31 @@ Done
   the approval store boundary, including crash-safe unapplied replay.
 - Slack outcomes are posted through `response_url`; background approval errors
   are caught and logged.
+- Fastify v5 surface gateway deployable in `services/surface-gateway` with:
+  `/surfaces/slack/interactions`, `/surfaces/email/approve`,
+  `/surfaces/teams/messages`, `/surfaces/smoke/proposals`, and `/healthz`.
+- Gateway-owned RLS tables for external identity links, canonical surface
+  proposals, delivered refs, terminal decisions, Slack retry keys, and Teams
+  conversation references.
+- Gateway composition delegates to existing policy evaluation, shared audit
+  emitter idempotency keys, and execution approvals. It never writes ledger
+  money-path rows and never touches `execution_outbox`.
+- `brain_surface_gateway` DB role is NOBYPASSRLS and is granted only surface
+  state, users and active policy reads, plus approval writes.
+- Production and dev compose wire the gateway as a separate process so Slack,
+  Teams, and ESP credentials are not loaded into the core API process.
 - Tests cover Slack signature valid, stale, tampered, ack timing, outcome
   posting, and logged failures; email GET and HEAD confirmation, POST approval,
   missing and invalid tokens; dual approval, double-click idempotency, crash-safe
-  replay, and expired proposal clicks.
+  replay, expired proposal clicks, Slack retry dedupe, email approval POST, and
+  the smoke proposal trigger.
 
-Pending (see packages/surfaces/CODEX_PROMPT.md for the full brief)
+Pending
 
-- [ ] Replace `internal/services.ts` interfaces with real brain-core services.
-- [ ] Host the inbound helpers in the real webhook deployable.
-- [ ] Delivered-ref persistence and proposal load-by-id against real storage.
 - [ ] Real agent input types from the detectors.
 - [ ] Slack Marketplace MCP registry listing for the pull path.
+- [ ] Provision real Slack, Teams, and ESP credentials in staging and run an
+      exercised surface approval release candidate.
 
 ## Runtime isolation
 

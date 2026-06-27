@@ -80,10 +80,12 @@ The same API surface serves humans, internal agents, and external agents. Auth d
 ### Approval Surfaces
 
 Agent proposals can be delivered to Slack, Microsoft Teams, and email through
-`@brain/surfaces`. These surfaces are not execution rails. They render
-proposals, capture human decisions, and send every decision through the same
-Brain approval pipeline: expiry, tenant-scoped identity, policy re-check,
-terminal-decision idempotency, audit, then execution handoff.
+`@brain/surfaces` and the standalone `services/surface-gateway` deployable.
+These surfaces are not execution rails. They render proposals, capture human
+decisions, and send every decision through the same Brain approval pipeline:
+expiry, tenant-scoped identity, policy re-check, terminal-decision idempotency,
+audit, then execution approval handoff. The gateway has its own DB role and
+does not receive Ledger or execution outbox privileges.
 
 [**→ Surface approval adapters**](surface-approval-adapters.md)
 
