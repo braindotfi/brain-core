@@ -8,7 +8,7 @@ Private workspace, UNLICENSED.
 
 - `packages/surfaces` (@brain/surfaces): propose-only delivery and approval for
   the four public agents across Slack, Microsoft Teams, and email. Depends on
-  nothing in core. Defines the four ports as interfaces.
+  nothing in core. Defines the surface ports as interfaces.
 - `packages/core` (@brain/core): implements those ports against brain-core's
   internal services and hosts the composition root. Depends on @brain/surfaces.
 - `services/surface-gateway` (@brain/surface-gateway): Fastify v5 deployable for
@@ -20,9 +20,9 @@ fail the build if anything under packages/surfaces imports @brain/core.
 
 ## Branch
 
-`feat/surface-gateway`. Branch from latest `origin/main`. The surface webhook
-deployable is being wired as a separate least-privilege service while preserving
-the acyclic core -> surfaces dependency.
+`fix/surface-audit-before-sign`. Branch from latest `origin/main`. The approval
+signature that contributes to quorum is being moved after the decision audit
+anchor while preserving the acyclic core -> surfaces dependency.
 
 ## Commands (from root)
 
@@ -43,11 +43,12 @@ include the packages in the workspace filters.
 
 ## Where the port implementations land
 
-`packages/core/src/bindings/` holds the four bindings, one per port:
+`packages/core/src/bindings/` holds the bindings, one per surface port:
 
 - `identity.ts` -> RLS-scoped tenant identity
 - `policy.ts` -> the policy engine and the 23 gates
 - `audit.ts` -> the immutable Audit log
+- `approvals.ts` -> post-audit approval signature recording
 - `execution.ts` -> the idempotent execution queue
 
 `buildBrainCorePorts(services)` assembles them. `buildSurfaceRuntime` in
@@ -91,6 +92,10 @@ Done
   missing and invalid tokens; dual approval, double-click idempotency, crash-safe
   replay, expired proposal clicks, Slack retry dedupe, email approval POST, and
   the smoke proposal trigger.
+- Approval signatures are recorded through a post-audit port, so policy
+  evaluation is read-only and execution enqueue does not sign. Tests cover
+  audit-before-sign ordering, awaiting dual approval signatures, terminal
+  no-double-sign behavior, roleless signer denial, and disabled user rejection.
 
 Pending
 
