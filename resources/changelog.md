@@ -6,6 +6,33 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.8 (surface approval audit ordering + OpenAPI cleanup)
+
+Safety and contract-polish release. No endpoint behavior is loosened.
+
+#### Fixed. Surface approval ordering
+
+- **Surface approval signatures now happen after the decision audit record.**
+  Slack, Teams, and email approval flows re-check policy first, write the audit
+  record, then record the approval signature that contributes to quorum. This
+  keeps quorum-changing approval writes from preceding the audit evidence for
+  the same human decision.
+- **Dual approval still records the first approver.** The post-audit approval
+  hook runs for both awaiting-second-approval and terminal approvals, so quorum
+  can build without moving signing into the execution handoff.
+- **Approver role checks are stricter.** A roleless actor no longer satisfies a
+  `signer` sentinel, and disabled users no longer count as active approvers.
+
+#### Changed. OpenAPI contract quality
+
+- **OpenAPI lint now runs clean with zero warnings.** The contract now includes
+  proprietary license metadata, explicit documented error responses for
+  operations that only listed success responses, and regenerated SDK types.
+- **Intentional route-shape exceptions are documented in Redocly config.** The
+  implemented Fastify routes retain their existing paths, and the disabled
+  legacy `POST /v1/execution/execute` route remains documented as returning
+  `422` rather than a fake success response.
+
 ### v0.5.7 (money-path reservation lifecycle)
 
 Safety hardening for the PaymentIntent execution path. No API, MCP, or SDK
