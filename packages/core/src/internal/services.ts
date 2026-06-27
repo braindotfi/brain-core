@@ -77,6 +77,7 @@ export interface DecisionStore {
           actorId: ActorId;
           decidedAt: string;
           applied: boolean;
+          context?: Record<string, string> | undefined;
         };
       }
   >;
@@ -86,6 +87,7 @@ export interface DecisionStore {
     decision: Exclude<Decision, "pending" | "expired">;
     actorId: ActorId;
     decidedAt: string;
+    context?: Record<string, string> | undefined;
   }): Promise<void>;
 }
 

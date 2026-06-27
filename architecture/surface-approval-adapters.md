@@ -4,7 +4,9 @@ Brain surface adapters deliver agent proposals to the places where operators alr
 
 ## Current Code
 
-The implementation lives in `packages/surfaces` with core bindings in `packages/core`.
+The implementation lives in `packages/surfaces`, core bindings live in
+`packages/core`, and the inbound webhook process lives in
+`services/surface-gateway`.
 
 | Area                        | Location                                   | Responsibility                                                                  |
 | --------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
@@ -15,6 +17,7 @@ The implementation lives in `packages/surfaces` with core bindings in `packages/
 | Inbound helpers             | `packages/surfaces/src/http`               | Slack signature validation, email token validation, Teams verifier seam         |
 | Live clients                | `packages/surfaces/src/clients`            | Slack Web API, generic HTTP email provider, and Bot Framework Teams client      |
 | Core bindings               | `packages/core/src/bindings`               | Adapter layer from Brain services into surface ports                            |
+| Webhook deployable          | `services/surface-gateway`                 | Fastify routes, DB adapters, live client wiring, and process isolation          |
 
 `@brain/surfaces` does not import `@brain/core`. The root `check-surface-acyclic` script enforces the dependency direction.
 
@@ -29,7 +32,7 @@ Agent finding
   -> Inbound HTTP helper
   -> ApprovalService.handle
   -> @brain/core ports
-  -> ExecutionHandoff enqueue
+  -> execution approval handoff
 ```
 
 The dispatcher computes the proposal content hash once at emit time. That hash is the value later recorded in audit, so the audit record proves what was shown to the approver.
@@ -50,10 +53,29 @@ Slack, Teams, and email are therefore input channels to the same policy and audi
 
 ## Deployment Notes
 
-The package provides framework-neutral handlers. A production deployable still needs to host those handlers behind the real API edge:
+`services/surface-gateway` hosts the framework-neutral handlers as a separate
+Fastify v5 process:
 
-- Slack interactivity endpoint with raw-body preservation.
-- Teams bot endpoint with Bot Framework verification.
-- Email approval endpoint with HTTPS-only signed token links.
-- Persistent proposal storage and delivered-message refs in Brain core storage.
-- A real `ApprovalDecisionStore` backed by an atomic tenant/proposal uniqueness constraint.
+| Route                               | Purpose                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------- |
+| `POST /surfaces/slack/interactions` | Slack interactivity with raw-body signature verification and retry dedupe |
+| `GET /surfaces/email/approve`       | Confirmation page for signed email approval links                         |
+| `HEAD /surfaces/email/approve`      | Link preview and health-safe email route check                            |
+| `POST /surfaces/email/approve`      | Email approval confirmation with signed-token validation                  |
+| `POST /surfaces/teams/messages`     | Bot Framework verified Teams submit activities                            |
+| `POST /surfaces/smoke/proposals`    | Explicitly gated smoke dispatch for release candidates                    |
+| `GET /healthz`                      | Process health check                                                      |
+
+The gateway owns only surface persistence:
+
+- `surface_external_identities`
+- `surface_proposals`
+- `surface_delivered_refs`
+- `surface_decisions`
+- `surface_slack_retries`
+- `surface_teams_conversation_refs`
+
+The production DB role is `brain_surface_gateway`. It is tenant-scoped, has no
+`BYPASSRLS`, and has no Ledger or execution outbox grants. Decisions delegate to
+the active Policy document at click time, write shared Audit with deterministic
+idempotency keys, and use the existing execution approval path for handoff.

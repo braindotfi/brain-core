@@ -84,6 +84,7 @@ export class ApprovalService {
         decision: incoming.decision,
         actorId: actor.actorId,
         decidedAt,
+        context: incoming.context,
       });
       if (claim.status === "already_decided") {
         if (claim.record.decision === "approved" && !claim.record.applied) {
@@ -94,8 +95,8 @@ export class ApprovalService {
             surface: incoming.surface,
             actorId: claim.record.actorId,
             decision: claim.record.decision,
-            decidedAt,
-            context: incoming.context,
+            decidedAt: claim.record.decidedAt,
+            context: claim.record.context,
           });
           await this.ports.execution.enqueue({ proposal, actorId: claim.record.actorId });
           await this.ports.decisions.markTerminalApplied(claim.record);
@@ -136,6 +137,7 @@ export class ApprovalService {
       decision: incoming.decision,
       actorId: actor.actorId,
       decidedAt,
+      context: incoming.context,
     });
 
     // 6. best-effort surface update

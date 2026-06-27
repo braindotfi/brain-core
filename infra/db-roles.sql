@@ -71,6 +71,7 @@ ALTER ROLE brain_wiki_reader WITH LOGIN PASSWORD :'brain_wiki_reader_password' N
 --      brain_audit_publisher     anchor tenant enumeration     (audit_events read only)
 --      brain_resolver            webhook/SIWX/login resolvers  (cross-tenant SELECT only)
 --      brain_tenant_deletion     GDPR erasure svc + blob-purge (broad DELETE, route-gated)
+--      brain_surface_gateway     approval webhooks only (surface_* + approvals)
 DO $$
 DECLARE
   rolename text;
@@ -78,7 +79,7 @@ BEGIN
   FOREACH rolename IN ARRAY ARRAY[
     'brain_raw_worker', 'brain_canonical_projector', 'brain_ledger_projector',
     'brain_execution_worker', 'brain_audit_verifier', 'brain_audit_publisher',
-    'brain_resolver', 'brain_tenant_deletion'
+    'brain_resolver', 'brain_tenant_deletion', 'brain_surface_gateway'
   ] LOOP
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = rolename) THEN
       EXECUTE format('CREATE ROLE %I LOGIN', rolename);
@@ -93,6 +94,7 @@ ALTER ROLE brain_audit_verifier      WITH LOGIN PASSWORD :'brain_audit_verifier_
 ALTER ROLE brain_audit_publisher     WITH LOGIN PASSWORD :'brain_audit_publisher_password' BYPASSRLS;
 ALTER ROLE brain_resolver            WITH LOGIN PASSWORD :'brain_resolver_password' BYPASSRLS;
 ALTER ROLE brain_tenant_deletion     WITH LOGIN PASSWORD :'brain_tenant_deletion_password' BYPASSRLS;
+ALTER ROLE brain_surface_gateway     WITH LOGIN PASSWORD :'brain_surface_gateway_password' NOBYPASSRLS;
 
 -- brain_app + brain_privileged get full DML on the application schema; neither
 -- owns the tables (the migration/owner role does), so RLS applies to brain_app.
@@ -134,12 +136,13 @@ $$;
 GRANT USAGE ON SCHEMA public TO
   brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
   brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
-  brain_resolver, brain_tenant_deletion;
+  brain_resolver, brain_tenant_deletion, brain_surface_gateway;
 -- Writer roles may hit serial-backed tables; read-only roles (publisher,
 -- resolver) get no sequence access.
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO
   brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
-  brain_execution_worker, brain_audit_verifier, brain_tenant_deletion;
+  brain_execution_worker, brain_audit_verifier, brain_tenant_deletion,
+  brain_surface_gateway;
 
 -- brain_raw_worker: full DML on the raw layer (sync + interpret workers).
 DO $$
@@ -195,6 +198,18 @@ GRANT SELECT ON audit_events TO brain_audit_publisher;
 -- brain_resolver: cross-tenant SELECT only, for the webhook/SIWX/login resolvers.
 GRANT SELECT ON raw_sync_partitions, wallet_identities, users TO brain_resolver;
 
+-- brain_surface_gateway: tenant-scoped webhook decisions and delivery state.
+-- No ledger_* or execution_outbox grants. The handoff stops at approvals.
+DO $$
+DECLARE t regclass;
+BEGIN
+  FOR t IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'surface\_%'
+  LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO brain_surface_gateway', t); END LOOP;
+END $$;
+GRANT SELECT ON users, policies TO brain_surface_gateway;
+GRANT SELECT, INSERT, UPDATE ON approvals TO brain_surface_gateway;
+
 -- brain_tenant_deletion: GDPR Article 17 erasure (route-gated) + blob-purge
 -- worker. Broad DELETE across tenant-scoped (RLS) tables — that IS the erasure
 -- concern — plus the tenant registry and the purge bookkeeping. audit_events /
@@ -228,7 +243,7 @@ REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
   FROM brain_app, brain_privileged, brain_wiki_reader,
        brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
        brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
-       brain_resolver, brain_tenant_deletion;
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway;
 
 -- Audit-verifier FORENSIC state (audit_verifier_checkpoint, audit_integrity_findings):
 -- global, RLS-exempt tables that PROVE tamper detection. Only the privileged verifier
@@ -248,7 +263,8 @@ REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
 REVOKE ALL ON audit_verifier_checkpoint, audit_integrity_findings
   FROM brain_app, brain_wiki_reader,
        brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
-       brain_execution_worker, brain_audit_publisher, brain_resolver, brain_tenant_deletion;
+       brain_execution_worker, brain_audit_publisher, brain_resolver,
+       brain_tenant_deletion, brain_surface_gateway;
 REVOKE DELETE, TRUNCATE ON audit_verifier_checkpoint
   FROM brain_privileged, brain_audit_verifier;
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_integrity_findings
@@ -283,6 +299,7 @@ $$;
 --   brain_audit_publisher     BRAIN_AUDIT_PUBLISHER_DB_URL
 --   brain_resolver            BRAIN_RESOLVER_DB_URL
 --   brain_tenant_deletion     BRAIN_TENANT_DELETION_DB_URL
+--   brain_surface_gateway     BRAIN_SURFACE_GATEWAY_DB_URL
 -- In NODE_ENV=production the api fails to boot if BRAIN_WIKI_DB_URL or any of
 -- the eight §4 URLs is unset (services/api/src/composition/db-isolation.ts);
 -- in dev/test each falls back to DATABASE_URL with a warning. The API runtime

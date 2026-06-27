@@ -84,6 +84,7 @@ export interface TerminalDecisionInput {
   decision: Exclude<Decision, "pending" | "expired">;
   actorId: ActorId;
   decidedAt: string;
+  context?: Record<string, string> | undefined;
 }
 
 export interface TerminalDecisionRecord extends TerminalDecisionInput {

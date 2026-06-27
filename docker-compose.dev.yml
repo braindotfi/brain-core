@@ -98,6 +98,59 @@ services:
       start_period: 40s
       retries: 10
 
+  surface-gateway:
+    build:
+      context: .
+      target: dev
+    container_name: brain-surface-gateway
+    working_dir: /app
+    command: >-
+      sh -c "pnpm install --frozen-lockfile
+      && pnpm -C services/surface-gateway run dev"
+    ports:
+      - "3002:3000"
+    environment:
+      NODE_ENV: development
+      SERVICE_NAME: brain-surface-gateway
+      PORT: "3000"
+      DATABASE_URL: postgres://brain:brain@postgres:5432/brain
+      BRAIN_SURFACE_GATEWAY_DB_URL: postgres://brain:brain@postgres:5432/brain
+      DATABASE_SSL: disable
+      REDIS_URL: redis://redis:6379
+      AUTH_JWKS_URL: https://auth.brain.fi/.well-known/jwks.json
+      SLACK_ENABLED: ${SLACK_ENABLED:-false}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      TEAMS_ENABLED: ${TEAMS_ENABLED:-false}
+      TEAMS_APP_ID: ${TEAMS_APP_ID:-}
+      TEAMS_APP_PASSWORD: ${TEAMS_APP_PASSWORD:-}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      EMAIL_APPROVAL_BASE_URL: ${EMAIL_APPROVAL_BASE_URL:-http://localhost:3002/surfaces/email/approve}
+      EMAIL_TOKEN_SECRET: ${EMAIL_TOKEN_SECRET:-}
+      EMAIL_ENDPOINT: ${EMAIL_ENDPOINT:-}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      BRAIN_SURFACE_SMOKE_ENABLED: ${BRAIN_SURFACE_SMOKE_ENABLED:-false}
+      BRAIN_SURFACE_SMOKE_SECRET: ${BRAIN_SURFACE_SMOKE_SECRET:-}
+    volumes:
+      - .:/app
+      - bc_node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 10
+
   # Python agents pointed at the in-network API. Off by default; needs an
   # OpenAI key and a dev JWT. Enable with: --profile agents
   agents:

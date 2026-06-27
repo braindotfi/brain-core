@@ -13,6 +13,7 @@ packages:
   - "services/internal-agents"
   - "services/mcp"
   - "services/audit"
+  - "services/surface-gateway"
   - "clients/*"
   - "tools/*"
   - "tests/e2e"

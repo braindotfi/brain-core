@@ -23,5 +23,6 @@ export type {
   PolicyEngine,
   AuditLog,
   ExecutionQueue,
+  DecisionStore,
   ProposalStore,
 } from "./internal/services.js";

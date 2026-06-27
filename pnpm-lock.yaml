@@ -618,6 +618,61 @@ importers:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.3(@types/node@22.19.19)(tsx@4.22.0)(yaml@2.9.0))
 
+  services/surface-gateway:
+    dependencies:
+      '@brain/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@brain/execution':
+        specifier: workspace:*
+        version: link:../execution
+      '@brain/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@brain/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      '@brain/surfaces':
+        specifier: workspace:*
+        version: link:../../packages/surfaces
+      '@fastify/helmet':
+        specifier: ^13.0.2
+        version: 13.0.2
+      '@fastify/rate-limit':
+        specifier: ^10.3.0
+        version: 10.3.0
+      botbuilder:
+        specifier: ^4.23.3
+        version: 4.23.3
+      fastify:
+        specifier: ^5.0.0
+        version: 5.8.5
+      pg:
+        specifier: ^8.13.0
+        version: 8.20.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.7.0
+        version: 22.19.19
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
+      '@vitest/coverage-v8':
+        specifier: ^4.1.8
+        version: 4.1.8(vitest@4.1.8)
+      eslint:
+        specifier: ^9.12.0
+        version: 9.39.4
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.0
+      typescript:
+        specifier: ^5.6.2
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.8)(vite@6.4.3(@types/node@22.19.19)(tsx@4.22.0)(yaml@2.9.0))
+
   services/wiki:
     dependencies:
       '@anthropic-ai/sdk':

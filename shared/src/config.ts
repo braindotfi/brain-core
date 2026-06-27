@@ -67,6 +67,7 @@ const envSchema = z.object({
   BRAIN_AUDIT_PUBLISHER_DB_URL: z.string().url().optional(),
   BRAIN_RESOLVER_DB_URL: z.string().url().optional(),
   BRAIN_TENANT_DELETION_DB_URL: z.string().url().optional(),
+  BRAIN_SURFACE_GATEWAY_DB_URL: z.string().url().optional(),
 
   // ---- Redis ----
   REDIS_URL: z.string().url(),
@@ -100,6 +101,34 @@ const envSchema = z.object({
 
   // ---- Limits ----
   REQUEST_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(52_428_800), // 50 MiB cap
+
+  // ---- Surface gateway ----
+  SLACK_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
+  SLACK_SIGNING_SECRET: optionalNonEmptyString(),
+  SLACK_BOT_TOKEN: optionalNonEmptyString(),
+  TEAMS_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
+  TEAMS_APP_ID: optionalNonEmptyString(),
+  TEAMS_APP_PASSWORD: optionalNonEmptyString(),
+  EMAIL_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
+  EMAIL_APPROVAL_BASE_URL: optionalNonEmptyString(),
+  EMAIL_TOKEN_SECRET: optionalNonEmptyString(),
+  EMAIL_ENDPOINT: optionalNonEmptyString(),
+  EMAIL_API_KEY: optionalNonEmptyString(),
+  EMAIL_FROM: optionalNonEmptyString(),
+  BRAIN_SURFACE_SMOKE_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
+  BRAIN_SURFACE_SMOKE_SECRET: optionalNonEmptyString(),
 
   // ---- CORS ----
   /** Comma-separated list of allowed origins. Use "*" only in local dev — never in staging/prod. */

@@ -106,14 +106,15 @@ export class BotFrameworkTeamsActivityVerifier implements TeamsActivityVerifier 
         const conversationRef = context.activity.conversation?.id;
         if (!submit || !aadObjectId || !conversationRef) return;
 
+        const tenantConversationRef = `${submit.tenantId}:${conversationRef}`;
         await this.references.set(
-          conversationRef,
+          tenantConversationRef,
           TurnContext.getConversationReference(context.activity),
         );
         verified = {
           submit,
           aadObjectId,
-          conversationRef,
+          conversationRef: tenantConversationRef,
           ...(context.activity.replyToId !== undefined
             ? { activityId: context.activity.replyToId }
             : context.activity.id !== undefined

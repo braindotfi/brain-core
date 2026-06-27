@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "incremental": false,
+    "noEmit": true,
+    "paths": {
+      "@brain/shared": ["../../shared/src/index.ts"],
+      "@brain/shared/*": ["../../shared/src/*.ts"],
+      "@brain/surfaces": ["../../packages/surfaces/src/index.ts"],
+      "@brain/core": ["../../packages/core/src/index.ts"],
+      "@brain/policy": ["../policy/src/index.ts"],
+      "@brain/execution": ["../execution/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
