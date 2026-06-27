@@ -43,6 +43,12 @@ function memoryDecisions(): BrainCorePorts["decisions"] {
   };
 }
 
+function noopApprovalRecorder(): BrainCorePorts["approvals"] {
+  return {
+    async recordApproval() {},
+  };
+}
+
 test("hash is deterministic and ignores field order", () => {
   const p = sampleProposal();
   const a = hashProposal(p);
@@ -100,6 +106,7 @@ test("approval pipeline denies an actor the policy gate rejects", async () => {
         audited = true;
       },
     },
+    approvals: noopApprovalRecorder(),
     execution: {
       async enqueue() {
         executed = true;
@@ -144,6 +151,11 @@ test("approval pipeline audits before it ever hands off", async () => {
         order.push("audit");
       },
     },
+    approvals: {
+      async recordApproval() {
+        order.push("recordApproval");
+      },
+    },
     execution: {
       async enqueue() {
         order.push("execute");
@@ -171,7 +183,54 @@ test("approval pipeline audits before it ever hands off", async () => {
   });
 
   assert.equal(outcome.status, "applied");
-  assert.deepEqual(order, ["audit", "execute", "mark"]);
+  assert.deepEqual(order, ["audit", "recordApproval", "execute", "mark"]);
+});
+
+test("approval pipeline records awaiting approval signatures after audit", async () => {
+  const proposal = withContentHash(sampleProposal());
+  const order: string[] = [];
+
+  const ports: BrainCorePorts = {
+    identity: {
+      async resolve() {
+        return { actorId: toActorId("a_1"), roles: ["ap_lead"] };
+      },
+    },
+    policy: {
+      async canDecide() {
+        return { allowed: true, awaitingSecondApproval: true, approverRole: "ap_lead" };
+      },
+    },
+    audit: {
+      async record() {
+        order.push("audit");
+      },
+    },
+    approvals: {
+      async recordApproval(input) {
+        order.push(`recordApproval:${input.approverRole ?? ""}`);
+      },
+    },
+    execution: {
+      async enqueue() {
+        order.push("execute");
+      },
+    },
+    decisions: memoryDecisions(),
+  };
+
+  const service = new ApprovalService(ports, new SurfaceRegistry(), async () => proposal);
+
+  const outcome = await service.handle({
+    surface: "slack",
+    proposalId: proposal.id,
+    tenantId: proposal.tenantId,
+    externalActorId: "U_slack",
+    decision: "approved",
+  });
+
+  assert.equal(outcome.status, "awaiting_second_approval");
+  assert.deepEqual(order, ["audit", "recordApproval:ap_lead"]);
 });
 
 test("approval pipeline makes terminal decisions idempotent", async () => {
@@ -195,6 +254,7 @@ test("approval pipeline makes terminal decisions idempotent", async () => {
         auditCount += 1;
       },
     },
+    approvals: noopApprovalRecorder(),
     execution: {
       async enqueue() {
         executionCount += 1;
@@ -249,6 +309,11 @@ test("approval pipeline re-drives unapplied approved terminal decisions", async 
         order.push("audit");
       },
     },
+    approvals: {
+      async recordApproval() {
+        order.push("recordApproval");
+      },
+    },
     execution: {
       async enqueue() {
         order.push("execute");
@@ -274,7 +339,7 @@ test("approval pipeline re-drives unapplied approved terminal decisions", async 
   });
 
   assert.equal(outcome.status, "already_decided");
-  assert.deepEqual(order, ["audit", "execute", "mark"]);
+  assert.deepEqual(order, ["audit", "recordApproval", "execute", "mark"]);
 });
 
 test("approval pipeline does not re-drive applied terminal decisions", async () => {
@@ -305,6 +370,7 @@ test("approval pipeline does not re-drive applied terminal decisions", async () 
         order.push("audit");
       },
     },
+    approvals: noopApprovalRecorder(),
     execution: {
       async enqueue() {
         order.push("execute");

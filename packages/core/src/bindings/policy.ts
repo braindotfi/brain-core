@@ -21,6 +21,7 @@ export class CorePolicyGate implements PolicyGate {
       ...(result.awaitingSecondApproval !== undefined
         ? { awaitingSecondApproval: result.awaitingSecondApproval }
         : {}),
+      ...(result.approverRole !== undefined ? { approverRole: result.approverRole } : {}),
     };
   }
 }
