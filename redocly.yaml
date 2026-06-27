@@ -1,0 +1,11 @@
+extends:
+  - recommended
+
+rules:
+  # The implemented Fastify API relies on concrete route ordering for these
+  # namespaces. Renaming the paths to satisfy the generic lint rule would make
+  # the contract drift from the running services.
+  no-ambiguous-paths: off
+  # /execution/execute is intentionally disabled and only returns 422. Adding a
+  # fake 2xx response would overstate the legacy route's behavior.
+  operation-2xx-response: off

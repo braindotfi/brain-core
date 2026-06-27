@@ -2431,42 +2431,6 @@ export interface components {
             status: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
             linked_transaction_ids?: string[];
         };
-        Document: components["schemas"]["LedgerCommonFields"] & {
-            /** @enum {string} */
-            document_type: "invoice" | "receipt" | "bank_statement" | "card_statement" | "contract" | "payroll" | "tax" | "other";
-            source_uri?: string | null;
-            extracted_fields?: {
-                [key: string]: unknown;
-            };
-            linked_account_ids?: string[];
-            linked_transaction_ids?: string[];
-            linked_obligation_ids?: string[];
-            confidence_score?: number;
-        };
-        Category: {
-            id: string;
-            owner_id: string;
-            name: string;
-            parent_id?: string | null;
-            /** @enum {string} */
-            kind: "expense" | "income" | "transfer" | "other";
-            /** Format: date-time */
-            created_at?: string;
-            /** Format: date-time */
-            updated_at?: string;
-        };
-        Transfer: components["schemas"]["LedgerCommonFields"] & {
-            from_account_id: string;
-            to_account_id: string;
-            from_transaction_id?: string | null;
-            to_transaction_id?: string | null;
-            amount: string;
-            currency: string;
-            /** Format: date-time */
-            transfer_date: string;
-            /** @enum {string} */
-            status: "proposed" | "in_flight" | "completed" | "failed";
-        };
         Invoice: components["schemas"]["LedgerCommonFields"] & {
             invoice_number: string;
             counterparty_id: string;
@@ -2645,7 +2609,9 @@ export interface components {
              *     `{ tools: ToolDescriptor[] }`, `tools/call` returns
              *     `ToolCallResult`, etc. See `docs/mcp-architecture.md`.
              */
-            result?: {
+            result?: components["schemas"]["InitializeResult"] | {
+                tools: components["schemas"]["ToolDescriptor"][];
+            } | components["schemas"]["ToolCallResult"] | {
                 [key: string]: unknown;
             };
             error?: components["schemas"]["JsonRpcError"];
@@ -2828,6 +2794,7 @@ export interface operations {
                     "text/html": string;
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getOpenApiYaml: {
@@ -2848,6 +2815,7 @@ export interface operations {
                     "application/yaml": string;
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     signup: {
@@ -3287,6 +3255,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getAccount: {
@@ -3338,6 +3307,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     listTransactions: {
@@ -3370,6 +3340,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getTransaction: {
@@ -3419,6 +3390,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     listObligations: {
@@ -3445,6 +3417,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     resolveObligation: {
@@ -3539,6 +3512,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     normalizeRaw: {
@@ -3572,6 +3546,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     runReconciliation: {
@@ -3602,6 +3577,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     listReconciliationMatches: {
@@ -3627,6 +3603,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     listMemoryPages: {
@@ -3653,6 +3630,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getMemoryPage: {
@@ -3702,6 +3680,7 @@ export interface operations {
                     "application/json": components["schemas"]["WikiPage"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     searchMemory: {
@@ -3730,6 +3709,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getWikiEntity: {
@@ -3785,6 +3765,7 @@ export interface operations {
                     "application/json": components["schemas"]["EvidenceChain"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getEntityHistory: {
@@ -3811,6 +3792,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     searchWiki: {
@@ -3844,6 +3826,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     askWiki: {
@@ -3908,6 +3891,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getWikiSchema: {
@@ -3932,6 +3916,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getActivePolicy: {
@@ -3979,6 +3964,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     composePolicy: {
@@ -4079,6 +4065,7 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyDecision"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     simulatePolicy: {
@@ -4108,6 +4095,7 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyDecision"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     lintPolicy: {
@@ -4149,6 +4137,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     diffPolicy: {
@@ -4223,6 +4212,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     listAgents: {
@@ -4257,6 +4247,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getAgent: {
@@ -4282,6 +4273,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     proposeAgentAction: {
@@ -4314,6 +4306,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     listAgentActions: {
@@ -4346,6 +4339,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     registerAgent: {
@@ -4377,6 +4371,7 @@ export interface operations {
                     "application/json": components["schemas"]["Agent"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     agentMcpEntry: {
@@ -4406,6 +4401,7 @@ export interface operations {
                     "application/json": components["schemas"]["JsonRpcResponse"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     routeAgent: {
@@ -4521,6 +4517,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getAgentRun: {
@@ -4715,6 +4712,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     haltCategory: {
@@ -4865,6 +4863,7 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentIntent"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     rejectPaymentIntent: {
@@ -4893,6 +4892,7 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentIntent"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     executePaymentIntent: {
@@ -5050,6 +5050,7 @@ export interface operations {
                     "application/json": components["schemas"]["Proposal"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     executeProposal: {
@@ -5130,6 +5131,7 @@ export interface operations {
                     "application/json": components["schemas"]["Proposal"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     escalateProposal: {
@@ -5156,6 +5158,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     listExecutionAgents: {
@@ -5178,6 +5181,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     registerExternalAgent: {
@@ -5212,6 +5216,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getExecutionAgent: {
@@ -5234,6 +5239,7 @@ export interface operations {
                     "application/json": components["schemas"]["Agent"];
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getAuditEntityHistory: {
@@ -5261,6 +5267,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getProof: {
@@ -5431,6 +5438,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getAuditEvent: {
@@ -5461,6 +5469,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     exportAudit: {
@@ -5498,6 +5507,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getLatestAnchor: {
@@ -5527,6 +5537,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     verifyInclusion: {
@@ -5558,6 +5569,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     listCanonicalObligations: {
@@ -5583,6 +5595,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getCanonicalObligation: {
@@ -5631,6 +5644,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getCanonicalGlAccount: {
@@ -5678,6 +5692,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
         };
     };
     getCanonicalJournalEntry: {
