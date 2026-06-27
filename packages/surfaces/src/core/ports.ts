@@ -4,7 +4,7 @@ import type { Proposal, ActorId, Decision } from "../proposal/schema.js";
  * The boundary between this surface package and brain-core.
  *
  * This package never reaches into brain-core directly. brain-core (or a thin
- * binding in brain-core) implements these four ports and injects them. That
+ * binding in brain-core) implements these ports and injects them. That
  * keeps this package publishable-shaped, keeps brain-core as the single source
  * of truth for policy and audit, and keeps the propose-only line clean: nothing
  * here can move money, because no port exposes a way to.
@@ -48,6 +48,8 @@ export interface PolicyVerdict {
   reason?: string;
   /** True when this approval satisfies a gate but a second approver is still required. */
   awaitingSecondApproval?: boolean;
+  /** The approver role that policy accepted for this decision. */
+  approverRole?: string;
 }
 
 /** Writes the immutable decision record into the brain-core Audit layer. */
@@ -78,12 +80,27 @@ export interface ExecutionHandoff {
   enqueue(input: { proposal: Proposal; actorId: ActorId }): Promise<void>;
 }
 
+/**
+ * Records the approval signature that contributes to quorum.
+ * ApprovalService calls this only after the decision audit anchor has been
+ * written, so a quorum-changing signature cannot precede its audit record.
+ */
+export interface ApprovalRecorder {
+  recordApproval(input: {
+    proposal: Proposal;
+    actorId: ActorId;
+    surface: SurfaceName;
+    approverRole?: string | undefined;
+  }): Promise<void>;
+}
+
 export interface TerminalDecisionInput {
   proposalId: string;
   tenantId: string;
   decision: Exclude<Decision, "pending" | "expired">;
   actorId: ActorId;
   decidedAt: string;
+  approverRole?: string | undefined;
   context?: Record<string, string> | undefined;
 }
 
@@ -114,6 +131,7 @@ export interface BrainCorePorts {
   identity: IdentityResolver;
   policy: PolicyGate;
   audit: AuditAnchor;
+  approvals: ApprovalRecorder;
   execution: ExecutionHandoff;
   decisions: ApprovalDecisionStore;
 }

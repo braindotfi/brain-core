@@ -30,7 +30,7 @@ function sampleProposal(): Proposal {
 /** In-memory stand-ins for the real brain-core services. */
 function fakeServices(
   proposal: Proposal,
-  record: { audited: boolean; executed: boolean; deliveredRefs: string[] },
+  record: { audited: boolean; approved: boolean; executed: boolean; deliveredRefs: string[] },
 ): CoreServices {
   const decisions = new Map<
     string,
@@ -57,6 +57,11 @@ function fakeServices(
     audit: {
       async append() {
         record.audited = true;
+      },
+    },
+    approvals: {
+      async recordApproval() {
+        record.approved = true;
       },
     },
     execution: {
@@ -90,7 +95,12 @@ function fakeServices(
 
 test("composed runtime dispatches to Slack and approves end to end", async () => {
   const proposal = sampleProposal();
-  const record = { audited: false, executed: false, deliveredRefs: [] as string[] };
+  const record = {
+    audited: false,
+    approved: false,
+    executed: false,
+    deliveredRefs: [] as string[],
+  };
   const posted: string[] = [];
 
   const slack: SlackClient = {
@@ -131,5 +141,6 @@ test("composed runtime dispatches to Slack and approves end to end", async () =>
 
   assert.equal(outcome.status, "applied");
   assert.equal(record.audited, true);
+  assert.equal(record.approved, true);
   assert.equal(record.executed, true);
 });

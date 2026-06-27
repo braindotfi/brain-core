@@ -73,11 +73,13 @@ shape, then calls `ApprovalService.handle`.
 3. Click-time policy re-check.
 4. Terminal-decision claim for idempotency.
 5. Audit record.
-6. Execution handoff for approvals only.
-7. Best-effort surface update.
+6. Approval signature recording for approvals only.
+7. Execution handoff for approvals only.
+8. Best-effort surface update.
 
 Duplicates return `already_decided` and do not enqueue execution again. Audit
-still happens before any execution handoff.
+still happens before any quorum-changing approval signature or execution
+handoff.
 
 See `SCOPE.md`, `CLAUDE.md`, and `CODEX_PROMPT.md`.
 

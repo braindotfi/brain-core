@@ -29,6 +29,7 @@ info:
     email: api@brain.fi
   license:
     name: Proprietary
+    identifier: LicenseRef-Proprietary
 
 servers:
   - url: https://api.brain.fi/v1
@@ -85,6 +86,7 @@ paths:
             text/html:
               schema:
                 type: string
+        '400': { $ref: '#/components/responses/BadRequest' }
   /openapi.yaml:
     get:
       tags: [Docs]
@@ -99,6 +101,7 @@ paths:
             application/yaml:
               schema:
                 type: string
+        '400': { $ref: '#/components/responses/BadRequest' }
   /signup:
     post:
       tags: [Auth]
@@ -561,6 +564,7 @@ paths:
                     items: { $ref: '#/components/schemas/Account' }
                   next_cursor: { type: [string, "null"] }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /ledger/accounts/{account_id}:
     get:
       tags: [Ledger]
@@ -607,6 +611,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Balance' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /ledger/transactions:
     get:
       tags: [Ledger]
@@ -650,6 +655,7 @@ paths:
                     items: { $ref: '#/components/schemas/Transaction' }
                   next_cursor: { type: [string, "null"] }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /ledger/transactions/{transaction_id}:
     get:
       tags: [Ledger]
@@ -697,6 +703,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Counterparty' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /ledger/obligations:
     get:
       tags: [Ledger]
@@ -724,6 +731,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Obligation' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /ledger/obligations/{obligation_id}/resolved:
     get:
       tags: [Ledger]
@@ -817,6 +825,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Invoice' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /ledger/normalize:
     post:
       tags: [Ledger]
@@ -858,6 +867,7 @@ paths:
                         entity: { type: string }
                         id: { type: string }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /ledger/reconcile:
     post:
       tags: [Ledger]
@@ -888,6 +898,7 @@ paths:
                 properties:
                   job_id: { type: string }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /ledger/reconciliation-matches:
     get:
       tags: [Ledger]
@@ -911,6 +922,7 @@ paths:
                   matches:
                     type: array
                     items: { $ref: '#/components/schemas/ReconciliationMatch' }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   #############################################################################
   # LAYER 3: WIKI (memory)
@@ -946,6 +958,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/WikiPage' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /memory/pages/{slug_or_id}:
     get:
       tags: [Wiki]
@@ -985,6 +998,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/WikiPage' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /memory/search:
     get:
       tags: [Wiki]
@@ -1014,6 +1028,7 @@ paths:
                         page: { $ref: '#/components/schemas/WikiPage' }
                         score: { type: number }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /wiki/entity/{entity_id}:
     get:
       tags: [Wiki]
@@ -1065,6 +1080,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/EvidenceChain'
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /wiki/entity/{entity_id}/history:
     get:
       tags: [Wiki]
@@ -1086,6 +1102,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/WikiEntity'
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /wiki/search:
     get:
       tags: [Wiki]
@@ -1128,6 +1145,7 @@ paths:
                     items: { $ref: '#/components/schemas/WikiEntity' }
                   next_cursor: { type: [string, "null"] }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /wiki/question:
     post:
       tags: [Wiki]
@@ -1196,6 +1214,7 @@ paths:
                   annotation_id: { type: string, format: uuid }
                   new_version_id: { type: string, format: uuid }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /wiki/schema:
     get:
       tags: [Wiki]
@@ -1215,6 +1234,7 @@ paths:
                 additionalProperties:
                   description: JSON Schema document for the kind
                   type: object
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   #############################################################################
   # LAYER 4: POLICY
@@ -1255,6 +1275,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Policy' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /policy/{tenant_id}/compose:
     post:
       tags: [Policy]
@@ -1347,6 +1368,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicyDecision'
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /policy/{tenant_id}/simulate:
     post:
       tags: [Policy]
@@ -1372,6 +1394,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicyDecision'
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /policy/{tenant_id}/lint:
     post:
       tags: [Policy]
@@ -1409,6 +1432,7 @@ paths:
                         rule_id: { type: [string, "null"] }
                         message: { type: string }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /policy/{tenant_id}/diff:
     post:
       tags: [Policy]
@@ -1472,6 +1496,7 @@ paths:
                   would_confirm: { type: integer }
                   would_reject: { type: integer }
                   diff_vs_active: { type: object }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   #############################################################################
   # LAYER 5: AGENT (action orchestration; legacy /execution/* paths retained)
@@ -1524,6 +1549,7 @@ paths:
                         capabilities: { type: array, items: { type: string } }
                         enabled_by_default: { type: boolean }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /agents/{agent_id}:
     get:
       tags: [Agent]
@@ -1545,6 +1571,7 @@ paths:
                   definition: { type: object }
                   registration: { type: [object, "null"] }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /agents/{agent_id}/propose:
     post:
       tags: [Agent]
@@ -1582,6 +1609,7 @@ paths:
                   policy_decision_id: { type: string }
                   status: { type: string }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /agents/{agent_id}/actions:
     get:
       tags: [Agent]
@@ -1613,6 +1641,7 @@ paths:
                         status: { type: string }
                         created_at: { type: string, format: date-time }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /agents/register:
     post:
       tags: [Agent]
@@ -1646,6 +1675,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Agent' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /agents/mcp:
     post:
       tags: [Agent, MCP]
@@ -1699,6 +1729,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/JsonRpcResponse' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /agents/route:
     post:
       tags: [Agent]
@@ -1798,6 +1829,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/AgentRun' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /agents/runs/{run_id}:
     get:
       tags: [Agent]
@@ -1966,6 +1998,7 @@ paths:
                   paused: { type: array, items: { type: string } }
                   quarantined: { type: boolean }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /agents/halt-category:
     post:
       tags: [Agent]
@@ -2118,6 +2151,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PaymentIntent' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /payment-intents/{id}/reject:
     post:
       tags: [PaymentIntent]
@@ -2143,6 +2177,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PaymentIntent' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /payment-intents/{id}/execute:
     post:
       tags: [PaymentIntent]
@@ -2294,6 +2329,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Proposal'
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /execution/execute:
     post:
       tags: [Execution]
@@ -2369,6 +2405,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Proposal' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /execution/escalate:
     post:
       tags: [Execution]
@@ -2388,6 +2425,7 @@ paths:
         '200':
           description: Escalated
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /execution/agents:
     get:
       tags: [Execution]
@@ -2405,6 +2443,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Agent' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /execution/agents/register:
     post:
       tags: [Execution]
@@ -2442,6 +2481,7 @@ paths:
                   onchain_tx_hash: { type: string }
                   scope_hash: { type: string }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /execution/agents/{agent_id}:
     get:
       tags: [Execution]
@@ -2463,6 +2503,7 @@ paths:
   # LAYER 6: AUDIT
   #############################################################################
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /audit/entity/{entityType}/{entityId}:
     get:
       tags: [Audit]
@@ -2504,6 +2545,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/AuditEvent' }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /proof/{action_id}:
     get:
       tags: [Audit]
@@ -2682,6 +2724,7 @@ paths:
                     items: { $ref: '#/components/schemas/AuditEvent' }
                   next_cursor: { type: [string, "null"] }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /audit/event/{event_id}:
     get:
       tags: [Audit]
@@ -2711,6 +2754,7 @@ paths:
                       anchor_tx_hash: { type: string }
                       anchor_block: { type: integer }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /audit/export:
     post:
       tags: [Audit]
@@ -2743,6 +2787,7 @@ paths:
                   job_id: { type: string, format: uuid }
                   status_url: { type: string, format: uri }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /audit/anchor/latest:
     get:
       tags: [Audit]
@@ -2763,6 +2808,7 @@ paths:
                   onchain_tx_hash: { type: string }
                   onchain_block_number: { type: integer }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /audit/verify:
     post:
       tags: [Audit]
@@ -2796,6 +2842,7 @@ paths:
                   verified: { type: boolean }
                   onchain_block: { type: [integer, "null"] }
 
+        '400': { $ref: '#/components/responses/BadRequest' }
   /canonical/obligations:
     get:
       tags: [Canonical]
@@ -2825,6 +2872,7 @@ paths:
                   obligations:
                     type: array
                     items: { $ref: '#/components/schemas/CanonicalObligationProduct' }
+        '400': { $ref: '#/components/responses/BadRequest' }
   /canonical/obligations/{obligation_id}:
     get:
       tags: [Canonical]
@@ -2871,6 +2919,7 @@ paths:
                   gl_accounts:
                     type: array
                     items: { $ref: '#/components/schemas/CanonicalGlAccountProduct' }
+        '400': { $ref: '#/components/responses/BadRequest' }
   /canonical/gl-accounts/{gl_account_id}:
     get:
       tags: [Canonical]
@@ -2914,6 +2963,7 @@ paths:
                   journal_entries:
                     type: array
                     items: { $ref: '#/components/schemas/CanonicalJournalEntryProduct' }
+        '400': { $ref: '#/components/responses/BadRequest' }
   /canonical/journal-entries/{journal_entry_id}:
     get:
       tags: [Canonical]
@@ -3821,61 +3871,6 @@ components:
               type: array
               items: { type: string }
 
-    Document:
-      allOf:
-        - $ref: '#/components/schemas/LedgerCommonFields'
-        - type: object
-          required: [id, owner_id, document_type]
-          properties:
-            document_type:
-              type: string
-              enum: [invoice, receipt, bank_statement, card_statement, contract, payroll, tax, other]
-            source_uri: { type: [string, "null"] }
-            extracted_fields:
-              type: object
-              additionalProperties: true
-            linked_account_ids:
-              type: array
-              items: { type: string }
-            linked_transaction_ids:
-              type: array
-              items: { type: string }
-            linked_obligation_ids:
-              type: array
-              items: { type: string }
-            confidence_score: { type: number, minimum: 0, maximum: 1 }
-
-    Category:
-      type: object
-      required: [id, owner_id, name, kind]
-      properties:
-        id: { type: string }
-        owner_id: { type: string }
-        name: { type: string }
-        parent_id: { type: [string, "null"] }
-        kind:
-          type: string
-          enum: [expense, income, transfer, other]
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
-
-    Transfer:
-      allOf:
-        - $ref: '#/components/schemas/LedgerCommonFields'
-        - type: object
-          required: [id, owner_id, from_account_id, to_account_id, amount, currency, transfer_date, status]
-          properties:
-            from_account_id: { type: string }
-            to_account_id: { type: string }
-            from_transaction_id: { type: [string, "null"] }
-            to_transaction_id: { type: [string, "null"] }
-            amount: { type: string }
-            currency: { type: string, pattern: '^[A-Z]{3}$' }
-            transfer_date: { type: string, format: date-time }
-            status:
-              type: string
-              enum: [proposed, in_flight, completed, failed]
-
     Invoice:
       allOf:
         - $ref: '#/components/schemas/LedgerCommonFields'
@@ -4157,8 +4152,17 @@ components:
             `initialize` returns `InitializeResult`, `tools/list` returns
             `{ tools: ToolDescriptor[] }`, `tools/call` returns
             `ToolCallResult`, etc. See `docs/mcp-architecture.md`.
-          type: object
-          additionalProperties: true
+          oneOf:
+            - $ref: '#/components/schemas/InitializeResult'
+            - type: object
+              required: [tools]
+              properties:
+                tools:
+                  type: array
+                  items: { $ref: '#/components/schemas/ToolDescriptor' }
+            - $ref: '#/components/schemas/ToolCallResult'
+            - type: object
+              additionalProperties: true
         error:
           $ref: '#/components/schemas/JsonRpcError'
 

@@ -104,6 +104,9 @@ function approvalService(input: {
         counters.audit += 1;
       },
     },
+    approvals: {
+      async recordApproval() {},
+    },
     execution: {
       async enqueue() {
         counters.execute += 1;

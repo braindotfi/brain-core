@@ -8,16 +8,16 @@ The implementation lives in `packages/surfaces`, core bindings live in
 `packages/core`, and the inbound webhook process lives in
 `services/surface-gateway`.
 
-| Area                        | Location                                   | Responsibility                                                                  |
-| --------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
-| Proposal schema and hashing | `packages/surfaces/src/proposal`           | Canonical proposal validation and content hash generation                       |
-| Dispatch pipeline           | `packages/surfaces/src/core/dispatcher.ts` | Validate, hash once, deliver, and persist delivered refs through a callback     |
-| Approval pipeline           | `packages/surfaces/src/core/approval.ts`   | Expiry, identity, policy, idempotency, audit, execution handoff, surface update |
-| Surface renderers           | `packages/surfaces/src/surfaces`           | Slack Block Kit, Teams Adaptive Cards, and email templates                      |
-| Inbound helpers             | `packages/surfaces/src/http`               | Slack signature validation, email token validation, Teams verifier seam         |
-| Live clients                | `packages/surfaces/src/clients`            | Slack Web API, generic HTTP email provider, and Bot Framework Teams client      |
-| Core bindings               | `packages/core/src/bindings`               | Adapter layer from Brain services into surface ports                            |
-| Webhook deployable          | `services/surface-gateway`                 | Fastify routes, DB adapters, live client wiring, and process isolation          |
+| Area                        | Location                                   | Responsibility                                                                                      |
+| --------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Proposal schema and hashing | `packages/surfaces/src/proposal`           | Canonical proposal validation and content hash generation                                           |
+| Dispatch pipeline           | `packages/surfaces/src/core/dispatcher.ts` | Validate, hash once, deliver, and persist delivered refs through a callback                         |
+| Approval pipeline           | `packages/surfaces/src/core/approval.ts`   | Expiry, identity, policy, idempotency, audit, approval signature, execution handoff, surface update |
+| Surface renderers           | `packages/surfaces/src/surfaces`           | Slack Block Kit, Teams Adaptive Cards, and email templates                                          |
+| Inbound helpers             | `packages/surfaces/src/http`               | Slack signature validation, email token validation, Teams verifier seam                             |
+| Live clients                | `packages/surfaces/src/clients`            | Slack Web API, generic HTTP email provider, and Bot Framework Teams client                          |
+| Core bindings               | `packages/core/src/bindings`               | Adapter layer from Brain services into surface ports                                                |
+| Webhook deployable          | `services/surface-gateway`                 | Fastify routes, DB adapters, live client wiring, and process isolation                              |
 
 `@brain/surfaces` does not import `@brain/core`. The root `check-surface-acyclic` script enforces the dependency direction.
 
@@ -32,6 +32,7 @@ Agent finding
   -> Inbound HTTP helper
   -> ApprovalService.handle
   -> @brain/core ports
+  -> post-audit approval signature
   -> execution approval handoff
 ```
 

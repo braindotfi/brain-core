@@ -307,6 +307,7 @@ export interface UserRow {
   email: string;
   role: "owner" | "admin" | "approver" | "viewer";
   created_at: Date;
+  status: "pending" | "active" | "disabled";
 }
 
 export async function findUser(client: TenantScopedClient, id: string): Promise<UserRow | null> {

@@ -12,13 +12,13 @@ implementation brief.
 ## Placement
 
 Lives at `packages/surfaces` in the brain-core monorepo. Depends on nothing in
-core. The four ports defined in `src/core/ports.ts` are implemented by
+core. The ports defined in `src/core/ports.ts` are implemented by
 `@brain/core` under `packages/core/src/bindings`. Dependency direction is
 core -> surfaces, never the reverse. See the root CLAUDE.md.
 
 ## Branch
 
-`fix/surface-approval-hardening`. Branch from latest `origin/main`, keep this
+`fix/surface-audit-before-sign`. Branch from latest `origin/main`, keep this
 file and the root CLAUDE.md updated as tasks move.
 
 ## Layout
@@ -44,7 +44,8 @@ Done
 
 - Canonical Proposal schema, zod validated, branded ids.
 - Deterministic content hash for audit anchoring.
-- Ports: IdentityResolver, PolicyGate, AuditAnchor, ExecutionHandoff.
+- Ports: IdentityResolver, PolicyGate, AuditAnchor, ApprovalRecorder,
+  ExecutionHandoff.
 - Dispatcher and ApprovalService with enforced security ordering.
 - Slack, Teams, email adapters with pure card builders and injected clients.
 - Four agent factories.
@@ -62,20 +63,19 @@ Done
   posting, and logged failures; email GET and HEAD confirmation, POST approval,
   missing and invalid tokens; dual approval, double-click idempotency, crash-safe
   replay, and expired proposal clicks.
+- Approval signatures are recorded only after the decision audit anchor. Policy
+  checks are read-only, and execution handoff no longer signs.
 
 Pending (for the implementer)
 
-- [ ] brain-core port bindings (real identity, 23 policy gates, audit, execution).
-- [ ] Host the inbound helpers in the real webhook deployable.
-- [ ] Delivered-ref persistence and proposal load-by-id against real storage.
 - [ ] Replace placeholder agent input types with real detector outputs.
 - [ ] Slack Marketplace MCP registry listing for the pull path.
 
 ## Invariants (never regress)
 
-Audit before handoff. Policy re-check at click time. Tenant-scoped identity, no
-workspace-level trust. Execution always leaves Brain via ExecutionHandoff. The
-emit-time content hash is the audit truth.
+Audit before approval signature and handoff. Policy re-check at click time.
+Tenant-scoped identity, no workspace-level trust. Execution always leaves Brain
+via ExecutionHandoff. The emit-time content hash is the audit truth.
 
 ## Copy
 

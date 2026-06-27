@@ -12,7 +12,8 @@ step. It never moves funds.
 An agent emits a `Proposal`. The `Dispatcher` validates and hashes it once, then
 fans it to the requested surfaces. A human acts on the rendered card. Every
 decision, from any surface, runs the same `ApprovalService` pipeline: resolve
-identity, re-check policy, anchor audit, hand off execution.
+identity, re-check policy, anchor audit, record the approval signature, hand off
+execution.
 
 ```
 agent factory ──> Proposal ──> Dispatcher ──> SurfaceAdapter (slack | teams | email)
@@ -20,7 +21,7 @@ agent factory ──> Proposal ──> Dispatcher ──> SurfaceAdapter (slack 
                                        human clicks Approve / Hold
                                                      │
                                                      v
-                              ApprovalService:  identity -> policy -> audit -> handoff
+                         ApprovalService:  identity -> policy -> audit -> signature -> handoff
                                                      │
                                                      v
                                   ExecutionHandoff (customer's own ERP / bank / ESP)
@@ -31,9 +32,9 @@ agent factory ──> Proposal ──> Dispatcher ──> SurfaceAdapter (slack 
 - Canonical `Proposal` schema with zod validation and branded ids. The schema is
   the contract. Surfaces and agents never widen it ad hoc.
 - Deterministic proposal hashing for the "proof of what was shown" audit anchor.
-- Four brain-core integration ports: `IdentityResolver`, `PolicyGate`,
-  `AuditAnchor`, `ExecutionHandoff`. Nothing else crosses the boundary, and no
-  port can move money.
+- Brain-core integration ports: `IdentityResolver`, `PolicyGate`,
+  `AuditAnchor`, `ApprovalRecorder`, and `ExecutionHandoff`. Nothing else
+  crosses the boundary, and no port can move money.
 - `Dispatcher` (validate, hash, fan out) and `ApprovalService` (the one approval
   pipeline) with the security ordering enforced and tested.
 - Three surface adapters with real render logic and injected transport clients:
@@ -44,7 +45,8 @@ agent factory ──> Proposal ──> Dispatcher ──> SurfaceAdapter (slack 
     hosted approval route decoder.
 - Four agent proposal factories: Invoice, Collections, Cash, Close.
 - Config loader that fails fast on missing secrets.
-- Tests covering hash determinism, dispatch, policy denial, and audit-before-handoff.
+- Tests covering hash determinism, dispatch, policy denial, audit-before-sign,
+  and audit-before-handoff.
 
 ## What is stubbed for the implementer (see CODEX_PROMPT.md)
 
@@ -61,8 +63,10 @@ agent factory ──> Proposal ──> Dispatcher ──> SurfaceAdapter (slack 
 
 ## Non-negotiable invariants (do not regress)
 
-1. A decision is never executed before it is audited. Audit is step 4, handoff
-   is step 5. The test `audits before it ever hands off` guards this.
+1. A decision is never signed or executed before it is audited. Audit comes
+   before approval signature recording and handoff. The tests
+   `audits before it ever hands off` and
+   `records awaiting approval signatures after audit` guard this.
 2. Authority is re-checked at click time by the Policy gate, not trusted from the
    rendered card. A surface can never become a policy-bypass path.
 3. Identity resolves to a tenant-scoped Brain actor. No workspace-level trust.

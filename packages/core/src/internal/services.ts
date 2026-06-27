@@ -33,6 +33,7 @@ export interface PolicyEngine {
     allowed: boolean;
     reason?: string;
     awaitingSecondApproval?: boolean;
+    approverRole?: string;
   }>;
 }
 
@@ -59,6 +60,15 @@ export interface ExecutionQueue {
   }): Promise<void>;
 }
 
+export interface ApprovalRecorder {
+  recordApproval(input: {
+    proposal: Proposal;
+    actorId: ActorId;
+    surface: SurfaceName;
+    approverRole?: string | undefined;
+  }): Promise<void>;
+}
+
 export interface DecisionStore {
   claimTerminal(input: {
     tenantId: string;
@@ -66,6 +76,7 @@ export interface DecisionStore {
     decision: Exclude<Decision, "pending" | "expired">;
     actorId: ActorId;
     decidedAt: string;
+    approverRole?: string | undefined;
   }): Promise<
     | { status: "claimed" }
     | {
@@ -76,6 +87,7 @@ export interface DecisionStore {
           decision: Exclude<Decision, "pending" | "expired">;
           actorId: ActorId;
           decidedAt: string;
+          approverRole?: string | undefined;
           applied: boolean;
           context?: Record<string, string> | undefined;
         };
@@ -109,6 +121,7 @@ export interface CoreServices {
   identity: TenantIdentityStore;
   policy: PolicyEngine;
   audit: AuditLog;
+  approvals: ApprovalRecorder;
   execution: ExecutionQueue;
   decisions: DecisionStore;
   proposals: ProposalStore;

@@ -25,8 +25,9 @@ export type ApprovalOutcome =
  *   2. identity resolution surface identity must map to a real Brain actor
  *   3. policy re-check      authority is verified at click time, not emit time
  *   4. audit anchor         the decision plus content hash is recorded first
- *   5. execution handoff    only after audit, and only for approvals
- *   6. surface update       best-effort, never gates the decision
+ *   5. approval signature   only after audit, and only for approvals
+ *   6. execution handoff    only after audit and signature, only for approvals
+ *   7. surface update       best-effort, never gates the decision
  *
  * Steps 1 to 4 must all succeed before anything leaves Brain. This is what keeps
  * a surface from becoming a policy-bypass or an unlogged-approval path.
@@ -84,6 +85,7 @@ export class ApprovalService {
         decision: incoming.decision,
         actorId: actor.actorId,
         decidedAt,
+        approverRole: verdict.approverRole,
         context: incoming.context,
       });
       if (claim.status === "already_decided") {
@@ -97,6 +99,12 @@ export class ApprovalService {
             decision: claim.record.decision,
             decidedAt: claim.record.decidedAt,
             context: claim.record.context,
+          });
+          await this.ports.approvals.recordApproval({
+            proposal,
+            actorId: claim.record.actorId,
+            surface: incoming.surface,
+            approverRole: claim.record.approverRole,
           });
           await this.ports.execution.enqueue({ proposal, actorId: claim.record.actorId });
           await this.ports.decisions.markTerminalApplied(claim.record);
@@ -122,11 +130,20 @@ export class ApprovalService {
       context: incoming.context,
     });
 
+    if (incoming.decision === "approved") {
+      await this.ports.approvals.recordApproval({
+        proposal,
+        actorId: actor.actorId,
+        surface: incoming.surface,
+        approverRole: verdict.approverRole,
+      });
+    }
+
     if (verdict.awaitingSecondApproval) {
       return { status: "awaiting_second_approval", actorLabel };
     }
 
-    // 5. execution handoff, approvals only, never inside Brain
+    // 6. execution handoff, approvals only, never inside Brain
     if (incoming.decision === "approved") {
       await this.ports.execution.enqueue({ proposal, actorId: actor.actorId });
     }
@@ -140,7 +157,7 @@ export class ApprovalService {
       context: incoming.context,
     });
 
-    // 6. best-effort surface update
+    // 7. best-effort surface update
     if (deliveredRef) {
       try {
         await this.surfaces.get(incoming.surface).updateDecision({
