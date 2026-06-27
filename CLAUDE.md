@@ -17,10 +17,9 @@ fail the build if anything under packages/surfaces imports @brain/core.
 
 ## Branch
 
-`feat/surface-adapters`. git fetch and pull before starting. This scaffold is
-shaped to drop into the real brain-core repo: add the two packages to the
-workspaces array and replace `packages/core/src/internal/services.ts` interfaces
-with imports of the real internal services.
+`fix/surface-approval-hardening`. Branch from latest `origin/main`. The surface
+packages are merged into brain-core; remaining work should preserve the acyclic
+core -> surfaces dependency.
 
 ## Commands (from root)
 
@@ -29,6 +28,9 @@ with imports of the real internal services.
 - `pnpm --filter @brain/surfaces run test`
 - `pnpm --filter @brain/core run test`
 - `pnpm run check-surface-acyclic`
+- `pnpm typecheck`
+- `pnpm test`
+- `pnpm lint`
 
 Surfaces must be built before core typechecks when consuming the package export,
 because core resolves @brain/surfaces through its built dist. The root scripts
@@ -53,29 +55,30 @@ Done
 
 - Monorepo workspace with one-directional core -> surfaces dependency, verified.
 - Surfaces package (schema, hashing, ports, dispatcher, approval pipeline, three
-  adapters, four agent factories). Strict typecheck clean, 4 tests green.
+  adapters, four agent factories). Strict typecheck clean, focused tests green.
 - Core bindings for the surface ports, plus the composition root.
 - End-to-end runtime test: dispatch to Slack then approve, with audit before
   execution. Green.
-- Inbound helper layer: Slack signature verification before parsing, email token
-  approval route, and Teams submit handler with injected activity verifier.
+- Inbound helper layer: Slack signature verification before parsing, email
+  confirmation plus POST approval route, and Teams submit handler.
 - Live transport client seams: Slack Web API client, Teams Bot Framework
-  proactive client with conversation-reference store, and generic HTTP ESP
-  client.
+  proactive client, Bot Framework activity verifier, conversation-reference
+  store, and generic HTTP ESP client.
 - Delivered-ref persistence from Dispatcher and terminal decision idempotency at
-  the approval store boundary.
-- Tests cover Slack signature valid, stale, and tampered; email token valid,
-  expired, wrong-secret, and tampered; dual approval, double-click idempotency,
-  and expired proposal clicks.
+  the approval store boundary, including crash-safe unapplied replay.
+- Slack outcomes are posted through `response_url`; background approval errors
+  are caught and logged.
+- Tests cover Slack signature valid, stale, tampered, ack timing, outcome
+  posting, and logged failures; email GET and HEAD confirmation, POST approval,
+  missing and invalid tokens; dual approval, double-click idempotency, crash-safe
+  replay, and expired proposal clicks.
 
 Pending (see packages/surfaces/CODEX_PROMPT.md for the full brief)
 
 - [ ] Replace `internal/services.ts` interfaces with real brain-core services.
-- [ ] Host the inbound helpers in the real webhook deployable and wire the Teams
-      verifier to the Bot Framework adapter.
+- [ ] Host the inbound helpers in the real webhook deployable.
 - [ ] Delivered-ref persistence and proposal load-by-id against real storage.
 - [ ] Real agent input types from the detectors.
-- [ ] CI: typecheck plus test gate, the acyclic-import check, and a lint step.
 - [ ] Slack Marketplace MCP registry listing for the pull path.
 
 ## Runtime isolation

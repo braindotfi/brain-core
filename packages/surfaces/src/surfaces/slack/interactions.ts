@@ -13,12 +13,15 @@ export interface SlackInteractionPayload {
   user: { id: string };
   channel?: { id: string };
   message?: { ts: string };
+  response_url?: string;
   actions: Array<{ action_id: string; value: string }>;
 }
 
-export function toIncomingDecision(
-  payload: SlackInteractionPayload,
-): { decision: IncomingDecision; deliveredRef?: string | undefined } | null {
+export function toIncomingDecision(payload: SlackInteractionPayload): {
+  decision: IncomingDecision;
+  deliveredRef?: string | undefined;
+  responseUrl?: string | undefined;
+} | null {
   const action = payload.actions[0];
   if (!action) return null;
 
@@ -39,5 +42,6 @@ export function toIncomingDecision(
       context,
     },
     deliveredRef: payload.message?.ts,
+    responseUrl: payload.response_url,
   };
 }

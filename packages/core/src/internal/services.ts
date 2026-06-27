@@ -76,6 +76,7 @@ export interface DecisionStore {
           decision: Exclude<Decision, "pending" | "expired">;
           actorId: ActorId;
           decidedAt: string;
+          applied: boolean;
         };
       }
   >;

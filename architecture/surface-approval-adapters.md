@@ -52,8 +52,8 @@ Slack, Teams, and email are therefore input channels to the same policy and audi
 
 The package provides framework-neutral handlers. A production deployable still needs to host those handlers behind the real API edge:
 
-* Slack interactivity endpoint with raw-body preservation.
-* Teams bot endpoint with Bot Framework verification.
-* Email approval endpoint with HTTPS-only signed token links.
-* Persistent proposal storage and delivered-message refs in Brain core storage.
-* A real `ApprovalDecisionStore` backed by an atomic tenant/proposal uniqueness constraint.
+- Slack interactivity endpoint with raw-body preservation.
+- Teams bot endpoint with Bot Framework verification.
+- Email approval endpoint with HTTPS-only signed token links.
+- Persistent proposal storage and delivered-message refs in Brain core storage.
+- A real `ApprovalDecisionStore` backed by an atomic tenant/proposal uniqueness constraint.

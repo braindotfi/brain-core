@@ -86,6 +86,20 @@ export class ApprovalService {
         decidedAt,
       });
       if (claim.status === "already_decided") {
+        if (claim.record.decision === "approved" && !claim.record.applied) {
+          await this.ports.audit.record({
+            proposalId: proposal.id,
+            tenantId: proposal.tenantId,
+            contentHash: proposal.contentHash ?? "",
+            surface: incoming.surface,
+            actorId: claim.record.actorId,
+            decision: claim.record.decision,
+            decidedAt,
+            context: incoming.context,
+          });
+          await this.ports.execution.enqueue({ proposal, actorId: claim.record.actorId });
+          await this.ports.decisions.markTerminalApplied(claim.record);
+        }
         return {
           status: "already_decided",
           decision: claim.record.decision,
@@ -111,6 +125,11 @@ export class ApprovalService {
       return { status: "awaiting_second_approval", actorLabel };
     }
 
+    // 5. execution handoff, approvals only, never inside Brain
+    if (incoming.decision === "approved") {
+      await this.ports.execution.enqueue({ proposal, actorId: actor.actorId });
+    }
+
     await this.ports.decisions.markTerminalApplied({
       proposalId: proposal.id,
       tenantId: proposal.tenantId,
@@ -118,11 +137,6 @@ export class ApprovalService {
       actorId: actor.actorId,
       decidedAt,
     });
-
-    // 5. execution handoff, approvals only, never inside Brain
-    if (incoming.decision === "approved") {
-      await this.ports.execution.enqueue({ proposal, actorId: actor.actorId });
-    }
 
     // 6. best-effort surface update
     if (deliveredRef) {

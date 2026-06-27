@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { ApprovalService } from "../core/approval.js";
+import type { ApprovalOutcome, ApprovalService } from "../core/approval.js";
 import {
   toIncomingDecision,
   type SlackInteractionPayload,
@@ -46,6 +46,8 @@ export interface SlackInteractionRequest {
   headers: Record<string, string | string[] | undefined>;
   signingSecret: string;
   approvals: ApprovalService;
+  outcomePoster?: SlackOutcomePoster | undefined;
+  logger?: SlackInteractionLogger | undefined;
   nowMs?: number | undefined;
 }
 
@@ -53,6 +55,20 @@ export interface SlackInteractionResponse {
   status: number;
   body: string;
 }
+
+export interface SlackInteractionLogger {
+  error(message: string, error: unknown): void;
+}
+
+export interface SlackOutcomeMessage {
+  text: string;
+  responseType: "ephemeral";
+}
+
+export type SlackOutcomePoster = (input: {
+  responseUrl: string;
+  message: SlackOutcomeMessage;
+}) => Promise<void>;
 
 export async function handleSlackInteraction(
   request: SlackInteractionRequest,
@@ -74,8 +90,73 @@ export async function handleSlackInteraction(
   const normalized = toIncomingDecision(payload);
   if (!normalized) return { status: 400, body: "unknown slack action" };
 
-  void request.approvals.handle(normalized.decision, normalized.deliveredRef);
+  const poster = request.outcomePoster ?? postSlackOutcome;
+  const logger = request.logger ?? console;
+  void request.approvals
+    .handle(normalized.decision, normalized.deliveredRef)
+    .then(async (outcome) => {
+      if (!normalized.responseUrl) return;
+      await poster({
+        responseUrl: normalized.responseUrl,
+        message: slackOutcomeMessage(outcome),
+      });
+    })
+    .catch((error: unknown) => {
+      logger.error("Slack approval handling failed", error);
+    });
   return { status: 200, body: "" };
+}
+
+export function slackOutcomeMessage(outcome: ApprovalOutcome): SlackOutcomeMessage {
+  switch (outcome.status) {
+    case "applied":
+      return {
+        responseType: "ephemeral",
+        text:
+          outcome.decision === "approved"
+            ? "Approved. Brain recorded the decision and handed it off."
+            : "Held. Brain recorded the decision and took no action.",
+      };
+    case "awaiting_second_approval":
+      return {
+        responseType: "ephemeral",
+        text: "Recorded. Brain is waiting for a second approver.",
+      };
+    case "already_decided":
+      return {
+        responseType: "ephemeral",
+        text: `Already decided by ${outcome.actorLabel}.`,
+      };
+    case "denied":
+      return { responseType: "ephemeral", text: `Denied. ${outcome.reason}` };
+    case "expired":
+      return {
+        responseType: "ephemeral",
+        text: "Expired. This proposal can no longer be decided.",
+      };
+    case "unknown_actor":
+      return {
+        responseType: "ephemeral",
+        text: "Unresolved. Brain could not resolve this identity or proposal.",
+      };
+  }
+}
+
+export async function postSlackOutcome(input: {
+  responseUrl: string;
+  message: SlackOutcomeMessage;
+}): Promise<void> {
+  const response = await fetch(input.responseUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      response_type: input.message.responseType,
+      text: input.message.text,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`slack_response_url_failed_${response.status}`);
+  }
 }
 
 function parseSlackPayload(rawBody: string | Buffer): SlackInteractionPayload | null {

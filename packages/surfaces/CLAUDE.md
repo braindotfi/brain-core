@@ -18,8 +18,8 @@ core -> surfaces, never the reverse. See the root CLAUDE.md.
 
 ## Branch
 
-`feat/surface-adapters`. git fetch and pull before starting, keep this file and
-the root CLAUDE.md updated as tasks move.
+`fix/surface-approval-hardening`. Branch from latest `origin/main`, keep this
+file and the root CLAUDE.md updated as tasks move.
 
 ## Layout
 
@@ -32,9 +32,11 @@ the root CLAUDE.md updated as tasks move.
 
 ## Commands
 
-- `npm run typecheck` strict, must stay at zero errors.
-- `npm test` node test runner via tsx.
-- `npm run build` emits to dist.
+- `pnpm --filter @brain/surfaces run typecheck` strict, must stay at zero
+  errors.
+- `pnpm --filter @brain/surfaces run test` node test runner via tsx.
+- `pnpm --filter @brain/surfaces run build` emits to dist.
+- `pnpm lint` runs the full repo gate before PR.
 
 ## Status
 
@@ -47,25 +49,27 @@ Done
 - Slack, Teams, email adapters with pure card builders and injected clients.
 - Four agent factories.
 - Config loader. Tests green. Strict typecheck clean.
-- Slack signature verification before parsing, email token approval route, and
-  Teams submit handler with injected activity verifier.
+- Slack signature verification before parsing, email confirmation plus POST
+  approval route, and Teams submit handler.
 - Slack Web API client, Teams Bot Framework proactive client with
-  conversation-reference store, and generic HTTP ESP client.
+  conversation-reference store, Bot Framework activity verifier, and generic
+  HTTP ESP client.
 - Delivered-ref persistence from Dispatcher and terminal decision idempotency at
-  the approval store boundary.
-- Tests cover Slack signature valid, stale, and tampered; email token valid,
-  expired, wrong-secret, and tampered; dual approval, double-click idempotency,
-  and expired proposal clicks.
+  the approval store boundary, including crash-safe unapplied replay.
+- Slack outcomes are posted through `response_url`; background approval errors
+  are caught and logged.
+- Tests cover Slack signature valid, stale, tampered, ack timing, outcome
+  posting, and logged failures; email GET and HEAD confirmation, POST approval,
+  missing and invalid tokens; dual approval, double-click idempotency, crash-safe
+  replay, and expired proposal clicks.
 
 Pending (for the implementer)
 
 - [ ] brain-core port bindings (real identity, 23 policy gates, audit, execution).
-- [ ] Host the inbound helpers in the real webhook deployable and wire the Teams
-      verifier to the Bot Framework adapter.
+- [ ] Host the inbound helpers in the real webhook deployable.
 - [ ] Delivered-ref persistence and proposal load-by-id against real storage.
 - [ ] Replace placeholder agent input types with real detector outputs.
 - [ ] Slack Marketplace MCP registry listing for the pull path.
-- [ ] CI: typecheck plus test gate; add a lint step.
 
 ## Invariants (never regress)
 

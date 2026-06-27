@@ -29,6 +29,7 @@ const ROOT = process.cwd();
 const SKIP_DIRS = new Set([
   "node_modules",
   ".git",
+  ".context",
   ".claude",
   "dist",
   ".venv",
