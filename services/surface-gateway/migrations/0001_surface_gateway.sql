@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS surface_decisions (
   decision     TEXT        NOT NULL CHECK (decision IN ('approved','rejected')),
   actor_id     TEXT        NOT NULL,
   decided_at   TIMESTAMPTZ NOT NULL,
+  approver_role TEXT,
   context      JSONB       NOT NULL DEFAULT '{}'::JSONB,
   applied      BOOLEAN     NOT NULL DEFAULT false,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),

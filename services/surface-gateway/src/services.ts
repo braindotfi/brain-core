@@ -47,7 +47,8 @@ export function buildSurfaceGatewayServices(options: SurfaceGatewayServiceOption
     identity: new PostgresSurfaceIdentityStore(options.pool, options.resolverPool ?? options.pool),
     policy: new SurfacePolicyEngine(options.pool, approvals),
     audit: new SurfaceAuditLog(options.audit),
-    execution: new SurfaceExecutionQueue(approvals),
+    approvals: new SurfaceApprovalRecorder(approvals),
+    execution: new SurfaceExecutionQueue(),
     decisions: new PostgresSurfaceDecisionStore(options.pool),
     proposals: proposalStore,
   };
@@ -64,7 +65,12 @@ export class SurfacePolicyEngine implements PolicyEngine {
     proposal: Proposal;
     actor: ResolvedActor;
     decision: TerminalDecision;
-  }): Promise<{ allowed: boolean; reason?: string; awaitingSecondApproval?: boolean }> {
+  }): Promise<{
+    allowed: boolean;
+    reason?: string;
+    awaitingSecondApproval?: boolean;
+    approverRole?: string;
+  }> {
     const ctx = context(input.proposal.tenantId, input.actor.actorId);
     const activeDecision = await withTenantScope(this.pool, input.proposal.tenantId, async (c) => {
       const active = await getActive(c);
@@ -89,21 +95,24 @@ export class SurfacePolicyEngine implements PolicyEngine {
     }
 
     if (input.decision === "rejected") {
-      return { allowed: true };
+      return { allowed: true, approverRole: actorRole };
     }
-
-    await signApprovalIdempotent(this.approvals, ctx, input.proposal.id, actorRole);
 
     const needsDualApproval =
       input.proposal.policy.requiresDualApproval || requiredRoles.length > 1;
-    if (!needsDualApproval) return { allowed: true };
+    if (!needsDualApproval) return { allowed: true, approverRole: actorRole };
 
-    const hasRequired = await this.approvals.hasRequiredApprovals(
+    const signedRoles = await this.approvals.signedValidRoles(
       ctx,
       { type: "proposal", id: input.proposal.id },
-      requiredRoles,
+      null,
     );
-    return hasRequired ? { allowed: true } : { allowed: true, awaitingSecondApproval: true };
+    const rolesAfterDecision = new Set(signedRoles);
+    rolesAfterDecision.add(actorRole);
+    const hasRequired = requiredRoles.every((role) => rolesAfterDecision.has(role));
+    return hasRequired
+      ? { allowed: true, approverRole: actorRole }
+      : { allowed: true, awaitingSecondApproval: true, approverRole: actorRole };
   }
 }
 
@@ -140,16 +149,27 @@ export class SurfaceAuditLog implements AuditLog {
   }
 }
 
-export class SurfaceExecutionQueue implements ExecutionQueue {
+export class SurfaceApprovalRecorder {
   public constructor(private readonly approvals: ExecutionApprovalService) {}
 
-  public async enqueueIdempotent(input: {
+  public async recordApproval(input: {
+    proposal: Proposal;
+    actorId: ActorId;
+    surface: SurfaceName;
+    approverRole?: string | undefined;
+  }): Promise<void> {
+    const ctx = context(input.proposal.tenantId, input.actorId);
+    await signApprovalIdempotent(this.approvals, ctx, input.proposal.id, input.approverRole);
+  }
+}
+
+export class SurfaceExecutionQueue implements ExecutionQueue {
+  public async enqueueIdempotent(_input: {
     proposalId: string;
     proposal: Proposal;
     actorId: ActorId;
   }): Promise<void> {
-    const ctx = context(input.proposal.tenantId, input.actorId);
-    await signApprovalIdempotent(this.approvals, ctx, input.proposalId, undefined);
+    return;
   }
 }
 
@@ -172,7 +192,8 @@ function isApproverActive(
     withTenantScope(pool, ctx.tenantId, async (c) => {
       const agent = await findAgent(c, principalId);
       if (agent !== null) return agent.state === "active";
-      return (await findUser(c, principalId)) !== null;
+      const user = await findUser(c, principalId);
+      return user?.status === "active";
     });
 }
 
@@ -198,7 +219,9 @@ function firstMatchingRole(
   actorRoles: readonly string[],
   requiredRoles: readonly string[],
 ): string | null {
-  if (requiredRoles.includes("signer")) return actorRoles[0] ?? "signer";
+  // In the policy DSL, signer is a sentinel for any eligible held approver role.
+  // A roleless actor is never eligible.
+  if (requiredRoles.includes("signer")) return actorRoles[0] ?? null;
   const required = new Set(requiredRoles);
   return actorRoles.find((role) => required.has(role)) ?? null;
 }

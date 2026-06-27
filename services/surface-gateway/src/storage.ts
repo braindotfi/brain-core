@@ -116,6 +116,7 @@ export class PostgresSurfaceDecisionStore implements DecisionStore {
     decision: TerminalDecision;
     actorId: ActorId;
     decidedAt: string;
+    approverRole?: string | undefined;
     context?: Record<string, string> | undefined;
   }): Promise<
     | { status: "claimed" }
@@ -127,6 +128,7 @@ export class PostgresSurfaceDecisionStore implements DecisionStore {
           decision: TerminalDecision;
           actorId: ActorId;
           decidedAt: string;
+          approverRole?: string | undefined;
           applied: boolean;
           context?: Record<string, string> | undefined;
         };
@@ -135,8 +137,8 @@ export class PostgresSurfaceDecisionStore implements DecisionStore {
     return withTenantScope(this.pool, input.tenantId, async (c) => {
       const inserted = await c.query<{ proposal_id: string }>(
         `INSERT INTO surface_decisions
-           (tenant_id, proposal_id, decision, actor_id, decided_at, context, applied)
-         VALUES ($1, $2, $3, $4, $5, $6, false)
+           (tenant_id, proposal_id, decision, actor_id, decided_at, approver_role, context, applied)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, false)
          ON CONFLICT (tenant_id, proposal_id) DO NOTHING
          RETURNING proposal_id`,
         [
@@ -145,6 +147,7 @@ export class PostgresSurfaceDecisionStore implements DecisionStore {
           input.decision,
           input.actorId,
           input.decidedAt,
+          input.approverRole ?? null,
           JSON.stringify(input.context ?? {}),
         ],
       );
@@ -156,10 +159,11 @@ export class PostgresSurfaceDecisionStore implements DecisionStore {
         decision: TerminalDecision;
         actor_id: string;
         decided_at: Date;
+        approver_role: string | null;
         applied: boolean;
         context: Record<string, string>;
       }>(
-        `SELECT tenant_id, proposal_id, decision, actor_id, decided_at, applied, context
+        `SELECT tenant_id, proposal_id, decision, actor_id, decided_at, approver_role, applied, context
            FROM surface_decisions
           WHERE tenant_id = $1 AND proposal_id = $2
           LIMIT 1`,
@@ -175,6 +179,7 @@ export class PostgresSurfaceDecisionStore implements DecisionStore {
           decision: row.decision,
           actorId: row.actor_id as ActorId,
           decidedAt: row.decided_at.toISOString(),
+          approverRole: row.approver_role ?? undefined,
           applied: row.applied,
           context: row.context,
         },
