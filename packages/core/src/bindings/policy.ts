@@ -18,9 +18,6 @@ export class CorePolicyGate implements PolicyGate {
     return {
       allowed: result.allowed,
       ...(result.reason !== undefined ? { reason: result.reason } : {}),
-      ...(result.awaitingSecondApproval !== undefined
-        ? { awaitingSecondApproval: result.awaitingSecondApproval }
-        : {}),
       ...(result.approverRole !== undefined ? { approverRole: result.approverRole } : {}),
     };
   }

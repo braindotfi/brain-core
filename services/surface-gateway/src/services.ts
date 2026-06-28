@@ -45,9 +45,9 @@ export function buildSurfaceGatewayServices(options: SurfaceGatewayServiceOption
 
   const services: CoreServices = {
     identity: new PostgresSurfaceIdentityStore(options.pool, options.resolverPool ?? options.pool),
-    policy: new SurfacePolicyEngine(options.pool, approvals),
+    policy: new SurfacePolicyEngine(options.pool),
     audit: new SurfaceAuditLog(options.audit),
-    approvals: new SurfaceApprovalRecorder(approvals),
+    approvals: new SurfaceApprovalRecorder(approvals, options.pool),
     execution: new SurfaceExecutionQueue(),
     decisions: new PostgresSurfaceDecisionStore(options.pool),
     proposals: proposalStore,
@@ -56,10 +56,7 @@ export function buildSurfaceGatewayServices(options: SurfaceGatewayServiceOption
 }
 
 export class SurfacePolicyEngine implements PolicyEngine {
-  public constructor(
-    private readonly pool: Pool,
-    private readonly approvals: ExecutionApprovalService,
-  ) {}
+  public constructor(private readonly pool: Pool) {}
 
   public async evaluateDecision(input: {
     proposal: Proposal;
@@ -68,10 +65,8 @@ export class SurfacePolicyEngine implements PolicyEngine {
   }): Promise<{
     allowed: boolean;
     reason?: string;
-    awaitingSecondApproval?: boolean;
     approverRole?: string;
   }> {
-    const ctx = context(input.proposal.tenantId, input.actor.actorId);
     const activeDecision = await withTenantScope(this.pool, input.proposal.tenantId, async (c) => {
       const active = await getActive(c);
       if (active === null) return null;
@@ -98,21 +93,7 @@ export class SurfacePolicyEngine implements PolicyEngine {
       return { allowed: true, approverRole: actorRole };
     }
 
-    const needsDualApproval =
-      input.proposal.policy.requiresDualApproval || requiredRoles.length > 1;
-    if (!needsDualApproval) return { allowed: true, approverRole: actorRole };
-
-    const signedRoles = await this.approvals.signedValidRoles(
-      ctx,
-      { type: "proposal", id: input.proposal.id },
-      null,
-    );
-    const rolesAfterDecision = new Set(signedRoles);
-    rolesAfterDecision.add(actorRole);
-    const hasRequired = requiredRoles.every((role) => rolesAfterDecision.has(role));
-    return hasRequired
-      ? { allowed: true, approverRole: actorRole }
-      : { allowed: true, awaitingSecondApproval: true, approverRole: actorRole };
+    return { allowed: true, approverRole: actorRole };
   }
 }
 
@@ -150,16 +131,42 @@ export class SurfaceAuditLog implements AuditLog {
 }
 
 export class SurfaceApprovalRecorder {
-  public constructor(private readonly approvals: ExecutionApprovalService) {}
+  public constructor(
+    private readonly approvals: ExecutionApprovalService,
+    private readonly pool?: Pool | undefined,
+  ) {}
 
   public async recordApproval(input: {
     proposal: Proposal;
     actorId: ActorId;
     surface: SurfaceName;
     approverRole?: string | undefined;
-  }): Promise<void> {
+  }): Promise<{ quorumMet: boolean }> {
     const ctx = context(input.proposal.tenantId, input.actorId);
-    await signApprovalIdempotent(this.approvals, ctx, input.proposal.id, input.approverRole);
+    const requiredRoles = await this.requiredRoles(input.proposal);
+    const result = await this.approvals.signAndCheckRequiredApprovals(
+      ctx,
+      { type: "proposal", id: input.proposal.id },
+      requiredRoles,
+      input.approverRole,
+    );
+    return { quorumMet: result.quorumMet };
+  }
+
+  private async requiredRoles(proposal: Proposal): Promise<string[]> {
+    if (this.pool === undefined) return proposal.policy.approverRoles;
+    return withTenantScope(this.pool, proposal.tenantId, async (c) => {
+      const active = await getActive(c);
+      if (active === null) return proposal.policy.approverRoles;
+      const activeDecision = evaluateForActorRoles(
+        active.content,
+        proposal,
+        proposal.policy.approverRoles,
+      );
+      return activeDecision.required_approvers.length > 0
+        ? activeDecision.required_approvers
+        : proposal.policy.approverRoles;
+    });
   }
 }
 
@@ -195,20 +202,6 @@ function isApproverActive(
       const user = await findUser(c, principalId);
       return user?.status === "active";
     });
-}
-
-async function signApprovalIdempotent(
-  approvals: ExecutionApprovalService,
-  ctx: ServiceCallContext,
-  proposalId: string,
-  role: string | undefined,
-): Promise<void> {
-  try {
-    await approvals.sign(ctx, { type: "proposal", id: proposalId }, role);
-  } catch (error) {
-    if (isBrainErrorCode(error, "approval_duplicate_signer")) return;
-    throw error;
-  }
 }
 
 function context(tenantId: string, actor: string): ServiceCallContext {
@@ -276,13 +269,4 @@ function surfaceDecisionAuditKey(event: {
     event.actorId,
     event.contentHash,
   ].join(":");
-}
-
-function isBrainErrorCode(error: unknown, code: string): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === code
-  );
 }

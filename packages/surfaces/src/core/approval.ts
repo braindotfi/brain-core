@@ -25,9 +25,10 @@ export type ApprovalOutcome =
  *   2. identity resolution surface identity must map to a real Brain actor
  *   3. policy re-check      authority is verified at click time, not emit time
  *   4. audit anchor         the decision plus content hash is recorded first
- *   5. approval signature   only after audit, and only for approvals
- *   6. execution handoff    only after audit and signature, only for approvals
- *   7. surface update       best-effort, never gates the decision
+ *   5. approval signature   signs and reads post-write quorum, approvals only
+ *   6. terminal claim       only after approval quorum is met, or for rejection
+ *   7. execution handoff    only after audit, signature, quorum, and claim
+ *   8. surface update       best-effort, never gates the decision
  *
  * Steps 1 to 4 must all succeed before anything leaves Brain. This is what keeps
  * a surface from becoming a policy-bypass or an unlogged-approval path.
@@ -78,7 +79,7 @@ export class ApprovalService {
     const decidedAt = new Date().toISOString();
     const actorLabel = actor.actorId;
 
-    if (!verdict.awaitingSecondApproval) {
+    if (incoming.decision === "rejected") {
       const claim = await this.ports.decisions.claimTerminal({
         proposalId: proposal.id,
         tenantId: proposal.tenantId,
@@ -89,7 +90,7 @@ export class ApprovalService {
         context: incoming.context,
       });
       if (claim.status === "already_decided") {
-        if (claim.record.decision === "approved" && !claim.record.applied) {
+        if (!claim.record.applied) {
           await this.ports.audit.record({
             proposalId: proposal.id,
             tenantId: proposal.tenantId,
@@ -100,13 +101,6 @@ export class ApprovalService {
             decidedAt: claim.record.decidedAt,
             context: claim.record.context,
           });
-          await this.ports.approvals.recordApproval({
-            proposal,
-            actorId: claim.record.actorId,
-            surface: incoming.surface,
-            approverRole: claim.record.approverRole,
-          });
-          await this.ports.execution.enqueue({ proposal, actorId: claim.record.actorId });
           await this.ports.decisions.markTerminalApplied(claim.record);
         }
         return {
@@ -116,9 +110,30 @@ export class ApprovalService {
           decidedAt: claim.record.decidedAt,
         };
       }
+
+      await this.ports.audit.record({
+        proposalId: proposal.id,
+        tenantId: proposal.tenantId,
+        contentHash: proposal.contentHash ?? "",
+        surface: incoming.surface,
+        actorId: actor.actorId,
+        decision: incoming.decision,
+        decidedAt,
+        context: incoming.context,
+      });
+      await this.ports.decisions.markTerminalApplied({
+        proposalId: proposal.id,
+        tenantId: proposal.tenantId,
+        decision: incoming.decision,
+        actorId: actor.actorId,
+        decidedAt,
+        context: incoming.context,
+      });
+      await this.updateSurface(incoming, deliveredRef, proposal, actorLabel);
+      return { status: "applied", decision: incoming.decision, actorLabel };
     }
 
-    // 4. audit anchor, before any handoff
+    // 4. audit anchor, before any quorum-changing signature or handoff
     await this.ports.audit.record({
       proposalId: proposal.id,
       tenantId: proposal.tenantId,
@@ -130,23 +145,41 @@ export class ApprovalService {
       context: incoming.context,
     });
 
-    if (incoming.decision === "approved") {
-      await this.ports.approvals.recordApproval({
-        proposal,
-        actorId: actor.actorId,
-        surface: incoming.surface,
-        approverRole: verdict.approverRole,
-      });
-    }
+    const approval = await this.ports.approvals.recordApproval({
+      proposal,
+      actorId: actor.actorId,
+      surface: incoming.surface,
+      approverRole: verdict.approverRole,
+    });
 
-    if (verdict.awaitingSecondApproval) {
+    if (!approval.quorumMet) {
       return { status: "awaiting_second_approval", actorLabel };
     }
 
-    // 6. execution handoff, approvals only, never inside Brain
-    if (incoming.decision === "approved") {
-      await this.ports.execution.enqueue({ proposal, actorId: actor.actorId });
+    const claim = await this.ports.decisions.claimTerminal({
+      proposalId: proposal.id,
+      tenantId: proposal.tenantId,
+      decision: incoming.decision,
+      actorId: actor.actorId,
+      decidedAt,
+      approverRole: verdict.approverRole,
+      context: incoming.context,
+    });
+    if (claim.status === "already_decided") {
+      if (claim.record.decision === "approved" && !claim.record.applied) {
+        await this.ports.execution.enqueue({ proposal, actorId: claim.record.actorId });
+        await this.ports.decisions.markTerminalApplied(claim.record);
+      }
+      return {
+        status: "already_decided",
+        decision: claim.record.decision,
+        actorLabel: claim.record.actorId,
+        decidedAt: claim.record.decidedAt,
+      };
     }
+
+    // 7. execution handoff, approvals only, never inside Brain
+    await this.ports.execution.enqueue({ proposal, actorId: actor.actorId });
 
     await this.ports.decisions.markTerminalApplied({
       proposalId: proposal.id,
@@ -154,10 +187,22 @@ export class ApprovalService {
       decision: incoming.decision,
       actorId: actor.actorId,
       decidedAt,
+      approverRole: verdict.approverRole,
       context: incoming.context,
     });
 
-    // 7. best-effort surface update
+    await this.updateSurface(incoming, deliveredRef, proposal, actorLabel);
+
+    return { status: "applied", decision: incoming.decision, actorLabel };
+  }
+
+  private async updateSurface(
+    incoming: IncomingDecision,
+    deliveredRef: string | undefined,
+    proposal: Proposal,
+    actorLabel: string,
+  ): Promise<void> {
+    // 8. best-effort surface update
     if (deliveredRef) {
       try {
         await this.surfaces.get(incoming.surface).updateDecision({
@@ -171,7 +216,5 @@ export class ApprovalService {
         // Surface update failure does not invalidate a recorded decision.
       }
     }
-
-    return { status: "applied", decision: incoming.decision, actorLabel };
   }
 }

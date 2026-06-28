@@ -29,6 +29,14 @@ export interface IApprovalService {
     signature?: string,
   ): Promise<ApprovalRecord>;
 
+  signAndCheckRequiredApprovals(
+    ctx: ServiceCallContext,
+    subject: { type: ApprovalSubjectType; id: string },
+    requiredRoles: readonly string[],
+    role?: string,
+    signature?: string,
+  ): Promise<{ approval: ApprovalRecord; quorumMet: boolean }>;
+
   list(
     ctx: ServiceCallContext,
     subject: { type: ApprovalSubjectType; id: string },
