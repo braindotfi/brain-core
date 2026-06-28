@@ -133,6 +133,101 @@ export class ApprovalService implements IApprovalService {
     return toRecord(row);
   }
 
+  public async signAndCheckRequiredApprovals(
+    ctx: ServiceCallContext,
+    subject: { type: "payment_intent" | "proposal"; id: string },
+    requiredRoles: readonly string[],
+    role?: string,
+    signature?: string,
+  ): Promise<{ approval: ApprovalRecord; quorumMet: boolean }> {
+    if (this.deps.isApproverActive !== undefined) {
+      const active = await this.deps.isApproverActive(ctx, ctx.actor);
+      if (!active) {
+        throw brainError("approval_signer_revoked", "signer is not an active approver", {
+          details: { signer_id: ctx.actor },
+        });
+      }
+    }
+    if (this.deps.resolveSubjectOwnerTenant !== undefined) {
+      const ownerTenant = await this.deps.resolveSubjectOwnerTenant(ctx, subject);
+      if (ownerTenant !== null && ownerTenant !== ctx.tenantId) {
+        throw brainError("approval_cross_tenant", "signer tenant does not own this subject", {
+          details: { signer_tenant: ctx.tenantId, owner_tenant: ownerTenant },
+        });
+      }
+    }
+
+    const policyVersion =
+      this.deps.resolveActivePolicyVersion !== undefined
+        ? await this.deps.resolveActivePolicyVersion(ctx)
+        : null;
+    const resolvedRole = role ?? (await this.deps.resolveRole(ctx, ctx.actor)) ?? null;
+    let inserted = false;
+
+    const { row, quorumMet } = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      await c.query(
+        "SELECT pg_advisory_xact_lock(('x' || substr(md5($1), 1, 16))::bit(64)::bigint)",
+        [`${ctx.tenantId}:${subject.type}:${subject.id}`],
+      );
+
+      const existing = await findApprovalForSigner(c, subject.type, subject.id, ctx.actor);
+      const approvalRow =
+        existing ??
+        (await insertApproval(c, {
+          id: newApprovalId(),
+          tenantId: ctx.tenantId,
+          subjectType: subject.type,
+          subjectId: subject.id,
+          approverPrincipalId: ctx.actor,
+          approverRole: resolvedRole,
+          signature: signature ?? null,
+          policyVersion,
+          signerTenantId: ctx.tenantId,
+        }));
+      inserted = existing === null;
+
+      if (policyVersion !== null) {
+        await markStaleForSupersededVersion(
+          c,
+          subject.type as ApprovalSubjectType,
+          subject.id,
+          policyVersion,
+        );
+      }
+      const rows = await listValidApprovals(
+        c,
+        subject.type as ApprovalSubjectType,
+        subject.id,
+        policyVersion,
+      );
+      const signed = new Set(
+        rows.map((r) => r.approver_role).filter((r): r is string => r !== null),
+      );
+      return {
+        row: approvalRow,
+        quorumMet: requiredRoles.every((requiredRole) => signed.has(requiredRole)),
+      };
+    });
+
+    if (inserted) {
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "agent",
+        actor: ctx.actor,
+        action: `approval.${subject.type}.signed`,
+        inputs: {
+          subject_type: subject.type,
+          subject_id: subject.id,
+          approver_role: resolvedRole,
+          policy_version: policyVersion,
+        },
+        outputs: { approval_id: row.id },
+      });
+    }
+
+    return { approval: toRecord(row), quorumMet };
+  }
+
   public async list(
     ctx: ServiceCallContext,
     subject: { type: "payment_intent" | "proposal"; id: string },

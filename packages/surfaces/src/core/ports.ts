@@ -46,8 +46,6 @@ export interface PolicyVerdict {
   allowed: boolean;
   /** Human-readable reason when not allowed, surfaced back to the approver. */
   reason?: string;
-  /** True when this approval satisfies a gate but a second approver is still required. */
-  awaitingSecondApproval?: boolean;
   /** The approver role that policy accepted for this decision. */
   approverRole?: string;
 }
@@ -91,7 +89,7 @@ export interface ApprovalRecorder {
     actorId: ActorId;
     surface: SurfaceName;
     approverRole?: string | undefined;
-  }): Promise<void>;
+  }): Promise<{ quorumMet: boolean }>;
 }
 
 export interface TerminalDecisionInput {

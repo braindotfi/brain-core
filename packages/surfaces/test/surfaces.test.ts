@@ -45,7 +45,9 @@ function memoryDecisions(): BrainCorePorts["decisions"] {
 
 function noopApprovalRecorder(): BrainCorePorts["approvals"] {
   return {
-    async recordApproval() {},
+    async recordApproval() {
+      return { quorumMet: true };
+    },
   };
 }
 
@@ -154,6 +156,7 @@ test("approval pipeline audits before it ever hands off", async () => {
     approvals: {
       async recordApproval() {
         order.push("recordApproval");
+        return { quorumMet: true };
       },
     },
     execution: {
@@ -198,7 +201,7 @@ test("approval pipeline records awaiting approval signatures after audit", async
     },
     policy: {
       async canDecide() {
-        return { allowed: true, awaitingSecondApproval: true, approverRole: "ap_lead" };
+        return { allowed: true, approverRole: "ap_lead" };
       },
     },
     audit: {
@@ -209,6 +212,7 @@ test("approval pipeline records awaiting approval signatures after audit", async
     approvals: {
       async recordApproval(input) {
         order.push(`recordApproval:${input.approverRole ?? ""}`);
+        return { quorumMet: false };
       },
     },
     execution: {
@@ -235,7 +239,8 @@ test("approval pipeline records awaiting approval signatures after audit", async
 
 test("approval pipeline makes terminal decisions idempotent", async () => {
   const proposal = withContentHash(sampleProposal());
-  let auditCount = 0;
+  const auditRows = new Set<string>();
+  const approvalRows = new Set<string>();
   let executionCount = 0;
 
   const ports: BrainCorePorts = {
@@ -250,11 +255,18 @@ test("approval pipeline makes terminal decisions idempotent", async () => {
       },
     },
     audit: {
-      async record() {
-        auditCount += 1;
+      async record(event) {
+        auditRows.add(
+          `${event.proposalId}:${event.actorId}:${event.decision}:${event.contentHash}`,
+        );
       },
     },
-    approvals: noopApprovalRecorder(),
+    approvals: {
+      async recordApproval(input) {
+        approvalRows.add(`${input.proposal.id}:${input.actorId}`);
+        return { quorumMet: true };
+      },
+    },
     execution: {
       async enqueue() {
         executionCount += 1;
@@ -277,8 +289,201 @@ test("approval pipeline makes terminal decisions idempotent", async () => {
 
   assert.equal(first.status, "applied");
   assert.equal(second.status, "already_decided");
-  assert.equal(auditCount, 1);
+  assert.equal(auditRows.size, 1);
+  assert.equal(approvalRows.size, 1);
   assert.equal(executionCount, 1);
+});
+
+test("approval pipeline applies when the second approval observes post-write quorum", async () => {
+  const proposal = withContentHash(sampleProposal());
+  const signed = new Set<string>();
+  const ports: BrainCorePorts = {
+    identity: {
+      async resolve(input) {
+        if (input.externalId === "U_controller") {
+          return { actorId: toActorId("a_2"), roles: ["controller"] };
+        }
+        return { actorId: toActorId("a_1"), roles: ["ap_lead"] };
+      },
+    },
+    policy: {
+      async canDecide(input) {
+        return { allowed: true, approverRole: input.actor.roles[0] ?? "ap_lead" };
+      },
+    },
+    audit: {
+      async record() {},
+    },
+    approvals: {
+      async recordApproval(input) {
+        if (input.approverRole !== undefined) signed.add(input.approverRole);
+        return {
+          quorumMet: ["ap_lead", "controller"].every((role) => signed.has(role)),
+        };
+      },
+    },
+    execution: {
+      async enqueue() {},
+    },
+    decisions: memoryDecisions(),
+  };
+
+  const service = new ApprovalService(ports, new SurfaceRegistry(), async () => proposal);
+  const first = await service.handle({
+    surface: "slack",
+    proposalId: proposal.id,
+    tenantId: proposal.tenantId,
+    externalActorId: "U_slack",
+    decision: "approved",
+  });
+  const second = await service.handle({
+    surface: "slack",
+    proposalId: proposal.id,
+    tenantId: proposal.tenantId,
+    externalActorId: "U_controller",
+    decision: "approved",
+  });
+
+  assert.equal(first.status, "awaiting_second_approval");
+  assert.equal(second.status, "applied");
+});
+
+test("approval pipeline leaves no met-quorum dual approval awaiting under concurrent clicks", async () => {
+  const proposal = withContentHash(sampleProposal());
+  const signed = new Set<string>();
+  let arrivals = 0;
+  let releaseBoth: (() => void) | undefined;
+  const bothArrived = new Promise<void>((resolve) => {
+    releaseBoth = resolve;
+  });
+  let claimCount = 0;
+  let markCount = 0;
+
+  const ports: BrainCorePorts = {
+    identity: {
+      async resolve(input) {
+        if (input.externalId === "U_controller") {
+          return { actorId: toActorId("a_2"), roles: ["controller"] };
+        }
+        return { actorId: toActorId("a_1"), roles: ["ap_lead"] };
+      },
+    },
+    policy: {
+      async canDecide(input) {
+        return { allowed: true, approverRole: input.actor.roles[0] ?? "ap_lead" };
+      },
+    },
+    audit: {
+      async record() {},
+    },
+    approvals: {
+      async recordApproval(input) {
+        arrivals += 1;
+        if (arrivals === 2) releaseBoth?.();
+        await bothArrived;
+        if (input.approverRole !== undefined) signed.add(input.approverRole);
+        return {
+          quorumMet: ["ap_lead", "controller"].every((role) => signed.has(role)),
+        };
+      },
+    },
+    execution: {
+      async enqueue() {},
+    },
+    decisions: {
+      async claimTerminal(record) {
+        claimCount += 1;
+        return memory.claimTerminal(record);
+      },
+      async markTerminalApplied(record) {
+        markCount += 1;
+        await memory.markTerminalApplied(record);
+      },
+    },
+  };
+  const memory = memoryDecisions();
+
+  const service = new ApprovalService(ports, new SurfaceRegistry(), async () => proposal);
+  const [first, second] = await Promise.all([
+    service.handle({
+      surface: "slack",
+      proposalId: proposal.id,
+      tenantId: proposal.tenantId,
+      externalActorId: "U_slack",
+      decision: "approved",
+    }),
+    service.handle({
+      surface: "slack",
+      proposalId: proposal.id,
+      tenantId: proposal.tenantId,
+      externalActorId: "U_controller",
+      decision: "approved",
+    }),
+  ]);
+
+  assert.equal(arrivals, 2);
+  assert.equal(claimCount, 1);
+  assert.equal(markCount, 1);
+  assert.deepEqual(
+    [first.status, second.status].sort(),
+    ["applied", "awaiting_second_approval"].sort(),
+  );
+});
+
+test("approval pipeline treats rejection as terminal without signature or execution", async () => {
+  const proposal = withContentHash(sampleProposal());
+  const order: string[] = [];
+
+  const ports: BrainCorePorts = {
+    identity: {
+      async resolve() {
+        return { actorId: toActorId("a_1"), roles: ["ap_lead"] };
+      },
+    },
+    policy: {
+      async canDecide() {
+        return { allowed: true };
+      },
+    },
+    audit: {
+      async record() {
+        order.push("audit");
+      },
+    },
+    approvals: {
+      async recordApproval() {
+        order.push("recordApproval");
+        return { quorumMet: true };
+      },
+    },
+    execution: {
+      async enqueue() {
+        order.push("execute");
+      },
+    },
+    decisions: {
+      async claimTerminal() {
+        order.push("claim");
+        return { status: "claimed" };
+      },
+      async markTerminalApplied() {
+        order.push("mark");
+      },
+    },
+  };
+
+  const service = new ApprovalService(ports, new SurfaceRegistry(), async () => proposal);
+  const outcome = await service.handle({
+    surface: "slack",
+    proposalId: proposal.id,
+    tenantId: proposal.tenantId,
+    externalActorId: "U_slack",
+    decision: "rejected",
+  });
+
+  assert.equal(outcome.status, "applied");
+  assert.equal(outcome.decision, "rejected");
+  assert.deepEqual(order, ["claim", "audit", "mark"]);
 });
 
 test("approval pipeline re-drives unapplied approved terminal decisions", async () => {
@@ -312,6 +517,7 @@ test("approval pipeline re-drives unapplied approved terminal decisions", async 
     approvals: {
       async recordApproval() {
         order.push("recordApproval");
+        return { quorumMet: true };
       },
     },
     execution: {
@@ -370,7 +576,12 @@ test("approval pipeline does not re-drive applied terminal decisions", async () 
         order.push("audit");
       },
     },
-    approvals: noopApprovalRecorder(),
+    approvals: {
+      async recordApproval() {
+        order.push("recordApproval");
+        return { quorumMet: true };
+      },
+    },
     execution: {
       async enqueue() {
         order.push("execute");
@@ -396,5 +607,5 @@ test("approval pipeline does not re-drive applied terminal decisions", async () 
   });
 
   assert.equal(outcome.status, "already_decided");
-  assert.deepEqual(order, []);
+  assert.deepEqual(order, ["audit", "recordApproval"]);
 });

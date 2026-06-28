@@ -27,10 +27,7 @@ const CONTROLLER_ACTOR = "user_01ARZ3NDEKTSV4RRFFQ69G5FAW" as ActorId;
 describe("surface gateway approval ordering", () => {
   it("keeps evaluateDecision read-only", async () => {
     const approvals = new ApprovalSpy([]);
-    const engine = new SurfacePolicyEngine(
-      policyPool(policyWithRequire("finance_approval")),
-      approvals.asExecutionApprovals(),
-    );
+    const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("finance_approval")));
 
     const verdict = await engine.evaluateDecision({
       proposal: sampleProposal({ approverRoles: ["finance"] }),
@@ -49,10 +46,7 @@ describe("surface gateway approval ordering", () => {
     });
     const order: string[] = [];
     const approvals = new ApprovalSpy([], order);
-    const engine = new SurfacePolicyEngine(
-      policyPool(policyWithRequire("finance_and_controller")),
-      approvals.asExecutionApprovals(),
-    );
+    const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("finance_and_controller")));
     const service = new ApprovalService(
       {
         identity: {
@@ -125,10 +119,7 @@ describe("surface gateway approval ordering", () => {
     const proposal = sampleProposal({ approverRoles: ["finance"] });
     const order: string[] = [];
     const approvals = new ApprovalSpy([], order);
-    const engine = new SurfacePolicyEngine(
-      policyPool(policyWithRequire("finance_approval")),
-      approvals.asExecutionApprovals(),
-    );
+    const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("finance_approval")));
     const service = new ApprovalService(
       {
         identity: {
@@ -177,10 +168,7 @@ describe("surface gateway approval ordering", () => {
 
   it("denies roleless actors when signer is required", async () => {
     const approvals = new ApprovalSpy([]);
-    const engine = new SurfacePolicyEngine(
-      policyPool(policyWithRequire("single_signer")),
-      approvals.asExecutionApprovals(),
-    );
+    const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("single_signer")));
 
     const verdict = await engine.evaluateDecision({
       proposal: sampleProposal({ approverRoles: ["signer"] }),
@@ -229,15 +217,17 @@ class ApprovalSpy {
     return [...this.signedRoles];
   }
 
-  public async sign(
+  public async signAndCheckRequiredApprovals(
     ctx: ServiceCallContext,
     _subject: { type: "proposal"; id: string },
+    requiredRoles: readonly string[],
     role?: string,
-  ): Promise<unknown> {
+  ): Promise<{ quorumMet: boolean }> {
     this.signCalls.push({ actor: ctx.actor as ActorId, role });
     if (role !== undefined) this.signedRoles.push(role);
     this.order?.push(`sign:${role ?? ""}:${ctx.actor}`);
-    return {};
+    const signed = new Set(this.signedRoles);
+    return { quorumMet: requiredRoles.every((requiredRole) => signed.has(requiredRole)) };
   }
 }
 

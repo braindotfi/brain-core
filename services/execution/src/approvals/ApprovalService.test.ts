@@ -165,3 +165,53 @@ describe("ApprovalService quorum (P0.4)", () => {
     expect(roles).toEqual([]);
   });
 });
+
+describe("ApprovalService.signAndCheckRequiredApprovals", () => {
+  it("returns false when the post-write valid role set is still below quorum", async () => {
+    const { deps: d } = deps(
+      fakePool({ existing: null, validRows: [row({ approver_role: "cfo" })] }),
+    );
+    const svc = new ApprovalService(d);
+
+    const result = await svc.signAndCheckRequiredApprovals(
+      ctx,
+      { type: "payment_intent", id: "pi_1" },
+      ["cfo", "ceo"],
+      "cfo",
+    );
+
+    expect(result.approval.approver_role).toBe("cfo");
+    expect(result.quorumMet).toBe(false);
+  });
+
+  it("returns true when the post-write valid role set satisfies quorum", async () => {
+    const validRows = [row({ approver_role: "cfo" }), row({ id: "appr_2", approver_role: "ceo" })];
+    const { deps: d } = deps(fakePool({ existing: null, validRows }));
+    const svc = new ApprovalService(d);
+
+    const result = await svc.signAndCheckRequiredApprovals(
+      ctx,
+      { type: "payment_intent", id: "pi_1" },
+      ["cfo", "ceo"],
+      "cfo",
+    );
+
+    expect(result.quorumMet).toBe(true);
+  });
+
+  it("treats a duplicate signer as idempotent and does not emit a second audit event", async () => {
+    const { deps: d, audit } = deps(fakePool({ existing: row(), validRows: [row()] }));
+    const svc = new ApprovalService(d);
+
+    const result = await svc.signAndCheckRequiredApprovals(
+      ctx,
+      { type: "payment_intent", id: "pi_1" },
+      ["cfo"],
+      "cfo",
+    );
+
+    expect(result.approval.id).toBe("appr_1");
+    expect(result.quorumMet).toBe(true);
+    expect(audit.events).toHaveLength(0);
+  });
+});

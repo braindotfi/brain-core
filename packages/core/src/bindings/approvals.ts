@@ -13,7 +13,7 @@ export class CoreApprovalRecorder implements ApprovalRecorder {
     actorId: ActorId;
     surface: SurfaceName;
     approverRole?: string | undefined;
-  }): Promise<void> {
-    await this.recorder.recordApproval(input);
+  }): Promise<{ quorumMet: boolean }> {
+    return this.recorder.recordApproval(input);
   }
 }

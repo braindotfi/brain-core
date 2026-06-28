@@ -32,7 +32,6 @@ export interface PolicyEngine {
   }): Promise<{
     allowed: boolean;
     reason?: string;
-    awaitingSecondApproval?: boolean;
     approverRole?: string;
   }>;
 }
@@ -66,7 +65,7 @@ export interface ApprovalRecorder {
     actorId: ActorId;
     surface: SurfaceName;
     approverRole?: string | undefined;
-  }): Promise<void>;
+  }): Promise<{ quorumMet: boolean }>;
 }
 
 export interface DecisionStore {
