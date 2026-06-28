@@ -62,6 +62,7 @@ function fakeServices(
     approvals: {
       async recordApproval() {
         record.approved = true;
+        return { quorumMet: true };
       },
     },
     execution: {

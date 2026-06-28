@@ -18,8 +18,8 @@ core -> surfaces, never the reverse. See the root CLAUDE.md.
 
 ## Branch
 
-`fix/surface-audit-before-sign`. Branch from latest `origin/main`, keep this
-file and the root CLAUDE.md updated as tasks move.
+`fix/surface-quorum-from-post-write`. Branch from latest `origin/main`, keep
+this file and the root CLAUDE.md updated as tasks move.
 
 ## Layout
 
@@ -64,7 +64,8 @@ Done
   missing and invalid tokens; dual approval, double-click idempotency, crash-safe
   replay, and expired proposal clicks.
 - Approval signatures are recorded only after the decision audit anchor. Policy
-  checks are read-only, and execution handoff no longer signs.
+  checks are read-only, approval recording returns post-write quorum, and
+  execution handoff no longer signs.
 
 Pending (for the implementer)
 

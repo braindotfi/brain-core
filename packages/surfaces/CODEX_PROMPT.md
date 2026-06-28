@@ -73,8 +73,8 @@ interfaces. Requirements:
   aad object id, and verified email to the same Brain actor where the customer
   has linked them.
 - `PolicyGate.canDecide` runs the real gates, honors `requiresDualApproval`, and
-  returns `awaitingSecondApproval` when a first valid approval is recorded but a
-  second is still needed.
+  returns only authority state. The awaiting-versus-terminal result is derived
+  from the post-write quorum returned by `ApprovalRecorder.recordApproval`.
 - `AuditAnchor.record` writes an immutable row including `contentHash`, actor,
   surface, decision, and timestamp.
 - `ExecutionHandoff.enqueue` places the approved proposal on the execution queue.

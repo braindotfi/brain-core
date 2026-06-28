@@ -83,6 +83,7 @@ function decisions(): BrainCorePorts["decisions"] {
 function approvalService(input: {
   proposal: Proposal;
   policy?: BrainCorePorts["policy"] | undefined;
+  approvals?: BrainCorePorts["approvals"] | undefined;
   counters?: { audit: number; execute: number } | undefined;
 }): ApprovalService {
   const counters = input.counters ?? { audit: 0, execute: 0 };
@@ -104,9 +105,13 @@ function approvalService(input: {
         counters.audit += 1;
       },
     },
-    approvals: {
-      async recordApproval() {},
-    },
+    approvals:
+      input.approvals ??
+      ({
+        async recordApproval() {
+          return { quorumMet: true };
+        },
+      } satisfies BrainCorePorts["approvals"]),
     execution: {
       async enqueue() {
         counters.execute += 1;
@@ -389,7 +394,7 @@ test("Email approval token rejects expired, wrong-secret, and tampered links", a
   assert.match(missingResponse.body, /Unknown/);
 });
 
-test("Dual approval does not enqueue until policy returns terminal approval", async () => {
+test("Dual approval does not enqueue until approval recording returns quorum", async () => {
   const proposal = sampleProposal();
   const counters = { audit: 0, execute: 0 };
   const service = approvalService({
@@ -397,7 +402,12 @@ test("Dual approval does not enqueue until policy returns terminal approval", as
     counters,
     policy: {
       async canDecide() {
-        return { allowed: true, awaitingSecondApproval: true };
+        return { allowed: true, approverRole: "ap_lead" };
+      },
+    },
+    approvals: {
+      async recordApproval() {
+        return { quorumMet: false };
       },
     },
   });
