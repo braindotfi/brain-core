@@ -1,7 +1,5 @@
 # Privacy Policy
 
-## Privacy Policy
-
 **Effective Date: January 1, 2026**
 
 Brain Finance Inc. ("Brain," "we," "our," or "us"), incorporated in the United States, is committed to protecting your privacy. This Privacy Policy outlines how we collect, use, disclose, and protect your personal information when you access our services, website, or products ("Services").
@@ -20,10 +18,10 @@ We may collect the following categories of information:
 
 We use the information we collect to:
 
-- Provide and improve our Services
-- Respond to inquiries and support requests
-- Send service-related and promotional communications
-- Comply with legal obligations and prevent fraud
+* Provide and improve our Services
+* Respond to inquiries and support requests
+* Send service-related and promotional communications
+* Comply with legal obligations and prevent fraud
 
 ### Sharing and Disclosure
 
@@ -50,11 +48,11 @@ No method of transmission over the internet is 100% secure. While we take reason
 
 Depending on your jurisdiction, you may have the right to:
 
-- **Access**: request a copy of the personal data we hold about you
-- **Update or delete**: correct inaccurate data or request its deletion
-- **Object to processing**: restrict how we use your data in certain circumstances
-- **Data portability**: receive your data in a structured, machine-readable format
-- **Lodge a complaint**: raise concerns with your local data protection authority
+* **Access**: request a copy of the personal data we hold about you
+* **Update or delete**: correct inaccurate data or request its deletion
+* **Object to processing**: restrict how we use your data in certain circumstances
+* **Data portability**: receive your data in a structured, machine-readable format
+* **Lodge a complaint**: raise concerns with your local data protection authority
 
 To exercise any of these rights, contact us at [legal@brain.fi](mailto:legal@brain.fi).
 
