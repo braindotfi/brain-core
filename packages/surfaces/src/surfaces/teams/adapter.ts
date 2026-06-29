@@ -12,10 +12,12 @@ import type { TeamsSubmitData } from "./adaptivecard.js";
  */
 export interface TeamsClient {
   sendCard(args: {
+    tenantId: string;
     conversationRef: string;
     card: Record<string, unknown>;
   }): Promise<{ ok: boolean; activityId?: string; error?: string }>;
   updateCard(args: {
+    tenantId: string;
     conversationRef: string;
     activityId: string;
     card: Record<string, unknown>;
@@ -29,7 +31,11 @@ export class TeamsAdapter implements SurfaceAdapter {
 
   async deliver(proposal: Proposal, to: string): Promise<DeliveryResult> {
     const card = buildAdaptiveCard(proposal);
-    const res = await this.client.sendCard({ conversationRef: to, card });
+    const res = await this.client.sendCard({
+      tenantId: proposal.tenantId,
+      conversationRef: to,
+      card,
+    });
     return {
       surface: this.name,
       target: to,
@@ -53,6 +59,7 @@ export class TeamsAdapter implements SurfaceAdapter {
           ? `Held by ${input.actorLabel}. No action taken.`
           : "Expired. No action taken.";
     await this.client.updateCard({
+      tenantId: input.proposal.tenantId,
       conversationRef: input.to,
       activityId: input.ref,
       card: {

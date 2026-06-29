@@ -48,7 +48,11 @@ export type {
 export { handleEmailApproval } from "./http/email.js";
 export type { EmailApprovalResponse } from "./http/email.js";
 export { handleTeamsSubmit } from "./http/teams.js";
-export type { TeamsActivityVerifier, TeamsSubmitResponse } from "./http/teams.js";
+export type {
+  TeamsActivityVerifier,
+  TeamsSubmitResponse,
+  VerifiedTeamsSubmit,
+} from "./http/teams.js";
 export { renderPlainOutcomePage, toPlainOutcome } from "./http/outcome.js";
 
 // Live transport client implementations
@@ -62,7 +66,7 @@ export {
   TeamsBotFrameworkClient,
   rememberConversationReference,
 } from "./clients/teams.js";
-export type { ConversationReferenceStore } from "./clients/teams.js";
+export type { ConversationReferenceStore, TeamsInstallationGuard } from "./clients/teams.js";
 
 // Agents
 export * from "./agents/catalog.js";

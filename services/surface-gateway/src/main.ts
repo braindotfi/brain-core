@@ -21,6 +21,7 @@ import {
   PostgresSlackInstallationStore,
   PostgresSlackRetryStore,
   PostgresTeamsConversationReferenceStore,
+  PostgresTeamsInstallationStore,
   SlackInstallationTokenProvider,
 } from "./storage.js";
 
@@ -69,6 +70,7 @@ async function main(): Promise<void> {
   });
   const slackInstallations = new PostgresSlackInstallationStore(surfacePool, sourceCredential);
   const teamsReferences = new PostgresTeamsConversationReferenceStore(surfacePool);
+  const teamsInstallations = new PostgresTeamsInstallationStore(surfacePool);
   const teamsAdapter = surfaceConfig.teams.enabled
     ? new BotFrameworkAdapter({
         appId: surfaceConfig.teams.appId,
@@ -101,6 +103,7 @@ async function main(): Promise<void> {
             teamsAdapter,
             surfaceConfig.teams.appId,
             teamsReferences,
+            teamsInstallations,
           ),
         }
       : {}),
@@ -112,10 +115,13 @@ async function main(): Promise<void> {
     proposals,
     slackRetries: new PostgresSlackRetryStore(surfacePool),
     ...(surfaceConfig.slack.enabled ? { slackInstallations } : {}),
+    ...(surfaceConfig.teams.enabled
+      ? { teamsInstallations, teamsConversationReferences: teamsReferences }
+      : {}),
     approvalBaseUrl: surfaceConfig.email.approvalBaseUrl || "http://localhost:3000",
     ...(teamsAdapter !== null
       ? {
-          teamsVerifier: new BotFrameworkTeamsActivityVerifier(teamsAdapter, teamsReferences),
+          teamsVerifier: new BotFrameworkTeamsActivityVerifier(teamsAdapter),
         }
       : {}),
     smoke: {
@@ -161,6 +167,9 @@ function buildSurfaceConfig(cfg: ReturnType<typeof loadConfig>): SurfaceConfig {
       enabled: cfg.TEAMS_ENABLED,
       appId: requiredIf(cfg.TEAMS_APP_ID, "TEAMS_APP_ID", cfg.TEAMS_ENABLED),
       appPassword: requiredIf(cfg.TEAMS_APP_PASSWORD, "TEAMS_APP_PASSWORD", cfg.TEAMS_ENABLED),
+      ...(cfg.TEAMS_INSTALL_ADMIN_SECRET !== undefined
+        ? { installAdminSecret: cfg.TEAMS_INSTALL_ADMIN_SECRET }
+        : {}),
     },
     email: {
       enabled: cfg.EMAIL_ENABLED,

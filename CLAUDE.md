@@ -75,11 +75,17 @@ Done
 - Slack outcomes are posted through `response_url`; background approval errors
   are caught and logged.
 - Fastify v5 surface gateway deployable in `services/surface-gateway` with:
-  `/surfaces/slack/interactions`, `/surfaces/email/approve`,
-  `/surfaces/teams/messages`, `/surfaces/smoke/proposals`, and `/healthz`.
+  `/surfaces/slack/interactions`, `/surfaces/slack/oauth/*`,
+  `/surfaces/email/approve`, `/surfaces/teams/messages`,
+  `/surfaces/teams/install`, `/surfaces/teams/revoke`,
+  `/surfaces/smoke/proposals`, and `/healthz`.
 - Gateway-owned RLS tables for external identity links, canonical surface
   proposals, delivered refs, terminal decisions, Slack retry keys, and Teams
   conversation references.
+- Slack and Teams installation stores are tenant scoped. Slack verifies
+  workspace to Brain tenant at click time. Teams resolves authenticated Azure AD
+  tenant to Brain tenant before storing conversation references or accepting
+  Adaptive Card actions.
 - Gateway composition delegates to existing policy evaluation, shared audit
   emitter idempotency keys, and execution approvals. It never writes ledger
   money-path rows and never touches `execution_outbox`.

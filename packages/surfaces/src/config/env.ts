@@ -11,7 +11,12 @@ export interface SurfaceConfig {
     clientSecret?: string | undefined;
     installAdminSecret?: string | undefined;
   };
-  teams: { enabled: boolean; appId: string; appPassword: string };
+  teams: {
+    enabled: boolean;
+    appId: string;
+    appPassword: string;
+    installAdminSecret?: string | undefined;
+  };
   email: {
     enabled: boolean;
     approvalBaseUrl: string;
@@ -33,6 +38,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SurfaceConfig 
       enabled: env.TEAMS_ENABLED === "true",
       appId: required(env, "TEAMS_APP_ID", env.TEAMS_ENABLED === "true"),
       appPassword: required(env, "TEAMS_APP_PASSWORD", env.TEAMS_ENABLED === "true"),
+      installAdminSecret: optional(env, "TEAMS_INSTALL_ADMIN_SECRET"),
     },
     email: {
       enabled: env.EMAIL_ENABLED === "true",

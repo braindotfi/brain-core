@@ -18,7 +18,7 @@ core -> surfaces, never the reverse. See the root CLAUDE.md.
 
 ## Branch
 
-`feat/slack-oauth-install`. Branch from latest `origin/main`, keep
+`feat/teams-install`. Branch from latest `origin/main`, keep
 this file and the root CLAUDE.md updated as tasks move.
 
 ## Layout
@@ -69,6 +69,10 @@ Done
 - Slack delivery can resolve bot tokens per tenant, while the signing secret
   remains app-wide. The surface gateway owns OAuth install, encrypted token
   storage, workspace cross-checks, and uninstall revocation.
+- Teams delivery checks for an active Brain tenant installation before
+  proactive sends. The surface gateway maps authenticated Azure AD tenant ids to
+  Brain tenants before accepting Adaptive Card actions or storing conversation
+  references.
 
 Pending (for the implementer)
 

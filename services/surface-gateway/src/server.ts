@@ -6,6 +6,7 @@ import {
   handleEmailApproval,
   handleSlackInteraction,
   type SurfaceConfig,
+  type ConversationReferenceStore,
   type TeamsActivityVerifier,
   parseProposal,
   type DeliveryTarget,
@@ -49,6 +50,27 @@ export interface SlackInstallationStore {
   revoke(teamId: string): Promise<void>;
 }
 
+export interface TeamsInstallationStore {
+  upsertInstallation(input: {
+    brainTenantId: string;
+    aadTenantId: string;
+    serviceUrl?: string | undefined;
+    installedBy: string;
+  }): Promise<void>;
+  resolveBrainTenant(aadTenantId: string): Promise<{
+    brainTenantId: string;
+    aadTenantId: string;
+    serviceUrl?: string | undefined;
+    status: "active" | "revoked";
+  } | null>;
+  recordActivity(input: {
+    brainTenantId: string;
+    aadTenantId: string;
+    serviceUrl?: string | undefined;
+  }): Promise<void>;
+  revoke(aadTenantId: string): Promise<void>;
+}
+
 export interface BuildSurfaceGatewayAppOptions {
   runtime: SurfaceRuntime;
   surfaceConfig: SurfaceConfig;
@@ -58,6 +80,8 @@ export interface BuildSurfaceGatewayAppOptions {
   slackOAuthClient?: SlackOAuthClient | undefined;
   slackOAuthRedirectUri?: string | undefined;
   teamsVerifier?: TeamsActivityVerifier | undefined;
+  teamsInstallations?: TeamsInstallationStore | undefined;
+  teamsConversationReferences?: ConversationReferenceStore | undefined;
   approvalBaseUrl: string;
   smoke?: { enabled: boolean; secret?: string | undefined } | undefined;
   logger?: ReturnType<typeof Fastify>["log"];
@@ -284,6 +308,10 @@ export async function buildSurfaceGatewayApp(
       reply.status(503);
       return "teams disabled";
     }
+    if (opts.teamsInstallations === undefined) {
+      reply.status(503);
+      return "teams installation store disabled";
+    }
     const verified = await opts.teamsVerifier.verify({
       authorization: header(request.headers, "authorization"),
       rawBody: requireRawBody(request.body),
@@ -291,6 +319,33 @@ export async function buildSurfaceGatewayApp(
     if (verified === null) {
       reply.status(401);
       return "unauthorized";
+    }
+    const installation = await opts.teamsInstallations.resolveBrainTenant(verified.aadTenantId);
+    if (installation === null || installation.status !== "active") {
+      reply.status(403);
+      return "teams installation not active";
+    }
+    await opts.teamsInstallations.recordActivity({
+      brainTenantId: installation.brainTenantId,
+      aadTenantId: verified.aadTenantId,
+      ...(verified.serviceUrl !== undefined ? { serviceUrl: verified.serviceUrl } : {}),
+    });
+    if (
+      verified.conversationReference !== undefined &&
+      opts.teamsConversationReferences !== undefined
+    ) {
+      await opts.teamsConversationReferences.set(
+        `${installation.brainTenantId}:${verified.conversationId}`,
+        verified.conversationReference,
+      );
+    }
+    if (verified.submit === undefined) {
+      reply.status(200);
+      return "ok";
+    }
+    if (verified.aadObjectId === undefined) {
+      reply.status(400);
+      return "missing teams actor";
     }
     if (
       verified.submit.proposalId === undefined ||
@@ -300,19 +355,76 @@ export async function buildSurfaceGatewayApp(
       reply.status(400);
       return "unknown teams action";
     }
+    if (verified.submit.tenantId !== installation.brainTenantId) {
+      reply.status(403);
+      return "teams tenant mismatch";
+    }
+    const conversationRef = `${installation.brainTenantId}:${verified.conversationId}`;
     const outcome = await opts.runtime.approvals.handle(
       {
         surface: "teams",
         proposalId: verified.submit.proposalId,
-        tenantId: verified.submit.tenantId,
+        tenantId: installation.brainTenantId,
         externalActorId: verified.aadObjectId,
         decision: verified.submit.brainDecision,
-        context: { to: verified.conversationRef },
+        context: { to: conversationRef },
       },
       verified.activityId,
     );
     reply.status(200);
     return outcome.status;
+  });
+
+  app.post("/surfaces/teams/install", async (request, reply) => {
+    const teams = opts.surfaceConfig.teams;
+    const installAdminSecret = teams.installAdminSecret;
+    const installations = opts.teamsInstallations;
+    if (installAdminSecret === undefined || installations === undefined) {
+      reply.status(404);
+      return "teams install disabled";
+    }
+    if (header(request.headers, "x-brain-teams-install-secret") !== installAdminSecret) {
+      reply.status(401);
+      return "unauthorized";
+    }
+    const body = parseJsonObject(requireRawBody(request.body));
+    const brainTenantId = stringField(body, "brainTenantId");
+    const aadTenantId = stringField(body, "aadTenantId");
+    const installedBy = stringField(body, "installedBy");
+    const serviceUrl = stringField(body, "serviceUrl");
+    if (brainTenantId === null || aadTenantId === null || installedBy === null) {
+      reply.status(400);
+      return "missing brainTenantId, aadTenantId, or installedBy";
+    }
+    await installations.upsertInstallation({
+      brainTenantId,
+      aadTenantId,
+      installedBy,
+      ...(serviceUrl !== null ? { serviceUrl } : {}),
+    });
+    reply.status(201);
+    return { ok: true, brainTenantId, aadTenantId };
+  });
+
+  app.post("/surfaces/teams/revoke", async (request, reply) => {
+    const installAdminSecret = opts.surfaceConfig.teams.installAdminSecret;
+    const installations = opts.teamsInstallations;
+    if (installAdminSecret === undefined || installations === undefined) {
+      reply.status(404);
+      return "teams install disabled";
+    }
+    if (header(request.headers, "x-brain-teams-install-secret") !== installAdminSecret) {
+      reply.status(401);
+      return "unauthorized";
+    }
+    const body = parseJsonObject(requireRawBody(request.body));
+    const aadTenantId = stringField(body, "aadTenantId");
+    if (aadTenantId === null) {
+      reply.status(400);
+      return "missing aadTenantId";
+    }
+    await installations.revoke(aadTenantId);
+    return { ok: true, aadTenantId };
   });
 
   app.post("/surfaces/smoke/proposals", async (request, reply) => {

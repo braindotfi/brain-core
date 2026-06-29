@@ -64,6 +64,8 @@ Fastify v5 process:
 | `HEAD /surfaces/email/approve`      | Link preview and health-safe email route check                            |
 | `POST /surfaces/email/approve`      | Email approval confirmation with signed-token validation                  |
 | `POST /surfaces/teams/messages`     | Bot Framework verified Teams submit activities                            |
+| `POST /surfaces/teams/install`      | Admin-gated Brain tenant to Azure AD tenant mapping                       |
+| `POST /surfaces/teams/revoke`       | Admin-gated Teams installation revocation                                 |
 | `POST /surfaces/smoke/proposals`    | Explicitly gated smoke dispatch for release candidates                    |
 | `GET /healthz`                      | Process health check                                                      |
 
@@ -74,7 +76,16 @@ The gateway owns only surface persistence:
 - `surface_delivered_refs`
 - `surface_decisions`
 - `surface_slack_retries`
+- `surface_slack_installations`
+- `surface_slack_install_nonces`
 - `surface_teams_conversation_refs`
+- `surface_teams_installations`
+
+Slack installations are resolved by verified Slack workspace id before tenant
+state is accepted. Teams installations are resolved by authenticated Azure AD
+tenant id before the card's Brain tenant is trusted. Teams conversation
+references are recorded only after that mapping succeeds, so proactive sends
+use `<brainTenantId>:<conversationId>` references tied to an active install.
 
 The production DB role is `brain_surface_gateway`. It is tenant-scoped, has no
 `BYPASSRLS`, and has no Ledger or execution outbox grants. Decisions delegate to

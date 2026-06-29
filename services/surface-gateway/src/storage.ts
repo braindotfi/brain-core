@@ -465,6 +465,111 @@ export class PostgresTeamsConversationReferenceStore {
   }
 }
 
+export interface TeamsInstallationSummary {
+  brainTenantId: string;
+  aadTenantId: string;
+  serviceUrl?: string | undefined;
+  installedBy: string;
+  installedAt: string;
+  status: "active" | "revoked";
+}
+
+interface TeamsInstallationRow {
+  brain_tenant_id: string;
+  aad_tenant_id: string;
+  service_url: string | null;
+  installed_by: string;
+  installed_at: Date;
+  status: "active" | "revoked";
+}
+
+export class PostgresTeamsInstallationStore {
+  public constructor(private readonly pool: Pool) {}
+
+  public async upsertInstallation(input: {
+    brainTenantId: string;
+    aadTenantId: string;
+    serviceUrl?: string | undefined;
+    installedBy: string;
+  }): Promise<void> {
+    await withTenantScope(this.pool, input.brainTenantId, async (c) => {
+      await c.query(
+        `INSERT INTO surface_teams_installations
+           (brain_tenant_id, aad_tenant_id, service_url, installed_by, status,
+            installed_at, revoked_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'active', now(), NULL, now())
+         ON CONFLICT (aad_tenant_id) DO UPDATE
+           SET brain_tenant_id = EXCLUDED.brain_tenant_id,
+               service_url = COALESCE(EXCLUDED.service_url, surface_teams_installations.service_url),
+               installed_by = EXCLUDED.installed_by,
+               status = 'active',
+               revoked_at = NULL,
+               updated_at = now()`,
+        [input.brainTenantId, input.aadTenantId, input.serviceUrl ?? null, input.installedBy],
+      );
+    });
+  }
+
+  public async resolveBrainTenant(aadTenantId: string): Promise<TeamsInstallationSummary | null> {
+    return withTeamsAadScope(this.pool, aadTenantId, async (c) => {
+      const { rows } = await c.query<TeamsInstallationRow>(
+        `SELECT brain_tenant_id, aad_tenant_id, service_url, installed_by, installed_at, status
+           FROM surface_teams_installations
+          WHERE aad_tenant_id = $1
+          LIMIT 1`,
+        [aadTenantId],
+      );
+      return rows[0] === undefined ? null : toTeamsInstallationSummary(rows[0]);
+    });
+  }
+
+  public async recordActivity(input: {
+    brainTenantId: string;
+    aadTenantId: string;
+    serviceUrl?: string | undefined;
+  }): Promise<void> {
+    await withTenantScope(this.pool, input.brainTenantId, async (c) => {
+      await c.query(
+        `UPDATE surface_teams_installations
+            SET service_url = COALESCE($3, service_url),
+                last_activity_at = now(),
+                updated_at = now()
+          WHERE brain_tenant_id = $1
+            AND aad_tenant_id = $2
+            AND status = 'active'`,
+        [input.brainTenantId, input.aadTenantId, input.serviceUrl ?? null],
+      );
+    });
+  }
+
+  public async revoke(aadTenantId: string): Promise<void> {
+    await withTeamsAadScope(this.pool, aadTenantId, async (c) => {
+      await c.query(
+        `UPDATE surface_teams_installations
+            SET status = 'revoked',
+                revoked_at = COALESCE(revoked_at, now()),
+                updated_at = now()
+          WHERE aad_tenant_id = $1`,
+        [aadTenantId],
+      );
+    });
+  }
+
+  public async isActiveForTenant(brainTenantId: string): Promise<boolean> {
+    return withTenantScope(this.pool, brainTenantId, async (c) => {
+      const { rows } = await c.query<{ found: number }>(
+        `SELECT 1 AS found
+           FROM surface_teams_installations
+          WHERE brain_tenant_id = $1
+            AND status = 'active'
+          LIMIT 1`,
+        [brainTenantId],
+      );
+      return rows[0] !== undefined;
+    });
+  }
+}
+
 async function withSlackTeamScope<T>(
   pool: Pool,
   teamId: string,
@@ -500,12 +605,58 @@ async function withSlackTeamScope<T>(
   }
 }
 
+async function withTeamsAadScope<T>(
+  pool: Pool,
+  aadTenantId: string,
+  fn: (client: TenantScopedClient) => Promise<T>,
+): Promise<T> {
+  const client: PoolClient = await pool.connect();
+  let committed = false;
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.teams_aad_tenant_id', $1, true)", [aadTenantId]);
+    const scoped: TenantScopedClient = {
+      query: (text, values) =>
+        client.query(text, values as unknown as unknown[]) as Promise<{
+          rows: never[];
+          rowCount: number | null;
+        }>,
+    };
+    const result = await fn(scoped);
+    await client.query("COMMIT");
+    committed = true;
+    return result;
+  } catch (err) {
+    if (!committed) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Preserve the original error.
+      }
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 function toSlackInstallationSummary(row: SlackInstallationRow): SlackInstallationSummary {
   return {
     tenantId: row.tenant_id,
     teamId: row.team_id,
     botUserId: row.bot_user_id,
     scopes: row.scopes,
+    installedBy: row.installed_by,
+    installedAt: row.installed_at.toISOString(),
+    status: row.status,
+  };
+}
+
+function toTeamsInstallationSummary(row: TeamsInstallationRow): TeamsInstallationSummary {
+  return {
+    brainTenantId: row.brain_tenant_id,
+    aadTenantId: row.aad_tenant_id,
+    ...(row.service_url !== null ? { serviceUrl: row.service_url } : {}),
     installedBy: row.installed_by,
     installedAt: row.installed_at.toISOString(),
     status: row.status,

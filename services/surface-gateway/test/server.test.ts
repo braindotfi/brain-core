@@ -1,9 +1,22 @@
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
+import type { ConversationReference } from "botbuilder";
 import type { SurfaceRuntime } from "@brain/core";
-import { signToken, withContentHash, type Proposal, type SurfaceConfig } from "@brain/surfaces";
-import { buildSurfaceGatewayApp, type SlackInstallationStore } from "../src/server.js";
+import {
+  signToken,
+  withContentHash,
+  type ConversationReferenceStore,
+  type Proposal,
+  type SurfaceConfig,
+  type TeamsActivityVerifier,
+  type VerifiedTeamsSubmit,
+} from "@brain/surfaces";
+import {
+  buildSurfaceGatewayApp,
+  type SlackInstallationStore,
+  type TeamsInstallationStore,
+} from "../src/server.js";
 import { SLACK_BOT_SCOPES, type SlackOAuthClient } from "../src/slack-oauth.js";
 import { SlackInstallationTokenProvider } from "../src/storage.js";
 
@@ -161,6 +174,148 @@ describe("surface gateway server", () => {
     );
   });
 
+  it("captures an admin-approved Teams installation mapping", async () => {
+    const installations = new MemoryTeamsInstallationStore();
+    const app = await makeApp({
+      surfaceConfig: teamsSurfaceConfig(),
+      teamsInstallations: installations,
+      teamsVerifier: new MemoryTeamsVerifier(null),
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/surfaces/teams/install",
+      headers: {
+        "content-type": "application/json",
+        "x-brain-teams-install-secret": "teams-install-secret",
+      },
+      payload: JSON.stringify({
+        brainTenantId: TENANT_ID,
+        aadTenantId: "aad-tenant-1",
+        installedBy: "tenant_admin",
+        serviceUrl: "https://smba.trafficmanager.net/amer/",
+      }),
+    });
+
+    expect(res.statusCode).toBe(201);
+    await expect(installations.resolveBrainTenant("aad-tenant-1")).resolves.toMatchObject({
+      brainTenantId: TENANT_ID,
+      aadTenantId: "aad-tenant-1",
+      status: "active",
+    });
+  });
+
+  it("rejects Teams approvals when the AAD tenant maps to a different Brain tenant", async () => {
+    const calls: unknown[] = [];
+    const installations = new MemoryTeamsInstallationStore();
+    await installations.upsertInstallation({
+      brainTenantId: TENANT_ID,
+      aadTenantId: "aad-tenant-1",
+      installedBy: "tenant_admin",
+    });
+    const app = await makeApp({
+      surfaceConfig: teamsSurfaceConfig(),
+      teamsInstallations: installations,
+      teamsVerifier: new MemoryTeamsVerifier(teamsSubmit({ tenantId: "tnt_other" })),
+      approvals: {
+        async handle(input: unknown) {
+          calls.push(input);
+          return { status: "applied", decision: "approved", actorLabel: "usr_1" };
+        },
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/surfaces/teams/messages",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      payload: JSON.stringify({ type: "message" }),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("accepts Teams approvals only for active mapped tenants and stores the conversation ref", async () => {
+    const calls: unknown[] = [];
+    const refs = new MemoryConversationReferenceStore();
+    const installations = new MemoryTeamsInstallationStore();
+    await installations.upsertInstallation({
+      brainTenantId: TENANT_ID,
+      aadTenantId: "aad-tenant-1",
+      installedBy: "tenant_admin",
+    });
+    const app = await makeApp({
+      surfaceConfig: teamsSurfaceConfig(),
+      teamsInstallations: installations,
+      teamsConversationReferences: refs,
+      teamsVerifier: new MemoryTeamsVerifier(teamsSubmit()),
+      approvals: {
+        async handle(input: unknown) {
+          calls.push(input);
+          return { status: "applied", decision: "approved", actorLabel: "usr_1" };
+        },
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/surfaces/teams/messages",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      payload: JSON.stringify({ type: "message" }),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(calls).toEqual([
+      expect.objectContaining({
+        surface: "teams",
+        tenantId: TENANT_ID,
+        externalActorId: "aad-user-1",
+        context: { to: `${TENANT_ID}:teams-conv-1` },
+      }),
+    ]);
+    await expect(refs.get(`${TENANT_ID}:teams-conv-1`)).resolves.toMatchObject({
+      conversation: { id: "teams-conv-1" },
+    });
+    expect(installations.lastActivity).toMatchObject({
+      brainTenantId: TENANT_ID,
+      aadTenantId: "aad-tenant-1",
+      serviceUrl: "https://smba.trafficmanager.net/amer/",
+    });
+  });
+
+  it("fails closed for revoked Teams installations", async () => {
+    const calls: unknown[] = [];
+    const installations = new MemoryTeamsInstallationStore();
+    await installations.upsertInstallation({
+      brainTenantId: TENANT_ID,
+      aadTenantId: "aad-tenant-1",
+      installedBy: "tenant_admin",
+    });
+    await installations.revoke("aad-tenant-1");
+    const app = await makeApp({
+      surfaceConfig: teamsSurfaceConfig(),
+      teamsInstallations: installations,
+      teamsVerifier: new MemoryTeamsVerifier(teamsSubmit()),
+      approvals: {
+        async handle(input: unknown) {
+          calls.push(input);
+          return { status: "applied", decision: "approved", actorLabel: "usr_1" };
+        },
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/surfaces/teams/messages",
+      headers: { authorization: "Bearer test", "content-type": "application/json" },
+      payload: JSON.stringify({ type: "message" }),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(calls).toHaveLength(0);
+  });
+
   it("handles email approval POST without logging approval tokens", async () => {
     const lines: string[] = [];
     const proposal = sampleProposal();
@@ -246,6 +401,10 @@ async function makeApp(
     smoke?: { enabled: boolean; secret?: string };
     slackInstallations?: SlackInstallationStore | undefined;
     slackOAuthClient?: SlackOAuthClient | undefined;
+    surfaceConfig?: SurfaceConfig | undefined;
+    teamsVerifier?: TeamsActivityVerifier | undefined;
+    teamsInstallations?: TeamsInstallationStore | undefined;
+    teamsConversationReferences?: ConversationReferenceStore | undefined;
   } = {},
   logLines: string[] = [],
 ): Promise<FastifyInstance> {
@@ -282,11 +441,14 @@ async function makeApp(
   }
   const app = await buildSurfaceGatewayApp({
     runtime,
-    surfaceConfig: surfaceConfig(),
+    surfaceConfig: overrides.surfaceConfig ?? surfaceConfig(),
     proposals: proposals as never,
     slackRetries: new MemorySlackRetryStore(),
     slackInstallations,
     slackOAuthClient: overrides.slackOAuthClient,
+    teamsVerifier: overrides.teamsVerifier,
+    teamsInstallations: overrides.teamsInstallations,
+    teamsConversationReferences: overrides.teamsConversationReferences,
     approvalBaseUrl: "http://localhost:3000",
     smoke: overrides.smoke,
     logger: memoryLogger(logLines) as never,
@@ -405,6 +567,73 @@ class MemorySlackOAuthClient implements SlackOAuthClient {
   }
 }
 
+class MemoryTeamsInstallationStore implements TeamsInstallationStore {
+  public lastActivity:
+    | { brainTenantId: string; aadTenantId: string; serviceUrl?: string | undefined }
+    | undefined;
+  private readonly installations = new Map<
+    string,
+    {
+      brainTenantId: string;
+      aadTenantId: string;
+      serviceUrl?: string | undefined;
+      installedBy: string;
+      status: "active" | "revoked";
+    }
+  >();
+
+  public async upsertInstallation(input: {
+    brainTenantId: string;
+    aadTenantId: string;
+    serviceUrl?: string | undefined;
+    installedBy: string;
+  }): Promise<void> {
+    this.installations.set(input.aadTenantId, { ...input, status: "active" });
+  }
+
+  public async resolveBrainTenant(aadTenantId: string): Promise<{
+    brainTenantId: string;
+    aadTenantId: string;
+    serviceUrl?: string | undefined;
+    status: "active" | "revoked";
+  } | null> {
+    return this.installations.get(aadTenantId) ?? null;
+  }
+
+  public async recordActivity(input: {
+    brainTenantId: string;
+    aadTenantId: string;
+    serviceUrl?: string | undefined;
+  }): Promise<void> {
+    this.lastActivity = input;
+  }
+
+  public async revoke(aadTenantId: string): Promise<void> {
+    const installation = this.installations.get(aadTenantId);
+    if (installation !== undefined) installation.status = "revoked";
+  }
+}
+
+class MemoryConversationReferenceStore implements ConversationReferenceStore {
+  private readonly refs = new Map<string, Partial<ConversationReference>>();
+
+  public async get(to: string): Promise<Partial<ConversationReference> | null> {
+    return this.refs.get(to) ?? null;
+  }
+
+  public async set(to: string, reference: Partial<ConversationReference>): Promise<void> {
+    this.refs.set(to, reference);
+  }
+}
+
+class MemoryTeamsVerifier implements TeamsActivityVerifier {
+  public constructor(private readonly result: VerifiedTeamsSubmit | null) {}
+
+  public async verify(): Promise<VerifiedTeamsSubmit | null> {
+    return this.result;
+  }
+}
+
 class MemorySlackRetryStore {
   private readonly seen = new Set<string>();
 
@@ -457,6 +686,47 @@ function surfaceConfig(): SurfaceConfig {
       approvalBaseUrl: "http://localhost:3000/surfaces/email/approve",
       tokenSecret: "email_secret",
     },
+  };
+}
+
+function teamsSurfaceConfig(): SurfaceConfig {
+  return {
+    ...surfaceConfig(),
+    teams: {
+      enabled: true,
+      appId: "teams-app-id",
+      appPassword: "teams-app-password",
+      installAdminSecret: "teams-install-secret",
+    },
+  };
+}
+
+function teamsSubmit(
+  overrides: Partial<NonNullable<VerifiedTeamsSubmit["submit"]>> = {},
+): VerifiedTeamsSubmit {
+  return {
+    submit: {
+      brainDecision: "approved",
+      tenantId: TENANT_ID,
+      proposalId: "prop_1",
+      ...overrides,
+    },
+    aadObjectId: "aad-user-1",
+    aadTenantId: "aad-tenant-1",
+    serviceUrl: "https://smba.trafficmanager.net/amer/",
+    conversationId: "teams-conv-1",
+    conversationRef: `${TENANT_ID}:teams-conv-1`,
+    conversationReference: {
+      channelId: "msteams",
+      serviceUrl: "https://smba.trafficmanager.net/amer/",
+      conversation: {
+        id: "teams-conv-1",
+        isGroup: true,
+        conversationType: "channel",
+        name: "Finance",
+      },
+    },
+    activityId: "activity-1",
   };
 }
 

@@ -118,6 +118,7 @@ const envSchema = z.object({
     .default("false"),
   TEAMS_APP_ID: optionalNonEmptyString(),
   TEAMS_APP_PASSWORD: optionalNonEmptyString(),
+  TEAMS_INSTALL_ADMIN_SECRET: optionalNonEmptyString(),
   EMAIL_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
