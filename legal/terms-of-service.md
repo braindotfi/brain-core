@@ -16,10 +16,10 @@ You must be at least 18 years old and legally capable of entering into binding c
 
 You agree not to use our Services in any of the following ways:
 
-* **Unlawful use**: violate any applicable laws or regulations
-* **Fraud or abuse**: use our Services for fraudulent, deceptive, or illegal purposes
-* **Infrastructure interference**: disrupt, degrade, or interfere with our network, systems, or infrastructure
-* **Reverse engineering**: attempt to reverse-engineer, decompile, or replicate our proprietary technology
+- **Unlawful use**: violate any applicable laws or regulations
+- **Fraud or abuse**: use our Services for fraudulent, deceptive, or illegal purposes
+- **Infrastructure interference**: disrupt, degrade, or interfere with our network, systems, or infrastructure
+- **Reverse engineering**: attempt to reverse-engineer, decompile, or replicate our proprietary technology
 
 ### Intellectual Property
 
@@ -47,9 +47,9 @@ The Services are provided **"as is"** and **"as available"** without warranties 
 
 To the fullest extent permitted by applicable law, Brain Finance Inc. shall not be liable for any indirect, incidental, special, or consequential damages arising from:
 
-* Your use of, or inability to use, our Services
-* Any unauthorised access to or alteration of your data
-* Any conduct or content of third parties on or via our Services
+- Your use of, or inability to use, our Services
+- Any unauthorised access to or alteration of your data
+- Any conduct or content of third parties on or via our Services
 
 ### Indemnity
 

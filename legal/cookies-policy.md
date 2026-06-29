@@ -56,15 +56,15 @@ We do not control third-party cookies once they are placed by those providers, b
 
 Cookies may collect or be linked to information such as:
 
-* Device type
-* Browser type
-* IP address
-* Approximate location
-* Pages viewed
-* Referring URLs
-* Session identifiers
-* Usage events
-* Account or login status, where applicable
+- Device type
+- Browser type
+- IP address
+- Approximate location
+- Pages viewed
+- Referring URLs
+- Session identifiers
+- Usage events
+- Account or login status, where applicable
 
 Where cookie data identifies or can reasonably be linked to you, we treat it in accordance with our Privacy Policy.
 

@@ -18,7 +18,7 @@ core -> surfaces, never the reverse. See the root CLAUDE.md.
 
 ## Branch
 
-`fix/surface-quorum-from-post-write`. Branch from latest `origin/main`, keep
+`feat/slack-oauth-install`. Branch from latest `origin/main`, keep
 this file and the root CLAUDE.md updated as tasks move.
 
 ## Layout
@@ -66,6 +66,9 @@ Done
 - Approval signatures are recorded only after the decision audit anchor. Policy
   checks are read-only, approval recording returns post-write quorum, and
   execution handoff no longer signs.
+- Slack delivery can resolve bot tokens per tenant, while the signing secret
+  remains app-wide. The surface gateway owns OAuth install, encrypted token
+  storage, workspace cross-checks, and uninstall revocation.
 
 Pending (for the implementer)
 
