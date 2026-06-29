@@ -196,6 +196,47 @@ const envSchema = z.object({
    */
   BRAIN_DEMO_PROVISION_SECRET: optionalNonEmptyString(),
 
+  /**
+   * ---- BFF service-token mint (per-user production tenants) ----
+   *
+   * POST /v1/auth/service-token lets a TRUSTED backend-for-frontend (e.g. the
+   * Brain Finance / BrainMVB BFF) mint a scoped JWT for a STABLE per-user
+   * tenant — the production counterpart to the demo-provision fence. Unlike
+   * provision-run it does NOT seed demo business data: it materialises an empty
+   * tenant + an active payment agent (idempotent on the caller-supplied
+   * tenant_id, which the BFF persists per app-user) and mints a token.
+   *
+   * Scope ceiling (mirrors the demo fence): READ + PROPOSE + APPROVE only. The
+   * minted token never carries payment_intent:execute, audit:admin, or
+   * policy:write — real money movement / signing stays off this path.
+   *
+   * Auth: when enabled, callers MUST send X-Service-Token-Auth equal to
+   * BRAIN_SERVICE_TOKEN_SECRET (constant-time compared). The box signing key
+   * never leaves the box; the BFF holds only the shared secret.
+   *
+   * Production safety: like the demo fence, enabling this in
+   * NODE_ENV=production requires BRAIN_SERVICE_TOKEN_TESTNET_ATTESTED="true"
+   * (the route mints propose/approve-capable tokens). Fenced by
+   * assertServiceTokenFences at boot.
+   */
+  BRAIN_SERVICE_TOKEN_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
+  /**
+   * Required when BRAIN_SERVICE_TOKEN_ENABLED=true in NODE_ENV=production.
+   * Operator's explicit attestation that this stack is a testnet "prod"
+   * (Base Sepolia, sandbox rails). Without it, the api refuses to start.
+   * Mirrors BRAIN_DEMO_PROVISION_TESTNET_ATTESTED.
+   */
+  BRAIN_SERVICE_TOKEN_TESTNET_ATTESTED: z.enum(["true", "false"]).default("false"),
+  /**
+   * Shared-secret header value the api compares X-Service-Token-Auth against.
+   * Required when BRAIN_SERVICE_TOKEN_ENABLED=true. Loaded from Key Vault in
+   * production. Without it the boot fence refuses to start.
+   */
+  BRAIN_SERVICE_TOKEN_SECRET: optionalNonEmptyString(),
+
   // ---- Self-serve onboarding (RFC 0002) ----
   /**
    * Set to "true" to expose the public self-serve signup surface
