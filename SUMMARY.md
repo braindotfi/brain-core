@@ -103,5 +103,5 @@
 
 * [Privacy Policy](legal/privacy-policy.md)
 * [Terms of Service](legal/terms-of-service.md)
-* [Cookies Policy](legal/privacy-policy-1.md)
+* [Cookies Policy](legal/cookies-policy.md)
 * [Disclaimer](legal/disclaimer.md)
