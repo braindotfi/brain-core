@@ -39,6 +39,7 @@ export {
   verifySlackRequest,
 } from "./http/slack.js";
 export type {
+  SlackInstallationVerifier,
   SlackInteractionResponse,
   SlackOutcomeMessage,
   SlackOutcomePoster,
@@ -52,6 +53,7 @@ export { renderPlainOutcomePage, toPlainOutcome } from "./http/outcome.js";
 
 // Live transport client implementations
 export { SlackWebApiClient } from "./clients/slack.js";
+export type { SlackTokenProvider } from "./clients/slack.js";
 export { HttpEmailClient } from "./clients/email.js";
 export type { HttpEmailClientOptions } from "./clients/email.js";
 export {

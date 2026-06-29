@@ -109,6 +109,9 @@ const envSchema = z.object({
     .default("false"),
   SLACK_SIGNING_SECRET: optionalNonEmptyString(),
   SLACK_BOT_TOKEN: optionalNonEmptyString(),
+  SLACK_CLIENT_ID: optionalNonEmptyString(),
+  SLACK_CLIENT_SECRET: optionalNonEmptyString(),
+  SLACK_INSTALL_ADMIN_SECRET: optionalNonEmptyString(),
   TEAMS_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")

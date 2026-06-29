@@ -10,6 +10,7 @@ import { decodeAction } from "./blockkit.js";
  * left to the host app, see CODEX_PROMPT.md.
  */
 export interface SlackInteractionPayload {
+  team?: { id: string };
   user: { id: string };
   channel?: { id: string };
   message?: { ts: string };
@@ -21,6 +22,7 @@ export function toIncomingDecision(payload: SlackInteractionPayload): {
   decision: IncomingDecision;
   deliveredRef?: string | undefined;
   responseUrl?: string | undefined;
+  teamId?: string | undefined;
 } | null {
   const action = payload.actions[0];
   if (!action) return null;
@@ -43,5 +45,6 @@ export function toIncomingDecision(payload: SlackInteractionPayload): {
     },
     deliveredRef: payload.message?.ts,
     responseUrl: payload.response_url,
+    teamId: payload.team?.id,
   };
 }

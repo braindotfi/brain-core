@@ -12,11 +12,13 @@ import { buildApprovalCard } from "./blockkit.js";
  */
 export interface SlackClient {
   postMessage(args: {
+    tenantId?: string | undefined;
     channel: string;
     text: string;
     blocks: unknown[];
   }): Promise<{ ok: boolean; ts?: string; error?: string }>;
   update(args: {
+    tenantId?: string | undefined;
     channel: string;
     ts: string;
     text: string;
@@ -32,6 +34,7 @@ export class SlackAdapter implements SurfaceAdapter {
   async deliver(proposal: Proposal, to: string): Promise<DeliveryResult> {
     const blocks = buildApprovalCard(proposal);
     const res = await this.client.postMessage({
+      tenantId: proposal.tenantId,
       channel: to,
       text: proposal.title, // fallback for notifications and accessibility
       blocks,
@@ -54,6 +57,7 @@ export class SlackAdapter implements SurfaceAdapter {
   }): Promise<void> {
     const banner = decisionBanner(input.decision, input.actorLabel);
     await this.client.update({
+      tenantId: input.proposal.tenantId,
       channel: input.to,
       ts: input.ref,
       text: input.proposal.title,

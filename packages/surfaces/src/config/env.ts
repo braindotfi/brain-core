@@ -3,7 +3,14 @@
  * than at first message. No secret is ever hardcoded.
  */
 export interface SurfaceConfig {
-  slack: { enabled: boolean; signingSecret: string; botToken: string };
+  slack: {
+    enabled: boolean;
+    signingSecret: string;
+    botToken?: string | undefined;
+    clientId?: string | undefined;
+    clientSecret?: string | undefined;
+    installAdminSecret?: string | undefined;
+  };
   teams: { enabled: boolean; appId: string; appPassword: string };
   email: {
     enabled: boolean;
@@ -17,7 +24,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SurfaceConfig 
     slack: {
       enabled: env.SLACK_ENABLED === "true",
       signingSecret: required(env, "SLACK_SIGNING_SECRET", env.SLACK_ENABLED === "true"),
-      botToken: required(env, "SLACK_BOT_TOKEN", env.SLACK_ENABLED === "true"),
+      botToken: optional(env, "SLACK_BOT_TOKEN"),
+      clientId: optional(env, "SLACK_CLIENT_ID"),
+      clientSecret: optional(env, "SLACK_CLIENT_SECRET"),
+      installAdminSecret: optional(env, "SLACK_INSTALL_ADMIN_SECRET"),
     },
     teams: {
       enabled: env.TEAMS_ENABLED === "true",
@@ -30,6 +40,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SurfaceConfig 
       tokenSecret: required(env, "EMAIL_TOKEN_SECRET", env.EMAIL_ENABLED === "true"),
     },
   };
+}
+
+function optional(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const v = env[key];
+  return v && v.length > 0 ? v : undefined;
 }
 
 function required(env: NodeJS.ProcessEnv, key: string, mustExist: boolean): string {
