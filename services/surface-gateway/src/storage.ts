@@ -1,14 +1,21 @@
 import type { ConversationReference } from "botbuilder";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import {
   parseProposal,
   withContentHash,
   type ActorId,
   type Decision,
   type Proposal,
+  type SlackTokenProvider,
   type SurfaceName,
 } from "@brain/surfaces";
-import { withTenantScope } from "@brain/shared";
+import {
+  decryptCredentials,
+  encryptCredentials,
+  withTenantScope,
+  type CredentialKey,
+  type TenantScopedClient,
+} from "@brain/shared";
 import type { DecisionStore, ProposalStore, TenantIdentityStore } from "@brain/core";
 
 type TerminalDecision = Exclude<Decision, "pending" | "expired">;
@@ -225,6 +232,206 @@ export class PostgresSlackRetryStore {
   }
 }
 
+export interface SlackInstallationSummary {
+  tenantId: string;
+  teamId: string;
+  botUserId: string;
+  scopes: string[];
+  installedBy: string;
+  installedAt: string;
+  status: "active" | "revoked";
+}
+
+interface SlackInstallationRow {
+  tenant_id: string;
+  team_id: string;
+  bot_token_encrypted: Buffer;
+  credential_key_id: string;
+  bot_user_id: string;
+  scopes: string[];
+  installed_by: string;
+  installed_at: Date;
+  status: "active" | "revoked";
+}
+
+interface SlackTokenPayload {
+  bot_token: string;
+}
+
+export class PostgresSlackInstallationStore {
+  public constructor(
+    private readonly pool: Pool,
+    private readonly credentialKey?: CredentialKey | undefined,
+  ) {}
+
+  public async upsertInstallation(input: {
+    tenantId: string;
+    teamId: string;
+    botToken: string;
+    botUserId: string;
+    scopes: string[];
+    installedBy: string;
+  }): Promise<void> {
+    const credential = this.requiredCredential();
+    const encrypted = encryptCredentials(
+      { bot_token: input.botToken },
+      credential.key,
+      credential.keyId,
+    );
+    await withTenantScope(this.pool, input.tenantId, async (c) => {
+      await c.query(
+        `INSERT INTO surface_slack_installations
+           (tenant_id, team_id, bot_token_encrypted, credential_key_id, bot_user_id,
+            scopes, installed_by, status, installed_at, revoked_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', now(), NULL, now())
+         ON CONFLICT (tenant_id, team_id) DO UPDATE
+           SET bot_token_encrypted = EXCLUDED.bot_token_encrypted,
+               credential_key_id = EXCLUDED.credential_key_id,
+               bot_user_id = EXCLUDED.bot_user_id,
+               scopes = EXCLUDED.scopes,
+               installed_by = EXCLUDED.installed_by,
+               status = 'active',
+               revoked_at = NULL,
+               updated_at = now()`,
+        [
+          input.tenantId,
+          input.teamId,
+          encrypted.ciphertext,
+          encrypted.keyId,
+          input.botUserId,
+          input.scopes,
+          input.installedBy,
+        ],
+      );
+    });
+  }
+
+  public async getTokenForTenant(tenantId: string): Promise<string | null> {
+    const row = await withTenantScope(this.pool, tenantId, async (c) => {
+      const { rows } = await c.query<SlackInstallationRow>(
+        `SELECT tenant_id, team_id, bot_token_encrypted, credential_key_id, bot_user_id,
+                scopes, installed_by, installed_at, status
+           FROM surface_slack_installations
+          WHERE tenant_id = $1 AND status = 'active'
+          ORDER BY installed_at DESC
+          LIMIT 1`,
+        [tenantId],
+      );
+      return rows[0] ?? null;
+    });
+    if (row === null) return null;
+    return this.decryptToken(row);
+  }
+
+  public async getInstallationForTenantTeam(input: {
+    tenantId: string;
+    teamId: string;
+  }): Promise<SlackInstallationSummary | null> {
+    return withTenantScope(this.pool, input.tenantId, async (c) => {
+      const { rows } = await c.query<SlackInstallationRow>(
+        `SELECT tenant_id, team_id, bot_token_encrypted, credential_key_id, bot_user_id,
+                scopes, installed_by, installed_at, status
+           FROM surface_slack_installations
+          WHERE tenant_id = $1 AND team_id = $2 AND status = 'active'
+          LIMIT 1`,
+        [input.tenantId, input.teamId],
+      );
+      return rows[0] === undefined ? null : toSlackInstallationSummary(rows[0]);
+    });
+  }
+
+  public async getInstallationByTeam(teamId: string): Promise<SlackInstallationSummary | null> {
+    return withSlackTeamScope(this.pool, teamId, async (c) => {
+      const { rows } = await c.query<SlackInstallationRow>(
+        `SELECT tenant_id, team_id, bot_token_encrypted, credential_key_id, bot_user_id,
+                scopes, installed_by, installed_at, status
+           FROM surface_slack_installations
+          WHERE team_id = $1
+          LIMIT 1`,
+        [teamId],
+      );
+      return rows[0] === undefined ? null : toSlackInstallationSummary(rows[0]);
+    });
+  }
+
+  public async revoke(teamId: string): Promise<void> {
+    await withSlackTeamScope(this.pool, teamId, async (c) => {
+      await c.query(
+        `UPDATE surface_slack_installations
+            SET status = 'revoked',
+                revoked_at = COALESCE(revoked_at, now()),
+                updated_at = now()
+          WHERE team_id = $1`,
+        [teamId],
+      );
+    });
+  }
+
+  public async createInstallNonce(input: {
+    tenantId: string;
+    nonce: string;
+    installedBy: string;
+    expiresAt: Date;
+  }): Promise<void> {
+    await withTenantScope(this.pool, input.tenantId, async (c) => {
+      await c.query(
+        `INSERT INTO surface_slack_install_nonces
+           (tenant_id, nonce, installed_by, expires_at)
+         VALUES ($1, $2, $3, $4)`,
+        [input.tenantId, input.nonce, input.installedBy, input.expiresAt],
+      );
+    });
+  }
+
+  public async consumeInstallNonce(input: {
+    tenantId: string;
+    nonce: string;
+    now: Date;
+  }): Promise<boolean> {
+    return withTenantScope(this.pool, input.tenantId, async (c) => {
+      const { rows } = await c.query<{ nonce: string }>(
+        `UPDATE surface_slack_install_nonces
+            SET consumed_at = $3
+          WHERE tenant_id = $1
+            AND nonce = $2
+            AND consumed_at IS NULL
+            AND expires_at > $3
+          RETURNING nonce`,
+        [input.tenantId, input.nonce, input.now],
+      );
+      return rows[0] !== undefined;
+    });
+  }
+
+  private decryptToken(row: SlackInstallationRow): string {
+    const credential = this.requiredCredential();
+    const decrypted = decryptCredentials(row.bot_token_encrypted, credential.key);
+    if (!isSlackTokenPayload(decrypted)) throw new Error("slack_token_payload_invalid");
+    return decrypted.bot_token;
+  }
+
+  private requiredCredential(): CredentialKey {
+    if (this.credentialKey === undefined) {
+      throw new Error("slack_installation_credential_key_required");
+    }
+    return this.credentialKey;
+  }
+}
+
+export class SlackInstallationTokenProvider implements SlackTokenProvider {
+  public constructor(
+    private readonly installations: { getTokenForTenant(tenantId: string): Promise<string | null> },
+    private readonly fallbackToken?: string | undefined,
+  ) {}
+
+  public async tokenForTenant(tenantId: string): Promise<string> {
+    const installed = await this.installations.getTokenForTenant(tenantId);
+    if (installed !== null) return installed;
+    if (this.fallbackToken !== undefined) return this.fallbackToken;
+    throw new Error("slack_installation_not_found");
+  }
+}
+
 export class PostgresTeamsConversationReferenceStore {
   public constructor(private readonly pool: Pool) {}
 
@@ -256,6 +463,61 @@ export class PostgresTeamsConversationReferenceStore {
       );
     });
   }
+}
+
+async function withSlackTeamScope<T>(
+  pool: Pool,
+  teamId: string,
+  fn: (client: TenantScopedClient) => Promise<T>,
+): Promise<T> {
+  const client: PoolClient = await pool.connect();
+  let committed = false;
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.slack_team_id', $1, true)", [teamId]);
+    const scoped: TenantScopedClient = {
+      query: (text, values) =>
+        client.query(text, values as unknown as unknown[]) as Promise<{
+          rows: never[];
+          rowCount: number | null;
+        }>,
+    };
+    const result = await fn(scoped);
+    await client.query("COMMIT");
+    committed = true;
+    return result;
+  } catch (err) {
+    if (!committed) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Preserve the original error.
+      }
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+function toSlackInstallationSummary(row: SlackInstallationRow): SlackInstallationSummary {
+  return {
+    tenantId: row.tenant_id,
+    teamId: row.team_id,
+    botUserId: row.bot_user_id,
+    scopes: row.scopes,
+    installedBy: row.installed_by,
+    installedAt: row.installed_at.toISOString(),
+    status: row.status,
+  };
+}
+
+function isSlackTokenPayload(value: object): value is SlackTokenPayload {
+  return (
+    "bot_token" in value &&
+    typeof (value as { bot_token?: unknown }).bot_token === "string" &&
+    (value as { bot_token: string }).bot_token.length > 0
+  );
 }
 
 function parseConversationRefKey(to: string): { tenantId: string; conversationRef: string } | null {

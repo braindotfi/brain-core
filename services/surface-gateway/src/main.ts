@@ -6,12 +6,23 @@ import {
   TeamsBotFrameworkClient,
   type SurfaceConfig,
 } from "@brain/surfaces";
-import { createLogger, createPool, loadConfig, PostgresAuditEmitter } from "@brain/shared";
+import {
+  buildCredentialKeyProvider,
+  createLogger,
+  createPool,
+  loadConfig,
+  PostgresAuditEmitter,
+} from "@brain/shared";
 import { buildSurfaceRuntime } from "@brain/core";
 import type { SurfaceClients } from "@brain/core";
 import { buildSurfaceGatewayApp } from "./server.js";
 import { buildSurfaceGatewayServices } from "./services.js";
-import { PostgresSlackRetryStore, PostgresTeamsConversationReferenceStore } from "./storage.js";
+import {
+  PostgresSlackInstallationStore,
+  PostgresSlackRetryStore,
+  PostgresTeamsConversationReferenceStore,
+  SlackInstallationTokenProvider,
+} from "./storage.js";
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -42,12 +53,21 @@ async function main(): Promise<void> {
   });
 
   const audit = new PostgresAuditEmitter(auditPool);
+  const credentialKeyProvider = buildCredentialKeyProvider({
+    kmsVaultUrl: cfg.BRAIN_AZURE_KEY_VAULT_URL,
+    kmsSecretName: cfg.BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME,
+    envVarKey: cfg.BRAIN_SOURCE_CREDENTIAL_KEY,
+    envKeyId: cfg.BRAIN_SOURCE_CREDENTIAL_KEY_ID,
+    nodeEnv: cfg.NODE_ENV,
+  });
+  const sourceCredential = await credentialKeyProvider.load();
   const { services, proposals } = buildSurfaceGatewayServices({
     pool: surfacePool,
     auditPool,
     resolverPool,
     audit,
   });
+  const slackInstallations = new PostgresSlackInstallationStore(surfacePool, sourceCredential);
   const teamsReferences = new PostgresTeamsConversationReferenceStore(surfacePool);
   const teamsAdapter = surfaceConfig.teams.enabled
     ? new BotFrameworkAdapter({
@@ -57,7 +77,14 @@ async function main(): Promise<void> {
     : null;
   const clients: SurfaceClients = {
     ...(surfaceConfig.slack.enabled
-      ? { slack: new SlackWebApiClient(surfaceConfig.slack.botToken) }
+      ? {
+          slack: new SlackWebApiClient(
+            new SlackInstallationTokenProvider(
+              slackInstallations,
+              cfg.NODE_ENV === "production" ? undefined : surfaceConfig.slack.botToken,
+            ),
+          ),
+        }
       : {}),
     ...(surfaceConfig.email.enabled
       ? {
@@ -84,6 +111,7 @@ async function main(): Promise<void> {
     surfaceConfig,
     proposals,
     slackRetries: new PostgresSlackRetryStore(surfacePool),
+    ...(surfaceConfig.slack.enabled ? { slackInstallations } : {}),
     approvalBaseUrl: surfaceConfig.email.approvalBaseUrl || "http://localhost:3000",
     ...(teamsAdapter !== null
       ? {
@@ -122,7 +150,12 @@ function buildSurfaceConfig(cfg: ReturnType<typeof loadConfig>): SurfaceConfig {
         "SLACK_SIGNING_SECRET",
         cfg.SLACK_ENABLED,
       ),
-      botToken: requiredIf(cfg.SLACK_BOT_TOKEN, "SLACK_BOT_TOKEN", cfg.SLACK_ENABLED),
+      ...(cfg.SLACK_BOT_TOKEN !== undefined ? { botToken: cfg.SLACK_BOT_TOKEN } : {}),
+      ...(cfg.SLACK_CLIENT_ID !== undefined ? { clientId: cfg.SLACK_CLIENT_ID } : {}),
+      ...(cfg.SLACK_CLIENT_SECRET !== undefined ? { clientSecret: cfg.SLACK_CLIENT_SECRET } : {}),
+      ...(cfg.SLACK_INSTALL_ADMIN_SECRET !== undefined
+        ? { installAdminSecret: cfg.SLACK_INSTALL_ADMIN_SECRET }
+        : {}),
     },
     teams: {
       enabled: cfg.TEAMS_ENABLED,

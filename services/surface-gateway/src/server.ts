@@ -9,12 +9,44 @@ import {
   type TeamsActivityVerifier,
   parseProposal,
   type DeliveryTarget,
+  verifySlackRequest,
 } from "@brain/surfaces";
 import type { SurfaceRuntime } from "@brain/core";
 import type { PostgresSurfaceProposalStore } from "./storage.js";
+import {
+  buildSlackAuthorizeUrl,
+  FetchSlackOAuthClient,
+  mintSlackInstallState,
+  verifySlackInstallState,
+  type SlackOAuthClient,
+} from "./slack-oauth.js";
 
 export interface SlackRetryStore {
   claim(retryKey: string): Promise<boolean>;
+}
+
+export interface SlackInstallationStore {
+  createInstallNonce(input: {
+    tenantId: string;
+    nonce: string;
+    installedBy: string;
+    expiresAt: Date;
+  }): Promise<void>;
+  consumeInstallNonce(input: { tenantId: string; nonce: string; now: Date }): Promise<boolean>;
+  upsertInstallation(input: {
+    tenantId: string;
+    teamId: string;
+    botToken: string;
+    botUserId: string;
+    scopes: string[];
+    installedBy: string;
+  }): Promise<void>;
+  getInstallationForTenantTeam(input: {
+    tenantId: string;
+    teamId: string;
+  }): Promise<{ status: "active" | "revoked" } | null>;
+  getInstallationByTeam(teamId: string): Promise<{ tenantId: string } | null>;
+  revoke(teamId: string): Promise<void>;
 }
 
 export interface BuildSurfaceGatewayAppOptions {
@@ -22,6 +54,9 @@ export interface BuildSurfaceGatewayAppOptions {
   surfaceConfig: SurfaceConfig;
   proposals: PostgresSurfaceProposalStore;
   slackRetries: SlackRetryStore;
+  slackInstallations?: SlackInstallationStore | undefined;
+  slackOAuthClient?: SlackOAuthClient | undefined;
+  slackOAuthRedirectUri?: string | undefined;
   teamsVerifier?: TeamsActivityVerifier | undefined;
   approvalBaseUrl: string;
   smoke?: { enabled: boolean; secret?: string | undefined } | undefined;
@@ -74,10 +109,151 @@ export async function buildSurfaceGatewayApp(
       headers: request.headers,
       signingSecret: opts.surfaceConfig.slack.signingSecret,
       approvals: opts.runtime.approvals,
+      ...(opts.slackInstallations !== undefined
+        ? {
+            installationVerifier: async ({ tenantId, teamId }) => {
+              const installation = await opts.slackInstallations?.getInstallationForTenantTeam({
+                tenantId,
+                teamId,
+              });
+              return installation?.status === "active";
+            },
+          }
+        : {}),
       logger: app.log,
     });
     reply.status(response.status);
     return response.body;
+  });
+
+  app.post("/surfaces/slack/oauth/install", async (request, reply) => {
+    const slack = opts.surfaceConfig.slack;
+    const clientId = slack.clientId;
+    const clientSecret = slack.clientSecret;
+    const installAdminSecret = slack.installAdminSecret;
+    const installations = opts.slackInstallations;
+    if (
+      clientId === undefined ||
+      clientSecret === undefined ||
+      installAdminSecret === undefined ||
+      installations === undefined
+    ) {
+      reply.status(404);
+      return "slack oauth disabled";
+    }
+    if (header(request.headers, "x-brain-slack-install-secret") !== installAdminSecret) {
+      reply.status(401);
+      return "unauthorized";
+    }
+    const body = parseJsonObject(requireRawBody(request.body));
+    const tenantId = stringField(body, "tenantId");
+    const installedBy = stringField(body, "installedBy");
+    if (tenantId === null || installedBy === null) {
+      reply.status(400);
+      return "missing tenantId or installedBy";
+    }
+    const state = mintSlackInstallState({
+      tenantId,
+      installedBy,
+      secret: clientSecret,
+    });
+    await installations.createInstallNonce({
+      tenantId,
+      nonce: state.nonce,
+      installedBy,
+      expiresAt: state.expiresAt,
+    });
+    const url = buildSlackAuthorizeUrl({
+      clientId,
+      state: state.token,
+      redirectUri: opts.slackOAuthRedirectUri,
+    });
+    reply.redirect(url, 302);
+    return "";
+  });
+
+  app.get("/surfaces/slack/oauth/callback", async (request, reply) => {
+    const slack = opts.surfaceConfig.slack;
+    const clientId = slack.clientId;
+    const clientSecret = slack.clientSecret;
+    const installations = opts.slackInstallations;
+    if (clientId === undefined || clientSecret === undefined || installations === undefined) {
+      reply.status(404);
+      return "slack oauth disabled";
+    }
+    const url = new URL(request.url, "http://surface-gateway.local");
+    const code = url.searchParams.get("code");
+    const stateToken = url.searchParams.get("state");
+    if (code === null || stateToken === null) {
+      reply.status(400);
+      return "missing code or state";
+    }
+    const state = verifySlackInstallState({ token: stateToken, secret: clientSecret });
+    if (!state.ok) {
+      reply.status(400);
+      return "invalid state";
+    }
+    const consumed = await installations.consumeInstallNonce({
+      tenantId: state.claims.tenantId,
+      nonce: state.claims.nonce,
+      now: new Date(),
+    });
+    if (!consumed) {
+      reply.status(400);
+      return "invalid state";
+    }
+    const oauth = opts.slackOAuthClient ?? new FetchSlackOAuthClient();
+    const access = await oauth.exchangeCode({
+      code,
+      clientId,
+      clientSecret,
+      redirectUri: opts.slackOAuthRedirectUri,
+    });
+    await installations.upsertInstallation({
+      tenantId: state.claims.tenantId,
+      teamId: access.teamId,
+      botToken: access.botToken,
+      botUserId: access.botUserId,
+      scopes: access.scopes,
+      installedBy: state.claims.installedBy,
+    });
+    reply.header("content-type", "text/plain; charset=utf-8");
+    return "Slack workspace connected.";
+  });
+
+  app.post("/surfaces/slack/events", async (request, reply) => {
+    const rawBody = requireRawBody(request.body);
+    const verified = verifySlackRequestForEvents({
+      rawBody,
+      headers: request.headers,
+      signingSecret: opts.surfaceConfig.slack.signingSecret,
+    });
+    if (!verified) {
+      reply.status(401);
+      return "invalid slack signature";
+    }
+    const body = parseJsonObject(rawBody);
+    if (body["type"] === "url_verification") {
+      const challenge = stringField(body, "challenge");
+      if (challenge === null) {
+        reply.status(400);
+        return "missing challenge";
+      }
+      return { challenge };
+    }
+    if (body["type"] !== "event_callback") return { ok: true };
+    const event = body["event"];
+    if (!isSlackAppUninstalledEvent(event)) return { ok: true };
+    const teamId = stringField(body, "team_id");
+    if (teamId === null) {
+      reply.status(400);
+      return "missing team_id";
+    }
+    if (opts.slackInstallations !== undefined) {
+      const installation = await opts.slackInstallations.getInstallationByTeam(teamId);
+      if (installation !== null) await opts.slackInstallations.revoke(teamId);
+    }
+    return { ok: true };
   });
 
   app.route({
@@ -163,6 +339,22 @@ export async function buildSurfaceGatewayApp(
   return app;
 }
 
+function verifySlackRequestForEvents(input: {
+  rawBody: Buffer;
+  headers: FastifyRequest["headers"];
+  signingSecret: string;
+}): boolean {
+  const signature = header(input.headers, "x-slack-signature");
+  const timestamp = header(input.headers, "x-slack-request-timestamp");
+  const verified = verifySlackRequest({
+    rawBody: input.rawBody,
+    signature,
+    timestamp,
+    signingSecret: input.signingSecret,
+  });
+  return verified.ok;
+}
+
 function requireRawBody(body: unknown): Buffer {
   if (Buffer.isBuffer(body)) return body;
   if (typeof body === "string") return Buffer.from(body, "utf8");
@@ -192,6 +384,16 @@ function parseJsonObject(body: Buffer): Record<string, unknown> {
     throw new Error("expected_json_object");
   }
   return parsed as Record<string, unknown>;
+}
+
+function stringField(body: Record<string, unknown>, key: string): string | null {
+  const value = body[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function isSlackAppUninstalledEvent(value: unknown): value is { type: "app_uninstalled" } {
+  if (typeof value !== "object" || value === null) return false;
+  return (value as Record<string, unknown>)["type"] === "app_uninstalled";
 }
 
 function parseTargets(value: unknown): DeliveryTarget[] {
