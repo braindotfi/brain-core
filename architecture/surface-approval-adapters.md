@@ -57,17 +57,24 @@ Slack, Teams, and email are therefore input channels to the same policy and audi
 `services/surface-gateway` hosts the framework-neutral handlers as a separate
 Fastify v5 process:
 
-| Route                               | Purpose                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------- |
-| `POST /surfaces/slack/interactions` | Slack interactivity with raw-body signature verification and retry dedupe |
-| `GET /surfaces/email/approve`       | Confirmation page for signed email approval links                         |
-| `HEAD /surfaces/email/approve`      | Link preview and health-safe email route check                            |
-| `POST /surfaces/email/approve`      | Email approval confirmation with signed-token validation                  |
-| `POST /surfaces/teams/messages`     | Bot Framework verified Teams submit activities                            |
-| `POST /surfaces/teams/install`      | Admin-gated Brain tenant to Azure AD tenant mapping                       |
-| `POST /surfaces/teams/revoke`       | Admin-gated Teams installation revocation                                 |
-| `POST /surfaces/smoke/proposals`    | Explicitly gated smoke dispatch for release candidates                    |
-| `GET /healthz`                      | Process health check                                                      |
+| Route                                          | Purpose                                                                   |
+| ---------------------------------------------- | ------------------------------------------------------------------------- |
+| `POST /surfaces/slack/interactions`            | Slack interactivity with raw-body signature verification and retry dedupe |
+| `GET /surfaces/email/approve`                  | Confirmation page for signed email approval links                         |
+| `HEAD /surfaces/email/approve`                 | Link preview and health-safe email route check                            |
+| `POST /surfaces/email/approve`                 | Email approval confirmation with signed-token validation                  |
+| `POST /surfaces/email/recipients/verify/start` | Admin-gated recipient verification email initiation                       |
+| `GET /surfaces/email/verify`                   | Confirmation page for signed recipient verification links                 |
+| `HEAD /surfaces/email/verify`                  | Link preview-safe recipient verification route check                      |
+| `POST /surfaces/email/verify`                  | Recipient verification confirmation                                       |
+| `POST /surfaces/email/routes`                  | Admin-gated agent to verified-recipient routing config                    |
+| `POST /surfaces/email/domains`                 | Admin-gated tenant sender-domain verification state                       |
+| `POST /surfaces/email/events`                  | ESP bounce and complaint events with webhook signature verification       |
+| `POST /surfaces/teams/messages`                | Bot Framework verified Teams submit activities                            |
+| `POST /surfaces/teams/install`                 | Admin-gated Brain tenant to Azure AD tenant mapping                       |
+| `POST /surfaces/teams/revoke`                  | Admin-gated Teams installation revocation                                 |
+| `POST /surfaces/smoke/proposals`               | Explicitly gated smoke dispatch for release candidates                    |
+| `GET /healthz`                                 | Process health check                                                      |
 
 The gateway owns only surface persistence:
 
@@ -78,6 +85,9 @@ The gateway owns only surface persistence:
 - `surface_slack_retries`
 - `surface_slack_installations`
 - `surface_slack_install_nonces`
+- `surface_email_recipients`
+- `surface_email_routes`
+- `surface_email_domains`
 - `surface_teams_conversation_refs`
 - `surface_teams_installations`
 
@@ -86,6 +96,11 @@ state is accepted. Teams installations are resolved by authenticated Azure AD
 tenant id before the card's Brain tenant is trusted. Teams conversation
 references are recorded only after that mapping succeeds, so proactive sends
 use `<brainTenantId>:<conversationId>` references tied to an active install.
+Email recipients must be verified before routing or identity resolution accepts
+them. Email GET and HEAD routes never mutate state; only POST confirmation
+verifies an address or applies an approval. ESP bounce and complaint events mark
+recipients disabled so future dispatch skips them. Tenant custom senders are
+only used after SPF, DKIM, and DMARC are all marked verified.
 
 The production DB role is `brain_surface_gateway`. It is tenant-scoped, has no
 `BYPASSRLS`, and has no Ledger or execution outbox grants. Decisions delegate to

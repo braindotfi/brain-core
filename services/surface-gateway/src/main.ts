@@ -18,6 +18,7 @@ import type { SurfaceClients } from "@brain/core";
 import { buildSurfaceGatewayApp } from "./server.js";
 import { buildSurfaceGatewayServices } from "./services.js";
 import {
+  PostgresEmailOnboardingStore,
   PostgresSlackInstallationStore,
   PostgresSlackRetryStore,
   PostgresTeamsConversationReferenceStore,
@@ -69,12 +70,21 @@ async function main(): Promise<void> {
     audit,
   });
   const slackInstallations = new PostgresSlackInstallationStore(surfacePool, sourceCredential);
+  const emailOnboarding = new PostgresEmailOnboardingStore(surfacePool, cfg.EMAIL_FROM);
   const teamsReferences = new PostgresTeamsConversationReferenceStore(surfacePool);
   const teamsInstallations = new PostgresTeamsInstallationStore(surfacePool);
   const teamsAdapter = surfaceConfig.teams.enabled
     ? new BotFrameworkAdapter({
         appId: surfaceConfig.teams.appId,
         appPassword: surfaceConfig.teams.appPassword,
+      })
+    : null;
+  const emailClient = surfaceConfig.email.enabled
+    ? new HttpEmailClient({
+        endpoint: required(cfg.EMAIL_ENDPOINT, "EMAIL_ENDPOINT"),
+        apiKey: required(cfg.EMAIL_API_KEY, "EMAIL_API_KEY"),
+        ...(cfg.EMAIL_FROM !== undefined ? { from: cfg.EMAIL_FROM } : {}),
+        senderResolver: emailOnboarding,
       })
     : null;
   const clients: SurfaceClients = {
@@ -90,11 +100,7 @@ async function main(): Promise<void> {
       : {}),
     ...(surfaceConfig.email.enabled
       ? {
-          email: new HttpEmailClient({
-            endpoint: required(cfg.EMAIL_ENDPOINT, "EMAIL_ENDPOINT"),
-            apiKey: required(cfg.EMAIL_API_KEY, "EMAIL_API_KEY"),
-            ...(cfg.EMAIL_FROM !== undefined ? { from: cfg.EMAIL_FROM } : {}),
-          }),
+          email: requiredClient(emailClient, "email"),
         }
       : {}),
     ...(surfaceConfig.teams.enabled && teamsAdapter !== null
@@ -117,6 +123,9 @@ async function main(): Promise<void> {
     ...(surfaceConfig.slack.enabled ? { slackInstallations } : {}),
     ...(surfaceConfig.teams.enabled
       ? { teamsInstallations, teamsConversationReferences: teamsReferences }
+      : {}),
+    ...(surfaceConfig.email.enabled && emailClient !== null
+      ? { emailOnboarding, emailVerificationSender: emailClient }
       : {}),
     approvalBaseUrl: surfaceConfig.email.approvalBaseUrl || "http://localhost:3000",
     ...(teamsAdapter !== null
@@ -179,8 +188,19 @@ function buildSurfaceConfig(cfg: ReturnType<typeof loadConfig>): SurfaceConfig {
         cfg.EMAIL_ENABLED,
       ),
       tokenSecret: requiredIf(cfg.EMAIL_TOKEN_SECRET, "EMAIL_TOKEN_SECRET", cfg.EMAIL_ENABLED),
+      ...(cfg.EMAIL_ONBOARDING_ADMIN_SECRET !== undefined
+        ? { onboardingAdminSecret: cfg.EMAIL_ONBOARDING_ADMIN_SECRET }
+        : {}),
+      ...(cfg.EMAIL_ESP_WEBHOOK_SECRET !== undefined
+        ? { espWebhookSecret: cfg.EMAIL_ESP_WEBHOOK_SECRET }
+        : {}),
     },
   };
+}
+
+function requiredClient<T>(client: T | null, name: string): T {
+  if (client === null) throw new Error(`${name} client unavailable`);
+  return client;
 }
 
 function requiredIf(value: string | undefined, name: string, enabled: boolean): string {

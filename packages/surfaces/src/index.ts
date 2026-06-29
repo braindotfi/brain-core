@@ -28,8 +28,13 @@ export { TeamsAdapter } from "./surfaces/teams/adapter.js";
 export type { TeamsClient } from "./surfaces/teams/adapter.js";
 export { EmailAdapter } from "./surfaces/email/adapter.js";
 export type { EmailClient } from "./surfaces/email/adapter.js";
-export { signToken, verifyToken } from "./surfaces/email/token.js";
-export type { TokenClaims } from "./surfaces/email/token.js";
+export {
+  signToken,
+  signVerificationToken,
+  verifyToken,
+  verifyVerificationToken,
+} from "./surfaces/email/token.js";
+export type { EmailVerificationTokenClaims, TokenClaims } from "./surfaces/email/token.js";
 
 // Inbound HTTP helpers
 export {

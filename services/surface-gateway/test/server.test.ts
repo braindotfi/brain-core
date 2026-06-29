@@ -4,9 +4,11 @@ import type { FastifyInstance } from "fastify";
 import type { ConversationReference } from "botbuilder";
 import type { SurfaceRuntime } from "@brain/core";
 import {
+  signVerificationToken,
   signToken,
   withContentHash,
   type ConversationReferenceStore,
+  type EmailVerificationTokenClaims,
   type Proposal,
   type SurfaceConfig,
   type TeamsActivityVerifier,
@@ -14,6 +16,8 @@ import {
 } from "@brain/surfaces";
 import {
   buildSurfaceGatewayApp,
+  type EmailOnboardingStore,
+  type EmailVerificationSender,
   type SlackInstallationStore,
   type TeamsInstallationStore,
 } from "../src/server.js";
@@ -355,6 +359,171 @@ describe("surface gateway server", () => {
     expect(lines.join("\n")).not.toContain(token);
   });
 
+  it("verifies email recipients only on POST confirmation", async () => {
+    const onboarding = new MemoryEmailOnboardingStore();
+    const sender = new MemoryEmailSender();
+    const app = await makeApp({
+      emailOnboarding: onboarding,
+      emailVerificationSender: sender,
+    });
+
+    const init = await app.inject({
+      method: "POST",
+      url: "/surfaces/email/recipients/verify/start",
+      headers: {
+        "content-type": "application/json",
+        "x-brain-email-onboarding-secret": "email-onboarding-secret",
+      },
+      payload: JSON.stringify({
+        tenantId: TENANT_ID,
+        email: "Approver@Example.com",
+        actorId: "user_approver",
+        roles: ["finance"],
+      }),
+    });
+    const token = extractToken(sender.sent[0]?.text ?? "");
+
+    const get = await app.inject({ method: "GET", url: `/surfaces/email/verify?t=${token}` });
+    const head = await app.inject({ method: "HEAD", url: `/surfaces/email/verify?t=${token}` });
+    expect(init.statusCode).toBe(202);
+    expect(get.statusCode).toBe(200);
+    expect(head.statusCode).toBe(200);
+    expect(await onboarding.isVerified(TENANT_ID, "approver@example.com")).toBe(false);
+
+    const post = await app.inject({
+      method: "POST",
+      url: "/surfaces/email/verify",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({ t: token }).toString(),
+    });
+
+    expect(post.statusCode).toBe(200);
+    expect(await onboarding.isVerified(TENANT_ID, "approver@example.com")).toBe(true);
+  });
+
+  it("rejects expired or tampered email verification tokens", async () => {
+    const onboarding = new MemoryEmailOnboardingStore();
+    const app = await makeApp({ emailOnboarding: onboarding });
+    const expired = signVerificationToken(
+      verificationClaims({ exp: Math.floor(Date.now() / 1000) - 1 }),
+      "email_secret",
+    );
+    const valid = signVerificationToken(
+      verificationClaims({ exp: Math.floor(Date.now() / 1000) + 60 }),
+      "email_secret",
+    );
+
+    const expiredRes = await app.inject({
+      method: "POST",
+      url: "/surfaces/email/verify",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({ t: expired }).toString(),
+    });
+    const tampered = await app.inject({
+      method: "POST",
+      url: "/surfaces/email/verify",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({ t: `${valid.slice(0, -1)}x` }).toString(),
+    });
+
+    expect(expiredRes.statusCode).toBe(400);
+    expect(tampered.statusCode).toBe(400);
+    expect(await onboarding.isVerified(TENANT_ID, "approver@example.com")).toBe(false);
+  });
+
+  it("expands smoke email routes to verified recipients only", async () => {
+    const onboarding = new MemoryEmailOnboardingStore();
+    await onboarding.verifyRecipient({
+      tenantId: TENANT_ID,
+      email: "verified@example.com",
+      actorId: "user_verified",
+      roles: ["finance"],
+    });
+    await onboarding.upsertRecipient({
+      tenantId: TENANT_ID,
+      email: "pending@example.com",
+      actorId: "user_pending",
+      roles: ["finance"],
+    });
+    await onboarding.setRoute({
+      tenantId: TENANT_ID,
+      agent: "invoice",
+      recipients: ["verified@example.com", "pending@example.com"],
+    });
+    const targets: unknown[] = [];
+    const app = await makeApp({
+      emailOnboarding: onboarding,
+      dispatcher: {
+        async dispatch(_proposal: Proposal, deliveryTargets: unknown[]) {
+          targets.push(...deliveryTargets);
+          return [{ surface: "email", target: "verified@example.com", ok: true }];
+        },
+      },
+      smoke: { enabled: true, secret: "smoke_secret" },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/surfaces/smoke/proposals",
+      headers: { "content-type": "application/json", "x-brain-smoke-secret": "smoke_secret" },
+      payload: JSON.stringify({ proposal: sampleProposal() }),
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(targets).toEqual([{ surface: "email", to: "verified@example.com" }]);
+  });
+
+  it("disables email recipients on bounce or complaint events and later skips sends", async () => {
+    const onboarding = new MemoryEmailOnboardingStore();
+    await onboarding.verifyRecipient({
+      tenantId: TENANT_ID,
+      email: "verified@example.com",
+      actorId: "user_verified",
+      roles: ["finance"],
+    });
+    await onboarding.setRoute({
+      tenantId: TENANT_ID,
+      agent: "invoice",
+      recipients: ["verified@example.com"],
+    });
+    const targets: unknown[] = [];
+    const app = await makeApp({
+      emailOnboarding: onboarding,
+      dispatcher: {
+        async dispatch(_proposal: Proposal, deliveryTargets: unknown[]) {
+          targets.push(...deliveryTargets);
+          return [];
+        },
+      },
+      smoke: { enabled: true, secret: "smoke_secret" },
+    });
+    const eventBody = JSON.stringify({
+      type: "bounce",
+      tenantId: TENANT_ID,
+      email: "verified@example.com",
+    });
+
+    const event = await app.inject({
+      method: "POST",
+      url: "/surfaces/email/events",
+      headers: {
+        "content-type": "application/json",
+        "x-brain-email-signature": emailEventSignature(eventBody),
+      },
+      payload: eventBody,
+    });
+    const smoke = await app.inject({
+      method: "POST",
+      url: "/surfaces/smoke/proposals",
+      headers: { "content-type": "application/json", "x-brain-smoke-secret": "smoke_secret" },
+      payload: JSON.stringify({ proposal: sampleProposal() }),
+    });
+
+    expect(event.statusCode).toBe(200);
+    expect(smoke.statusCode).toBe(202);
+    expect(targets).toEqual([]);
+  });
+
   it("persists and dispatches a smoke proposal when explicitly enabled", async () => {
     const saved: Proposal[] = [];
     const dispatched: Proposal[] = [];
@@ -405,6 +574,8 @@ async function makeApp(
     teamsVerifier?: TeamsActivityVerifier | undefined;
     teamsInstallations?: TeamsInstallationStore | undefined;
     teamsConversationReferences?: ConversationReferenceStore | undefined;
+    emailOnboarding?: EmailOnboardingStore | undefined;
+    emailVerificationSender?: EmailVerificationSender | undefined;
   } = {},
   logLines: string[] = [],
 ): Promise<FastifyInstance> {
@@ -449,6 +620,8 @@ async function makeApp(
     teamsVerifier: overrides.teamsVerifier,
     teamsInstallations: overrides.teamsInstallations,
     teamsConversationReferences: overrides.teamsConversationReferences,
+    emailOnboarding: overrides.emailOnboarding,
+    emailVerificationSender: overrides.emailVerificationSender,
     approvalBaseUrl: "http://localhost:3000",
     smoke: overrides.smoke,
     logger: memoryLogger(logLines) as never,
@@ -634,6 +807,125 @@ class MemoryTeamsVerifier implements TeamsActivityVerifier {
   }
 }
 
+class MemoryEmailOnboardingStore implements EmailOnboardingStore {
+  private readonly recipients = new Map<
+    string,
+    {
+      actorId: string;
+      roles: string[];
+      verified: boolean;
+      status: "pending" | "active" | "disabled";
+    }
+  >();
+  private readonly routes = new Map<string, string[]>();
+  private readonly domains = new Map<
+    string,
+    { verified: boolean; status: "pending" | "active" | "disabled" }
+  >();
+
+  public async upsertRecipient(input: {
+    tenantId: string;
+    email: string;
+    actorId: string;
+    roles: string[];
+  }): Promise<void> {
+    this.recipients.set(recipientKey(input.tenantId, input.email), {
+      actorId: input.actorId,
+      roles: input.roles,
+      verified: false,
+      status: "pending",
+    });
+  }
+
+  public async verifyRecipient(input: {
+    tenantId: string;
+    email: string;
+    actorId: string;
+    roles: string[];
+  }): Promise<void> {
+    this.recipients.set(recipientKey(input.tenantId, input.email), {
+      actorId: input.actorId,
+      roles: input.roles,
+      verified: true,
+      status: "active",
+    });
+  }
+
+  public async disableRecipient(input: { tenantId: string; email: string }): Promise<void> {
+    const existing = this.recipients.get(recipientKey(input.tenantId, input.email));
+    if (existing !== undefined) existing.status = "disabled";
+  }
+
+  public async setRoute(input: {
+    tenantId: string;
+    agent: "invoice" | "collections" | "cash" | "close";
+    recipients: string[];
+  }): Promise<void> {
+    this.routes.set(`${input.tenantId}:${input.agent}`, input.recipients.map(normalizeEmail));
+  }
+
+  public async resolveRoute(input: {
+    tenantId: string;
+    agent: "invoice" | "collections" | "cash" | "close";
+  }): Promise<string[]> {
+    return this.filterVerifiedRecipients({
+      tenantId: input.tenantId,
+      recipients: this.routes.get(`${input.tenantId}:${input.agent}`) ?? [],
+    });
+  }
+
+  public async filterVerifiedRecipients(input: {
+    tenantId: string;
+    recipients: string[];
+  }): Promise<string[]> {
+    return input.recipients.map(normalizeEmail).filter((email) => {
+      const recipient = this.recipients.get(recipientKey(input.tenantId, email));
+      return recipient?.verified === true && recipient.status === "active";
+    });
+  }
+
+  public async upsertDomain(input: {
+    tenantId: string;
+    domain: string;
+    spfOk: boolean;
+    dkimOk: boolean;
+    dmarcOk: boolean;
+    status?: "pending" | "active" | "disabled" | undefined;
+  }): Promise<void> {
+    const verified = input.spfOk && input.dkimOk && input.dmarcOk;
+    this.domains.set(`${input.tenantId}:${input.domain.toLowerCase()}`, {
+      verified,
+      status: input.status ?? (verified ? "active" : "pending"),
+    });
+  }
+
+  public async isVerified(tenantId: string, email: string): Promise<boolean> {
+    const recipient = this.recipients.get(recipientKey(tenantId, email));
+    return recipient?.verified === true && recipient.status === "active";
+  }
+}
+
+class MemoryEmailSender implements EmailVerificationSender {
+  public readonly sent: Array<{
+    tenantId: string;
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+  }> = [];
+
+  public async send(input: {
+    tenantId: string;
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+  }): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+    this.sent.push(input);
+    return { ok: true, messageId: "msg_1" };
+  }
+}
+
 class MemorySlackRetryStore {
   private readonly seen = new Set<string>();
 
@@ -685,6 +977,8 @@ function surfaceConfig(): SurfaceConfig {
       enabled: true,
       approvalBaseUrl: "http://localhost:3000/surfaces/email/approve",
       tokenSecret: "email_secret",
+      onboardingAdminSecret: "email-onboarding-secret",
+      espWebhookSecret: "email-event-secret",
     },
   };
 }
@@ -746,6 +1040,38 @@ function slackSignature(rawBody: string, timestamp: string): string {
   return `v0=${createHmac("sha256", SIGNING_SECRET)
     .update(`v0:${timestamp}:${rawBody}`)
     .digest("hex")}`;
+}
+
+function emailEventSignature(rawBody: string): string {
+  return `v1=${createHmac("sha256", "email-event-secret").update(rawBody).digest("hex")}`;
+}
+
+function extractToken(text: string): string {
+  const match = /[?&]t=(\S+)/.exec(text);
+  expect(match?.[1]).toBeTruthy();
+  return match![1]!;
+}
+
+function verificationClaims(
+  overrides: Partial<EmailVerificationTokenClaims> = {},
+): EmailVerificationTokenClaims {
+  return {
+    purpose: "email_recipient_verification",
+    tenantId: TENANT_ID,
+    email: "approver@example.com",
+    actorId: "user_approver",
+    roles: ["finance"],
+    exp: Math.floor(Date.now() / 1000) + 60,
+    ...overrides,
+  };
+}
+
+function recipientKey(tenantId: string, email: string): string {
+  return `${tenantId}:${normalizeEmail(email)}`;
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 function sampleProposal(): Proposal {

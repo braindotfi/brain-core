@@ -21,6 +21,8 @@ export interface SurfaceConfig {
     enabled: boolean;
     approvalBaseUrl: string;
     tokenSecret: string;
+    onboardingAdminSecret?: string | undefined;
+    espWebhookSecret?: string | undefined;
   };
 }
 
@@ -44,6 +46,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SurfaceConfig 
       enabled: env.EMAIL_ENABLED === "true",
       approvalBaseUrl: required(env, "EMAIL_APPROVAL_BASE_URL", env.EMAIL_ENABLED === "true"),
       tokenSecret: required(env, "EMAIL_TOKEN_SECRET", env.EMAIL_ENABLED === "true"),
+      onboardingAdminSecret: optional(env, "EMAIL_ONBOARDING_ADMIN_SECRET"),
+      espWebhookSecret: optional(env, "EMAIL_ESP_WEBHOOK_SECRET"),
     },
   };
 }

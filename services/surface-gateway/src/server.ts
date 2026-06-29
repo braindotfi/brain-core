@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import fastifyHelmet from "@fastify/helmet";
 import fastifyRateLimit from "@fastify/rate-limit";
@@ -9,8 +9,12 @@ import {
   type ConversationReferenceStore,
   type TeamsActivityVerifier,
   parseProposal,
+  signVerificationToken,
   type DeliveryTarget,
   verifySlackRequest,
+  verifyVerificationToken,
+  type Proposal,
+  type AgentKind,
 } from "@brain/surfaces";
 import type { SurfaceRuntime } from "@brain/core";
 import type { PostgresSurfaceProposalStore } from "./storage.js";
@@ -71,6 +75,43 @@ export interface TeamsInstallationStore {
   revoke(aadTenantId: string): Promise<void>;
 }
 
+export interface EmailOnboardingStore {
+  upsertRecipient(input: {
+    tenantId: string;
+    email: string;
+    actorId: string;
+    roles: string[];
+  }): Promise<void>;
+  verifyRecipient(input: {
+    tenantId: string;
+    email: string;
+    actorId: string;
+    roles: string[];
+  }): Promise<void>;
+  disableRecipient(input: { tenantId: string; email: string }): Promise<void>;
+  setRoute(input: { tenantId: string; agent: AgentKind; recipients: string[] }): Promise<void>;
+  resolveRoute(input: { tenantId: string; agent: AgentKind }): Promise<string[]>;
+  filterVerifiedRecipients(input: { tenantId: string; recipients: string[] }): Promise<string[]>;
+  upsertDomain(input: {
+    tenantId: string;
+    domain: string;
+    spfOk: boolean;
+    dkimOk: boolean;
+    dmarcOk: boolean;
+    status?: "pending" | "active" | "disabled" | undefined;
+  }): Promise<void>;
+}
+
+export interface EmailVerificationSender {
+  send(args: {
+    tenantId: string;
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+  }): Promise<{ ok: boolean; messageId?: string; error?: string }>;
+}
+
 export interface BuildSurfaceGatewayAppOptions {
   runtime: SurfaceRuntime;
   surfaceConfig: SurfaceConfig;
@@ -82,6 +123,8 @@ export interface BuildSurfaceGatewayAppOptions {
   teamsVerifier?: TeamsActivityVerifier | undefined;
   teamsInstallations?: TeamsInstallationStore | undefined;
   teamsConversationReferences?: ConversationReferenceStore | undefined;
+  emailOnboarding?: EmailOnboardingStore | undefined;
+  emailVerificationSender?: EmailVerificationSender | undefined;
   approvalBaseUrl: string;
   smoke?: { enabled: boolean; secret?: string | undefined } | undefined;
   logger?: ReturnType<typeof Fastify>["log"];
@@ -303,6 +346,179 @@ export async function buildSurfaceGatewayApp(
     },
   });
 
+  app.post("/surfaces/email/recipients/verify/start", async (request, reply) => {
+    const onboarding = opts.emailOnboarding;
+    const sender = opts.emailVerificationSender;
+    const adminSecret = opts.surfaceConfig.email.onboardingAdminSecret;
+    if (onboarding === undefined || sender === undefined || adminSecret === undefined) {
+      reply.status(404);
+      return "email onboarding disabled";
+    }
+    if (header(request.headers, "x-brain-email-onboarding-secret") !== adminSecret) {
+      reply.status(401);
+      return "unauthorized";
+    }
+    const body = parseJsonObject(requireRawBody(request.body));
+    const tenantId = stringField(body, "tenantId");
+    const email = stringField(body, "email");
+    const actorId = stringField(body, "actorId");
+    const roles = stringArrayField(body, "roles");
+    if (tenantId === null || email === null || actorId === null || roles === null) {
+      reply.status(400);
+      return "missing tenantId, email, actorId, or roles";
+    }
+    const normalizedEmail = normalizeEmail(email);
+    await onboarding.upsertRecipient({ tenantId, email: normalizedEmail, actorId, roles });
+    const token = signVerificationToken(
+      {
+        purpose: "email_recipient_verification",
+        tenantId,
+        email: normalizedEmail,
+        actorId,
+        roles,
+        exp: Math.floor(Date.now() / 1000) + 15 * 60,
+      },
+      opts.surfaceConfig.email.tokenSecret,
+    );
+    const verifyUrl = `${emailVerifyBaseUrl(opts.approvalBaseUrl)}?t=${encodeURIComponent(token)}`;
+    const sent = await sender.send({
+      tenantId,
+      to: normalizedEmail,
+      subject: "Verify your Brain approval email",
+      html: renderVerificationEmail(verifyUrl),
+      text: `Verify your Brain approval email: ${verifyUrl}`,
+    });
+    if (!sent.ok) {
+      reply.status(502);
+      return "verification email failed";
+    }
+    reply.status(202);
+    return { ok: true, tenantId, email: normalizedEmail };
+  });
+
+  app.route({
+    method: ["GET", "HEAD", "POST"],
+    url: "/surfaces/email/verify",
+    handler: async (request, reply) => {
+      const onboarding = opts.emailOnboarding;
+      if (onboarding === undefined) {
+        reply.status(404);
+        return "email onboarding disabled";
+      }
+      const method = request.method as "GET" | "HEAD" | "POST";
+      const token =
+        method === "POST"
+          ? readFormToken(requireRawBody(request.body))
+          : new URL(request.url, opts.approvalBaseUrl).searchParams.get("t");
+      if (token === null) {
+        reply.status(400);
+        return renderVerificationPage("unknown", method);
+      }
+      const claims = verifyVerificationToken(token, opts.surfaceConfig.email.tokenSecret);
+      if (claims === null) {
+        reply.status(400);
+        return renderVerificationPage("unknown", method);
+      }
+      if (method === "GET" || method === "HEAD") {
+        reply.header("content-type", "text/html; charset=utf-8");
+        return renderVerificationConfirmPage({ token, email: claims.email, method });
+      }
+      await onboarding.verifyRecipient({
+        tenantId: claims.tenantId,
+        email: claims.email,
+        actorId: claims.actorId,
+        roles: claims.roles,
+      });
+      reply.header("content-type", "text/html; charset=utf-8");
+      return renderVerificationPage("verified", method);
+    },
+  });
+
+  app.post("/surfaces/email/routes", async (request, reply) => {
+    const onboarding = opts.emailOnboarding;
+    const adminSecret = opts.surfaceConfig.email.onboardingAdminSecret;
+    if (onboarding === undefined || adminSecret === undefined) {
+      reply.status(404);
+      return "email onboarding disabled";
+    }
+    if (header(request.headers, "x-brain-email-onboarding-secret") !== adminSecret) {
+      reply.status(401);
+      return "unauthorized";
+    }
+    const body = parseJsonObject(requireRawBody(request.body));
+    const tenantId = stringField(body, "tenantId");
+    const agent = proposalAgentField(body, "agent");
+    const recipients = stringArrayField(body, "recipients");
+    if (tenantId === null || agent === null || recipients === null) {
+      reply.status(400);
+      return "missing tenantId, agent, or recipients";
+    }
+    await onboarding.setRoute({ tenantId, agent, recipients });
+    reply.status(201);
+    return { ok: true, tenantId, agent, recipients: recipients.map(normalizeEmail) };
+  });
+
+  app.post("/surfaces/email/domains", async (request, reply) => {
+    const onboarding = opts.emailOnboarding;
+    const adminSecret = opts.surfaceConfig.email.onboardingAdminSecret;
+    if (onboarding === undefined || adminSecret === undefined) {
+      reply.status(404);
+      return "email onboarding disabled";
+    }
+    if (header(request.headers, "x-brain-email-onboarding-secret") !== adminSecret) {
+      reply.status(401);
+      return "unauthorized";
+    }
+    const body = parseJsonObject(requireRawBody(request.body));
+    const tenantId = stringField(body, "tenantId");
+    const domain = stringField(body, "domain");
+    const spfOk = booleanField(body, "spfOk");
+    const dkimOk = booleanField(body, "dkimOk");
+    const dmarcOk = booleanField(body, "dmarcOk");
+    if (
+      tenantId === null ||
+      domain === null ||
+      spfOk === null ||
+      dkimOk === null ||
+      dmarcOk === null
+    ) {
+      reply.status(400);
+      return "missing tenantId, domain, spfOk, dkimOk, or dmarcOk";
+    }
+    await onboarding.upsertDomain({ tenantId, domain, spfOk, dkimOk, dmarcOk });
+    reply.status(201);
+    return {
+      ok: true,
+      tenantId,
+      domain: normalizeDomain(domain),
+      verified: spfOk && dkimOk && dmarcOk,
+    };
+  });
+
+  app.post("/surfaces/email/events", async (request, reply) => {
+    const onboarding = opts.emailOnboarding;
+    const secret = opts.surfaceConfig.email.espWebhookSecret;
+    if (onboarding === undefined || secret === undefined) {
+      reply.status(404);
+      return "email events disabled";
+    }
+    const rawBody = requireRawBody(request.body);
+    if (!verifyEmailEventSignature({ rawBody, headers: request.headers, secret })) {
+      reply.status(401);
+      return "invalid email event signature";
+    }
+    const body = parseJsonObject(rawBody);
+    const type = stringField(body, "type");
+    const tenantId = stringField(body, "tenantId");
+    const email = stringField(body, "email");
+    if ((type !== "bounce" && type !== "complaint") || tenantId === null || email === null) {
+      reply.status(400);
+      return "unknown email event";
+    }
+    await onboarding.disableRecipient({ tenantId, email });
+    return { ok: true };
+  });
+
   app.post("/surfaces/teams/messages", async (request, reply) => {
     if (opts.teamsVerifier === undefined) {
       reply.status(503);
@@ -442,7 +658,11 @@ export async function buildSurfaceGatewayApp(
     const body = parseJsonObject(requireRawBody(request.body));
     const proposal = parseProposal(body["proposal"]);
     const saved = await opts.proposals.save({ proposal });
-    const targets = parseTargets(body["targets"]);
+    const targets = await resolveDispatchTargets({
+      proposal: saved,
+      rawTargets: body["targets"],
+      emailOnboarding: opts.emailOnboarding,
+    });
     const results = await opts.runtime.dispatcher.dispatch(saved, targets);
     reply.status(202);
     return { proposal_id: saved.id, content_hash: saved.contentHash, results };
@@ -501,6 +721,122 @@ function parseJsonObject(body: Buffer): Record<string, unknown> {
 function stringField(body: Record<string, unknown>, key: string): string | null {
   const value = body[key];
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function stringArrayField(body: Record<string, unknown>, key: string): string[] | null {
+  const value = body[key];
+  if (!Array.isArray(value)) return null;
+  const strings = value.filter(
+    (item): item is string => typeof item === "string" && item.length > 0,
+  );
+  return strings.length === value.length ? strings : null;
+}
+
+function booleanField(body: Record<string, unknown>, key: string): boolean | null {
+  const value = body[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function proposalAgentField(body: Record<string, unknown>, key: string): AgentKind | null {
+  const value = body[key];
+  return value === "invoice" || value === "collections" || value === "cash" || value === "close"
+    ? value
+    : null;
+}
+
+function readFormToken(body: Buffer): string | null {
+  const params = new URLSearchParams(body.toString("utf8"));
+  return params.get("t");
+}
+
+function emailVerifyBaseUrl(approvalBaseUrl: string): string {
+  const url = new URL(approvalBaseUrl);
+  url.pathname = "/surfaces/email/verify";
+  url.search = "";
+  return url.toString();
+}
+
+function renderVerificationEmail(verifyUrl: string): string {
+  return `<!doctype html><html><body><main><h1>Verify Brain approval email</h1><p>Confirm this address before Brain sends approval links.</p><p><a href="${escapeHtml(verifyUrl)}">Verify email</a></p></main></body></html>`;
+}
+
+function renderVerificationConfirmPage(input: {
+  token: string;
+  email: string;
+  method: "GET" | "HEAD" | "POST";
+}): string {
+  if (input.method === "HEAD") return "";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Verify Brain Email</title></head><body><main><h1>Verify email</h1><p>${escapeHtml(input.email)}</p><form method="post" action="/surfaces/email/verify"><input type="hidden" name="t" value="${escapeHtml(input.token)}"><button type="submit">Confirm email</button></form></main></body></html>`;
+}
+
+function renderVerificationPage(
+  outcome: "verified" | "unknown",
+  method: "GET" | "HEAD" | "POST",
+): string {
+  if (method === "HEAD") return "";
+  const message =
+    outcome === "verified"
+      ? "Email verified. Brain can now send approval links to this address."
+      : "This verification link is invalid or expired.";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Brain Email Verification</title></head><body><main><h1>${escapeHtml(message)}</h1></main></body></html>`;
+}
+
+function verifyEmailEventSignature(input: {
+  rawBody: Buffer;
+  headers: FastifyRequest["headers"];
+  secret: string;
+}): boolean {
+  const signature = header(input.headers, "x-brain-email-signature");
+  if (signature === undefined) return false;
+  const expected = `v1=${createHmac("sha256", input.secret).update(input.rawBody).digest("hex")}`;
+  const actual = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actual.length !== expectedBuffer.length) return false;
+  return timingSafeEqual(actual, expectedBuffer);
+}
+
+async function resolveDispatchTargets(input: {
+  proposal: Proposal;
+  rawTargets: unknown;
+  emailOnboarding?: EmailOnboardingStore | undefined;
+}): Promise<DeliveryTarget[]> {
+  const parsed = parseTargets(input.rawTargets);
+  if (input.emailOnboarding === undefined) return parsed;
+  if (parsed.length === 0) {
+    const recipients = await input.emailOnboarding.resolveRoute({
+      tenantId: input.proposal.tenantId,
+      agent: input.proposal.agent,
+    });
+    return recipients.map((to) => ({ surface: "email", to }));
+  }
+
+  const emailTargets = parsed.filter((target) => target.surface === "email");
+  if (emailTargets.length === 0) return parsed;
+  const verified = new Set(
+    await input.emailOnboarding.filterVerifiedRecipients({
+      tenantId: input.proposal.tenantId,
+      recipients: emailTargets.map((target) => target.to),
+    }),
+  );
+  return parsed.filter(
+    (target) => target.surface !== "email" || verified.has(normalizeEmail(target.to)),
+  );
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function normalizeDomain(domain: string): string {
+  return domain.trim().toLowerCase();
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 function isSlackAppUninstalledEvent(value: unknown): value is { type: "app_uninstalled" } {

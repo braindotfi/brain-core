@@ -20,6 +20,15 @@ export interface TokenClaims {
   exp: number;
 }
 
+export interface EmailVerificationTokenClaims {
+  purpose: "email_recipient_verification";
+  tenantId: string;
+  email: string;
+  actorId: string;
+  roles: string[];
+  exp: number;
+}
+
 export function signToken(claims: TokenClaims, secret: string): string {
   const payload = base64url(JSON.stringify(claims));
   const sig = base64url(hmac(payload, secret));
@@ -41,6 +50,46 @@ export function verifyToken(token: string, secret: string): TokenClaims | null {
     return null;
   }
   if (typeof claims.exp !== "number" || claims.exp * 1000 <= Date.now()) return null;
+  return claims;
+}
+
+export function signVerificationToken(
+  claims: EmailVerificationTokenClaims,
+  secret: string,
+): string {
+  const payload = base64url(JSON.stringify(claims));
+  const sig = base64url(hmac(payload, secret));
+  return `${payload}.${sig}`;
+}
+
+export function verifyVerificationToken(
+  token: string,
+  secret: string,
+): EmailVerificationTokenClaims | null {
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts as [string, string];
+
+  const expected = base64url(hmac(payload, secret));
+  if (!constantTimeEqual(sig, expected)) return null;
+
+  let claims: EmailVerificationTokenClaims;
+  try {
+    claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (claims.purpose !== "email_recipient_verification") return null;
+  if (typeof claims.exp !== "number" || claims.exp * 1000 <= Date.now()) return null;
+  if (
+    typeof claims.tenantId !== "string" ||
+    typeof claims.email !== "string" ||
+    typeof claims.actorId !== "string" ||
+    !Array.isArray(claims.roles) ||
+    !claims.roles.every((role) => typeof role === "string")
+  ) {
+    return null;
+  }
   return claims;
 }
 

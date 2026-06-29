@@ -8,6 +8,7 @@ import { verifyToken } from "./token.js";
 /** Minimal send interface. Back it with the customer's ESP in production. */
 export interface EmailClient {
   send(args: {
+    tenantId?: string | undefined;
     to: string;
     subject: string;
     html: string;
@@ -26,6 +27,7 @@ export class EmailAdapter implements SurfaceAdapter {
   async deliver(proposal: Proposal, to: string): Promise<DeliveryResult> {
     const email = renderEmail(proposal, { ...this.opts, recipient: to });
     const res = await this.client.send({
+      tenantId: proposal.tenantId,
       to,
       subject: email.subject,
       html: email.html,

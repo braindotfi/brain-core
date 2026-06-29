@@ -6,6 +6,7 @@ import {
   type ActorId,
   type Decision,
   type Proposal,
+  type AgentKind,
   type SlackTokenProvider,
   type SurfaceName,
 } from "@brain/surfaces";
@@ -31,6 +32,9 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
     surface: SurfaceName;
     externalId: string;
   }): Promise<{ actorId: ActorId; roles: string[] } | null> {
+    if (input.surface === "email") {
+      return this.lookupEmailActor(input);
+    }
     const link = await withTenantScope(this.pool, input.tenantId, async (c) => {
       const { rows } = await c.query<{
         actor_id: string;
@@ -57,6 +61,42 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
     const roles = new Set(link.roles);
     if (role !== null) roles.add(role);
     return { actorId: link.actor_id as ActorId, roles: [...roles] };
+  }
+
+  private async lookupEmailActor(input: {
+    tenantId: string;
+    externalId: string;
+  }): Promise<{ actorId: ActorId; roles: string[] } | null> {
+    const email = normalizeEmail(input.externalId);
+    const recipient = await withTenantScope(this.pool, input.tenantId, async (c) => {
+      const { rows } = await c.query<{
+        actor_id: string;
+        roles: string[];
+      }>(
+        `SELECT actor_id, roles
+           FROM surface_email_recipients
+          WHERE tenant_id = $1
+            AND email = $2
+            AND verified_at IS NOT NULL
+            AND status = 'active'
+          LIMIT 1`,
+        [input.tenantId, email],
+      );
+      return rows[0] ?? null;
+    });
+    if (recipient === null) return null;
+
+    const role = await withTenantScope(this.userPool, input.tenantId, async (c) => {
+      const { rows } = await c.query<{ role: string }>(
+        `SELECT role FROM users WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
+        [input.tenantId, recipient.actor_id],
+      );
+      return rows[0]?.role ?? null;
+    });
+
+    const roles = new Set(recipient.roles);
+    if (role !== null) roles.add(role);
+    return { actorId: recipient.actor_id as ActorId, roles: [...roles] };
   }
 }
 
@@ -570,6 +610,217 @@ export class PostgresTeamsInstallationStore {
   }
 }
 
+export interface EmailRecipientSummary {
+  tenantId: string;
+  email: string;
+  actorId: string;
+  roles: string[];
+  verifiedAt?: string | undefined;
+  status: "pending" | "active" | "disabled";
+}
+
+interface EmailRecipientRow {
+  tenant_id: string;
+  email: string;
+  actor_id: string;
+  roles: string[];
+  verified_at: Date | null;
+  status: "pending" | "active" | "disabled";
+}
+
+export class PostgresEmailOnboardingStore {
+  public constructor(
+    private readonly pool: Pool,
+    private readonly defaultFrom?: string | undefined,
+  ) {}
+
+  public async upsertRecipient(input: {
+    tenantId: string;
+    email: string;
+    actorId: string;
+    roles: string[];
+  }): Promise<void> {
+    const email = normalizeEmail(input.email);
+    await withTenantScope(this.pool, input.tenantId, async (c) => {
+      await c.query(
+        `INSERT INTO surface_email_recipients
+           (tenant_id, email, actor_id, roles, verified_at, status)
+         VALUES ($1, $2, $3, $4, NULL, 'pending')
+         ON CONFLICT (tenant_id, email) DO UPDATE
+           SET actor_id = EXCLUDED.actor_id,
+               roles = EXCLUDED.roles,
+               status = CASE
+                 WHEN surface_email_recipients.status = 'disabled' THEN 'pending'
+                 ELSE surface_email_recipients.status
+               END,
+               updated_at = now()`,
+        [input.tenantId, email, input.actorId, input.roles],
+      );
+    });
+  }
+
+  public async verifyRecipient(input: {
+    tenantId: string;
+    email: string;
+    actorId: string;
+    roles: string[];
+  }): Promise<void> {
+    const email = normalizeEmail(input.email);
+    await withTenantScope(this.pool, input.tenantId, async (c) => {
+      await c.query(
+        `INSERT INTO surface_email_recipients
+           (tenant_id, email, actor_id, roles, verified_at, status)
+         VALUES ($1, $2, $3, $4, now(), 'active')
+         ON CONFLICT (tenant_id, email) DO UPDATE
+           SET actor_id = EXCLUDED.actor_id,
+               roles = EXCLUDED.roles,
+               verified_at = now(),
+               status = 'active',
+               updated_at = now()`,
+        [input.tenantId, email, input.actorId, input.roles],
+      );
+    });
+  }
+
+  public async getRecipient(input: {
+    tenantId: string;
+    email: string;
+  }): Promise<EmailRecipientSummary | null> {
+    const email = normalizeEmail(input.email);
+    return withTenantScope(this.pool, input.tenantId, async (c) => {
+      const { rows } = await c.query<EmailRecipientRow>(
+        `SELECT tenant_id, email, actor_id, roles, verified_at, status
+           FROM surface_email_recipients
+          WHERE tenant_id = $1 AND email = $2
+          LIMIT 1`,
+        [input.tenantId, email],
+      );
+      return rows[0] === undefined ? null : toEmailRecipientSummary(rows[0]);
+    });
+  }
+
+  public async disableRecipient(input: { tenantId: string; email: string }): Promise<void> {
+    const email = normalizeEmail(input.email);
+    await withTenantScope(this.pool, input.tenantId, async (c) => {
+      await c.query(
+        `UPDATE surface_email_recipients
+            SET status = 'disabled',
+                updated_at = now()
+          WHERE tenant_id = $1 AND email = $2`,
+        [input.tenantId, email],
+      );
+    });
+  }
+
+  public async setRoute(input: {
+    tenantId: string;
+    agent: AgentKind;
+    recipients: string[];
+  }): Promise<void> {
+    const recipients = input.recipients.map(normalizeEmail);
+    await withTenantScope(this.pool, input.tenantId, async (c) => {
+      await c.query(
+        `INSERT INTO surface_email_routes (tenant_id, agent, recipients)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (tenant_id, agent) DO UPDATE
+           SET recipients = EXCLUDED.recipients, updated_at = now()`,
+        [input.tenantId, input.agent, recipients],
+      );
+    });
+  }
+
+  public async resolveRoute(input: { tenantId: string; agent: AgentKind }): Promise<string[]> {
+    return withTenantScope(this.pool, input.tenantId, async (c) => {
+      const { rows } = await c.query<{ recipients: string[] }>(
+        `SELECT recipients
+           FROM surface_email_routes
+          WHERE tenant_id = $1 AND agent = $2
+          LIMIT 1`,
+        [input.tenantId, input.agent],
+      );
+      const recipients = rows[0]?.recipients ?? [];
+      return this.filterVerifiedRecipients({ tenantId: input.tenantId, recipients });
+    });
+  }
+
+  public async filterVerifiedRecipients(input: {
+    tenantId: string;
+    recipients: string[];
+  }): Promise<string[]> {
+    const recipients = input.recipients.map(normalizeEmail);
+    if (recipients.length === 0) return [];
+    return withTenantScope(this.pool, input.tenantId, async (c) => {
+      const { rows } = await c.query<{ email: string }>(
+        `SELECT email
+           FROM surface_email_recipients
+          WHERE tenant_id = $1
+            AND email = ANY($2::text[])
+            AND verified_at IS NOT NULL
+            AND status = 'active'`,
+        [input.tenantId, recipients],
+      );
+      const verified = new Set(rows.map((row) => row.email));
+      return recipients.filter((email) => verified.has(email));
+    });
+  }
+
+  public async upsertDomain(input: {
+    tenantId: string;
+    domain: string;
+    spfOk: boolean;
+    dkimOk: boolean;
+    dmarcOk: boolean;
+    status?: "pending" | "active" | "disabled" | undefined;
+  }): Promise<void> {
+    const domain = normalizeDomain(input.domain);
+    const verified = input.spfOk && input.dkimOk && input.dmarcOk;
+    await withTenantScope(this.pool, input.tenantId, async (c) => {
+      await c.query(
+        `INSERT INTO surface_email_domains
+           (tenant_id, domain, spf_ok, dkim_ok, dmarc_ok, verified_at, status)
+         VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN now() ELSE NULL END, $7)
+         ON CONFLICT (tenant_id, domain) DO UPDATE
+           SET spf_ok = EXCLUDED.spf_ok,
+               dkim_ok = EXCLUDED.dkim_ok,
+               dmarc_ok = EXCLUDED.dmarc_ok,
+               verified_at = CASE WHEN $6 THEN COALESCE(surface_email_domains.verified_at, now()) ELSE NULL END,
+               status = EXCLUDED.status,
+               updated_at = now()`,
+        [
+          input.tenantId,
+          domain,
+          input.spfOk,
+          input.dkimOk,
+          input.dmarcOk,
+          verified,
+          input.status ?? (verified ? "active" : "pending"),
+        ],
+      );
+    });
+  }
+
+  public async senderForTenant(tenantId: string): Promise<string | null> {
+    return withTenantScope(this.pool, tenantId, async (c) => {
+      const { rows } = await c.query<{ domain: string }>(
+        `SELECT domain
+           FROM surface_email_domains
+          WHERE tenant_id = $1
+            AND spf_ok = true
+            AND dkim_ok = true
+            AND dmarc_ok = true
+            AND verified_at IS NOT NULL
+            AND status = 'active'
+          ORDER BY verified_at DESC
+          LIMIT 1`,
+        [tenantId],
+      );
+      const domain = rows[0]?.domain;
+      if (domain === undefined) return this.defaultFrom ?? null;
+      return `noreply@${domain}`;
+    });
+  }
+}
+
 async function withSlackTeamScope<T>(
   pool: Pool,
   teamId: string,
@@ -663,12 +914,31 @@ function toTeamsInstallationSummary(row: TeamsInstallationRow): TeamsInstallatio
   };
 }
 
+function toEmailRecipientSummary(row: EmailRecipientRow): EmailRecipientSummary {
+  return {
+    tenantId: row.tenant_id,
+    email: row.email,
+    actorId: row.actor_id,
+    roles: row.roles,
+    ...(row.verified_at !== null ? { verifiedAt: row.verified_at.toISOString() } : {}),
+    status: row.status,
+  };
+}
+
 function isSlackTokenPayload(value: object): value is SlackTokenPayload {
   return (
     "bot_token" in value &&
     typeof (value as { bot_token?: unknown }).bot_token === "string" &&
     (value as { bot_token: string }).bot_token.length > 0
   );
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function normalizeDomain(domain: string): string {
+  return domain.trim().toLowerCase();
 }
 
 function parseConversationRefKey(to: string): { tenantId: string; conversationRef: string } | null {
