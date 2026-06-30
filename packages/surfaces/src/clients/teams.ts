@@ -15,6 +15,10 @@ export interface ConversationReferenceStore {
   set(to: string, reference: Partial<ConversationReference>): Promise<void>;
 }
 
+export interface TeamsInstallationGuard {
+  isActiveForTenant(tenantId: string): Promise<boolean>;
+}
+
 export class InMemoryConversationReferenceStore implements ConversationReferenceStore {
   private readonly refs = new Map<string, Partial<ConversationReference>>();
 
@@ -32,6 +36,7 @@ export class TeamsBotFrameworkClient implements TeamsClient {
     private readonly adapter: BotFrameworkAdapter,
     private readonly appId: string,
     private readonly references: ConversationReferenceStore,
+    private readonly installationGuard?: TeamsInstallationGuard | undefined,
   ) {}
 
   async postConversationReference(to: string, reference: ConversationReference): Promise<void> {
@@ -39,9 +44,13 @@ export class TeamsBotFrameworkClient implements TeamsClient {
   }
 
   async sendCard(args: {
+    tenantId?: string | undefined;
     conversationRef: string;
     card: Record<string, unknown>;
   }): Promise<{ ok: boolean; activityId?: string; error?: string }> {
+    if (!(await this.hasActiveInstallation(args.tenantId))) {
+      return { ok: false, error: "teams_installation_not_active" };
+    }
     const reference = await this.references.get(args.conversationRef);
     if (!reference) return { ok: false, error: "missing_conversation_reference" };
 
@@ -60,10 +69,14 @@ export class TeamsBotFrameworkClient implements TeamsClient {
   }
 
   async updateCard(args: {
+    tenantId?: string | undefined;
     conversationRef: string;
     activityId: string;
     card: Record<string, unknown>;
   }): Promise<{ ok: boolean; error?: string }> {
+    if (!(await this.hasActiveInstallation(args.tenantId))) {
+      return { ok: false, error: "teams_installation_not_active" };
+    }
     const reference = await this.references.get(args.conversationRef);
     if (!reference) return { ok: false, error: "missing_conversation_reference" };
 
@@ -76,13 +89,15 @@ export class TeamsBotFrameworkClient implements TeamsClient {
     });
     return { ok: true };
   }
+
+  private async hasActiveInstallation(tenantId: string | undefined): Promise<boolean> {
+    if (tenantId === undefined || this.installationGuard === undefined) return true;
+    return this.installationGuard.isActiveForTenant(tenantId);
+  }
 }
 
 export class BotFrameworkTeamsActivityVerifier implements TeamsActivityVerifier {
-  constructor(
-    private readonly adapter: BotFrameworkAdapter,
-    private readonly references: ConversationReferenceStore,
-  ) {}
+  constructor(private readonly adapter: BotFrameworkAdapter) {}
 
   async verify(input: {
     authorization: string | undefined;
@@ -103,18 +118,24 @@ export class BotFrameworkTeamsActivityVerifier implements TeamsActivityVerifier 
       await this.adapter.processActivity(request, response, async (context) => {
         const submit = readSubmitData(context.activity.value);
         const aadObjectId = readAadObjectId(context.activity);
+        const aadTenantId = readAadTenantId(context.activity);
         const conversationRef = context.activity.conversation?.id;
-        if (!submit || !aadObjectId || !conversationRef) return;
+        if (!aadTenantId || !conversationRef) return;
 
-        const tenantConversationRef = `${submit.tenantId}:${conversationRef}`;
-        await this.references.set(
-          tenantConversationRef,
-          TurnContext.getConversationReference(context.activity),
-        );
+        const tenantConversationRef =
+          submit?.tenantId !== undefined
+            ? `${submit.tenantId}:${conversationRef}`
+            : conversationRef;
         verified = {
-          submit,
-          aadObjectId,
+          ...(submit !== null ? { submit } : {}),
+          ...(aadObjectId !== null ? { aadObjectId } : {}),
+          aadTenantId,
+          ...(context.activity.serviceUrl !== undefined
+            ? { serviceUrl: context.activity.serviceUrl }
+            : {}),
+          conversationId: conversationRef,
           conversationRef: tenantConversationRef,
+          conversationReference: TurnContext.getConversationReference(context.activity),
           ...(context.activity.replyToId !== undefined
             ? { activityId: context.activity.replyToId }
             : context.activity.id !== undefined
@@ -168,6 +189,17 @@ function readAadObjectId(activity: Activity): string | null {
   if (fromAad) return fromAad;
   const channelDataAad = readString(activity.channelData, "aadObjectId");
   if (channelDataAad) return channelDataAad;
+  return null;
+}
+
+function readAadTenantId(activity: Activity): string | null {
+  const channelDataTenant = readString(activity.channelData, "tenantId");
+  if (channelDataTenant) return channelDataTenant;
+  if (isRecord(activity.channelData)) {
+    const tenant = activity.channelData["tenant"];
+    const tenantId = readString(tenant, "id");
+    if (tenantId) return tenantId;
+  }
   return null;
 }
 

@@ -18,6 +18,7 @@ out/
 # (see services/api/scripts/copy-openapi-spec.mjs). Source of truth is the root
 # Brain_API_Specification.yaml.
 services/api/assets/openapi.yaml
+services/surface-gateway/teams-app-package.zip
 
 # Test / coverage
 coverage/

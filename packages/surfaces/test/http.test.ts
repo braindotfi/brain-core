@@ -8,6 +8,7 @@ import {
   buildInvoiceProposal,
   handleEmailApproval,
   handleSlackInteraction,
+  HttpEmailClient,
   signToken,
   toActorId,
   toPlainOutcome,
@@ -392,6 +393,43 @@ test("Email approval token rejects expired, wrong-secret, and tampered links", a
   assert.equal(tamperedResponse.status, 400);
   assert.equal(missingResponse.status, 400);
   assert.match(missingResponse.body, /Unknown/);
+});
+
+test("HttpEmailClient uses tenant sender resolver only when it returns a verified sender", async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({ messageId: "msg_1" }), { status: 200 });
+  };
+  const client = new HttpEmailClient({
+    endpoint: "https://esp.example/send",
+    apiKey: "esp-key",
+    from: "approvals@brain.fi",
+    senderResolver: {
+      async senderForTenant(tenantId) {
+        return tenantId === "tenant_verified" ? "noreply@customer.example" : null;
+      },
+    },
+    fetchImpl,
+  });
+
+  await client.send({
+    tenantId: "tenant_verified",
+    to: "ap@example.com",
+    subject: "Verify",
+    html: "<p>Verify</p>",
+    text: "Verify",
+  });
+  await client.send({
+    tenantId: "tenant_unverified",
+    to: "ap@example.com",
+    subject: "Verify",
+    html: "<p>Verify</p>",
+    text: "Verify",
+  });
+
+  assert.equal(bodies[0]?.from, "noreply@customer.example");
+  assert.equal(bodies[1]?.from, "approvals@brain.fi");
 });
 
 test("Dual approval does not enqueue until approval recording returns quorum", async () => {

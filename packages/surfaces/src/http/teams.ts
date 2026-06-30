@@ -1,11 +1,16 @@
+import type { ConversationReference } from "botbuilder";
 import type { ApprovalService } from "../core/approval.js";
 import { toIncomingDecision } from "../surfaces/teams/adapter.js";
 import type { TeamsSubmitData } from "../surfaces/teams/adaptivecard.js";
 
 export interface VerifiedTeamsSubmit {
-  submit: TeamsSubmitData;
-  aadObjectId: string;
+  submit?: TeamsSubmitData | undefined;
+  aadObjectId?: string | undefined;
+  aadTenantId: string;
+  serviceUrl?: string | undefined;
+  conversationId: string;
   conversationRef: string;
+  conversationReference?: Partial<ConversationReference> | undefined;
   activityId?: string | undefined;
 }
 
@@ -34,6 +39,10 @@ export async function handleTeamsSubmit(request: TeamsSubmitRequest): Promise<Te
     rawBody: request.rawBody,
   });
   if (!verified) return { status: 401, body: "unauthorized" };
+
+  if (verified.submit === undefined || verified.aadObjectId === undefined) {
+    return { status: 400, body: "unknown teams action" };
+  }
 
   const normalized = toIncomingDecision({
     submit: verified.submit,

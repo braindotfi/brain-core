@@ -18,6 +18,7 @@ import {
   SurfaceExecutionQueue,
   SurfacePolicyEngine,
 } from "../src/services.js";
+import { PostgresSurfaceIdentityStore } from "../src/storage.js";
 
 const TENANT_ID = "tnt_01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const PROPOSAL_ID = "prop_01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -25,6 +26,43 @@ const FINANCE_ACTOR = "user_01ARZ3NDEKTSV4RRFFQ69G5FAV" as ActorId;
 const CONTROLLER_ACTOR = "user_01ARZ3NDEKTSV4RRFFQ69G5FAW" as ActorId;
 
 describe("surface gateway approval ordering", () => {
+  it("resolves only verified active email recipients", async () => {
+    const store = new PostgresSurfaceIdentityStore(
+      emailRecipientPool({ verified: true, status: "active" }),
+      emailUserPool(),
+    );
+    const unverified = new PostgresSurfaceIdentityStore(
+      emailRecipientPool({ verified: false, status: "pending" }),
+      emailUserPool(),
+    );
+    const disabled = new PostgresSurfaceIdentityStore(
+      emailRecipientPool({ verified: true, status: "disabled" }),
+      emailUserPool(),
+    );
+
+    await expect(
+      store.lookupActor({
+        tenantId: TENANT_ID,
+        surface: "email",
+        externalId: "Finance@Example.com",
+      }),
+    ).resolves.toMatchObject({ actorId: FINANCE_ACTOR, roles: ["finance", "approver"] });
+    await expect(
+      unverified.lookupActor({
+        tenantId: TENANT_ID,
+        surface: "email",
+        externalId: "finance@example.com",
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      disabled.lookupActor({
+        tenantId: TENANT_ID,
+        surface: "email",
+        externalId: "finance@example.com",
+      }),
+    ).resolves.toBeNull();
+  });
+
   it("keeps evaluateDecision read-only", async () => {
     const approvals = new ApprovalSpy([]);
     const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("finance_approval")));
@@ -326,6 +364,29 @@ function disabledUserPool(): Pool {
       ];
     }
     return [];
+  });
+}
+
+function emailRecipientPool(input: {
+  verified: boolean;
+  status: "pending" | "active" | "disabled";
+}): Pool {
+  return fakePool((text) => {
+    if (!text.includes("FROM surface_email_recipients")) return [];
+    if (!input.verified || input.status !== "active") return [];
+    return [
+      {
+        actor_id: FINANCE_ACTOR,
+        roles: ["finance"],
+      },
+    ];
+  });
+}
+
+function emailUserPool(): Pool {
+  return fakePool((text) => {
+    if (!text.includes("FROM users")) return [];
+    return [{ role: "approver" }];
   });
 }
 

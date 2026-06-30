@@ -6,6 +6,7 @@ import { hashProposal, withContentHash } from "../src/proposal/hash.js";
 import { SurfaceRegistry } from "../src/core/registry.js";
 import { Dispatcher } from "../src/core/dispatcher.js";
 import { ApprovalService } from "../src/core/approval.js";
+import { SlackAdapter, type SlackClient } from "../src/surfaces/slack/adapter.js";
 import type { SurfaceAdapter } from "../src/surfaces/surface.js";
 import type { Proposal } from "../src/proposal/schema.js";
 import { toActorId } from "../src/proposal/schema.js";
@@ -85,6 +86,33 @@ test("dispatcher validates, hashes, and delivers to a surface", async () => {
   assert.equal(delivered.length, 1);
   assert.ok(delivered[0]?.contentHash, "proposal should be hashed before delivery");
   assert.deepEqual(persisted, ["ts_1"]);
+});
+
+test("Slack adapter passes tenant id to the injected Slack client", async () => {
+  const proposal = withContentHash(sampleProposal());
+  const tenantIds: Array<string | undefined> = [];
+  const client: SlackClient = {
+    async postMessage(args) {
+      tenantIds.push(args.tenantId);
+      return { ok: true, ts: "ts_1" };
+    },
+    async update(args) {
+      tenantIds.push(args.tenantId);
+      return { ok: true };
+    },
+  };
+  const adapter = new SlackAdapter(client);
+
+  await adapter.deliver(proposal, "C_AP");
+  await adapter.updateDecision({
+    ref: "ts_1",
+    to: "C_AP",
+    proposal,
+    decision: "approved",
+    actorLabel: "U_1",
+  });
+
+  assert.deepEqual(tenantIds, [proposal.tenantId, proposal.tenantId]);
 });
 
 test("approval pipeline denies an actor the policy gate rejects", async () => {

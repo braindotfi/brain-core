@@ -12,6 +12,7 @@
     "dev": "tsx watch src/main.ts",
     "lint": "eslint src test --max-warnings 0",
     "lint:fix": "eslint src test --fix",
+    "teams:package": "node scripts/package-teams-app.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run",
     "test:watch": "vitest"
