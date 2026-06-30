@@ -1,7 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyHelmet from "@fastify/helmet";
 import fastifyRateLimit from "@fastify/rate-limit";
+import { extractBearer, isBrainError, requireScope, type Principal } from "@brain/shared";
 import {
   handleEmailApproval,
   handleSlackInteraction,
@@ -18,6 +19,7 @@ import {
 } from "@brain/surfaces";
 import type { SurfaceRuntime } from "@brain/core";
 import type { PostgresSurfaceProposalStore } from "./storage.js";
+import type { DomainVerifier } from "./domain-verifier.js";
 import {
   buildSlackAuthorizeUrl,
   FetchSlackOAuthClient,
@@ -112,6 +114,10 @@ export interface EmailVerificationSender {
   }): Promise<{ ok: boolean; messageId?: string; error?: string }>;
 }
 
+export interface OnboardingAdminVerifier {
+  verify(token: string): Promise<Principal>;
+}
+
 export interface BuildSurfaceGatewayAppOptions {
   runtime: SurfaceRuntime;
   surfaceConfig: SurfaceConfig;
@@ -125,6 +131,8 @@ export interface BuildSurfaceGatewayAppOptions {
   teamsConversationReferences?: ConversationReferenceStore | undefined;
   emailOnboarding?: EmailOnboardingStore | undefined;
   emailVerificationSender?: EmailVerificationSender | undefined;
+  emailDomainVerifier?: DomainVerifier | undefined;
+  onboardingAdminVerifier?: OnboardingAdminVerifier | undefined;
   approvalBaseUrl: string;
   smoke?: { enabled: boolean; secret?: string | undefined } | undefined;
   logger?: ReturnType<typeof Fastify>["log"];
@@ -197,35 +205,28 @@ export async function buildSurfaceGatewayApp(
     const slack = opts.surfaceConfig.slack;
     const clientId = slack.clientId;
     const clientSecret = slack.clientSecret;
-    const installAdminSecret = slack.installAdminSecret;
+    const installStateSecret = slack.installStateSecret;
     const installations = opts.slackInstallations;
     if (
       clientId === undefined ||
       clientSecret === undefined ||
-      installAdminSecret === undefined ||
+      installStateSecret === undefined ||
       installations === undefined
     ) {
       reply.status(404);
       return "slack oauth disabled";
     }
-    if (header(request.headers, "x-brain-slack-install-secret") !== installAdminSecret) {
-      reply.status(401);
-      return "unauthorized";
-    }
+    const principal = await requireOnboardingAdmin(request, reply, opts.onboardingAdminVerifier);
+    if (principal === null) return "unauthorized";
     const body = parseJsonObject(requireRawBody(request.body));
-    const tenantId = stringField(body, "tenantId");
-    const installedBy = stringField(body, "installedBy");
-    if (tenantId === null || installedBy === null) {
-      reply.status(400);
-      return "missing tenantId or installedBy";
-    }
+    const installedBy = stringField(body, "installedBy") ?? principal.id;
     const state = mintSlackInstallState({
-      tenantId,
+      tenantId: principal.tenantId,
       installedBy,
-      secret: clientSecret,
+      secret: installStateSecret,
     });
     await installations.createInstallNonce({
-      tenantId,
+      tenantId: principal.tenantId,
       nonce: state.nonce,
       installedBy,
       expiresAt: state.expiresAt,
@@ -243,8 +244,14 @@ export async function buildSurfaceGatewayApp(
     const slack = opts.surfaceConfig.slack;
     const clientId = slack.clientId;
     const clientSecret = slack.clientSecret;
+    const installStateSecret = slack.installStateSecret;
     const installations = opts.slackInstallations;
-    if (clientId === undefined || clientSecret === undefined || installations === undefined) {
+    if (
+      clientId === undefined ||
+      clientSecret === undefined ||
+      installStateSecret === undefined ||
+      installations === undefined
+    ) {
       reply.status(404);
       return "slack oauth disabled";
     }
@@ -255,7 +262,7 @@ export async function buildSurfaceGatewayApp(
       reply.status(400);
       return "missing code or state";
     }
-    const state = verifySlackInstallState({ token: stateToken, secret: clientSecret });
+    const state = verifySlackInstallState({ token: stateToken, secret: installStateSecret });
     if (!state.ok) {
       reply.status(400);
       return "invalid state";
@@ -349,30 +356,31 @@ export async function buildSurfaceGatewayApp(
   app.post("/surfaces/email/recipients/verify/start", async (request, reply) => {
     const onboarding = opts.emailOnboarding;
     const sender = opts.emailVerificationSender;
-    const adminSecret = opts.surfaceConfig.email.onboardingAdminSecret;
-    if (onboarding === undefined || sender === undefined || adminSecret === undefined) {
+    if (onboarding === undefined || sender === undefined) {
       reply.status(404);
       return "email onboarding disabled";
     }
-    if (header(request.headers, "x-brain-email-onboarding-secret") !== adminSecret) {
-      reply.status(401);
-      return "unauthorized";
-    }
+    const principal = await requireOnboardingAdmin(request, reply, opts.onboardingAdminVerifier);
+    if (principal === null) return "unauthorized";
     const body = parseJsonObject(requireRawBody(request.body));
-    const tenantId = stringField(body, "tenantId");
     const email = stringField(body, "email");
     const actorId = stringField(body, "actorId");
     const roles = stringArrayField(body, "roles");
-    if (tenantId === null || email === null || actorId === null || roles === null) {
+    if (email === null || actorId === null || roles === null) {
       reply.status(400);
-      return "missing tenantId, email, actorId, or roles";
+      return "missing email, actorId, or roles";
     }
     const normalizedEmail = normalizeEmail(email);
-    await onboarding.upsertRecipient({ tenantId, email: normalizedEmail, actorId, roles });
+    await onboarding.upsertRecipient({
+      tenantId: principal.tenantId,
+      email: normalizedEmail,
+      actorId,
+      roles,
+    });
     const token = signVerificationToken(
       {
         purpose: "email_recipient_verification",
-        tenantId,
+        tenantId: principal.tenantId,
         email: normalizedEmail,
         actorId,
         roles,
@@ -382,7 +390,7 @@ export async function buildSurfaceGatewayApp(
     );
     const verifyUrl = `${emailVerifyBaseUrl(opts.approvalBaseUrl)}?t=${encodeURIComponent(token)}`;
     const sent = await sender.send({
-      tenantId,
+      tenantId: principal.tenantId,
       to: normalizedEmail,
       subject: "Verify your Brain approval email",
       html: renderVerificationEmail(verifyUrl),
@@ -393,7 +401,7 @@ export async function buildSurfaceGatewayApp(
       return "verification email failed";
     }
     reply.status(202);
-    return { ok: true, tenantId, email: normalizedEmail };
+    return { ok: true, tenantId: principal.tenantId, email: normalizedEmail };
   });
 
   app.route({
@@ -436,63 +444,81 @@ export async function buildSurfaceGatewayApp(
 
   app.post("/surfaces/email/routes", async (request, reply) => {
     const onboarding = opts.emailOnboarding;
-    const adminSecret = opts.surfaceConfig.email.onboardingAdminSecret;
-    if (onboarding === undefined || adminSecret === undefined) {
+    if (onboarding === undefined) {
       reply.status(404);
       return "email onboarding disabled";
     }
-    if (header(request.headers, "x-brain-email-onboarding-secret") !== adminSecret) {
-      reply.status(401);
-      return "unauthorized";
-    }
+    const principal = await requireOnboardingAdmin(request, reply, opts.onboardingAdminVerifier);
+    if (principal === null) return "unauthorized";
     const body = parseJsonObject(requireRawBody(request.body));
-    const tenantId = stringField(body, "tenantId");
     const agent = proposalAgentField(body, "agent");
     const recipients = stringArrayField(body, "recipients");
-    if (tenantId === null || agent === null || recipients === null) {
+    if (agent === null || recipients === null) {
       reply.status(400);
-      return "missing tenantId, agent, or recipients";
+      return "missing agent or recipients";
     }
-    await onboarding.setRoute({ tenantId, agent, recipients });
+    await onboarding.setRoute({ tenantId: principal.tenantId, agent, recipients });
     reply.status(201);
-    return { ok: true, tenantId, agent, recipients: recipients.map(normalizeEmail) };
+    return {
+      ok: true,
+      tenantId: principal.tenantId,
+      agent,
+      recipients: recipients.map(normalizeEmail),
+    };
   });
 
   app.post("/surfaces/email/domains", async (request, reply) => {
     const onboarding = opts.emailOnboarding;
-    const adminSecret = opts.surfaceConfig.email.onboardingAdminSecret;
-    if (onboarding === undefined || adminSecret === undefined) {
+    const verifier = opts.emailDomainVerifier;
+    if (onboarding === undefined || verifier === undefined) {
       reply.status(404);
       return "email onboarding disabled";
     }
-    if (header(request.headers, "x-brain-email-onboarding-secret") !== adminSecret) {
-      reply.status(401);
-      return "unauthorized";
-    }
+    const principal = await requireOnboardingAdmin(request, reply, opts.onboardingAdminVerifier);
+    if (principal === null) return "unauthorized";
     const body = parseJsonObject(requireRawBody(request.body));
-    const tenantId = stringField(body, "tenantId");
     const domain = stringField(body, "domain");
-    const spfOk = booleanField(body, "spfOk");
-    const dkimOk = booleanField(body, "dkimOk");
-    const dmarcOk = booleanField(body, "dmarcOk");
-    if (
-      tenantId === null ||
-      domain === null ||
-      spfOk === null ||
-      dkimOk === null ||
-      dmarcOk === null
-    ) {
+    if (domain === null) {
       reply.status(400);
-      return "missing tenantId, domain, spfOk, dkimOk, or dmarcOk";
+      return "missing domain";
     }
-    await onboarding.upsertDomain({ tenantId, domain, spfOk, dkimOk, dmarcOk });
+    const result = await verifier.verify(domain);
+    await onboarding.upsertDomain({
+      tenantId: principal.tenantId,
+      domain: result.domain,
+      spfOk: result.spfOk,
+      dkimOk: result.dkimOk,
+      dmarcOk: result.dmarcOk,
+    });
     reply.status(201);
     return {
       ok: true,
-      tenantId,
-      domain: normalizeDomain(domain),
-      verified: spfOk && dkimOk && dmarcOk,
+      tenantId: principal.tenantId,
+      domain: result.domain,
+      verified: result.spfOk && result.dkimOk && result.dmarcOk,
+      checks: {
+        spf: result.spfOk,
+        dkim: result.dkimOk,
+        dmarc: result.dmarcOk,
+      },
     };
+  });
+
+  app.post("/surfaces/email/domains/reverify", async (request, reply) => {
+    return app
+      .inject({
+        method: "POST",
+        url: "/surfaces/email/domains",
+        headers: request.headers,
+        payload: requireRawBody(request.body),
+      })
+      .then((response) => {
+        reply.status(response.statusCode);
+        for (const [key, value] of Object.entries(response.headers)) {
+          if (value !== undefined) reply.header(key, value);
+        }
+        return response.body;
+      });
   });
 
   app.post("/surfaces/email/events", async (request, reply) => {
@@ -592,47 +618,39 @@ export async function buildSurfaceGatewayApp(
   });
 
   app.post("/surfaces/teams/install", async (request, reply) => {
-    const teams = opts.surfaceConfig.teams;
-    const installAdminSecret = teams.installAdminSecret;
     const installations = opts.teamsInstallations;
-    if (installAdminSecret === undefined || installations === undefined) {
+    if (installations === undefined) {
       reply.status(404);
       return "teams install disabled";
     }
-    if (header(request.headers, "x-brain-teams-install-secret") !== installAdminSecret) {
-      reply.status(401);
-      return "unauthorized";
-    }
+    const principal = await requireOnboardingAdmin(request, reply, opts.onboardingAdminVerifier);
+    if (principal === null) return "unauthorized";
     const body = parseJsonObject(requireRawBody(request.body));
-    const brainTenantId = stringField(body, "brainTenantId");
     const aadTenantId = stringField(body, "aadTenantId");
-    const installedBy = stringField(body, "installedBy");
+    const installedBy = stringField(body, "installedBy") ?? principal.id;
     const serviceUrl = stringField(body, "serviceUrl");
-    if (brainTenantId === null || aadTenantId === null || installedBy === null) {
+    if (aadTenantId === null) {
       reply.status(400);
-      return "missing brainTenantId, aadTenantId, or installedBy";
+      return "missing aadTenantId";
     }
     await installations.upsertInstallation({
-      brainTenantId,
+      brainTenantId: principal.tenantId,
       aadTenantId,
       installedBy,
       ...(serviceUrl !== null ? { serviceUrl } : {}),
     });
     reply.status(201);
-    return { ok: true, brainTenantId, aadTenantId };
+    return { ok: true, brainTenantId: principal.tenantId, aadTenantId };
   });
 
   app.post("/surfaces/teams/revoke", async (request, reply) => {
-    const installAdminSecret = opts.surfaceConfig.teams.installAdminSecret;
     const installations = opts.teamsInstallations;
-    if (installAdminSecret === undefined || installations === undefined) {
+    if (installations === undefined) {
       reply.status(404);
       return "teams install disabled";
     }
-    if (header(request.headers, "x-brain-teams-install-secret") !== installAdminSecret) {
-      reply.status(401);
-      return "unauthorized";
-    }
+    const principal = await requireOnboardingAdmin(request, reply, opts.onboardingAdminVerifier);
+    if (principal === null) return "unauthorized";
     const body = parseJsonObject(requireRawBody(request.body));
     const aadTenantId = stringField(body, "aadTenantId");
     if (aadTenantId === null) {
@@ -710,6 +728,31 @@ function slackRetryKey(headers: FastifyRequest["headers"], rawBody: Buffer): str
     .digest("hex");
 }
 
+async function requireOnboardingAdmin(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  verifier: OnboardingAdminVerifier | undefined,
+): Promise<Principal | null> {
+  if (verifier === undefined) {
+    reply.status(503);
+    return null;
+  }
+  const token = extractBearer(header(request.headers, "authorization"));
+  if (token === null) {
+    reply.status(401);
+    return null;
+  }
+  try {
+    const principal = await verifier.verify(token);
+    requireScope(principal.scopes, "surfaces:admin");
+    return principal;
+  } catch (error: unknown) {
+    const status = isBrainError(error) ? error.statusCode : 401;
+    reply.status(status === 403 ? 403 : 401);
+    return null;
+  }
+}
+
 function parseJsonObject(body: Buffer): Record<string, unknown> {
   const parsed = JSON.parse(body.toString("utf8")) as unknown;
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
@@ -730,11 +773,6 @@ function stringArrayField(body: Record<string, unknown>, key: string): string[] 
     (item): item is string => typeof item === "string" && item.length > 0,
   );
   return strings.length === value.length ? strings : null;
-}
-
-function booleanField(body: Record<string, unknown>, key: string): boolean | null {
-  const value = body[key];
-  return typeof value === "boolean" ? value : null;
 }
 
 function proposalAgentField(body: Record<string, unknown>, key: string): AgentKind | null {
@@ -825,10 +863,6 @@ async function resolveDispatchTargets(input: {
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
-}
-
-function normalizeDomain(domain: string): string {
-  return domain.trim().toLowerCase();
 }
 
 function escapeHtml(value: string): string {

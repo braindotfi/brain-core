@@ -54,7 +54,7 @@ POST /v1/auth/verify-email
 → 200 { "verified": true, "user_id": "user_…", "status": "active" }
 ```
 
-**3. Log in**. Email + password → owner JWT.
+**3. Log in**. Email + password -> owner JWT.
 
 ```http
 POST /v1/auth/login
@@ -63,7 +63,8 @@ POST /v1/auth/login
 → 200 { "access_token": "eyJ…", "token_type": "Bearer", "expires_in": 900,
         "principal": { "type": "user", "tenantId": "tnt_…",
                        "scopes": ["ledger:read","wiki:read","policy:read","policy:write",
-                                  "audit:read","execution:read","payment_intent:approve"] } }
+                                  "audit:read","execution:read","payment_intent:approve",
+                                  "surfaces:admin"] } }
 ```
 
 An unknown email and a wrong password return the **same** `401 auth_invalid_credentials` (no user enumeration); an unverified account returns `403 auth_email_unverified`.
@@ -155,6 +156,10 @@ ScopeAttestation(
 | **Service token**            | 90 days     | Rotated by tenant admin     |
 | **Email-verification token** | 24 hours    | No, single-use              |
 | **Policy verdict**           | 60 seconds  | No, single-use              |
+
+Owner JWTs include `surfaces:admin` so a tenant admin can connect or revoke
+Slack, Teams, and email approval surfaces. Surface onboarding endpoints derive
+the Brain tenant from this bearer principal, not from request bodies.
 
 ### Revocation
 

@@ -18,7 +18,7 @@ core -> surfaces, never the reverse. See the root CLAUDE.md.
 
 ## Branch
 
-`feat/email-onboarding`. Branch from latest `origin/main`, keep
+`feat/surface-onboarding-admin-auth`. Branch from latest `origin/main`, keep
 this file and the root CLAUDE.md updated as tasks move.
 
 ## Layout
@@ -76,6 +76,13 @@ Done
 - Email delivery passes tenant context to the injected email client so the
   gateway can choose a verified tenant sender domain. Verification tokens use a
   separate purpose claim from approval tokens.
+- Surface onboarding endpoints use Brain bearer JWTs with `surfaces:admin`
+  instead of global install secrets. The surface gateway derives the tenant from
+  the principal for Slack OAuth install, Teams install and revoke, and email
+  recipient, route, and domain onboarding.
+- Tenant custom-from domain onboarding now verifies SPF, DKIM, and DMARC through
+  an injected DNS verifier before activating the sender domain. Slack OAuth
+  install state is signed with `SLACK_INSTALL_STATE_SECRET`.
 
 Pending (for the implementer)
 

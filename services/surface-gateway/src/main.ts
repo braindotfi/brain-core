@@ -10,11 +10,13 @@ import {
   buildCredentialKeyProvider,
   createLogger,
   createPool,
+  JwtVerifier,
   loadConfig,
   PostgresAuditEmitter,
 } from "@brain/shared";
 import { buildSurfaceRuntime } from "@brain/core";
 import type { SurfaceClients } from "@brain/core";
+import { DnsDomainVerifier } from "./domain-verifier.js";
 import { buildSurfaceGatewayApp } from "./server.js";
 import { buildSurfaceGatewayServices } from "./services.js";
 import {
@@ -26,6 +28,8 @@ import {
   SlackInstallationTokenProvider,
 } from "./storage.js";
 
+const DEMO_SIGN_SECRET = "brain-demo-mode-insecure-dev-only";
+
 async function main(): Promise<void> {
   const cfg = loadConfig();
   const logger = createLogger({
@@ -34,6 +38,13 @@ async function main(): Promise<void> {
     pretty: cfg.LOG_PRETTY,
   });
   const surfaceConfig = buildSurfaceConfig(cfg);
+  const onboardingAdminVerifier = new JwtVerifier({
+    jwksUrl: cfg.AUTH_JWKS_URL,
+    ...(cfg.BRAIN_DEMO_MODE ? { secret: DEMO_SIGN_SECRET } : {}),
+    issuer: cfg.AUTH_ISSUER,
+    audience: cfg.AUTH_AUDIENCE,
+    clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
+  });
 
   const surfacePool = createPool({
     connectionString: cfg.BRAIN_SURFACE_GATEWAY_DB_URL ?? cfg.DATABASE_URL,
@@ -127,6 +138,18 @@ async function main(): Promise<void> {
     ...(surfaceConfig.email.enabled && emailClient !== null
       ? { emailOnboarding, emailVerificationSender: emailClient }
       : {}),
+    onboardingAdminVerifier,
+    ...(cfg.EMAIL_DOMAIN_SPF_EXPECTED !== undefined &&
+    cfg.EMAIL_DOMAIN_DKIM_SELECTOR !== undefined &&
+    cfg.EMAIL_DOMAIN_DKIM_PUBLIC_KEY !== undefined
+      ? {
+          emailDomainVerifier: new DnsDomainVerifier({
+            spfExpected: cfg.EMAIL_DOMAIN_SPF_EXPECTED,
+            dkimSelector: cfg.EMAIL_DOMAIN_DKIM_SELECTOR,
+            dkimPublicKey: cfg.EMAIL_DOMAIN_DKIM_PUBLIC_KEY,
+          }),
+        }
+      : {}),
     approvalBaseUrl: surfaceConfig.email.approvalBaseUrl || "http://localhost:3000",
     ...(teamsAdapter !== null
       ? {
@@ -168,17 +191,14 @@ function buildSurfaceConfig(cfg: ReturnType<typeof loadConfig>): SurfaceConfig {
       ...(cfg.SLACK_BOT_TOKEN !== undefined ? { botToken: cfg.SLACK_BOT_TOKEN } : {}),
       ...(cfg.SLACK_CLIENT_ID !== undefined ? { clientId: cfg.SLACK_CLIENT_ID } : {}),
       ...(cfg.SLACK_CLIENT_SECRET !== undefined ? { clientSecret: cfg.SLACK_CLIENT_SECRET } : {}),
-      ...(cfg.SLACK_INSTALL_ADMIN_SECRET !== undefined
-        ? { installAdminSecret: cfg.SLACK_INSTALL_ADMIN_SECRET }
+      ...(cfg.SLACK_INSTALL_STATE_SECRET !== undefined
+        ? { installStateSecret: cfg.SLACK_INSTALL_STATE_SECRET }
         : {}),
     },
     teams: {
       enabled: cfg.TEAMS_ENABLED,
       appId: requiredIf(cfg.TEAMS_APP_ID, "TEAMS_APP_ID", cfg.TEAMS_ENABLED),
       appPassword: requiredIf(cfg.TEAMS_APP_PASSWORD, "TEAMS_APP_PASSWORD", cfg.TEAMS_ENABLED),
-      ...(cfg.TEAMS_INSTALL_ADMIN_SECRET !== undefined
-        ? { installAdminSecret: cfg.TEAMS_INSTALL_ADMIN_SECRET }
-        : {}),
     },
     email: {
       enabled: cfg.EMAIL_ENABLED,
@@ -188,9 +208,6 @@ function buildSurfaceConfig(cfg: ReturnType<typeof loadConfig>): SurfaceConfig {
         cfg.EMAIL_ENABLED,
       ),
       tokenSecret: requiredIf(cfg.EMAIL_TOKEN_SECRET, "EMAIL_TOKEN_SECRET", cfg.EMAIL_ENABLED),
-      ...(cfg.EMAIL_ONBOARDING_ADMIN_SECRET !== undefined
-        ? { onboardingAdminSecret: cfg.EMAIL_ONBOARDING_ADMIN_SECRET }
-        : {}),
       ...(cfg.EMAIL_ESP_WEBHOOK_SECRET !== undefined
         ? { espWebhookSecret: cfg.EMAIL_ESP_WEBHOOK_SECRET }
         : {}),

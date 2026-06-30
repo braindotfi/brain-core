@@ -9,19 +9,17 @@ export interface SurfaceConfig {
     botToken?: string | undefined;
     clientId?: string | undefined;
     clientSecret?: string | undefined;
-    installAdminSecret?: string | undefined;
+    installStateSecret?: string | undefined;
   };
   teams: {
     enabled: boolean;
     appId: string;
     appPassword: string;
-    installAdminSecret?: string | undefined;
   };
   email: {
     enabled: boolean;
     approvalBaseUrl: string;
     tokenSecret: string;
-    onboardingAdminSecret?: string | undefined;
     espWebhookSecret?: string | undefined;
   };
 }
@@ -34,19 +32,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SurfaceConfig 
       botToken: optional(env, "SLACK_BOT_TOKEN"),
       clientId: optional(env, "SLACK_CLIENT_ID"),
       clientSecret: optional(env, "SLACK_CLIENT_SECRET"),
-      installAdminSecret: optional(env, "SLACK_INSTALL_ADMIN_SECRET"),
+      installStateSecret: optional(env, "SLACK_INSTALL_STATE_SECRET"),
     },
     teams: {
       enabled: env.TEAMS_ENABLED === "true",
       appId: required(env, "TEAMS_APP_ID", env.TEAMS_ENABLED === "true"),
       appPassword: required(env, "TEAMS_APP_PASSWORD", env.TEAMS_ENABLED === "true"),
-      installAdminSecret: optional(env, "TEAMS_INSTALL_ADMIN_SECRET"),
     },
     email: {
       enabled: env.EMAIL_ENABLED === "true",
       approvalBaseUrl: required(env, "EMAIL_APPROVAL_BASE_URL", env.EMAIL_ENABLED === "true"),
       tokenSecret: required(env, "EMAIL_TOKEN_SECRET", env.EMAIL_ENABLED === "true"),
-      onboardingAdminSecret: optional(env, "EMAIL_ONBOARDING_ADMIN_SECRET"),
       espWebhookSecret: optional(env, "EMAIL_ESP_WEBHOOK_SECRET"),
     },
   };

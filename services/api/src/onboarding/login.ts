@@ -40,6 +40,7 @@ export const OWNER_SCOPES: readonly Scope[] = [
   "audit:read",
   "execution:read",
   "payment_intent:approve",
+  "surfaces:admin",
 ];
 
 /** A non-secret scrypt hash used only to equalize timing on unknown-email logins. */

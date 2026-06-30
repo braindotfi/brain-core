@@ -27,6 +27,7 @@ export const LAYERS = [
   "execution",
   "payment_intent",
   "audit",
+  "surfaces",
 ] as const;
 export type Layer = (typeof LAYERS)[number];
 
@@ -65,6 +66,7 @@ export const VALID_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "audit:read",
   "audit:write",
   "audit:admin",
+  "surfaces:admin",
 ]);
 
 export function isValidScope(s: string): s is Scope {
