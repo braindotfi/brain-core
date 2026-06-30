@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { ConversationReference } from "botbuilder";
 import type { SurfaceRuntime } from "@brain/core";
+import { brainError, type Principal, type Scope } from "@brain/shared";
 import {
   signVerificationToken,
   signToken,
@@ -18,9 +19,11 @@ import {
   buildSurfaceGatewayApp,
   type EmailOnboardingStore,
   type EmailVerificationSender,
+  type OnboardingAdminVerifier,
   type SlackInstallationStore,
   type TeamsInstallationStore,
 } from "../src/server.js";
+import type { DomainVerifier } from "../src/domain-verifier.js";
 import { SLACK_BOT_SCOPES, type SlackOAuthClient } from "../src/slack-oauth.js";
 import { SlackInstallationTokenProvider } from "../src/storage.js";
 
@@ -116,9 +119,9 @@ describe("surface gateway server", () => {
       url: "/surfaces/slack/oauth/install",
       headers: {
         "content-type": "application/json",
-        "x-brain-slack-install-secret": "install-secret",
+        authorization: bearer(),
       },
-      payload: JSON.stringify({ tenantId: TENANT_ID, installedBy: "user_admin" }),
+      payload: JSON.stringify({ tenantId: "tnt_wrong", installedBy: "user_admin" }),
     });
     expect(init.statusCode).toBe(302);
     const location = init.headers.location;
@@ -145,7 +148,74 @@ describe("surface gateway server", () => {
       botUserId: "B_oauth",
       installedBy: "user_admin",
     });
+    expect(installations.createdNonces[0]).toMatchObject({
+      tenantId: TENANT_ID,
+      installedBy: "user_admin",
+    });
     expect(lines.join("\n")).not.toContain("xoxb-oauth-token");
+  });
+
+  it("rejects onboarding endpoints without tenant-admin bearer auth", async () => {
+    const onboarding = new MemoryEmailOnboardingStore();
+    const routes = [
+      {
+        url: "/surfaces/slack/oauth/install",
+        payload: { tenantId: TENANT_ID, installedBy: "tenant_admin" },
+      },
+      {
+        url: "/surfaces/teams/install",
+        payload: { brainTenantId: TENANT_ID, aadTenantId: "aad-tenant-1" },
+      },
+      { url: "/surfaces/teams/revoke", payload: { aadTenantId: "aad-tenant-1" } },
+      {
+        url: "/surfaces/email/recipients/verify/start",
+        payload: { email: "approver@example.com", actorId: "user_1", roles: ["finance"] },
+      },
+      {
+        url: "/surfaces/email/routes",
+        payload: { agent: "invoice", recipients: ["approver@example.com"] },
+      },
+      { url: "/surfaces/email/domains", payload: { domain: "example.com" } },
+    ];
+    const app = await makeApp({
+      teamsInstallations: new MemoryTeamsInstallationStore(),
+      emailOnboarding: onboarding,
+      emailVerificationSender: new MemoryEmailSender(),
+      emailDomainVerifier: new MemoryDomainVerifier(),
+    });
+
+    for (const route of routes) {
+      const res = await app.inject({
+        method: "POST",
+        url: route.url,
+        headers: { "content-type": "application/json" },
+        payload: JSON.stringify(route.payload),
+      });
+      expect(res.statusCode, route.url).toBe(401);
+    }
+  });
+
+  it("rejects invalid and non-admin onboarding bearer tokens", async () => {
+    const app = await makeApp({
+      onboardingAdminVerifier: new MemoryOnboardingAdminVerifier("bad-token"),
+      teamsInstallations: new MemoryTeamsInstallationStore(),
+    });
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/surfaces/teams/install",
+      headers: { "content-type": "application/json", authorization: "Bearer bad-token" },
+      payload: JSON.stringify({ aadTenantId: "aad-tenant-1" }),
+    });
+    const missingScope = await app.inject({
+      method: "POST",
+      url: "/surfaces/teams/install",
+      headers: { "content-type": "application/json", authorization: bearer("tenant-reader") },
+      payload: JSON.stringify({ aadTenantId: "aad-tenant-1" }),
+    });
+
+    expect(invalid.statusCode).toBe(401);
+    expect(missingScope.statusCode).toBe(403);
   });
 
   it("marks Slack installations revoked on app_uninstalled and sends fail closed", async () => {
@@ -191,10 +261,10 @@ describe("surface gateway server", () => {
       url: "/surfaces/teams/install",
       headers: {
         "content-type": "application/json",
-        "x-brain-teams-install-secret": "teams-install-secret",
+        authorization: bearer(),
       },
       payload: JSON.stringify({
-        brainTenantId: TENANT_ID,
+        brainTenantId: "tnt_wrong",
         aadTenantId: "aad-tenant-1",
         installedBy: "tenant_admin",
         serviceUrl: "https://smba.trafficmanager.net/amer/",
@@ -372,10 +442,10 @@ describe("surface gateway server", () => {
       url: "/surfaces/email/recipients/verify/start",
       headers: {
         "content-type": "application/json",
-        "x-brain-email-onboarding-secret": "email-onboarding-secret",
+        authorization: bearer(),
       },
       payload: JSON.stringify({
-        tenantId: TENANT_ID,
+        tenantId: "tnt_wrong",
         email: "Approver@Example.com",
         actorId: "user_approver",
         roles: ["finance"],
@@ -399,6 +469,43 @@ describe("surface gateway server", () => {
 
     expect(post.statusCode).toBe(200);
     expect(await onboarding.isVerified(TENANT_ID, "approver@example.com")).toBe(true);
+  });
+
+  it("verifies email domains from DNS checks before activating custom sender", async () => {
+    const onboarding = new MemoryEmailOnboardingStore();
+    const app = await makeApp({
+      emailOnboarding: onboarding,
+      emailVerificationSender: new MemoryEmailSender(),
+      emailDomainVerifier: new MemoryDomainVerifier({
+        domain: "Example.com",
+        spfOk: true,
+        dkimOk: true,
+        dmarcOk: true,
+      }),
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/surfaces/email/domains",
+      headers: { "content-type": "application/json", authorization: bearer() },
+      payload: JSON.stringify({
+        tenantId: "tnt_wrong",
+        domain: "Example.com",
+        spfOk: false,
+        dkimOk: false,
+        dmarcOk: false,
+      }),
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({
+      tenantId: TENANT_ID,
+      domain: "example.com",
+      verified: true,
+      checks: { spf: true, dkim: true, dmarc: true },
+    });
+    expect(await onboarding.senderForTenant(TENANT_ID)).toBe("noreply@example.com");
+    expect(await onboarding.senderForTenant("tnt_wrong")).toBeNull();
   });
 
   it("rejects expired or tampered email verification tokens", async () => {
@@ -576,6 +683,8 @@ async function makeApp(
     teamsConversationReferences?: ConversationReferenceStore | undefined;
     emailOnboarding?: EmailOnboardingStore | undefined;
     emailVerificationSender?: EmailVerificationSender | undefined;
+    emailDomainVerifier?: DomainVerifier | undefined;
+    onboardingAdminVerifier?: OnboardingAdminVerifier | undefined;
   } = {},
   logLines: string[] = [],
 ): Promise<FastifyInstance> {
@@ -622,6 +731,9 @@ async function makeApp(
     teamsConversationReferences: overrides.teamsConversationReferences,
     emailOnboarding: overrides.emailOnboarding,
     emailVerificationSender: overrides.emailVerificationSender,
+    emailDomainVerifier: overrides.emailDomainVerifier,
+    onboardingAdminVerifier:
+      overrides.onboardingAdminVerifier ?? new MemoryOnboardingAdminVerifier(),
     approvalBaseUrl: "http://localhost:3000",
     smoke: overrides.smoke,
     logger: memoryLogger(logLines) as never,
@@ -642,6 +754,12 @@ class MemorySlackInstallationStore implements SlackInstallationStore {
       }
     | undefined;
   public readonly revokedTeams: string[] = [];
+  public readonly createdNonces: Array<{
+    tenantId: string;
+    nonce: string;
+    installedBy: string;
+    expiresAt: Date;
+  }> = [];
   private readonly nonces = new Map<string, { expiresAt: Date; consumed: boolean }>();
   private readonly installations = new Map<
     string,
@@ -658,6 +776,7 @@ class MemorySlackInstallationStore implements SlackInstallationStore {
     installedBy: string;
     expiresAt: Date;
   }): Promise<void> {
+    this.createdNonces.push(input);
     this.nonces.set(`${input.tenantId}:${input.nonce}`, {
       expiresAt: input.expiresAt,
       consumed: false,
@@ -820,7 +939,7 @@ class MemoryEmailOnboardingStore implements EmailOnboardingStore {
   private readonly routes = new Map<string, string[]>();
   private readonly domains = new Map<
     string,
-    { verified: boolean; status: "pending" | "active" | "disabled" }
+    { domain: string; verified: boolean; status: "pending" | "active" | "disabled" }
   >();
 
   public async upsertRecipient(input: {
@@ -894,14 +1013,63 @@ class MemoryEmailOnboardingStore implements EmailOnboardingStore {
   }): Promise<void> {
     const verified = input.spfOk && input.dkimOk && input.dmarcOk;
     this.domains.set(`${input.tenantId}:${input.domain.toLowerCase()}`, {
+      domain: input.domain.toLowerCase(),
       verified,
       status: input.status ?? (verified ? "active" : "pending"),
     });
   }
 
+  public async senderForTenant(tenantId: string): Promise<string | null> {
+    for (const [key, domain] of this.domains.entries()) {
+      if (key.startsWith(`${tenantId}:`) && domain.verified && domain.status === "active") {
+        return `noreply@${domain.domain}`;
+      }
+    }
+    return null;
+  }
+
   public async isVerified(tenantId: string, email: string): Promise<boolean> {
     const recipient = this.recipients.get(recipientKey(tenantId, email));
     return recipient?.verified === true && recipient.status === "active";
+  }
+}
+
+class MemoryOnboardingAdminVerifier implements OnboardingAdminVerifier {
+  public constructor(private readonly invalidToken: string | null = null) {}
+
+  public async verify(token: string): Promise<Principal> {
+    if (token === this.invalidToken) {
+      throw brainError("auth_token_invalid", "invalid token");
+    }
+    const scopes: Scope[] = token === "tenant-reader" ? ["audit:read"] : ["surfaces:admin"];
+    return {
+      id: "user_admin",
+      type: "user",
+      tenantId: TENANT_ID,
+      scopes,
+      tokenId: "token_admin",
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+    };
+  }
+}
+
+class MemoryDomainVerifier implements DomainVerifier {
+  public constructor(
+    private readonly result = {
+      domain: "example.com",
+      spfOk: true,
+      dkimOk: true,
+      dmarcOk: true,
+    },
+  ) {}
+
+  public async verify(): Promise<{
+    domain: string;
+    spfOk: boolean;
+    dkimOk: boolean;
+    dmarcOk: boolean;
+  }> {
+    return { ...this.result, domain: this.result.domain.toLowerCase() };
   }
 }
 
@@ -970,14 +1138,13 @@ function surfaceConfig(): SurfaceConfig {
       botToken: "xoxb-test",
       clientId: "slack-client-id",
       clientSecret: "slack-client-secret",
-      installAdminSecret: "install-secret",
+      installStateSecret: "slack-install-state-secret",
     },
     teams: { enabled: false, appId: "", appPassword: "" },
     email: {
       enabled: true,
       approvalBaseUrl: "http://localhost:3000/surfaces/email/approve",
       tokenSecret: "email_secret",
-      onboardingAdminSecret: "email-onboarding-secret",
       espWebhookSecret: "email-event-secret",
     },
   };
@@ -990,7 +1157,6 @@ function teamsSurfaceConfig(): SurfaceConfig {
       enabled: true,
       appId: "teams-app-id",
       appPassword: "teams-app-password",
-      installAdminSecret: "teams-install-secret",
     },
   };
 }
@@ -1044,6 +1210,10 @@ function slackSignature(rawBody: string, timestamp: string): string {
 
 function emailEventSignature(rawBody: string): string {
   return `v1=${createHmac("sha256", "email-event-secret").update(rawBody).digest("hex")}`;
+}
+
+function bearer(token = "tenant-admin"): string {
+  return `Bearer ${token}`;
 }
 
 function extractToken(text: string): string {

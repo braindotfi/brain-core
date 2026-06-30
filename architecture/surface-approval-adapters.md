@@ -68,7 +68,8 @@ Fastify v5 process:
 | `HEAD /surfaces/email/verify`                  | Link preview-safe recipient verification route check                      |
 | `POST /surfaces/email/verify`                  | Recipient verification confirmation                                       |
 | `POST /surfaces/email/routes`                  | Admin-gated agent to verified-recipient routing config                    |
-| `POST /surfaces/email/domains`                 | Admin-gated tenant sender-domain verification state                       |
+| `POST /surfaces/email/domains`                 | Admin-gated tenant sender-domain DNS verification                         |
+| `POST /surfaces/email/domains/reverify`        | Admin-gated re-check for tenant sender-domain DNS                         |
 | `POST /surfaces/email/events`                  | ESP bounce and complaint events with webhook signature verification       |
 | `POST /surfaces/teams/messages`                | Bot Framework verified Teams submit activities                            |
 | `POST /surfaces/teams/install`                 | Admin-gated Brain tenant to Azure AD tenant mapping                       |
@@ -100,7 +101,13 @@ Email recipients must be verified before routing or identity resolution accepts
 them. Email GET and HEAD routes never mutate state; only POST confirmation
 verifies an address or applies an approval. ESP bounce and complaint events mark
 recipients disabled so future dispatch skips them. Tenant custom senders are
-only used after SPF, DKIM, and DMARC are all marked verified.
+only used after Brain verifies SPF, DKIM, and DMARC through DNS.
+
+Surface onboarding routes require a Brain bearer JWT with `surfaces:admin`.
+Slack OAuth install, Teams install and revoke, and email recipient, route, and
+domain onboarding all derive the Brain tenant from the principal. Slack and ESP
+event webhooks stay on provider HMAC signatures because they are machine
+callbacks, not tenant-admin onboarding calls.
 
 The production DB role is `brain_surface_gateway`. It is tenant-scoped, has no
 `BYPASSRLS`, and has no Ledger or execution outbox grants. Decisions delegate to

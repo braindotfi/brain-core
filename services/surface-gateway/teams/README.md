@@ -21,7 +21,7 @@ The Bot Framework registration must be multi-tenant:
 - Supported account types: `Accounts in any organizational directory`.
 - Messaging endpoint: `https://<surface-gateway-host>/surfaces/teams/messages`.
 - App id and secret are supplied to the gateway as `TEAMS_APP_ID` and `TEAMS_APP_PASSWORD`.
-- The gateway install endpoint is protected by `TEAMS_INSTALL_ADMIN_SECRET`.
+- The install and revoke endpoints require a Brain bearer JWT with `surfaces:admin`.
 
 Admin consent URL pattern:
 
@@ -38,15 +38,14 @@ Create or refresh the mapping after a tenant admin approves the install:
 ```bash
 curl -X POST https://<surface-gateway-host>/surfaces/teams/install \
   -H "content-type: application/json" \
-  -H "x-brain-teams-install-secret: $TEAMS_INSTALL_ADMIN_SECRET" \
+  -H "authorization: Bearer $BRAIN_ADMIN_TOKEN" \
   -d '{
-    "brainTenantId": "tnt_123",
     "aadTenantId": "00000000-0000-0000-0000-000000000000",
     "installedBy": "admin@example.com"
   }'
 ```
 
-The gateway resolves every authenticated Teams activity by `aadTenantId`, checks that it maps to the Brain tenant carried in the Adaptive Card, and only then stores the conversation reference as `<brainTenantId>:<conversationId>`.
+The gateway derives the Brain tenant from the authenticated principal, never from the request body. It resolves every authenticated Teams activity by `aadTenantId`, checks that it maps to the Brain tenant carried in the Adaptive Card, and only then stores the conversation reference as `<brainTenantId>:<conversationId>`.
 
 ## Revocation
 
@@ -55,7 +54,7 @@ Revoke an installation:
 ```bash
 curl -X POST https://<surface-gateway-host>/surfaces/teams/revoke \
   -H "content-type: application/json" \
-  -H "x-brain-teams-install-secret: $TEAMS_INSTALL_ADMIN_SECRET" \
+  -H "authorization: Bearer $BRAIN_ADMIN_TOKEN" \
   -d '{"aadTenantId":"00000000-0000-0000-0000-000000000000"}'
 ```
 

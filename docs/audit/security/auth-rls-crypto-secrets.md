@@ -32,7 +32,7 @@ Out of scope: Plaid webhook HMAC signature verification, pre-commit secret scann
 ```
 shared/src/auth/jwt.ts. JwtVerifier: production JWKS, demo HS256, claim validation
 shared/src/auth/middleware.ts. Fastify onRequest hook, skipAuth config flag
-shared/src/auth/scopes.ts. VALID_SCOPES (23), AGENT_PERMITTED_SCOPES (5)
+shared/src/auth/scopes.ts. VALID_SCOPES (24), AGENT_PERMITTED_SCOPES (5)
 shared/src/db/tenant-scoped.ts. WithTenantScope implementation
 shared/src/crypto/aes-gcm.ts. AES-256-GCM encrypt/decrypt
 services/api/src/main.ts. Boot guards (lines 597–609, 1377–1381), DEMO_SIGN_SECRET (line 612)
@@ -94,7 +94,7 @@ line 1377: AUTH_SIGN_KEY required in NODE_ENV=production (SIWX signing)
 shared/src/auth/
   jwt.ts            # JwtVerifier (production JWKS, demo HS256), JwtSigner
   middleware.ts     # Fastify plugin. OnRequest hook, skipAuth flag
-  scopes.ts         # VALID_SCOPES (23), AGENT_PERMITTED_SCOPES (5), requireScope()
+  scopes.ts         # VALID_SCOPES (24), AGENT_PERMITTED_SCOPES (5), requireScope()
 shared/src/db/
   tenant-scoped.ts  # withTenantScope. BEGIN + SET LOCAL + fn + COMMIT
 shared/src/crypto/
@@ -415,7 +415,7 @@ The suite logic is correct and CI-verified; the local failure is a developer erg
 | SIWX / AUTH_SIGN_KEY                         | Boot-guarded. Required in production                                                     |
 | Claim validation (sub, exp, jti, scopes)     | Comprehensive. All checked at middleware                                                 |
 | Revocation store                             | Functional. Redis per-jti TTL, self-evicting                                             |
-| Scope enforcement                            | Comprehensive. 23 VALID_SCOPES, AGENT_PERMITTED_SCOPES(5), requireScope                  |
+| Scope enforcement                            | Comprehensive. 24 VALID_SCOPES, AGENT_PERMITTED_SCOPES(5), requireScope                  |
 | `skipAuth` surface                           | Minimal and justified. 6 routes, all legitimate                                          |
 | `withTenantScope`                            | Correct. SET LOCAL, parameterized, rollback-on-throw, isBrainId guard                    |
 | FORCE ROW LEVEL SECURITY                     | Complete. All 6 service schemas covered; api/tenants via db-roles.sql loop               |
@@ -451,7 +451,7 @@ The suite logic is correct and CI-verified; the local failure is a developer erg
 | Area                            | Confidence | Reason                                                                                      |
 | ------------------------------- | ---------- | ------------------------------------------------------------------------------------------- |
 | JWT production/demo paths       | High       | Source read; boot guard confirmed by line number                                            |
-| VALID_SCOPES set                | High       | `scopes.ts` read directly; 23 entries enumerated                                            |
+| VALID_SCOPES set                | High       | `scopes.ts` read directly; 24 entries enumerated                                            |
 | `withTenantScope` correctness   | High       | Implementation read in full; SET LOCAL confirmed transaction-scoped                         |
 | FORCE RLS coverage              | High       | All `FORCE ROW LEVEL SECURITY` migration files grep-confirmed; db-roles.sql read            |
 | AES-256-GCM wire format         | High       | Implementation read; GCM auth tag enforcement confirmed                                     |

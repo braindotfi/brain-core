@@ -20,9 +20,9 @@ fail the build if anything under packages/surfaces imports @brain/core.
 
 ## Branch
 
-`fix/surface-audit-before-sign`. Branch from latest `origin/main`. The approval
-signature that contributes to quorum is being moved after the decision audit
-anchor while preserving the acyclic core -> surfaces dependency.
+`feat/surface-onboarding-admin-auth`. Branch from latest `origin/main`. Surface
+onboarding is moving from global operator secrets to tenant-admin JWT auth, with
+Brain-side email domain verification and a dedicated Slack install state secret.
 
 ## Commands (from root)
 
@@ -108,6 +108,12 @@ Done
   evaluation is read-only and execution enqueue does not sign. Tests cover
   audit-before-sign ordering, awaiting dual approval signatures, terminal
   no-double-sign behavior, roleless signer denial, and disabled user rejection.
+- Slack OAuth install, Teams install and revoke, and email onboarding endpoints
+  now require `surfaces:admin` bearer auth. The gateway derives Brain tenant
+  identity from the principal and ignores tenant ids in request bodies.
+- Email domain onboarding verifies SPF, DKIM, and DMARC from DNS before
+  activating tenant custom-from domains. Slack OAuth state uses
+  `SLACK_INSTALL_STATE_SECRET` instead of the OAuth client secret.
 
 Pending
 

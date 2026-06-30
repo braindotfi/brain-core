@@ -111,14 +111,13 @@ const envSchema = z.object({
   SLACK_BOT_TOKEN: optionalNonEmptyString(),
   SLACK_CLIENT_ID: optionalNonEmptyString(),
   SLACK_CLIENT_SECRET: optionalNonEmptyString(),
-  SLACK_INSTALL_ADMIN_SECRET: optionalNonEmptyString(),
+  SLACK_INSTALL_STATE_SECRET: optionalNonEmptyString(),
   TEAMS_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
     .default("false"),
   TEAMS_APP_ID: optionalNonEmptyString(),
   TEAMS_APP_PASSWORD: optionalNonEmptyString(),
-  TEAMS_INSTALL_ADMIN_SECRET: optionalNonEmptyString(),
   EMAIL_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
@@ -128,8 +127,10 @@ const envSchema = z.object({
   EMAIL_ENDPOINT: optionalNonEmptyString(),
   EMAIL_API_KEY: optionalNonEmptyString(),
   EMAIL_FROM: optionalNonEmptyString(),
-  EMAIL_ONBOARDING_ADMIN_SECRET: optionalNonEmptyString(),
   EMAIL_ESP_WEBHOOK_SECRET: optionalNonEmptyString(),
+  EMAIL_DOMAIN_SPF_EXPECTED: optionalNonEmptyString(),
+  EMAIL_DOMAIN_DKIM_SELECTOR: optionalNonEmptyString(),
+  EMAIL_DOMAIN_DKIM_PUBLIC_KEY: optionalNonEmptyString(),
   BRAIN_SURFACE_SMOKE_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")

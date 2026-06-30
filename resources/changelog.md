@@ -6,6 +6,17 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.9 (surface onboarding admin auth)
+
+- Surface onboarding endpoints for Slack OAuth install, Teams install and
+  revoke, and email recipients, routes, and domains now require a Brain bearer
+  JWT with `surfaces:admin`. The gateway derives the tenant from the principal
+  instead of trusting tenant ids in request bodies.
+- Email custom sender domains are verified by Brain-side DNS checks for SPF,
+  DKIM, and DMARC before activation. A reverify endpoint can refresh the result.
+- Slack OAuth install state is signed with `SLACK_INSTALL_STATE_SECRET` instead
+  of reusing the OAuth client secret.
+
 ### v0.5.8 (surface approval audit ordering + OpenAPI cleanup)
 
 Safety and contract-polish release. No endpoint behavior is loosened.

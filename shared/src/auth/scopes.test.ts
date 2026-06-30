@@ -18,6 +18,7 @@ describe("VALID_SCOPES", () => {
       "execution:propose",
       "audit:read",
       "audit:admin",
+      "surfaces:admin",
     ] as const) {
       expect(VALID_SCOPES.has(s)).toBe(true);
     }

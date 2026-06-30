@@ -53,6 +53,7 @@ const ALL_SCOPES = [
   "audit:read",
   "audit:write",
   "audit:admin",
+  "surfaces:admin",
   "policy:read",
   "policy:write",
   "policy:admin",
