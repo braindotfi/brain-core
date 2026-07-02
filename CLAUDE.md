@@ -164,3 +164,34 @@ separate deploy.
 
 No em dashes, no ampersands outside brand names, no emojis in docs, comments, or
 commit messages.
+
+## Deployment status (merged ≠ deployed)
+
+CI/CD is NOT auto-deploy to production. Per .github/workflows/main.yml: merge to main →
+integration tests → build + push images to ACR → deploy to STAGING → E2E → **manual promote
+to production**. A commit on main is on staging automatically; production requires someone to
+run the manual promote job. "CI green" and "main" mean deployed-to-staging, never
+deployed-to-prod.
+
+Infra: Azure Container Apps, revision_mode "Multiple", blue/green (infra/main.tf). The `api`
+service is the deploy target (member/approval routes mount in services/api/src/main.ts).
+Migrations apply via `node tools/migrate/dist/cli.js up`, must run against prod BEFORE the
+app revision is promoted, or a new route serving a missing table 500s.
+
+To fully ship a change to api.brain.fi (production):
+
+1. Apply pending migrations to the prod DB.
+2. Run the manual staging to prod promote for the revision built from the target commit.
+3. Confirm `var.services` (or the prod tfvars) includes `api`, a subset override can silently
+   exclude it.
+4. Smoke-check: the new route returns non-404 on api.brain.fi.
+
+### Current deployment state (update on every promote)
+
+| Change | On main | On staging | On prod (api.brain.fi) |
+| --- | --- | --- | --- |
+| Members / approval authority / actor attribution (PR #214, #215; edc9a3f) | Yes | Yes (auto on merge; verify) | NO, NOT PROMOTED, /v1/members 404s on prod |
+
+Rule: when a feature's platform integration is blocked on "the route 404s," check THIS table
+first, it is almost always merged-but-not-promoted, not a code bug. Confirm staging before
+assuming a different environment.
