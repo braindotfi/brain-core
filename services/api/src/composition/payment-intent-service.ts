@@ -10,7 +10,9 @@
 import {
   PaymentIntentService,
   OutboxService,
+  type ActorResolver,
   type ApprovalService,
+  type MemberLookup,
   type OnchainDispatchParams,
 } from "@brain/execution";
 import type {
@@ -46,6 +48,8 @@ export interface BuildPaymentIntentServiceDeps {
   pool: Pool;
   audit: AuditEmitter;
   approvals: ApprovalService;
+  actorResolver: ActorResolver;
+  members: MemberLookup;
 
   resolveAgent: (ctx: ServiceCallContext, agentId: string) => Promise<GateAgent | null>;
   resolveAccount: (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null>;
@@ -54,6 +58,10 @@ export interface BuildPaymentIntentServiceDeps {
     counterpartyId: string,
   ) => Promise<GateCounterparty | null>;
   resolvePrincipal: (ctx: ServiceCallContext) => Promise<GatePrincipal>;
+  resolveApprovalPayeeEmail: (
+    ctx: ServiceCallContext,
+    intent: GatePaymentIntent,
+  ) => Promise<string | null>;
   evaluatePolicy: PaymentIntentPolicyEvaluator;
   resolveTenantFlags: (ctx: ServiceCallContext, tenantId: string) => Promise<GateTenantFlags>;
 
@@ -147,6 +155,9 @@ export function buildPaymentIntentService(
     // H-04: execute enqueues to the durable outbox; the rail moved to the worker.
     outbox: new OutboxService(),
     approvals: deps.approvals,
+    actorResolver: deps.actorResolver,
+    members: deps.members,
+    resolveApprovalPayeeEmail: deps.resolveApprovalPayeeEmail,
     resolveAgent: deps.resolveAgent,
     resolveTenantFlags: deps.resolveTenantFlags,
     resolveAccount: deps.resolveAccount,

@@ -20,9 +20,9 @@ fail the build if anything under packages/surfaces imports @brain/core.
 
 ## Branch
 
-`feat/surface-onboarding-admin-auth`. Branch from latest `origin/main`. Surface
-onboarding is moving from global operator secrets to tenant-admin JWT auth, with
-Brain-side email domain verification and a dedicated Slack install state secret.
+`feature/members-approval-attribution`. Branch from latest `origin/main`.
+Members, approval authority, and actor attribution are moving into core as the
+normative money-path contract in `docs/contracts/members-attribution.md`.
 
 ## Commands (from root)
 
@@ -114,6 +114,34 @@ Done
 - Email domain onboarding verifies SPF, DKIM, and DMARC from DNS before
   activating tenant custom-from domains. Slack OAuth state uses
   `SLACK_INSTALL_STATE_SECRET` instead of the OAuth client secret.
+- Members are now the core approval authority model. `members` and
+  `member_identity_links` are tenant-scoped RLS tables; authenticated identities
+  are backfilled as tenant admins on upgrade to preserve behavior.
+- Approval actors resolve through `ActorResolver` only. Session surfaces derive
+  the actor from authenticated server context and ignore any actor field in the
+  payload. API machine credentials must assert an actor and are recorded as
+  `tenant_asserted`; Slack and Teams resolve through identity links; email uses
+  signed proposal-bound tokens.
+- `PaymentIntentService.approve` resolves the actor and calls
+  `authorizeApproval` before any approval signature or status transition. The
+  gate checks, in order: active tenant member, admin or approver role, authorized
+  domain, per-item limit, tenant-wide distinct second approval, and actor is not
+  the payee.
+- Second approval moves payment intents to `awaiting_second_approval` and gates
+  execution until a distinct member passes the authority checks. Same-member
+  retry returns `second_approval_required`.
+- Members are deactivated, never hard-deleted. The last active admin in a tenant
+  cannot be deactivated or demoted and returns `last_admin_protected`.
+- Actor-payee protection currently falls back to email match against the
+  resolved payment recipient because richer vendor and employee identity mapping
+  is not yet present in core data.
+- Member mutations emit `member.changed` audit events with before and after
+  envelopes and return `audit_id`. Awaiting-second-approval emits the contract
+  event `proposal.awaiting_second_approval`; the older payment-intent alias
+  remains accepted by the outbound webhook allowlist for compatibility.
+- The platform repo must conform to `docs/contracts/members-attribution.md`.
+  Platform-side member UI is mock-only until it is wired against the core
+  `/v1/members` API and core approval responses.
 
 Pending
 
@@ -121,6 +149,8 @@ Pending
 - [ ] Slack Marketplace MCP registry listing for the pull path.
 - [ ] Provision real Slack, Teams, and ESP credentials in staging and run an
       exercised surface approval release candidate.
+- [ ] Replace actor-payee email fallback with canonical vendor and employee
+      identity matching once those links are first-class in the ledger model.
 
 ## Runtime isolation
 

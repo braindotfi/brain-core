@@ -37,6 +37,31 @@ export {
 } from "./payment-intents/state-machine.js";
 export { ApprovalService } from "./approvals/ApprovalService.js";
 export type { ApprovalServiceDeps } from "./approvals/ApprovalService.js";
+export { ActorResolver, actorUnresolved } from "./members/ActorResolver.js";
+export {
+  authorizeApproval,
+  decimalAmountToCents,
+  paymentIntentApprovalDomain,
+  type ApprovalAuthorization,
+  type ApprovalRejectionReason,
+} from "./members/authorizeApproval.js";
+export {
+  PostgresMemberLookup,
+  findMemberByEmail,
+  findMemberById,
+  findMemberByIdentityLink,
+} from "./members/repository.js";
+export type {
+  ActorContext,
+  ActorVerification,
+  ApprovalDomain,
+  MemberAuthority,
+  MemberIdentitySurface,
+  MemberLookup,
+  MemberRole,
+  ResolveActorInput,
+  SignedApprovalTokenClaims,
+} from "./members/types.js";
 
 // Stage 6 — rails.
 export {
@@ -104,6 +129,8 @@ export {
 export { registerExecutionRoutes } from "./routes.js";
 export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
 export type { InvoiceShortcutResolver } from "./payment-intents/routes.js";
+export { registerMemberRoutes } from "./members/routes.js";
+export type { MemberRoutesDeps } from "./members/routes.js";
 
 // P0.5 invoice shortcut resolver + injected lookups.
 export { resolveInvoiceShortcut } from "./payment-intents/invoice-shortcut.js";

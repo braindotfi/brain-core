@@ -141,6 +141,8 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   // ---- Onboarding / identity (tenants registry last) ----
   { table: "email_verifications", column: "tenant_id" },
   { table: "wallet_identities", column: "tenant_id" },
+  { table: "member_identity_links", column: "tenant_id" },
+  { table: "members", column: "tenant_id" },
   { table: "users", column: "tenant_id" },
   // tenants itself uses `id` as the tenant key, not tenant_id/owner_id.
   // Handled separately below to preserve the column-shape invariant.

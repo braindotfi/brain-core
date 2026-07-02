@@ -196,7 +196,8 @@ GRANT SELECT, INSERT ON audit_integrity_findings TO brain_audit_verifier;
 GRANT SELECT ON audit_events TO brain_audit_publisher;
 
 -- brain_resolver: cross-tenant SELECT only, for the webhook/SIWX/login resolvers.
-GRANT SELECT ON raw_sync_partitions, wallet_identities, users TO brain_resolver;
+GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links
+  TO brain_resolver;
 
 -- brain_surface_gateway: tenant-scoped webhook decisions and delivery state.
 -- No ledger_* or execution_outbox grants. The handoff stops at approvals.
@@ -207,7 +208,7 @@ BEGIN
            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'surface\_%'
   LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO brain_surface_gateway', t); END LOOP;
 END $$;
-GRANT SELECT ON users, policies TO brain_surface_gateway;
+GRANT SELECT ON users, members, member_identity_links, policies TO brain_surface_gateway;
 GRANT SELECT, INSERT, UPDATE ON approvals TO brain_surface_gateway;
 
 -- brain_tenant_deletion: GDPR Article 17 erasure (route-gated) + blob-purge

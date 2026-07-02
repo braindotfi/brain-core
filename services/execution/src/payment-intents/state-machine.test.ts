@@ -9,6 +9,7 @@ import {
 const ALL: PaymentIntentState[] = [
   "proposed",
   "pending_approval",
+  "awaiting_second_approval",
   "approved",
   "paused",
   "dispatching",
@@ -28,11 +29,21 @@ describe("§9.5 PaymentIntent state machine", () => {
     expect(isValidPaymentIntentTransition("proposed", "failed")).toBe(false);
   });
 
-  it("pending_approval → approved | rejected only", () => {
+  it("pending_approval → awaiting_second_approval | approved | rejected only", () => {
+    expect(isValidPaymentIntentTransition("pending_approval", "awaiting_second_approval")).toBe(
+      true,
+    );
     expect(isValidPaymentIntentTransition("pending_approval", "approved")).toBe(true);
     expect(isValidPaymentIntentTransition("pending_approval", "rejected")).toBe(true);
     expect(isValidPaymentIntentTransition("pending_approval", "executed")).toBe(false);
     expect(isValidPaymentIntentTransition("pending_approval", "cancelled")).toBe(false);
+  });
+
+  it("awaiting_second_approval → approved | rejected only", () => {
+    expect(isValidPaymentIntentTransition("awaiting_second_approval", "approved")).toBe(true);
+    expect(isValidPaymentIntentTransition("awaiting_second_approval", "rejected")).toBe(true);
+    expect(isValidPaymentIntentTransition("awaiting_second_approval", "executed")).toBe(false);
+    expect(isValidPaymentIntentTransition("awaiting_second_approval", "cancelled")).toBe(false);
   });
 
   it("approved → dispatching | rejected | failed | paused (H-04: no direct executed)", () => {
