@@ -25,6 +25,8 @@ export default defineConfig({
         "src/actions/routes.ts",
         "src/approvals/ApprovalService.ts",
         "src/approvals/repository.ts",
+        "src/members/repository.ts",
+        "src/members/routes.ts",
         "src/payment-intents/PaymentIntentService.ts",
         "src/payment-intents/routes.ts",
         "src/rails/stubs.ts",
