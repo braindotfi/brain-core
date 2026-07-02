@@ -125,16 +125,18 @@ Done
 - `PaymentIntentService.approve` resolves the actor and calls
   `authorizeApproval` before any approval signature or status transition. The
   gate checks, in order: active tenant member, admin or approver role, authorized
-  domain, per-item limit, tenant-wide distinct second approval, and actor is not
-  the payee.
+  domain, per-item limit, actor is not the payee, and tenant-wide distinct
+  second approval.
 - Second approval moves payment intents to `awaiting_second_approval` and gates
   execution until a distinct member passes the authority checks. Same-member
   retry returns `second_approval_required`.
 - Members are deactivated, never hard-deleted. The last active admin in a tenant
   cannot be deactivated or demoted and returns `last_admin_protected`.
-- Actor-payee protection currently falls back to email match against the
-  resolved payment recipient because richer vendor and employee identity mapping
-  is not yet present in core data.
+- Actor-payee protection normalizes emails by trimming, lowercasing, and
+  stripping plus-address aliases. Employee or payroll payees with unresolved
+  email fail closed as `self_approval_blocked` with `payee_unresolved=true`.
+  Vendor payees with unresolved email still pass in v1 as an accepted residual
+  gap until canonical vendor identity links are first-class in Ledger.
 - Member mutations emit `member.changed` audit events with before and after
   envelopes and return `audit_id`. Awaiting-second-approval emits the contract
   event `proposal.awaiting_second_approval`; the older payment-intent alias
@@ -149,8 +151,8 @@ Pending
 - [ ] Slack Marketplace MCP registry listing for the pull path.
 - [ ] Provision real Slack, Teams, and ESP credentials in staging and run an
       exercised surface approval release candidate.
-- [ ] Replace actor-payee email fallback with canonical vendor and employee
-      identity matching once those links are first-class in the ledger model.
+- [ ] Replace the vendor unresolved-email residual gap with canonical vendor
+      identity matching once those links are first-class in the Ledger model.
 
 ## Runtime isolation
 

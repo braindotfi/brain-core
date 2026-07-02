@@ -31,8 +31,8 @@ checks are ordered:
 2. Member role permits approval: admin or approver.
 3. Proposal domain is in the member approval domains.
 4. Amount is within the member per-item limit.
-5. Tenant-wide second approval requires a distinct member when triggered.
-6. Actor is not the payee.
+5. Actor is not the payee.
+6. Tenant-wide second approval requires a distinct member when triggered.
 
 Second approval moves the intent to `awaiting_second_approval` and blocks
 execution until another eligible member completes approval. Same-member retry
@@ -41,8 +41,11 @@ returns `second_approval_required`.
 Members are deactivated, never hard-deleted. The last active admin cannot be
 deactivated or demoted and returns `last_admin_protected`.
 
-Actor-payee protection currently uses resolved recipient email matching as the
-fallback until vendor and employee identity links become canonical in core data.
+Actor-payee protection normalizes email by trimming, lowercasing, and stripping
+plus-address aliases. Employee or payroll payees with unresolved email fail
+closed as `self_approval_blocked` with `payee_unresolved=true`. Vendor payees
+with unresolved email still pass in v1 as an accepted residual gap until
+canonical vendor identity links are first-class in Ledger.
 
 Member mutations emit `member.changed` audit events with before and after
 envelopes and return `audit_id`. Awaiting second approval emits

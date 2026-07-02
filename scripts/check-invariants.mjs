@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const checks = [];
+const root = process.env.BRAIN_INVARIANT_ROOT ?? fileURLToPath(new URL("..", import.meta.url));
 
 function read(path) {
-  return readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  return readFileSync(resolve(root, path), "utf8");
 }
 
 function check(name, ok, detail) {
@@ -24,12 +27,34 @@ check(
 );
 
 const authorizationGate = read("services/execution/src/members/authorizeApproval.ts");
+const gateStart = authorizationGate.indexOf("export function authorizeApproval");
+const gateEnd = authorizationGate.indexOf("export function paymentIntentApprovalDomain", gateStart);
+const gateBody = authorizationGate.slice(gateStart, gateEnd);
+const selfApprovalIndex = gateBody.indexOf('reject("self_approval_blocked"');
+const secondApprovalIndex = gateBody.indexOf('reject("second_approval_required"');
 check(
-  "actor-payee guard is present and unconditional",
-  authorizationGate.includes("self_approval_blocked") &&
-    authorizationGate.includes("proposal.payeeEmail") &&
-    authorizationGate.includes("member.email"),
-  "authorizeApproval must compare the actor member to the resolved payee email",
+  "actor-payee guard precedes second-approval reasoning",
+  gateStart >= 0 &&
+    gateEnd > gateStart &&
+    selfApprovalIndex >= 0 &&
+    secondApprovalIndex >= 0 &&
+    selfApprovalIndex < secondApprovalIndex,
+  "authorizeApproval must reject self-approval before second-approval quorum checks",
+);
+
+const authorizationTests = read("services/execution/src/members/authorizeApproval.test.ts");
+const skippedSelfApprovalTests =
+  /(?:it|test)\.(?:skip|todo)\([^)]*(?:self-payee|employee payees|plus-addressed|case-mismatched)/s.test(
+    authorizationTests,
+  );
+check(
+  "self-approval unit tests are active",
+  authorizationTests.includes("rejects self-payee before second-approval reasoning") &&
+    authorizationTests.includes("rejects employee payees with unresolved email") &&
+    authorizationTests.includes("blocks plus-addressed self-payee aliases") &&
+    authorizationTests.includes("blocks case-mismatched self-payee emails") &&
+    !skippedSelfApprovalTests,
+  "authorizeApproval self-approval and precedence tests must exist and must not be skipped or todo",
 );
 
 const actorResolver = read("services/execution/src/members/ActorResolver.ts");

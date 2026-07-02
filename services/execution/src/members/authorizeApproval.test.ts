@@ -27,7 +27,12 @@ function input(overrides: Partial<Parameters<typeof authorizeApproval>[0]> = {})
   return {
     actor,
     member: member(),
-    proposal: { domain: "ap" as const, amountCents: 100_00n, payeeEmail: null },
+    proposal: {
+      domain: "ap" as const,
+      amountCents: 100_00n,
+      payeeKind: "vendor" as const,
+      payeeEmail: null,
+    },
     existingApproverMemberIds: [],
     requiredDistinctApprovals: 1,
     ...overrides,
@@ -109,7 +114,90 @@ describe("authorizeApproval", () => {
     expect(
       authorizeApproval(
         input({
-          proposal: { domain: "ap", amountCents: 100_00n, payeeEmail: "APPROVER@example.com" },
+          proposal: {
+            domain: "ap",
+            amountCents: 100_00n,
+            payeeKind: "vendor",
+            payeeEmail: "APPROVER@example.com",
+          },
+        }),
+      ),
+    ).toMatchObject({
+      allowed: false,
+      reason: "self_approval_blocked",
+    });
+  });
+
+  it("rejects self-payee before second-approval reasoning", () => {
+    expect(
+      authorizeApproval(
+        input({
+          proposal: {
+            domain: "ap",
+            amountCents: 100_00n,
+            payeeKind: "vendor",
+            payeeEmail: "approver@example.com",
+          },
+          existingApproverMemberIds: ["usr_1"],
+          requiredDistinctApprovals: 2,
+        }),
+      ),
+    ).toMatchObject({
+      allowed: false,
+      reason: "self_approval_blocked",
+    });
+  });
+
+  it("rejects employee payees with unresolved email", () => {
+    expect(
+      authorizeApproval(
+        input({
+          member: member({ approvalDomains: ["payroll"] }),
+          proposal: {
+            domain: "payroll",
+            amountCents: 100_00n,
+            payeeKind: "employee",
+            payeeEmail: null,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      allowed: false,
+      reason: "self_approval_blocked",
+      detail: { payee_unresolved: true },
+    });
+  });
+
+  it("blocks plus-addressed self-payee aliases", () => {
+    expect(
+      authorizeApproval(
+        input({
+          member: member({ email: "approver@example.com" }),
+          proposal: {
+            domain: "ap",
+            amountCents: 100_00n,
+            payeeKind: "vendor",
+            payeeEmail: "approver+payroll@example.com",
+          },
+        }),
+      ),
+    ).toMatchObject({
+      allowed: false,
+      reason: "self_approval_blocked",
+    });
+  });
+
+  it("blocks case-mismatched self-payee emails", () => {
+    expect(
+      authorizeApproval(
+        input({
+          member: member({ email: "Approver@Example.com" }),
+          proposal: {
+            domain: "ap",
+            amountCents: 100_00n,
+            payeeKind: "vendor",
+            payeeEmail: " APPROVER@example.COM ",
+          },
         }),
       ),
     ).toMatchObject({

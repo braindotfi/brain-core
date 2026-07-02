@@ -30,6 +30,7 @@ type ActorVerification =
   | "surface_linked"
   | "signed_token"
   | "tenant_asserted";
+type PayeeKind = "vendor" | "employee";
 interface ActorContext {
   memberId: string;
   email: string;
@@ -46,8 +47,14 @@ Exact order; evaluated before any approve state transition:
 2. Member role permits approving (admin or approver; viewer never).
 3. Proposal domain in member.approval.domains.
 4. Amount <= member.approval.perItemLimit.
-5. Tenant-wide second-approval rule: amount above the tenant threshold -> this approval is recorded as the FIRST of two; proposal status -> "awaiting_second_approval"; execution gated until a DISTINCT member passing checks 1-4 completes it. Same member twice -> rejected.
-6. ACTOR != PAYEE: a member may never approve a payment whose resolved recipient is themselves. Non-configurable. Same tier as the fraud guards.
+5. ACTOR != PAYEE: a member may never approve a payment whose resolved recipient is themselves. Non-configurable. Same tier as the fraud guards. Compare normalized emails by trimming, lowercasing, and stripping plus-address aliases from the local part.
+6. Tenant-wide second-approval rule: amount above the tenant threshold -> this approval is recorded as the FIRST of two; proposal status -> "awaiting_second_approval"; execution gated until a DISTINCT member passing checks 1-4 completes it. Same member twice -> rejected.
+
+Payee identity rule:
+
+- Employee or payroll payees are conservative on unknown identity. If the payee email is unresolved, reject with `self_approval_blocked` and `detail.payee_unresolved=true`.
+- Vendor payees without a resolved email pass in v1 only because canonical vendor identity links are not yet first-class in Ledger. This is an accepted residual gap until vendor identity links are added.
+- A self-payee approval that would also require a second approver must reject with `self_approval_blocked`, never `second_approval_required`.
 
 ## Structured Rejection Reasons
 
@@ -55,7 +62,7 @@ Exact order; evaluated before any approve state transition:
 
 ```txt
 actor_unresolved | actor_inactive | domain_not_authorized | actor_limit_exceeded |
-second_approval_required | self_approval_blocked | last_admin_protected
+self_approval_blocked | second_approval_required | last_admin_protected
 ```
 
 ## Status
