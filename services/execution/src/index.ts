@@ -37,6 +37,24 @@ export {
 } from "./payment-intents/state-machine.js";
 export { ApprovalService } from "./approvals/ApprovalService.js";
 export type { ApprovalServiceDeps } from "./approvals/ApprovalService.js";
+export { ActorResolver, actorUnresolved } from "./members/ActorResolver.js";
+export {
+  PostgresMemberLookup,
+  findMemberByEmail,
+  findMemberById,
+  findMemberByIdentityLink,
+} from "./members/repository.js";
+export type {
+  ActorContext,
+  ActorVerification,
+  ApprovalDomain,
+  MemberAuthority,
+  MemberIdentitySurface,
+  MemberLookup,
+  MemberRole,
+  ResolveActorInput,
+  SignedApprovalTokenClaims,
+} from "./members/types.js";
 
 // Stage 6 — rails.
 export {
