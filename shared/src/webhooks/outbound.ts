@@ -2,7 +2,7 @@
  * Outbound webhook dispatcher — Brain → customer HTTP endpoints.
  *
  * The dispatcher is called fire-and-forget after each `AuditEmitter.emit()`
- * for the nine forwarded event types. It queries the tenant's registered
+ * for the forwarded event types. It queries the tenant's registered
  * `webhook_endpoints`, signs the payload with HMAC-SHA256, and POSTs.
  *
  * Delivery is best-effort for MVP (no retry queue). Failures are logged at
@@ -29,11 +29,13 @@ import type { AuditEvent, AuditEventInput } from "../audit/types.js";
 import { isPublicUrl } from "../net/ssrf.js";
 import { clearDeadLetter, recordDeliveryFailure } from "./dead-letters.js";
 
-/** The nine audit action types forwarded to registered endpoints. */
+/** Audit action types forwarded to registered endpoints. */
 export const FORWARDED_EVENTS = new Set<string>([
   "payment_intent.created",
   "payment_intent.approved",
+  "payment_intent.awaiting_second_approval",
   "payment_intent.rejected",
+  "member.changed",
   "payment_intent.execute.after",
   "ledger.counterparty.created",
   "ledger.transaction.created",

@@ -117,6 +117,7 @@ import type { PolicyDeps, PolicyDocument, PolicyRow } from "@brain/policy";
 
 import {
   registerExecutionRoutes,
+  registerMemberRoutes,
   registerPaymentIntentRoutes,
   ApprovalService,
   ActorResolver,
@@ -1528,6 +1529,7 @@ async function main(): Promise<void> {
         await v1.register(async (child) => registerWikiPlugin(child, wikiDeps));
         await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
         await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
+        await v1.register(async (child) => registerMemberRoutes(child, { pool, audit }));
         await v1.register(async (child) => {
           // PaymentIntentService has its own approval sub-service; create a fresh
           // instance scoped to this plugin so it doesn't share mutable state.

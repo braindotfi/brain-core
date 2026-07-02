@@ -129,6 +129,8 @@ export {
 export { registerExecutionRoutes } from "./routes.js";
 export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
 export type { InvoiceShortcutResolver } from "./payment-intents/routes.js";
+export { registerMemberRoutes } from "./members/routes.js";
+export type { MemberRoutesDeps } from "./members/routes.js";
 
 // P0.5 invoice shortcut resolver + injected lookups.
 export { resolveInvoiceShortcut } from "./payment-intents/invoice-shortcut.js";
