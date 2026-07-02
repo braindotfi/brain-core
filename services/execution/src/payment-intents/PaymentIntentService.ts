@@ -578,7 +578,7 @@ export class PaymentIntentService implements IPaymentIntentService {
           tenantId: ctx.tenantId,
           layer: "agent",
           actor: actor.memberId,
-          action: "payment_intent.awaiting_second_approval",
+          action: "proposal.awaiting_second_approval",
           inputs: { payment_intent_id: id, approval_id: approval.id },
           outputs: {
             status: "awaiting_second_approval",

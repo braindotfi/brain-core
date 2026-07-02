@@ -34,6 +34,7 @@ export const FORWARDED_EVENTS = new Set<string>([
   "payment_intent.created",
   "payment_intent.approved",
   "payment_intent.awaiting_second_approval",
+  "proposal.awaiting_second_approval",
   "payment_intent.rejected",
   "member.changed",
   "payment_intent.execute.after",
