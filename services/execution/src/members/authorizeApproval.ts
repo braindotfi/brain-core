@@ -12,6 +12,7 @@ export type ApprovalRejectionReason =
 export type ApprovalDomainSource = {
   domain: ApprovalDomain;
   amountCents: bigint;
+  payeeKind: "vendor" | "employee";
   payeeEmail: string | null;
 };
 
@@ -62,6 +63,24 @@ export function authorizeApproval(input: AuthorizeApprovalInput): ApprovalAuthor
     });
   }
 
+  const normalizedPayeeEmail = normalizeApprovalEmail(proposal.payeeEmail);
+  const normalizedMemberEmail = normalizeApprovalEmail(member.email);
+  // Employee payees fail closed when the email join is absent. Vendor payees
+  // without an email still pass in v1 because canonical vendor identity links
+  // are not yet first-class in Ledger.
+  if (normalizedPayeeEmail === null && proposal.payeeKind === "employee") {
+    return reject("self_approval_blocked", {
+      member_id: member.id,
+      payee_unresolved: true,
+    });
+  }
+  if (normalizedPayeeEmail !== null && normalizedPayeeEmail === normalizedMemberEmail) {
+    return reject("self_approval_blocked", {
+      member_id: member.id,
+      payee_email: proposal.payeeEmail,
+    });
+  }
+
   const requiredDistinctApprovals = Math.max(1, input.requiredDistinctApprovals);
   const existing = new Set(input.existingApproverMemberIds);
   if (requiredDistinctApprovals > 1 && existing.has(member.id)) {
@@ -72,16 +91,6 @@ export function authorizeApproval(input: AuthorizeApprovalInput): ApprovalAuthor
   }
   const requiresAdditionalApproval =
     requiredDistinctApprovals > 1 && existing.size + 1 < requiredDistinctApprovals;
-
-  if (
-    proposal.payeeEmail !== null &&
-    proposal.payeeEmail.toLowerCase() === member.email.toLowerCase()
-  ) {
-    return reject("self_approval_blocked", {
-      member_id: member.id,
-      payee_email: proposal.payeeEmail,
-    });
-  }
 
   return { allowed: true, requiresAdditionalApproval, approverRole: member.role };
 }
@@ -95,6 +104,16 @@ export function paymentIntentApprovalDomain(actionType: string): ApprovalDomain 
     default:
       return "ap";
   }
+}
+
+export function paymentIntentPayeeKind(input: {
+  actionType: string;
+  counterpartyType?: string | null;
+}): ApprovalDomainSource["payeeKind"] {
+  if (input.counterpartyType === "employee" || input.actionType.includes("payroll")) {
+    return "employee";
+  }
+  return "vendor";
 }
 
 export function decimalAmountToCents(value: string): bigint {
@@ -111,4 +130,15 @@ function reject(
   detail: Record<string, unknown>,
 ): ApprovalAuthorization {
   return { allowed: false, reason, detail: { reason, ...detail } };
+}
+
+function normalizeApprovalEmail(email: string | null): string | null {
+  if (email === null) return null;
+  const trimmed = email.trim().toLowerCase();
+  const at = trimmed.indexOf("@");
+  if (at <= 0 || at === trimmed.length - 1) return null;
+  const local = trimmed.slice(0, at);
+  const domain = trimmed.slice(at + 1);
+  const plus = local.indexOf("+");
+  return `${plus >= 0 ? local.slice(0, plus) : local}@${domain}`;
 }

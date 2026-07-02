@@ -66,6 +66,7 @@ import {
   authorizeApproval,
   decimalAmountToCents,
   paymentIntentApprovalDomain,
+  paymentIntentPayeeKind,
   type ApprovalRejectionReason,
 } from "../members/authorizeApproval.js";
 import type { ActorContext, MemberLookup } from "../members/types.js";
@@ -518,6 +519,10 @@ export class PaymentIntentService implements IPaymentIntentService {
       const existingApprovals = await this.deps.approvals.list(ctx, subject);
       const fresh = await this.deps.evaluatePolicy(ctx, intentToGate(intent));
       const requiredDistinctApprovals = Math.max(1, fresh.required_approvers.length);
+      const counterparty = await this.deps.resolveCounterparty(
+        ctx,
+        intent.destination_counterparty_id,
+      );
       const payeeEmail =
         this.deps.resolveApprovalPayeeEmail !== undefined
           ? await this.deps.resolveApprovalPayeeEmail(ctx, intentToGate(intent))
@@ -528,6 +533,10 @@ export class PaymentIntentService implements IPaymentIntentService {
         proposal: {
           domain: paymentIntentApprovalDomain(intent.action_type),
           amountCents: decimalAmountToCents(intent.amount),
+          payeeKind: paymentIntentPayeeKind({
+            actionType: intent.action_type,
+            counterpartyType: counterparty?.type ?? null,
+          }),
           payeeEmail,
         },
         existingApproverMemberIds: existingApprovals.map((a) => a.approver_principal_id),
