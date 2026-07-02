@@ -6,8 +6,9 @@
  * minimize blast radius — see docs/sdk-audit.md decision A. This file is
  * the translation boundary:
  *
- *   - status:   PaymentIntent (proposed | pending_approval | approved
- *                | rejected | executed | failed | cancelled)
+ *   - status:   PaymentIntent (proposed | pending_approval |
+ *                awaiting_second_approval | approved | rejected | executed |
+ *                failed | cancelled)
  *               → ActionStatus (auto | needs_approval | approved
  *                | rejected | executed | failed | cancelled)
  *   - decision: derived from status (we don't fetch the underlying
@@ -74,6 +75,7 @@ export function piStatusToActionStatus(s: PaymentIntentStatus): ActionStatus {
       // these into "auto".
       return "auto";
     case "pending_approval":
+    case "awaiting_second_approval":
       return "needs_approval";
     case "paused":
       // Kill-switch hold (1b.3): surfaced 1:1 so the actions view reflects it.
@@ -109,6 +111,7 @@ export function piStatusToDecision(s: PaymentIntentStatus): ActionDecision {
     case "rejected":
       return "DENY";
     case "pending_approval":
+    case "awaiting_second_approval":
       return "ESCALATE";
     default:
       return "ALLOW";

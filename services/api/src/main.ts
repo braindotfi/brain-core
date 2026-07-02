@@ -119,8 +119,10 @@ import {
   registerExecutionRoutes,
   registerPaymentIntentRoutes,
   ApprovalService,
+  ActorResolver,
   OutboxService,
   AgentService,
+  PostgresMemberLookup,
   AchPlaidRail,
   OnchainBaseRail,
   X402BaseRail,
@@ -632,6 +634,8 @@ async function main(): Promise<void> {
     resolveSubjectOwnerTenant,
     resolveActivePolicyVersion,
   });
+  const memberLookup = new PostgresMemberLookup(pool);
+  const actorResolver = new ActorResolver({ members: memberLookup });
 
   // P0.5: invoice shortcut resolver (LedgerService-backed; works in demo too).
   const invoiceShortcut = makeInvoiceShortcutResolver(ledgerService, pool);
@@ -751,6 +755,16 @@ async function main(): Promise<void> {
     obligationId: string,
   ): Promise<string | null> =>
     (await ledgerService.findObligationById(ctx, obligationId))?.provenance ?? null;
+  const resolveApprovalPayeeEmail = async (
+    ctx: ServiceCallContext,
+    intent: GatePaymentIntent,
+  ): Promise<string | null> => {
+    const counterparty = await ledgerService.findCounterpartyById(
+      ctx,
+      intent.destination_counterparty_id,
+    );
+    return counterparty === null ? null : emailFromMetadata(counterparty.metadata);
+  };
 
   // Production fence: the always-applicable money-path safety loaders must be
   // wired in production. Same fail-closed posture as the rail/escrow fences.
@@ -773,10 +787,13 @@ async function main(): Promise<void> {
     pool,
     audit,
     approvals: approvalService,
+    actorResolver,
+    members: memberLookup,
     resolveAgent,
     resolveTenantFlags,
     resolveAccount,
     resolveCounterparty,
+    resolveApprovalPayeeEmail,
     evaluatePolicy: evaluatePaymentIntent,
     resolvePrincipal,
     attestCounterpartyAgent,
@@ -1526,10 +1543,13 @@ async function main(): Promise<void> {
             pool,
             audit,
             approvals: piApprovals,
+            actorResolver,
+            members: memberLookup,
             resolveAgent,
             resolveTenantFlags,
             resolveAccount,
             resolveCounterparty,
+            resolveApprovalPayeeEmail,
             evaluatePolicy: evaluatePaymentIntent,
             resolvePrincipal,
             attestCounterpartyAgent,
@@ -2356,6 +2376,17 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => {
     void shutdown("SIGTERM");
   });
+}
+
+function emailFromMetadata(metadata: Record<string, unknown>): string | null {
+  for (const value of Object.values(metadata)) {
+    if (value !== null && typeof value === "object") {
+      const email = (value as { email?: unknown }).email;
+      if (typeof email === "string" && email.includes("@")) return email.toLowerCase();
+    }
+  }
+  const email = metadata["email"];
+  return typeof email === "string" && email.includes("@") ? email.toLowerCase() : null;
 }
 
 main().catch((err) => {

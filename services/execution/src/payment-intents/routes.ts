@@ -219,13 +219,24 @@ export async function registerPaymentIntentRoutes(
 
   app.post(
     "/payment-intents/:id/approve",
-    async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    async (
+      request: FastifyRequest<{
+        Params: { id: string };
+        Body: { asserted_actor_id?: string; actor_id?: unknown; actor?: unknown };
+      }>,
+      reply,
+    ) => {
       const ctx = assertCtx(request);
       requireScope(request.principal!.scopes, SCOPE_APPROVE);
       if (!isBrainId(request.params.id, "pi")) {
         throw brainError("request_params_invalid", "malformed payment_intent id");
       }
-      const intent = await service.approve(ctx, request.params.id);
+      const intent = await service.approve(ctx, request.params.id, {
+        ...(request.body?.asserted_actor_id !== undefined
+          ? { assertedActorId: request.body.asserted_actor_id }
+          : {}),
+        payloadActorId: request.body?.actor_id ?? request.body?.actor,
+      });
       reply.status(200);
       return intent;
     },

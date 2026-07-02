@@ -33,6 +33,7 @@ export type PaymentIntentActionType =
 export type PaymentIntentStatus =
   | "proposed"
   | "pending_approval"
+  | "awaiting_second_approval"
   | "approved"
   | "paused"
   | "dispatching"
@@ -115,7 +116,11 @@ export interface IPaymentIntentService {
     ctx: ServiceCallContext,
     f: { status?: PaymentIntentStatus; agent_id?: string; limit?: number },
   ): Promise<PaymentIntent[]>;
-  approve(ctx: ServiceCallContext, id: string): Promise<PaymentIntent>;
+  approve(
+    ctx: ServiceCallContext,
+    id: string,
+    opts?: { assertedActorId?: string; payloadActorId?: unknown },
+  ): Promise<PaymentIntent>;
   reject(ctx: ServiceCallContext, id: string, reason?: string): Promise<PaymentIntent>;
   cancel(ctx: ServiceCallContext, id: string): Promise<PaymentIntent>;
 

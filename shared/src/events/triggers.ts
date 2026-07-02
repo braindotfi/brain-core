@@ -28,6 +28,7 @@ export const DOMAIN_EVENTS = [
   // Phase 2 triggers (business agent library).
   "bill.due_soon", // payment
   "invoice.approved", // payment
+  "proposal.awaiting_second_approval", // payment approval
   "payment.scheduled", // payment
   "recurring_charge.detected", // subscription
   "vendor.duplicate_detected", // subscription

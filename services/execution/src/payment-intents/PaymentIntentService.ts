@@ -16,6 +16,7 @@
 
 import {
   brainError,
+  isBrainError,
   newPaymentIntentId,
   withTenantScope,
   type AuditEmitter,
@@ -60,6 +61,14 @@ import {
   type ExecutionRow,
 } from "../repository.js";
 import type { OutboxService } from "../outbox/OutboxService.js";
+import type { ActorResolver } from "../members/ActorResolver.js";
+import {
+  authorizeApproval,
+  decimalAmountToCents,
+  paymentIntentApprovalDomain,
+  type ApprovalRejectionReason,
+} from "../members/authorizeApproval.js";
+import type { ActorContext, MemberLookup } from "../members/types.js";
 
 const EXECUTION_RESERVATION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -95,6 +104,19 @@ export interface PaymentIntentServiceDeps {
    */
   outbox: OutboxService;
   approvals: ApprovalService;
+  /** Resolves the authenticated/request actor into a tenant member. */
+  actorResolver?: ActorResolver;
+  /** Reads member authority for approval authorization. */
+  members?: MemberLookup;
+  /**
+   * Best-effort payee identity resolver for ACTOR != PAYEE. v1 uses the
+   * counterparty email fallback because richer employee/vendor identity mapping
+   * is not consistently available in the Ledger yet.
+   */
+  resolveApprovalPayeeEmail?: (
+    ctx: ServiceCallContext,
+    intent: GatePaymentIntent,
+  ) => Promise<string | null>;
   /** Resolves the agent record by id; returns null if missing/inactive. */
   resolveAgent: (ctx: ServiceCallContext, agentId: string) => Promise<GateAgent | null>;
   /**
@@ -475,61 +497,149 @@ export class PaymentIntentService implements IPaymentIntentService {
 
   // ---- approve / reject / cancel ---------------------------------------
 
-  public async approve(ctx: ServiceCallContext, id: string): Promise<PaymentIntent> {
+  public async approve(
+    ctx: ServiceCallContext,
+    id: string,
+    opts: { assertedActorId?: string; payloadActorId?: unknown } = {},
+  ): Promise<PaymentIntent> {
     const intent = await this.requireIntent(ctx, id);
-    if (intent.status !== "pending_approval") {
+    if (intent.status !== "pending_approval" && intent.status !== "awaiting_second_approval") {
       throw brainError(
         "payment_intent_invalid_state",
         `cannot approve PaymentIntent in status ${intent.status}`,
       );
     }
 
-    // Record the approval.
-    const approval = await this.deps.approvals.sign(ctx, { type: "payment_intent", id });
-    await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      LedgerPaymentIntents.appendApprovalId(c, id, approval.id),
-    );
+    const subject = { type: "payment_intent" as const, id };
+    let actor: ActorContext | null = null;
+    try {
+      actor = await this.resolveApprovalActor(ctx, opts);
+      const member = await this.deps.members?.findMemberById(ctx.tenantId, actor.memberId);
+      const existingApprovals = await this.deps.approvals.list(ctx, subject);
+      const fresh = await this.deps.evaluatePolicy(ctx, intentToGate(intent));
+      const requiredDistinctApprovals = Math.max(1, fresh.required_approvers.length);
+      const payeeEmail =
+        this.deps.resolveApprovalPayeeEmail !== undefined
+          ? await this.deps.resolveApprovalPayeeEmail(ctx, intentToGate(intent))
+          : null;
+      const authorization = authorizeApproval({
+        actor,
+        member: member ?? null,
+        proposal: {
+          domain: paymentIntentApprovalDomain(intent.action_type),
+          amountCents: decimalAmountToCents(intent.amount),
+          payeeEmail,
+        },
+        existingApproverMemberIds: existingApprovals.map((a) => a.approver_principal_id),
+        requiredDistinctApprovals,
+      });
+      if (!authorization.allowed) {
+        await this.emitApprovalRejected(
+          ctx,
+          intent,
+          actor,
+          authorization.reason,
+          authorization.detail,
+        );
+        throw brainError("payment_intent_approval_invalid", authorization.reason, {
+          statusOverride: 403,
+          details: authorization.detail,
+        });
+      }
 
-    // Check whether quorum is met. Required approvers came from the
-    // PolicyDecision — re-evaluate so we always check against the current
-    // decision (operators may have rotated the policy between creation
-    // and approval).
-    const fresh = await this.deps.evaluatePolicy(ctx, intentToGate(intent));
-    const ready = await this.deps.approvals.hasRequiredApprovals(
-      ctx,
-      { type: "payment_intent", id },
-      fresh.required_approvers,
-    );
+      const approvalCtx: ServiceCallContext = {
+        ...ctx,
+        actor: actor.memberId,
+        principalType: "user",
+      };
 
-    if (ready) {
+      // Record the approval only after member authority has passed every check.
+      const approval = await this.deps.approvals.sign(
+        approvalCtx,
+        subject,
+        authorization.approverRole,
+      );
+      await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+        LedgerPaymentIntents.appendApprovalId(c, id, approval.id),
+      );
+
+      if (authorization.requiresAdditionalApproval) {
+        const updated = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+          assertPaymentIntentTransition("pending_approval", "awaiting_second_approval");
+          return LedgerPaymentIntents.transition(
+            c,
+            id,
+            "pending_approval",
+            "awaiting_second_approval",
+          );
+        });
+        const row = updated ?? (await this.requireIntent(ctx, id));
+        await this.deps.audit.emit({
+          tenantId: ctx.tenantId,
+          layer: "agent",
+          actor: actor.memberId,
+          action: "payment_intent.awaiting_second_approval",
+          inputs: { payment_intent_id: id, approval_id: approval.id },
+          outputs: {
+            status: "awaiting_second_approval",
+            actor: { member_id: actor.memberId, verification: actor.verification },
+            approvals: [
+              {
+                member_id: actor.memberId,
+                at: approval.signed_at,
+                verification: actor.verification,
+              },
+            ],
+          },
+          policyDecisionId: fresh.id,
+        });
+        if (this.deps.enqueue !== undefined) {
+          void emitDomainEvent(this.deps.enqueue, {
+            tenantId: ctx.tenantId,
+            event: "proposal.awaiting_second_approval",
+            context: {
+              payment_intent_id: id,
+              actor: { member_id: actor.memberId, verification: actor.verification },
+            },
+            ...(ctx.requestId !== undefined ? { requestId: ctx.requestId } : {}),
+          }).catch(() => undefined);
+        }
+        return toRecord(row);
+      }
+
       const updated = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
-        assertPaymentIntentTransition("pending_approval", "approved");
-        return LedgerPaymentIntents.transition(c, id, "pending_approval", "approved");
+        assertPaymentIntentTransition(intent.status as PaymentIntentState, "approved");
+        return LedgerPaymentIntents.transition(c, id, intent.status, "approved");
       });
       if (updated === null) {
         throw brainError(
           "payment_intent_invalid_state",
-          "PaymentIntent moved between approve and quorum check",
+          "PaymentIntent moved between approve and authorization",
         );
       }
       await this.deps.audit.emit({
         tenantId: ctx.tenantId,
         layer: "agent",
-        actor: ctx.actor,
+        actor: actor.memberId,
         action: "payment_intent.approved",
         inputs: { payment_intent_id: id, approval_id: approval.id },
-        outputs: { status: "approved", required_approvers: fresh.required_approvers },
+        outputs: {
+          status: "approved",
+          required_approvers: fresh.required_approvers,
+          actor: { member_id: actor.memberId, verification: actor.verification },
+          approvals: [
+            { member_id: actor.memberId, at: approval.signed_at, verification: actor.verification },
+          ],
+        },
         policyDecisionId: fresh.id,
       });
       return toRecord(updated);
+    } catch (err) {
+      if (isBrainError(err) && err.details?.["reason"] === "actor_unresolved") {
+        await this.emitApprovalRejected(ctx, intent, actor, "actor_unresolved", err.details);
+      }
+      throw err;
     }
-
-    // Quorum not met yet — return the intent unchanged but with the new
-    // approval recorded.
-    const refetched = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      LedgerPaymentIntents.findById(c, id),
-    );
-    return toRecord(refetched!);
   }
 
   public async reject(
@@ -540,6 +650,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     const intent = await this.requireIntent(ctx, id);
     if (
       intent.status !== "pending_approval" &&
+      intent.status !== "awaiting_second_approval" &&
       intent.status !== "proposed" &&
       intent.status !== "approved"
     ) {
@@ -1194,6 +1305,49 @@ export class PaymentIntentService implements IPaymentIntentService {
   }
 
   // ---- internals -------------------------------------------------------
+
+  private async resolveApprovalActor(
+    ctx: ServiceCallContext,
+    opts: { assertedActorId?: string; payloadActorId?: unknown },
+  ): Promise<ActorContext> {
+    if (this.deps.actorResolver === undefined) {
+      throw brainError("internal_server_error", "approval actor resolver is not configured");
+    }
+    if (ctx.principalType === "api_partner") {
+      return this.deps.actorResolver.resolve({
+        kind: "api",
+        ctx,
+        ...(opts.assertedActorId !== undefined ? { assertedActorId: opts.assertedActorId } : {}),
+      });
+    }
+    return this.deps.actorResolver.resolve({
+      kind: "session",
+      ctx,
+      payloadActorId: opts.payloadActorId,
+    });
+  }
+
+  private async emitApprovalRejected(
+    ctx: ServiceCallContext,
+    intent: PaymentIntentRow,
+    actor: ActorContext | null,
+    reason: ApprovalRejectionReason,
+    detail: Readonly<Record<string, unknown>>,
+  ): Promise<void> {
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "agent",
+      actor: actor?.memberId ?? ctx.actor,
+      action: "approval_rejected",
+      inputs: {
+        payment_intent_id: intent.id,
+        reason,
+        actor:
+          actor === null ? null : { member_id: actor.memberId, verification: actor.verification },
+      },
+      outputs: { status: intent.status, detail },
+    });
+  }
 
   private async requireIntent(ctx: ServiceCallContext, id: string): Promise<PaymentIntentRow> {
     const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>

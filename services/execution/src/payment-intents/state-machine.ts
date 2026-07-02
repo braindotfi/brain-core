@@ -1,7 +1,7 @@
 /**
  * §9.5 PaymentIntent state machine.
  *
- *   [proposed] ──> [pending_approval] ──> [approved] ──> [dispatching] ──> [executed]
+ *   [proposed] ──> [pending_approval] ──> [awaiting_second_approval] ──> [approved] ──> [dispatching] ──> [executed]
  *       │              │                       │              │               │
  *       │              │                       │              v               v
  *       │              │                       │           [failed]        [failed]
@@ -25,6 +25,7 @@ import { brainError } from "@brain/shared";
 export type PaymentIntentState =
   | "proposed"
   | "pending_approval"
+  | "awaiting_second_approval"
   | "approved"
   | "paused"
   | "dispatching"
@@ -43,6 +44,8 @@ export function isValidPaymentIntentTransition(
         to === "pending_approval" || to === "approved" || to === "rejected" || to === "cancelled"
       );
     case "pending_approval":
+      return to === "awaiting_second_approval" || to === "approved" || to === "rejected";
+    case "awaiting_second_approval":
       return to === "approved" || to === "rejected";
     case "approved":
       // Kill-switch (1b.3): approved ⇄ paused. H-04: execute now hands off to

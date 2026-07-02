@@ -33,8 +33,9 @@ describe("piStatusToActionStatus", () => {
     expect(piStatusToActionStatus("approved")).toBe("auto");
   });
 
-  it("maps pending_approval to needs_approval", () => {
+  it("maps pending approval states to needs_approval", () => {
     expect(piStatusToActionStatus("pending_approval")).toBe("needs_approval");
+    expect(piStatusToActionStatus("awaiting_second_approval")).toBe("needs_approval");
   });
 
   it("preserves terminal statuses verbatim", () => {
@@ -49,13 +50,16 @@ describe("piStatusToDecision", () => {
   it("maps rejected → DENY", () => {
     expect(piStatusToDecision("rejected")).toBe("DENY");
   });
-  it("maps pending_approval → ESCALATE", () => {
+  it("maps pending approval states to ESCALATE", () => {
     expect(piStatusToDecision("pending_approval")).toBe("ESCALATE");
+    expect(piStatusToDecision("awaiting_second_approval")).toBe("ESCALATE");
   });
   it("maps every other lifecycle state to ALLOW", () => {
     const allowed: PaymentIntentStatus[] = [
       "proposed",
       "approved",
+      "paused",
+      "dispatching",
       "executed",
       "failed",
       "cancelled",

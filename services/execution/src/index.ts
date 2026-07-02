@@ -39,6 +39,13 @@ export { ApprovalService } from "./approvals/ApprovalService.js";
 export type { ApprovalServiceDeps } from "./approvals/ApprovalService.js";
 export { ActorResolver, actorUnresolved } from "./members/ActorResolver.js";
 export {
+  authorizeApproval,
+  decimalAmountToCents,
+  paymentIntentApprovalDomain,
+  type ApprovalAuthorization,
+  type ApprovalRejectionReason,
+} from "./members/authorizeApproval.js";
+export {
   PostgresMemberLookup,
   findMemberByEmail,
   findMemberById,

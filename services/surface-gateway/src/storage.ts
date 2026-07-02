@@ -32,6 +32,8 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
     surface: SurfaceName;
     externalId: string;
   }): Promise<{ actorId: ActorId; roles: string[] } | null> {
+    const member = await this.lookupMemberActor(input);
+    if (member !== null) return member;
     if (input.surface === "email") {
       return this.lookupEmailActor(input);
     }
@@ -61,6 +63,53 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
     const roles = new Set(link.roles);
     if (role !== null) roles.add(role);
     return { actorId: link.actor_id as ActorId, roles: [...roles] };
+  }
+
+  private async lookupMemberActor(input: {
+    tenantId: string;
+    surface: SurfaceName;
+    externalId: string;
+  }): Promise<{ actorId: ActorId; roles: string[] } | null> {
+    const externalRef =
+      input.surface === "email" ? normalizeEmail(input.externalId) : input.externalId;
+    const linked = await withTenantScope(this.pool, input.tenantId, async (c) => {
+      const { rows } = await c.query<{
+        id: string;
+        role: string;
+      }>(
+        `SELECT m.id, m.role
+           FROM member_identity_links l
+           JOIN members m
+             ON m.tenant_id = l.tenant_id
+            AND m.id = l.member_id
+          WHERE l.tenant_id = $1
+            AND l.surface = $2
+            AND l.external_ref = $3
+            AND m.active = true
+          LIMIT 1`,
+        [input.tenantId, input.surface, externalRef],
+      );
+      return rows[0] ?? null;
+    });
+    if (linked !== null) return { actorId: linked.id as ActorId, roles: [linked.role] };
+    if (input.surface !== "email") return null;
+
+    const byEmail = await withTenantScope(this.pool, input.tenantId, async (c) => {
+      const { rows } = await c.query<{
+        id: string;
+        role: string;
+      }>(
+        `SELECT id, role
+           FROM members
+          WHERE tenant_id = $1
+            AND lower(email) = lower($2)
+            AND active = true
+          LIMIT 1`,
+        [input.tenantId, externalRef],
+      );
+      return rows[0] ?? null;
+    });
+    return byEmail === null ? null : { actorId: byEmail.id as ActorId, roles: [byEmail.role] };
   }
 
   private async lookupEmailActor(input: {
