@@ -23,6 +23,11 @@ WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY schemas/package.json schemas/tsconfig.json schemas/
 COPY shared/package.json shared/tsconfig.json shared/
+# packages/* are workspace members (deps of services/surface-gateway). The
+# frozen install resolves the full workspace graph, so their manifests must be
+# present here even though the api image does not import them.
+COPY packages/core/package.json packages/core/tsconfig.json packages/core/
+COPY packages/surfaces/package.json packages/surfaces/tsconfig.json packages/surfaces/
 COPY services/api/package.json services/api/tsconfig.json services/api/
 COPY services/raw/package.json services/raw/tsconfig.json services/raw/
 COPY services/canonical/package.json services/canonical/tsconfig.json services/canonical/
@@ -73,6 +78,10 @@ WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY schemas/package.json schemas/
 COPY shared/package.json shared/
+# packages/* manifests needed for the frozen --prod install's workspace graph
+# (deps of surface-gateway); the api runtime does not import them, so no dist.
+COPY packages/core/package.json packages/core/
+COPY packages/surfaces/package.json packages/surfaces/
 COPY services/api/package.json services/api/
 COPY services/raw/package.json services/raw/
 COPY services/canonical/package.json services/canonical/
