@@ -56,6 +56,31 @@ Payee identity rule:
 - Vendor payees without a resolved email pass in v1 only because canonical vendor identity links are not yet first-class in Ledger. This is an accepted residual gap until vendor identity links are added.
 - A self-payee approval that would also require a second approver must reject with `self_approval_blocked`, never `second_approval_required`.
 
+## Tenant Bootstrap
+
+Every tenant is created with one initial active admin member in the same
+transaction that creates the tenant row. The bootstrap member uses the same
+authority defaults as the migration backfill: all approval domains,
+`perItemLimit=9223372036854775807`, no second-approver threshold, and
+`active=true`.
+
+The bootstrap member id must match the principal id used by the first session
+token issued by that provisioning path. Self-serve signup uses the owner user id.
+Demo provision-run uses the minted demo agent id because the returned token acts
+as that agent. This preserves the session derivation rule: `resolveActor` still
+looks up the authenticated server-side actor as a member and never relaxes to a
+payload actor or a tenant-level fallback.
+
+Provisioning derives bootstrap email and display name from the provisioning
+identity when available. If the identity has no email, provisioning writes a
+documented placeholder email of `bootstrap+<tenantId>@brain.invalid`; an admin
+can PATCH the member later once a real identity exists.
+
+POST `/v1/members` remains admin-only because every tenant already has a
+bootstrap admin. The post-0023 gap window is repaired by migration 0024, which
+creates exactly one active admin for any tenant with zero members, preferring an
+existing user id, then an existing agent id, then a deterministic placeholder.
+
 ## Structured Rejection Reasons
 
 403 body `{ error, reason, detail }`:

@@ -59,6 +59,12 @@ async function buildApp(opts: {
       if (sql.includes("count(*)::text AS count")) {
         return Promise.resolve({ rows: [{ count: String(opts.activeAdmins) }], rowCount: 1 });
       }
+      if (sql.includes("FROM members") && sql.includes("ORDER BY email ASC")) {
+        return Promise.resolve({
+          rows: Object.values(opts.members),
+          rowCount: opts.members.length,
+        });
+      }
       if (sql.includes("FROM members") && sql.includes("WHERE id = $1")) {
         const id = String(values?.[0]);
         const found = opts.members[id];
@@ -76,10 +82,59 @@ async function buildApp(opts: {
   const pool = { connect: vi.fn(() => Promise.resolve(client)) };
   const audit = new InMemoryAuditEmitter();
   await registerMemberRoutes(app, { pool: pool as never, audit });
-  return { app, audit };
+  return { app, audit, client };
 }
 
 describe("member routes", () => {
+  it("allows a freshly bootstrapped admin session to list its member row", async () => {
+    const bootstrap = row("usr_admin", "admin");
+    const { app } = await buildApp({
+      principal: principal("usr_admin"),
+      members: { usr_admin: bootstrap },
+      activeAdmins: 1,
+    });
+    try {
+      const res = await app.inject({ method: "GET", url: "/members" });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.members).toHaveLength(1);
+      expect(body.members[0].id).toBe("usr_admin");
+      expect(body.members[0].role).toBe("admin");
+      expect(body.members[0].active).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("allows the bootstrap admin to patch its own member profile", async () => {
+    const bootstrap = row("usr_admin", "admin");
+    const { app, client } = await buildApp({
+      principal: principal("usr_admin"),
+      members: { usr_admin: bootstrap },
+      activeAdmins: 1,
+    });
+    try {
+      const res = await app.inject({
+        method: "PATCH",
+        url: "/members/usr_admin",
+        payload: { display_name: "Founder" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().member.id).toBe("usr_admin");
+      expect(
+        client.query.mock.calls.some(
+          ([sql, values]) =>
+            String(sql).startsWith("UPDATE members") &&
+            String(sql).includes("display_name") &&
+            Array.isArray(values) &&
+            values.includes("Founder"),
+        ),
+      ).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects an approver attempting to patch a member", async () => {
     const { app } = await buildApp({
       principal: principal("usr_approver"),

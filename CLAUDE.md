@@ -117,6 +117,13 @@ Done
 - Members are now the core approval authority model. `members` and
   `member_identity_links` are tenant-scoped RLS tables; authenticated identities
   are backfilled as tenant admins on upgrade to preserve behavior.
+- Tenant provisioning must create one active bootstrap admin member in the same
+  transaction as the tenant row. The bootstrap member uses all approval domains,
+  a per-item limit of `9223372036854775807`, no second-approver threshold, and
+  `active=true`. Self-serve signup uses the owner user id as the member id.
+  Demo provision-run uses the minted demo agent id because the returned token
+  acts as that agent. Missing email is written as
+  `bootstrap+<tenantId>@brain.invalid` and can be patched by an admin later.
 - Approval actors resolve through `ActorResolver` only. Session surfaces derive
   the actor from authenticated server context and ignore any actor field in the
   payload. API machine credentials must assert an actor and are recorded as

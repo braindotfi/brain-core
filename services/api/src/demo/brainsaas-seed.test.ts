@@ -208,13 +208,24 @@ describe("seedBrainSaasDemo", () => {
 
   it("writes a default AP funding account into the tenants row", async () => {
     const { pool, audit } = deps();
-    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+    const result = await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
 
     const tenantUpsert = scopedCalls.find((c) =>
       c.sql.includes("INSERT INTO tenants (id, default_ap_account_id)"),
     );
     expect(tenantUpsert).toBeDefined();
     expect(tenantUpsert!.values).toEqual([TENANT, "acct_brainsaas_operating"]);
+
+    const memberInsert = scopedCalls.find((c) => c.sql.includes("INSERT INTO members"));
+    expect(memberInsert).toBeDefined();
+    expect(memberInsert!.values).toEqual([
+      TENANT,
+      result.agentId,
+      `bootstrap+${TENANT}@brain.invalid`,
+      "Demo Payment Agent",
+      ["ap", "ar", "treasury", "payroll", "reconciliation"],
+      "9223372036854775807",
+    ]);
   });
 
   it("inserts one active policy and deactivates prior ones", async () => {

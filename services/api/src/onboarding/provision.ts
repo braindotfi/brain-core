@@ -29,6 +29,7 @@ import {
   type TenantScopedClient,
 } from "@brain/shared";
 import { contentHash, type PolicyDocument } from "@brain/policy";
+import { insertBootstrapAdminMember } from "./bootstrap-member.js";
 
 /**
  * Batch 11: default agent-confidence floor for a freshly provisioned tenant.
@@ -129,9 +130,10 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 /**
- * Provision a new sandbox tenant + owner user + email-verification token,
- * atomically. Throws `signup_email_taken` (409) when the email already has a
- * password-login account (anywhere); rethrows anything else after rollback.
+ * Provision a new sandbox tenant + owner user + bootstrap admin member +
+ * email-verification token, atomically. Throws `signup_email_taken` (409) when
+ * the email already has a password-login account (anywhere); rethrows anything
+ * else after rollback.
  */
 export async function provisionTenant(
   pool: Pool,
@@ -155,6 +157,12 @@ export async function provisionTenant(
          VALUES ($1, $2, $3, 'owner', $4, 'pending')`,
         [userId, tenantId, input.email, input.passwordHash],
       );
+      await insertBootstrapAdminMember(c, {
+        tenantId,
+        memberId: userId,
+        email: input.email,
+        displayName: input.email,
+      });
       await c.query(
         `INSERT INTO email_verifications (token_hash, user_id, tenant_id, expires_at)
          VALUES ($1, $2, $3, $4)`,
