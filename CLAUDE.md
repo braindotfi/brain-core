@@ -155,6 +155,22 @@ Done
   Platform-side member UI is mock-only until it is wired against the core
   `/v1/members` API and core approval responses.
 
+### Current deployment state
+
+Update this table on every promote.
+
+| Change | On main | On staging | On prod (api.brain.fi) |
+| --- | --- | --- | --- |
+| Members / approval authority / actor attribution (PR #214, #215) | Yes | Yes | Promoted, probe pending operator run |
+| Approval-authority gap fixes (PR #216) | Yes | Yes | Promoted, probe pending operator run |
+| Tenant bootstrap member (PR #218) | Yes | Yes | Promoted, probe pending operator run |
+| Bootstrap member session split: member_token in provision-run (PR #219) | Yes | Yes | Promoted, probe pending operator run |
+
+Provision-run returns `tokens.member.token` for user-principal member and
+approval workflows and `tokens.agent.token` for propose-only agent workflows;
+the agent token returning `403 actor_unresolved` on `/v1/members` is by design
+and is a permanent invariant.
+
 Pending
 
 - [ ] Real agent input types from the detectors.
