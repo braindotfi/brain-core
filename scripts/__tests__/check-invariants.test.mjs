@@ -30,6 +30,7 @@ test("check-invariants fails when self-approval moves after second approval", ()
       "services/execution/src/members/authorizeApproval.ts",
       "services/execution/src/members/authorizeApproval.test.ts",
       "services/api/src/onboarding/provision.ts",
+      "services/api/src/main.ts",
       "services/api/src/demo/brainsaas-seed.ts",
       "services/execution/migrations/0024_bootstrap_missing_members.sql",
     ]) {
@@ -70,6 +71,7 @@ test("check-invariants fails when provisioning stops creating bootstrap member",
       "services/execution/src/members/authorizeApproval.ts",
       "services/execution/src/members/authorizeApproval.test.ts",
       "services/api/src/onboarding/provision.ts",
+      "services/api/src/main.ts",
       "services/api/src/demo/brainsaas-seed.ts",
       "services/execution/migrations/0024_bootstrap_missing_members.sql",
     ]) {

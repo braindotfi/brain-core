@@ -220,12 +220,13 @@ describe("seedBrainSaasDemo", () => {
     expect(memberInsert).toBeDefined();
     expect(memberInsert!.values).toEqual([
       TENANT,
-      result.agentId,
+      ACTOR,
       `bootstrap+${TENANT}@brain.invalid`,
-      "Demo Payment Agent",
+      "Bootstrap Admin",
       ["ap", "ar", "treasury", "payroll", "reconciliation"],
       "9223372036854775807",
     ]);
+    expect(result.agentId).not.toBe(ACTOR);
   });
 
   it("inserts one active policy and deactivates prior ones", async () => {

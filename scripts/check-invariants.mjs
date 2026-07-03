@@ -90,11 +90,36 @@ const demoSeed = read("services/api/src/demo/brainsaas-seed.ts");
 const demoTenantInsertIndex = demoSeed.indexOf("INSERT INTO tenants (id, default_ap_account_id)");
 const demoBootstrapIndex = demoSeed.indexOf("insertBootstrapAdminMember", demoTenantInsertIndex);
 check(
-  "demo provisioning creates member for minted session principal",
+  "demo provisioning creates member for user session principal",
   demoTenantInsertIndex >= 0 &&
     demoBootstrapIndex > demoTenantInsertIndex &&
-    demoSeed.includes("memberId: agentId"),
-  "demo provision-run must create a member whose id matches the minted token principal",
+    demoSeed.includes("memberId: actor") &&
+    !demoSeed.includes("memberId: agentId"),
+  "demo provision-run must create a bootstrap member for the user session, never the agent",
+);
+
+const apiMain = read("services/api/src/main.ts");
+check(
+  "demo provision-run returns split agent and member tokens",
+  apiMain.includes("agent_token: agentToken") &&
+    apiMain.includes("member_token: memberToken") &&
+    apiMain.includes("type: \"agent\"") &&
+    apiMain.includes("type: \"user\"") &&
+    apiMain.includes("scopes: PAYMENT_AGENT_SCOPES"),
+  "demo provision-run must return a propose-only agent token and separate user member token",
+);
+
+const actorResolverSource = read("services/execution/src/members/ActorResolver.ts");
+const agentPrincipalGuardIndex = actorResolverSource.indexOf('input.ctx.principalType !== "user"');
+const sessionLookupIndex = actorResolverSource.indexOf(
+  "findMemberById(input.ctx.tenantId, input.ctx.actor)",
+);
+check(
+  "agent session principals never resolve to members",
+  agentPrincipalGuardIndex >= 0 &&
+    sessionLookupIndex > agentPrincipalGuardIndex &&
+    actorResolverSource.includes("principal_type: input.ctx.principalType"),
+  "ActorResolver must reject non-user session principals before member lookup",
 );
 
 const bootstrapMigration = read("services/execution/migrations/0024_bootstrap_missing_members.sql");
