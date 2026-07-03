@@ -49,6 +49,7 @@ PY
 
 if [[ "${provision_status}" != "201" || -z "${member_token}" || -z "${agent_token}" ]]; then
   echo "PROVISION_STATUS=${provision_status}"
+  echo "PROVISION_BODY=$(cat "${provision_body}")"
   echo "Provision failed or did not return both tokens" >&2
   exit 1
 fi

@@ -161,10 +161,10 @@ Update this table on every promote.
 
 | Change | On main | On staging | On prod (api.brain.fi) |
 | --- | --- | --- | --- |
-| Members / approval authority / actor attribution (PR #214, #215) | Yes | Yes | Promoted, probe pending operator run |
-| Approval-authority gap fixes (PR #216) | Yes | Yes | Promoted, probe pending operator run |
-| Tenant bootstrap member (PR #218) | Yes | Yes | Promoted, probe pending operator run |
-| Bootstrap member session split: member_token in provision-run (PR #219) | Yes | Yes | Promoted, probe pending operator run |
+| Members / approval authority / actor attribution (PR #214, #215) | Yes | Yes | NO, probe failed: provision-run 500 internal_server_error, request_id `req_01KWMBAYERP35HHKNC4W2THQPG` |
+| Approval-authority gap fixes (PR #216) | Yes | Yes | NO, probe failed: provision-run 500 internal_server_error, request_id `req_01KWMBAYERP35HHKNC4W2THQPG` |
+| Tenant bootstrap member (PR #218) | Yes | Yes | NO, probe failed: provision-run 500 internal_server_error, request_id `req_01KWMBAYERP35HHKNC4W2THQPG` |
+| Bootstrap member session split: member_token in provision-run (PR #219) | Yes | Yes | NO, probe failed: provision-run 500 internal_server_error, request_id `req_01KWMBAYERP35HHKNC4W2THQPG` |
 
 Provision-run returns `tokens.member.token` for user-principal member and
 approval workflows and `tokens.agent.token` for propose-only agent workflows;
