@@ -527,16 +527,17 @@ export class PaymentIntentService implements IPaymentIntentService {
         this.deps.resolveApprovalPayeeEmail !== undefined
           ? await this.deps.resolveApprovalPayeeEmail(ctx, intentToGate(intent))
           : null;
+      const payeeKind = paymentIntentPayeeKind({
+        actionType: intent.action_type,
+        counterpartyType: counterparty?.type ?? null,
+      });
       const authorization = authorizeApproval({
         actor,
         member: member ?? null,
         proposal: {
-          domain: paymentIntentApprovalDomain(intent.action_type),
+          domain: paymentIntentApprovalDomain(intent.action_type, payeeKind),
           amountCents: decimalAmountToCents(intent.amount),
-          payeeKind: paymentIntentPayeeKind({
-            actionType: intent.action_type,
-            counterpartyType: counterparty?.type ?? null,
-          }),
+          payeeKind,
           payeeEmail,
         },
         existingApproverMemberIds: existingApprovals.map((a) => a.approver_principal_id),

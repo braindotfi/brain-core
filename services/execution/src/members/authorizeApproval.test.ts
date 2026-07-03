@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ActorContext, MemberAuthority } from "./types.js";
-import { authorizeApproval, decimalAmountToCents } from "./authorizeApproval.js";
+import {
+  authorizeApproval,
+  decimalAmountToCents,
+  paymentIntentApprovalDomain,
+} from "./authorizeApproval.js";
 
 const actor: ActorContext = {
   memberId: "usr_1",
@@ -210,5 +214,87 @@ describe("authorizeApproval", () => {
     expect(decimalAmountToCents("12")).toBe(1_200n);
     expect(decimalAmountToCents("12.3")).toBe(1_230n);
     expect(decimalAmountToCents("12.34")).toBe(1_234n);
+  });
+
+  it("rounds >2-decimal amounts up instead of collapsing to zero (H1)", () => {
+    // Prior behaviour returned 0n for these, bypassing the per-item limit.
+    expect(decimalAmountToCents("100.999")).toBe(101_00n);
+    expect(decimalAmountToCents("0.000001")).toBe(1n);
+    expect(decimalAmountToCents("1000000.001")).toBe(100_000_001n);
+    expect(decimalAmountToCents("12.340")).toBe(1_234n);
+  });
+
+  it("does not let a >2-decimal amount bypass the per-item limit (H1)", () => {
+    expect(
+      authorizeApproval(
+        input({
+          member: member({ perItemLimitCents: 1_000_00n }),
+          proposal: {
+            domain: "ap",
+            amountCents: decimalAmountToCents("1000000.001"),
+            payeeKind: "vendor",
+            payeeEmail: null,
+          },
+        }),
+      ),
+    ).toMatchObject({ allowed: false, reason: "actor_limit_exceeded" });
+  });
+
+  it("routes employee payees to the payroll domain (H2)", () => {
+    expect(paymentIntentApprovalDomain("ach_outbound", "employee")).toBe("payroll");
+    expect(paymentIntentApprovalDomain("payroll_run")).toBe("payroll");
+    expect(paymentIntentApprovalDomain("ach_outbound", "vendor")).toBe("ap");
+    expect(paymentIntentApprovalDomain("ach_inbound")).toBe("ar");
+    expect(paymentIntentApprovalDomain("erp_writeback")).toBe("reconciliation");
+  });
+
+  it("blocks an AP-only member from approving a payroll-domain proposal (H2)", () => {
+    expect(
+      authorizeApproval(
+        input({
+          member: member({ approvalDomains: ["ap"] }),
+          proposal: {
+            domain: "payroll",
+            amountCents: 100_00n,
+            payeeKind: "employee",
+            payeeEmail: "employee@example.com",
+          },
+        }),
+      ),
+    ).toMatchObject({ allowed: false, reason: "domain_not_authorized" });
+  });
+
+  it("enforces a per-member second-approver threshold (M1)", () => {
+    expect(
+      authorizeApproval(
+        input({
+          member: member({ requiresSecondApproverAboveCents: 500_00n }),
+          proposal: {
+            domain: "ap",
+            amountCents: 1_000_00n,
+            payeeKind: "vendor",
+            payeeEmail: null,
+          },
+          requiredDistinctApprovals: 1,
+        }),
+      ),
+    ).toEqual({ allowed: true, requiresAdditionalApproval: true, approverRole: "approver" });
+  });
+
+  it("does not force a second approver below the member threshold (M1)", () => {
+    expect(
+      authorizeApproval(
+        input({
+          member: member({ requiresSecondApproverAboveCents: 500_00n }),
+          proposal: {
+            domain: "ap",
+            amountCents: 100_00n,
+            payeeKind: "vendor",
+            payeeEmail: null,
+          },
+          requiredDistinctApprovals: 1,
+        }),
+      ),
+    ).toEqual({ allowed: true, requiresAdditionalApproval: false, approverRole: "approver" });
   });
 });
