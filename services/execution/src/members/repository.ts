@@ -126,6 +126,8 @@ export async function updateMember(
   client: TenantScopedClient,
   input: {
     id: string;
+    email?: string;
+    displayName?: string;
     role?: "admin" | "approver" | "viewer";
     active?: boolean;
     approvalDomains?: ApprovalDomain[];
@@ -135,6 +137,14 @@ export async function updateMember(
 ): Promise<MemberAuthority | null> {
   const sets: string[] = [];
   const values: unknown[] = [];
+  if (input.email !== undefined) {
+    values.push(input.email);
+    sets.push(`email = lower($${values.length})`);
+  }
+  if (input.displayName !== undefined) {
+    values.push(input.displayName);
+    sets.push(`display_name = $${values.length}`);
+  }
   if (input.role !== undefined) {
     values.push(input.role);
     sets.push(`role = $${values.length}`);

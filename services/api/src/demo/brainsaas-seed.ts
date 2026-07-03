@@ -55,6 +55,7 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import type { Pool } from "pg";
+import { insertBootstrapAdminMember } from "../onboarding/bootstrap-member.js";
 
 // ---------------------------------------------------------------------------
 // Reference dataset (mirrors the former BrainSaaS seed.ts).
@@ -389,6 +390,11 @@ export async function seedBrainSaasDemo(
     ).row;
   }
 
+  // Registered demo payment agent. The provision-run JWT is minted as this
+  // principal, so the bootstrap admin member must use this exact id for
+  // session actor resolution to work without weakening the member gate.
+  const agentId = await seedAgent(pool, tenantId);
+
   // Default AP funding account — the P0.5 invoice-shortcut resolver needs one.
   // Tenant-scoped: the `tenants` RLS write policy is WITH CHECK (id =
   // app.tenant_id), so the row must be inserted inside the tenant's scope (the
@@ -399,6 +405,12 @@ export async function seedBrainSaasDemo(
          ON CONFLICT (id) DO UPDATE SET default_ap_account_id = EXCLUDED.default_ap_account_id`,
       [tenantId, operating.id],
     );
+    await insertBootstrapAdminMember(c, {
+      tenantId,
+      memberId: agentId,
+      email: null,
+      displayName: "Demo Payment Agent",
+    });
   });
 
   // ---------- Invoices (AP inbox + AR receivables) + per-AP-invoice docs ----------
@@ -522,9 +534,6 @@ export async function seedBrainSaasDemo(
   // ---------- Active policy (off-chain; on-chain registration is a later phase) ----------
   const approvedVendorCpIds = VENDORS.filter((v) => v.approved).map((v) => vendors[v.key]!.id);
   const policyId = await seedPolicy(pool, tenantId, actor, approvedVendorCpIds);
-
-  // ---------- Registered demo payment agent ----------
-  const agentId = await seedAgent(pool, tenantId);
 
   return {
     tenantId,

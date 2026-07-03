@@ -60,10 +60,11 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
     expect(sqls[0]).toBe("BEGIN");
     expect(sqls[1]).toBe("SELECT set_config('app.tenant_id', $1, true)");
     expect(sqls.at(-1)).toBe("COMMIT");
-    // The four domain inserts, in order: tenant -> user -> verification ->
-    // policy (default agent.confidence.gte floor, batch 11).
+    // The five domain inserts, in order: tenant -> user -> bootstrap member ->
+    // verification -> policy (default agent.confidence.gte floor, batch 11).
     expect(sqls.some((s) => /INSERT INTO tenants/.test(s))).toBe(true);
     expect(sqls.some((s) => /INSERT INTO users/.test(s))).toBe(true);
+    expect(sqls.some((s) => /INSERT INTO members/.test(s))).toBe(true);
     expect(sqls.some((s) => /INSERT INTO email_verifications/.test(s))).toBe(true);
     expect(sqls.some((s) => /INSERT INTO policies/.test(s))).toBe(true);
   });
@@ -88,6 +89,10 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
         expect(c.values[1]).toBe(userId);
         expect(c.values[2]).toBe(tenantId);
       }
+      if (/INSERT INTO members/.test(c.sql)) {
+        expect(c.values[0]).toBe(tenantId);
+        expect(c.values[1]).toBe(userId);
+      }
       if (/INSERT INTO policies/.test(c.sql)) {
         // [0]=policyId [1]=tenantId [2]=content json [3]=content_hash [4]=createdBy
         expect(c.values[1]).toBe(tenantId);
@@ -102,9 +107,30 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
     const userInsert = calls.find((c) => /INSERT INTO users/.test(c.sql));
     expect(userInsert?.values).toContain(INPUT.passwordHash);
     expect(userInsert?.values).toContain(INPUT.email);
+    const memberInsert = calls.find((c) => /INSERT INTO members/.test(c.sql));
+    expect(memberInsert?.values).toContain(INPUT.email);
     const verifyInsert = calls.find((c) => /INSERT INTO email_verifications/.test(c.sql));
     expect(verifyInsert?.values[0]).toBe(INPUT.emailVerificationTokenHash);
     expect(verifyInsert?.values[3]).toBe(INPUT.emailVerificationExpiresAt);
+  });
+
+  it("creates exactly one active bootstrap admin member for the owner session actor", async () => {
+    const { pool, calls } = makeFakePool();
+    const { tenantId, userId } = await provisionTenant(pool, INPUT);
+
+    const memberInserts = calls.filter((c) => /INSERT INTO members/.test(c.sql));
+    expect(memberInserts).toHaveLength(1);
+    const insert = memberInserts[0]!;
+    expect(insert.sql).toContain("'admin'");
+    expect(insert.sql).toContain("true");
+    expect(insert.values).toEqual([
+      tenantId,
+      userId,
+      INPUT.email,
+      INPUT.email,
+      ["ap", "ar", "treasury", "payroll", "reconciliation"],
+      "9223372036854775807",
+    ]);
   });
 
   it("maps a unique-violation on the email to signup_email_taken (and rolls back)", async () => {

@@ -23,6 +23,12 @@ must assert an actor and are recorded as `tenant_asserted`. Slack and Teams
 resolve through `member_identity_links`. Email approvals use signed tokens bound
 to the tenant and proposal.
 
+Tenant provisioning must create one active bootstrap admin member in the same
+transaction as the tenant row. Self-serve signup uses the owner user id as the
+member id. Demo provision-run uses the minted demo agent id because the returned
+token acts as that agent. Missing email is written as
+`bootstrap+<tenantId>@brain.invalid` and can be patched by an admin later.
+
 `PaymentIntentService.approve` must resolve the actor and call
 `authorizeApproval` before any approval signature or status transition. The gate
 checks are ordered:

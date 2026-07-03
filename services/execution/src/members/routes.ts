@@ -121,6 +121,10 @@ export async function registerMemberRoutes(
       const after = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
         updateMember(c, {
           id: request.params.id,
+          ...(body.email !== undefined ? { email: requireString(body.email, "email") } : {}),
+          ...(body.display_name !== undefined
+            ? { displayName: requireString(body.display_name, "display_name") }
+            : {}),
           ...(body.role !== undefined ? { role: parseRole(body.role) } : {}),
           ...(body.active !== undefined ? { active: body.active } : {}),
           ...(body.approval?.domains !== undefined

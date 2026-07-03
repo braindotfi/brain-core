@@ -67,6 +67,46 @@ check(
   "session actors must be derived only from authenticated server context",
 );
 
+const provisionTenant = read("services/api/src/onboarding/provision.ts");
+const provisionTxnStart = provisionTenant.indexOf("await withTenantScope(pool, tenantId");
+const tenantInsertIndex = provisionTenant.indexOf("INSERT INTO tenants", provisionTxnStart);
+const userInsertIndex = provisionTenant.indexOf("INSERT INTO users", provisionTxnStart);
+const bootstrapMemberIndex = provisionTenant.indexOf("insertBootstrapAdminMember", provisionTxnStart);
+const verificationInsertIndex = provisionTenant.indexOf(
+  "INSERT INTO email_verifications",
+  provisionTxnStart,
+);
+check(
+  "self-serve provisioning creates bootstrap member atomically",
+  provisionTxnStart >= 0 &&
+    tenantInsertIndex > provisionTxnStart &&
+    userInsertIndex > tenantInsertIndex &&
+    bootstrapMemberIndex > userInsertIndex &&
+    verificationInsertIndex > bootstrapMemberIndex,
+  "provisionTenant must create the initial admin member in the tenant creation transaction",
+);
+
+const demoSeed = read("services/api/src/demo/brainsaas-seed.ts");
+const demoTenantInsertIndex = demoSeed.indexOf("INSERT INTO tenants (id, default_ap_account_id)");
+const demoBootstrapIndex = demoSeed.indexOf("insertBootstrapAdminMember", demoTenantInsertIndex);
+check(
+  "demo provisioning creates member for minted session principal",
+  demoTenantInsertIndex >= 0 &&
+    demoBootstrapIndex > demoTenantInsertIndex &&
+    demoSeed.includes("memberId: agentId"),
+  "demo provision-run must create a member whose id matches the minted token principal",
+);
+
+const bootstrapMigration = read("services/execution/migrations/0024_bootstrap_missing_members.sql");
+check(
+  "gap-window migration backfills zero-member tenants",
+  bootstrapMigration.includes("zero_member_tenants") &&
+    bootstrapMigration.includes("NOT EXISTS") &&
+    bootstrapMigration.includes("INSERT INTO members") &&
+    bootstrapMigration.includes("ARRAY['ap', 'ar', 'treasury', 'payroll', 'reconciliation']"),
+  "migration 0024 must backfill tenants with zero members using bootstrap admin defaults",
+);
+
 const bad = checks.filter((c) => !c.ok);
 if (bad.length > 0) {
   for (const c of bad) {
