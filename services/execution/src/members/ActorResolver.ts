@@ -18,6 +18,12 @@ export class ActorResolver {
   public async resolve(input: ResolveActorInput): Promise<ActorContext> {
     switch (input.kind) {
       case "session": {
+        if (input.ctx.principalType !== "user") {
+          throw actorUnresolved({
+            source: "session",
+            principal_type: input.ctx.principalType ?? "unknown",
+          });
+        }
         // The payload actor, if present, is intentionally ignored. Session
         // identity is derived only from authenticated server-side context.
         const member = await this.deps.members.findMemberById(input.ctx.tenantId, input.ctx.actor);

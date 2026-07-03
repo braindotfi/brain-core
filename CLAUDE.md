@@ -121,14 +121,17 @@ Done
   transaction as the tenant row. The bootstrap member uses all approval domains,
   a per-item limit of `9223372036854775807`, no second-approver threshold, and
   `active=true`. Self-serve signup uses the owner user id as the member id.
-  Demo provision-run uses the minted demo agent id because the returned token
-  acts as that agent. Missing email is written as
-  `bootstrap+<tenantId>@brain.invalid` and can be patched by an admin later.
+  Demo provision-run uses the minted bootstrap user id as the member id and
+  returns a separate user-principal member session for member and approval
+  workflows. Missing email is written as `bootstrap+<tenantId>@brain.invalid`
+  and can be patched by an admin later.
 - Approval actors resolve through `ActorResolver` only. Session surfaces derive
   the actor from authenticated server context and ignore any actor field in the
-  payload. API machine credentials must assert an actor and are recorded as
-  `tenant_asserted`; Slack and Teams resolve through identity links; email uses
-  signed proposal-bound tokens.
+  payload. Session actor resolution requires `principal_type=user`; agent
+  principals are propose-only and never member-resolvable. API machine
+  credentials must assert an actor and are recorded as `tenant_asserted`; Slack
+  and Teams resolve through identity links; email uses signed proposal-bound
+  tokens.
 - `PaymentIntentService.approve` resolves the actor and calls
   `authorizeApproval` before any approval signature or status transition. The
   gate checks, in order: active tenant member, admin or approver role, authorized

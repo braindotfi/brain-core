@@ -11,10 +11,10 @@ import { registerMemberRoutes } from "./routes.js";
 const tenantId = newTenantId();
 const tokenId = "tok_members";
 
-function principal(id: string): Principal {
+function principal(id: string, type: Principal["type"] = "user"): Principal {
   return {
     id,
-    type: "user",
+    type,
     tenantId,
     scopes: ["execution:admin", "execution:read"] as Principal["scopes"],
     tokenId,
@@ -101,6 +101,29 @@ describe("member routes", () => {
       expect(body.members[0].id).toBe("usr_admin");
       expect(body.members[0].role).toBe("admin");
       expect(body.members[0].active).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects agent sessions on member routes before member lookup", async () => {
+    const colliding = row("agent_demo", "admin");
+    const { app, client } = await buildApp({
+      principal: principal("agent_demo", "agent"),
+      members: { agent_demo: colliding },
+      activeAdmins: 1,
+    });
+    try {
+      const res = await app.inject({ method: "GET", url: "/members" });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.details).toMatchObject({
+        reason: "actor_unresolved",
+        source: "session",
+        principal_type: "agent",
+      });
+      expect(client.query.mock.calls.some(([sql]) => String(sql).includes("FROM members"))).toBe(
+        false,
+      );
     } finally {
       await app.close();
     }

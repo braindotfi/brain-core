@@ -25,9 +25,13 @@ to the tenant and proposal.
 
 Tenant provisioning must create one active bootstrap admin member in the same
 transaction as the tenant row. Self-serve signup uses the owner user id as the
-member id. Demo provision-run uses the minted demo agent id because the returned
-token acts as that agent. Missing email is written as
-`bootstrap+<tenantId>@brain.invalid` and can be patched by an admin later.
+member id. Demo provision-run uses the minted bootstrap user id as the member id
+and returns a separate user-principal member session for member and approval
+workflows. Missing email is written as `bootstrap+<tenantId>@brain.invalid` and
+can be patched by an admin later.
+
+Agent principals are propose-only at the identity layer. They must never resolve
+as members, receive member claims, or carry approval/member admin scopes.
 
 `PaymentIntentService.approve` must resolve the actor and call
 `authorizeApproval` before any approval signature or status transition. The gate

@@ -390,9 +390,9 @@ export async function seedBrainSaasDemo(
     ).row;
   }
 
-  // Registered demo payment agent. The provision-run JWT is minted as this
-  // principal, so the bootstrap admin member must use this exact id for
-  // session actor resolution to work without weakening the member gate.
+  // Registered demo payment agent. Agents are propose-only principals and must
+  // never be member-resolvable. The bootstrap admin member is the human actor
+  // passed by the provision-run route, which receives a separate user session.
   const agentId = await seedAgent(pool, tenantId);
 
   // Default AP funding account — the P0.5 invoice-shortcut resolver needs one.
@@ -407,9 +407,9 @@ export async function seedBrainSaasDemo(
     );
     await insertBootstrapAdminMember(c, {
       tenantId,
-      memberId: agentId,
+      memberId: actor,
       email: null,
-      displayName: "Demo Payment Agent",
+      displayName: "Bootstrap Admin",
     });
   });
 

@@ -232,6 +232,16 @@ function assertCtx(request: FastifyRequest): ServiceCallContext {
 }
 
 async function requireAnyMember(pool: Pool, ctx: ServiceCallContext): Promise<MemberAuthority> {
+  if (ctx.principalType !== "user") {
+    throw brainError("payment_intent_approval_invalid", "actor_unresolved", {
+      statusOverride: 403,
+      details: {
+        reason: "actor_unresolved",
+        source: "session",
+        principal_type: ctx.principalType ?? "unknown",
+      },
+    });
+  }
   const member = await withTenantScope(pool, ctx.tenantId, (c) => findMemberById(c, ctx.actor));
   if (member === null || !member.active) {
     throw brainError("payment_intent_approval_invalid", "actor_unresolved", {

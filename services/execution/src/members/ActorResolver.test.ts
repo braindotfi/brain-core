@@ -52,6 +52,36 @@ describe("ActorResolver", () => {
     });
   });
 
+  it("rejects agent session principals before member lookup even if ids collide", async () => {
+    const colliding = member("agent_demo");
+    let lookedUp = false;
+    const resolver = new ActorResolver({
+      members: {
+        ...lookup({ byId: { agent_demo: colliding } }),
+        findMemberById: async () => {
+          lookedUp = true;
+          return colliding;
+        },
+      },
+    });
+
+    await expect(
+      resolver.resolve({
+        kind: "session",
+        ctx: { tenantId, actor: "agent_demo", principalType: "agent" },
+      }),
+    ).rejects.toMatchObject({
+      code: "payment_intent_approval_invalid",
+      statusCode: 403,
+      details: {
+        reason: "actor_unresolved",
+        source: "session",
+        principal_type: "agent",
+      },
+    });
+    expect(lookedUp).toBe(false);
+  });
+
   it("rejects API mutating calls without an asserted actor", async () => {
     const resolver = new ActorResolver({ members: lookup({}) });
 

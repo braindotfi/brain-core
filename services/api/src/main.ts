@@ -51,6 +51,8 @@ import {
   newUserId,
   InMemoryAuditEmitter,
   AGENT_PERMITTED_SCOPES,
+  PAYMENT_AGENT_SCOPES,
+  type Scope,
   type ServiceCallContext,
   type TenantCategory,
 } from "@brain/shared";
@@ -243,6 +245,17 @@ import type { LedgerDeps } from "@brain/ledger";
 import type { WikiDeps, PolicyReader, AgentReader, PolicyView } from "@brain/wiki";
 import type { RawDeps } from "@brain/raw";
 import type { GatePaymentIntent, TenantScopedClient } from "@brain/shared";
+
+const DEMO_MEMBER_SESSION_SCOPES = [
+  "ledger:read",
+  "wiki:read",
+  "raw:read",
+  "policy:read",
+  "execution:read",
+  "execution:admin",
+  "payment_intent:approve",
+  "audit:read",
+] as const satisfies readonly Scope[];
 
 // ---------------------------------------------------------------------------
 // .env loader (optional — repo-root .env only)
@@ -2034,30 +2047,31 @@ async function main(): Promise<void> {
                 actor,
               );
 
-              // The token acts AS the seeded payment agent (type "agent") so the
+              // The agent token acts AS the seeded payment agent (type "agent") so the
               // §6 gate's agent-identity check passes when the run later proposes
               // a payment-intent. Read + propose scopes ONLY. Execute, audit
-              // admin, and policy write are deliberately excluded (batch 10 C-1):
-              // the demo token can drive UI flows but cannot, on its own, settle
-              // a payment or rewrite policy.
-              const token = await siwxSigner.sign({
+              // admin, policy write, and member approval scopes are deliberately
+              // excluded: the demo agent can propose but cannot approve or settle.
+              const agentToken = await siwxSigner.sign({
                 id: seed.agentId,
                 type: "agent",
                 tenantId,
                 tokenId: newTokenId(),
                 expiresAt: Math.floor(Date.now() / 1000) + PROVISION_TTL_S,
-                scopes: [
-                  "ledger:read",
-                  "wiki:read",
-                  "raw:read",
-                  "raw:write",
-                  "policy:read",
-                  "execution:read",
-                  "execution:propose",
-                  "payment_intent:propose",
-                  "payment_intent:approve",
-                  "audit:read",
-                ],
+                scopes: PAYMENT_AGENT_SCOPES,
+              });
+
+              // The member token is the human/admin session for member and
+              // approval workflows. Its subject matches the bootstrap admin
+              // member created by seedBrainSaasDemo. Do not add these scopes to
+              // the agent token: agents propose, humans approve.
+              const memberToken = await siwxSigner.sign({
+                id: actor,
+                type: "user",
+                tenantId,
+                tokenId: newTokenId(),
+                expiresAt: Math.floor(Date.now() / 1000) + PROVISION_TTL_S,
+                scopes: DEMO_MEMBER_SESSION_SCOPES,
               });
 
               reply.status(201);
@@ -2065,7 +2079,26 @@ async function main(): Promise<void> {
                 tenant_id: tenantId,
                 agent_id: seed.agentId,
                 actor,
-                token,
+                agent_token: agentToken,
+                member_token: memberToken,
+                token: agentToken,
+                tokens: {
+                  agent: {
+                    token: agentToken,
+                    principal_type: "agent",
+                    subject: seed.agentId,
+                    scopes: PAYMENT_AGENT_SCOPES,
+                    use: "propose-only agent workflows",
+                  },
+                  member: {
+                    token: memberToken,
+                    principal_type: "user",
+                    subject: actor,
+                    member_id: actor,
+                    scopes: DEMO_MEMBER_SESSION_SCOPES,
+                    use: "member, approval, and admin workflows",
+                  },
+                },
                 expires_in: PROVISION_TTL_S,
                 scenario: {
                   vendors: seed.vendors,

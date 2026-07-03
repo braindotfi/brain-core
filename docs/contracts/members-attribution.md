@@ -64,12 +64,19 @@ authority defaults as the migration backfill: all approval domains,
 `perItemLimit=9223372036854775807`, no second-approver threshold, and
 `active=true`.
 
-The bootstrap member id must match the principal id used by the first session
-token issued by that provisioning path. Self-serve signup uses the owner user id.
-Demo provision-run uses the minted demo agent id because the returned token acts
-as that agent. This preserves the session derivation rule: `resolveActor` still
-looks up the authenticated server-side actor as a member and never relaxes to a
-payload actor or a tenant-level fallback.
+The bootstrap member id must match the user-principal session issued by that
+provisioning path. Self-serve signup uses the owner user id. Demo provision-run
+uses a minted bootstrap user id and returns two tokens: a user-principal member
+session for member and approval workflows, and a separate propose-only agent
+token for agent workflows. `resolveActor` still looks up only the authenticated
+server-side actor as a member and never relaxes to a payload actor or a
+tenant-level fallback.
+
+Agent principals are never member-resolvable. Provisioning must not identity-link
+the demo agent to the bootstrap member, add a member claim to an agent token, or
+grant member or approval scopes to the agent token. The agent token exists to
+propose; the user-principal member session exists to approve and administer
+members.
 
 Provisioning derives bootstrap email and display name from the provisioning
 identity when available. If the identity has no email, provisioning writes a
