@@ -155,6 +155,37 @@ Done
   Platform-side member UI is mock-only until it is wired against the core
   `/v1/members` API and core approval responses.
 
+### Deployment
+
+Production promotion now runs `tools/migrate up` against `DATABASE_URL_PROD`
+inside the `promote_production` GitHub environment before updating the
+production Container App revision. The migration runner is idempotent: applied
+migrations with matching hashes are skipped, drift fails the job, and a failed
+migration exits nonzero before any new revision is shipped. This replaces the
+previous manual and unowned production migration step, which caused the members
+promote to deploy app code before migrations 0023 and 0024 existed in prod.
+
+After the production app update, `promote_production` curls the production
+health URL and fails the job if no 2xx response is observed. The default smoke
+target is `https://api.brain.fi/health`; override with
+`BRAIN_PRODUCTION_HEALTH_URL` when needed.
+
+#### Current deployment state
+
+Update this table on every promote.
+
+| Change                                                                  | On main | On staging | On prod (api.brain.fi)                                                                                |
+| ----------------------------------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------------------------------------------- |
+| Members / approval authority / actor attribution (PR #214, #215)        | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
+| Approval-authority gap fixes (PR #216)                                  | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
+| Tenant bootstrap member (PR #218)                                       | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
+| Bootstrap member session split: member_token in provision-run (PR #219) | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
+
+Provision-run returns `tokens.member.token` for user-principal member and
+approval workflows and `tokens.agent.token` for propose-only agent workflows.
+The agent token returning `403 actor_unresolved` on `/v1/members` is by design
+and is a permanent invariant.
+
 Pending
 
 - [ ] Real agent input types from the detectors.

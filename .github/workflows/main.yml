@@ -331,6 +331,24 @@ jobs:
     environment: production # GitHub environment gate — manual approval
     if: vars.DEPLOY_ENABLED == 'true'
     steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build migration tool
+        run: pnpm -C tools/migrate run build
+      - name: Migrate production
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
+        run: |
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "DATABASE_URL_PROD secret is required for production migrations" >&2
+            exit 1
+          fi
+          node tools/migrate/dist/cli.js up
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -349,3 +367,15 @@ jobs:
               --image "${{ secrets.ACR_LOGIN_SERVER_PROD }}/brain-$svc:${{ github.sha }}" \
               --revision-suffix "sha${{ github.sha }}"
           done
+      - name: Production smoke check
+        env:
+          HEALTH_URL: ${{ vars.BRAIN_PRODUCTION_HEALTH_URL || 'https://api.brain.fi/health' }}
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS "$HEALTH_URL"; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Production smoke check failed: $HEALTH_URL" >&2
+          exit 1
