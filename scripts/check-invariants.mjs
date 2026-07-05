@@ -132,6 +132,71 @@ check(
   "migration 0024 must backfill tenants with zero members using bootstrap admin defaults",
 );
 
+// M1: pin POST /v1/auth/service-token's minted scope set (single source of
+// truth: onboarding/service-token.ts's SERVICE_TOKEN_SCOPES) to reads +
+// propose, so it cannot silently regain payment_intent:approve (the finding
+// fixed here) or gain execute / sign / write / policy:admin later.
+const serviceTokenModule = read("services/api/src/onboarding/service-token.ts");
+const serviceTokenScopesStart = serviceTokenModule.indexOf("SERVICE_TOKEN_SCOPES");
+const serviceTokenScopesEnd = serviceTokenModule.indexOf("];", serviceTokenScopesStart);
+const serviceTokenScopesBlock = serviceTokenModule.slice(
+  serviceTokenScopesStart,
+  serviceTokenScopesEnd,
+);
+const DANGEROUS_SERVICE_TOKEN_SCOPES = [
+  "payment_intent:approve",
+  "payment_intent:execute",
+  "policy:write",
+  "policy:admin",
+  "policy:sign",
+  "audit:admin",
+  "audit:write",
+  "raw:admin",
+  "execution:write",
+  "execution:admin",
+];
+check(
+  "service-token mint scope set excludes approve/execute/sign/write/admin",
+  serviceTokenScopesStart >= 0 &&
+    serviceTokenScopesEnd > serviceTokenScopesStart &&
+    serviceTokenScopesBlock.includes("payment_intent:propose") &&
+    !DANGEROUS_SERVICE_TOKEN_SCOPES.some((scope) => serviceTokenScopesBlock.includes(`"${scope}"`)),
+  "SERVICE_TOKEN_SCOPES must mint reads + propose only, never approve/execute/sign/write/admin scopes",
+);
+
+const apiMainForServiceToken = read("services/api/src/main.ts");
+const serviceTokenRouteStart = apiMainForServiceToken.indexOf('"/auth/service-token"');
+const serviceTokenSignStart = apiMainForServiceToken.indexOf(
+  "siwxSigner.sign(",
+  serviceTokenRouteStart,
+);
+check(
+  "service-token route mints from the shared SERVICE_TOKEN_SCOPES constant",
+  serviceTokenRouteStart >= 0 &&
+    serviceTokenSignStart > serviceTokenRouteStart &&
+    apiMainForServiceToken.indexOf("scopes: SERVICE_TOKEN_SCOPES", serviceTokenSignStart) >
+      serviceTokenSignStart,
+  "POST /v1/auth/service-token must mint scopes: SERVICE_TOKEN_SCOPES, not an inline literal that can drift",
+);
+
+// H2: pin that the mint route audits itself before returning 201, instead of
+// being silently exempt from the audit trail every other mutating route uses.
+const serviceTokenReplyIndex = apiMainForServiceToken.indexOf(
+  "reply.status(201)",
+  serviceTokenSignStart,
+);
+const serviceTokenAuditIndex = apiMainForServiceToken.indexOf(
+  "auth.service_token.minted",
+  serviceTokenSignStart,
+);
+check(
+  "service-token mint emits an audit event before returning 201",
+  serviceTokenReplyIndex > serviceTokenSignStart &&
+    serviceTokenAuditIndex > serviceTokenSignStart &&
+    serviceTokenAuditIndex < serviceTokenReplyIndex,
+  "POST /v1/auth/service-token must call audit.emit with action auth.service_token.minted before the 201 reply",
+);
+
 const bad = checks.filter((c) => !c.ok);
 if (bad.length > 0) {
   for (const c of bad) {

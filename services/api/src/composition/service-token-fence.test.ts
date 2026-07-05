@@ -13,7 +13,7 @@ import { assertServiceTokenFences } from "./service-token-fence.js";
  *   B. serviceTokenEnabled=true in NODE_ENV=production additionally requires
  *      BRAIN_SERVICE_TOKEN_TESTNET_ATTESTED="true". Operators must explicitly
  *      attest that this stack is the right kind of production (testnet, sandbox
- *      rails) before the propose/approve-capable mint becomes reachable on prod.
+ *      rails) before the propose-capable mint becomes reachable on prod.
  */
 describe("assertServiceTokenFences", () => {
   test("silent when the route is disabled (the default)", () => {

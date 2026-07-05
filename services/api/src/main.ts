@@ -67,6 +67,7 @@ import {
   registerWalletRoutes,
   PostgresWalletIdentityReader,
 } from "./onboarding/wallet-identities.js";
+import { ensureTenantBootstrapped, SERVICE_TOKEN_SCOPES } from "./onboarding/service-token.js";
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 import { logBootCapabilities } from "./capabilities.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
@@ -2159,10 +2160,11 @@ async function main(): Promise<void> {
         // BRAIN_SERVICE_TOKEN_SECRET (constant-time compared). The boot fence
         // (assertServiceTokenFences) guarantees the secret is set when enabled.
         //
-        // Scopes: READ + PROPOSE + APPROVE only — never payment_intent:execute,
-        // audit:admin, or policy:write. Same ceiling as the demo token; real
-        // money movement / policy signing stays off this path. Prod-capable,
-        // gated by BRAIN_SERVICE_TOKEN_TESTNET_ATTESTED=true in production.
+        // Scopes: READ + PROPOSE only — never payment_intent:approve,
+        // payment_intent:execute, audit:admin, or policy:write. Approval
+        // authority belongs to a human member, never to this agent-typed
+        // token. Prod-capable, gated by BRAIN_SERVICE_TOKEN_TESTNET_ATTESTED=
+        // true in production.
         if (cfg.BRAIN_SERVICE_TOKEN_ENABLED) {
           const serviceTokenSecret = cfg.BRAIN_SERVICE_TOKEN_SECRET;
           if (serviceTokenSecret === undefined || serviceTokenSecret.length === 0) {
@@ -2227,22 +2229,33 @@ async function main(): Promise<void> {
                 computeAgentScopeHash(PAYMENT_AGENT_SCOPES).slice(2),
                 "hex",
               );
+              let tenantCreated = false;
+              let agentCreated = false;
               const agentId = await withTenantScope(pool, tenantId, async (c) => {
                 // sandbox=TRUE + created_via='self_serve': this tenant is a
-                // read/propose/approve sandbox — rails fail closed and it is
+                // read/propose sandbox — rails fail closed and it is
                 // never auto-promoted to LIVE_AGENTS. Defense in depth for the
                 // no-execute ceiling, even if a scope ever leaked.
-                await c.query(
+                const tenantInsert = await c.query(
                   `INSERT INTO tenants (id, sandbox, created_via) VALUES ($1, TRUE, 'self_serve')
                      ON CONFLICT (id) DO NOTHING`,
                   [tenantId],
                 );
+                tenantCreated = (tenantInsert.rowCount ?? 0) > 0;
+
+                // H1: a tenant with no owner member and no active policy fails
+                // every §6 gate / approval-authority check for it. Mirror
+                // provision.ts — seed the owner member + default policy once,
+                // in this same transaction, before the tenant is usable.
+                await ensureTenantBootstrapped(c, tenantId);
+
                 const existing = await c.query<{ id: string }>(
                   `SELECT id FROM agents
                      WHERE display_name = 'BFF Service Agent' AND state = 'active'
                      ORDER BY created_at ASC LIMIT 1`,
                 );
                 if (existing.rows[0]) return existing.rows[0].id;
+                agentCreated = true;
                 const newId = newAgentId();
                 await c.query(
                   `INSERT INTO agents (id, tenant_id, kind, role, display_name, scope_hash, onchain_address, state, registered_at, created_at, contribution_count, quarantine_threshold)
@@ -2253,24 +2266,32 @@ async function main(): Promise<void> {
               });
 
               const SERVICE_TOKEN_TTL_S = 60 * 60; // 1 hour
+              const tokenId = newTokenId();
               const token = await siwxSigner.sign({
                 id: agentId,
                 type: "agent",
                 tenantId,
-                tokenId: newTokenId(),
+                tokenId,
                 expiresAt: Math.floor(Date.now() / 1000) + SERVICE_TOKEN_TTL_S,
-                scopes: [
-                  "ledger:read",
-                  "wiki:read",
-                  "raw:read",
-                  "raw:write",
-                  "policy:read",
-                  "execution:read",
-                  "execution:propose",
-                  "payment_intent:propose",
-                  "payment_intent:approve",
-                  "audit:read",
-                ],
+                // M1: reads + propose only. payment_intent:approve dropped —
+                // approval authority belongs to a human member (authenticated
+                // separately), never to this agent-typed token. Single source
+                // of truth in onboarding/service-token.ts so this list and
+                // the check-invariants pin cannot drift apart.
+                scopes: SERVICE_TOKEN_SCOPES,
+              });
+
+              // H2: audit the mint itself — this is a production credential
+              // grant and a tenant/agent materialisation, both auditable
+              // events elsewhere in this file (policy.activate, member
+              // mutations); this route was silently exempt.
+              await audit.emit({
+                tenantId,
+                layer: "agent",
+                actor: agentId,
+                action: "auth.service_token.minted",
+                inputs: { tenant_created: tenantCreated, agent_created: agentCreated },
+                outputs: { tenant_id: tenantId, agent_id: agentId, token_id: tokenId },
               });
 
               reply.status(201);
