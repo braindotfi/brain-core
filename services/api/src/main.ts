@@ -49,9 +49,12 @@ import {
   newPolicyId,
   newTenantId,
   newUserId,
+  newAgentId,
+  isBrainId,
+  computeAgentScopeHash,
+  PAYMENT_AGENT_SCOPES,
   InMemoryAuditEmitter,
   AGENT_PERMITTED_SCOPES,
-  PAYMENT_AGENT_SCOPES,
   type Scope,
   type ServiceCallContext,
   type TenantCategory,
@@ -64,6 +67,7 @@ import {
   registerWalletRoutes,
   PostgresWalletIdentityReader,
 } from "./onboarding/wallet-identities.js";
+import { ensureTenantBootstrapped, SERVICE_TOKEN_SCOPES } from "./onboarding/service-token.js";
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 import { logBootCapabilities } from "./capabilities.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
@@ -237,6 +241,7 @@ import { runShutdown } from "./composition/shutdown.js";
 import { resolveComposition, POOL_ENV } from "./composition/process-roles.js";
 import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
+import { assertServiceTokenFences } from "./composition/service-token-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
 import { seedBrainSaasDemo } from "./demo/brainsaas-seed.js";
 import { YIELD_VENUES } from "./demo/yield-venues.js";
@@ -392,6 +397,17 @@ async function main(): Promise<void> {
     provisionEnabled: cfg.BRAIN_DEMO_PROVISION_ENABLED,
     provisionSecret: cfg.BRAIN_DEMO_PROVISION_SECRET,
     testnetAttested: cfg.BRAIN_DEMO_PROVISION_TESTNET_ATTESTED,
+  });
+
+  // Refuse to boot when POST /v1/auth/service-token is enabled without (a) the
+  // shared-secret header configured (so the route would mint tokens to anyone
+  // reaching it) or (b) the testnet attestation in NODE_ENV=production. Logic +
+  // tests live in composition/service-token-fence.ts.
+  assertServiceTokenFences({
+    nodeEnv: cfg.NODE_ENV,
+    serviceTokenEnabled: cfg.BRAIN_SERVICE_TOKEN_ENABLED,
+    serviceTokenSecret: cfg.BRAIN_SERVICE_TOKEN_SECRET,
+    testnetAttested: cfg.BRAIN_SERVICE_TOKEN_TESTNET_ATTESTED,
   });
 
   let wikiPool = pool;
@@ -2129,6 +2145,164 @@ async function main(): Promise<void> {
                 ? undefined
                 : (input) => publishAnchor(pool, anchorBroadcaster, input),
           });
+        }
+
+        // ── POST /v1/auth/service-token ───────────────────────────────────
+        // The production counterpart to /v1/demo/provision-run: a TRUSTED
+        // backend-for-frontend (e.g. the Brain Finance BFF) mints a scoped JWT
+        // for a STABLE per-user tenant. Unlike provision-run it seeds NO demo
+        // business data — it idempotently materialises an empty tenant + an
+        // active payment agent (keyed on the caller-supplied tenant_id, which
+        // the BFF persists per app-user) and mints a token.
+        //
+        // Auth: skipAuth (it issues a JWT; the caller has none yet) but NOT
+        // public — callers MUST send X-Service-Token-Auth equal to
+        // BRAIN_SERVICE_TOKEN_SECRET (constant-time compared). The boot fence
+        // (assertServiceTokenFences) guarantees the secret is set when enabled.
+        //
+        // Scopes: READ + PROPOSE only — never payment_intent:approve,
+        // payment_intent:execute, audit:admin, or policy:write. Approval
+        // authority belongs to a human member, never to this agent-typed
+        // token. Prod-capable, gated by BRAIN_SERVICE_TOKEN_TESTNET_ATTESTED=
+        // true in production.
+        if (cfg.BRAIN_SERVICE_TOKEN_ENABLED) {
+          const serviceTokenSecret = cfg.BRAIN_SERVICE_TOKEN_SECRET;
+          if (serviceTokenSecret === undefined || serviceTokenSecret.length === 0) {
+            throw new Error(
+              "internal: BRAIN_SERVICE_TOKEN_SECRET missing after fence passed (should be unreachable)",
+            );
+          }
+          v1.post(
+            "/auth/service-token",
+            { config: { skipAuth: true, rateLimit: { max: 30, timeWindow: "1 minute" } } },
+            async (req, reply) => {
+              // Shared-secret header check (constant-time).
+              const headerRaw = req.headers["x-service-token-auth"];
+              const provided = Array.isArray(headerRaw) ? headerRaw[0] : headerRaw;
+              const expectedBuf = Buffer.from(serviceTokenSecret, "utf8");
+              const providedBuf = Buffer.from(provided ?? "", "utf8");
+              const ok =
+                providedBuf.length === expectedBuf.length &&
+                timingSafeEqual(providedBuf, expectedBuf);
+              if (!ok) {
+                reply.status(401);
+                return {
+                  error: {
+                    code: "auth_header_invalid",
+                    message:
+                      "X-Service-Token-Auth header missing or does not match BRAIN_SERVICE_TOKEN_SECRET",
+                    request_id: req.id ?? null,
+                    docs_url: "https://docs.brain.fi/api-reference/authentication",
+                  },
+                };
+              }
+
+              // Stable per-user tenant id supplied by the BFF (persisted on its
+              // side, one per app-user). Optional: on the first call the BFF can
+              // omit it and persist the tnt_ id we return. Reject any other shape
+              // so a caller cannot smuggle a non-tenant id.
+              const bodyTenant = (req.body as { tenant_id?: unknown } | undefined)?.tenant_id;
+              let tenantId: string;
+              if (bodyTenant === undefined || bodyTenant === null) {
+                tenantId = newTenantId();
+              } else if (typeof bodyTenant === "string" && isBrainId(bodyTenant, "tnt")) {
+                tenantId = bodyTenant;
+              } else {
+                reply.status(400);
+                return {
+                  error: {
+                    code: "tenant_id_invalid",
+                    message: "tenant_id, when provided, must be a tnt_-prefixed Brain id",
+                    request_id: req.id ?? null,
+                    docs_url: "https://docs.brain.fi/api-reference/authentication",
+                  },
+                };
+              }
+
+              // Idempotently ensure the tenant row + an active payment agent.
+              // RLS: the tenants/agents write policies are WITH CHECK (… =
+              // app.tenant_id), so both run inside the tenant's scope.
+              const smartAccount =
+                process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ??
+                "0x0000000000000000000000000000000000000000";
+              const scopeHash = Buffer.from(
+                computeAgentScopeHash(PAYMENT_AGENT_SCOPES).slice(2),
+                "hex",
+              );
+              let tenantCreated = false;
+              let agentCreated = false;
+              const agentId = await withTenantScope(pool, tenantId, async (c) => {
+                // sandbox=TRUE + created_via='self_serve': this tenant is a
+                // read/propose sandbox — rails fail closed and it is
+                // never auto-promoted to LIVE_AGENTS. Defense in depth for the
+                // no-execute ceiling, even if a scope ever leaked.
+                const tenantInsert = await c.query(
+                  `INSERT INTO tenants (id, sandbox, created_via) VALUES ($1, TRUE, 'self_serve')
+                     ON CONFLICT (id) DO NOTHING`,
+                  [tenantId],
+                );
+                tenantCreated = (tenantInsert.rowCount ?? 0) > 0;
+
+                // H1: a tenant with no owner member and no active policy fails
+                // every §6 gate / approval-authority check for it. Mirror
+                // provision.ts — seed the owner member + default policy once,
+                // in this same transaction, before the tenant is usable.
+                await ensureTenantBootstrapped(c, tenantId);
+
+                const existing = await c.query<{ id: string }>(
+                  `SELECT id FROM agents
+                     WHERE display_name = 'BFF Service Agent' AND state = 'active'
+                     ORDER BY created_at ASC LIMIT 1`,
+                );
+                if (existing.rows[0]) return existing.rows[0].id;
+                agentCreated = true;
+                const newId = newAgentId();
+                await c.query(
+                  `INSERT INTO agents (id, tenant_id, kind, role, display_name, scope_hash, onchain_address, state, registered_at, created_at, contribution_count, quarantine_threshold)
+                   VALUES ($1, $2, 'internal', 'payment', 'BFF Service Agent', $3, $4, 'active', now(), now(), 0, 100)`,
+                  [newId, tenantId, scopeHash, smartAccount],
+                );
+                return newId;
+              });
+
+              const SERVICE_TOKEN_TTL_S = 60 * 60; // 1 hour
+              const tokenId = newTokenId();
+              const token = await siwxSigner.sign({
+                id: agentId,
+                type: "agent",
+                tenantId,
+                tokenId,
+                expiresAt: Math.floor(Date.now() / 1000) + SERVICE_TOKEN_TTL_S,
+                // M1: reads + propose only. payment_intent:approve dropped —
+                // approval authority belongs to a human member (authenticated
+                // separately), never to this agent-typed token. Single source
+                // of truth in onboarding/service-token.ts so this list and
+                // the check-invariants pin cannot drift apart.
+                scopes: SERVICE_TOKEN_SCOPES,
+              });
+
+              // H2: audit the mint itself — this is a production credential
+              // grant and a tenant/agent materialisation, both auditable
+              // events elsewhere in this file (policy.activate, member
+              // mutations); this route was silently exempt.
+              await audit.emit({
+                tenantId,
+                layer: "agent",
+                actor: agentId,
+                action: "auth.service_token.minted",
+                inputs: { tenant_created: tenantCreated, agent_created: agentCreated },
+                outputs: { tenant_id: tenantId, agent_id: agentId, token_id: tokenId },
+              });
+
+              reply.status(201);
+              return {
+                tenant_id: tenantId,
+                agent_id: agentId,
+                token,
+                expires_in: SERVICE_TOKEN_TTL_S,
+              };
+            },
+          );
         }
       },
       { prefix: "/v1" },
