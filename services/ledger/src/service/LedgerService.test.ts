@@ -12,12 +12,15 @@ type SqlPattern = string;
 function fakePool(routes: Record<SqlPattern, Array<Record<string, unknown>>> = {}): {
   pool: Pool;
   log: string[];
+  calls: { text: string; values: unknown[] }[];
 } {
   const log: string[] = [];
+  const calls: { text: string; values: unknown[] }[] = [];
   const client = {
-    query: vi.fn(async (text: string, _values?: unknown[]) => {
+    query: vi.fn(async (text: string, values: unknown[] = []) => {
       const summary = text.trim().split("\n")[0]!.trim();
       log.push(summary);
+      calls.push({ text, values });
       if (text.startsWith("BEGIN") || text === "COMMIT" || text === "ROLLBACK") {
         return { rows: [], rowCount: 0 };
       }
@@ -32,7 +35,7 @@ function fakePool(routes: Record<SqlPattern, Array<Record<string, unknown>>> = {
     release: vi.fn(),
   };
   const pool = { connect: async () => client } as unknown as Pool;
-  return { pool, log };
+  return { pool, log, calls };
 }
 
 const ctx = { tenantId: newTenantId(), actor: newUserId() };
@@ -203,6 +206,223 @@ describe("LedgerService.upsertCounterparty", () => {
         confidence: -0.5, // a negative confidence must not slip past the 0.5 cap
       }),
     ).rejects.toSatisfy((err) => isBrainError(err) && err.code === "ledger_row_invalid");
+  });
+});
+
+describe("LedgerService manual counterparty endpoints", () => {
+  it("creates a human confirmed vendor and emits vendor.created", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const enqueue = vi.fn(async () => undefined);
+    const { pool } = fakePool({
+      "INSERT INTO ledger_counterparties": [
+        {
+          ...rowCommon(),
+          id: "cp_manual",
+          name: "Acme Trading LLC",
+          normalized_name: "acme_trading_llc",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          aliases: ["Acme LLC"],
+          linked_accounts: [],
+          provenance: "human_confirmed",
+          confidence: 0.95,
+          metadata: { country: "AE" },
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit, enqueue });
+    const result = await service.createManualCounterparty(
+      { ...ctx, principalType: "user", requestId: "req_manual" },
+      {
+        name: "Acme Trading LLC",
+        type: "vendor",
+        country: "AE",
+        aliases: ["Acme LLC"],
+      },
+    );
+    expect(result.created).toBe(true);
+    expect(result.merged).toBe(false);
+    expect(result.counterparty.provenance).toBe("human_confirmed");
+    expect(result.counterparty.verified_status).toBe("unverified");
+    expect(audit.events[0]!.action).toBe("ledger.counterparty.created");
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: ctx.tenantId,
+        requestId: "req_manual",
+        payload: expect.objectContaining({ event: "vendor.created" }),
+      }),
+    );
+  });
+
+  it("creates agent contributed rows for agent principals", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = fakePool({
+      "INSERT INTO ledger_counterparties": [
+        {
+          ...rowCommon(),
+          id: "cp_agent_manual",
+          name: "Agent Suggested Vendor",
+          normalized_name: "agent_suggested_vendor",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          aliases: [],
+          linked_accounts: [],
+          provenance: "agent_contributed",
+          confidence: 0.5,
+          metadata: {},
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit });
+    const result = await service.createManualCounterparty(
+      { ...ctx, principalType: "agent", actor: "agent_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
+      { name: "Agent Suggested Vendor", type: "vendor" },
+    );
+    expect(result.counterparty.provenance).toBe("agent_contributed");
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_counterparties"))!;
+    expect(insert.values[10]).toBe("agent_contributed");
+    expect(insert.values[11]).toBe(0.5);
+  });
+
+  it("does not downgrade trust state when manual create dedupes into an existing row", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = fakePool({
+      "FROM ledger_counterparties\n      WHERE normalized_name": [
+        {
+          ...rowCommon(),
+          id: "cp_existing",
+          name: "Acme",
+          normalized_name: "acme",
+          type: "vendor",
+          risk_level: "low",
+          verified_status: "sanctions_cleared",
+          aliases: [],
+          linked_accounts: [],
+          metadata: {},
+        },
+      ],
+      "UPDATE ledger_counterparties": [
+        {
+          ...rowCommon(),
+          id: "cp_existing",
+          name: "Acme",
+          normalized_name: "acme",
+          type: "vendor",
+          risk_level: "low",
+          verified_status: "sanctions_cleared",
+          aliases: ["Acme LLC"],
+          linked_accounts: [],
+          metadata: {},
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit });
+    const result = await service.createManualCounterparty(
+      { ...ctx, principalType: "user" },
+      { name: "Acme", type: "vendor", aliases: ["Acme LLC"] },
+    );
+    expect(result.created).toBe(false);
+    expect(result.counterparty.verified_status).toBe("sanctions_cleared");
+    const update = calls.find((c) => c.text.includes("UPDATE ledger_counterparties"))!;
+    expect(update.values[4]).toBe("unverified");
+    expect(update.values[6]).toBe(false);
+  });
+
+  it("renames with the previous name preserved as an alias and audits changed fields", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = fakePool({
+      "WHERE id = $1 LIMIT 1": [
+        {
+          ...rowCommon(),
+          id: "cp_existing",
+          name: "Acme Old",
+          normalized_name: "acme_old",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          aliases: ["AO"],
+          linked_accounts: [],
+          metadata: {},
+        },
+      ],
+      "WHERE normalized_name = $1 AND type = $2": [],
+      "UPDATE ledger_counterparties": [
+        {
+          ...rowCommon(),
+          id: "cp_existing",
+          name: "Acme New",
+          normalized_name: "acme_new",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          aliases: ["AO", "Acme Old"],
+          linked_accounts: [],
+          provenance: "human_confirmed",
+          metadata: { category: "logistics" },
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit });
+    const result = await service.updateCounterpartyIdentity(ctx, "cp_existing", {
+      name: "Acme New",
+      category: "logistics",
+    });
+    expect(result.counterparty.name).toBe("Acme New");
+    expect(result.counterparty.aliases).toContain("Acme Old");
+    expect(result.changed_fields).toEqual(["name", "aliases", "category"]);
+    const update = calls.find((c) => c.text.includes("UPDATE ledger_counterparties"))!;
+    expect(update.values).toContain("Acme New");
+    expect(update.values.some((value) => Array.isArray(value) && value.includes("Acme Old"))).toBe(
+      true,
+    );
+    expect(audit.events[0]!.action).toBe("ledger.counterparty.updated");
+    expect(audit.events[0]!.inputs).toMatchObject({
+      counterparty_id: "cp_existing",
+      changed_fields: ["name", "aliases", "category"],
+    });
+  });
+
+  it("returns name_conflict on rename collision without mutating", async () => {
+    const { pool, calls } = fakePool({
+      "WHERE id = $1 LIMIT 1": [
+        {
+          ...rowCommon(),
+          id: "cp_existing",
+          name: "Acme Old",
+          normalized_name: "acme_old",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          aliases: [],
+          linked_accounts: [],
+          metadata: {},
+        },
+      ],
+      "WHERE normalized_name = $1 AND type = $2": [
+        {
+          ...rowCommon(),
+          id: "cp_other",
+          name: "Acme New",
+          normalized_name: "acme_new",
+          type: "vendor",
+          aliases: [],
+          linked_accounts: [],
+          metadata: {},
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    await expect(
+      service.updateCounterpartyIdentity(ctx, "cp_existing", { name: "Acme New" }),
+    ).rejects.toSatisfy(
+      (err) =>
+        isBrainError(err) &&
+        err.code === "ledger_reconciliation_conflict" &&
+        err.details?.["reason"] === "name_conflict",
+    );
+    expect(calls.some((c) => c.text.includes("UPDATE ledger_counterparties"))).toBe(false);
   });
 });
 

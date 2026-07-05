@@ -687,7 +687,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [merchant, vendor, customer, employer, employee, bank, wallet, exchange, tax_authority, other]
+            enum: [merchant, vendor, customer, employer, employee, bank, wallet, exchange, tax_authority, agent, other]
         - name: verified_status
           in: query
           schema: { type: string }
@@ -704,6 +704,110 @@ paths:
                     items: { $ref: '#/components/schemas/Counterparty' }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+    post:
+      tags: [Ledger]
+      summary: Manually create or merge a counterparty
+      operationId: createCounterparty
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, type]
+              properties:
+                name: { type: string }
+                type:
+                  type: string
+                  enum: [merchant, vendor, customer, employer, employee, bank, wallet, exchange, tax_authority, agent, other]
+                country: { type: string }
+                tax_id: { type: string }
+                category: { type: string }
+                contact_email: { type: string }
+                aliases:
+                  type: array
+                  items: { type: string }
+      responses:
+        '201':
+          description: Counterparty created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  counterparty: { $ref: '#/components/schemas/Counterparty' }
+                  created: { type: boolean }
+                  merged: { type: boolean }
+        '200':
+          description: Existing counterparty merged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  counterparty: { $ref: '#/components/schemas/Counterparty' }
+                  created: { type: boolean }
+                  merged: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /ledger/counterparties/{counterparty_id}:
+    get:
+      tags: [Ledger]
+      summary: Counterparty detail
+      operationId: getCounterparty
+      parameters:
+        - name: counterparty_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Counterparty
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Counterparty' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Ledger]
+      summary: Edit counterparty identity fields
+      operationId: updateCounterpartyIdentity
+      parameters:
+        - name: counterparty_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                country: { type: string }
+                tax_id: { type: string }
+                category: { type: string }
+                contact_email: { type: string }
+                aliases:
+                  type: array
+                  items: { type: string }
+      responses:
+        '200':
+          description: Counterparty updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  counterparty: { $ref: '#/components/schemas/Counterparty' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Rename conflicts with another counterparty
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /ledger/obligations:
     get:
       tags: [Ledger]
@@ -3835,7 +3939,7 @@ components:
             normalized_name: { type: [string, "null"] }
             type:
               type: string
-              enum: [merchant, vendor, customer, employer, employee, bank, wallet, exchange, tax_authority, other]
+              enum: [merchant, vendor, customer, employer, employee, bank, wallet, exchange, tax_authority, agent, other]
             risk_level:
               type: [string, "null"]
               enum: [low, medium, high, sanctioned]

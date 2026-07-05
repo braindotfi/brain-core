@@ -39,6 +39,7 @@ export const FORWARDED_EVENTS = new Set<string>([
   "member.changed",
   "payment_intent.execute.after",
   "ledger.counterparty.created",
+  "ledger.counterparty.updated",
   "ledger.transaction.created",
   "ledger.obligation.created",
   "policy.evaluate",
