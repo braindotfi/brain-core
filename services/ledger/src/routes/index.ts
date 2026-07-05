@@ -15,7 +15,12 @@ import {
   type Scope,
   type ServiceCallContext,
 } from "@brain/shared";
-import type { LedgerService } from "../service/LedgerService.js";
+import type {
+  LedgerService,
+  ManualCounterpartyCreateInput,
+  ManualCounterpartyPatchInput,
+  ManualCounterpartyType,
+} from "../service/LedgerService.js";
 import type { ReconciliationService } from "../reconciliation/ReconciliationService.js";
 
 const READ: Scope = "ledger:read";
@@ -29,6 +34,8 @@ function principalCtx(request: FastifyRequest): ServiceCallContext {
     tenantId: request.principal.tenantId,
     actor: request.principal.id,
     requestId: request.id,
+    principalType: request.principal.type,
+    scopes: request.principal.scopes,
   };
 }
 
@@ -165,6 +172,18 @@ export async function registerLedgerRoutes(
     },
   );
 
+  app.post(
+    "/ledger/counterparties",
+    async (request: FastifyRequest<{ Body: Record<string, unknown> }>, reply) => {
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, WRITE);
+      const body = parseCounterpartyCreateBody(request.body);
+      const result = await service.createManualCounterparty(ctx, body);
+      reply.status(result.created ? 201 : 200);
+      return result;
+    },
+  );
+
   app.get(
     "/ledger/counterparties/:counterparty_id",
     async (request: FastifyRequest<{ Params: { counterparty_id: string } }>, reply) => {
@@ -177,6 +196,32 @@ export async function registerLedgerRoutes(
       if (result === null) throw brainError("ledger_row_not_found", "no such counterparty");
       reply.status(200);
       return result;
+    },
+  );
+
+  app.patch(
+    "/ledger/counterparties/:counterparty_id",
+    async (
+      request: FastifyRequest<{
+        Params: { counterparty_id: string };
+        Body: Record<string, unknown>;
+      }>,
+      reply,
+    ) => {
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, WRITE);
+      requireUserPrincipal(ctx);
+      if (!isBrainId(request.params.counterparty_id, "cp")) {
+        throw brainError("request_params_invalid", "malformed counterparty_id");
+      }
+      const body = parseCounterpartyPatchBody(request.body);
+      const result = await service.updateCounterpartyIdentity(
+        ctx,
+        request.params.counterparty_id,
+        body,
+      );
+      reply.status(200);
+      return { counterparty: result.counterparty };
     },
   );
 
@@ -358,4 +403,137 @@ function parseLimit(raw: string | undefined): number | undefined {
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n < 1) return undefined;
   return n;
+}
+
+const COUNTERPARTY_TYPES = new Set<ManualCounterpartyType>([
+  "merchant",
+  "vendor",
+  "customer",
+  "employer",
+  "employee",
+  "bank",
+  "wallet",
+  "exchange",
+  "tax_authority",
+  "agent",
+  "other",
+]);
+
+const IDENTITY_FIELDS = new Set([
+  "name",
+  "type",
+  "category",
+  "contact_email",
+  "country",
+  "tax_id",
+  "aliases",
+]);
+
+const PATCH_FIELDS = new Set(["name", "category", "contact_email", "country", "tax_id", "aliases"]);
+const TRUST_FIELDS = new Set(["provenance", "confidence", "verified_status", "risk_level"]);
+const PAYMENT_FIELD_RE = /(iban|account_number|routing|swift|bic|wallet|bank)/i;
+
+function parseCounterpartyCreateBody(body: Record<string, unknown>): ManualCounterpartyCreateInput {
+  assertPlainBody(body);
+  rejectPaymentFields(body);
+  rejectTrustFields(body);
+  rejectUnknownFields(body, IDENTITY_FIELDS);
+  const name = requireNonEmptyString(body["name"], "name");
+  const type = parseCounterpartyType(body["type"]);
+  return {
+    name,
+    type,
+    ...optionalIdentityFields(body),
+  };
+}
+
+function parseCounterpartyPatchBody(body: Record<string, unknown>): ManualCounterpartyPatchInput {
+  assertPlainBody(body);
+  rejectPaymentFields(body);
+  rejectTrustFields(body);
+  rejectUnknownFields(body, PATCH_FIELDS);
+  const patch: ManualCounterpartyPatchInput = optionalIdentityFields(body);
+  if (body["name"] !== undefined) patch.name = requireNonEmptyString(body["name"], "name");
+  if (Object.keys(patch).length === 0) {
+    throw brainError("request_body_invalid", "at least one editable field required");
+  }
+  return patch;
+}
+
+function optionalIdentityFields(
+  body: Record<string, unknown>,
+): Omit<ManualCounterpartyCreateInput, "name" | "type"> {
+  const out: Omit<ManualCounterpartyCreateInput, "name" | "type"> = {};
+  for (const key of ["category", "contact_email", "country", "tax_id"] as const) {
+    if (body[key] !== undefined) out[key] = requireNonEmptyString(body[key], key);
+  }
+  if (body["aliases"] !== undefined) {
+    if (!Array.isArray(body["aliases"])) {
+      throw brainError("request_body_invalid", "aliases must be an array of strings");
+    }
+    out.aliases = body["aliases"].map((alias) => requireNonEmptyString(alias, "aliases"));
+  }
+  return out;
+}
+
+function assertPlainBody(body: unknown): asserts body is Record<string, unknown> {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw brainError("request_body_invalid", "body must be an object");
+  }
+}
+
+function requireNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw brainError("request_body_invalid", `${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function parseCounterpartyType(value: unknown): ManualCounterpartyType {
+  if (typeof value !== "string" || !COUNTERPARTY_TYPES.has(value as ManualCounterpartyType)) {
+    throw brainError("request_body_invalid", "invalid_type", {
+      details: { reason: "invalid_type" },
+    });
+  }
+  return value as ManualCounterpartyType;
+}
+
+function rejectPaymentFields(body: Record<string, unknown>): void {
+  const found = Object.keys(body).filter((key) => PAYMENT_FIELD_RE.test(key));
+  if (found.length > 0) {
+    throw brainError("request_body_invalid", "payment_fields_not_allowed", {
+      details: { reason: "payment_fields_not_allowed", fields: found },
+    });
+  }
+}
+
+function rejectTrustFields(body: Record<string, unknown>): void {
+  const found = Object.keys(body).filter((key) => TRUST_FIELDS.has(key));
+  if (found.length > 0) {
+    throw brainError("request_body_invalid", "field_not_editable", {
+      details: { reason: "field_not_editable", fields: found },
+    });
+  }
+}
+
+function rejectUnknownFields(body: Record<string, unknown>, allowed: Set<string>): void {
+  const found = Object.keys(body).filter((key) => !allowed.has(key));
+  if (found.length > 0) {
+    throw brainError("request_body_invalid", "field_not_editable", {
+      details: { reason: "field_not_editable", fields: found },
+    });
+  }
+}
+
+function requireUserPrincipal(ctx: ServiceCallContext): void {
+  if (ctx.principalType !== "user") {
+    throw brainError("payment_intent_approval_invalid", "actor_unresolved", {
+      statusOverride: 403,
+      details: {
+        reason: "actor_unresolved",
+        source: "session",
+        principal_type: ctx.principalType ?? "unknown",
+      },
+    });
+  }
 }

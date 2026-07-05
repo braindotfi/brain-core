@@ -310,11 +310,30 @@ export interface paths {
         /** List/search counterparties */
         get: operations["listCounterparties"];
         put?: never;
-        post?: never;
+        /** Manually create or merge a counterparty */
+        post: operations["createCounterparty"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/ledger/counterparties/{counterparty_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Counterparty detail */
+        get: operations["getCounterparty"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit counterparty identity fields */
+        patch: operations["updateCounterpartyIdentity"];
         trace?: never;
     };
     "/ledger/obligations": {
@@ -2409,7 +2428,7 @@ export interface components {
             name: string;
             normalized_name?: string | null;
             /** @enum {string} */
-            type: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "other";
+            type: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "agent" | "other";
             /** @enum {string|null} */
             risk_level?: "low" | "medium" | "high" | "sanctioned" | null;
             /** @enum {string|null} */
@@ -3370,7 +3389,7 @@ export interface operations {
         parameters: {
             query?: {
                 q?: string;
-                type?: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "other";
+                type?: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "agent" | "other";
                 verified_status?: string;
             };
             header?: never;
@@ -3391,6 +3410,128 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+        };
+    };
+    createCounterparty: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                    /** @enum {string} */
+                    type: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "agent" | "other";
+                    country?: string;
+                    tax_id?: string;
+                    category?: string;
+                    contact_email?: string;
+                    aliases?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Existing counterparty merged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        counterparty?: components["schemas"]["Counterparty"];
+                        created?: boolean;
+                        merged?: boolean;
+                    };
+                };
+            };
+            /** @description Counterparty created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        counterparty?: components["schemas"]["Counterparty"];
+                        created?: boolean;
+                        merged?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getCounterparty: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                counterparty_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Counterparty */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Counterparty"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateCounterpartyIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                counterparty_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    country?: string;
+                    tax_id?: string;
+                    category?: string;
+                    contact_email?: string;
+                    aliases?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Counterparty updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        counterparty?: components["schemas"]["Counterparty"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Rename conflicts with another counterparty */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listObligations: {

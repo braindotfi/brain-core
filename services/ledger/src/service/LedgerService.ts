@@ -11,6 +11,7 @@
 
 import {
   brainError,
+  emitDomainEvent,
   withTenantScope,
   type ILedgerService,
   type ServiceCallContext,
@@ -34,6 +35,7 @@ import {
   findCounterpartyById,
   findDocumentById,
   findInvoiceById,
+  findCounterpartyByNormalizedName,
   findObligationById,
   findTransactionById,
   findLatestBalance,
@@ -44,6 +46,7 @@ import {
   listInvoices as listInvoicesRepo,
   listObligations as listObligationsRepo,
   listTransactions as listTransactionsRepo,
+  updateCounterpartyIdentity as updateCounterpartyIdentityRepo,
   type AccountRow,
   type BalanceRow,
   type CounterpartyRow,
@@ -54,6 +57,7 @@ import {
 } from "../repository/index.js";
 import type { LedgerDeps } from "../deps.js";
 import { recordTransactionRow, upsertAccountRow, upsertCounterpartyRow } from "./writes.js";
+import { normalizeName } from "./writes.js";
 import { extractorForParser } from "../extractors/registry.js";
 import {
   resolveObligationView,
@@ -259,6 +263,100 @@ export class LedgerService implements ILedgerService {
       ...(verified_status !== undefined && verified_status !== null ? { verified_status } : {}),
     });
     return serializeCounterparty(row);
+  }
+
+  public async createManualCounterparty(
+    ctx: ServiceCallContext,
+    input: ManualCounterpartyCreateInput,
+  ): Promise<{ counterparty: Counterparty; created: boolean; merged: boolean }> {
+    const provenance = ctx.principalType === "user" ? "human_confirmed" : "agent_contributed";
+    const confidence = provenance === "human_confirmed" ? 0.95 : 0.5;
+    const { row, created } = await upsertCounterpartyRow(this.deps.pool, this.deps.audit, ctx, {
+      name: input.name,
+      type: input.type,
+      aliases: input.aliases ?? [],
+      metadata: metadataFromIdentityFields(input),
+      source_ids: [],
+      evidence_ids: [],
+      provenance,
+      confidence,
+      verified_status: "unverified",
+      merge_trust_state: false,
+    });
+
+    if (created && row.type === "vendor" && this.deps.enqueue !== undefined) {
+      void emitDomainEvent(this.deps.enqueue, {
+        tenantId: ctx.tenantId,
+        event: "vendor.created",
+        ...(ctx.requestId !== undefined ? { requestId: ctx.requestId } : {}),
+        context: {
+          counterparty_id: row.id,
+          source: "ledger.counterparties.manual",
+          provenance,
+        },
+      });
+    }
+
+    return { counterparty: serializeCounterparty(row), created, merged: !created };
+  }
+
+  public async updateCounterpartyIdentity(
+    ctx: ServiceCallContext,
+    id: string,
+    input: ManualCounterpartyPatchInput,
+  ): Promise<{ counterparty: Counterparty; changed_fields: string[] }> {
+    const result = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      const before = await findCounterpartyById(c, id);
+      if (before === null) return null;
+
+      const aliases = mergeAliases(
+        before.aliases,
+        input.aliases ?? [],
+        input.name !== undefined && input.name !== before.name ? [before.name] : [],
+      );
+      if (input.name !== undefined && input.name !== before.name) {
+        const normalized = normalizeName(input.name).slice(0, 200);
+        const collision = await findCounterpartyByNormalizedName(c, normalized, before.type);
+        if (collision !== null && collision.id !== before.id) {
+          throw brainError("ledger_reconciliation_conflict", "name_conflict", {
+            statusOverride: 409,
+            details: {
+              reason: "name_conflict",
+              conflicting_counterparty_id: collision.id,
+            },
+          });
+        }
+      }
+
+      const metadata = metadataFromIdentityFields(input);
+      const changedFields = changedIdentityFields(before, input, aliases, metadata);
+      const after = await updateCounterpartyIdentityRepo(c, id, {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(aliasesChanged(before.aliases, aliases) ? { aliases } : {}),
+        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+        provenance: "human_confirmed",
+      });
+      if (after === null) return null;
+      return { before, after, changedFields };
+    });
+
+    if (result === null) {
+      throw brainError("ledger_row_not_found", "no such counterparty");
+    }
+
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "ledger",
+      actor: ctx.actor,
+      action: "ledger.counterparty.updated",
+      inputs: { counterparty_id: id, changed_fields: result.changedFields },
+      outputs: { counterparty_id: result.after.id },
+    });
+
+    return {
+      counterparty: serializeCounterparty(result.after),
+      changed_fields: result.changedFields,
+    };
   }
 
   /**
@@ -491,4 +589,71 @@ function clampLimit(requested: number | undefined, fallback: number, max: number
   if (requested === undefined) return fallback;
   if (requested < 1) return fallback;
   return Math.min(requested, max);
+}
+
+export type ManualCounterpartyType = Counterparty["type"];
+
+export interface ManualCounterpartyCreateInput {
+  name: string;
+  type: ManualCounterpartyType;
+  category?: string;
+  contact_email?: string;
+  country?: string;
+  tax_id?: string;
+  aliases?: string[];
+}
+
+export interface ManualCounterpartyPatchInput {
+  name?: string;
+  category?: string;
+  contact_email?: string;
+  country?: string;
+  tax_id?: string;
+  aliases?: string[];
+}
+
+function metadataFromIdentityFields(
+  input: ManualCounterpartyCreateInput | ManualCounterpartyPatchInput,
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {};
+  for (const key of ["category", "contact_email", "country", "tax_id"] as const) {
+    if (input[key] !== undefined) metadata[key] = input[key];
+  }
+  return metadata;
+}
+
+function mergeAliases(
+  current: ReadonlyArray<string>,
+  supplied: ReadonlyArray<string>,
+  forced: ReadonlyArray<string>,
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of [...current, ...supplied, ...forced]) {
+    const trimmed = value.trim();
+    if (trimmed === "") continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function aliasesChanged(before: ReadonlyArray<string>, after: ReadonlyArray<string>): boolean {
+  if (before.length !== after.length) return true;
+  return before.some((value, index) => value !== after[index]);
+}
+
+function changedIdentityFields(
+  before: CounterpartyRow,
+  input: ManualCounterpartyPatchInput,
+  aliases: ReadonlyArray<string>,
+  metadata: Record<string, unknown>,
+): string[] {
+  const fields: string[] = [];
+  if (input.name !== undefined && input.name !== before.name) fields.push("name");
+  if (aliasesChanged(before.aliases, aliases)) fields.push("aliases");
+  for (const key of Object.keys(metadata).sort()) fields.push(key);
+  return fields;
 }

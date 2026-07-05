@@ -1,5 +1,6 @@
 import type { TenantScopedClient } from "@brain/shared";
 import type { LedgerRowCommon } from "./types.js";
+import { normalizeName } from "../service/writes.js";
 
 export interface CounterpartyRow extends LedgerRowCommon {
   name: string;
@@ -23,6 +24,13 @@ export interface CounterpartyListFilters {
   type?: string;
   verified_status?: string;
   limit: number;
+}
+
+export interface CounterpartyIdentityPatch {
+  name?: string;
+  aliases?: string[];
+  metadata?: Record<string, unknown>;
+  provenance?: "human_confirmed";
 }
 
 export async function findCounterpartyById(
@@ -51,10 +59,17 @@ export async function listCounterparties(
     where.push(`verified_status = $${values.length}`);
   }
   if (filters.q !== undefined && filters.q !== "") {
-    values.push(`%${filters.q.toLowerCase()}%`);
+    const normalized = normalizeName(filters.q);
+    values.push(`%${normalized}%`);
     where.push(
-      `(LOWER(name) LIKE $${values.length} OR LOWER(COALESCE(normalized_name, '')) LIKE $${values.length})`,
+      `(LOWER(COALESCE(normalized_name, '')) LIKE $${values.length}
+        OR EXISTS (
+          SELECT 1
+            FROM unnest(aliases) AS alias
+           WHERE LOWER(alias) = LOWER($${values.length + 1})
+        ))`,
     );
+    values.push(filters.q.trim());
   }
   values.push(filters.limit);
   const limitIdx = values.length;
@@ -66,4 +81,59 @@ export async function listCounterparties(
     values,
   );
   return rows;
+}
+
+export async function findCounterpartyByNormalizedName(
+  client: TenantScopedClient,
+  normalizedName: string,
+  type: string,
+): Promise<CounterpartyRow | null> {
+  const { rows } = await client.query<CounterpartyRow>(
+    `SELECT * FROM ledger_counterparties
+      WHERE normalized_name = $1 AND type = $2
+      LIMIT 1`,
+    [normalizedName, type],
+  );
+  return rows[0] ?? null;
+}
+
+export async function updateCounterpartyIdentity(
+  client: TenantScopedClient,
+  id: string,
+  patch: CounterpartyIdentityPatch,
+): Promise<CounterpartyRow | null> {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if (patch.name !== undefined) {
+    values.push(patch.name);
+    sets.push(`name = $${values.length}`);
+    values.push(normalizeName(patch.name).slice(0, 200));
+    sets.push(`normalized_name = $${values.length}`);
+  }
+  if (patch.aliases !== undefined) {
+    values.push(patch.aliases);
+    sets.push(`aliases = $${values.length}`);
+  }
+  if (patch.metadata !== undefined) {
+    values.push(JSON.stringify(patch.metadata));
+    sets.push(`metadata = metadata || $${values.length}::jsonb`);
+  }
+  if (patch.provenance !== undefined) {
+    values.push(patch.provenance);
+    sets.push(`provenance = $${values.length}`);
+  }
+  if (sets.length === 0) {
+    return findCounterpartyById(client, id);
+  }
+  sets.push("updated_at = now()");
+  values.push(id);
+  const idIndex = values.length;
+  const { rows } = await client.query<CounterpartyRow>(
+    `UPDATE ledger_counterparties
+        SET ${sets.join(", ")}
+      WHERE id = $${idIndex}
+      RETURNING *`,
+    values,
+  );
+  return rows[0] ?? null;
 }

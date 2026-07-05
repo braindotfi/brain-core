@@ -1,12 +1,5 @@
 import { execFileSync } from "node:child_process";
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -33,6 +26,9 @@ test("check-invariants fails when self-approval moves after second approval", ()
       "services/api/src/main.ts",
       "services/api/src/demo/brainsaas-seed.ts",
       "services/execution/migrations/0024_bootstrap_missing_members.sql",
+      "services/ledger/src/routes/index.ts",
+      "services/ledger/src/service/LedgerService.ts",
+      "shared/src/webhooks/outbound.ts",
     ]) {
       const target = join(root, file);
       mkdirSync(dirname(target), { recursive: true });
@@ -74,6 +70,9 @@ test("check-invariants fails when provisioning stops creating bootstrap member",
       "services/api/src/main.ts",
       "services/api/src/demo/brainsaas-seed.ts",
       "services/execution/migrations/0024_bootstrap_missing_members.sql",
+      "services/ledger/src/routes/index.ts",
+      "services/ledger/src/service/LedgerService.ts",
+      "shared/src/webhooks/outbound.ts",
     ]) {
       const target = join(root, file);
       mkdirSync(dirname(target), { recursive: true });

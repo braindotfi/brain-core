@@ -154,6 +154,22 @@ Done
 - The platform repo must conform to `docs/contracts/members-attribution.md`.
   Platform-side member UI is mock-only until it is wired against the core
   `/v1/members` API and core approval responses.
+- Manual counterparty creation, search, and identity edit are governed by
+  `docs/contracts/counterparty-manual.md`. Ledger exposes
+  `GET /ledger/counterparties`, `GET /ledger/counterparties/:id`,
+  `POST /ledger/counterparties`, and `PATCH /ledger/counterparties/:id`.
+  Manual create derives provenance from the principal: user principals write
+  `human_confirmed`; agent and API partner principals write low-trust
+  `agent_contributed`. Request bodies cannot set provenance, confidence,
+  `verified_status`, or `risk_level`.
+- Manual counterparty create and edit are identity-only. Payment rail fields
+  such as IBAN, account number, routing, SWIFT, BIC, wallet, and bank details
+  are rejected with `payment_fields_not_allowed` and never write
+  `ledger_counterparty_payment_instructions`.
+- Counterparty identity edits require a user principal, preserve the previous
+  name as an alias on rename, keep aliases append-only, reject rename
+  collisions with `name_conflict`, and emit `ledger.counterparty.updated`.
+  New manual vendor creates emit `vendor.created` for vendor risk routing.
 
 ### Deployment
 

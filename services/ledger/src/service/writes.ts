@@ -101,6 +101,8 @@ export interface UpsertCounterpartyArgs {
   evidence_ids: string[];
   provenance: string;
   confidence: number;
+  /** False for manual create, where a dedupe merge must not alter trust state. */
+  merge_trust_state?: boolean;
 }
 
 /**
@@ -131,11 +133,11 @@ export async function upsertCounterpartyRow(
             SET aliases = $1,
                 source_ids = $2,
                 evidence_ids = $3,
-                risk_level = COALESCE($4, risk_level),
-                verified_status = COALESCE($5, verified_status),
+                risk_level = CASE WHEN $7 THEN COALESCE($4, risk_level) ELSE risk_level END,
+                verified_status = CASE WHEN $7 THEN COALESCE($5, verified_status) ELSE verified_status END,
                 metadata = COALESCE($6::jsonb, metadata),
                 updated_at = now()
-          WHERE id = $7
+          WHERE id = $8
           RETURNING *`,
         [
           aliases,
@@ -144,6 +146,7 @@ export async function upsertCounterpartyRow(
           args.risk_level ?? null,
           args.verified_status ?? null,
           args.metadata !== undefined ? JSON.stringify(args.metadata) : null,
+          args.merge_trust_state ?? true,
           existing.id,
         ],
       );

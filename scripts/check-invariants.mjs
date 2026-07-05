@@ -22,7 +22,10 @@ const authorizeIndex = approveBody.indexOf("authorizeApproval(");
 const signIndex = approveBody.indexOf("this.deps.approvals.sign(");
 check(
   "PaymentIntent approve calls authorizeApproval before approvals.sign",
-  approveStart >= 0 && approveEnd > approveStart && authorizeIndex >= 0 && signIndex > authorizeIndex,
+  approveStart >= 0 &&
+    approveEnd > approveStart &&
+    authorizeIndex >= 0 &&
+    signIndex > authorizeIndex,
   "approve must authorize member authority before writing an approval signature",
 );
 
@@ -71,7 +74,10 @@ const provisionTenant = read("services/api/src/onboarding/provision.ts");
 const provisionTxnStart = provisionTenant.indexOf("await withTenantScope(pool, tenantId");
 const tenantInsertIndex = provisionTenant.indexOf("INSERT INTO tenants", provisionTxnStart);
 const userInsertIndex = provisionTenant.indexOf("INSERT INTO users", provisionTxnStart);
-const bootstrapMemberIndex = provisionTenant.indexOf("insertBootstrapAdminMember", provisionTxnStart);
+const bootstrapMemberIndex = provisionTenant.indexOf(
+  "insertBootstrapAdminMember",
+  provisionTxnStart,
+);
 const verificationInsertIndex = provisionTenant.indexOf(
   "INSERT INTO email_verifications",
   provisionTxnStart,
@@ -103,8 +109,8 @@ check(
   "demo provision-run returns split agent and member tokens",
   apiMain.includes("agent_token: agentToken") &&
     apiMain.includes("member_token: memberToken") &&
-    apiMain.includes("type: \"agent\"") &&
-    apiMain.includes("type: \"user\"") &&
+    apiMain.includes('type: "agent"') &&
+    apiMain.includes('type: "user"') &&
     apiMain.includes("scopes: PAYMENT_AGENT_SCOPES"),
   "demo provision-run must return a propose-only agent token and separate user member token",
 );
@@ -195,6 +201,81 @@ check(
     serviceTokenAuditIndex > serviceTokenSignStart &&
     serviceTokenAuditIndex < serviceTokenReplyIndex,
   "POST /v1/auth/service-token must call audit.emit with action auth.service_token.minted before the 201 reply",
+);
+
+const ledgerRoutes = read("services/ledger/src/routes/index.ts");
+const ledgerService = read("services/ledger/src/service/LedgerService.ts");
+const webhookOutbound = read("shared/src/webhooks/outbound.ts");
+const counterpartyCreateRouteIndex = ledgerRoutes.indexOf(
+  "parseCounterpartyCreateBody(request.body)",
+);
+const counterpartyCreateMutateIndex = ledgerRoutes.indexOf("service.createManualCounterparty");
+const counterpartyCreateParserStart = ledgerRoutes.indexOf("function parseCounterpartyCreateBody");
+const counterpartyPatchParserStart = ledgerRoutes.indexOf("function parseCounterpartyPatchBody");
+const counterpartyParserEnd = ledgerRoutes.indexOf(
+  "function optionalIdentityFields",
+  counterpartyPatchParserStart,
+);
+const counterpartyParserBody = ledgerRoutes.slice(
+  counterpartyCreateParserStart,
+  counterpartyParserEnd,
+);
+check(
+  "manual counterparty routes reject payment and trust fields",
+  ledgerRoutes.includes("payment_fields_not_allowed") &&
+    ledgerRoutes.includes("field_not_editable") &&
+    ledgerRoutes.includes("PAYMENT_FIELD_RE") &&
+    ledgerRoutes.includes("TRUST_FIELDS") &&
+    counterpartyCreateRouteIndex >= 0 &&
+    counterpartyCreateMutateIndex > counterpartyCreateRouteIndex &&
+    counterpartyCreateParserStart >= 0 &&
+    counterpartyPatchParserStart > counterpartyCreateParserStart &&
+    counterpartyParserEnd > counterpartyPatchParserStart &&
+    counterpartyParserBody.includes("rejectPaymentFields(body)") &&
+    counterpartyParserBody.includes("rejectTrustFields(body)"),
+  "POST/PATCH /ledger/counterparties must reject payment instruction fields and trust state before service mutation",
+);
+
+const manualCreateStart = ledgerService.indexOf("public async createManualCounterparty");
+const manualCreateEnd = ledgerService.indexOf(
+  "public async updateCounterpartyIdentity",
+  manualCreateStart,
+);
+const manualCreateBody = ledgerService.slice(manualCreateStart, manualCreateEnd);
+check(
+  "manual counterparty provenance is server-derived",
+  manualCreateStart >= 0 &&
+    manualCreateEnd > manualCreateStart &&
+    manualCreateBody.includes(
+      'ctx.principalType === "user" ? "human_confirmed" : "agent_contributed"',
+    ) &&
+    !manualCreateBody.includes("input.provenance") &&
+    !manualCreateBody.includes("input.confidence") &&
+    !manualCreateBody.includes("input.verified_status") &&
+    !manualCreateBody.includes("input.risk_level"),
+  "manual counterparty create must derive provenance and confidence from the principal, never request body fields",
+);
+
+const updateIdentityStart = ledgerService.indexOf("public async updateCounterpartyIdentity");
+const updateIdentityEnd = ledgerService.indexOf(
+  "public async normalizeFromRaw",
+  updateIdentityStart,
+);
+const updateIdentityBody = ledgerService.slice(updateIdentityStart, updateIdentityEnd);
+check(
+  "counterparty rename preserves previous name as alias",
+  updateIdentityStart >= 0 &&
+    updateIdentityEnd > updateIdentityStart &&
+    updateIdentityBody.includes("[before.name]") &&
+    updateIdentityBody.includes("name_conflict") &&
+    updateIdentityBody.includes('provenance: "human_confirmed"'),
+  "counterparty identity updates must preserve the previous name as an alias, reject rename collisions, and stamp human provenance",
+);
+
+check(
+  "counterparty updated webhooks are forwardable",
+  webhookOutbound.includes('"ledger.counterparty.updated"'),
+  "ledger.counterparty.updated must remain in the outbound webhook event allowlist",
 );
 
 const bad = checks.filter((c) => !c.ok);
