@@ -2,6 +2,7 @@ import Fastify, { type FastifyRequest } from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import {
   errorHandlerPlugin,
+  InMemoryAuditEmitter,
   newCounterpartyId,
   newTenantId,
   newUserId,
@@ -10,7 +11,9 @@ import {
   type Scope,
 } from "@brain/shared";
 import { registerLedgerRoutes } from "./index.js";
+import { registerLedgerPlugin } from "../server.js";
 import type { LedgerService } from "../service/LedgerService.js";
+import type { Pool } from "pg";
 
 const tenantId = newTenantId();
 
@@ -35,6 +38,25 @@ async function buildApp(service: Partial<LedgerService>, p: Principal = principa
   return app;
 }
 
+function fakePool(routes: Record<string, Array<Record<string, unknown>>> = {}): Pool {
+  const client = {
+    query: vi.fn(async (text: string) => {
+      if (text.startsWith("BEGIN") || text === "COMMIT" || text === "ROLLBACK") {
+        return { rows: [], rowCount: 0 };
+      }
+      if (text.startsWith("SELECT set_config")) return { rows: [], rowCount: 0 };
+      for (const [pattern, rows] of Object.entries(routes)) {
+        if (text.includes(pattern)) {
+          return { rows, rowCount: rows.length };
+        }
+      }
+      return { rows: [], rowCount: 0 };
+    }),
+    release: vi.fn(),
+  };
+  return { connect: async () => client } as unknown as Pool;
+}
+
 describe("counterparty routes", () => {
   const counterpartyId = newCounterpartyId();
 
@@ -43,6 +65,7 @@ describe("counterparty routes", () => {
       id: "cp_manual",
       owner_id: tenantId,
       name: "Acme",
+      display_name: "Acme",
       normalized_name: "acme",
       type: "vendor",
       risk_level: null,
@@ -81,12 +104,17 @@ describe("counterparty routes", () => {
       const ok = await app.inject({
         method: "POST",
         url: "/ledger/counterparties",
-        payload: { name: "Acme", type: "vendor", country: "AE" },
+        payload: { name: "Acme", display_name: "Acme Trading", type: "vendor", country: "AE" },
       });
       expect(ok.statusCode).toBe(201);
       expect(createManualCounterparty).toHaveBeenCalledWith(
         expect.objectContaining({ principalType: "user" }),
-        expect.objectContaining({ name: "Acme", type: "vendor", country: "AE" }),
+        expect.objectContaining({
+          name: "Acme",
+          display_name: "Acme Trading",
+          type: "vendor",
+          country: "AE",
+        }),
       );
     } finally {
       await app.close();
@@ -103,6 +131,102 @@ describe("counterparty routes", () => {
       });
       expect(res.statusCode).toBe(400);
       expect(res.json().error.details.reason).toBe("payment_fields_not_allowed");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("passes verified_status through list filters and rejects invalid values", async () => {
+    const listCounterparties = vi.fn(async () => ({ items: [], next_cursor: null }));
+    const app = await buildApp({ listCounterparties });
+    try {
+      const ok = await app.inject({
+        method: "GET",
+        url: "/ledger/counterparties?verified_status=unverified",
+      });
+      expect(ok.statusCode).toBe(200);
+      expect(listCounterparties).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ verified_status: "unverified" }),
+      );
+
+      const bad = await app.inject({
+        method: "GET",
+        url: "/ledger/counterparties?verified_status=trusted",
+      });
+      expect(bad.statusCode).toBe(400);
+      expect(bad.json().error.details.reason).toBe("invalid_verified_status");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("reports unknown identity fields distinctly from trust fields", async () => {
+    const app = await buildApp({ createManualCounterparty: vi.fn() });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/ledger/counterparties",
+        payload: { name: "Acme", type: "vendor", nickname: "A" },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.details.reason).toBe("unknown_field");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("wires plugin enqueue options into manual vendor.created routing", async () => {
+    const enqueue = vi.fn(async () => undefined);
+    const app = Fastify({ logger: false });
+    await app.register(errorHandlerPlugin);
+    app.addHook("preHandler", async (request: FastifyRequest) => {
+      request.principal = principal();
+    });
+    await registerLedgerPlugin(
+      app,
+      {
+        pool: fakePool({
+          "INSERT INTO ledger_counterparties": [
+            {
+              owner_id: tenantId,
+              source_ids: [],
+              evidence_ids: [],
+              provenance: "human_confirmed",
+              confidence: 0.95,
+              created_at: new Date("2026-07-05T00:00:00.000Z"),
+              updated_at: new Date("2026-07-05T00:00:00.000Z"),
+              id: "cp_manual",
+              name: "Acme",
+              normalized_name: "acme",
+              type: "vendor",
+              risk_level: null,
+              verified_status: "unverified",
+              aliases: [],
+              linked_accounts: [],
+              agent_id: null,
+              onchain_address: null,
+              metadata: {},
+            },
+          ],
+        }),
+        audit: new InMemoryAuditEmitter(),
+      },
+      { enqueue },
+    );
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/ledger/counterparties",
+        payload: { name: "Acme", type: "vendor" },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId,
+          payload: expect.objectContaining({ event: "vendor.created" }),
+        }),
+      );
     } finally {
       await app.close();
     }

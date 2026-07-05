@@ -76,14 +76,27 @@ export async function emitDomainEvent(
   enqueue: RoutingEnqueue,
   input: EmitDomainEventInput,
 ): Promise<void> {
-  await enqueue({
-    tenantId: input.tenantId,
-    ...(input.requestId !== undefined ? { requestId: input.requestId } : {}),
-    payload: {
-      event: input.event,
-      ...(input.context !== undefined ? { context: input.context } : {}),
-    },
-  });
+  try {
+    await enqueue({
+      tenantId: input.tenantId,
+      ...(input.requestId !== undefined ? { requestId: input.requestId } : {}),
+      payload: {
+        event: input.event,
+        ...(input.context !== undefined ? { context: input.context } : {}),
+      },
+    });
+  } catch (err) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "domain_event_enqueue_failed",
+        tenant_id: input.tenantId,
+        request_id: input.requestId ?? null,
+        event: input.event,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
 }
 
 /** Build a RoutingEnqueue backed by the `agentRoute` BullMQ queue. */

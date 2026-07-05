@@ -154,7 +154,7 @@ export class ReconciliationService implements IReconciliationService {
           event: "reconciliation.candidate_found",
           context: { matches_created: totalCreated, match_types: types },
           ...(ctx.requestId !== undefined ? { requestId: ctx.requestId } : {}),
-        }).catch(() => undefined);
+        });
       }
 
       // Phase 5 returns a synthetic job id; stage-8 wires this through BullMQ

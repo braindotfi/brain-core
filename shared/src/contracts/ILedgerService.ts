@@ -73,6 +73,7 @@ export interface Transaction extends LedgerCommonFields {
 
 export interface Counterparty extends LedgerCommonFields {
   name: string;
+  display_name: string;
   normalized_name: string | null;
   type:
     | "merchant"
