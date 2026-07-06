@@ -27,6 +27,11 @@ export interface ParsedRaw {
   parsed: RawParsed[];
 }
 
+export interface RawExtractResult {
+  parsedId: string;
+  confidence: number;
+}
+
 export type GetParsedParams = NonNullable<
   paths["/raw/{raw_id}/parsed"]["get"]["parameters"]["query"]
 >;
@@ -88,6 +93,17 @@ export class RawResource {
     return {
       rawId: body.raw_id,
       parsed: body.parsed ?? [],
+    };
+  }
+
+  async extract(rawId: string): Promise<RawExtractResult> {
+    const { data, error, response } = await this.http.POST("/raw/{raw_id}/extract", {
+      params: { path: { raw_id: rawId } },
+    });
+    const body = unwrap(data, error, response.status);
+    return {
+      parsedId: body.parsed_id,
+      confidence: body.confidence,
     };
   }
 }

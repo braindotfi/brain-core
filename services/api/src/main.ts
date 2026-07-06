@@ -199,7 +199,9 @@ import {
 } from "@brain/internal-agents";
 import { createViemScopeChecker } from "./mcp/viemScopeChecker.js";
 import { createViemPolicySignerChecker } from "./policy/viemPolicySignerChecker.js";
+import { DocumentExtractClient } from "./agents/documentExtractClient.js";
 import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
+import { registerRawExtractRoute } from "./raw-extract/route.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
 import {
@@ -1320,6 +1322,7 @@ async function main(): Promise<void> {
   // call would 401 at the Python verifier with the failure invisible until
   // the first request lands.
   const reconciliationAgentUrl = cfg.RECONCILIATION_AGENT_URL;
+  const documentExtractAgentUrl = cfg.DOCUMENT_EXTRACT_AGENT_URL;
   if (
     reconciliationAgentUrl !== undefined &&
     cfg.BRAIN_AGENTS_INBOUND_SECRET === undefined &&
@@ -1327,6 +1330,16 @@ async function main(): Promise<void> {
   ) {
     throw new Error(
       "BRAIN_AGENTS_INBOUND_SECRET is required when RECONCILIATION_AGENT_URL is set in " +
+        "NODE_ENV=production. The Python service requires X-Brain-Auth on every request.",
+    );
+  }
+  if (
+    documentExtractAgentUrl !== undefined &&
+    cfg.BRAIN_AGENTS_INBOUND_SECRET === undefined &&
+    cfg.NODE_ENV === "production"
+  ) {
+    throw new Error(
+      "BRAIN_AGENTS_INBOUND_SECRET is required when DOCUMENT_EXTRACT_AGENT_URL is set in " +
         "NODE_ENV=production. The Python service requires X-Brain-Auth on every request.",
     );
   }
@@ -1341,6 +1354,15 @@ async function main(): Promise<void> {
           ),
         }
       : {};
+  const documentExtractClient =
+    documentExtractAgentUrl !== undefined
+      ? new DocumentExtractClient(
+          documentExtractAgentUrl,
+          cfg.BRAIN_AGENTS_INBOUND_SECRET !== undefined
+            ? { signingSecret: cfg.BRAIN_AGENTS_INBOUND_SECRET }
+            : {},
+        )
+      : undefined;
 
   // -- Agent run persistence + run service (Agent Autonomy v3, 1a.3/1a.6) ---
   // Runs persist through the execution-owned agent_runs tables (tenant-scoped,
@@ -1551,6 +1573,14 @@ async function main(): Promise<void> {
     await app.register(
       async (v1) => {
         await v1.register(async (child) => registerRawPlugin(child, rawDeps, rawOpts));
+        await v1.register(async (child) =>
+          registerRawExtractRoute(child, {
+            pool,
+            blob,
+            agentId: "document_extractor",
+            ...(documentExtractClient !== undefined ? { client: documentExtractClient } : {}),
+          }),
+        );
         await v1.register(async (child) =>
           registerLedgerPlugin(child, ledgerDeps, { enqueue: routingEnqueue }),
         );
