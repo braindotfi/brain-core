@@ -71,6 +71,24 @@ resource "azurerm_role_assignment" "services_kv_read" {
   principal_id         = azurerm_user_assigned_identity.services.principal_id
 }
 
+data "azurerm_key_vault_secret" "openai_api_key" {
+  count        = contains(var.services, "agents") ? 1 : 0
+  name         = var.openai_api_key_secret_name
+  key_vault_id = azurerm_key_vault.main.id
+}
+
+data "azurerm_key_vault_secret" "brain_agents_inbound_secret" {
+  count        = contains(var.services, "agents") ? 1 : 0
+  name         = var.brain_agents_inbound_secret_name
+  key_vault_id = azurerm_key_vault.main.id
+}
+
+data "azurerm_key_vault_secret" "brain_api_token" {
+  count        = contains(var.services, "agents") ? 1 : 0
+  name         = var.brain_api_token_secret_name
+  key_vault_id = azurerm_key_vault.main.id
+}
+
 # ---------------------------------------------------------------------------
 # Postgres Flexible Server with pgvector
 # ---------------------------------------------------------------------------
@@ -204,7 +222,14 @@ resource "azurerm_container_app_environment" "main" {
 # One Container App per service. Revision-based blue/green per §10.3.
 # Override var.services in a tfvars file to deploy a subset (e.g. poc.tfvars).
 locals {
-  services = toset(var.services)
+  services                   = toset(var.services)
+  deploys_agents             = contains(var.services, "agents")
+  api_base_url               = local.is_prod ? "https://api.brain.fi" : "https://api.sandbox.brain.fi"
+  document_extract_agent_url = "https://${local.name_prefix}-agents.internal.${azurerm_container_app_environment.main.default_domain}"
+  service_ports = merge(
+    { for service in var.services : service => 8080 },
+    { agents = 8001 },
+  )
 }
 
 resource "azurerm_container_app" "service" {
@@ -239,6 +264,10 @@ resource "azurerm_container_app" "service" {
         value = var.environment
       }
       env {
+        name  = "BRAIN_ENV"
+        value = var.environment
+      }
+      env {
         name  = "SERVICE_NAME"
         value = "brain-${each.key}"
       }
@@ -249,6 +278,41 @@ resource "azurerm_container_app" "service" {
       env {
         name        = "REDIS_URL"
         secret_name = "redis-url"
+      }
+      dynamic "env" {
+        for_each = each.key == "api" && local.deploys_agents ? [1] : []
+        content {
+          name  = "DOCUMENT_EXTRACT_AGENT_URL"
+          value = local.document_extract_agent_url
+        }
+      }
+      dynamic "env" {
+        for_each = (each.key == "api" || each.key == "agents") && local.deploys_agents ? [1] : []
+        content {
+          name        = "BRAIN_AGENTS_INBOUND_SECRET"
+          secret_name = "brain-agents-inbound-secret"
+        }
+      }
+      dynamic "env" {
+        for_each = each.key == "agents" ? [1] : []
+        content {
+          name        = "OPENAI_API_KEY"
+          secret_name = "openai-api-key"
+        }
+      }
+      dynamic "env" {
+        for_each = each.key == "agents" ? [1] : []
+        content {
+          name        = "BRAIN_API_TOKEN"
+          secret_name = "brain-api-token"
+        }
+      }
+      dynamic "env" {
+        for_each = each.key == "agents" ? [1] : []
+        content {
+          name  = "BRAIN_API_BASE_URL"
+          value = local.api_base_url
+        }
       }
     }
   }
@@ -265,9 +329,36 @@ resource "azurerm_container_app" "service" {
     key_vault_secret_id = azurerm_key_vault_secret.redis_url.id
   }
 
+  dynamic "secret" {
+    for_each = local.deploys_agents ? [1] : []
+    content {
+      name                = "openai-api-key"
+      identity            = azurerm_user_assigned_identity.services.id
+      key_vault_secret_id = data.azurerm_key_vault_secret.openai_api_key[0].id
+    }
+  }
+
+  dynamic "secret" {
+    for_each = local.deploys_agents ? [1] : []
+    content {
+      name                = "brain-agents-inbound-secret"
+      identity            = azurerm_user_assigned_identity.services.id
+      key_vault_secret_id = data.azurerm_key_vault_secret.brain_agents_inbound_secret[0].id
+    }
+  }
+
+  dynamic "secret" {
+    for_each = local.deploys_agents ? [1] : []
+    content {
+      name                = "brain-api-token"
+      identity            = azurerm_user_assigned_identity.services.id
+      key_vault_secret_id = data.azurerm_key_vault_secret.brain_api_token[0].id
+    }
+  }
+
   ingress {
     external_enabled = each.key == "api"
-    target_port      = 8080
+    target_port      = local.service_ports[each.key]
     traffic_weight {
       latest_revision = true
       percentage      = 100

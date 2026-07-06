@@ -189,6 +189,22 @@ Done
 
 ### Deployment
 
+The main workflow runs the Python agents quality gate before image builds:
+`ruff`, `black --check`, `mypy --strict brain_agents`, and `pytest`. The
+container image matrix builds `brain-agents` from `services/agents/Dockerfile`
+with `services/agents` as the Docker context. Staging deploy and production
+promote update `api` and `agents` together.
+
+Terraform deploys `agents` as an internal-only Azure Container App on port 8001. The public API remains the only externally exposed Container App. When
+`agents` is in `var.services`, the API app receives
+`DOCUMENT_EXTRACT_AGENT_URL=https://brain-<environment>-agents.internal.<aca-default-domain>`
+and the shared `BRAIN_AGENTS_INBOUND_SECRET`. The agents app receives
+`OPENAI_API_KEY`, `BRAIN_AGENTS_INBOUND_SECRET`, `BRAIN_API_TOKEN`, and
+`BRAIN_API_BASE_URL` from Key Vault-backed Container App secrets. Operators
+must create `openai-api-key`, `brain-agents-inbound-secret`, and
+`brain-api-token` in both staging and production Key Vaults before applying the
+Terraform stack with agents enabled.
+
 Production promotion now runs `tools/migrate up` against `DATABASE_URL_PROD`
 inside the `promote_production` GitHub environment before updating the
 production Container App revision. The migration runner is idempotent: applied
