@@ -166,13 +166,21 @@ export class LedgerService implements ILedgerService {
 
   public async listCounterparties(
     ctx: ServiceCallContext,
-    f: { q?: string; type?: Counterparty["type"]; limit?: number },
+    f: {
+      q?: string;
+      type?: Counterparty["type"];
+      verified_status?: Counterparty["verified_status"];
+      limit?: number;
+    },
   ): Promise<ListResult<Counterparty>> {
     const limit = clampLimit(f.limit, 50, 500);
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       listCounterpartiesRepo(c, {
         ...(f.q !== undefined ? { q: f.q } : {}),
         ...(f.type !== undefined ? { type: f.type } : {}),
+        ...(f.verified_status !== undefined && f.verified_status !== null
+          ? { verified_status: f.verified_status }
+          : {}),
         limit,
       }),
     );
@@ -274,7 +282,13 @@ export class LedgerService implements ILedgerService {
     const { row, created } = await upsertCounterpartyRow(this.deps.pool, this.deps.audit, ctx, {
       name: input.name,
       type: input.type,
-      aliases: input.aliases ?? [],
+      aliases: mergeAliases(
+        [],
+        input.aliases ?? [],
+        input.display_name !== undefined && input.display_name !== input.name
+          ? [input.display_name]
+          : [],
+      ),
       metadata: metadataFromIdentityFields(input),
       source_ids: [],
       evidence_ids: [],
@@ -309,11 +323,13 @@ export class LedgerService implements ILedgerService {
       const before = await findCounterpartyById(c, id);
       if (before === null) return null;
 
-      const aliases = mergeAliases(
-        before.aliases,
-        input.aliases ?? [],
-        input.name !== undefined && input.name !== before.name ? [before.name] : [],
-      );
+      const beforeDisplayName = displayNameFromMetadata(before);
+      const aliases = mergeAliases(before.aliases, input.aliases ?? [], [
+        ...(input.name !== undefined && input.name !== before.name ? [before.name] : []),
+        ...(input.display_name !== undefined && input.display_name !== beforeDisplayName
+          ? [beforeDisplayName]
+          : []),
+      ]);
       if (input.name !== undefined && input.name !== before.name) {
         const normalized = normalizeName(input.name).slice(0, 200);
         const collision = await findCounterpartyByNormalizedName(c, normalized, before.type);
@@ -526,6 +542,7 @@ function serializeCounterparty(row: CounterpartyRow): Counterparty {
   return {
     ...commonFields(row),
     name: row.name,
+    display_name: displayNameFromMetadata(row),
     normalized_name: row.normalized_name,
     type: row.type as Counterparty["type"],
     risk_level: row.risk_level as Counterparty["risk_level"],
@@ -534,7 +551,7 @@ function serializeCounterparty(row: CounterpartyRow): Counterparty {
     linked_accounts: row.linked_accounts,
     agent_id: row.agent_id,
     onchain_address: row.onchain_address,
-    metadata: row.metadata,
+    metadata: row.metadata ?? {},
   };
 }
 
@@ -595,6 +612,7 @@ export type ManualCounterpartyType = Counterparty["type"];
 
 export interface ManualCounterpartyCreateInput {
   name: string;
+  display_name?: string;
   type: ManualCounterpartyType;
   category?: string;
   contact_email?: string;
@@ -605,6 +623,7 @@ export interface ManualCounterpartyCreateInput {
 
 export interface ManualCounterpartyPatchInput {
   name?: string;
+  display_name?: string;
   category?: string;
   contact_email?: string;
   country?: string;
@@ -616,7 +635,7 @@ function metadataFromIdentityFields(
   input: ManualCounterpartyCreateInput | ManualCounterpartyPatchInput,
 ): Record<string, unknown> {
   const metadata: Record<string, unknown> = {};
-  for (const key of ["category", "contact_email", "country", "tax_id"] as const) {
+  for (const key of ["display_name", "category", "contact_email", "country", "tax_id"] as const) {
     if (input[key] !== undefined) metadata[key] = input[key];
   }
   return metadata;
@@ -656,4 +675,11 @@ function changedIdentityFields(
   if (aliasesChanged(before.aliases, aliases)) fields.push("aliases");
   for (const key of Object.keys(metadata).sort()) fields.push(key);
   return fields;
+}
+
+function displayNameFromMetadata(
+  row: Pick<CounterpartyRow, "name"> & { metadata?: Record<string, unknown> | null },
+): string {
+  const displayName = row.metadata?.["display_name"];
+  return typeof displayName === "string" && displayName.trim() !== "" ? displayName : row.name;
 }

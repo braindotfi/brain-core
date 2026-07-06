@@ -2426,6 +2426,7 @@ export interface components {
         };
         Counterparty: components["schemas"]["LedgerCommonFields"] & {
             name: string;
+            display_name: string;
             normalized_name?: string | null;
             /** @enum {string} */
             type: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "agent" | "other";
@@ -3390,7 +3391,7 @@ export interface operations {
             query?: {
                 q?: string;
                 type?: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "agent" | "other";
-                verified_status?: string;
+                verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared";
             };
             header?: never;
             path?: never;
@@ -3423,6 +3424,7 @@ export interface operations {
             content: {
                 "application/json": {
                     name: string;
+                    display_name?: string;
                     /** @enum {string} */
                     type: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "agent" | "other";
                     country?: string;
@@ -3500,6 +3502,7 @@ export interface operations {
             content: {
                 "application/json": {
                     name?: string;
+                    display_name?: string;
                     country?: string;
                     tax_id?: string;
                     category?: string;

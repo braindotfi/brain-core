@@ -7,6 +7,7 @@ import { findDocumentById, listDocuments } from "./documents.js";
 import { findInvoiceById, listInvoices } from "./invoices.js";
 import { findObligationById, listObligations } from "./obligations.js";
 import { findTransferById, listTransfers } from "./transfers.js";
+import { listCounterparties } from "./counterparties.js";
 
 type FakeClient = TenantScopedClient & { _log: { sql: string; values: unknown[] }[] };
 
@@ -163,6 +164,25 @@ describe("listInvoices", () => {
     expect(_log[0]!.sql).toContain("status = $1");
     expect(_log[0]!.sql).toContain("counterparty_id = $2");
     expect(_log[0]!.values).toEqual(["open", "cp_1", 15]);
+  });
+});
+
+// ---- counterparties ----
+
+describe("listCounterparties", () => {
+  it("adds verified_status filter", async () => {
+    const { _log, ...client } = fakeClient();
+    await listCounterparties(client, { verified_status: "unverified", limit: 20 });
+    expect(_log[0]!.sql).toContain("verified_status = $1");
+    expect(_log[0]!.values).toEqual(["unverified", 20]);
+  });
+
+  it("searches normalized names and aliases", async () => {
+    const { _log, ...client } = fakeClient();
+    await listCounterparties(client, { q: "Acme Trading", limit: 20 });
+    expect(_log[0]!.sql).toContain("LOWER(COALESCE(normalized_name, '')) LIKE $1");
+    expect(_log[0]!.sql).toContain("FROM unnest(aliases) AS alias");
+    expect(_log[0]!.values).toEqual(["%acme_trading%", "Acme Trading", 20]);
   });
 });
 

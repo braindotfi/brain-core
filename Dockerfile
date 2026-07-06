@@ -69,6 +69,8 @@ RUN pnpm -C tools/seed-golden-path run build
 
 # ---- runtime stage ----
 FROM node:22-slim AS runtime
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
 
 RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
 

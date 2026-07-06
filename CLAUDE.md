@@ -162,10 +162,18 @@ Done
   `human_confirmed`; agent and API partner principals write low-trust
   `agent_contributed`. Request bodies cannot set provenance, confidence,
   `verified_status`, or `risk_level`.
+- Counterparty responses include `display_name`. If unset, it defaults to
+  `name`. Manual create accepts `display_name` and aliases it when it differs
+  from `name`; manual edit accepts `display_name`, aliases the previous display
+  name, and does not change `normalized_name`.
+- Counterparty list supports `verified_status` filtering for `unverified`,
+  `self_attested`, `document_verified`, and `sanctions_cleared`.
 - Manual counterparty create and edit are identity-only. Payment rail fields
   such as IBAN, account number, routing, SWIFT, BIC, wallet, and bank details
   are rejected with `payment_fields_not_allowed` and never write
   `ledger_counterparty_payment_instructions`.
+- Unknown identity body fields return `unknown_field`; server-controlled trust
+  fields return `field_not_editable`.
 - Counterparty identity edits require a user principal, preserve the previous
   name as an alias on rename, keep aliases append-only, reject rename
   collisions with `name_conflict`, and emit `ledger.counterparty.updated`.
@@ -185,6 +193,10 @@ After the production app update, `promote_production` curls the production
 health URL and fails the job if no 2xx response is observed. The default smoke
 target is `https://api.brain.fi/health`; override with
 `BRAIN_PRODUCTION_HEALTH_URL` when needed.
+
+`/health` includes `commit: process.env.GIT_SHA ?? "dev"` so operators can
+confirm which image revision an environment is running. The main workflow passes
+the GitHub SHA into container image builds as `GIT_SHA`.
 
 #### Current deployment state
 

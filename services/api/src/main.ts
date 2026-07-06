@@ -475,9 +475,14 @@ async function main(): Promise<void> {
     s3ForcePathStyle: cfg.S3_FORCE_PATH_STYLE,
   });
 
+  // Agent-router routing enqueue (agent-router Phase 1). Shared by
+  // PaymentIntent, Ledger, and reconciliation domain-event producers so events
+  // actually reach the brain.agent.route queue the worker drains.
+  const routingEnqueue = createRoutingEnqueue({ redisUrl: cfg.REDIS_URL });
+
   // -- layer deps objects ---------------------------------------------
   const rawDeps: RawDeps = { pool, blob, audit };
-  const ledgerDeps: LedgerDeps = { pool, audit };
+  const ledgerDeps: LedgerDeps = { pool, audit, enqueue: routingEnqueue };
   const ledgerService = new LedgerService(ledgerDeps);
 
   // -- source credential store ----------------------------------------
@@ -806,12 +811,6 @@ async function main(): Promise<void> {
     hasResolveObligationConfidence: resolveObligationConfidence !== undefined,
     hasResolveObligationDirection: resolveObligationDirection !== undefined,
   });
-
-  // Agent-router routing enqueue (agent-router Phase 1). Shared by the
-  // PaymentIntent + reconciliation domain-event producers so events actually
-  // reach the brain.agent.route queue the worker drains. Declared before the
-  // first PaymentIntentService build so both route mounts share one enqueue.
-  const routingEnqueue = createRoutingEnqueue({ redisUrl: cfg.REDIS_URL });
 
   const paymentIntentService = buildPaymentIntentService({
     pool,
@@ -1469,6 +1468,7 @@ async function main(): Promise<void> {
     ok: true,
     version: cfg.SERVICE_VERSION,
     service: cfg.SERVICE_NAME,
+    commit: process.env.GIT_SHA ?? "dev",
   }));
 
   // Worker/process separation: the public HTTP surface (audit-health snapshot +

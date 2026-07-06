@@ -37,9 +37,15 @@ export async function buildLedgerApp(opts: BuildLedgerAppOptions): Promise<Fasti
   await app.register(errorHandlerPlugin);
   await app.register(authPlugin, { verifier: opts.jwtVerifier });
 
-  app.get("/health", { config: { skipAuth: true } }, async () => ({ ok: true }));
+  app.get("/health", { config: { skipAuth: true } }, async () => ({
+    ok: true,
+    commit: process.env.GIT_SHA ?? "dev",
+  }));
 
-  const ledger = new LedgerService(opts.deps);
+  const ledger = new LedgerService({
+    ...opts.deps,
+    ...(opts.enqueue !== undefined ? { enqueue: opts.enqueue } : {}),
+  });
   const reconciliation = new ReconciliationService({
     pool: opts.deps.pool,
     audit: opts.deps.audit,
@@ -61,7 +67,10 @@ export async function registerLedgerPlugin(
   deps: LedgerDeps,
   opts?: { enqueue?: RoutingEnqueue },
 ): Promise<void> {
-  const service = new LedgerService(deps);
+  const service = new LedgerService({
+    ...deps,
+    ...(opts?.enqueue !== undefined ? { enqueue: opts.enqueue } : {}),
+  });
   const reconciliation = new ReconciliationService({
     pool: deps.pool,
     audit: deps.audit,

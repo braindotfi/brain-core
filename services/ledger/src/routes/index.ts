@@ -12,6 +12,7 @@ import {
   brainError,
   isBrainId,
   requireScope,
+  type Counterparty,
   type Scope,
   type ServiceCallContext,
 } from "@brain/shared";
@@ -165,6 +166,9 @@ export async function registerLedgerRoutes(
       const result = await service.listCounterparties(ctx, {
         ...(request.query.q !== undefined ? { q: request.query.q } : {}),
         ...(request.query.type !== undefined ? { type: request.query.type as never } : {}),
+        ...(request.query.verified_status !== undefined
+          ? { verified_status: parseVerifiedStatus(request.query.verified_status) }
+          : {}),
         ...(limit !== undefined ? { limit } : {}),
       });
       reply.status(200);
@@ -421,6 +425,7 @@ const COUNTERPARTY_TYPES = new Set<ManualCounterpartyType>([
 
 const IDENTITY_FIELDS = new Set([
   "name",
+  "display_name",
   "type",
   "category",
   "contact_email",
@@ -429,9 +434,23 @@ const IDENTITY_FIELDS = new Set([
   "aliases",
 ]);
 
-const PATCH_FIELDS = new Set(["name", "category", "contact_email", "country", "tax_id", "aliases"]);
+const PATCH_FIELDS = new Set([
+  "name",
+  "display_name",
+  "category",
+  "contact_email",
+  "country",
+  "tax_id",
+  "aliases",
+]);
 const TRUST_FIELDS = new Set(["provenance", "confidence", "verified_status", "risk_level"]);
 const PAYMENT_FIELD_RE = /(iban|account_number|routing|swift|bic|wallet|bank)/i;
+const VERIFIED_STATUSES = new Set([
+  "unverified",
+  "self_attested",
+  "document_verified",
+  "sanctions_cleared",
+]);
 
 function parseCounterpartyCreateBody(body: Record<string, unknown>): ManualCounterpartyCreateInput {
   assertPlainBody(body);
@@ -464,7 +483,7 @@ function optionalIdentityFields(
   body: Record<string, unknown>,
 ): Omit<ManualCounterpartyCreateInput, "name" | "type"> {
   const out: Omit<ManualCounterpartyCreateInput, "name" | "type"> = {};
-  for (const key of ["category", "contact_email", "country", "tax_id"] as const) {
+  for (const key of ["display_name", "category", "contact_email", "country", "tax_id"] as const) {
     if (body[key] !== undefined) out[key] = requireNonEmptyString(body[key], key);
   }
   if (body["aliases"] !== undefined) {
@@ -498,6 +517,15 @@ function parseCounterpartyType(value: unknown): ManualCounterpartyType {
   return value as ManualCounterpartyType;
 }
 
+function parseVerifiedStatus(value: string): NonNullable<Counterparty["verified_status"]> {
+  if (!VERIFIED_STATUSES.has(value)) {
+    throw brainError("request_params_invalid", "invalid_verified_status", {
+      details: { reason: "invalid_verified_status" },
+    });
+  }
+  return value as NonNullable<Counterparty["verified_status"]>;
+}
+
 function rejectPaymentFields(body: Record<string, unknown>): void {
   const found = Object.keys(body).filter((key) => PAYMENT_FIELD_RE.test(key));
   if (found.length > 0) {
@@ -519,8 +547,8 @@ function rejectTrustFields(body: Record<string, unknown>): void {
 function rejectUnknownFields(body: Record<string, unknown>, allowed: Set<string>): void {
   const found = Object.keys(body).filter((key) => !allowed.has(key));
   if (found.length > 0) {
-    throw brainError("request_body_invalid", "field_not_editable", {
-      details: { reason: "field_not_editable", fields: found },
+    throw brainError("request_body_invalid", "unknown_field", {
+      details: { reason: "unknown_field", fields: found },
     });
   }
 }

@@ -66,6 +66,15 @@ describe("LedgerService — limit clamping and reads", () => {
     const result = await service.getAccount(ctx, "acct_DOES_NOT_EXIST");
     expect(result).toBeNull();
   });
+
+  it("passes verified_status to the counterparty repository filter", async () => {
+    const { pool, calls } = fakePool();
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    await service.listCounterparties(ctx, { verified_status: "unverified" });
+    const list = calls.find((c) => c.text.includes("SELECT * FROM ledger_counterparties"))!;
+    expect(list.text).toContain("verified_status = $1");
+    expect(list.values).toEqual(["unverified", 50]);
+  });
 });
 
 // =============================================================================
@@ -223,11 +232,11 @@ describe("LedgerService manual counterparty endpoints", () => {
           type: "vendor",
           risk_level: null,
           verified_status: "unverified",
-          aliases: ["Acme LLC"],
+          aliases: ["Acme LLC", "Acme Trading"],
           linked_accounts: [],
           provenance: "human_confirmed",
           confidence: 0.95,
-          metadata: { country: "AE" },
+          metadata: { country: "AE", display_name: "Acme Trading" },
         },
       ],
     });
@@ -237,6 +246,7 @@ describe("LedgerService manual counterparty endpoints", () => {
       {
         name: "Acme Trading LLC",
         type: "vendor",
+        display_name: "Acme Trading",
         country: "AE",
         aliases: ["Acme LLC"],
       },
@@ -244,6 +254,8 @@ describe("LedgerService manual counterparty endpoints", () => {
     expect(result.created).toBe(true);
     expect(result.merged).toBe(false);
     expect(result.counterparty.provenance).toBe("human_confirmed");
+    expect(result.counterparty.display_name).toBe("Acme Trading");
+    expect(result.counterparty.aliases).toContain("Acme Trading");
     expect(result.counterparty.verified_status).toBe("unverified");
     expect(audit.events[0]!.action).toBe("ledger.counterparty.created");
     expect(enqueue).toHaveBeenCalledWith(
@@ -284,6 +296,34 @@ describe("LedgerService manual counterparty endpoints", () => {
     const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_counterparties"))!;
     expect(insert.values[10]).toBe("agent_contributed");
     expect(insert.values[11]).toBe(0.5);
+  });
+
+  it("defaults display_name to name when metadata omits it", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool } = fakePool({
+      "INSERT INTO ledger_counterparties": [
+        {
+          ...rowCommon(),
+          id: "cp_default_display",
+          name: "Default Display",
+          normalized_name: "default_display",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          aliases: [],
+          linked_accounts: [],
+          provenance: "human_confirmed",
+          confidence: 0.95,
+          metadata: {},
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit });
+    const result = await service.createManualCounterparty(
+      { ...ctx, principalType: "user" },
+      { name: "Default Display", type: "vendor" },
+    );
+    expect(result.counterparty.display_name).toBe("Default Display");
   });
 
   it("does not downgrade trust state when manual create dedupes into an existing row", async () => {
@@ -382,6 +422,53 @@ describe("LedgerService manual counterparty endpoints", () => {
       counterparty_id: "cp_existing",
       changed_fields: ["name", "aliases", "category"],
     });
+  });
+
+  it("updates display_name without rename collision and preserves the previous display name", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = fakePool({
+      "WHERE id = $1 LIMIT 1": [
+        {
+          ...rowCommon(),
+          id: "cp_existing",
+          name: "Acme Legal LLC",
+          normalized_name: "acme_legal_llc",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          aliases: ["Acme"],
+          linked_accounts: [],
+          metadata: { display_name: "Acme Trading" },
+        },
+      ],
+      "UPDATE ledger_counterparties": [
+        {
+          ...rowCommon(),
+          id: "cp_existing",
+          name: "Acme Legal LLC",
+          normalized_name: "acme_legal_llc",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          aliases: ["Acme", "Acme Trading"],
+          linked_accounts: [],
+          provenance: "human_confirmed",
+          metadata: { display_name: "Acme Supply" },
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit });
+    const result = await service.updateCounterpartyIdentity(ctx, "cp_existing", {
+      display_name: "Acme Supply",
+    });
+    expect(result.counterparty.name).toBe("Acme Legal LLC");
+    expect(result.counterparty.normalized_name).toBe("acme_legal_llc");
+    expect(result.counterparty.display_name).toBe("Acme Supply");
+    expect(result.counterparty.aliases).toContain("Acme Trading");
+    expect(result.changed_fields).toEqual(["aliases", "display_name"]);
+    expect(calls.some((c) => c.text.includes("WHERE normalized_name = $1 AND type = $2"))).toBe(
+      false,
+    );
   });
 
   it("returns name_conflict on rename collision without mutating", async () => {

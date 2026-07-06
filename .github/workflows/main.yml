@@ -212,6 +212,8 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           tags: |
             ${{ secrets.ACR_LOGIN_SERVER }}/brain-${{ matrix.service }}:${{ github.sha }}
             ${{ secrets.ACR_LOGIN_SERVER }}/brain-${{ matrix.service }}:latest

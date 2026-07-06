@@ -690,7 +690,9 @@ paths:
             enum: [merchant, vendor, customer, employer, employee, bank, wallet, exchange, tax_authority, agent, other]
         - name: verified_status
           in: query
-          schema: { type: string }
+          schema:
+            type: string
+            enum: [unverified, self_attested, document_verified, sanctions_cleared]
       responses:
         '200':
           description: Counterparty list
@@ -717,6 +719,7 @@ paths:
               required: [name, type]
               properties:
                 name: { type: string }
+                display_name: { type: string }
                 type:
                   type: string
                   enum: [merchant, vendor, customer, employer, employee, bank, wallet, exchange, tax_authority, agent, other]
@@ -784,6 +787,7 @@ paths:
               type: object
               properties:
                 name: { type: string }
+                display_name: { type: string }
                 country: { type: string }
                 tax_id: { type: string }
                 category: { type: string }
@@ -3933,9 +3937,10 @@ components:
       allOf:
         - $ref: '#/components/schemas/LedgerCommonFields'
         - type: object
-          required: [id, owner_id, name, type]
+          required: [id, owner_id, name, display_name, type]
           properties:
             name: { type: string }
+            display_name: { type: string }
             normalized_name: { type: [string, "null"] }
             type:
               type: string
