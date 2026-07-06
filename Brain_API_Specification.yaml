@@ -453,6 +453,51 @@ paths:
         '410':
           description: Already tombstoned
 
+  /raw/{raw_id}/extract:
+    post:
+      tags: [Raw]
+      summary: Trigger document extraction for a raw artifact
+      description: |
+        Explicitly sends the referenced artifact bytes to the configured
+        document extraction agent. This route is manual by design and is not
+        called automatically after raw ingestion.
+      operationId: extractRawDocument
+      parameters:
+        - $ref: '#/components/parameters/RawId'
+      responses:
+        '200':
+          description: Document extraction completed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [parsed_id, confidence]
+                properties:
+                  parsed_id: { type: string, format: uuid }
+                  confidence: { type: number, minimum: 0, maximum: 1 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410':
+          description: Artifact has been tombstoned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Artifact cannot be extracted by the document agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '501':
+          description: Document extraction agent is not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /raw/{raw_id}/parsed:
     get:
       tags: [Raw]

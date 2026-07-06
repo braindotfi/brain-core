@@ -191,6 +191,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/raw/{raw_id}/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger document extraction for a raw artifact
+         * @description Explicitly sends the referenced artifact bytes to the configured
+         *     document extraction agent. This route is manual by design and is not
+         *     called automatically after raw ingestion.
+         */
+        post: operations["extractRawDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/raw/{raw_id}/parsed": {
         parameters: {
             query?: never;
@@ -3171,6 +3193,63 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    extractRawDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                raw_id: components["parameters"]["RawId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Document extraction completed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        parsed_id: string;
+                        confidence: number;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Artifact has been tombstoned */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Artifact cannot be extracted by the document agent */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Document extraction agent is not configured */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
         };
     };

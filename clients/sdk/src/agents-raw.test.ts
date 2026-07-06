@@ -199,4 +199,18 @@ describe("Brain.raw", () => {
 
     expect(result.parsed).toEqual([]);
   });
+
+  it("extract triggers document extraction and camelCases the result", async () => {
+    const { fetch, calls } = mockFetch(200, {
+      parsed_id: "prs_1",
+      confidence: 0.93,
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const result = await brain.raw.extract("raw_1");
+
+    expect(result).toEqual({ parsedId: "prs_1", confidence: 0.93 });
+    expect(calls[0]?.url).toContain("/raw/raw_1/extract");
+    expect(calls[0]?.method).toBe("POST");
+  });
 });

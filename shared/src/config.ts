@@ -296,6 +296,11 @@ const envSchema = z.object({
    */
   RECONCILIATION_AGENT_URL: optionalNonEmptyString(),
   /**
+   * URL of the brain-agents service endpoint for explicit document extraction
+   * runs. When unset, /v1/raw/{raw_id}/extract returns 501.
+   */
+  DOCUMENT_EXTRACT_AGENT_URL: optionalNonEmptyString(),
+  /**
    * Shared secret for the X-Brain-Auth HMAC sent to the brain-agents service.
    * The Python side verifies with the same secret (BRAIN_AGENTS_INBOUND_SECRET
    * env var on that service). Required in production when RECONCILIATION_AGENT_URL
