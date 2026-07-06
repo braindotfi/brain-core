@@ -37,6 +37,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint (ESLint + Prettier)
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm run lint
 
       - name: Build workspace packages

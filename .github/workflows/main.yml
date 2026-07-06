@@ -85,6 +85,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
       # Build workspace dist/ before typecheck: the per-package `tsc --noEmit`
       # resolves cross-package types from the built .d.ts files. Mirrors pr.yml.
       - run: pnpm run build
