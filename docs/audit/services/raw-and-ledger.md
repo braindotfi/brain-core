@@ -144,17 +144,26 @@ The normalize pipeline status:
 
 ```
 [1] raw_artifacts (blob + DB row)     ← ingestOne writes here ✓
-[2] raw_parsed (typed parsed row)     ← EMPTY. No writer exists in codebase ✗
-[3] normalizeWorker polls raw_parsed  ← always finds 0 rows → permanent no-op ✗
+[2] raw_parsed (typed parsed row)     ← writeRawParsed route plus document extractor trigger ✓
+[3] normalizeWorker polls raw_parsed  ← processes rows after extraction ✓
 [4] LedgerService.normalizeFromRaw    ← fully implemented for plaid_tx_v1 ✓
-[5] Ledger entities (account/tx/cp)   ← never auto-populated from Plaid ✗
+[5] Ledger entities (account/tx/cp)   ← populated after parser output is written ✓
 ```
 
-**The pipeline bridge is missing**: the stage-3 parser/extractor that reads a `raw_artifacts` blob and writes a `raw_parsed` row has not been implemented. The migration schema exists, the worker and ledger extractor are complete, but step [2] is absent.
+**Pipeline bridge status**: the stage-3 schema, parsed-row write route, explicit
+document extraction trigger, normalize worker, and Ledger normalizer are wired.
+`POST /raw/{raw_id}/extract` reads the tenant-scoped artifact, base64-encodes the
+blob, and delegates to the configured Python document extraction agent, which
+returns the `raw_parsed` id and confidence. This route is explicit by design and
+does not run automatically after ingestion.
 
-`POST /ledger/normalize` (`services/ledger/src/routes/index.ts:215`) is wired and calls `LedgerService.normalizeFromRaw`. It would work correctly if given a valid `raw_parsed_id`, but no `raw_parsed` rows exist. The route is functional but unreachable in practice.
+`POST /ledger/normalize` (`services/ledger/src/routes/index.ts:215`) is wired
+and calls `LedgerService.normalizeFromRaw`. It works when given a valid
+`raw_parsed_id`; automatic normalization depends on the extractor writing
+`raw_parsed` rows.
 
-This is not a regression. The `0002_raw_parsed.sql` migration comment explicitly states "stage-2 only creates the schema; populated by stage-3 extractors." But it does mean that the Plaid data flow currently stops at blob storage.
+The remaining gap is operational, not structural: extraction is manual via the
+API trigger until an in-API poller or automatic post-ingest scheduler is added.
 
 ### 3.6 ReconciliationService
 
@@ -208,19 +217,25 @@ The migration runner uses the full filename as a unique key (established in the 
 
 ---
 
-### R-19 (High). Normalize pipeline non-operational: no writer to `raw_parsed`
+### R-19 (Medium, mitigated). Normalize pipeline requires explicit extraction trigger
 
-The raw→ledger normalize pipeline is fully implemented at both ends but the middle stage is absent:
+The raw-to-ledger normalize pipeline is implemented, but ingestion does not
+automatically start extraction:
 
 - `raw_artifacts` is populated by every successful `ingestOne` call.
 - `raw_parsed` has migration schema (`0002_raw_parsed.sql`), RLS, FORCE RLS, and correct indexes.
-- **No code in the codebase writes to `raw_parsed`.** `grep -rn "INSERT.*raw_parsed" services/` returns only the `normalization_log` INSERT in `normalizeWorker.ts`.
-- The `normalizeWorker` polls every 15 seconds (`services/ledger/src/workers/normalizeWorker.ts:85`) and perpetually processes zero rows.
-- `LedgerService.normalizeFromRaw` + `normalizePlaidArtifact` are complete and tested, but unreachable in the current system.
+- `POST /raw/{raw_id}/parsed` writes parser output rows idempotently.
+- `POST /raw/{raw_id}/extract` explicitly delegates a raw artifact to the Python document extraction agent.
+- The `normalizeWorker` polls every 15 seconds (`services/ledger/src/workers/normalizeWorker.ts:85`) and processes rows after extraction creates them.
+- `LedgerService.normalizeFromRaw` plus `normalizePlaidArtifact` are complete and tested.
 
-**Impact**: Plaid data flow terminates at blob/artifact storage. Ledger entities (accounts, transactions, counterparties) are never auto-populated from Plaid webhook data. The empty-pipeline no-op imposes a 15s poll cycle at process startup with no useful work.
+**Impact**: Ingestion alone still stops at blob and artifact storage. Ledger
+entities are populated only after a caller or operator triggers extraction, or
+after a future scheduler does so.
 
-**Next step for stage-3**: Implement a parser that reads a `raw_artifacts` blob (for `source_type = 'plaid'`), extracts accounts and transactions, and inserts rows into `raw_parsed` with `parser = 'plaid_tx_v1'`. The `normalizeWorker` will then pick them up automatically.
+**Next step**: Add an optional in-API poller or scheduler that selects eligible
+raw artifacts and calls the same extraction path after ingestion. Keep the
+manual route as the deterministic operator and integration trigger.
 
 ---
 
@@ -273,18 +288,19 @@ const result = await deps.pool.query<{ id: string; tenant_id: string }>(
 
 ## 7. Functional Status
 
-| Component                          | Status                  | Notes                                                                        |
-| ---------------------------------- | ----------------------- | ---------------------------------------------------------------------------- |
-| `/raw/ingest` (multipart + JSON)   | Functional ✓            | All dedup and audit paths wired                                              |
-| `/raw/webhooks/plaid`              | Functional ✓            | Signature verified; artifact stored; dedup via Redis                         |
-| `/raw/webhooks/{other}`            | Stub ✗                  | Returns 501 by design                                                        |
-| `/raw/sources/*` lifecycle         | Functional ✓            | Postgres-backed; AES-256-GCM encryption                                      |
-| Ledger reads (all entities)        | Functional ✓            | Tenant-scoped, paginated                                                     |
-| Ledger writes (account/tx/cp)      | Functional ✓            | Idempotent upserts                                                           |
-| `POST /ledger/normalize`           | Wired but unreachable ⚠ | No `raw_parsed` rows exist (R-19)                                            |
-| normalizeWorker                    | Perpetual no-op ⚠       | Correct code, empty input (R-19)                                             |
-| ReconciliationService (7 matchers) | Functional ✓            | Advisory lock, all tests pass                                                |
-| `POST /ledger/reconcile`           | Stub 501 ✗              | Docs: "Phase 5"; ReconciliationService.run exists but isn't exposed via POST |
+| Component                          | Status       | Notes                                                                        |
+| ---------------------------------- | ------------ | ---------------------------------------------------------------------------- |
+| `/raw/ingest` (multipart + JSON)   | Functional ✓ | All dedup and audit paths wired                                              |
+| `/raw/webhooks/plaid`              | Functional ✓ | Signature verified; artifact stored; dedup via Redis                         |
+| `/raw/webhooks/{other}`            | Stub ✗       | Returns 501 by design                                                        |
+| `/raw/sources/*` lifecycle         | Functional ✓ | Postgres-backed; AES-256-GCM encryption                                      |
+| Ledger reads (all entities)        | Functional ✓ | Tenant-scoped, paginated                                                     |
+| Ledger writes (account/tx/cp)      | Functional ✓ | Idempotent upserts                                                           |
+| `POST /ledger/normalize`           | Functional ✓ | Requires a valid `raw_parsed_id`                                             |
+| normalizeWorker                    | Functional ✓ | Processes parsed rows after extraction creates them                          |
+| `POST /raw/{raw_id}/extract`       | Functional ✓ | Explicit trigger; returns parsed id and confidence                           |
+| ReconciliationService (7 matchers) | Functional ✓ | Advisory lock, all tests pass                                                |
+| `POST /ledger/reconcile`           | Stub 501 ✗   | Docs: "Phase 5"; ReconciliationService.run exists but isn't exposed via POST |
 
 ---
 
@@ -316,13 +332,13 @@ const result = await deps.pool.query<{ id: string; tenant_id: string }>(
 
 ## 9. Refactor Priorities
 
-| Priority | Action                                                                                                 | Location                                      |
-| -------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| P1       | Implement stage-3 Plaid parser: reads `raw_artifacts` blob, writes `raw_parsed` row with `plaid_tx_v1` | New file: `services/raw/src/parsers/plaid.ts` |
-| P2       | Verify/document production DB role has BYPASSRLS for normalizeWorker                                   | `database/` audit turn, DB role config        |
-| P3       | Remove `"plaid": "^27.0.0"` from `services/raw/package.json`                                           | `services/raw/package.json:34`                |
-| P4       | Renumber `0004_raw_plaid_items_rls.sql` to avoid duplicate prefix                                      | `services/raw/migrations/`                    |
-| P5       | Add live Plaid API probe in `plaidConnector.validateCredentials`                                       | `services/raw/src/sources/connectors.ts`      |
+| Priority | Action                                                                                         | Location                                 |
+| -------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| P1       | Add optional post-ingest extraction scheduler that calls the existing document extraction path | `services/api/src/raw-extract/`          |
+| P2       | Verify/document production DB role has BYPASSRLS for normalizeWorker                           | `database/` audit turn, DB role config   |
+| P3       | Remove `"plaid": "^27.0.0"` from `services/raw/package.json`                                   | `services/raw/package.json:34`           |
+| P4       | Renumber `0004_raw_plaid_items_rls.sql` to avoid duplicate prefix                              | `services/raw/migrations/`               |
+| P5       | Add live Plaid API probe in `plaidConnector.validateCredentials`                               | `services/raw/src/sources/connectors.ts` |
 
 ---
 

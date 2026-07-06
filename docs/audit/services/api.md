@@ -25,7 +25,7 @@
 - `services/wiki/src/routes/annotate.ts`
 - `shared/src/gate/gate.ts` (lines 275–310)
 - `shared/src/config.ts` (lines 92–150)
-- `Brain_API_Specification.yaml` (80 operationIds, 3494 lines)
+- `Brain_API_Specification.yaml` (99 operationIds)
 
 **Commands run:**
 
@@ -74,11 +74,11 @@ Per `docs/boot-binary-spec.md` (referenced from `main.ts:8`) and CLAUDE.md §MCP
 
 ### 3.1 Route registration map
 
-All 80 spec operationIds are wired. Route composition order (within `/v1`):
+All public service plugins are wired under `/v1`. Route composition order:
 
 | Plugin             | Spec paths                                                     | Route function                                          |
 | ------------------ | -------------------------------------------------------------- | ------------------------------------------------------- |
-| Raw                | `/raw/*`, `/raw/webhooks/{provider}`                           | `registerRawPlugin`                                     |
+| Raw                | `/raw/*`, `/raw/webhooks/{provider}`                           | `registerRawPlugin`, `registerRawExtractRoute`          |
 | Ledger             | `/ledger/*`                                                    | `registerLedgerPlugin` (includes ReconciliationService) |
 | Wiki               | `/memory/*`, `/wiki/*`                                         | `registerWikiPlugin`                                    |
 | Policy             | `/policy/*`                                                    | `registerPolicyRoutes`                                  |
