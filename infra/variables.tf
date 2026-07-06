@@ -25,3 +25,21 @@ variable "services" {
   type        = set(string)
   default     = ["api", "raw", "wiki", "policy", "execution", "audit", "agents"]
 }
+
+variable "openai_api_key_secret_name" {
+  description = "Azure Key Vault secret name for the OpenAI API key used by the agents service."
+  type        = string
+  default     = "openai-api-key"
+}
+
+variable "brain_agents_inbound_secret_name" {
+  description = "Azure Key Vault secret name for the API to agents HMAC secret."
+  type        = string
+  default     = "brain-agents-inbound-secret"
+}
+
+variable "brain_api_token_secret_name" {
+  description = "Azure Key Vault secret name for the agents service outbound Brain API token."
+  type        = string
+  default     = "brain-api-token"
+}

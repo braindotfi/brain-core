@@ -17,6 +17,21 @@ See `Brain_MVP_Architecture.md` §2 for the stack choices and
 Never in git. Everything reads from Azure Key Vault via managed identity.
 Rotation schedule documented in `infra/secrets.md` (to land in stage-8).
 
+The agents Container App requires these Key Vault secrets in both staging and
+production before applying the default stack:
+
+| Secret name                   | Used by      | Purpose                                 |
+| ----------------------------- | ------------ | --------------------------------------- |
+| `openai-api-key`              | agents       | OpenAI client for extraction agents     |
+| `brain-agents-inbound-secret` | api, agents  | HMAC secret for API to agents requests  |
+| `brain-api-token`             | agents       | Agents outbound calls to the Brain API  |
+
+Terraform reads the names from `openai_api_key_secret_name`,
+`brain_agents_inbound_secret_name`, and `brain_api_token_secret_name` so
+environments can override naming without putting secret values in git. The API
+app gets `DOCUMENT_EXTRACT_AGENT_URL` pointing at the internal agents Container
+App FQDN when `agents` is included in `var.services`.
+
 ## Commands
 
 ```bash
