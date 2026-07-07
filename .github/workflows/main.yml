@@ -257,6 +257,7 @@ jobs:
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents build agents && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents"
 
       - name: Smoke test /health
@@ -314,6 +315,7 @@ jobs:
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents build agents && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents"
 
       - name: Smoke test /health

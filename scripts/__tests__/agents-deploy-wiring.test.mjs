@@ -56,14 +56,15 @@ test("staging and production deploy recreates include the agents service", () =>
   const deployStagingJob = workflowJob("deploy_staging");
   const promoteProductionJob = workflowJob("promote_production");
   const serviceTargets = "api worker agents";
-  assert.match(
-    deployStagingJob,
-    new RegExp(`up -d --no-deps --no-build ${serviceTargets}`),
-  );
-  assert.match(
-    promoteProductionJob,
-    new RegExp(`up -d --no-deps --no-build ${serviceTargets}`),
-  );
+
+  for (const job of [deployStagingJob, promoteProductionJob]) {
+    const buildIndex = job.indexOf("--profile agents build agents");
+    const upIndex = job.indexOf(`up -d --no-deps --no-build ${serviceTargets}`);
+
+    assert.notEqual(buildIndex, -1);
+    assert.notEqual(upIndex, -1);
+    assert.ok(buildIndex < upIndex);
+  }
 });
 
 test("production compose defines the optional Python agents service", () => {
