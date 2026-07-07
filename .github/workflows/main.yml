@@ -1,6 +1,9 @@
 # Brain main-branch pipeline.
-# §10.2: on merge to main → integration tests, build images, push to ACR,
-# deploy to staging, E2E tests, manual promote to production.
+# On merge to main: secret scan, unit+integration, golden-path smoke, python
+# agents lint/type/test, then a single deploy job ships straight to the one
+# production target, api.brain.fi (a single-host Docker VM, not Azure
+# Container Apps). No staging environment exists. workflow_dispatch allows a
+# manual re-run of the same deploy.
 
 name: main
 
@@ -11,7 +14,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write # OIDC to Azure
 
 concurrency:
   group: main-${{ github.ref }}
@@ -190,113 +192,66 @@ jobs:
       - name: pytest (80% coverage gate)
         run: uv run pytest
 
-  build_and_push_images:
-    name: build + push container images
+  deploy_vm:
+    name: deploy → production VM (api.brain.fi)
     runs-on: ubuntu-latest
-    needs: [unit_and_integration, python_agents]
-    # Deploy chain is gated behind the DEPLOY_ENABLED repo variable. Set
-    # `vars.DEPLOY_ENABLED == 'true'` once Azure OIDC secrets (AZURE_CLIENT_ID,
-    # AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, ACR_NAME, ACR_LOGIN_SERVER) are
-    # configured. Until then the quality gates (secrets/units/golden-path) stay
-    # the visible CI signal instead of a permanently-red build/push job.
-    if: vars.DEPLOY_ENABLED == 'true'
-    # The root Dockerfile builds the all-in-one api boot binary (the current
-    # deploy target). The per-service Dockerfiles (P1.5) validate each service's
-    # build graph for the multi-process rollout; the api image stays the deploy
-    # target until standalone per-service entrypoints land.
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: api
-            dockerfile: Dockerfile
-            context: .
-          - service: raw
-            dockerfile: services/raw/Dockerfile
-            context: .
-          - service: ledger
-            dockerfile: services/ledger/Dockerfile
-            context: .
-          - service: wiki
-            dockerfile: services/wiki/Dockerfile
-            context: .
-          - service: policy
-            dockerfile: services/policy/Dockerfile
-            context: .
-          - service: execution
-            dockerfile: services/execution/Dockerfile
-            context: .
-          - service: audit
-            dockerfile: services/audit/Dockerfile
-            context: .
-          - service: mcp
-            dockerfile: services/mcp/Dockerfile
-            context: .
-          - service: agents
-            dockerfile: services/agents/Dockerfile
-            context: services/agents
+    needs: [unit_and_integration, golden_path_smoke, python_agents]
+    # Only on a push to main or an explicit manual re-run — never on PRs.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: ACR login
-        run: az acr login --name ${{ secrets.ACR_NAME }}
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context || '.' }}
-          file: ${{ matrix.dockerfile }}
-          push: true
-          build-args: |
-            GIT_SHA=${{ github.sha }}
-          tags: |
-            ${{ secrets.ACR_LOGIN_SERVER }}/brain-${{ matrix.service }}:${{ github.sha }}
-            ${{ secrets.ACR_LOGIN_SERVER }}/brain-${{ matrix.service }}:latest
 
-  deploy_staging:
-    name: deploy → staging
-    runs-on: ubuntu-latest
-    needs: build_and_push_images
-    environment: staging
-    if: vars.DEPLOY_ENABLED == 'true'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Deploy new revision per service
+      # Single production target: there is no staging environment or Azure
+      # Container Apps here. api.brain.fi is one Docker VM.
+      - name: Build prod image
+        run: docker build --build-arg GIT_SHA=${{ github.sha }} -t brain-core:prod -f Dockerfile .
+
+      - name: Configure SSH
         run: |
-          # The api boot binary and agents service are deployed now. The other
-          # service images stay build-verified until standalone entrypoints land.
-          for svc in api agents; do
-            az containerapp update \
-              --name "brain-staging-$svc" \
-              --resource-group "brain-staging-rg" \
-              --image "${{ secrets.ACR_LOGIN_SERVER }}/brain-$svc:${{ github.sha }}"
-          done
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
 
-  e2e_staging:
-    name: E2E → staging
-    runs-on: ubuntu-latest
-    needs: deploy_staging
-    if: vars.DEPLOY_ENABLED == 'true'
-    env:
-      BRAIN_BASE_URL: https://api.sandbox.brain.fi/v1
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -r --filter='./tests/e2e' run test --if-present
+      # Tag the box's current :prod image as a rollback point BEFORE the
+      # `docker load` below overwrites the :prod tag. See docs/rollback.md §B.
+      - name: Tag rollback image on VM
+        run: |
+          ssh -i ~/.ssh/id_deploy azureuser@${{ secrets.VM_HOST }} \
+            'docker tag brain-core:prod brain-core:prod-rollback-$(date +%Y%m%d-%H%M%S) || true'
+
+      - name: Ship image to VM
+        run: |
+          docker save brain-core:prod | gzip | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 azureuser@${{ secrets.VM_HOST }} \
+            'gunzip | docker load'
+
+      # The VM's ~/brain-core is a copied tree (not a git checkout) that
+      # already holds .env.prod and docker-compose.caddy.yml (both host-only,
+      # not in this repo). Migrations are idempotent, so running `up` on every
+      # deploy is safe even when there are no new migrations.
+      - name: Migrate + recreate api/worker on VM
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 azureuser@${{ secrets.VM_HOST }} \
+            'cd ~/brain-core && \
+             docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
+             docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-deps --no-build api worker'
+
+      - name: Smoke test /health
+        # A bare 200 is not enough: /health returns 200 before a deploy too, so
+        # a deploy that silently failed to recreate the container would still
+        # pass. Assert the live commit matches the sha we just built and shipped.
+        run: |
+          expected="${{ github.sha }}"
+          last_commit=""
+          for i in $(seq 1 10); do
+            body=$(curl -s https://api.brain.fi/health || true)
+            last_commit=$(echo "$body" | grep -o '"commit":"[^"]*"' | sed 's/.*:"//;s/"$//')
+            [ "$last_commit" = "$expected" ] && exit 0
+            sleep 6
+          done
+          echo "api.brain.fi/health never reported commit=$expected (last seen: '$last_commit')"
+          exit 1
 
   external_agent_mcp_e2e:
     name: external-agent MCP E2E
@@ -363,58 +318,3 @@ jobs:
       - run: pnpm --filter @brain/shared run build && pnpm --filter @brain/execution run build
       - name: Testnet on-chain executor E2E
         run: pnpm -C tests/e2e run test onchain-executor.testnet.e2e.test.ts
-
-  promote_production:
-    name: manual promote → production
-    runs-on: ubuntu-latest
-    needs: e2e_staging
-    environment: production # GitHub environment gate — manual approval
-    if: vars.DEPLOY_ENABLED == 'true'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Build migration tool
-        run: pnpm -C tools/migrate run build
-      - name: Migrate production
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
-        run: |
-          if [ -z "${DATABASE_URL:-}" ]; then
-            echo "DATABASE_URL_PROD secret is required for production migrations" >&2
-            exit 1
-          fi
-          node tools/migrate/dist/cli.js up
-      - uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Blue/green via revision weights
-        run: |
-          # §10.3: run N and N-1 in parallel. Ship a new revision with
-          # traffic=0, then shift to 10%, then 100%, each step gated by
-          # a separate workflow_dispatch rerun if needed.
-          for svc in api agents; do
-            az containerapp update \
-              --name "brain-production-$svc" \
-              --resource-group "brain-production-rg" \
-              --image "${{ secrets.ACR_LOGIN_SERVER_PROD }}/brain-$svc:${{ github.sha }}" \
-              --revision-suffix "sha${{ github.sha }}"
-          done
-      - name: Production smoke check
-        env:
-          HEALTH_URL: ${{ vars.BRAIN_PRODUCTION_HEALTH_URL || 'https://api.brain.fi/health' }}
-        run: |
-          for i in $(seq 1 30); do
-            if curl -fsS "$HEALTH_URL"; then
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "Production smoke check failed: $HEALTH_URL" >&2
-          exit 1
