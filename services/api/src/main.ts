@@ -63,6 +63,7 @@ import {
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
 import { registerPasswordLoginRoute, PostgresUserCredentialReader } from "./onboarding/login.js";
+import { insertBootstrapAdminMember } from "./onboarding/bootstrap-member.js";
 import {
   registerWalletRoutes,
   PostgresWalletIdentityReader,
@@ -2093,6 +2094,25 @@ async function main(): Promise<void> {
                 actor,
               );
 
+              // Seed a SECOND distinct approver member so the demo can drive a real
+              // two-signer approval. The seeded policy's owner_and_cfo quorum needs
+              // two distinct approvers, and provisioning otherwise seeds only one.
+              // Handler-local (not in the shared seedBrainSaasDemo) so BrainSaaS
+              // provisioning stays byte for byte unchanged. It is a second active
+              // admin with a distinct id and a distinct non-payee email, all approval
+              // domains and no second-approver threshold, so it passes the same
+              // authorizeApproval checks the first signer does. Off the record like
+              // the rest of provisioning: a raw insert, no member.changed audit event.
+              const secondApprover = newUserId();
+              await withTenantScope(pool, tenantId, async (c) => {
+                await insertBootstrapAdminMember(c, {
+                  tenantId,
+                  memberId: secondApprover,
+                  email: `approver2+${tenantId}@brain.invalid`,
+                  displayName: "Second Approver",
+                });
+              });
+
               // The agent token acts AS the seeded payment agent (type "agent") so the
               // §6 gate's agent-identity check passes when the run later proposes
               // a payment-intent. Read + propose scopes ONLY. Execute, audit
@@ -2120,6 +2140,19 @@ async function main(): Promise<void> {
                 scopes: DEMO_MEMBER_SESSION_SCOPES,
               });
 
+              // Second distinct approver session, same member scopes. Present only
+              // on this demo route so a consumer can drive the full two-signer flow:
+              // sign with member_token, then sign with second_approver_token to reach
+              // approved. Absent from every non-demo auth path.
+              const secondApproverToken = await siwxSigner.sign({
+                id: secondApprover,
+                type: "user",
+                tenantId,
+                tokenId: newTokenId(),
+                expiresAt: Math.floor(Date.now() / 1000) + PROVISION_TTL_S,
+                scopes: DEMO_MEMBER_SESSION_SCOPES,
+              });
+
               reply.status(201);
               return {
                 tenant_id: tenantId,
@@ -2127,6 +2160,7 @@ async function main(): Promise<void> {
                 actor,
                 agent_token: agentToken,
                 member_token: memberToken,
+                second_approver_token: secondApproverToken,
                 token: agentToken,
                 tokens: {
                   agent: {
@@ -2143,6 +2177,14 @@ async function main(): Promise<void> {
                     member_id: actor,
                     scopes: DEMO_MEMBER_SESSION_SCOPES,
                     use: "member, approval, and admin workflows",
+                  },
+                  second_approver: {
+                    token: secondApproverToken,
+                    principal_type: "user",
+                    subject: secondApprover,
+                    member_id: secondApprover,
+                    scopes: DEMO_MEMBER_SESSION_SCOPES,
+                    use: "second distinct approver for two-signer approval demo",
                   },
                 },
                 expires_in: PROVISION_TTL_S,
