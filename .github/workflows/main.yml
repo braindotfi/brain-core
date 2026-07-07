@@ -1,9 +1,8 @@
 # Brain main-branch pipeline.
-# On merge to main: secret scan, unit+integration, golden-path smoke, python
-# agents lint/type/test, then a single deploy job ships straight to the one
-# production target, api.brain.fi (a single-host Docker VM, not Azure
-# Container Apps). No staging environment exists. workflow_dispatch allows a
-# manual re-run of the same deploy.
+# On merge to main: secret scan, unit+integration, golden-path smoke, Python
+# agents lint/type/test, build one VM image, deploy that image to staging, then
+# wait for a production environment approval before promoting the same image to
+# api.brain.fi.
 
 name: main
 
@@ -39,13 +38,13 @@ jobs:
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
       - name: gitleaks (push diff)
-        # gitleaks detect against the push's commit range — `before..after` covers
+        # gitleaks detect against the push's commit range. `before..after` covers
         # everything new on this push, including amended merge commits.
         run: |
           BEFORE="${{ github.event.before }}"
           AFTER="${{ github.sha }}"
           if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            # First push to the ref — scan the full tree to baseline.
+            # First push to the ref. Scan the full tree to baseline.
             gitleaks detect --source . --redact --exit-code 1
           else
             gitleaks detect --source . --log-opts="${BEFORE}..${AFTER}" --redact --exit-code 1
@@ -192,50 +191,73 @@ jobs:
       - name: pytest (80% coverage gate)
         run: uv run pytest
 
-  deploy_vm:
-    name: deploy → production VM (api.brain.fi)
+  build_image:
+    name: build production image
     runs-on: ubuntu-latest
     needs: [unit_and_integration, golden_path_smoke, python_agents]
-    # Only on a push to main or an explicit manual re-run — never on PRs.
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
 
-      # Single production target: there is no staging environment or Azure
-      # Container Apps here. api.brain.fi is one Docker VM.
-      - name: Build prod image
-        run: docker build --build-arg GIT_SHA=${{ github.sha }} -t brain-core:prod -f Dockerfile .
+      - name: Build image
+        run: |
+          docker build --build-arg GIT_SHA=${{ github.sha }} -t brain-core:prod-${{ github.sha }} -f Dockerfile .
+          docker tag brain-core:prod-${{ github.sha }} brain-core:prod
+          docker save brain-core:prod | gzip > brain-core-prod.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brain-core-prod-${{ github.sha }}
+          path: brain-core-prod.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy_staging:
+    name: deploy staging VM
+    runs-on: ubuntu-latest
+    needs: build_image
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_ENV_FILE: .env.staging
+      COMPOSE_PROJECT: brain-staging
+      HEALTH_URL: ${{ vars.BRAIN_STAGING_HEALTH_URL || 'https://staging-api.brain.fi/health' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: brain-core-prod-${{ github.sha }}
 
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_deploy
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
 
       # Tag the box's current :prod image as a rollback point BEFORE the
       # `docker load` below overwrites the :prod tag. See docs/rollback.md §B.
       - name: Tag rollback image on VM
         run: |
-          ssh -i ~/.ssh/id_deploy azureuser@${{ secrets.VM_HOST }} \
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
             'docker tag brain-core:prod brain-core:prod-rollback-$(date +%Y%m%d-%H%M%S) || true'
 
       - name: Ship image to VM
         run: |
-          docker save brain-core:prod | gzip | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 azureuser@${{ secrets.VM_HOST }} \
+          cat brain-core-prod.tar.gz | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             'gunzip | docker load'
 
       # The VM's ~/brain-core is a copied tree (not a git checkout) that
-      # already holds .env.prod and docker-compose.caddy.yml (both host-only,
-      # not in this repo). Migrations are idempotent, so running `up` on every
-      # deploy is safe even when there are no new migrations.
-      - name: Migrate + recreate api/worker on VM
+      # already holds the stage env file and docker-compose.caddy.yml (both
+      # host-only, not in this repo). Migrations are idempotent, so running `up`
+      # on every deploy is safe even when there are no new migrations.
+      - name: Migrate + recreate api/worker/agents on VM
         run: |
-          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 azureuser@${{ secrets.VM_HOST }} \
-            'cd ~/brain-core && \
-             docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
-             docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-deps --no-build api worker'
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents"
 
       - name: Smoke test /health
         # A bare 200 is not enough: /health returns 200 before a deploy too, so
@@ -245,12 +267,66 @@ jobs:
           expected="${{ github.sha }}"
           last_commit=""
           for i in $(seq 1 10); do
-            body=$(curl -s https://api.brain.fi/health || true)
+            body=$(curl -s "$HEALTH_URL" || true)
             last_commit=$(echo "$body" | grep -o '"commit":"[^"]*"' | sed 's/.*:"//;s/"$//')
             [ "$last_commit" = "$expected" ] && exit 0
             sleep 6
           done
-          echo "api.brain.fi/health never reported commit=$expected (last seen: '$last_commit')"
+          echo "$HEALTH_URL never reported commit=$expected (last seen: '$last_commit')"
+          exit 1
+
+  promote_production:
+    name: promote production VM (api.brain.fi)
+    runs-on: ubuntu-latest
+    needs: deploy_staging
+    environment: production
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      VM_ENV_FILE: .env.prod
+      COMPOSE_PROJECT: brain-prod
+      HEALTH_URL: https://api.brain.fi/health
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: brain-core-prod-${{ github.sha }}
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Tag rollback image on VM
+        run: |
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            'docker tag brain-core:prod brain-core:prod-rollback-$(date +%Y%m%d-%H%M%S) || true'
+
+      - name: Ship image to VM
+        run: |
+          cat brain-core-prod.tar.gz | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            'gunzip | docker load'
+
+      - name: Migrate + recreate api/worker/agents on VM
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents"
+
+      - name: Smoke test /health
+        run: |
+          expected="${{ github.sha }}"
+          last_commit=""
+          for i in $(seq 1 10); do
+            body=$(curl -s "$HEALTH_URL" || true)
+            last_commit=$(echo "$body" | grep -o '"commit":"[^"]*"' | sed 's/.*:"//;s/"$//')
+            [ "$last_commit" = "$expected" ] && exit 0
+            sleep 6
+          done
+          echo "$HEALTH_URL never reported commit=$expected (last seen: '$last_commit')"
           exit 1
 
   external_agent_mcp_e2e:
@@ -261,12 +337,12 @@ jobs:
     # intent → audit. It only passes once the agent is actually registered
     # on-chain (Track 1), so it stays gated behind an explicit repo variable +
     # token secret. Without them the test self-skips (describe.skip); gating the
-    # whole job keeps the signal honest — a green check means it really ran.
+    # whole job keeps the signal honest. A green check means it really ran.
     # Lives here (post-merge) rather than in pr.yml so PRs don't hit a live env
     # or mint $10 ACH intents on every push.
     if: vars.E2E_EXTERNAL_AGENT_ENABLED == 'true'
     env:
-      # Host root WITHOUT a /v1 suffix — every e2e path already includes /v1.
+      # Host root WITHOUT a /v1 suffix. Every e2e path already includes /v1.
       BRAIN_BASE_URL: ${{ vars.E2E_EXTERNAL_AGENT_BASE_URL || 'https://api.sandbox.brain.fi' }}
       BRAIN_EXTERNAL_AGENT_TOKEN: ${{ secrets.BRAIN_EXTERNAL_AGENT_TOKEN }}
       # The 3rd case mints a fixed $10.00 ACH intent. Point these at a THROWAWAY
@@ -291,7 +367,7 @@ jobs:
     # Opt-in (Review 3 P0 8.1). Drives the real OnchainBaseRail against a deployed
     # BrainSmartAccount on Base Sepolia. Stays gated behind an explicit repo
     # variable + RPC/key secrets; without them the test self-skips (describe.skip),
-    # and gating the whole job keeps the signal honest — a green check means it
+    # and gating the whole job keeps the signal honest. A green check means it
     # really ran. Needs a deployed smart-account address + a gas-funded throwaway
     # session key; the value-moving success case additionally needs a GRANTED key
     # (BRAIN_TESTNET_SUCCESS_ENABLED). See tests/e2e/README.md.
