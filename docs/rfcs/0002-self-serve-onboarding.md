@@ -65,10 +65,10 @@ execute` is unchanged. The MCP surface still has no execute tool.
 
 A tenant has **two kinds of principal**, both linkable under one tenant:
 
-| Principal                  | Identity                                               | Auth                                                           | What it can do                                                                                                                                                   |
-| -------------------------- | ------------------------------------------------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Human owner / operator** | email (+ password), optionally a linked wallet         | `POST /v1/auth/login` (email) **or** SIWX (wallet) → human JWT | Tenant management: configure policy, register/manage agents, read via REST, approve payment intents. **No `*:execute`, no `payment_intent:propose` by default.** |
-| **Agent (machine)**        | on-chain address registered in `BrainMCPAgentRegistry` | SIWX (wallet) + on-chain scope attestation → agent JWT         | The M2M surface: MCP tools (ledger/wiki reads, `raw.contribute`, `payment_intent.propose`, `agent.action.propose`). Scopes bound by the on-chain `scope_hash`.   |
+| Principal                  | Identity                                               | Auth                                                           | What it can do                                                                                                                                                                              |
+| -------------------------- | ------------------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Human owner / operator** | email (+ password), optionally a linked wallet         | `POST /v1/auth/login` (email) **or** SIWX (wallet) → human JWT | Tenant management: configure policy, register/manage agents, ingest/read Raw artifacts, read via REST, approve payment intents. **No `*:execute`, no `payment_intent:propose` by default.** |
+| **Agent (machine)**        | on-chain address registered in `BrainMCPAgentRegistry` | SIWX (wallet) + on-chain scope attestation → agent JWT         | The M2M surface: MCP tools (ledger/wiki reads, `raw.contribute`, `payment_intent.propose`, `agent.action.propose`). Scopes bound by the on-chain `scope_hash`.                              |
 
 Key point established during design: **email is for the human account; the
 wallet + on-chain attestation is for the agent that acts autonomously.** They are
@@ -83,7 +83,7 @@ agents, and the human may _also_ hold a wallet login.
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
 | `POST /v1/signup`                                     | Self-provision a tenant + owner user (email). Creates a **sandbox** tenant. Sends an email-verification token.                                                         | none (public) |
 | `POST /v1/auth/verify-email`                          | Confirm the owner's email via the token.                                                                                                                               | token         |
-| `POST /v1/auth/login`                                 | Email + password → human (owner) JWT, tenant-scoped, management scopes only.                                                                                           | none (public) |
+| `POST /v1/auth/login`                                 | Email + password → human (owner) JWT, tenant-scoped, management/read/approve scopes plus Raw ingest/read.                                                              | none (public) |
 | `POST /v1/auth/siwx/challenge` · `POST /v1/auth/siwx` | **Existing.** Extended so an unknown valid wallet can either (a) **link** to the caller's tenant when invoked with a human JWT, or (b) resolve a human/agent identity. | none / bearer |
 | `POST /v1/tenants/{id}/wallets`                       | Link a wallet to the tenant as a **human** login or as an **agent** identity.                                                                                          | owner JWT     |
 | `POST /v1/agents`                                     | Owner registers an agent (address + requested scope) → creates `pending_onchain` + enqueues the on-chain relay.                                                        | owner JWT     |
@@ -197,6 +197,9 @@ read its own (empty) ledger and generate shadow proposals.
   `email_verifications`; the narrow privileged signup writer; the isolation
   invariant test. **No agent, no money.** Behind `BRAIN_SELF_SERVE_SIGNUP` flag,
   default off.
+  Production enablement additionally requires a verification-token delivery path
+  owned by API or platform. If the raw token is hidden and no delivery dependency
+  is configured, signup fails closed before provisioning.
 - **Phase C. Agent registration + relayer interface.** `POST /v1/agents`,
   `pending_onchain` lifecycle, the `brain.agents.onchainRegister` job + a
   fail-closed relayer interface (signer deferred).

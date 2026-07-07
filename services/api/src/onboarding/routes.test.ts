@@ -37,7 +37,12 @@ function makeFakePool(opts: {
 
 async function buildApp(
   pool: Pool,
-  opts: { exposeVerificationToken?: boolean } = {},
+  opts: {
+    exposeVerificationToken?: boolean;
+    deliverVerificationEmail?: Parameters<
+      typeof registerOnboardingRoutes
+    >[1]["deliverVerificationEmail"];
+  } = {},
 ): Promise<{ app: FastifyInstance; audit: InMemoryAuditEmitter }> {
   const app = Fastify({ logger: false });
   await app.register(requestIdPlugin);
@@ -47,6 +52,9 @@ async function buildApp(
     pool,
     audit,
     exposeVerificationToken: opts.exposeVerificationToken ?? true,
+    ...(opts.deliverVerificationEmail !== undefined
+      ? { deliverVerificationEmail: opts.deliverVerificationEmail }
+      : {}),
   });
   await app.ready();
   return { app, audit };
@@ -75,12 +83,35 @@ describe("POST /signup — RFC 0002 Phase B", () => {
   });
 
   it("hides the raw token when exposeVerificationToken is false (prod posture)", async () => {
-    const { app } = await buildApp(makeFakePool({}), { exposeVerificationToken: false });
+    const deliverVerificationEmail = vi.fn(async () => undefined);
+    const { app } = await buildApp(makeFakePool({}), {
+      exposeVerificationToken: false,
+      deliverVerificationEmail,
+    });
     const res = await app.inject({ method: "POST", url: "/signup", payload: GOOD_SIGNUP });
     expect(res.statusCode).toBe(201);
     const body = res.json();
     expect(body.verification_token).toBeUndefined();
     expect(body.verification_sent).toBe(true);
+    expect(deliverVerificationEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "founder@example.com",
+        tenantId: body.tenant_id,
+        userId: body.user_id,
+        token: expect.any(String),
+        expiresAt: expect.any(Date),
+      }),
+    );
+    await app.close();
+  });
+
+  it("fails closed when tokens are hidden and no delivery path is configured", async () => {
+    const pool = makeFakePool({});
+    const { app } = await buildApp(pool, { exposeVerificationToken: false });
+    const res = await app.inject({ method: "POST", url: "/signup", payload: GOOD_SIGNUP });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe("dependency_unavailable");
+    expect(pool.connect).not.toHaveBeenCalled();
     await app.close();
   });
 

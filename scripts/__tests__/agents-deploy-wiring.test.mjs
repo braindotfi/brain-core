@@ -3,66 +3,51 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const workflow = readFileSync(".github/workflows/main.yml", "utf8");
-const terraform = readFileSync("infra/main.tf", "utf8");
-const variables = readFileSync("infra/variables.tf", "utf8");
+const composeProd = readFileSync("docker-compose.prod.yml", "utf8");
+const envProdExample = readFileSync(".env.prod.example", "utf8");
 
-test("main workflow builds the agents image from the agents context", () => {
-  assert.match(
-    workflow,
-    /service:\s*agents[\s\S]*dockerfile:\s*services\/agents\/Dockerfile[\s\S]*context:\s*services\/agents/,
-  );
-  assert.match(workflow, /context:\s*\$\{\{\s*matrix\.context\s*\|\|\s*'\.'\s*\}\}/);
-});
-
-test("main workflow runs Python agents checks", () => {
+test("main workflow runs Python agents checks before VM deploy", () => {
+  assert.match(workflow, /python_agents:/);
   assert.match(workflow, /uv run ruff check \./);
   assert.match(workflow, /uv run black --check \./);
   assert.match(workflow, /uv run mypy --strict brain_agents/);
   assert.match(workflow, /uv run pytest/);
+  assert.match(
+    workflow,
+    /deploy_vm:[\s\S]*needs:\s*\[unit_and_integration, golden_path_smoke, python_agents\]/,
+  );
 });
 
-test("staging and production deploy the api and agents apps together", () => {
-  const deployLoops = workflow.match(/for svc in api agents; do/g) ?? [];
-  assert.equal(deployLoops.length, 2);
+test("main workflow ships one root production image to the VM with migration and health gates", () => {
+  assert.match(
+    workflow,
+    /docker build --build-arg GIT_SHA=\$\{\{ github\.sha \}\} -t brain-core:prod -f Dockerfile \./,
+  );
+  assert.match(workflow, /docker save brain-core:prod \| gzip \| ssh/);
+  assert.match(workflow, /tools\/migrate\/dist\/cli\.js up/);
+  assert.match(workflow, /up -d --no-deps --no-build api worker/);
+  assert.match(workflow, /https:\/\/api\.brain\.fi\/health/);
+  assert.match(workflow, /last_commit.*expected/s);
 });
 
-test("terraform defaults include agents and keeps it internally exposed", () => {
-  assert.match(variables, /default\s*=\s*\[[^\]]*"agents"[^\]]*\]/);
-  assert.match(terraform, /external_enabled\s*=\s*each\.key\s*==\s*"api"/);
-  assert.match(terraform, /service_ports\s*=\s*merge\(/);
-  assert.match(terraform, /agents\s*=\s*8001/);
-  assert.match(terraform, /target_port\s*=\s*local\.service_ports\[each\.key\]/);
+test("production compose defines the optional Python agents service", () => {
+  assert.match(composeProd, /agents:\n\s+profiles:\s*\["agents"\]/);
+  assert.match(
+    composeProd,
+    /agents:[\s\S]*build:\n\s+context:\s+services\/agents\n\s+dockerfile:\s+Dockerfile/,
+  );
+  assert.match(composeProd, /container_name:\s+brain-prod-agents/);
+  assert.match(composeProd, /BRAIN_API_BASE_URL:\s+http:\/\/api:3000/);
+  assert.match(composeProd, /depends_on:[\s\S]*api:[\s\S]*condition:\s+service_healthy/);
 });
 
-test("terraform wires agents secrets and api extraction callback configuration", () => {
-  for (const name of [
-    "openai_api_key_secret_name",
-    "brain_agents_inbound_secret_name",
-    "brain_api_token_secret_name",
-  ]) {
-    assert.match(variables, new RegExp(`variable "${name}"`));
-  }
-
+test("production env example documents API to agents extraction wiring", () => {
   for (const name of [
     "OPENAI_API_KEY",
+    "DOCUMENT_EXTRACT_AGENT_URL",
     "BRAIN_AGENTS_INBOUND_SECRET",
     "BRAIN_API_TOKEN",
-    "BRAIN_API_BASE_URL",
-    "DOCUMENT_EXTRACT_AGENT_URL",
   ]) {
-    assert.match(terraform, new RegExp(`name\\s*=\\s*"${name}"`));
+    assert.match(envProdExample, new RegExp(`^${name}=`, "m"));
   }
-
-  assert.match(
-    terraform,
-    /key_vault_secret_id\s*=\s*data\.azurerm_key_vault_secret\.openai_api_key\[0\]\.id/,
-  );
-  assert.match(
-    terraform,
-    /key_vault_secret_id\s*=\s*data\.azurerm_key_vault_secret\.brain_agents_inbound_secret\[0\]\.id/,
-  );
-  assert.match(
-    terraform,
-    /key_vault_secret_id\s*=\s*data\.azurerm_key_vault_secret\.brain_api_token\[0\]\.id/,
-  );
 });

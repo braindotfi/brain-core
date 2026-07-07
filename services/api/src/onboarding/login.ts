@@ -9,10 +9,10 @@
  * scrypt password hash, requires the email to be verified (`status = active`),
  * and mints a short-lived JWT.
  *
- * Scopes (RFC 0002 O-5): management + read + approve ONLY. The owner JWT
- * deliberately carries **no** `*:execute`, `payment_intent:propose`, or
- * `execution:propose` — money movement is an agent + §6-gate concern, never a
- * human-login capability.
+ * Scopes (RFC 0002 O-5): management + read + approve plus Raw ingest/read for
+ * the owner's own sandbox documents. The owner JWT deliberately carries **no**
+ * `*:execute`, `payment_intent:propose`, or `execution:propose` because money
+ * movement is an agent plus §6-gate concern, never a human-login capability.
  *
  * Anti-enumeration: an unknown email and a wrong password return the SAME
  * `auth_invalid_credentials` (401), and a dummy hash is verified when the email
@@ -31,10 +31,12 @@ import {
   type Scope,
 } from "@brain/shared";
 
-/** Owner/operator scope set — management + read + approve; never propose/execute. */
+/** Owner/operator scope set: manage/read/approve plus Raw ingest; never propose/execute. */
 export const OWNER_SCOPES: readonly Scope[] = [
   "ledger:read",
   "wiki:read",
+  "raw:read",
+  "raw:write",
   "policy:read",
   "policy:write",
   "audit:read",
