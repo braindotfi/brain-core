@@ -101,7 +101,9 @@ def create_app(deps: AppDeps | None = None) -> FastAPI:
                 anomaly_agent=anomaly_agent,
                 plaid_extractor_agent=PlaidExtractorAgent(),
                 document_extractor_agent=DocumentExtractorAgent(
-                    openai_client, settings.openai_model
+                    openai_client,
+                    settings.openai_model,
+                    ocr_model=settings.openai_ocr_model,
                 ),
             )
             # Anomaly scheduler (autopilot). Stays dormant when no tenant ids

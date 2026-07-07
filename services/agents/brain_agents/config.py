@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    openai_ocr_model: str = "gpt-4o"
     brain_api_base_url: str = "http://localhost:3001"
     brain_api_token: str = ""
 

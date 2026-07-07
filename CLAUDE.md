@@ -193,6 +193,11 @@ Done
   Production self-serve signup must not be enabled until verification-token
   delivery is wired through API or the platform; when tokens are hidden and no
   delivery dependency is configured, signup fails closed before provisioning.
+- The document extraction agent keeps deterministic text extraction first for
+  CSV, plain text, XLSX, and text-layer PDFs. Image uploads and scanned PDFs
+  fall back to OCR through `OPENAI_OCR_MODEL` (default `gpt-4o`) with a 10 MB
+  input guard, a 5 page PDF guard, and a fail-closed blank-OCR check. OCR-derived
+  parsed evidence remains `agent_contributed` and is capped at confidence `0.5`.
 
 ### Deployment
 
