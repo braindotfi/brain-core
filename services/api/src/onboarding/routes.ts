@@ -2,7 +2,7 @@
  * Public self-serve onboarding routes — RFC 0002 Phase B.
  *
  *   POST /v1/signup            → provision a sandbox tenant + owner (email),
- *                                return a verification token (non-prod) / "sent".
+ *                                return a verification token (non-prod) or send it.
  *   POST /v1/auth/verify-email → consume the token, activate the owner.
  *
  * These are the only public (skipAuth) write endpoints. They are registered ONLY
@@ -39,6 +39,14 @@ export interface OnboardingDeps {
   readonly audit: AuditEmitter;
   /** When true (non-prod), the signup response includes the raw verification token. */
   readonly exposeVerificationToken: boolean;
+  /** Required when verification tokens are hidden from the response. */
+  readonly deliverVerificationEmail?: (input: {
+    readonly tenantId: string;
+    readonly userId: string;
+    readonly email: string;
+    readonly token: string;
+    readonly expiresAt: Date;
+  }) => Promise<void>;
 }
 
 const signupBody = z.object({
@@ -73,6 +81,9 @@ export async function registerOnboardingRoutes(
       const passwordHash = await hashPassword(parsed.data.password);
       const rawToken = randomBytes(32).toString("base64url");
       const expiresAt = new Date(Date.now() + VERIFICATION_TTL_MS);
+      if (!deps.exposeVerificationToken && deps.deliverVerificationEmail === undefined) {
+        throw brainError("dependency_unavailable", "email verification delivery is not configured");
+      }
 
       const { tenantId, userId } = await provisionTenant(deps.pool, {
         email,
@@ -97,6 +108,16 @@ export async function registerOnboardingRoutes(
         inputs: { email },
         outputs: { user_id: userId, role: "owner", status: "pending" },
       });
+
+      if (!deps.exposeVerificationToken) {
+        await deps.deliverVerificationEmail?.({
+          tenantId,
+          userId,
+          email,
+          token: rawToken,
+          expiresAt,
+        });
+      }
 
       reply.status(201);
       return {

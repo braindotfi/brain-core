@@ -186,6 +186,13 @@ Done
   confidence. This is intentionally not an automatic post-ingest trigger.
   If `DOCUMENT_EXTRACT_AGENT_URL` is unset, the route returns 501 using
   `dependency_unavailable`.
+- Owner password-login tokens now include `raw:read` and `raw:write` so a
+  verified self-serve tenant owner can upload documents, trigger extraction, and
+  read advisory ledger state. Owner tokens still exclude
+  `payment_intent:propose`, `payment_intent:execute`, and `execution:propose`.
+  Production self-serve signup must not be enabled until verification-token
+  delivery is wired through API or the platform; when tokens are hidden and no
+  delivery dependency is configured, signup fails closed before provisioning.
 
 ### Deployment
 

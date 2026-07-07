@@ -1759,7 +1759,7 @@ async function main(): Promise<void> {
         // Public self-serve onboarding (RFC 0002) — registered ONLY when the flag
         // is on; absent it the routes do not exist. New tenants are sandbox-only
         // and grant no execution capability. The raw verification token is exposed
-        // in the response outside production (no email provider wired yet).
+        // outside production; production signup requires a delivery dependency.
         if (cfg.BRAIN_SELF_SERVE_SIGNUP) {
           await v1.register(async (child) =>
             registerOnboardingRoutes(child, {

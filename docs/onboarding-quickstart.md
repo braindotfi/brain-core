@@ -8,9 +8,10 @@ see §"Agents" below).
 > **Status / safety.** Self-serve signup is gated by the `BRAIN_SELF_SERVE_SIGNUP`
 > flag (default **off**. The routes don't exist unless enabled). Every new tenant
 > is **sandbox-only**: it can read and _propose_, but moves **no money**. Real
-> settlement stays behind the existing promotion + external-audit gates. Email
-> delivery is not wired yet. Outside production the verification token is
-> returned in the signup response.
+> settlement stays behind the existing promotion + external-audit gates. Outside
+> production the verification token is returned in the signup response. In
+> production, token delivery must be owned by a configured verification sender or
+> the platform before `BRAIN_SELF_SERVE_SIGNUP` is enabled.
 
 ## The two principals
 
@@ -19,9 +20,10 @@ see §"Agents" below).
 | **Human owner**     | email + password                                                   | tenant management, reads, approving payment intents (a management JWT) |
 | **Agent** (machine) | wallet (SIWX) + on-chain `BrainMCPAgentRegistry` scope attestation | the M2M / MCP tool surface (propose, reads, contribute)                |
 
-The owner JWT carries **management/read/approve scopes only**. Never
-`payment_intent:propose`, `payment_intent:execute`, or `execution:propose`. Money
-movement is an agent + §6-gate concern, never a human-login capability.
+The owner JWT carries **management/read/approve scopes plus Raw ingest/read**.
+Never `payment_intent:propose`, `payment_intent:execute`, or
+`execution:propose`. Money movement is an agent + §6-gate concern, never a
+human-login capability.
 
 ## 1. Sign up (provision a sandbox tenant + owner)
 
@@ -36,12 +38,15 @@ curl -sX POST "$BRAIN/v1/signup" \
   "tenant_id": "tnt_…",
   "user_id": "user_…",
   "status": "pending",
-  "verification_token": "…" // non-prod only; emailed in production
+  "verification_token": "..." // non-prod only; delivered in production
 }
 ```
 
 - Password: min 12 chars (stored as a scrypt hash; never logged).
 - Duplicate email → `409 signup_email_taken`.
+- Production: do not enable `BRAIN_SELF_SERVE_SIGNUP` until verification token
+  delivery is configured. The API fails closed when the raw token is hidden and
+  no delivery path is available.
 
 ## 2. Verify the email (activate the owner)
 
@@ -78,6 +83,8 @@ curl -sX POST "$BRAIN/v1/auth/login" \
     "scopes": [
       "ledger:read",
       "wiki:read",
+      "raw:read",
+      "raw:write",
       "policy:read",
       "policy:write",
       "audit:read",
@@ -98,7 +105,10 @@ auth_email_unverified`.
 curl -s "$BRAIN/v1/ledger/accounts" -H "authorization: Bearer $ACCESS_TOKEN"
 ```
 
-The token is tenant-scoped (RLS) and 15-minute-lived. Refresh by logging in again.
+The token is tenant-scoped (RLS) and 15-minute-lived. It can upload artifacts
+through `POST /v1/raw/ingest`, trigger extraction through
+`POST /v1/raw/{raw_id}/extract`, and read the resulting advisory ledger state.
+Refresh by logging in again.
 
 ## Agents (machine principals)
 
