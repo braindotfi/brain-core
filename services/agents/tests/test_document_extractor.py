@@ -11,7 +11,10 @@ import pytest
 from brain_agents.anomaly.agent import AnomalyAgent
 from brain_agents.client import BrainApiClient
 from brain_agents.deps import AppDeps
-from brain_agents.document_extractor.agent import DocumentExtractorAgent
+from brain_agents.document_extractor.agent import (
+    DocumentExtractorAgent,
+    DocumentOcrUnavailableError,
+)
 from brain_agents.payment.agent import PaymentAgent
 from brain_agents.plaid_extractor.agent import PlaidExtractorAgent
 from brain_agents.reconciliation.agent import ReconciliationAgent
@@ -26,6 +29,40 @@ _PAYLOAD = {
     "due_date": "2026-07-01T00:00:00Z",
     "status": "upcoming",
 }
+
+
+def _pdf_bytes(*page_texts: str) -> bytes:
+    n_pages = len(page_texts)
+    font_num = 3 + 2 * n_pages
+    kids = " ".join(f"{3 + 2 * i} 0 R" for i in range(n_pages))
+    objects: list[bytes] = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        f"<< /Type /Pages /Kids [{kids}] /Count {n_pages} >>".encode(),
+    ]
+    for i, text in enumerate(page_texts):
+        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode() if text else b""
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            f"/Resources << /Font << /F1 {font_num} 0 R >> >> "
+            f"/Contents {4 + 2 * i} 0 R >>".encode()
+        )
+        objects.append(f"<< /Length {len(stream)} >>\nstream\n".encode() + stream + b"\nendstream")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for num, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{num} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref_at = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_at}\n%%EOF\n".encode()
+    )
+    return bytes(out)
 
 
 def _make_mock_deps() -> AppDeps:
@@ -122,8 +159,68 @@ async def test_run_extracts_text_from_base64_csv_bytes(
     assert "Acme" in text_arg
 
 
-async def test_run_rejects_unsupported_mime_with_422(client: httpx.AsyncClient) -> None:
+async def test_run_ocr_extracts_image_bytes(
+    client: httpx.AsyncClient,
+    mock_deps: AppDeps,
+) -> None:
     png_b64 = base64.b64encode(b"\x89PNG\r\n").decode("ascii")
+    mock_deps.document_extractor_agent.ocr_text.return_value = (  # type: ignore[union-attr]
+        "INVOICE\nAcme Utilities\nTotal due: 120.50"
+    )
+
+    resp = await client.post(
+        "/run/document_extract",
+        json={
+            "agent_id": "agent_x",
+            "tenant_id": "tnt_x",
+            "raw_id": "raw_x",
+            "document_b64": png_b64,
+            "mime_type": "image/png",
+        },
+    )
+    assert resp.status_code == 200
+    mock_deps.document_extractor_agent.ocr_text.assert_awaited_once()  # type: ignore[union-attr]
+    mock_deps.document_extractor_agent.extract.assert_awaited_once_with(  # type: ignore[union-attr]
+        "INVOICE\nAcme Utilities\nTotal due: 120.50"
+    )
+    kwargs = mock_deps.brain_client.post_parsed.await_args.kwargs  # type: ignore[union-attr]
+    assert kwargs["confidence"] == 0.5
+    assert resp.json()["confidence"] == 0.5
+
+
+async def test_run_ocr_extracts_scanned_pdf_bytes(
+    client: httpx.AsyncClient,
+    mock_deps: AppDeps,
+) -> None:
+    pdf_b64 = base64.b64encode(_pdf_bytes("")).decode("ascii")
+    mock_deps.document_extractor_agent.ocr_text.return_value = (  # type: ignore[union-attr]
+        "Rent statement\nAmount due 2200.00"
+    )
+    resp = await client.post(
+        "/run/document_extract",
+        json={
+            "agent_id": "agent_x",
+            "tenant_id": "tnt_x",
+            "raw_id": "raw_x",
+            "document_b64": pdf_b64,
+            "mime_type": "application/pdf",
+        },
+    )
+    assert resp.status_code == 200
+    mock_deps.document_extractor_agent.ocr_text.assert_awaited_once()  # type: ignore[union-attr]
+    mock_deps.document_extractor_agent.extract.assert_awaited_once_with(  # type: ignore[union-attr]
+        "Rent statement\nAmount due 2200.00"
+    )
+
+
+async def test_run_blank_ocr_fails_with_422(
+    client: httpx.AsyncClient,
+    mock_deps: AppDeps,
+) -> None:
+    png_b64 = base64.b64encode(b"\x89PNG\r\n").decode("ascii")
+    mock_deps.document_extractor_agent.ocr_text.side_effect = (  # type: ignore[union-attr]
+        DocumentOcrUnavailableError("OCR produced no usable text")
+    )
     resp = await client.post(
         "/run/document_extract",
         json={
@@ -135,6 +232,7 @@ async def test_run_rejects_unsupported_mime_with_422(client: httpx.AsyncClient) 
         },
     )
     assert resp.status_code == 422
+    assert "OCR produced no usable text" in resp.json()["detail"]
 
 
 async def test_run_rejects_textless_pdf_with_422(client: httpx.AsyncClient) -> None:
@@ -153,6 +251,25 @@ async def test_run_rejects_textless_pdf_with_422(client: httpx.AsyncClient) -> N
     )
     assert resp.status_code == 422
     assert "no extractable text" in resp.json()["detail"]
+
+
+async def test_run_does_not_ocr_malformed_pdf(
+    client: httpx.AsyncClient,
+    mock_deps: AppDeps,
+) -> None:
+    pdf_b64 = base64.b64encode(b"%PDF-1.7 ...").decode("ascii")
+    resp = await client.post(
+        "/run/document_extract",
+        json={
+            "agent_id": "agent_x",
+            "tenant_id": "tnt_x",
+            "raw_id": "raw_x",
+            "document_b64": pdf_b64,
+            "mime_type": "application/pdf",
+        },
+    )
+    assert resp.status_code == 422
+    mock_deps.document_extractor_agent.ocr_text.assert_not_awaited()  # type: ignore[union-attr]
 
 
 async def test_run_requires_a_content_source_400(client: httpx.AsyncClient) -> None:
@@ -175,6 +292,13 @@ def _openai_returning(content: str | None) -> MagicMock:
     mock_openai.chat.completions.create = AsyncMock(
         return_value=MagicMock(choices=[MagicMock(message=MagicMock(content=content))])
     )
+    return mock_openai
+
+
+def _openai_ocr_returning(content: str) -> MagicMock:
+    mock_openai = MagicMock()
+    mock_openai.responses = MagicMock()
+    mock_openai.responses.create = AsyncMock(return_value=MagicMock(output_text=content))
     return mock_openai
 
 
@@ -219,3 +343,57 @@ async def test_agent_extract_clamps_out_of_range_confidence() -> None:
     agent = DocumentExtractorAgent(mock_openai, "gpt-4o-mini")
     result = await agent.extract("text")
     assert result["confidence"] == 1.0
+
+
+async def test_agent_ocr_image_uses_vision_model() -> None:
+    mock_openai = _openai_ocr_returning("INVOICE\nAcme Utilities\nTotal due 120.50")
+    agent = DocumentExtractorAgent(mock_openai, "gpt-4o-mini", ocr_model="gpt-4o")
+
+    result = await agent.ocr_text(b"\x89PNG\r\n", "image/png")
+
+    assert "Acme Utilities" in result
+    mock_openai.responses.create.assert_awaited_once()
+    kwargs = mock_openai.responses.create.await_args.kwargs
+    assert kwargs["model"] == "gpt-4o"
+    content = kwargs["input"][0]["content"]
+    assert content[1]["type"] == "input_image"
+    assert content[1]["image_url"].startswith("data:image/png;base64,")
+
+
+async def test_agent_ocr_pdf_uses_file_input() -> None:
+    mock_openai = _openai_ocr_returning("Rent statement\nAmount due 2200.00")
+    agent = DocumentExtractorAgent(mock_openai, "gpt-4o-mini", ocr_model="gpt-4o")
+
+    result = await agent.ocr_text(_pdf_bytes(""), "application/pdf")
+
+    assert "Amount due" in result
+    kwargs = mock_openai.responses.create.await_args.kwargs
+    content = kwargs["input"][0]["content"]
+    assert content[1]["type"] == "input_file"
+    assert content[1]["file_data"].startswith("data:application/pdf;base64,")
+
+
+async def test_agent_ocr_blank_output_raises() -> None:
+    mock_openai = _openai_ocr_returning("   ")
+    agent = DocumentExtractorAgent(mock_openai, "gpt-4o-mini", ocr_model="gpt-4o")
+
+    with pytest.raises(DocumentOcrUnavailableError, match="OCR produced no usable text"):
+        await agent.ocr_text(b"\x89PNG\r\n", "image/png")
+
+
+async def test_agent_ocr_rejects_large_input_without_model_call() -> None:
+    mock_openai = _openai_ocr_returning("text")
+    agent = DocumentExtractorAgent(mock_openai, "gpt-4o-mini", ocr_model="gpt-4o")
+
+    with pytest.raises(DocumentOcrUnavailableError, match="exceeds 10 MB"):
+        await agent.ocr_text(b"x" * (10 * 1024 * 1024 + 1), "image/png")
+    mock_openai.responses.create.assert_not_awaited()
+
+
+async def test_agent_ocr_rejects_pdf_over_page_limit_without_model_call() -> None:
+    mock_openai = _openai_ocr_returning("text")
+    agent = DocumentExtractorAgent(mock_openai, "gpt-4o-mini", ocr_model="gpt-4o")
+
+    with pytest.raises(DocumentOcrUnavailableError, match="exceeds 5 page limit"):
+        await agent.ocr_text(_pdf_bytes("", "", "", "", "", ""), "application/pdf")
+    mock_openai.responses.create.assert_not_awaited()

@@ -18,7 +18,7 @@ dependencies = [
   "pydantic-settings>=2.14.2",
   # Deterministic document -> text for the document_extractor (RFC 0004).
   # CSV/plain text need only the stdlib; XLSX via openpyxl; text-layer PDFs
-  # via pypdf. Scanned/image PDFs (OCR) remain a deferred follow-up.
+  # via pypdf. Image and scanned PDF OCR uses the OpenAI vision model.
   "openpyxl>=3.1.0",
   "pypdf>=6.13.3",  # >=6.13.3: GHSA-jm82-fx9c-mx94 (PDF stream-length memory exhaustion)
 ]
