@@ -202,33 +202,36 @@ Done
 ### Deployment
 
 The main workflow runs the Python agents quality gate before image builds:
-`ruff`, `black --check`, `mypy --strict brain_agents`, and `pytest`. The
-container image matrix builds `brain-agents` from `services/agents/Dockerfile`
-with `services/agents` as the Docker context. Staging deploy and production
-promote update `api` and `agents` together.
+`ruff`, `black --check`, `mypy --strict brain_agents`, and `pytest`. After the
+green main checks, `build_image` builds one root Docker image with the GitHub
+SHA as `GIT_SHA` and uploads it as a short-lived artifact. The same image
+artifact is deployed to every environment in order, so staging and production
+run the same commit.
 
-Terraform deploys `agents` as an internal-only Azure Container App on port 8001. The public API remains the only externally exposed Container App. When
-`agents` is in `var.services`, the API app receives
-`DOCUMENT_EXTRACT_AGENT_URL=https://brain-<environment>-agents.internal.<aca-default-domain>`
-and the shared `BRAIN_AGENTS_INBOUND_SECRET`. The agents app receives
-`OPENAI_API_KEY`, `BRAIN_AGENTS_INBOUND_SECRET`, `BRAIN_API_TOKEN`, and
-`BRAIN_API_BASE_URL` from Key Vault-backed Container App secrets. Operators
-must create `openai-api-key`, `brain-agents-inbound-secret`, and
-`brain-api-token` in both staging and production Key Vaults before applying the
-Terraform stack with agents enabled.
+Deployment is a single Docker VM per environment. `deploy_staging` runs
+automatically on green `main`, connects to `VM_HOST_STAGING` with
+`VM_SSH_KEY_STAGING`, uses `.env.staging`, runs `tools/migrate up`, recreates
+`api`, `worker`, and `agents`, then smokes the staging health URL with a commit
+match. `promote_production` depends on staging, is bound to the GitHub
+`production` environment, and must wait for that environment's required
+reviewer approval before it connects to `VM_HOST`, uses `.env.prod`, runs the
+same migration and recreate sequence, and smokes
+`https://api.brain.fi/health`.
 
-Production promotion now runs `tools/migrate up` against `DATABASE_URL_PROD`
-inside the `promote_production` GitHub environment before updating the
-production Container App revision. The migration runner is idempotent: applied
-migrations with matching hashes are skipped, drift fails the job, and a failed
-migration exits nonzero before any new revision is shipped. This replaces the
-previous manual and unowned production migration step, which caused the members
-promote to deploy app code before migrations 0023 and 0024 existed in prod.
+Production must never deploy from a bare push without the `production`
+environment approval. The GitHub environment is the manual promote gate, not a
+replacement for staging. A failed migration or smoke check fails the job before
+the promote is considered complete.
 
-After the production app update, `promote_production` curls the production
-health URL and fails the job if no 2xx response is observed. The default smoke
-target is `https://api.brain.fi/health`; override with
-`BRAIN_PRODUCTION_HEALTH_URL` when needed.
+The VM compose recreate command starts `api`, `worker`, and `agents` with the
+`agents` profile. The API reaches the extraction agents at
+`DOCUMENT_EXTRACT_AGENT_URL=http://agents:8001`. Both host env files must carry
+`OPENAI_API_KEY`, `DOCUMENT_EXTRACT_AGENT_URL`, `BRAIN_AGENTS_INBOUND_SECRET`,
+and the ESP credentials required by outbound email onboarding.
+
+`infra/main.tf` still contains Container Apps wiring from the earlier deploy
+model. That wiring is legacy and is not the production source of truth while
+the GitHub workflow deploys to Docker VMs.
 
 `/health` includes `commit: process.env.GIT_SHA ?? "dev"` so operators can
 confirm which image revision an environment is running. The main workflow passes

@@ -1,149 +1,109 @@
 # Rollback Runbook
 
-Brain runs on two substrates with different rollback mechanics:
+Brain currently deploys each environment to a single Docker VM through
+`.github/workflows/main.yml`.
 
-- **Azure Container Apps** (managed staging/production). Revision-based; see
-  [§A](#a-azure-container-apps).
-- **Single-host Docker** (testnet dev-live VM, `docker-compose.prod.yml`).
-  image-tag based; see [§B](#b-single-host-docker-testnet-dev-live).
+- `deploy_staging` runs automatically after green `main`, uses `VM_HOST_STAGING`,
+  `.env.staging`, and project `brain-staging`.
+- `promote_production` depends on staging, waits for the GitHub `production`
+  environment approval, uses `VM_HOST`, `.env.prod`, and project `brain-prod`.
+- Both jobs ship the same `brain-core:prod` image artifact, run
+  `tools/migrate up`, then recreate `api`, `worker`, and `agents`.
 
 The forward-only migration rule in [Post-Rollback](#post-rollback) applies to
-both.
+both environments.
 
----
+## Current VM Rollback
 
-## A. Azure Container Apps
-
-§10.3: "Rollback is one command: `az containerapp revision set-active --revision N-1`."
-
-### Prerequisites
-
-- Azure CLI authenticated with an identity that has `Container Apps
-Contributor` on the resource group.
-- Resource group: `brain-production-rg` (or `brain-staging-rg`).
-- Know the service that needs rollback (usually `api`, but any of the
-  seven services).
-
-### Procedure
-
-1. Identify the currently-active revision:
-
-   ```bash
-   az containerapp revision list \
-     --name brain-production-api \
-     --resource-group brain-production-rg \
-     --query "[?properties.active].name" -o tsv
-   ```
-
-2. Identify the previous revision (N-1) by `createdTime`:
-
-   ```bash
-   az containerapp revision list \
-     --name brain-production-api \
-     --resource-group brain-production-rg \
-     --query "sort_by([], &properties.createdTime)[-2].name" -o tsv
-   ```
-
-3. Shift traffic to N-1:
-
-   ```bash
-   az containerapp ingress traffic set \
-     --name brain-production-api \
-     --resource-group brain-production-rg \
-     --revision-weight <REVISION_N-1>=100
-   ```
-
-4. Verify:
-
-   ```bash
-   az containerapp ingress traffic show \
-     --name brain-production-api \
-     --resource-group brain-production-rg
-   ```
-
-5. Notify on-call via PagerDuty with the revision hashes and the reason.
-
----
-
-## B. Single-host Docker (testnet dev-live)
-
-The testnet VM runs the stack from `docker-compose.prod.yml`, which builds a
-local `brain-core:prod` image. Rollback here means **re-pinning the `api` (and
-`migrate`) service to a previously-built, known-good image tag**. There is no
-revision controller, so the image tag IS the unit of rollback.
+Rollback on the VM means reusing the rollback image tag captured before the last
+deploy overwrote `brain-core:prod`.
 
 ### Prerequisites
 
-- SSH access to the VM and membership in the `docker` group.
-- A known-good image tag to roll back to. **This only works if images were
-  tagged at deploy time**. See [Tagging discipline](#tagging-discipline) below.
-  Without prior tags, the only "rollback" is `git checkout <good-sha>` +
-  rebuild, which is slow and rebuilds from source.
+- SSH access to the target VM as `azureuser`.
+- Access to the target env file on the host: `.env.staging` or `.env.prod`.
+- The failing deploy has run through the workflow, which tags the previous
+  image as `brain-core:prod-rollback-<timestamp>` before loading the new image.
 
 ### Procedure
 
-1. List locally-available image tags and pick the previous good one:
+1. SSH to the target VM.
 
    ```bash
-   docker images brain-core --format '{{.Tag}}\t{{.CreatedAt}}'
+   ssh azureuser@<vm-host>
+   cd ~/brain-core
    ```
 
-2. Re-pin the `api`/`migrate` image tag. The compose file resolves the image as
-   `brain-core:${BRAIN_IMAGE_TAG:-prod}`, so a rollback is a single env override
-   . No file edit:
+2. List local rollback images and choose the latest known-good tag.
 
    ```bash
-   BRAIN_IMAGE_TAG=<GOOD_TAG> \
-     docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --no-build api
+   docker images brain-core --format '{{.Tag}}\t{{.CreatedAt}}' | sort
    ```
 
-   `--no-build` is critical. It recreates the container from the existing
-   tagged image instead of rebuilding the current (bad) source. (Set
-   `BRAIN_IMAGE_TAG` in `.env.prod` to make the pin sticky across later
-   `up` invocations.)
-
-3. Confirm the new container is healthy (the image carries a `/health`
-   HEALTHCHECK):
+3. Repoint `brain-core:prod` at the chosen rollback image.
 
    ```bash
-   docker compose -f docker-compose.prod.yml ps        # api → healthy
-   curl -fsS http://localhost:3000/health
+   docker tag brain-core:<ROLLBACK_TAG> brain-core:prod
    ```
 
-4. Do **not** roll back the `migrate`/`db-roles` one-shots to "undo" a
-   migration. Migrations are forward-only (see Post-Rollback). Rolling the
-   `api` image back to a build whose code predates a migration is safe as long
-   as the migration is forward-compatible (it must be, per §10.5).
+4. Recreate the runtime services without rebuilding.
 
-### Tagging discipline
+   For staging:
 
-Rollback is only possible if good images exist. At deploy time, tag the build
-with the git sha before promoting it to `:prod`:
+   ```bash
+   docker compose -p brain-staging \
+     --env-file .env.staging \
+     -f docker-compose.prod.yml \
+     -f docker-compose.caddy.yml \
+     --profile agents \
+     up -d --no-deps --no-build api worker agents
+   ```
 
-```bash
-GIT_SHA=$(git rev-parse --short HEAD)
-docker compose --env-file .env.prod -f docker-compose.prod.yml build api
-docker tag brain-core:prod brain-core:$GIT_SHA   # keep an addressable history
-```
+   For production:
 
-Keep at least the last 2–3 sha-tagged images on the VM so a one-command
-re-pin is always available. Prune older ones with `docker image prune`.
+   ```bash
+   docker compose -p brain-prod \
+     --env-file .env.prod \
+     -f docker-compose.prod.yml \
+     -f docker-compose.caddy.yml \
+     --profile agents \
+     up -d --no-deps --no-build api worker agents
+   ```
 
-### Data & volumes
+5. Verify the service health and commit.
 
-The stack's state lives in named volumes (`pg-data`, `redis-data`,
-`minio-data`). An image rollback does **not** touch them. Postgres data,
-Redis state, and blobs survive. Never `docker compose down -v` as part of a
-rollback; `-v` deletes those volumes.
+   ```bash
+   docker compose -p <brain-staging-or-brain-prod> \
+     -f docker-compose.prod.yml \
+     -f docker-compose.caddy.yml \
+     ps
 
----
+   curl -fsS https://<environment-health-host>/health
+   ```
+
+6. Notify the team with the failed commit, rollback tag, symptom, and follow-up
+   owner.
+
+## Data And Volumes
+
+The VM stack stores state in named volumes: `pg-data`, `redis-data`, and
+`minio-data`. An image rollback does not touch them. Postgres data, Redis state,
+and blobs survive.
+
+Never run `docker compose down -v` as part of rollback. The `-v` flag deletes
+those volumes.
 
 ## Post-Rollback
 
-- Open an incident ticket with the failing revision hash and the symptom
-  that caused the rollback. §11.1 requires a post-mortem on every
-  production rollback.
-- Migration rollback is NOT a general-purpose operation: §10.5 mandates
-  forward-compatible migrations. If a migration is the root cause, the
-  fix is forward, a new migration that reconciles state, never a
-  reverse migration.
+- Open an incident ticket with the failing revision hash and symptom.
+- Migration rollback is not a general-purpose operation. Migrations are
+  forward-only. If a migration is the root cause, ship a forward fix through a
+  new migration that reconciles state.
+- Do not run `tools/migrate down` in staging or production.
+
+## Legacy Azure Notes
+
+The older Azure Container Apps revision-weight rollback model is not the current
+production deploy path. `infra/main.tf` still contains legacy Container Apps
+wiring, but the GitHub workflow deploys to Docker VMs until that substrate is
+explicitly replaced.

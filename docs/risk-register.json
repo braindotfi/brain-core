@@ -51,13 +51,13 @@
     },
     {
       "id": "R-03",
-      "title": "Azure production deploy chain not yet exercised",
+      "title": "Staging VM deploy chain not yet exercised",
       "priority": "P1",
       "status": "open",
-      "mitigation_summary": "All safety controls (boot fences, gate, RLS) are deploy-substrate-independent. Disclosure explicit in architecture/enterprise-readiness.md. docs/r03-staging-deploy-runbook.md gives the ordered turnkey path (Terraform provision -> apply infra/db-roles.sql -> populate Key Vault -> GitHub OIDC + secrets/vars -> DEPLOY_ENABLED=true -> verify via production-readiness --profile staging) and enumerates the infra gaps the POC infra/main.tf does not yet cover (connect as brain_app not brain_admin; wire the eight R-12 role URLs + R-13 BRAIN_WORKERS + AUTH/session/blob secrets into the Container App; align the ingress port). Closing those + provisioning is the remaining operator work.",
+      "mitigation_summary": "All safety controls (boot fences, gate, RLS) are deploy-substrate-independent. Disclosure explicit in architecture/enterprise-readiness.md. docs/r03-staging-deploy-runbook.md gives the ordered VM path: build one image, deploy staging on green main, smoke the staging commit, then require GitHub production environment approval before production promote. Closing staging VM provisioning, GitHub secrets, host env files, and the production environment reviewer gate is the remaining operator work.",
       "exit_criteria": [
-        "Azure OIDC secrets provisioned",
-        "build push deploy staging-validation chain runs cleanly end-to-end",
+        "staging VM secrets provisioned",
+        "build deploy staging-validation chain runs cleanly end-to-end",
         "production deploy logs show all 5 boot fences armed via brain.runtime.capabilities",
         "rollback procedure exercised against staging"
       ],
