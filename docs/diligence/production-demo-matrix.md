@@ -54,13 +54,13 @@ Status legend:
 
 ## Environments and tooling
 
-| Component                   | Status             | Notes                                                                                                                                                                     |
-| --------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Demo seed / golden-path     | Dev/test only      | Demo provisioning fails closed in production (`demo-provision-fence`). Golden-path runs against the dev stack.                                                            |
-| Plaid sandbox               | Sandbox only       | Validated; drives webhooks + simulated transfers.                                                                                                                         |
-| Plaid live                  | Sandbox only       | Needs production Plaid credentials/approval.                                                                                                                              |
-| Azure deployment            | Wired, unexercised | Deployment workflow exists (`.github/workflows/main.yml`), but the full infra → migrate → boot → readiness → rollback chain has not yet been exercised end-to-end (R-03). |
-| CI guards (`pnpm run lint`) | Production-ready   | 14 CI guard scripts enforce gate-no-bypass, loader binding, audit-status integrity, RLS write boundaries, no-on-chain-PII, rails/docs/risk-register drift, and more.      |
+| Component                         | Status                        | Notes                                                                                                                                                                                                                                     |
+| --------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Demo seed / golden-path           | Dev/test only                 | Demo provisioning fails closed in production (`demo-provision-fence`). Golden-path runs against the dev stack.                                                                                                                            |
+| Plaid sandbox                     | Sandbox only                  | Validated; drives webhooks + simulated transfers.                                                                                                                                                                                         |
+| Plaid live                        | Sandbox only                  | Needs production Plaid credentials/approval.                                                                                                                                                                                              |
+| VM staging and production promote | Wired, pending operator setup | `.github/workflows/main.yml` builds one image, deploys staging on green `main`, and gates production behind the GitHub `production` environment. Staging VM provisioning, secrets, and env files are the remaining operator setup (R-03). |
+| CI guards (`pnpm run lint`)       | Production-ready              | 14 CI guard scripts enforce gate-no-bypass, loader binding, audit-status integrity, RLS write boundaries, no-on-chain-PII, rails/docs/risk-register drift, and more.                                                                      |
 
 ## Bottom line
 
@@ -68,6 +68,6 @@ The deterministic safety model (§6 gate, RLS, boot fences, audit trail, MCP
 propose-only) is **production-ready**. Money movement is **testnet/sandbox-only**:
 on-chain rails run on Base Sepolia, ACH runs against the Plaid sandbox, and
 **Base mainnet custody is blocked on the external smart-contract audit**. The
-remaining production-hardening items (live-cloud erasure test, exercised Azure
-deploy, observability dashboards, load/chaos) are tracked in
+remaining production-hardening items (live-cloud erasure test, exercised staging
+VM deploy, observability dashboards, load/chaos) are tracked in
 `docs/risk-register.md`.
