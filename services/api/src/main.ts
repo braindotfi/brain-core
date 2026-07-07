@@ -256,6 +256,7 @@ import type { GatePaymentIntent, TenantScopedClient } from "@brain/shared";
 
 const DEMO_MEMBER_SESSION_SCOPES = [
   "ledger:read",
+  "ledger:write", // manual counterparty (vendor) create+edit from the neobank UI
   "wiki:read",
   "raw:read",
   "policy:read",
