@@ -204,10 +204,12 @@ Done
 
 The main workflow runs the Python agents quality gate before image builds:
 `ruff`, `black --check`, `mypy --strict brain_agents`, and `pytest`. After the
-green main checks, `build_image` builds one root Docker image with the GitHub
-SHA as `GIT_SHA` and uploads it as a short-lived artifact. The same image
-artifact is deployed to every environment in order, so staging and production
-run the same commit.
+green main checks, `build_image` builds and pushes two GHCR images tagged with
+the GitHub SHA: `ghcr.io/braindotfi/brain-core:<sha>` for the Node runtime and
+`ghcr.io/braindotfi/brain-agents:<sha>` for the Python agents runtime. Staging
+and production pull the same SHA-tagged images and retag them locally as
+`brain-core:prod` and `brain-agents:prod`, so both environments run the same
+commit.
 
 Deployment is a single Docker VM per environment. `deploy_staging` runs
 automatically on green `main`, connects to `VM_HOST_STAGING` with
@@ -226,7 +228,10 @@ the promote is considered complete.
 
 The VM compose recreate command starts `api`, `worker`, and `agents` with the
 `agents` profile. The API reaches the extraction agents at
-`DOCUMENT_EXTRACT_AGENT_URL=http://agents:8001`. Both host env files must carry
+`DOCUMENT_EXTRACT_AGENT_URL=http://agents:8001`. The agents service uses
+`image: brain-agents:${BRAIN_AGENTS_IMAGE_TAG:-prod}` in
+`docker-compose.prod.yml`; CI must pull and retag `brain-agents:prod` before
+running compose with `--no-build`. Both host env files must carry
 `OPENAI_API_KEY`, `DOCUMENT_EXTRACT_AGENT_URL`, `BRAIN_AGENTS_INBOUND_SECRET`,
 and the ESP credentials required by outbound email onboarding.
 
