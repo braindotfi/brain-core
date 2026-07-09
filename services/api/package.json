@@ -45,6 +45,7 @@
     "@brain/policy": "workspace:*",
     "@brain/raw": "workspace:*",
     "@brain/shared": "workspace:*",
+    "@brain/surfaces": "workspace:*",
     "@brain/wiki": "workspace:*",
     "@fastify/cors": "^11.2.0",
     "@fastify/helmet": "^13.0.2",

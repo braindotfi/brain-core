@@ -62,6 +62,7 @@ import {
 
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
+import { buildVerificationEmailDelivery } from "./onboarding/email-delivery.js";
 import { registerPasswordLoginRoute, PostgresUserCredentialReader } from "./onboarding/login.js";
 import { insertBootstrapAdminMember } from "./onboarding/bootstrap-member.js";
 import {
@@ -1761,11 +1762,20 @@ async function main(): Promise<void> {
         // and grant no execution capability. The raw verification token is exposed
         // outside production; production signup requires a delivery dependency.
         if (cfg.BRAIN_SELF_SERVE_SIGNUP) {
+          const exposeVerificationToken = cfg.NODE_ENV !== "production";
+          const deliverVerificationEmail = buildVerificationEmailDelivery({
+            selfServeSignupEnabled: cfg.BRAIN_SELF_SERVE_SIGNUP,
+            exposeVerificationToken,
+            emailEndpoint: cfg.EMAIL_ENDPOINT,
+            emailApiKey: cfg.EMAIL_API_KEY,
+            emailFrom: cfg.EMAIL_FROM,
+          });
           await v1.register(async (child) =>
             registerOnboardingRoutes(child, {
               pool,
               audit,
-              exposeVerificationToken: cfg.NODE_ENV !== "production",
+              exposeVerificationToken,
+              ...(deliverVerificationEmail !== undefined ? { deliverVerificationEmail } : {}),
             }),
           );
           // Owner password login → short-lived management JWT. The email→user

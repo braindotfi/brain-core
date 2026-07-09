@@ -10,8 +10,10 @@ see §"Agents" below).
 > is **sandbox-only**: it can read and _propose_, but moves **no money**. Real
 > settlement stays behind the existing promotion + external-audit gates. Outside
 > production the verification token is returned in the signup response. In
-> production, token delivery must be owned by a configured verification sender or
-> the platform before `BRAIN_SELF_SERVE_SIGNUP` is enabled.
+> production, the API sends the token through the configured ESP client
+> (`EMAIL_ENDPOINT`, `EMAIL_API_KEY`, optional `EMAIL_FROM`). If
+> `BRAIN_SELF_SERVE_SIGNUP` is enabled in production without ESP credentials,
+> API boot fails before signup routes are served.
 
 ## The two principals
 
@@ -44,9 +46,10 @@ curl -sX POST "$BRAIN/v1/signup" \
 
 - Password: min 12 chars (stored as a scrypt hash; never logged).
 - Duplicate email → `409 signup_email_taken`.
-- Production: do not enable `BRAIN_SELF_SERVE_SIGNUP` until verification token
-  delivery is configured. The API fails closed when the raw token is hidden and
-  no delivery path is available.
+- Production: configure `EMAIL_ENDPOINT` and `EMAIL_API_KEY` before enabling
+  `BRAIN_SELF_SERVE_SIGNUP`; optional `EMAIL_FROM` controls the sender. The API
+  fails at boot when the raw token is hidden and no ESP delivery path is
+  available.
 
 ## 2. Verify the email (activate the owner)
 

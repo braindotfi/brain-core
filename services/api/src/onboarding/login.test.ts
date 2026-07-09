@@ -172,6 +172,91 @@ describe("POST /auth/login — RFC 0002 Phase B", () => {
     await app.close();
   });
 
+  it("lets a production-mode self-serve owner verify with the emailed token and log in", async () => {
+    const state = makeSelfServeState();
+    const app = Fastify({ logger: false });
+    await app.register(requestIdPlugin);
+    await app.register(errorHandlerPlugin);
+    await app.register(authPlugin, {
+      verifier: new JwtVerifier({
+        jwksUrl: "https://auth.brain.fi.test/.well-known/jwks.json",
+        secret: HS256_SECRET,
+        issuer: ISSUER,
+        audience: AUDIENCE,
+        clockToleranceSeconds: 5,
+      }),
+    });
+    const audit = new InMemoryAuditEmitter();
+    let emailedToken: string | null = null;
+    await registerOnboardingRoutes(app, {
+      pool: state.pool,
+      audit,
+      exposeVerificationToken: false,
+      deliverVerificationEmail: async ({ token }) => {
+        emailedToken = token;
+      },
+    });
+    await registerPasswordLoginRoute(app, {
+      resolveUserByEmail: (email) => Promise.resolve(state.resolveUserByEmail(email)),
+      signer: new JwtSigner({
+        issuer: ISSUER,
+        audience: AUDIENCE,
+        key: HS256_KEY,
+        algorithm: "HS256",
+      }),
+      audit,
+      tokenTtlSeconds: 900,
+    });
+    app.post("/raw/ingest", async (request) => {
+      requireScope(request.principal?.scopes ?? [], "raw:write" as Scope);
+      return { raw_id: "raw_test", accepted: true };
+    });
+    await app.ready();
+
+    const signup = await app.inject({
+      method: "POST",
+      url: "/signup",
+      payload: { email: "Founder@Example.com", password: PASSWORD },
+    });
+    expect(signup.statusCode).toBe(201);
+    const signupBody = signup.json();
+    expect(signupBody.verification_sent).toBe(true);
+    expect(signupBody.verification_token).toBeUndefined();
+    const token = emailedToken;
+    expect(token).toEqual(expect.any(String));
+    if (token === null) throw new Error("expected verification token delivery");
+    expect(JSON.stringify(signupBody)).not.toContain(token);
+
+    const verify = await app.inject({
+      method: "POST",
+      url: "/auth/verify-email",
+      payload: {
+        tenant_id: signupBody.tenant_id,
+        token,
+      },
+    });
+    expect(verify.statusCode).toBe(200);
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "founder@example.com", password: PASSWORD },
+    });
+    expect(login.statusCode).toBe(200);
+    const loginBody = login.json();
+    expect(loginBody.principal.scopes).toContain("raw:write");
+
+    const ingest = await app.inject({
+      method: "POST",
+      url: "/raw/ingest",
+      headers: { authorization: `Bearer ${loginBody.access_token}` },
+      payload: { sourceType: "manual_upload", sourceRef: "invoice.pdf", body: "hello" },
+    });
+    expect(ingest.statusCode).toBe(200);
+    expect(ingest.json()).toMatchObject({ accepted: true });
+    await app.close();
+  });
+
   it("rejects a wrong password with 401 auth_invalid_credentials", async () => {
     const { app } = await buildApp(async () => ACTIVE_USER);
     const res = await app.inject({

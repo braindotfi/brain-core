@@ -37,7 +37,7 @@ Content-Type: application/json
 }
 ```
 
-`verification_token` is included **only outside production** (no email provider is wired yet); in production it is emailed and `verification_sent: true`. Errors: `400` (validation), `409` (`signup_email_taken`), `429`.
+`verification_token` is included **only outside production**. In production the API sends the token through the configured ESP client (`EMAIL_ENDPOINT`, `EMAIL_API_KEY`, optional `EMAIL_FROM`) and returns `verification_sent: true`. If self-serve signup is enabled in production without ESP credentials, API boot fails before the route is served. Errors: `400` (validation), `409` (`signup_email_taken`), `429`.
 
 ### Verify Email
 

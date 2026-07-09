@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from brain_agents.auth import require_inbound_auth
 from brain_agents.deps import AppDeps, get_deps
-from brain_agents.document_extractor.agent import DocumentOcrUnavailableError
+from brain_agents.document_extractor.agent import DocumentOcrUnavailableError, OcrTextResult
 from brain_agents.document_extractor.extract_text import (
     DocumentTextUnavailableError,
     UnsupportedDocumentTypeError,
@@ -69,14 +69,16 @@ async def _ocr_document_text(
     deps: AppDeps,
     content: bytes,
     mime_type: str | None,
-) -> str:
+) -> OcrTextResult:
     try:
         return await deps.document_extractor_agent.ocr_text(content, mime_type)
     except DocumentOcrUnavailableError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-async def _resolve_document_text(req: DocumentExtractRequest, deps: AppDeps) -> tuple[str, bool]:
+async def _resolve_document_text(
+    req: DocumentExtractRequest, deps: AppDeps
+) -> tuple[str, float | None]:
     """Return the document text to extract from, or raise an HTTP error.
 
     Text extraction (bytes to text) is deterministic and preferred. OCR is used
@@ -84,21 +86,23 @@ async def _resolve_document_text(req: DocumentExtractRequest, deps: AppDeps) -> 
     or image-only document.
     """
     if req.document_text is not None:
-        return req.document_text, False
+        return req.document_text, None
     if req.document_b64 is not None:
         try:
             content = base64.b64decode(req.document_b64, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise HTTPException(status_code=400, detail="document_b64 is not valid base64") from exc
         try:
-            return extract_text(content, req.mime_type), False
+            return extract_text(content, req.mime_type), None
         except UnsupportedDocumentTypeError as exc:
             if _is_ocr_image_mime(req.mime_type):
-                return await _ocr_document_text(deps, content, req.mime_type), True
+                ocr = await _ocr_document_text(deps, content, req.mime_type)
+                return ocr.text, ocr.confidence_cap
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except DocumentTextUnavailableError as exc:
             if _is_scanned_pdf_error(req.mime_type, exc):
-                return await _ocr_document_text(deps, content, req.mime_type), True
+                ocr = await _ocr_document_text(deps, content, req.mime_type)
+                return ocr.text, ocr.confidence_cap
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     raise HTTPException(status_code=400, detail="provide document_text or document_b64")
 
@@ -108,9 +112,13 @@ async def run_document_extract(
     req: DocumentExtractRequest,
     deps: AppDeps = _get_deps,
 ) -> Any:
-    document_text, used_ocr = await _resolve_document_text(req, deps)
+    document_text, confidence_cap = await _resolve_document_text(req, deps)
     extracted = await deps.document_extractor_agent.extract(document_text)
-    confidence: float = min(extracted["confidence"], 0.5) if used_ocr else extracted["confidence"]
+    confidence: float = (
+        min(extracted["confidence"], confidence_cap)
+        if confidence_cap is not None
+        else extracted["confidence"]
+    )
 
     result = await deps.brain_client.post_parsed(
         raw_id=req.raw_id,

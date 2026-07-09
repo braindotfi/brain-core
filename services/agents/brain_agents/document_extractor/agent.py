@@ -15,6 +15,7 @@ POST /raw/{id}/parsed by the route, preserving the layer boundary.
 import base64
 import io
 import json
+from dataclasses import dataclass
 from typing import Any, Final, cast
 
 from openai import AsyncOpenAI
@@ -38,6 +39,8 @@ _PAYLOAD_KEYS = (
 
 _MAX_OCR_BYTES: Final = 10 * 1024 * 1024
 _MAX_OCR_PDF_PAGES: Final = 5
+_OCR_TIMEOUT_SECONDS: Final = 30.0
+_OCR_CONFIDENCE_CAP: Final = 0.5
 _OCR_IMAGE_MIMES: Final = frozenset({"image/png", "image/jpeg", "image/jpg", "image/webp"})
 
 _OCR_PROMPT: Final = """
@@ -69,6 +72,12 @@ direction is "payable" when the document is a bill/invoice WE must pay, and
 "receivable" when it is an invoice WE issued. Use "upcoming" for status when
 the document does not state one. Respond with ONLY valid JSON.
 """.strip()
+
+
+@dataclass(frozen=True)
+class OcrTextResult:
+    text: str
+    confidence_cap: float = _OCR_CONFIDENCE_CAP
 
 
 class DocumentExtractorAgent:
@@ -104,13 +113,13 @@ class DocumentExtractorAgent:
         payload = {k: parsed[k] for k in _PAYLOAD_KEYS if k in parsed and parsed[k] is not None}
         return {"kind": "doc_obligation", "payload": payload, "confidence": confidence}
 
-    async def ocr_text(self, content: bytes, mime_type: str | None) -> str:
+    async def ocr_text(self, content: bytes, mime_type: str | None) -> OcrTextResult:
         """Use a vision model to recover text from an image or scanned PDF.
 
         Deterministic text extraction is preferred by the route. This method is
         only for image inputs and PDFs that have already been found to have no
-        text layer. The output is model-generated text, so callers must keep the
-        downstream evidence low-confidence.
+        text layer. The output is model-generated text, so the returned contract
+        carries the downstream confidence cap that quarantines OCR evidence.
         """
         mime = _normalize_mime(mime_type)
         _guard_ocr_size(content)
@@ -147,11 +156,12 @@ class DocumentExtractorAgent:
             ),
             temperature=0,
             max_output_tokens=2000,
+            timeout=_OCR_TIMEOUT_SECONDS,
         )
         text = str(getattr(response, "output_text", "") or "").strip()
         if not text:
             raise DocumentOcrUnavailableError("OCR produced no usable text")
-        return text
+        return OcrTextResult(text=text)
 
 
 class DocumentOcrUnavailableError(Exception):

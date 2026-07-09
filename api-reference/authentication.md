@@ -14,6 +14,10 @@ Every credential is presented the same way: `Authorization: Bearer <token>`. The
 Self-serve signup is gated by the `BRAIN_SELF_SERVE_SIGNUP` flag and is **sandbox-only** (RFC 0002): a new tenant can read and _propose_, but moves no money until the existing promotion + external-audit gates clear. Hosted SSO (Auth0/SAML) is **planned (roadmap)**, not in the MVP.
 {% endhint %}
 
+{% hint style="warning" %}
+The internal `POST /v1/auth/service-token` mint route is a break-glass sandbox/testnet BFF credential path. It uses a shared secret, is not per-user auth, and must stay disabled for live-money or multi-customer production.
+{% endhint %}
+
 ### Server API key (`brain_sk_`)
 
 The credential a server-side integration uses is a Brain-issued **service token**, surfaced in the Console and SDK as an API key with a `brain_sk_` prefix. It is one artifact under three names: "Server API key" (Concepts), "service token" (the table above), and `brain_sk_` (the Console/SDK value). It is **not** a distinct fourth credential.
@@ -44,6 +48,8 @@ Content-Type: application/json
 → 201 { "tenant_id": "tnt_…", "user_id": "user_…", "status": "pending",
         "verification_token": "…" }   // returned outside production; emailed in prod
 ```
+
+In production, the API emails the token through the configured ESP client (`EMAIL_ENDPOINT`, `EMAIL_API_KEY`, optional `EMAIL_FROM`). If `BRAIN_SELF_SERVE_SIGNUP` is enabled in production without ESP credentials, API boot fails before signup routes are served.
 
 **2. Verify the email**. Single-use, short-TTL token, scoped to the tenant.
 

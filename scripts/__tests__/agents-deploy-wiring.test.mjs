@@ -35,9 +35,12 @@ test("main workflow builds one root image and deploys staging before manual prod
 
   assert.match(
     buildImageJob,
-    /docker build --build-arg GIT_SHA=\$\{\{ github\.sha \}\} -t brain-core:prod-\$\{\{ github\.sha \}\} -f Dockerfile \./,
+    /docker build --build-arg GIT_SHA=\$\{\{ github\.sha \}\} -t ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\} -f Dockerfile \./,
   );
-  assert.match(buildImageJob, /actions\/upload-artifact@v4/);
+  assert.match(
+    buildImageJob,
+    /docker push ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\}/,
+  );
   assert.match(deployStagingJob, /needs: build_image/);
   assert.match(deployStagingJob, /VM_HOST: \$\{\{ secrets\.VM_HOST_STAGING \}\}/);
   assert.match(deployStagingJob, /VM_ENV_FILE: \.env\.staging/);
@@ -45,8 +48,22 @@ test("main workflow builds one root image and deploys staging before manual prod
   assert.match(promoteProductionJob, /environment:\s*production/);
   assert.match(promoteProductionJob, /VM_HOST: \$\{\{ secrets\.VM_HOST \}\}/);
   assert.match(promoteProductionJob, /VM_ENV_FILE: \.env\.prod/);
-  assert.match(deployStagingJob, /gunzip \| docker load/);
-  assert.match(promoteProductionJob, /gunzip \| docker load/);
+  assert.match(
+    deployStagingJob,
+    /docker pull ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\}/,
+  );
+  assert.match(
+    promoteProductionJob,
+    /docker pull ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\}/,
+  );
+  assert.match(
+    deployStagingJob,
+    /docker tag ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\} brain-core:prod/,
+  );
+  assert.match(
+    promoteProductionJob,
+    /docker tag ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\} brain-core:prod/,
+  );
   assert.match(workflow, /tools\/migrate\/dist\/cli\.js up/);
   assert.match(workflow, /https:\/\/api\.brain\.fi\/health/);
   assert.match(workflow, /last_commit.*expected/s);
@@ -56,14 +73,8 @@ test("staging and production deploy recreates include the agents service", () =>
   const deployStagingJob = workflowJob("deploy_staging");
   const promoteProductionJob = workflowJob("promote_production");
   const serviceTargets = "api worker agents";
-  assert.match(
-    deployStagingJob,
-    new RegExp(`up -d --no-deps --no-build ${serviceTargets}`),
-  );
-  assert.match(
-    promoteProductionJob,
-    new RegExp(`up -d --no-deps --no-build ${serviceTargets}`),
-  );
+  assert.match(deployStagingJob, new RegExp(`up -d --no-deps --no-build ${serviceTargets}`));
+  assert.match(promoteProductionJob, new RegExp(`up -d --no-deps --no-build ${serviceTargets}`));
 });
 
 test("production compose defines the optional Python agents service", () => {

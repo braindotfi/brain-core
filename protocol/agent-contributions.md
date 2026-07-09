@@ -92,6 +92,8 @@ Even after extraction, derived Ledger rows that trace back to an `agent_contribu
 | Wiki narratives can mark them as "unverified"                     | The narrative explicitly notes that the source is an agent, not a bank or ERP |
 | Reconciliation matches treat them as soft evidence                | Stronger sources (bank, ERP) take precedence on conflicts                     |
 
+OCR output follows the same rule at the extractor boundary: the document extraction agent returns OCR text with a `confidence_cap` of `0.5`, so downstream callers cannot accidentally treat scanned-image extraction as higher-trust evidence.
+
 To lift the cap, a human or a higher-trust source has to corroborate. Once corroborated, the row carries both provenances and the cap lifts.
 
 ### Authorization

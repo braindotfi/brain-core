@@ -259,6 +259,10 @@ how autonomously Brain may act on it:
 - **model / OCR extraction of a PDF or scan** -> provenance `agent_contributed`,
   confidence `<= 0.5`.
 
+For OCR, the Python document extractor returns recovered text with a
+`confidence_cap` of `0.5`; routes and future callers consume that cap rather
+than re-declaring the quarantine rule locally.
+
 This makes the trust model legible: the more structured the source, the closer to
 autonomy its data starts. A scanned invoice never autonomously pays on its own
 reading; a reconciled or confirmed obligation can.
