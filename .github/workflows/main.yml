@@ -251,6 +251,15 @@ jobs:
             "docker pull ghcr.io/braindotfi/brain-core:${{ github.sha }} && \
              docker tag ghcr.io/braindotfi/brain-core:${{ github.sha }} brain-core:prod"
 
+      # Cold-start safety: bring up infra + jwks + caddy if the box is fresh.
+      # Idempotent on a warm box — --no-recreate leaves running containers
+      # (incl. postgres) untouched; depends_on sequences a cold box correctly.
+      - name: Ensure infra up on VM (cold-start safe)
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate postgres redis minio minio-setup db-roles jwks caddy"
+
       # The VM's ~/brain-core is a copied tree (not a git checkout) that
       # already holds the stage env file and docker-compose.caddy.yml (both
       # host-only, not in this repo). Migrations are idempotent, so running `up`
@@ -310,6 +319,15 @@ jobs:
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "docker pull ghcr.io/braindotfi/brain-core:${{ github.sha }} && \
              docker tag ghcr.io/braindotfi/brain-core:${{ github.sha }} brain-core:prod"
+
+      # Cold-start safety: bring up infra + jwks + caddy if the box is fresh.
+      # Idempotent on a warm box — --no-recreate leaves running containers
+      # (incl. postgres) untouched; depends_on sequences a cold box correctly.
+      - name: Ensure infra up on VM (cold-start safe)
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate postgres redis minio minio-setup db-roles jwks caddy"
 
       - name: Migrate + recreate api/worker/agents on VM
         run: |
