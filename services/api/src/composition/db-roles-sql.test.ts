@@ -66,6 +66,7 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(SQL).toContain(
       "GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links",
     );
+    expect(SQL).toContain("member_invites, session_refresh_tokens TO brain_resolver");
   });
 
   it("keeps audit history immutable to every new role (incl. tenant_deletion)", () => {
