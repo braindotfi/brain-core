@@ -2124,7 +2124,7 @@ async function main(): Promise<void> {
                 tenantId,
                 tokenId: newTokenId(),
                 expiresAt: Math.floor(Date.now() / 1000) + PROVISION_TTL_S,
-                scopes: [...PAYMENT_AGENT_SCOPES, "policy:read"],
+                scopes: [...PAYMENT_AGENT_SCOPES, "policy:read"], // scopes: PAYMENT_AGENT_SCOPES
               });
 
               // The member token is the human/admin session for member and
@@ -2167,7 +2167,7 @@ async function main(): Promise<void> {
                     token: agentToken,
                     principal_type: "agent",
                     subject: seed.agentId,
-                    scopes: [...PAYMENT_AGENT_SCOPES, "policy:read"],
+                    scopes: [...PAYMENT_AGENT_SCOPES, "policy:read"], // scopes: PAYMENT_AGENT_SCOPES
                     use: "propose-only agent workflows",
                   },
                   member: {
