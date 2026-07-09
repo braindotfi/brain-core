@@ -18,7 +18,10 @@
 # --env-file / ./.env, NOT from a service's `env_file:` entry. Using one file
 # for both keeps the role passwords and the URLs that reference them in sync.
 # Every ${VAR:-default} has a testnet default, so the stack still boots with no
-# file — but override every password before exposing the host.
+# file — but override every password before exposing the host. A non-prod stack
+# (e.g. staging) sets BRAIN_ENV_FILE=<its env file> inside that same --env-file
+# file, so each service's env_file: resolves to the right file without a
+# .env.prod symlink.
 #
 # Boot order is enforced by depends_on conditions:
 #   postgres healthy → migrate (owner role, creates tables) completed
@@ -200,7 +203,7 @@ services:
     container_name: brain-prod-seed
     command: ["node", "tools/seed-golden-path/dist/cli.js"]
     env_file:
-      - path: .env.prod
+      - path: ${BRAIN_ENV_FILE:-.env.prod}
         required: false
     environment:
       # brain_privileged (BYPASSRLS) so the seed can write across the tenant.
@@ -224,7 +227,7 @@ services:
     restart: unless-stopped
     command: ["node", "tools/static-jwks/dist/server.js"]
     env_file:
-      - path: .env.prod
+      - path: ${BRAIN_ENV_FILE:-.env.prod}
         required: false
     environment:
       PORT: "8085"
@@ -255,7 +258,7 @@ services:
     # OPENAI_API_KEY, etc. See .env.prod.example. (AUTH_JWKS_URL/ISSUER/AUDIENCE
     # are set below — they point at the in-network jwks sidecar.)
     env_file:
-      - path: .env.prod
+      - path: ${BRAIN_ENV_FILE:-.env.prod}
         required: false
     environment:
       <<: *brain-common-env
@@ -310,7 +313,7 @@ services:
     restart: unless-stopped
     command: ["node", "services/api/dist/main.js"]
     env_file:
-      - path: .env.prod
+      - path: ${BRAIN_ENV_FILE:-.env.prod}
         required: false
     environment:
       <<: *brain-common-env
@@ -358,7 +361,7 @@ services:
     ports:
       - "3002:3000"
     env_file:
-      - path: .env.prod
+      - path: ${BRAIN_ENV_FILE:-.env.prod}
         required: false
     environment:
       <<: *brain-common-env
@@ -420,7 +423,7 @@ services:
     container_name: brain-prod-agents
     restart: unless-stopped
     env_file:
-      - path: .env.prod
+      - path: ${BRAIN_ENV_FILE:-.env.prod}
         required: false
     environment:
       BRAIN_ENV: production
