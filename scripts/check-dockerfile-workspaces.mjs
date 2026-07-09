@@ -38,12 +38,13 @@ import { fileURLToPath } from "node:url";
 const ROOT = process.cwd();
 const DOCKERFILE = join(ROOT, "Dockerfile");
 const WORKSPACE = join(ROOT, "pnpm-workspace.yaml");
+const REQUIRED_RUNTIME_PACKAGES = ["packages/core", "packages/surfaces"];
 
 function fail(reasons) {
   console.error("dockerfile-workspaces guard: FAIL");
   for (const r of reasons) console.error(`  - ${r}`);
   console.error(
-    "\nEvery service in pnpm-workspace.yaml must be COPYed into the prod\n" +
+    "\nEvery runtime service and package must be COPYed into the prod\n" +
       "Dockerfile (builder manifest, runtime manifest, runtime dist, and\n" +
       "runtime migrations when the service ships a migrations/ dir). Add the\n" +
       "missing lines above next to the sibling services, then rebuild with\n" +
@@ -142,7 +143,7 @@ function main() {
     fail(["parsed zero service workspaces from pnpm-workspace.yaml (parser broken?)"]);
   }
 
-  const serviceSet = services.map((dir) => ({
+  const serviceSet = [...services, ...REQUIRED_RUNTIME_PACKAGES].map((dir) => ({
     dir,
     hasMigrations: existsSync(join(ROOT, dir, "migrations")),
   }));
@@ -151,7 +152,7 @@ function main() {
   if (reasons.length > 0) fail(reasons);
 
   console.log(
-    `dockerfile-workspaces guard: OK (${services.length} services wired into the prod Dockerfile)`,
+    `dockerfile-workspaces guard: OK (${serviceSet.length} runtime workspaces wired into the prod Dockerfile)`,
   );
 }
 

@@ -16,21 +16,27 @@ import {
 // way docker compose does. Same class as the earlier audit-status COPY miss.
 
 const ROOT = process.cwd();
+const RUNTIME_PACKAGES = ["packages/core", "packages/surfaces"];
 
-// Resolve the real service workspaces the same way the guard does.
-function realServices() {
+// Resolve the real runtime workspaces the same way the guard does.
+function realRuntimeWorkspaces() {
   const yaml = readFileSync(join(ROOT, "pnpm-workspace.yaml"), "utf8");
-  return parseWorkspacePackages(yaml)
+  const services = parseWorkspacePackages(yaml)
     .filter((p) => p.startsWith("services/") && p.split("/").length === 2)
     .filter((p) => existsSync(join(ROOT, p, "package.json")))
     .map((dir) => ({ dir, hasMigrations: existsSync(join(ROOT, dir, "migrations")) }));
+  const packages = RUNTIME_PACKAGES.map((dir) => ({
+    dir,
+    hasMigrations: existsSync(join(ROOT, dir, "migrations")),
+  }));
+  return [...services, ...packages];
 }
 
-test("every service workspace is wired into the prod Dockerfile", () => {
+test("every runtime workspace is wired into the prod Dockerfile", () => {
   const dockerfile = readFileSync(join(ROOT, "Dockerfile"), "utf8");
-  const services = realServices();
-  assert.ok(services.length > 0, "expected to resolve at least one service workspace");
-  const missing = findMissingCopyLines(dockerfile, services);
+  const workspaces = realRuntimeWorkspaces();
+  assert.ok(workspaces.length > 0, "expected to resolve at least one runtime workspace");
+  const missing = findMissingCopyLines(dockerfile, workspaces);
   assert.deepEqual(missing, [], `prod Dockerfile is missing COPY lines:\n${missing.join("\n")}`);
 });
 
