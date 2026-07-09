@@ -401,8 +401,8 @@ export async function seedBrainSaasDemo(
   // app role has RLS forced on — a raw pool.query would violate the policy).
   await withTenantScope(pool, tenantId, async (c) => {
     await c.query(
-      `INSERT INTO tenants (id, default_ap_account_id) VALUES ($1, $2)
-         ON CONFLICT (id) DO UPDATE SET default_ap_account_id = EXCLUDED.default_ap_account_id`,
+      `INSERT INTO tenants (id, kind, default_ap_account_id) VALUES ($1, 'demo', $2)
+       ON CONFLICT (id) DO UPDATE SET default_ap_account_id = EXCLUDED.default_ap_account_id`,
       [tenantId, operating.id],
     );
     await insertBootstrapAdminMember(c, {

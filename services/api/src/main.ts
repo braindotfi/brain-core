@@ -77,6 +77,7 @@ import { TenantDeletionService } from "./tenant-deletion/service.js";
 import { startTenantBlobPurgeWorker } from "./tenant-deletion/blob-purge-worker.js";
 import { registerTenantDeletionRoute } from "./tenant-deletion/route.js";
 import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
+import { registerProductionTenancyRoutes } from "./production-tenancy/routes.js";
 import { registerProofViewRoute } from "./proof/view.js";
 import { registerAuditHealthRoute } from "./audit-health/route.js";
 import {
@@ -1742,6 +1743,17 @@ async function main(): Promise<void> {
         const agentRegistry = cfg.BRAIN_DEMO_MODE
           ? new StubAgentRegistry()
           : new PostgresAgentRegistry(pool);
+        await v1.register(async (child) =>
+          registerProductionTenancyRoutes(child, {
+            pool,
+            resolverPool,
+            audit,
+            signer: siwxSigner,
+            ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
+              ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
+              : {}),
+          }),
+        );
         // RFC 0002 Phase D: SIWX resolves a wallet linked to a HUMAN owner to an
         // owner JWT (email-or-wallet login). Cross-tenant read ⇒ privileged pool.
         // Always wired — additive and harmless (returns null absent any link, so
@@ -2320,11 +2332,25 @@ async function main(): Promise<void> {
                 // never auto-promoted to LIVE_AGENTS. Defense in depth for the
                 // no-execute ceiling, even if a scope ever leaked.
                 const tenantInsert = await c.query(
-                  `INSERT INTO tenants (id, sandbox, created_via) VALUES ($1, TRUE, 'self_serve')
+                  `INSERT INTO tenants (id, kind, sandbox, created_via) VALUES ($1, 'demo', TRUE, 'self_serve')
                      ON CONFLICT (id) DO NOTHING`,
                   [tenantId],
                 );
                 tenantCreated = (tenantInsert.rowCount ?? 0) > 0;
+                const tenantKind = await c.query<{ kind: string }>(
+                  `SELECT kind FROM tenants WHERE id = $1 LIMIT 1`,
+                  [tenantId],
+                );
+                if (tenantKind.rows[0]?.kind === "production") {
+                  throw brainError(
+                    "auth_scope_insufficient",
+                    "service-token is not a production session exchange path",
+                    {
+                      statusOverride: 403,
+                      details: { reason: "production_tenant_uses_sessions" },
+                    },
+                  );
+                }
 
                 // H1: a tenant with no owner member and no active policy fails
                 // every §6 gate / approval-authority check for it. Mirror

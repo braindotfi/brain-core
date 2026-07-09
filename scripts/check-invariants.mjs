@@ -93,12 +93,15 @@ check(
 );
 
 const demoSeed = read("services/api/src/demo/brainsaas-seed.ts");
-const demoTenantInsertIndex = demoSeed.indexOf("INSERT INTO tenants (id, default_ap_account_id)");
+const demoTenantInsertIndex = demoSeed.indexOf(
+  "INSERT INTO tenants (id, kind, default_ap_account_id)",
+);
 const demoBootstrapIndex = demoSeed.indexOf("insertBootstrapAdminMember", demoTenantInsertIndex);
 check(
   "demo provisioning creates member for user session principal",
   demoTenantInsertIndex >= 0 &&
     demoBootstrapIndex > demoTenantInsertIndex &&
+    demoSeed.includes("VALUES ($1, 'demo', $2)") &&
     demoSeed.includes("memberId: actor") &&
     !demoSeed.includes("memberId: agentId"),
   "demo provision-run must create a bootstrap member for the user session, never the agent",
@@ -201,6 +204,57 @@ check(
     serviceTokenAuditIndex > serviceTokenSignStart &&
     serviceTokenAuditIndex < serviceTokenReplyIndex,
   "POST /v1/auth/service-token must call audit.emit with action auth.service_token.minted before the 201 reply",
+);
+
+const productionTenancy = read("services/api/src/production-tenancy/routes.ts");
+const productionContract = read("docs/contracts/production-tenancy.md");
+const memberRoutesSource = read("services/execution/src/members/routes.ts");
+check(
+  "production tenancy contract is present",
+  productionContract.includes("POST /v1/tenants") &&
+    productionContract.includes("session_identity_unlinked") &&
+    productionContract.includes("invite_invalid") &&
+    productionContract.includes("Agent principals remain never member-resolvable"),
+  "docs/contracts/production-tenancy.md must describe tenants, sessions, invites, and agent invariants",
+);
+check(
+  "production tenant creation stamps production and rejects demo-fence auth",
+  productionTenancy.includes('"/tenants"') &&
+    productionTenancy.includes("INSERT INTO tenants (id, kind, sandbox, created_via)") &&
+    productionTenancy.includes("VALUES ($1, 'production', FALSE, 'admin')") &&
+    productionTenancy.includes('request.headers["x-demo-provision-auth"]'),
+  "POST /v1/tenants must create tenant.kind production and reject demo provision credentials",
+);
+check(
+  "session exchange fails closed on unlinked platform identity",
+  productionTenancy.includes('"/sessions"') &&
+    productionTenancy.includes("findMemberByPlatformExternalRef") &&
+    productionTenancy.includes('reason: "session_identity_unlinked"') &&
+    productionTenancy.indexOf('reason: "session_identity_unlinked"') <
+      productionTenancy.indexOf("insertRefreshToken(client, sessionSeed)", productionTenancy.indexOf('"/sessions"')),
+  "POST /v1/sessions must return session_identity_unlinked before creating any session state",
+);
+check(
+  "invite tokens are hashed at rest and consume is row-locked",
+  memberRoutesSource.includes("hashToken(inviteToken)") &&
+    memberRoutesSource.includes("INSERT INTO member_invites") &&
+    memberRoutesSource.includes("token_hash") &&
+    productionTenancy.includes("FOR UPDATE OF i, m") &&
+    !memberRoutesSource.includes("invite_token, token_hash"),
+  "invite storage must write token_hash only and invite consume must lock the invite row",
+);
+check(
+  "refresh-token reuse revokes the refresh family",
+  productionTenancy.includes("refresh.rotated_at !== null") &&
+    productionTenancy.includes("revokeRefreshFamily(client, refresh.family_id)") &&
+    productionTenancy.includes("refresh token reuse detected"),
+  "rotated refresh-token reuse must revoke the whole family",
+);
+check(
+  "service-token rejects production tenants",
+  apiMainForServiceToken.includes("production_tenant_uses_sessions") &&
+    apiMainForServiceToken.includes("service-token is not a production session exchange path"),
+  "POST /v1/auth/service-token must not be a competing production user-session exchange path",
 );
 
 const ledgerRoutes = read("services/ledger/src/routes/index.ts");

@@ -211,7 +211,7 @@ describe("seedBrainSaasDemo", () => {
     const result = await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
 
     const tenantUpsert = scopedCalls.find((c) =>
-      c.sql.includes("INSERT INTO tenants (id, default_ap_account_id)"),
+      c.sql.includes("INSERT INTO tenants (id, kind, default_ap_account_id)"),
     );
     expect(tenantUpsert).toBeDefined();
     expect(tenantUpsert!.values).toEqual([TENANT, "acct_brainsaas_operating"]);
