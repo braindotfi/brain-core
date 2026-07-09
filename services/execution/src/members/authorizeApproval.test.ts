@@ -19,6 +19,7 @@ function member(overrides: Partial<MemberAuthority> = {}): MemberAuthority {
     email: "approver@example.com",
     displayName: "Approver",
     role: "approver",
+    status: "active",
     active: true,
     approvalDomains: ["ap"],
     perItemLimitCents: 1_000_00n,

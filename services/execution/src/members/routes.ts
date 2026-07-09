@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { createHash, randomBytes } from "node:crypto";
 import {
   brainError,
   newUserId,
@@ -7,6 +8,7 @@ import {
   type AuditEmitter,
   type Scope,
   type ServiceCallContext,
+  type TenantScopedClient,
 } from "@brain/shared";
 import type { Pool } from "pg";
 import {
@@ -22,6 +24,7 @@ import type { ApprovalDomain, MemberAuthority, MemberIdentitySurface } from "./t
 
 const READ: Scope = "execution:read";
 const ADMIN: Scope = "execution:admin";
+const INVITE_TTL_HOURS = 72;
 
 export interface MemberRoutesDeps {
   pool: Pool;
@@ -33,7 +36,9 @@ interface MemberBody {
   email?: string;
   display_name?: string;
   role?: string;
+  status?: string;
   active?: boolean;
+  invite?: boolean;
   approval?: {
     domains?: string[];
     per_item_limit_cents?: number | string;
@@ -85,8 +90,10 @@ export async function registerMemberRoutes(
     const role = parseRole(b.role);
     const domains = parseDomains(b.approval?.domains);
     const before = null;
-    const after = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
-      insertMember(c, {
+    const invite = b.invite === true;
+    const inviteToken = invite ? newSecretToken() : undefined;
+    const after = await withTenantScope(deps.pool, ctx.tenantId, async (c) => {
+      const member = await insertMember(c, {
         tenantId: ctx.tenantId,
         id: b.id ?? newUserId(),
         email: requireString(b.email, "email"),
@@ -97,11 +104,37 @@ export async function registerMemberRoutes(
         requiresSecondApproverAboveCents: parseNullableCents(
           b.approval?.requires_second_approver_above_cents,
         ),
-      }),
-    );
+        status: invite ? "invited" : "active",
+      });
+      if (inviteToken !== undefined) {
+        await issueInvite(c, {
+          tenantId: ctx.tenantId,
+          memberId: member.id,
+          tokenHash: hashToken(inviteToken),
+          issuedBy: ctx.actor,
+        });
+      }
+      return member;
+    });
     const audit = await emitMemberChanged(deps.audit, ctx, "created", before, after);
+    if (inviteToken !== undefined) {
+      await deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "execution",
+        actor: ctx.actor,
+        action: "member.invited",
+        inputs: { member_id: after.id },
+        outputs: { status: after.status },
+      });
+    }
     reply.status(201);
-    return { member: serializeMember(after), audit_id: audit.id };
+    return {
+      member: serializeMember(after),
+      audit_id: audit.id,
+      ...(inviteToken !== undefined
+        ? { invite_token: inviteToken, invite_expires_in_hours: INVITE_TTL_HOURS }
+        : {}),
+    };
   });
 
   app.patch(
@@ -126,6 +159,7 @@ export async function registerMemberRoutes(
             ? { displayName: requireString(body.display_name, "display_name") }
             : {}),
           ...(body.role !== undefined ? { role: parseRole(body.role) } : {}),
+          ...(body.status !== undefined ? { status: parseStatus(body.status) } : {}),
           ...(body.active !== undefined ? { active: body.active } : {}),
           ...(body.approval?.domains !== undefined
             ? { approvalDomains: parseDomains(body.approval.domains) }
@@ -161,12 +195,63 @@ export async function registerMemberRoutes(
     if (before === null) throw brainError("agent_not_found", "member not found");
     if (before.role === "admin" && before.active) await assertNotLastAdmin(deps.pool, ctx);
     const after = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
-      updateMember(c, { id: request.params.id, active: false }),
+      updateMember(c, { id: request.params.id, status: "deactivated" }),
     );
     if (after === null) throw brainError("agent_not_found", "member not found");
     const audit = await emitMemberChanged(deps.audit, ctx, "deactivated", before, after);
     return { member: serializeMember(after), audit_id: audit.id };
   });
+
+  app.post("/members/:id/invites", async (request: FastifyRequest<{ Params: { id: string } }>) => {
+    const ctx = assertCtx(request);
+    requireScope(request.principal!.scopes, ADMIN);
+    await requireAdmin(deps.pool, ctx);
+    const before = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+      findMemberById(c, request.params.id),
+    );
+    if (before === null) throw brainError("agent_not_found", "member not found");
+    const inviteToken = newSecretToken();
+    const expiresAt = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+      issueInvite(c, {
+        tenantId: ctx.tenantId,
+        memberId: before.id,
+        tokenHash: hashToken(inviteToken),
+        issuedBy: ctx.actor,
+      }),
+    );
+    await deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "execution",
+      actor: ctx.actor,
+      action: "member.invited",
+      inputs: { member_id: before.id, reissue: true },
+      outputs: { expires_at: expiresAt },
+    });
+    return { invite_token: inviteToken, expires_at: expiresAt };
+  });
+
+  app.delete(
+    "/members/:id/invites",
+    async (request: FastifyRequest<{ Params: { id: string } }>) => {
+      const ctx = assertCtx(request);
+      requireScope(request.principal!.scopes, ADMIN);
+      await requireAdmin(deps.pool, ctx);
+      const before = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+        findMemberById(c, request.params.id),
+      );
+      if (before === null) throw brainError("agent_not_found", "member not found");
+      await withTenantScope(deps.pool, ctx.tenantId, (c) => revokeOutstandingInvites(c, before.id));
+      await deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "execution",
+        actor: ctx.actor,
+        action: "invite.revoked",
+        inputs: { member_id: before.id },
+        outputs: { revoked: true },
+      });
+      return { revoked: true };
+    },
+  );
 
   app.post(
     "/members/:id/identity-links",
@@ -274,7 +359,10 @@ function wouldRemoveAdmin(before: MemberAuthority, body: MemberBody): boolean {
   return (
     before.role === "admin" &&
     before.active &&
-    ((body.role !== undefined && body.role !== "admin") || body.active === false)
+    ((body.role !== undefined && body.role !== "admin") ||
+      body.active === false ||
+      body.status === "deactivated" ||
+      body.status === "invited")
   );
 }
 
@@ -302,6 +390,7 @@ function serializeMember(member: MemberAuthority) {
     email: member.email,
     displayName: member.displayName,
     role: member.role,
+    status: member.status,
     active: member.active,
     approval: {
       domains: member.approvalDomains,
@@ -314,6 +403,42 @@ function serializeMember(member: MemberAuthority) {
   };
 }
 
+async function issueInvite(
+  client: TenantScopedClient,
+  input: { tenantId: string; memberId: string; tokenHash: string; issuedBy: string },
+): Promise<string> {
+  await revokeOutstandingInvites(client, input.memberId);
+  const { rows } = await client.query<{ expires_at: string }>(
+    `INSERT INTO member_invites (tenant_id, member_id, token_hash, expires_at, issued_by)
+     VALUES ($1, $2, $3, now() + ($4::text || ' hours')::interval, $5)
+     RETURNING expires_at::text`,
+    [input.tenantId, input.memberId, input.tokenHash, INVITE_TTL_HOURS, input.issuedBy],
+  );
+  return rows[0]?.expires_at ?? "";
+}
+
+async function revokeOutstandingInvites(
+  client: TenantScopedClient,
+  memberId: string,
+): Promise<void> {
+  await client.query(
+    `UPDATE member_invites
+        SET revoked_at = COALESCE(revoked_at, now())
+      WHERE member_id = $1
+        AND consumed_at IS NULL
+        AND revoked_at IS NULL`,
+    [memberId],
+  );
+}
+
+function newSecretToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+function hashToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value === "") {
     throw brainError("request_body_invalid", `${name} required`);
@@ -324,6 +449,11 @@ function requireString(value: unknown, name: string): string {
 function parseRole(value: unknown): "admin" | "approver" | "viewer" {
   if (value === "admin" || value === "approver" || value === "viewer") return value;
   throw brainError("request_body_invalid", "invalid member role");
+}
+
+function parseStatus(value: unknown): "invited" | "active" | "deactivated" {
+  if (value === "invited" || value === "active" || value === "deactivated") return value;
+  throw brainError("request_body_invalid", "invalid member status");
 }
 
 function parseSurface(value: unknown): MemberIdentitySurface {

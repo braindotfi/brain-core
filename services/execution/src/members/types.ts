@@ -1,6 +1,7 @@
 import type { ServiceCallContext } from "@brain/shared";
 
 export type MemberRole = "admin" | "approver" | "viewer";
+export type MemberStatus = "invited" | "active" | "deactivated";
 export type ApprovalDomain = "ap" | "ar" | "treasury" | "payroll" | "reconciliation";
 export type ActorVerification =
   | "session"
@@ -8,7 +9,7 @@ export type ActorVerification =
   | "surface_linked"
   | "signed_token"
   | "tenant_asserted";
-export type MemberIdentitySurface = "slack" | "teams" | "email";
+export type MemberIdentitySurface = "slack" | "teams" | "email" | "platform";
 
 export interface MemberAuthority {
   id: string;
@@ -16,6 +17,7 @@ export interface MemberAuthority {
   email: string;
   displayName: string;
   role: MemberRole;
+  status: MemberStatus;
   active: boolean;
   approvalDomains: ApprovalDomain[];
   perItemLimitCents: bigint;

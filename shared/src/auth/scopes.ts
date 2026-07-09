@@ -28,10 +28,24 @@ export const LAYERS = [
   "payment_intent",
   "audit",
   "surfaces",
+  "tenant",
+  "session",
+  "invite",
 ] as const;
 export type Layer = (typeof LAYERS)[number];
 
-export const VERBS = ["read", "write", "admin", "propose", "approve", "execute", "sign"] as const;
+export const VERBS = [
+  "read",
+  "write",
+  "admin",
+  "propose",
+  "approve",
+  "execute",
+  "sign",
+  "create",
+  "exchange",
+  "consume",
+] as const;
 export type Verb = (typeof VERBS)[number];
 
 /** `{layer}:{verb}` tuple. Narrower types could enumerate valid pairs,
@@ -67,6 +81,9 @@ export const VALID_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "audit:write",
   "audit:admin",
   "surfaces:admin",
+  "tenant:create",
+  "session:exchange",
+  "invite:consume",
 ]);
 
 export function isValidScope(s: string): s is Scope {

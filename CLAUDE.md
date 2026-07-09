@@ -199,6 +199,30 @@ Done
   fall back to OCR through `OPENAI_OCR_MODEL` (default `gpt-4o`) with a 10 MB
   input guard, a 5 page PDF guard, and a fail-closed blank-OCR check. OCR-derived
   parsed evidence remains `agent_contributed` and is capped at confidence `0.5`.
+- Production tenancy is governed by
+  `docs/contracts/production-tenancy.md`. Production tenants are created only by
+  `POST /v1/tenants` with the platform service credential. The route creates
+  `tenant.kind='production'`, one active bootstrap admin member, a platform
+  identity link, and a user-principal member session. It seeds no demo data.
+- Demo tenancy remains structurally separate. `/v1/demo/provision-run` stamps
+  `tenant.kind='demo'`, can never create production tenants, and still returns
+  split propose-only agent tokens and user-principal member tokens. Production
+  tenants are not eligible for demo cleanup.
+- Production member sessions use the exchange model:
+  `POST /v1/sessions`, `POST /v1/sessions/refresh`, and
+  `DELETE /v1/sessions`. Unlinked platform identities return
+  `session_identity_unlinked` and create no tenant, member, link, or session.
+  Refresh tokens are hashed at rest, rotated on use, and family-revoked on
+  rotated-token reuse.
+- Invites are the only way a colleague joins an existing production tenant:
+  `POST /v1/members` with `invite:true`, `POST /v1/members/{id}/invites`,
+  `DELETE /v1/members/{id}/invites`, and `POST /v1/invites/consume`.
+  Invite tokens are returned once, stored hashed, and consume is atomic. Invited
+  members have `status='invited'`, cannot approve, cannot hold sessions, and do
+  not count toward the last-admin guard.
+- `/v1/auth/service-token` remains sandbox and testnet only. It mints
+  propose-only agent credentials and rejects `tenant.kind='production'`; it is
+  not a competing production user-session exchange path.
 
 ### Deployment
 
@@ -215,16 +239,18 @@ Deployment is a single Docker VM per environment. `deploy_staging` runs
 automatically on green `main`, connects to `VM_HOST_STAGING` with
 `VM_SSH_KEY_STAGING`, uses `.env.staging`, runs `tools/migrate up`, recreates
 `api`, `worker`, and `agents`, then smokes the staging health URL with a commit
-match. `promote_production` depends on staging, is bound to the GitHub
-`production` environment, and must wait for that environment's required
-reviewer approval before it connects to `VM_HOST`, uses `.env.prod`, runs the
-same migration and recreate sequence, and smokes
-`https://api.brain.fi/health`.
+match. Production deployment is also automated from green `main`: the workflow
+connects to `VM_HOST`, uses `.env.prod`, runs `tools/migrate up` before any
+compose recreate, pulls the SHA-tagged images, recreates `api`, `worker`, and
+`agents`, and smokes `https://api.brain.fi/health`.
 
-Production must never deploy from a bare push without the `production`
-environment approval. The GitHub environment is the manual promote gate, not a
-replacement for staging. A failed migration or smoke check fails the job before
-the promote is considered complete.
+The old manual staging-to-production promote is retired. The remaining
+discipline is the post-deploy probe: verify what is serving, not only what is
+merged. For production tenancy changes, operators must probe
+`POST /v1/tenants` with `X-Platform-Service-Auth`, confirm the response returns
+a user-principal member session, then record the result in the PR or release
+notes. A failed migration or smoke check fails the workflow before the deploy is
+considered complete.
 
 The VM compose recreate command starts `api`, `worker`, and `agents` with the
 `agents` profile. The API reaches the extraction agents at
@@ -253,11 +279,18 @@ Update this table on every promote.
 | Approval-authority gap fixes (PR #216)                                  | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
 | Tenant bootstrap member (PR #218)                                       | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
 | Bootstrap member session split: member_token in provision-run (PR #219) | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
+| Production tenancy, sessions, and invites                               | Pending | No         | No, pending merge and post-deploy `/v1/tenants` probe                                                 |
 
 Provision-run returns `tokens.member.token` for user-principal member and
 approval workflows and `tokens.agent.token` for propose-only agent workflows.
 The agent token returning `403 actor_unresolved` on `/v1/members` is by design
 and is a permanent invariant.
+
+Production integrators use `POST /v1/tenants` for first company creation,
+`POST /v1/sessions` for platform identity exchange, and
+`POST /v1/invites/consume` for invited colleagues. Platform service credentials
+identify the platform only; human approval authority always comes from the
+member-resolvable user session.
 
 Pending
 

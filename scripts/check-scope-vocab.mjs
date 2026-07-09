@@ -42,6 +42,9 @@ const VALID_SCOPES = new Set([
   "audit:write",
   "audit:admin",
   "surfaces:admin",
+  "tenant:create",
+  "session:exchange",
+  "invite:consume",
 ]);
 
 // Match {word}:{word} literals but skip Node built-in module specifiers (node:*)

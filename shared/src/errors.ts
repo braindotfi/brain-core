@@ -231,6 +231,13 @@ export const BRAIN_ERROR_CODES = [
   "auth_invalid_credentials",
   "auth_email_unverified",
   "wallet_already_linked",
+
+  // Production tenancy, sessions, and invites
+  "session_identity_unlinked",
+  "invite_invalid",
+  "invite_expired",
+  "invite_consumed",
+  "invite_revoked",
 ] as const;
 
 export type BrainErrorCode = (typeof BRAIN_ERROR_CODES)[number];
@@ -327,6 +334,11 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   auth_invalid_credentials: 401,
   auth_email_unverified: 403,
   wallet_already_linked: 409,
+  session_identity_unlinked: 403,
+  invite_invalid: 403,
+  invite_expired: 403,
+  invite_consumed: 403,
+  invite_revoked: 403,
 
   // 422 — semantic precondition unsatisfiable (ledger evidence/balance, gate
   // approval/decision preconditions)
