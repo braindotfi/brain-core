@@ -190,7 +190,7 @@ export async function registerProductionTenancyRoutes(
   app.post(
     "/sessions/refresh",
     { config: { skipAuth: true, rateLimit: { max: 60, timeWindow: "1 minute" } } },
-    async (request, reply) => {
+    async (request) => {
       const body = request.body as { refresh_token?: unknown } | undefined;
       const refreshToken = requireString(body?.refresh_token, "refresh_token");
       const refresh = await findRefreshToken(deps.resolverPool, hashToken(refreshToken));

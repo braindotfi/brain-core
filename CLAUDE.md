@@ -279,7 +279,7 @@ Update this table on every promote.
 | Approval-authority gap fixes (PR #216)                                  | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
 | Tenant bootstrap member (PR #218)                                       | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
 | Bootstrap member session split: member_token in provision-run (PR #219) | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
-| Production tenancy, sessions, and invites                               | Pending | No         | No, pending merge and post-deploy `/v1/tenants` probe                                                  |
+| Production tenancy, sessions, and invites                               | Pending | No         | No, pending merge and post-deploy `/v1/tenants` probe                                                 |
 
 Provision-run returns `tokens.member.token` for user-principal member and
 approval workflows and `tokens.agent.token` for propose-only agent workflows.

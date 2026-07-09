@@ -17,23 +17,23 @@ playground only.
 
 ## Tenant lifecycle
 
-POST /v1/tenants  (auth: platform service credential)
-  body: { company_name, founder: { email, display_name }, founder_external_ref }
-  -> 201 { tenant_id, member: {...bootstrap admin...}, session: { token, refresh_token,
-    expires_in } }
+POST /v1/tenants (auth: platform service credential)
+body: { company_name, founder: { email, display_name }, founder_external_ref }
+-> 201 { tenant_id, member: {...bootstrap admin...}, session: { token, refresh_token,
+expires_in } }
 Semantics: atomic - tenant + bootstrap admin member (role admin, all domains, high limit,
 active) + identity link (surface "platform", external_ref = founder_external_ref) + session,
 one transaction. No seeded data. Audit: tenant.created, member.changed.
 
 ## Sessions (exchange model; ACTOR = SESSION preserved)
 
-POST /v1/sessions  (auth: platform service credential)
-  body: { external_ref }
-  -> 200 { token, refresh_token, expires_in, member: { id, role, approval } }
-  -> 403 { reason: "session_identity_unlinked" } when no identity link matches - the
-    platform must treat this as "not a member of any tenant", never auto-provision.
+POST /v1/sessions (auth: platform service credential)
+body: { external_ref }
+-> 200 { token, refresh_token, expires_in, member: { id, role, approval } }
+-> 403 { reason: "session_identity_unlinked" } when no identity link matches - the
+platform must treat this as "not a member of any tenant", never auto-provision.
 POST /v1/sessions/refresh { refresh_token } -> rotated pair; reuse of a rotated refresh
-  token revokes the family. DELETE /v1/sessions (token) -> revoke.
+token revokes the family. DELETE /v1/sessions (token) -> revoke.
 Token: principal_type "user", member claim, verification "session". Actor derived from the
 token ONLY; payload actor stripped (unchanged rule). Demo tokens keep their short TTL;
 production sessions are long-lived via refresh.
@@ -45,19 +45,19 @@ boolean; the bootstrap admin is born active). INVITED members fail gate check 1 
 active): they cannot approve, hold no session, and do not count toward last-admin.
 
 POST /v1/members (existing, admin-gated) with { email, display_name, role, approval,
-  invite: true } -> 201 member with status "invited" + first invite issued.
+invite: true } -> 201 member with status "invited" + first invite issued.
 POST /v1/members/{id}/invites (admin) -> { invite_token, expires_at } - token returned
-  ONCE, stored hashed, single-use, default expiry 72h. Reissue revokes prior outstanding
-  invites for the member.
+ONCE, stored hashed, single-use, default expiry 72h. Reissue revokes prior outstanding
+invites for the member.
 DELETE /v1/members/{id}/invites (admin) -> revoke outstanding.
-POST /v1/invites/consume  (auth: platform service credential)
-  body: { invite_token, external_ref, display_name? }
-  -> 200 { tenant_id, member, session } - atomic: validate token (unexpired, unconsumed,
-    unrevoked, member still invited) + create identity link + member -> active + issue
-    session, one transaction.
-  -> 403 reasons: "invite_invalid" | "invite_expired" | "invite_consumed" |
-    "invite_revoked" (exact strings; expired/consumed/revoked only after the token itself
-    matches - never confirm token validity on a bad token).
+POST /v1/invites/consume (auth: platform service credential)
+body: { invite_token, external_ref, display_name? }
+-> 200 { tenant_id, member, session } - atomic: validate token (unexpired, unconsumed,
+unrevoked, member still invited) + create identity link + member -> active + issue
+session, one transaction.
+-> 403 reasons: "invite_invalid" | "invite_expired" | "invite_consumed" |
+"invite_revoked" (exact strings; expired/consumed/revoked only after the token itself
+matches - never confirm token validity on a bad token).
 Consuming an invite can never change role or envelope: authority is fixed by the admin who
 created the member. Audit: member.invited, invite.consumed, invite.revoked. Webhooks:
 member.changed carries status transitions.

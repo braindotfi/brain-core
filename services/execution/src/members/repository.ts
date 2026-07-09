@@ -251,7 +251,7 @@ export async function findMemberByIdentityLink(
   externalRef: string,
 ): Promise<MemberAuthority | null> {
   const { rows } = await client.query<MemberRow>(
-      `SELECT m.tenant_id, m.id, m.email, m.display_name, m.role, m.status, m.active,
+    `SELECT m.tenant_id, m.id, m.email, m.display_name, m.role, m.status, m.active,
             m.approval_domains, m.per_item_limit_cents,
             m.requires_second_approver_above_cents
        FROM member_identity_links l

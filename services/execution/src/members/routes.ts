@@ -202,36 +202,33 @@ export async function registerMemberRoutes(
     return { member: serializeMember(after), audit_id: audit.id };
   });
 
-  app.post(
-    "/members/:id/invites",
-    async (request: FastifyRequest<{ Params: { id: string } }>) => {
-      const ctx = assertCtx(request);
-      requireScope(request.principal!.scopes, ADMIN);
-      await requireAdmin(deps.pool, ctx);
-      const before = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
-        findMemberById(c, request.params.id),
-      );
-      if (before === null) throw brainError("agent_not_found", "member not found");
-      const inviteToken = newSecretToken();
-      const expiresAt = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
-        issueInvite(c, {
-          tenantId: ctx.tenantId,
-          memberId: before.id,
-          tokenHash: hashToken(inviteToken),
-          issuedBy: ctx.actor,
-        }),
-      );
-      await deps.audit.emit({
+  app.post("/members/:id/invites", async (request: FastifyRequest<{ Params: { id: string } }>) => {
+    const ctx = assertCtx(request);
+    requireScope(request.principal!.scopes, ADMIN);
+    await requireAdmin(deps.pool, ctx);
+    const before = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+      findMemberById(c, request.params.id),
+    );
+    if (before === null) throw brainError("agent_not_found", "member not found");
+    const inviteToken = newSecretToken();
+    const expiresAt = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
+      issueInvite(c, {
         tenantId: ctx.tenantId,
-        layer: "execution",
-        actor: ctx.actor,
-        action: "member.invited",
-        inputs: { member_id: before.id, reissue: true },
-        outputs: { expires_at: expiresAt },
-      });
-      return { invite_token: inviteToken, expires_at: expiresAt };
-    },
-  );
+        memberId: before.id,
+        tokenHash: hashToken(inviteToken),
+        issuedBy: ctx.actor,
+      }),
+    );
+    await deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "execution",
+      actor: ctx.actor,
+      action: "member.invited",
+      inputs: { member_id: before.id, reissue: true },
+      outputs: { expires_at: expiresAt },
+    });
+    return { invite_token: inviteToken, expires_at: expiresAt };
+  });
 
   app.delete(
     "/members/:id/invites",

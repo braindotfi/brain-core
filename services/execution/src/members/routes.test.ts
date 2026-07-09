@@ -82,7 +82,7 @@ async function buildApp(opts: {
           active: values?.[6] === true,
           approval_domains: values?.[7] as string[],
           per_item_limit_cents: String(values?.[8]),
-          requires_second_approver_above_cents: values?.[9] as string | null,
+          requires_second_approver_above_cents: null,
         };
         opts.members[inserted.id] = inserted;
         return Promise.resolve({ rows: [inserted], rowCount: 1 });

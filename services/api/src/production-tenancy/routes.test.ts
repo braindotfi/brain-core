@@ -43,7 +43,10 @@ function appPool(member = memberRow()) {
         return Promise.resolve({ rows: [member], rowCount: 1 });
       }
       if (sql.startsWith("UPDATE members")) {
-        return Promise.resolve({ rows: [{ ...member, status: "active", active: true }], rowCount: 1 });
+        return Promise.resolve({
+          rows: [{ ...member, status: "active", active: true }],
+          rowCount: 1,
+        });
       }
       return Promise.resolve({ rows: [], rowCount: 1 });
     }),
@@ -64,7 +67,7 @@ function resolverPool(rows: unknown[] = []) {
 async function build(opts: { appRows?: unknown[]; resolverRows?: unknown[] } = {}) {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
-  const appDb = appPool(opts.appRows?.[0] === undefined ? memberRow() : opts.appRows[0] as never);
+  const appDb = appPool(opts.appRows?.[0] === undefined ? memberRow() : (opts.appRows[0] as never));
   const resolver = resolverPool(opts.resolverRows ?? []);
   const audit = { emit: vi.fn(async () => ({ id: "audit_1" })) };
   const signer = { sign: vi.fn(async () => "access-token") };
@@ -103,13 +106,16 @@ describe("production tenancy routes", () => {
         ),
       ).toBe(true);
       expect(
-        appDb.calls.some((c) =>
-          c.sql.includes("INSERT INTO member_identity_links") &&
-          c.sql.includes("'platform'"),
+        appDb.calls.some(
+          (c) =>
+            c.sql.includes("INSERT INTO member_identity_links") && c.sql.includes("'platform'"),
         ),
       ).toBe(true);
       expect(signer.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ type: "user", scopes: expect.arrayContaining(["execution:admin"]) }),
+        expect.objectContaining({
+          type: "user",
+          scopes: expect.arrayContaining(["execution:admin"]),
+        }),
       );
     } finally {
       await app.close();
