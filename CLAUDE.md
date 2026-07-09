@@ -237,12 +237,14 @@ commit.
 
 Deployment is a single Docker VM per environment. `deploy_staging` runs
 automatically on green `main`, connects to `VM_HOST_STAGING` with
-`VM_SSH_KEY_STAGING`, uses `.env.staging`, runs `tools/migrate up`, recreates
-`api`, `worker`, and `agents`, then smokes the staging health URL with a commit
-match. Production deployment is also automated from green `main`: the workflow
-connects to `VM_HOST`, uses `.env.prod`, runs `tools/migrate up` before any
-compose recreate, pulls the SHA-tagged images, recreates `api`, `worker`, and
-`agents`, and smokes `https://api.brain.fi/health`.
+`VM_SSH_KEY_STAGING`, uses `.env.staging`, pulls the SHA-tagged images, runs
+`tools/migrate up`, reruns `infra/db-roles.sql`, recreates `api`, `worker`, and
+`agents`, then smokes the staging health URL with a commit match. Production
+deployment is also automated from green `main`: the workflow connects to
+`VM_HOST`, uses `.env.prod`, pulls the SHA-tagged images, runs
+`tools/migrate up`, reruns `infra/db-roles.sql` before any compose recreate,
+recreates `api`, `worker`, and `agents`, and smokes
+`https://api.brain.fi/health`.
 
 The old manual staging-to-production promote is retired. The remaining
 discipline is the post-deploy probe: verify what is serving, not only what is

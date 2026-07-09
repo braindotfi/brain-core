@@ -103,6 +103,23 @@ test("staging and production deploy recreates include the agents service", () =>
   assert.match(promoteProductionJob, new RegExp(`up -d --no-deps --no-build ${serviceTargets}`));
 });
 
+test("staging and production deploy rerun db role grants after migrations", () => {
+  const deployStagingJob = workflowJob("deploy_staging");
+  const promoteProductionJob = workflowJob("promote_production");
+
+  for (const [name, job] of [
+    ["deploy_staging", deployStagingJob],
+    ["promote_production", promoteProductionJob],
+  ]) {
+    assert.match(
+      job,
+      /tools\/migrate\/dist\/cli\.js up && \\\s+docker compose [\s\S]*?run --rm --no-deps db-roles && \\\s+\(docker compose [\s\S]*?up -d --no-deps --no-build api worker agents/,
+      `${name} must apply migrations, rerun db-roles, then recreate services`,
+    );
+    assert.match(job, /logs --tail=200 api worker agents/, `${name} must print deploy logs`);
+  }
+});
+
 test("production compose defines the optional Python agents service", () => {
   assert.match(composeProd, /agents:\n\s+profiles:\s*\["agents"\]/);
   assert.match(
