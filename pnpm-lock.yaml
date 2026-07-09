@@ -11,6 +11,7 @@ overrides:
   vite: 6.4.3
   esbuild: '>=0.28.1'
   ws: ^8.21.0
+  uuid: 11.1.1
 
 importers:
 
@@ -3468,14 +3469,8 @@ packages:
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
 
-  uuid@10.0.0:
-    resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
-    hasBin: true
-
-  uuid@8.3.2:
-    resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+  uuid@11.1.1:
+    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
     hasBin: true
 
   valid-url@1.0.9:
@@ -4175,7 +4170,7 @@ snapshots:
     dependencies:
       '@azure/msal-common': 14.16.1
       jsonwebtoken: 9.0.3
-      uuid: 8.3.2
+      uuid: 11.1.1
 
   '@azure/msal-node@5.2.2':
     dependencies:
@@ -5137,7 +5132,7 @@ snapshots:
       botbuilder-stdlib: 4.23.3-internal
       botframework-connector: 4.23.3
       botframework-schema: 4.23.3
-      uuid: 10.0.0
+      uuid: 11.1.1
       zod: 3.25.76
     transitivePeerDependencies:
       - debug
@@ -5173,7 +5168,7 @@ snapshots:
       filenamify: 6.0.0
       fs-extra: 11.3.5
       htmlparser2: 9.1.0
-      uuid: 10.0.0
+      uuid: 11.1.1
       zod: 3.25.76
     transitivePeerDependencies:
       - bufferutil
@@ -5208,13 +5203,13 @@ snapshots:
   botframework-schema@4.23.3:
     dependencies:
       adaptivecards: 1.2.3
-      uuid: 10.0.0
+      uuid: 11.1.1
       zod: 3.25.76
 
   botframework-streaming@4.23.3:
     dependencies:
       '@types/ws': 6.0.4
-      uuid: 10.0.0
+      uuid: 11.1.1
       ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
@@ -6492,9 +6487,7 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  uuid@10.0.0: {}
-
-  uuid@8.3.2: {}
+  uuid@11.1.1: {}
 
   valid-url@1.0.9: {}
 
