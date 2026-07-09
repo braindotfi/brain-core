@@ -19,7 +19,7 @@ curl -sX POST "$BRAIN/v1/signup" -H 'content-type: application/json' \
 #         "verification_token":"…" }   # returned outside production; emailed in prod
 ```
 
-Password is min 12 chars (stored as a scrypt hash). A duplicate email returns `409 signup_email_taken`.
+Password is min 12 chars (stored as a scrypt hash). A duplicate email returns `409 signup_email_taken`. In production, the API sends the verification token through the configured ESP client and fails at boot if self-serve signup is enabled without ESP credentials.
 
 ### 2. Verify your email
 

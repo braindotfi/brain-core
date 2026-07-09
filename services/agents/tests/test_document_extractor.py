@@ -14,6 +14,7 @@ from brain_agents.deps import AppDeps
 from brain_agents.document_extractor.agent import (
     DocumentExtractorAgent,
     DocumentOcrUnavailableError,
+    OcrTextResult,
 )
 from brain_agents.payment.agent import PaymentAgent
 from brain_agents.plaid_extractor.agent import PlaidExtractorAgent
@@ -165,7 +166,7 @@ async def test_run_ocr_extracts_image_bytes(
 ) -> None:
     png_b64 = base64.b64encode(b"\x89PNG\r\n").decode("ascii")
     mock_deps.document_extractor_agent.ocr_text.return_value = (  # type: ignore[union-attr]
-        "INVOICE\nAcme Utilities\nTotal due: 120.50"
+        OcrTextResult(text="INVOICE\nAcme Utilities\nTotal due: 120.50")
     )
 
     resp = await client.post(
@@ -194,7 +195,7 @@ async def test_run_ocr_extracts_scanned_pdf_bytes(
 ) -> None:
     pdf_b64 = base64.b64encode(_pdf_bytes("")).decode("ascii")
     mock_deps.document_extractor_agent.ocr_text.return_value = (  # type: ignore[union-attr]
-        "Rent statement\nAmount due 2200.00"
+        OcrTextResult(text="Rent statement\nAmount due 2200.00")
     )
     resp = await client.post(
         "/run/document_extract",
@@ -351,10 +352,12 @@ async def test_agent_ocr_image_uses_vision_model() -> None:
 
     result = await agent.ocr_text(b"\x89PNG\r\n", "image/png")
 
-    assert "Acme Utilities" in result
+    assert "Acme Utilities" in result.text
+    assert result.confidence_cap == 0.5
     mock_openai.responses.create.assert_awaited_once()
     kwargs = mock_openai.responses.create.await_args.kwargs
     assert kwargs["model"] == "gpt-4o"
+    assert kwargs["timeout"] == 30.0
     content = kwargs["input"][0]["content"]
     assert content[1]["type"] == "input_image"
     assert content[1]["image_url"].startswith("data:image/png;base64,")
@@ -366,11 +369,22 @@ async def test_agent_ocr_pdf_uses_file_input() -> None:
 
     result = await agent.ocr_text(_pdf_bytes(""), "application/pdf")
 
-    assert "Amount due" in result
+    assert "Amount due" in result.text
+    assert result.confidence_cap == 0.5
     kwargs = mock_openai.responses.create.await_args.kwargs
     content = kwargs["input"][0]["content"]
     assert content[1]["type"] == "input_file"
     assert content[1]["file_data"].startswith("data:application/pdf;base64,")
+
+
+async def test_agent_ocr_uses_per_request_timeout() -> None:
+    mock_openai = _openai_ocr_returning("INVOICE")
+    agent = DocumentExtractorAgent(mock_openai, "gpt-4o-mini", ocr_model="gpt-4o")
+
+    await agent.ocr_text(b"\x89PNG\r\n", "image/png")
+
+    kwargs = mock_openai.responses.create.await_args.kwargs
+    assert kwargs["timeout"] == 30.0
 
 
 async def test_agent_ocr_blank_output_raises() -> None:

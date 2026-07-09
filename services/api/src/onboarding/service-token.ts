@@ -15,6 +15,12 @@
  * via the shared `buildDefaultPolicyDocument`. This owner member is the
  * tenant's human owner and is separate from the payment agent the route also
  * creates; the minted token still authenticates the agent only.
+ *
+ * Production fence: this endpoint is a break-glass sandbox/testnet BFF
+ * credential, not per-user auth. It is controlled by
+ * `BRAIN_SERVICE_TOKEN_ENABLED`, defaults off behind the testnet attestation
+ * fence, and must stay disabled for live-money or multi-customer production
+ * because the shared secret is not bound to an individual tenant operator.
  */
 
 import type { TenantScopedClient, Scope } from "@brain/shared";

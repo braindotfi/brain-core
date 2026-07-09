@@ -10,6 +10,7 @@ import {
 } from "@brain/shared";
 import type { BlobAdapter } from "@brain/shared";
 import type { Pool } from "pg";
+import { DocumentExtractClient } from "../agents/documentExtractClient.js";
 import { registerRawExtractRoute, type DocumentExtractPort } from "./route.js";
 
 const TENANT = newTenantId();
@@ -192,6 +193,37 @@ describe("POST /raw/:raw_id/extract", () => {
         },
       );
     } finally {
+      await app.close();
+    }
+  });
+
+  it("does not expose upstream agent 422 bodies in the caller error envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        text: async () => "python stack with extracted customer text",
+      }),
+    );
+    const { app } = await buildApp({
+      principal: principal(),
+      client: new DocumentExtractClient("http://agents.internal"),
+    });
+    try {
+      const res = await app.inject({ method: "POST", url: `/raw/${RAW_ID}/extract` });
+      expect(res.statusCode).toBe(422);
+      const body = res.json();
+      expect(body).toMatchObject({
+        error: {
+          code: "raw_source_unsupported",
+          details: { upstream_status: 422 },
+        },
+      });
+      expect(JSON.stringify(body)).not.toContain("upstream_body");
+      expect(JSON.stringify(body)).not.toContain("python stack with extracted customer text");
+    } finally {
+      vi.unstubAllGlobals();
       await app.close();
     }
   });

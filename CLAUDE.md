@@ -190,9 +190,10 @@ Done
   verified self-serve tenant owner can upload documents, trigger extraction, and
   read advisory ledger state. Owner tokens still exclude
   `payment_intent:propose`, `payment_intent:execute`, and `execution:propose`.
-  Production self-serve signup must not be enabled until verification-token
-  delivery is wired through API or the platform; when tokens are hidden and no
-  delivery dependency is configured, signup fails closed before provisioning.
+  Production self-serve signup sends verification tokens through the API ESP
+  client using `EMAIL_ENDPOINT`, `EMAIL_API_KEY`, and optional `EMAIL_FROM`.
+  When tokens are hidden and ESP credentials are missing, API boot fails before
+  routes are registered.
 - The document extraction agent keeps deterministic text extraction first for
   CSV, plain text, XLSX, and text-layer PDFs. Image uploads and scanned PDFs
   fall back to OCR through `OPENAI_OCR_MODEL` (default `gpt-4o`) with a 10 MB

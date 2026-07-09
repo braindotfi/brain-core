@@ -4,6 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import { errorHandlerPlugin, requestIdPlugin, InMemoryAuditEmitter } from "@brain/shared";
 import { registerOnboardingRoutes } from "./routes.js";
 
+type DeliverVerificationEmail = NonNullable<
+  Parameters<typeof registerOnboardingRoutes>[1]["deliverVerificationEmail"]
+>;
+
 /**
  * Fake pool that transparently handles BEGIN/COMMIT/ROLLBACK/set_config and
  * delegates domain queries to `handler`. `failOn` simulates a DB error.
@@ -82,8 +86,8 @@ describe("POST /signup — RFC 0002 Phase B", () => {
     await app.close();
   });
 
-  it("hides the raw token when exposeVerificationToken is false (prod posture)", async () => {
-    const deliverVerificationEmail = vi.fn(async () => undefined);
+  it("sends the raw token by delivery dependency when exposeVerificationToken is false", async () => {
+    const deliverVerificationEmail = vi.fn<DeliverVerificationEmail>(async () => undefined);
     const { app } = await buildApp(makeFakePool({}), {
       exposeVerificationToken: false,
       deliverVerificationEmail,
@@ -93,6 +97,9 @@ describe("POST /signup — RFC 0002 Phase B", () => {
     const body = res.json();
     expect(body.verification_token).toBeUndefined();
     expect(body.verification_sent).toBe(true);
+    const delivered = deliverVerificationEmail.mock.calls[0]?.[0];
+    expect(delivered).toBeDefined();
+    expect(JSON.stringify(body)).not.toContain(delivered?.token);
     expect(deliverVerificationEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         email: "founder@example.com",

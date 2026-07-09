@@ -215,6 +215,9 @@ importers:
       '@brain/shared':
         specifier: workspace:*
         version: link:../../shared
+      '@brain/surfaces':
+        specifier: workspace:*
+        version: link:../../packages/surfaces
       '@brain/wiki':
         specifier: workspace:*
         version: link:../wiki

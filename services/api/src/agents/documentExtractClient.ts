@@ -56,7 +56,8 @@ export class DocumentExtractClient {
       if (resp.status === 422) {
         throw brainError("raw_source_unsupported", "document extraction agent rejected artifact", {
           statusOverride: 422,
-          details: { upstream_status: resp.status, upstream_body: text },
+          details: { upstream_status: resp.status },
+          cause: new Error(text),
         });
       }
       throw brainError(
