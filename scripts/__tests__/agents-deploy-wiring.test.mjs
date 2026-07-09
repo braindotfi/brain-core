@@ -28,7 +28,7 @@ test("main workflow runs Python agents checks before VM image build", () => {
   );
 });
 
-test("main workflow builds one root image and deploys staging before manual production promote", () => {
+test("main workflow builds app and agents images before deployment", () => {
   const buildImageJob = workflowJob("build_image");
   const deployStagingJob = workflowJob("deploy_staging");
   const promoteProductionJob = workflowJob("promote_production");
@@ -40,6 +40,14 @@ test("main workflow builds one root image and deploys staging before manual prod
   assert.match(
     buildImageJob,
     /docker push ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\}/,
+  );
+  assert.match(
+    buildImageJob,
+    /docker build -t ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\} -f services\/agents\/Dockerfile services\/agents/,
+  );
+  assert.match(
+    buildImageJob,
+    /docker push ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\}/,
   );
   assert.match(deployStagingJob, /needs: build_image/);
   assert.match(deployStagingJob, /VM_HOST: \$\{\{ secrets\.VM_HOST_STAGING \}\}/);
@@ -58,12 +66,30 @@ test("main workflow builds one root image and deploys staging before manual prod
   );
   assert.match(
     deployStagingJob,
+    /docker pull ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\}/,
+  );
+  assert.match(
+    promoteProductionJob,
+    /docker pull ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\}/,
+  );
+  assert.match(
+    deployStagingJob,
     /docker tag ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\} brain-core:prod/,
   );
   assert.match(
     promoteProductionJob,
     /docker tag ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\} brain-core:prod/,
   );
+  assert.match(
+    deployStagingJob,
+    /docker tag ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\} brain-agents:prod/,
+  );
+  assert.match(
+    promoteProductionJob,
+    /docker tag ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\} brain-agents:prod/,
+  );
+  assert.match(deployStagingJob, /brain-agents:prod-rollback-\$ts/);
+  assert.match(promoteProductionJob, /brain-agents:prod-rollback-\$ts/);
   assert.match(workflow, /tools\/migrate\/dist\/cli\.js up/);
   assert.match(workflow, /https:\/\/api\.brain\.fi\/health/);
   assert.match(workflow, /last_commit.*expected/s);
@@ -81,7 +107,11 @@ test("production compose defines the optional Python agents service", () => {
   assert.match(composeProd, /agents:\n\s+profiles:\s*\["agents"\]/);
   assert.match(
     composeProd,
-    /agents:[\s\S]*build:\n\s+context:\s+services\/agents\n\s+dockerfile:\s+Dockerfile/,
+    /agents:[\s\S]*image:\s+brain-agents:\$\{BRAIN_AGENTS_IMAGE_TAG:-prod\}/,
+  );
+  assert.doesNotMatch(
+    composeProd.match(/  agents:[\s\S]*?(?=\nvolumes:)/)?.[0] ?? "",
+    /\n\s+build:/,
   );
   assert.match(composeProd, /container_name:\s+brain-prod-agents/);
   assert.match(composeProd, /BRAIN_API_BASE_URL:\s+http:\/\/api:3000/);

@@ -3,22 +3,25 @@
 This runbook describes the current staging-first VM deployment path. It replaces
 the older Azure Container Apps staging plan for day-to-day deploy operations.
 
-Goal: every green merge to `main` deploys the same built image to staging, proves
-the live `/health` commit, and then leaves production behind a manual GitHub
-environment approval.
+Goal: every green merge to `main` deploys the same built images to staging,
+proves the live `/health` commit, and then leaves production behind a manual
+GitHub environment approval.
 
 ## Current Deployment Shape
 
 The main workflow has three deployment jobs after quality gates:
 
-1. `build_image` builds one root Docker image with `GIT_SHA=${{ github.sha }}` and
-   uploads `brain-core-prod-${{ github.sha }}` as a short-lived artifact.
-2. `deploy_staging` downloads that artifact, ships it to the staging VM, runs
-   migrations, recreates `api`, `worker`, and `agents`, and checks the staging
-   health endpoint for the same commit.
+1. `build_image` builds and pushes `ghcr.io/braindotfi/brain-core:${{ github.sha }}`
+   with `GIT_SHA=${{ github.sha }}` and
+   `ghcr.io/braindotfi/brain-agents:${{ github.sha }}` from
+   `services/agents/Dockerfile`.
+2. `deploy_staging` pulls both images on the staging VM, retags them as
+   `brain-core:prod` and `brain-agents:prod`, runs migrations, recreates `api`,
+   `worker`, and `agents`, and checks the staging health endpoint for the same
+   commit.
 3. `promote_production` depends on staging and is bound to the GitHub
    `production` environment. It waits for a required reviewer before deploying
-   the same image artifact to `api.brain.fi`.
+   the same SHA-tagged images to `api.brain.fi`.
 
 Production must never deploy directly from a bare push. The production
 environment approval is the manual promote gate.
@@ -89,12 +92,14 @@ significant changes.
 
 For document extraction, verify the API can reach the agents service at
 `http://agents:8001` from inside the compose network. The workflow recreates
-`api`, `worker`, and `agents` together with `--profile agents`.
+`api`, `worker`, and `agents` together with `--profile agents`. The agents
+service is not built on the VM during deploy; it must come from the pulled and
+retagged `brain-agents:prod` image.
 
 ## Rollback
 
 Use [Rollback Runbook](./rollback.md). The current rollback unit is the Docker
-image tag on the target VM, not an Azure Container Apps revision.
+image tags on the target VM, not an Azure Container Apps revision.
 
 ## Legacy Terraform Notes
 

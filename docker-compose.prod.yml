@@ -11,7 +11,9 @@
 #   1. cp .env.prod.example .env.prod   and fill it in (DB/MinIO passwords +
 #      the C-series secrets: AUTH_JWKS_URL, BRAIN_SESSION_KEY, BASE_RPC_URL, …)
 #   2. docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
-#      (add `--profile agents` to also start the Python reasoning agents)
+#      (CI pulls and retags brain-agents:prod before adding `--profile agents`;
+#       for manual local testing, build that image first with:
+#       docker build -t brain-agents:prod -f services/agents/Dockerfile services/agents)
 #
 # IMPORTANT: pass `--env-file .env.prod`. Compose reads ${VAR} interpolation
 # (the DB/MinIO passwords woven into the connection URLs below) from the
@@ -417,9 +419,7 @@ services:
   # services/agents/brain_agents/server.py).
   agents:
     profiles: ["agents"]
-    build:
-      context: services/agents
-      dockerfile: Dockerfile
+    image: brain-agents:${BRAIN_AGENTS_IMAGE_TAG:-prod}
     container_name: brain-prod-agents
     restart: unless-stopped
     env_file:

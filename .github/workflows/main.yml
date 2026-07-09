@@ -209,10 +209,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Build and push images
         run: |
           docker build --build-arg GIT_SHA=${{ github.sha }} -t ghcr.io/braindotfi/brain-core:${{ github.sha }} -f Dockerfile .
           docker push ghcr.io/braindotfi/brain-core:${{ github.sha }}
+          docker build -t ghcr.io/braindotfi/brain-agents:${{ github.sha }} -f services/agents/Dockerfile services/agents
+          docker push ghcr.io/braindotfi/brain-agents:${{ github.sha }}
 
   deploy_staging:
     name: deploy staging VM
@@ -235,21 +237,24 @@ jobs:
 
       # Tag the box's current :prod image as a rollback point BEFORE the
       # `docker tag` below overwrites the :prod tag. See docs/rollback.md §B.
-      - name: Tag rollback image on VM
+      - name: Tag rollback images on VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'docker tag brain-core:prod brain-core:prod-rollback-$(date +%Y%m%d-%H%M%S) || true'
+            'ts=$(date +%Y%m%d-%H%M%S); docker tag brain-core:prod brain-core:prod-rollback-$ts || true; docker tag brain-agents:prod brain-agents:prod-rollback-$ts || true'
 
-      - name: Pull image from GHCR
+      - name: Pull images from GHCR
         # The VM authenticates to ghcr.io via a one-time manual `docker login`
         # (persisted in ~/.docker/config.json); the pull relies on that stored
         # login, no token is passed over SSH. Retag to brain-core:prod so
         # docker-compose.prod.yml's `image: brain-core:${BRAIN_IMAGE_TAG:-prod}`
-        # needs no change.
+        # needs no change. Retag brain-agents too so --no-build can recreate
+        # the agents service from the freshly shipped Python image.
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "docker pull ghcr.io/braindotfi/brain-core:${{ github.sha }} && \
-             docker tag ghcr.io/braindotfi/brain-core:${{ github.sha }} brain-core:prod"
+             docker pull ghcr.io/braindotfi/brain-agents:${{ github.sha }} && \
+             docker tag ghcr.io/braindotfi/brain-core:${{ github.sha }} brain-core:prod && \
+             docker tag ghcr.io/braindotfi/brain-agents:${{ github.sha }} brain-agents:prod"
 
       # Cold-start safety: bring up infra + jwks + caddy if the box is fresh.
       # Idempotent on a warm box — --no-recreate leaves running containers
@@ -307,18 +312,20 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
 
-      - name: Tag rollback image on VM
+      - name: Tag rollback images on VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'docker tag brain-core:prod brain-core:prod-rollback-$(date +%Y%m%d-%H%M%S) || true'
+            'ts=$(date +%Y%m%d-%H%M%S); docker tag brain-core:prod brain-core:prod-rollback-$ts || true; docker tag brain-agents:prod brain-agents:prod-rollback-$ts || true'
 
-      - name: Pull image from GHCR
-        # See deploy_staging's "Pull image from GHCR" step: relies on the box's
+      - name: Pull images from GHCR
+        # See deploy_staging's "Pull images from GHCR" step: relies on the box's
         # stored `docker login`, no token over SSH; retag keeps compose unchanged.
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "docker pull ghcr.io/braindotfi/brain-core:${{ github.sha }} && \
-             docker tag ghcr.io/braindotfi/brain-core:${{ github.sha }} brain-core:prod"
+             docker pull ghcr.io/braindotfi/brain-agents:${{ github.sha }} && \
+             docker tag ghcr.io/braindotfi/brain-core:${{ github.sha }} brain-core:prod && \
+             docker tag ghcr.io/braindotfi/brain-agents:${{ github.sha }} brain-agents:prod"
 
       # Cold-start safety: bring up infra + jwks + caddy if the box is fresh.
       # Idempotent on a warm box — --no-recreate leaves running containers

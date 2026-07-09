@@ -7,7 +7,8 @@ Brain currently deploys each environment to a single Docker VM through
   `.env.staging`, and project `brain-staging`.
 - `promote_production` depends on staging, waits for the GitHub `production`
   environment approval, uses `VM_HOST`, `.env.prod`, and project `brain-prod`.
-- Both jobs ship the same `brain-core:prod` image artifact, run
+- Both jobs ship the same SHA-tagged `brain-core` and `brain-agents` images,
+  retag them locally as `brain-core:prod` and `brain-agents:prod`, run
   `tools/migrate up`, then recreate `api`, `worker`, and `agents`.
 
 The forward-only migration rule in [Post-Rollback](#post-rollback) applies to
@@ -15,15 +16,16 @@ both environments.
 
 ## Current VM Rollback
 
-Rollback on the VM means reusing the rollback image tag captured before the last
-deploy overwrote `brain-core:prod`.
+Rollback on the VM means reusing the rollback image tags captured before the
+last deploy overwrote `brain-core:prod` and `brain-agents:prod`.
 
 ### Prerequisites
 
 - SSH access to the target VM as `azureuser`.
 - Access to the target env file on the host: `.env.staging` or `.env.prod`.
 - The failing deploy has run through the workflow, which tags the previous
-  image as `brain-core:prod-rollback-<timestamp>` before loading the new image.
+  images as `brain-core:prod-rollback-<timestamp>` and
+  `brain-agents:prod-rollback-<timestamp>` before pulling the new images.
 
 ### Procedure
 
@@ -34,16 +36,19 @@ deploy overwrote `brain-core:prod`.
    cd ~/brain-core
    ```
 
-2. List local rollback images and choose the latest known-good tag.
+2. List local rollback images and choose the latest known-good tags.
 
    ```bash
    docker images brain-core --format '{{.Tag}}\t{{.CreatedAt}}' | sort
+   docker images brain-agents --format '{{.Tag}}\t{{.CreatedAt}}' | sort
    ```
 
-3. Repoint `brain-core:prod` at the chosen rollback image.
+3. Repoint `brain-core:prod` and `brain-agents:prod` at the chosen rollback
+   images.
 
    ```bash
    docker tag brain-core:<ROLLBACK_TAG> brain-core:prod
+   docker tag brain-agents:<ROLLBACK_TAG> brain-agents:prod
    ```
 
 4. Recreate the runtime services without rebuilding.
@@ -81,7 +86,7 @@ deploy overwrote `brain-core:prod`.
    curl -fsS https://<environment-health-host>/health
    ```
 
-6. Notify the team with the failed commit, rollback tag, symptom, and follow-up
+6. Notify the team with the failed commit, rollback tags, symptom, and follow-up
    owner.
 
 ## Data And Volumes
