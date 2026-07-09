@@ -80,8 +80,9 @@ WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY schemas/package.json schemas/
 COPY shared/package.json shared/
-# packages/* manifests needed for the frozen --prod install's workspace graph
-# (deps of surface-gateway); the api runtime does not import them, so no dist.
+# packages/* manifests needed for the frozen --prod install's workspace graph.
+# API imports @brain/surfaces for onboarding email delivery; surface-gateway
+# imports both @brain/surfaces and @brain/core.
 COPY packages/core/package.json packages/core/
 COPY packages/surfaces/package.json packages/surfaces/
 COPY services/api/package.json services/api/
@@ -118,6 +119,8 @@ COPY --from=builder /app/schemas/dist schemas/dist
 COPY --from=builder /app/schemas/entity schemas/entity
 COPY --from=builder /app/schemas/relation schemas/relation
 COPY --from=builder /app/shared/dist shared/dist
+COPY --from=builder /app/packages/core/dist packages/core/dist
+COPY --from=builder /app/packages/surfaces/dist packages/surfaces/dist
 COPY --from=builder /app/services/api/dist services/api/dist
 # OpenAPI spec for the /v1/docs UI. `services/api` build runs copy-spec to
 # generate services/api/assets/openapi.yaml; the runtime loader (docs/spec.ts)
