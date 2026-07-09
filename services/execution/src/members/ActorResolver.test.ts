@@ -11,6 +11,7 @@ function member(id: string, email = `${id}@example.com`): MemberAuthority {
     email,
     displayName: id,
     role: "approver",
+    status: "active",
     active: true,
     approvalDomains: ["ap"],
     perItemLimitCents: 100_00n,

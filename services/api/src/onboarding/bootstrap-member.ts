@@ -42,10 +42,10 @@ export async function insertBootstrapAdminMember(
 ): Promise<void> {
   await client.query(
     `INSERT INTO members (
-       tenant_id, id, email, display_name, role, active, approval_domains,
+       tenant_id, id, email, display_name, role, status, active, approval_domains,
        per_item_limit_cents, requires_second_approver_above_cents
      )
-     VALUES ($1, $2, $3, $4, 'admin', true, $5, $6, NULL)
+     VALUES ($1, $2, $3, $4, 'admin', 'active', true, $5, $6, NULL)
      ON CONFLICT (tenant_id, id) DO NOTHING`,
     [
       input.tenantId,

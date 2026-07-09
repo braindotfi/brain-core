@@ -79,6 +79,11 @@ const envSchema = z.object({
   AUTH_AUDIENCE: z.string().default("brain-api"),
   /** Acceptable clock skew when verifying exp/iat. Keep small. */
   AUTH_CLOCK_TOLERANCE_SECONDS: z.coerce.number().int().nonnegative().default(5),
+  /**
+   * Shared platform BFF credential for production tenant creation, session
+   * exchange, and invite consumption. Routes compare it in constant time.
+   */
+  BRAIN_PLATFORM_SERVICE_SECRET: optionalNonEmptyString(),
 
   // ---- Observability ----
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),

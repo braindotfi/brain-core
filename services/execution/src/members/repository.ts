@@ -4,6 +4,7 @@ import type {
   ApprovalDomain,
   MemberAuthority,
   MemberIdentitySurface,
+  MemberStatus,
   MemberLookup,
 } from "./types.js";
 
@@ -13,6 +14,7 @@ interface MemberRow {
   email: string;
   display_name: string;
   role: "admin" | "approver" | "viewer";
+  status: MemberStatus;
   active: boolean;
   approval_domains: ApprovalDomain[];
   per_item_limit_cents: string | number | bigint;
@@ -46,7 +48,7 @@ export async function findMemberById(
   memberId: string,
 ): Promise<MemberAuthority | null> {
   const { rows } = await client.query<MemberRow>(
-    `SELECT tenant_id, id, email, display_name, role, active, approval_domains,
+    `SELECT tenant_id, id, email, display_name, role, status, active, approval_domains,
             per_item_limit_cents, requires_second_approver_above_cents
        FROM members
       WHERE id = $1
@@ -74,7 +76,7 @@ export async function listMembers(
   const limitIndex = values.length;
   const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const { rows } = await client.query<MemberRow>(
-    `SELECT tenant_id, id, email, display_name, role, active, approval_domains,
+    `SELECT tenant_id, id, email, display_name, role, status, active, approval_domains,
             per_item_limit_cents, requires_second_approver_above_cents
        FROM members
        ${whereSql}
@@ -96,15 +98,17 @@ export async function insertMember(
     approvalDomains: ApprovalDomain[];
     perItemLimitCents: bigint;
     requiresSecondApproverAboveCents: bigint | null;
+    status?: MemberStatus;
   },
 ): Promise<MemberAuthority> {
+  const status = input.status ?? "active";
   const { rows } = await client.query<MemberRow>(
     `INSERT INTO members (
-       tenant_id, id, email, display_name, role, active, approval_domains,
+       tenant_id, id, email, display_name, role, status, active, approval_domains,
        per_item_limit_cents, requires_second_approver_above_cents
      )
-     VALUES ($1,$2,lower($3),$4,$5,true,$6,$7,$8)
-     RETURNING tenant_id, id, email, display_name, role, active, approval_domains,
+     VALUES ($1,$2,lower($3),$4,$5,$6,$7,$8,$9)
+     RETURNING tenant_id, id, email, display_name, role, status, active, approval_domains,
                per_item_limit_cents, requires_second_approver_above_cents`,
     [
       input.tenantId,
@@ -112,6 +116,8 @@ export async function insertMember(
       input.email,
       input.displayName,
       input.role,
+      status,
+      status === "active",
       input.approvalDomains,
       input.perItemLimitCents.toString(),
       input.requiresSecondApproverAboveCents?.toString() ?? null,
@@ -129,6 +135,7 @@ export async function updateMember(
     email?: string;
     displayName?: string;
     role?: "admin" | "approver" | "viewer";
+    status?: MemberStatus;
     active?: boolean;
     approvalDomains?: ApprovalDomain[];
     perItemLimitCents?: bigint;
@@ -149,9 +156,17 @@ export async function updateMember(
     values.push(input.role);
     sets.push(`role = $${values.length}`);
   }
+  if (input.status !== undefined) {
+    values.push(input.status);
+    sets.push(`status = $${values.length}`);
+    values.push(input.status === "active");
+    sets.push(`active = $${values.length}`);
+  }
   if (input.active !== undefined) {
     values.push(input.active);
     sets.push(`active = $${values.length}`);
+    values.push(input.active ? "active" : "deactivated");
+    sets.push(`status = $${values.length}`);
   }
   if (input.approvalDomains !== undefined) {
     values.push(input.approvalDomains);
@@ -172,7 +187,7 @@ export async function updateMember(
     `UPDATE members
         SET ${sets.join(", ")}, updated_at = now()
       WHERE id = $${idIndex}
-      RETURNING tenant_id, id, email, display_name, role, active, approval_domains,
+      RETURNING tenant_id, id, email, display_name, role, status, active, approval_domains,
                 per_item_limit_cents, requires_second_approver_above_cents`,
     values,
   );
@@ -181,7 +196,7 @@ export async function updateMember(
 
 export async function countActiveAdmins(client: TenantScopedClient): Promise<number> {
   const { rows } = await client.query<{ count: string }>(
-    `SELECT count(*)::text AS count FROM members WHERE role = 'admin' AND active = true`,
+    `SELECT count(*)::text AS count FROM members WHERE role = 'admin' AND status = 'active'`,
   );
   return Number(rows[0]?.count ?? "0");
 }
@@ -220,7 +235,7 @@ export async function findMemberByEmail(
   email: string,
 ): Promise<MemberAuthority | null> {
   const { rows } = await client.query<MemberRow>(
-    `SELECT tenant_id, id, email, display_name, role, active, approval_domains,
+    `SELECT tenant_id, id, email, display_name, role, status, active, approval_domains,
             per_item_limit_cents, requires_second_approver_above_cents
        FROM members
       WHERE lower(email) = lower($1)
@@ -236,7 +251,7 @@ export async function findMemberByIdentityLink(
   externalRef: string,
 ): Promise<MemberAuthority | null> {
   const { rows } = await client.query<MemberRow>(
-    `SELECT m.tenant_id, m.id, m.email, m.display_name, m.role, m.active,
+      `SELECT m.tenant_id, m.id, m.email, m.display_name, m.role, m.status, m.active,
             m.approval_domains, m.per_item_limit_cents,
             m.requires_second_approver_above_cents
        FROM member_identity_links l
@@ -258,7 +273,8 @@ function toMember(row: MemberRow): MemberAuthority {
     email: row.email,
     displayName: row.display_name,
     role: row.role,
-    active: row.active,
+    status: row.status,
+    active: row.status === "active" && row.active,
     approvalDomains: row.approval_domains,
     perItemLimitCents: BigInt(row.per_item_limit_cents),
     requiresSecondApproverAboveCents:

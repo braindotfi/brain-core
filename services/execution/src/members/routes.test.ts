@@ -29,6 +29,7 @@ function row(id: string, role: "admin" | "approver" | "viewer", active = true) {
     email: `${id}@example.com`,
     display_name: id,
     role,
+    status: active ? "active" : "deactivated",
     active,
     approval_domains: ["ap"],
     per_item_limit_cents: "10000",
