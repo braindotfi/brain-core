@@ -2,13 +2,13 @@
 
 Monorepo working notes. Keep current as work lands.
 
-## ⛔ Dev environment — WSL is the single source of truth
+## ⛔ Dev environment. WSL is the single source of truth
 
-**All work happens in the WSL ext4 clone: `~/work/brain.fi/brain-core`.** Edit, build, run, git, and package-manager commands run there (native Linux, fast, LF endings). The Windows checkout at `C:\Users\sanke\Work\brain.fi\brain-core` is a **READ-ONLY mirror** — it exists only so Claude Desktop (a Windows GUI app that cannot open WSL paths) can read the source.
+**All work happens in the WSL ext4 clone: `~/work/brain.fi/brain-core`.** Edit, build, run, git, and package-manager commands run there (native Linux, fast, LF endings). The Windows checkout at `C:\Users\sanke\Work\brain.fi\brain-core` is a **READ-ONLY mirror**. It exists only so Claude Desktop (a Windows GUI app that cannot open WSL paths) can read the source.
 
 - **Never edit or commit on the Windows side.** Windows Edit/Write tools inject CRLF; the committed `.gitattributes` (`* text=auto eol=lf`) is the LF guard. If a Windows tool touches a file, normalize in WSL: `sed -i 's/\r$//' <file>`.
 - **Refresh the mirror** after editing in WSL (and before reading it in Claude Desktop) with **`bfmirror`** (`~/work/brain.fi/sync-mirror.sh`, one-way WSL→Windows). Never run it the reverse direction.
-- **The Windows side carries no `node_modules` or build output** — those live only in WSL; `bfmirror` excludes them.
+- **The Windows side carries no `node_modules` or build output**. Those live only in WSL; `bfmirror` excludes them.
 
 See the container-wide memory `brainfi-wsl-dev-setup` and `dev-environment`.
 
@@ -283,18 +283,18 @@ the GitHub SHA into container image builds as `GIT_SHA`.
 
 #### Versioning & release tags
 
-The `version` in `GET /health` is derived automatically — never hand-edited.
+The `version` in `GET /health` is derived automatically. Never hand-edited.
 `build_image` runs `git describe --tags --always --match 'v*'` and bakes the
 result into the image as `SERVICE_VERSION` (Dockerfile `ARG`/`ENV`), so a build
 off `main` reports e.g. `v0.0.7-65-gc6674af`: last tier tag, commits since, short
 SHA. It cannot drift from what shipped. `SERVICE_VERSION` is therefore NOT set in
-`docker-compose.prod.yml`, `.env.prod`, or `.env.staging` — an `env_file`/
+`docker-compose.prod.yml`, `.env.prod`, or `.env.staging`. An `env_file`/
 `environment:` value overrides the baked image ENV and would re-pin a stale
 version, so keep it out of those files.
 
 Humans touch the version only to move a **tier**: tag `main` with `vMAJOR.MINOR.0`
 (`v0.1.0`, `v1.0.0`) at a real milestone. The patch/build portion (`-N-gSHA`) is
-automatic. Do not cut `v0.0.x` patch tags — the machine fills that in.
+automatic. Do not cut `v0.0.x` patch tags. The machine fills that in.
 
 Every production promote pushes a lightweight **deploy tag**
 `deploy/prod/<utc-timestamp>-<short-sha>` (last step of `promote_production`), so
