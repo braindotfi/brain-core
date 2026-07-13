@@ -92,7 +92,11 @@ def create_app(deps: AppDeps | None = None) -> FastAPI:
             app.state.deps = deps
         else:
             openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-            brain_client = BrainApiClient(settings.brain_api_base_url, settings.brain_api_token)
+            brain_client = BrainApiClient(
+                settings.brain_api_base_url,
+                settings.brain_api_token,
+                settings.brain_agents_inbound_secret,
+            )
             anomaly_agent = AnomalyAgent(openai_client, settings.openai_model)
             app.state.deps = AppDeps(
                 brain_client=brain_client,

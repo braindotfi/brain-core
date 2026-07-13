@@ -1529,6 +1529,13 @@ async function main(): Promise<void> {
       idempotencyTtlSeconds: cfg.IDEMPOTENCY_TTL_SECONDS,
       sourceRepository: postgresSourceRepo,
       sourceCredentialStore: postgresSourceRepo,
+      // Lets a trusted first-party agent (proven via the same shared secret
+      // that signs X-Brain-Auth on the outbound API -> agents call) write a
+      // parsed row into the caller's own tenant instead of the static
+      // golden-tenant agent JWT's tenant. See RegisterParsedOptions.
+      ...(cfg.BRAIN_AGENTS_INBOUND_SECRET !== undefined
+        ? { crossTenantServiceSecret: cfg.BRAIN_AGENTS_INBOUND_SECRET }
+        : {}),
       plaidVerify: {
         keyResolver: cfg.BRAIN_DEMO_MODE
           ? async (_kid: string): Promise<never> => {

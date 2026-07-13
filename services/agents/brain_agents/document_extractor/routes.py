@@ -126,6 +126,7 @@ async def run_document_extract(
         parser_version=_PARSER_VERSION,
         extracted=extracted["payload"],
         confidence=confidence,
+        tenant_id=req.tenant_id,
     )
 
     return DocumentExtractResult(

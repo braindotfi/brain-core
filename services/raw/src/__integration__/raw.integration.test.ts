@@ -9,7 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { newRawArtifactId, newTenantId } from "@brain/shared";
-import { buildHarness, type Harness } from "./harness.js";
+import { buildHarness, signCrossTenantServiceAuth, type Harness } from "./harness.js";
 
 const DESCRIBE = process.env.DATABASE_URL !== undefined ? describe : describe.skip;
 
@@ -347,6 +347,167 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: { code: "request_body_invalid" } });
+  });
+
+  it("POST /raw/{raw_id}/parsed with a proven HMAC signature writes into the X-Brain-Write-Tenant header tenant, not the JWT tenant", async () => {
+    if (h === null) return;
+    const tenantB = newTenantId();
+    const { token: tenantBToken } = await h.signToken({
+      tenantId: tenantB,
+      scopes: ["raw:write", "raw:read"],
+    });
+    const raw_id = await ingestUpload(tenantBToken, "cross-tenant-write");
+
+    // Sign a raw:write token in a different tenant (A), standing in for the
+    // static golden-tenant agent JWT, and prove the shared secret (via HMAC
+    // over the raw body, never the secret itself) to redirect the write
+    // into tenant B.
+    const { token: tenantAAgentToken } = await h.signToken({
+      tenantId: newTenantId(),
+      scopes: ["raw:write"],
+      principalType: "agent",
+    });
+
+    const payload = JSON.stringify({
+      parser: "doc_obligation_v1",
+      parser_version: "1.0.0",
+      extracted: { direction: "payable", amount: "42.00" },
+    });
+    const writeRes = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers: {
+        authorization: `Bearer ${tenantAAgentToken}`,
+        "content-type": "application/json",
+        "x-brain-write-tenant": tenantB,
+        "x-brain-service-auth": signCrossTenantServiceAuth(payload),
+      },
+      payload,
+    });
+    expect(writeRes.statusCode).toBe(201);
+    const written = writeRes.json() as { id: string };
+
+    // GET as a tenant-B token proves the row is reachable there.
+    const getRes = await h.app.inject({
+      method: "GET",
+      url: `/raw/${raw_id}/parsed`,
+      headers: { authorization: `Bearer ${tenantBToken}` },
+    });
+    const listed = getRes.json() as { parsed: Array<{ id: string }> };
+    expect(listed.parsed.map((p) => p.id)).toContain(written.id);
+
+    // The local test DB role is a superuser (bypasses RLS), so the GET above
+    // cannot by itself distinguish "wrote to tenant B" from "wrote to the
+    // JWT's own tenant and every tenant can see it anyway". Assert the
+    // persisted column directly for real proof of which tenant it landed in.
+    const { rows } = await h.pool.query<{ tenant_id: string }>(
+      "SELECT tenant_id FROM raw_parsed WHERE id = $1",
+      [written.id],
+    );
+    expect(rows[0]?.tenant_id).toBe(tenantB);
+  });
+
+  it("POST /raw/{raw_id}/parsed with a valid signature but a malformed X-Brain-Write-Tenant fails closed (403), not open", async () => {
+    if (h === null) return;
+    const token = await writeToken();
+    const raw_id = await ingestUpload(token, "cross-tenant-malformed-tenant");
+    const payload = JSON.stringify({
+      parser: "doc_obligation_v1",
+      parser_version: "1.0.0",
+      extracted: { direction: "payable", amount: "3.00" },
+    });
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "x-brain-write-tenant": "not-a-tenant-id",
+        "x-brain-service-auth": signCrossTenantServiceAuth(payload),
+      },
+      payload,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: { code: "auth_tenant_mismatch" } });
+  });
+
+  it("POST /raw/{raw_id}/parsed with a valid signature but no X-Brain-Write-Tenant falls back to the JWT tenant (201)", async () => {
+    if (h === null) return;
+    const token = await writeToken();
+    const raw_id = await ingestUpload(token, "cross-tenant-no-target-header");
+    const payload = JSON.stringify({
+      parser: "doc_obligation_v1",
+      parser_version: "1.0.0",
+      extracted: { direction: "payable", amount: "4.00" },
+    });
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "x-brain-service-auth": signCrossTenantServiceAuth(payload),
+      },
+      payload,
+    });
+    expect(res.statusCode).toBe(201);
+    const written = res.json() as { id: string };
+
+    const getRes = await h.app.inject({
+      method: "GET",
+      url: `/raw/${raw_id}/parsed`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const listed = getRes.json() as { parsed: Array<{ id: string }> };
+    expect(listed.parsed.map((p) => p.id)).toContain(written.id);
+  });
+
+  it("POST /raw/{raw_id}/parsed ignores X-Brain-Write-Tenant without a matching signature (no cross-tenant leak)", async () => {
+    if (h === null) return;
+    const token = await writeToken();
+    const raw_id = await ingestUpload(token, "cross-tenant-no-secret");
+    const otherTenant = newTenantId();
+
+    const writeRes = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "x-brain-write-tenant": otherTenant,
+        "x-brain-service-auth": "sha256=wrong",
+      },
+      payload: JSON.stringify({
+        parser: "doc_obligation_v1",
+        parser_version: "1.0.0",
+        extracted: { direction: "payable", amount: "1.00" },
+      }),
+    });
+    // Header ignored: the write proceeds against the caller's own tenant, on
+    // the same artifact it already owns, so this still succeeds (201); it
+    // just does not honor otherTenant.
+    expect(writeRes.statusCode).toBe(201);
+    const written = writeRes.json() as { id: string };
+
+    const getRes = await h.app.inject({
+      method: "GET",
+      url: `/raw/${raw_id}/parsed`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const listed = getRes.json() as { parsed: Array<{ id: string }> };
+    expect(listed.parsed.map((p) => p.id)).toContain(written.id);
+
+    // Affirmatively confirm the row never landed in otherTenant. The test
+    // DB role is a superuser (bypasses RLS), so a GET-as-otherTenant cannot
+    // prove absence here; assert the persisted column instead.
+    const { rows } = await h.pool.query<{ tenant_id: string }>(
+      "SELECT tenant_id FROM raw_parsed WHERE id = $1",
+      [written.id],
+    );
+    expect(rows[0]?.tenant_id).toBe(tenant);
+    expect(rows[0]?.tenant_id).not.toBe(otherTenant);
   });
 
   it("POST /raw/webhooks/plaid rejects missing signature (401)", async () => {

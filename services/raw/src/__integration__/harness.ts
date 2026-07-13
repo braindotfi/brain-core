@@ -13,7 +13,7 @@
  *   - Constructs an app with in-memory blob + in-memory audit emitter.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { Client, Pool } from "pg";
 import Fastify from "fastify";
 import {
@@ -30,6 +30,25 @@ import {
 import { SignJWT, exportJWK, generateKeyPair, type KeyLike } from "jose";
 import { buildRawApp } from "../server.js";
 import { applyAll, discoverMigrations } from "../../../../tools/migrate/src/index.js";
+
+/**
+ * Fixed test secret standing in for BRAIN_AGENTS_INBOUND_SECRET. Exported so
+ * integration tests can prove (and disprove) the cross-tenant parsed
+ * writeback trust predicate against the same value the harness wires in.
+ */
+export const CROSS_TENANT_SERVICE_SECRET = "test-cross-tenant-service-secret";
+
+/**
+ * Sign a raw request body with the same HMAC construction the api uses to
+ * verify X-Brain-Service-Auth (see services/raw/src/routes/parsed.ts and
+ * services/agents/brain_agents/auth.py's expected_signature). Tests must
+ * sign the EXACT bytes they POST as the body.
+ */
+export function signCrossTenantServiceAuth(rawBody: string): string {
+  return (
+    "sha256=" + createHmac("sha256", CROSS_TENANT_SERVICE_SECRET).update(rawBody).digest("hex")
+  );
+}
 
 export interface Harness {
   url: string;
@@ -116,6 +135,7 @@ export async function buildHarness(): Promise<Harness | null> {
     plaidVerify: { keyResolver: async () => ({}) as never },
     resolveWebhookTenant: async () => "tnt_NOT_USED",
     logger,
+    crossTenantServiceSecret: CROSS_TENANT_SERVICE_SECRET,
   });
 
   async function signToken(claims: {
