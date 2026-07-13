@@ -110,10 +110,11 @@ describe("Brain.audit", () => {
     expect(result.events).toEqual([]);
   });
 
-  it("export posts a job request and returns jobId + statusUrl", async () => {
+  it("export posts a job request and returns jobId", async () => {
     const { fetch, calls } = mockFetch(202, {
       job_id: "job_1",
-      status_url: "https://api.brain.fi/v1/audit/export/jobs/job_1",
+      format: "jsonl",
+      status: "enqueued",
     });
     const brain = new Brain({ token: "k", fetch });
 
@@ -125,7 +126,6 @@ describe("Brain.audit", () => {
     });
 
     expect(job.jobId).toBe("job_1");
-    expect(job.statusUrl).toContain("/audit/export/jobs/job_1");
     const request = calls[0]!;
     expect(request.method).toBe("POST");
     expect(request.url).toContain("/audit/export");
@@ -223,7 +223,14 @@ describe("Brain.proof (H-07 flagship artifact)", () => {
   });
 
   it("propagates 404 (no proof / not visible to tenant)", async () => {
-    const { fetch } = mockFetch(404, { code: "proof_not_found", message: "no proof" });
+    const { fetch } = mockFetch(404, {
+      error: {
+        code: "proof_not_found",
+        message: "no proof",
+        request_id: "req_1",
+        docs_url: "https://docs.brain.fi/resources/errors#proof_not_found",
+      },
+    });
     const brain = new Brain({ token: "k", fetch });
 
     await expect(brain.proof("missing")).rejects.toMatchObject({

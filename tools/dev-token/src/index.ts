@@ -15,7 +15,8 @@
  *   AUTH_SIGN_KEY          Private signing JWK (JSON) → mints an RS256 token the
  *                          production JWKS verifier accepts (same key the
  *                          static-jwks sidecar publishes). Preferred for prod.
- *   AUTH_JWT_SECRET        HMAC-SHA256 secret (default: dev-secret-not-for-production).
+ *   AUTH_JWT_SECRET        HMAC-SHA256 secret (default: brain-demo-mode-insecure-dev-only,
+ *                          the literal the BRAIN_DEMO_MODE=true API verifier uses).
  *                          HS256 fallback — only valid against a non-prod verifier.
  *
  * Optional env:
@@ -109,7 +110,7 @@ async function main(): Promise<void> {
     signer = await importJWK(jwk, alg);
     header = jwk.kid !== undefined ? { alg, kid: jwk.kid } : { alg };
   } else {
-    const secret = process.env["AUTH_JWT_SECRET"] ?? "dev-secret-not-for-production";
+    const secret = process.env["AUTH_JWT_SECRET"] ?? "brain-demo-mode-insecure-dev-only";
     signer = new TextEncoder().encode(secret);
     header = { alg: "HS256" };
   }

@@ -11,14 +11,17 @@ export class BrainAPIError extends Error {
   readonly details: Record<string, unknown> | undefined;
 
   constructor(status: number, body: BrainErrorBody | undefined) {
-    const code = body?.code ?? "unknown";
-    const message = body?.message ?? `Brain API request failed with status ${status}`;
+    // The `Error` schema is the canonical nested envelope (Engineering
+    // Standards §4.1): `{ error: { code, message, details?, request_id, docs_url } }`.
+    const e = body?.error;
+    const code = e?.code ?? "unknown";
+    const message = e?.message ?? `Brain API request failed with status ${status}`;
     super(`[${code}] ${message}`);
     this.name = "BrainAPIError";
     this.status = status;
     this.code = code;
-    this.traceId = body?.trace_id;
-    this.details = body?.details;
+    this.traceId = e?.request_id;
+    this.details = e?.details;
   }
 }
 

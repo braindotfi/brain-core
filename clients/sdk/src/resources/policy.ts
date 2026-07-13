@@ -8,14 +8,14 @@ type PolicyDecision = components["schemas"]["PolicyDecision"];
 type ProposedAction = components["schemas"]["ProposedAction"];
 
 export interface PolicySigningPayload {
-  contentHash: string | undefined;
-  typedData: Record<string, unknown> | undefined;
-  requiredSigners: string[];
+  policyId: string;
+  state: string;
+  signingPayload: Record<string, unknown>;
 }
 
 export interface PolicySignatureSubmission {
-  contentHash: string;
-  signatures: Array<{ signer: string; signature: string }>;
+  policyId: string;
+  signatures: Array<{ address: string; signature: string }>;
 }
 
 export interface SimulatePolicyParams {
@@ -53,16 +53,27 @@ export class PolicyResource {
    * the DSL and returns the EIP-712 signing payload. Caller signs with
    * authorised keys, then submits via `sign()` to activate.
    */
-  async compose(tenantId: string, dsl: PolicyDSL): Promise<PolicySigningPayload> {
+  async compose(
+    tenantId: string,
+    dsl: PolicyDSL,
+    quorumRequired?: number,
+  ): Promise<PolicySigningPayload> {
+    const composeBody: { content: PolicyDSL; quorum_required?: number } = { content: dsl };
+    if (quorumRequired !== undefined) {
+      composeBody.quorum_required = quorumRequired;
+    }
     const { data, error, response } = await this.http.POST("/policy/{tenant_id}/compose", {
       params: { path: { tenant_id: tenantId } },
-      body: dsl,
+      body: composeBody,
     });
     const body = unwrap(data, error, response.status);
+    if (!body.policy_id) {
+      throw new BrainAPIError(response.status, undefined);
+    }
     return {
-      contentHash: body.content_hash,
-      typedData: body.typed_data,
-      requiredSigners: body.required_signers ?? [],
+      policyId: body.policy_id,
+      state: body.state ?? "pending_signatures",
+      signingPayload: body.signing_payload ?? {},
     };
   }
 
@@ -72,15 +83,22 @@ export class PolicyResource {
    * new active Policy is returned. 409 indicates insufficient signatures
    * (more required).
    */
-  async sign(tenantId: string, submission: PolicySignatureSubmission): Promise<Policy> {
+  async sign(
+    tenantId: string,
+    submission: PolicySignatureSubmission,
+  ): Promise<{ policy: Policy; activated: boolean }> {
     const { data, error, response } = await this.http.POST("/policy/{tenant_id}/sign", {
       params: { path: { tenant_id: tenantId } },
       body: {
-        content_hash: submission.contentHash,
+        policy_id: submission.policyId,
         signatures: submission.signatures,
       },
     });
-    return unwrap(data, error, response.status);
+    const body = unwrap(data, error, response.status);
+    if (!body.policy) {
+      throw new BrainAPIError(response.status, undefined);
+    }
+    return { policy: body.policy, activated: body.activated ?? false };
   }
 
   /**
@@ -89,14 +107,17 @@ export class PolicyResource {
    * policy activates as a side effect of submitting sufficient signatures
    * via /sign.
    */
-  activate(tenantId: string, submission: PolicySignatureSubmission): Promise<Policy> {
+  activate(
+    tenantId: string,
+    submission: PolicySignatureSubmission,
+  ): Promise<{ policy: Policy; activated: boolean }> {
     return this.sign(tenantId, submission);
   }
 
   async evaluate(tenantId: string, action: ProposedAction): Promise<PolicyDecision> {
     const { data, error, response } = await this.http.POST("/policy/{tenant_id}/evaluate", {
       params: { path: { tenant_id: tenantId } },
-      body: action,
+      body: { action },
     });
     return unwrap(data, error, response.status);
   }

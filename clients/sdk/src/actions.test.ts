@@ -59,9 +59,12 @@ describe("Brain.actions", () => {
 
   it("execute is disabled — it rejects with the §6 gate error (dry_run forwarded)", async () => {
     const { fetch, calls } = mockFetch(422, {
-      code: "gate_no_policy_decision",
-      message: "the legacy /execution/execute route is disabled",
-      trace_id: "trace-1",
+      error: {
+        code: "gate_no_policy_decision",
+        message: "the legacy /execution/execute route is disabled",
+        request_id: "trace-1",
+        docs_url: "https://docs.brain.fi/resources/errors#gate_no_policy_decision",
+      },
     });
     const brain = new Brain({ token: "k", fetch });
 
@@ -78,8 +81,12 @@ describe("Brain.actions", () => {
 
   it("execute omits dry_run when not provided", async () => {
     const { fetch, calls } = mockFetch(422, {
-      code: "gate_no_policy_decision",
-      message: "the legacy /execution/execute route is disabled",
+      error: {
+        code: "gate_no_policy_decision",
+        message: "the legacy /execution/execute route is disabled",
+        request_id: "trace-2",
+        docs_url: "https://docs.brain.fi/resources/errors#gate_no_policy_decision",
+      },
     });
     const brain = new Brain({ token: "k", fetch });
 

@@ -130,9 +130,12 @@ describe("Brain", () => {
 
     it("throws BrainAPIError on 4xx with typed body", async () => {
       const { fetch } = mockFetch(404, {
-        code: "not_found",
-        message: "Account not found",
-        trace_id: "trace-1",
+        error: {
+          code: "not_found",
+          message: "Account not found",
+          request_id: "trace-1",
+          docs_url: "https://docs.brain.fi/resources/errors#not_found",
+        },
       });
       const brain = new Brain({ token: "k", fetch });
 
@@ -255,11 +258,30 @@ describe("Brain", () => {
 
     it("preserves structured details when body provides them", () => {
       const err = new BrainAPIError(422, {
-        code: "validation_failed",
-        message: "bad input",
-        details: { field: "amount" },
+        error: {
+          code: "validation_failed",
+          message: "bad input",
+          details: { field: "amount" },
+          request_id: "req_1",
+          docs_url: "https://docs.brain.fi/resources/errors#validation_failed",
+        },
       });
       expect(err.details).toEqual({ field: "amount" });
+    });
+
+    it("unwraps the nested { error: {...} } envelope and prefers request_id", () => {
+      const err = new BrainAPIError(401, {
+        error: {
+          code: "auth_token_invalid",
+          message: "JWT verification failed",
+          request_id: "req_123",
+          docs_url: "https://docs.brain.fi/resources/errors#auth_token_invalid",
+          details: { reason: "Invalid Compact JWS" },
+        },
+      });
+      expect(err.code).toBe("auth_token_invalid");
+      expect(err.traceId).toBe("req_123");
+      expect(err.details).toEqual({ reason: "Invalid Compact JWS" });
     });
   });
 });

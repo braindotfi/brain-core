@@ -119,6 +119,196 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/siwx/challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request a Sign-In With X (EIP-4361) nonce
+         * @description Public. Issues a one-time nonce, held server-side (Redis) with a
+         *     5-minute TTL under `session_id`. The caller embeds the nonce in the
+         *     EIP-4361 message it asks the wallet to sign, then posts the signed
+         *     message to POST /auth/siwx along with `session_id`.
+         */
+        post: operations["siwxChallenge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/siwx": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in with a verified EIP-4361 (Sign-In With X) wallet signature
+         * @description Public. Verifies the EIP-4361 message and signature; on success
+         *     resolves the recovered address to a principal and issues a token:
+         *
+         *       - A wallet linked to a human owner (RFC 0002 Phase D) mints an
+         *         owner JWT with the same management/read/approve scopes as
+         *         POST /auth/login, never propose/execute scopes.
+         *       - Otherwise the address must match an `active` row in the agent
+         *         registry (on-chain `BrainMCPAgentRegistry`-backed); the issued
+         *         token carries `principal_type=agent` with the scope set drawn
+         *         from the agent's registered role. An unregistered address
+         *         returns 404 (`agent_not_found`).
+         *
+         *     `session_id` is optional: when present, the stored nonce for that
+         *     session must match the message's nonce (single-use, then deleted);
+         *     when omitted, the message's own nonce is trusted as single-use.
+         */
+        post: operations["siwxVerify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{tenant_id}/wallets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link a wallet address to the tenant (RFC 0002 Phase D)
+         * @description Owner JWT required, gated on `policy:write`. The path `tenant_id`
+         *     must equal the authenticated principal's tenant. Once linked, the
+         *     address can sign in via POST /auth/siwx. A human link defaults
+         *     `principal_id` to the calling owner; an agent link must name the
+         *     agent id explicitly. Registered only when self-serve onboarding is
+         *     enabled.
+         */
+        post: operations["linkWallet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a production tenant with its founder bootstrap admin
+         * @description Public route (`skipAuth`), gated instead by the
+         *     `X-Platform-Service-Auth` shared secret header
+         *     (`BRAIN_PLATFORM_SERVICE_SECRET`) — not a JWT bearer scope.
+         *     Rate-limited to 20/minute. Creates `tenant.kind='production'`,
+         *     one active bootstrap admin member, a `platform`-surface identity
+         *     link for the founder, and an initial member session (access +
+         *     refresh token pair). Rejects the request outright if the demo
+         *     provisioning header (`X-Demo-Provision-Auth`) is also present, to
+         *     keep the demo and production tenant-creation paths from being
+         *     conflatable.
+         */
+        post: operations["createTenant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange a platform identity for a member session
+         * @description Public route (`skipAuth`), gated by `X-Platform-Service-Auth`.
+         *     Rate-limited to 60/minute. Resolves `external_ref` to a member
+         *     via its `platform`-surface identity link; the member must be
+         *     `status: active`.
+         */
+        post: operations["createSession"];
+        /**
+         * Revoke the caller's member refresh tokens
+         * @description Requires a `user`-type JWT principal (standard bearer auth, no
+         *     platform credential). Revokes every non-revoked refresh token
+         *     for the calling member; does not invalidate the current access
+         *     token, which remains valid until it expires.
+         */
+        delete: operations["deleteSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate a refresh token for a new access + refresh token pair
+         * @description Public route (`skipAuth`) — no platform credential or bearer
+         *     token required, only the refresh token itself. Rate-limited to
+         *     60/minute. Refresh tokens are single-use: a token that has
+         *     already been rotated once is treated as reuse (potential theft)
+         *     and revokes the entire token family.
+         */
+        post: operations["refreshSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/invites/consume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Consume a member invite token and open a session
+         * @description Public route (`skipAuth`), gated by `X-Platform-Service-Auth`.
+         *     Rate-limited to 60/minute. Links the platform `external_ref` to
+         *     the invited member, activates the member (`status: invited` ->
+         *     `active`), marks the invite consumed, and issues an initial
+         *     member session. `display_name` overrides the member's display
+         *     name if provided.
+         */
+        post: operations["consumeInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/raw/ingest": {
         parameters: {
             query?: never;
@@ -130,9 +320,10 @@ export interface paths {
         put?: never;
         /**
          * Ingest a financial artifact
-         * @description Accepts a financial artifact via direct upload or URL reference.
-         *     Content is stored immutably with SHA-256 content addressing.
-         *     Duplicate artifacts (same tenant, same SHA-256) return the existing raw_id.
+         * @description Requires `raw:write`. Accepts a financial artifact via direct
+         *     upload or URL reference. Content is stored immutably with SHA-256
+         *     content addressing. Duplicate artifacts (same tenant, same
+         *     SHA-256) return the existing raw_id.
          */
         post: operations["ingestRaw"];
         delete?: never;
@@ -152,9 +343,12 @@ export interface paths {
         put?: never;
         /**
          * Webhook ingestion from a known provider
-         * @description HMAC-authenticated webhook endpoint. Each provider has a pre-registered
-         *     signing secret. Request is rejected if the provider signature header
-         *     does not verify. Provider-specific.
+         * @description HMAC-authenticated webhook endpoint (`skipAuth`; the provider
+         *     signature replaces bearer auth). Only `plaid` has signature
+         *     verification always wired; `stripe` verifies when
+         *     `stripeVerify` credentials are configured, else 501.
+         *     `alchemy`, `netsuite`, and `generic_hmac` are enum placeholders
+         *     with no wired verification yet and also return 501.
          */
         post: operations["ingestWebhook"];
         delete?: never;
@@ -172,18 +366,19 @@ export interface paths {
         };
         /**
          * Retrieve a raw artifact
-         * @description Returns a short-lived signed URL (10 minute expiry) pointing at the
-         *     artifact in Azure Blob Storage. The artifact itself is served with
-         *     Content-Disposition: attachment.
+         * @description Requires `raw:read`. Returns a short-lived signed URL (10 minute
+         *     expiry) pointing at the artifact in Azure Blob Storage. The
+         *     artifact itself is served with Content-Disposition: attachment.
          */
         get: operations["getRaw"];
         put?: never;
         post?: never;
         /**
          * Tombstone a raw artifact
-         * @description Writes a tombstone record. The underlying artifact is retained in
-         *     storage per regulatory retention policy but becomes inaccessible
-         *     via the API and is filtered from all Wiki derivations.
+         * @description Requires `raw:admin` (not `raw:write`). Writes a tombstone record.
+         *     The underlying artifact is retained in storage per regulatory
+         *     retention policy but becomes inaccessible via the API and is
+         *     filtered from all Wiki derivations.
          */
         delete: operations["tombstoneRaw"];
         options?: never;
@@ -202,9 +397,10 @@ export interface paths {
         put?: never;
         /**
          * Trigger document extraction for a raw artifact
-         * @description Explicitly sends the referenced artifact bytes to the configured
-         *     document extraction agent. This route is manual by design and is not
-         *     called automatically after raw ingestion.
+         * @description Requires `raw:write`. Explicitly sends the referenced artifact
+         *     bytes to the configured document extraction agent. This route is
+         *     manual by design and is not called automatically after raw
+         *     ingestion.
          */
         post: operations["extractRawDocument"];
         delete?: never;
@@ -222,15 +418,86 @@ export interface paths {
         };
         /**
          * Retrieve parsed output for an artifact
-         * @description Returns normalized output from all parser versions.
+         * @description Requires `raw:read`. Returns normalized output from all parser versions.
          */
         get: operations["getRawParsed"];
         put?: never;
         /**
          * Write a parsed (stage-3) record for an artifact
-         * @description Records one parser-output row for the referenced artifact. Called by extraction workers and first-party extractor agents (e.g. document_extractor); it is the stage-3 producer of `raw_parsed`. Naturally idempotent on the (raw_artifact_id, parser, parser_version) tuple: re-posting the same tuple returns the existing row with 200. Writing into Ledger remains the Ledger normalize service's job; this endpoint never touches Ledger.
+         * @description Requires `raw:write`. Records one parser-output row for the referenced artifact. Called by extraction workers and first-party extractor agents (e.g. document_extractor); it is the stage-3 producer of `raw_parsed`. Naturally idempotent on the (raw_artifact_id, parser, parser_version) tuple: re-posting the same tuple returns the existing row with 200. Writing into Ledger remains the Ledger normalize service's job; this endpoint never touches Ledger.
          */
         post: operations["writeRawParsed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List connected sources
+         * @description Requires `raw:read`.
+         */
+        get: operations["listSources"];
+        put?: never;
+        /**
+         * Connect a source
+         * @description Connects a source connector for this tenant. Idempotent (config:
+         *     `idempotent: true`). Requires `raw:write`.
+         */
+        post: operations["connectSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sources/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a source
+         * @description Requires `raw:read`.
+         */
+        get: operations["getSource"];
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect a source
+         * @description Requires `raw:write`. Marks the source disconnected; does not delete previously ingested artifacts.
+         */
+        delete: operations["disconnectSource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sources/{source_id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger a sync for a source
+         * @description Requires `raw:write`. Stub connectors (netsuite, email_inbound,
+         *     csv_upload, pdf_upload, alchemy_wallet, eth_address) return
+         *     immediately with `notes: "stub"` rather than performing a real sync.
+         */
+        post: operations["syncSource"];
         delete?: never;
         options?: never;
         head?: never;
@@ -244,7 +511,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List accounts */
+        /**
+         * List accounts
+         * @description Requires `ledger:read`.
+         */
         get: operations["listAccounts"];
         put?: never;
         post?: never;
@@ -261,7 +531,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Account detail */
+        /**
+         * Account detail
+         * @description Requires `ledger:read`.
+         */
         get: operations["getAccount"];
         put?: never;
         post?: never;
@@ -278,7 +551,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Point-in-time balances */
+        /**
+         * Point-in-time balances
+         * @description Requires `ledger:read`.
+         */
         get: operations["listBalances"];
         put?: never;
         post?: never;
@@ -295,7 +571,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List transactions */
+        /**
+         * List transactions
+         * @description Requires `ledger:read`.
+         */
         get: operations["listTransactions"];
         put?: never;
         post?: never;
@@ -312,7 +591,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Transaction detail */
+        /**
+         * Transaction detail
+         * @description Requires `ledger:read`.
+         */
         get: operations["getTransaction"];
         put?: never;
         post?: never;
@@ -329,10 +611,24 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List/search counterparties */
+        /**
+         * List/search counterparties
+         * @description Requires `ledger:read`.
+         */
         get: operations["listCounterparties"];
         put?: never;
-        /** Manually create or merge a counterparty */
+        /**
+         * Manually create or merge a counterparty
+         * @description Requires `ledger:write`. Identity-only: payment rail fields (IBAN,
+         *     account number, routing, SWIFT, BIC, wallet, bank details) are
+         *     rejected with `payment_fields_not_allowed`, never written. Unknown
+         *     body fields return `unknown_field`; server-controlled trust fields
+         *     (`provenance`, `confidence`, `verified_status`, `risk_level`)
+         *     return `field_not_editable`. Provenance is derived from the
+         *     principal, not the request body: user principals write
+         *     `human_confirmed`, agent and API partner principals write
+         *     `agent_contributed`.
+         */
         post: operations["createCounterparty"];
         delete?: never;
         options?: never;
@@ -347,14 +643,26 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Counterparty detail */
+        /**
+         * Counterparty detail
+         * @description Requires `ledger:read`.
+         */
         get: operations["getCounterparty"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        /** Edit counterparty identity fields */
+        /**
+         * Edit counterparty identity fields
+         * @description Requires `ledger:write` and a user principal (agent and API
+         *     partner principals are rejected). Identity-only, same field
+         *     restrictions as create: payment rail fields return
+         *     `payment_fields_not_allowed`, unknown fields return
+         *     `unknown_field`, server-controlled trust fields return
+         *     `field_not_editable`. Renaming preserves the previous name as an
+         *     alias; aliases are append-only.
+         */
         patch: operations["updateCounterpartyIdentity"];
         trace?: never;
     };
@@ -365,7 +673,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List obligations (bills, invoices, subscriptions) */
+        /**
+         * List obligations (bills, invoices, subscriptions)
+         * @description Requires `ledger:read`.
+         */
         get: operations["listObligations"];
         put?: never;
         post?: never;
@@ -384,11 +695,12 @@ export interface paths {
         };
         /**
          * Resolved cross-source view of an obligation (observations, authority, conflicts)
-         * @description The reconciled fact for one obligation: every source observation
-         *     retained, field-level authority (which source owns each field),
-         *     conflicts listed where sources disagree, and duplicate candidates
-         *     pending user review. The "explain this number, including where sources
-         *     disagree" surface (Phase 4 resolution / §13).
+         * @description Requires `ledger:read`. The reconciled fact for one obligation:
+         *     every source observation retained, field-level authority (which
+         *     source owns each field), conflicts listed where sources disagree,
+         *     and duplicate candidates pending user review. The "explain this
+         *     number, including where sources disagree" surface (Phase 4
+         *     resolution / §13).
          */
         get: operations["resolveObligation"];
         put?: never;
@@ -408,9 +720,10 @@ export interface paths {
         };
         /**
          * Resolved organization view of a counterparty (linked observations, facets)
-         * @description The reconciled organization for one counterparty: linked observations
-         *     across sources/types unioned into facets, name variants listed, and
-         *     duplicate candidates pending user review (Phase 4 resolution / §13).
+         * @description Requires `ledger:read`. The reconciled organization for one
+         *     counterparty: linked observations across sources/types unioned
+         *     into facets, name variants listed, and duplicate candidates
+         *     pending user review (Phase 4 resolution / §13).
          */
         get: operations["resolveCounterparty"];
         put?: never;
@@ -430,10 +743,11 @@ export interface paths {
         };
         /**
          * Resolved money-pool view of an account (per-observation balances, links)
-         * @description The reconciled money pool for one account: balances reported per
-         *     observation (never adjudicated), confirmed-duplicate links followed,
-         *     candidates pending user review. Account duplicates never auto-match
-         *     (Phase 4 / §13), so member links here are human-confirmed.
+         * @description Requires `ledger:read`. The reconciled money pool for one account:
+         *     balances reported per observation (never adjudicated),
+         *     confirmed-duplicate links followed, candidates pending user
+         *     review. Account duplicates never auto-match (Phase 4 / §13), so
+         *     member links here are human-confirmed.
          */
         get: operations["resolveAccount"];
         put?: never;
@@ -451,7 +765,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List invoices */
+        /**
+         * List invoices
+         * @description Requires `ledger:read`.
+         */
         get: operations["listInvoices"];
         put?: never;
         post?: never;
@@ -472,9 +789,9 @@ export interface paths {
         put?: never;
         /**
          * Idempotently normalize a Raw artifact into Ledger rows
-         * @description Normalizes a raw_parsed row (or a raw_artifact_id + parser tuple) into
-         *     Ledger entities. Idempotent: re-running with the same input returns
-         *     the same Ledger row ids. Used by the extractor pipeline and by
+         * @description Requires `ledger:write`. Normalizes a raw_parsed row into Ledger
+         *     entities. Idempotent: re-running with the same input returns the
+         *     same Ledger row ids. Used by the extractor pipeline and by
          *     /wiki/annotate's write-through path.
          */
         post: operations["normalizeRaw"];
@@ -493,7 +810,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run the reconciliation engine over recent ledger rows */
+        /**
+         * Run the reconciliation engine over recent ledger rows
+         * @description Requires `ledger:write`.
+         */
         post: operations["runReconciliation"];
         delete?: never;
         options?: never;
@@ -508,8 +828,34 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List reconciliation matches */
+        /**
+         * List reconciliation matches
+         * @description Requires `ledger:read`.
+         */
         get: operations["listReconciliationMatches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/cash_flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cash-flow aggregation over a trailing window
+         * @description Requires `ledger:read`. Aggregates transactions in the trailing
+         *     `days` window (default 30, max 365) by currency and by day. Pulls
+         *     up to 1000 transactions per request; very high-volume tenants may
+         *     not see the full window reflected (no cursor pagination yet).
+         */
+        get: operations["getCashFlows"];
         put?: never;
         post?: never;
         delete?: never;
@@ -525,7 +871,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List/search wiki pages */
+        /**
+         * List/search wiki pages
+         * @description Requires `wiki:read`.
+         */
         get: operations["listMemoryPages"];
         put?: never;
         post?: never;
@@ -542,7 +891,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a single wiki page */
+        /**
+         * Get a single wiki page
+         * @description Requires `wiki:read`.
+         */
         get: operations["getMemoryPage"];
         put?: never;
         post?: never;
@@ -561,7 +913,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Regenerate a wiki page from current Ledger state */
+        /**
+         * Regenerate a wiki page from current Ledger state
+         * @description Despite being a POST, requires only `wiki:read` (not `wiki:write`)
+         *     — regeneration re-derives the page from existing Ledger/Raw state
+         *     rather than writing new source-of-truth data.
+         */
         post: operations["regenerateMemoryPage"];
         delete?: never;
         options?: never;
@@ -576,7 +933,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Semantic + lexical search across wiki pages */
+        /**
+         * Semantic + lexical search across wiki pages
+         * @description Requires `wiki:read`.
+         */
         get: operations["searchMemory"];
         put?: never;
         post?: never;
@@ -593,7 +953,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Fetch an entity with one-hop neighbors */
+        /**
+         * Fetch an entity with one-hop neighbors
+         * @description Requires `wiki:read`.
+         */
         get: operations["getWikiEntity"];
         put?: never;
         post?: never;
@@ -612,8 +975,9 @@ export interface paths {
         };
         /**
          * Retrieve the evidence chain for an entity
-         * @description Returns the full provenance chain: every raw_parsed record and
-         *     extraction path that produced this entity and its attributes.
+         * @description Requires `wiki:read`. Returns the full provenance chain: every
+         *     raw_parsed record and extraction path that produced this entity
+         *     and its attributes.
          */
         get: operations["getEntityEvidence"];
         put?: never;
@@ -631,7 +995,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** All temporal versions of an entity */
+        /**
+         * All temporal versions of an entity
+         * @description Requires `wiki:read`.
+         */
         get: operations["getEntityHistory"];
         put?: never;
         post?: never;
@@ -648,7 +1015,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Search the Wiki */
+        /**
+         * Search the Wiki
+         * @description Requires `wiki:read`.
+         */
         get: operations["searchWiki"];
         put?: never;
         post?: never;
@@ -669,10 +1039,11 @@ export interface paths {
         put?: never;
         /**
          * Natural-language question against the Wiki
-         * @description Translates a natural-language question into a set of SQL queries
-         *     against the Wiki, executes them, and composes an answer with an
-         *     evidence path attached. This is the LLM-in-hot-path endpoint.
-         *     Costs apply per call; see pricing documentation.
+         * @description Requires `wiki:read`. Translates a natural-language question into
+         *     a set of SQL queries against the Wiki, executes them, and
+         *     composes an answer with an evidence path attached. This is the
+         *     LLM-in-hot-path endpoint. Costs apply per call; see pricing
+         *     documentation.
          */
         post: operations["askWiki"];
         delete?: never;
@@ -692,9 +1063,11 @@ export interface paths {
         put?: never;
         /**
          * Human correction on an entity or relation
-         * @description Submits a structured correction. Corrections are applied as a new
-         *     temporal version with provenance=human_confirmed. The original
-         *     version is retained.
+         * @description Requires `wiki:write`. Submits a structured correction. Corrections
+         *     are applied as a new temporal version with
+         *     provenance=human_confirmed. The original version is retained.
+         *     Rate-limited per (tenant, principal): 60/hour by default
+         *     (`WIKI_ANNOTATION_RATE_PER_HOUR`), checked before any write.
          */
         post: operations["annotateWiki"];
         delete?: never;
@@ -710,7 +1083,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Retrieve current JSON schemas per entity and relation kind */
+        /**
+         * Retrieve current JSON schemas per entity and relation kind
+         * @description Requires `wiki:read`.
+         */
         get: operations["getWikiSchema"];
         put?: never;
         post?: never;
@@ -727,7 +1103,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the active policy for a tenant */
+        /**
+         * Get the active policy for a tenant
+         * @description Requires `policy:read`. The path `tenant_id` must equal the
+         *     authenticated principal's tenant (cross-tenant reads are rejected
+         *     with `auth_tenant_mismatch`, not 404).
+         */
         get: operations["getActivePolicy"];
         put?: never;
         post?: never;
@@ -744,7 +1125,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List policy versions */
+        /**
+         * List policy versions
+         * @description Requires `policy:read` and matching path/token tenant.
+         */
         get: operations["listPolicyVersions"];
         put?: never;
         post?: never;
@@ -765,7 +1149,9 @@ export interface paths {
         put?: never;
         /**
          * Compose a new policy, returns signing payload
-         * @description Validates the proposed policy against the DSL schema. Returns an
+         * @description Requires `policy:write` and matching path/token tenant. Validates
+         *     the proposed policy against the DSL schema, inserts it in `draft`
+         *     state, transitions it to `pending_signatures`, and returns an
          *     EIP-712 typed-data signing payload. Caller then signs with the
          *     appropriate keys and submits via /sign.
          */
@@ -785,7 +1171,16 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Submit signatures for a composed policy */
+        /**
+         * Submit signatures for a composed policy
+         * @description Requires `policy:sign` and matching path/token tenant. Each
+         *     signature is verified against the EIP-712 typed data for the
+         *     policy; signers must be distinct and pre-authorized on the
+         *     tenant's on-chain signer allowlist. Once signature count reaches
+         *     `quorum_required` the policy transitions `pending_signatures` →
+         *     `active`; below quorum the signatures are recorded but the policy
+         *     stays `pending_signatures` (still 200, `activated: false`).
+         */
         post: operations["signPolicy"];
         delete?: never;
         options?: never;
@@ -802,7 +1197,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Evaluate a proposed action against active policy */
+        /**
+         * Evaluate a proposed action against active policy
+         * @description Requires `policy:read` (despite being a POST — evaluation is a
+         *     read against the active policy, it writes nothing) and matching
+         *     path/token tenant.
+         */
         post: operations["evaluatePolicy"];
         delete?: never;
         options?: never;
@@ -819,7 +1219,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Replay an action against a historical policy version */
+        /**
+         * Replay an action against a historical policy version
+         * @description Requires `policy:read` and matching path/token tenant.
+         */
         post: operations["simulatePolicy"];
         delete?: never;
         options?: never;
@@ -836,7 +1239,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Static-analyze a candidate policy before signing (H-18) */
+        /**
+         * Static-analyze a candidate policy before signing (H-18)
+         * @description Requires `policy:read` and matching path/token tenant.
+         */
         post: operations["lintPolicy"];
         delete?: never;
         options?: never;
@@ -853,7 +1259,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Semantic diff between two policy versions (H-18) */
+        /**
+         * Semantic diff between two policy versions (H-18)
+         * @description Requires `policy:read` and matching path/token tenant.
+         */
         post: operations["diffPolicy"];
         delete?: never;
         options?: never;
@@ -870,7 +1279,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Replay the period's actions against a candidate policy (H-18) */
+        /**
+         * Replay the period's actions against a candidate policy (H-18)
+         * @description Requires `policy:read` and matching path/token tenant.
+         */
         post: operations["simulateHistoricalPolicy"];
         delete?: never;
         options?: never;
@@ -887,9 +1299,10 @@ export interface paths {
         };
         /**
          * List agents available to the tenant (internal-agent catalog)
-         * @description Returns the first-party agent catalog (capability definitions). Internal
-         *     and external agents share these routes — kind/provenance is a metadata
-         *     field, not a separate path.
+         * @description Requires `execution:read`. Returns the first-party agent catalog
+         *     (capability definitions). Internal and external agents share
+         *     these routes — kind/provenance is a metadata field, not a
+         *     separate path.
          */
         get: operations["listAgents"];
         put?: never;
@@ -907,7 +1320,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Agent detail (catalog definition + on-chain registration) */
+        /**
+         * Agent detail (catalog definition + on-chain registration)
+         * @description Requires `execution:read`.
+         */
         get: operations["getAgent"];
         put?: never;
         post?: never;
@@ -948,7 +1364,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Recent actions/proposals for an agent */
+        /**
+         * Recent actions/proposals for an agent
+         * @description Requires `execution:read`. Implemented in the PaymentIntent routes module (`services/execution`), not agent-router.
+         */
         get: operations["listAgentActions"];
         put?: never;
         post?: never;
@@ -1044,7 +1463,9 @@ export interface paths {
         put?: never;
         /**
          * Routing decision only (no run)
-         * @description Returns the selected agent + scoring reason. Advisory; the selected agent still proposes through the gated path.
+         * @description Requires `execution:read`. Returns the selected agent + scoring
+         *     reason. Advisory; the selected agent still proposes through the
+         *     gated path.
          */
         post: operations["routeAgent"];
         delete?: never;
@@ -1064,10 +1485,12 @@ export interface paths {
         put?: never;
         /**
          * Route, resolve action, persist a run, and propose (shadow-aware)
-         * @description Routes an event/intent to an agent, resolves the action within it,
-         *     evaluates the §6 gate in dry-run, persists an `agent_runs` row, and
-         *     proposes through the existing path. A financial proposal from a shadowed
-         *     (un-promoted) agent terminates as `shadow_completed` and moves no money.
+         * @description Requires `payment_intent:propose`. Routes an event/intent to an
+         *     agent, resolves the action within it, evaluates the §6 gate in
+         *     dry-run, persists an `agent_runs` row, and proposes through the
+         *     existing path. A financial proposal from a shadowed
+         *     (un-promoted) agent terminates as `shadow_completed` and moves no
+         *     money.
          */
         post: operations["runAgent"];
         delete?: never;
@@ -1085,7 +1508,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Enqueue an event-driven route/run job */
+        /**
+         * Enqueue an event-driven route/run job
+         * @description Requires `payment_intent:propose`.
+         */
         post: operations["enqueueAgentEvent"];
         delete?: never;
         options?: never;
@@ -1100,7 +1526,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List agent runs */
+        /**
+         * List agent runs
+         * @description Requires `execution:read`.
+         */
         get: operations["listAgentRuns"];
         put?: never;
         post?: never;
@@ -1117,7 +1546,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Agent run detail */
+        /**
+         * Agent run detail
+         * @description Requires `execution:read`.
+         */
         get: operations["getAgentRun"];
         put?: never;
         post?: never;
@@ -1136,7 +1568,7 @@ export interface paths {
         };
         /**
          * Why this agent was selected for the run (H-25)
-         * @description Which agents were candidates, why this one was selected (router multi-factor reason — score, evidence completeness, reputation, cost), and the runtime behavior hash.
+         * @description Requires `execution:read`. Which agents were candidates, why this one was selected (router multi-factor reason — score, evidence completeness, reputation, cost), and the runtime behavior hash.
          */
         get: operations["getAgentRunWhy"];
         put?: never;
@@ -1154,7 +1586,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Evidence chain the agent consumed for the run (H-25) */
+        /**
+         * Evidence chain the agent consumed for the run (H-25)
+         * @description Requires `execution:read`.
+         */
         get: operations["getAgentRunEvidence"];
         put?: never;
         post?: never;
@@ -1171,7 +1606,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The §6 gate check trace if a gate ran during the run (H-25) */
+        /**
+         * The §6 gate check trace if a gate ran during the run (H-25)
+         * @description Requires `execution:read`.
+         */
         get: operations["getAgentRunGateTrace"];
         put?: never;
         post?: never;
@@ -1190,7 +1628,7 @@ export interface paths {
         };
         /**
          * Proof for the action the run produced (H-25 → H-07)
-         * @description Proxies the Proof API for the run's PaymentIntent. 404 if the run produced no on-ledger action.
+         * @description Requires `execution:read`. Proxies the Proof API for the run's PaymentIntent. 404 if the run produced no on-ledger action.
          */
         get: operations["getAgentRunProof"];
         put?: never;
@@ -1208,7 +1646,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Routing decision detail */
+        /**
+         * Routing decision detail
+         * @description Requires `execution:read`.
+         */
         get: operations["getRoutingDecision"];
         put?: never;
         post?: never;
@@ -1229,9 +1670,35 @@ export interface paths {
         put?: never;
         /**
          * Halt an agent — pause its in-flight intents and quarantine it
-         * @description Tenant-root kill-switch (1b.3). Pauses all in-flight PaymentIntents from the agent and flips its state to `quarantined`.
+         * @description Requires `payment_intent:approve` (not an execution-admin scope —
+         *     halt authority piggybacks on approval authority). Tenant-root
+         *     kill-switch (1b.3). Pauses all in-flight PaymentIntents from the
+         *     agent and flips its state to `quarantined`.
          */
         post: operations["haltAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{agent_id}/quarantine/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Release an agent's contribution quarantine
+         * @description Requires `payment_intent:approve` (same scope as halt). Clears
+         *     the quarantine so subsequent agent contributions extract
+         *     normally again. Idempotent (config `idempotent: true`). Does not
+         *     un-pause PaymentIntents paused by a prior halt.
+         */
+        post: operations["releaseAgentQuarantine"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1249,7 +1716,7 @@ export interface paths {
         put?: never;
         /**
          * Emergency-stop every agent in a category
-         * @description Break-glass + tenant-root. Halts all agents of the given category.
+         * @description Requires `payment_intent:approve`. Break-glass + tenant-root. Halts all agents of the given category.
          */
         post: operations["haltCategory"];
         delete?: never;
@@ -1267,7 +1734,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create a PaymentIntent (proposed) */
+        /**
+         * Create a PaymentIntent (proposed)
+         * @description Requires `payment_intent:propose`. Idempotent (config `idempotent: true`).
+         */
         post: operations["createPaymentIntent"];
         delete?: never;
         options?: never;
@@ -1282,7 +1752,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** PaymentIntent detail with PolicyDecision and audit trail */
+        /**
+         * PaymentIntent detail with PolicyDecision and audit trail
+         * @description Requires `execution:read`.
+         */
         get: operations["getPaymentIntent"];
         put?: never;
         post?: never;
@@ -1301,7 +1774,19 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Sign approval on a confirm-mode PaymentIntent */
+        /**
+         * Sign approval on a confirm-mode PaymentIntent
+         * @description Requires `payment_intent:approve`. The actor resolves through
+         *     `ActorResolver` to a tenant member (session actors require
+         *     `principal_type=user`) and must pass, in order: active tenant
+         *     member, admin or approver role, authorized approval domain,
+         *     per-item limit, actor is not the payee, and (when the policy
+         *     decision or the member's own dual-control threshold requires it) a
+         *     distinct second approval. When a second, distinct approval is
+         *     still required the PaymentIntent moves to
+         *     `awaiting_second_approval` instead of `approved`; the same member
+         *     approving twice is rejected with `second_approval_required`.
+         */
         post: operations["approvePaymentIntent"];
         delete?: never;
         options?: never;
@@ -1318,7 +1803,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Reject a PaymentIntent */
+        /**
+         * Reject a PaymentIntent
+         * @description Requires `payment_intent:approve`.
+         */
         post: operations["rejectPaymentIntent"];
         delete?: never;
         options?: never;
@@ -1337,7 +1825,7 @@ export interface paths {
         put?: never;
         /**
          * Execute an approved PaymentIntent through its rail
-         * @description Runs the deterministic 13-step pre-execution gate (§6 of Engineering
+         * @description Requires `payment_intent:execute`. Runs the deterministic 13-step pre-execution gate (§6 of Engineering
          *     Standards), then durably hands the action to the execution outbox
          *     (H-04). On success the intent transitions approved → dispatching and a
          *     `pending` outbox row is enqueued atomically; the outbox worker then
@@ -1364,7 +1852,7 @@ export interface paths {
         put?: never;
         /**
          * Pause an approved PaymentIntent (kill-switch)
-         * @description Holds an `approved` intent without a terminal transition (1b.3). approved → paused.
+         * @description Requires `payment_intent:approve` (an approver can hold/release; tenant-root is the operational owner). Holds an `approved` intent without a terminal transition (1b.3). approved → paused.
          */
         post: operations["pausePaymentIntent"];
         delete?: never;
@@ -1384,7 +1872,7 @@ export interface paths {
         put?: never;
         /**
          * Resume a paused PaymentIntent
-         * @description Re-runs the live §6 gate before re-entering `approved` (defends against Ledger state drift while paused). paused → approved.
+         * @description Requires `payment_intent:approve`. Re-runs the live §6 gate before re-entering `approved` (defends against Ledger state drift while paused). paused → approved.
          */
         post: operations["resumePaymentIntent"];
         delete?: never;
@@ -1402,7 +1890,7 @@ export interface paths {
         };
         /**
          * Typed forensic record for a PaymentIntent
-         * @description Returns the intent, its executions (each with its typed rail receipt),
+         * @description Requires `execution:read`. Returns the intent, its executions (each with its typed rail receipt),
          *     and the linking ids (policy_decision_id, evidence_ids). The policy
          *     decision, reservation, and audit chain are referenced by id and joined
          *     via their owning service APIs (2.4).
@@ -1411,6 +1899,136 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List tenant members
+         * @description Requires `execution:read` and a resolvable active member as the
+         *     calling actor (session actor resolution requires
+         *     `principal_type=user`; agent and machine principals are not
+         *     member-resolvable and receive 403).
+         */
+        get: operations["listMembers"];
+        put?: never;
+        /**
+         * Create a member
+         * @description Requires `execution:admin` and an active admin member as the
+         *     calling actor. When `invite: true`, the member is created with
+         *     `status: invited` (not immediately active) and a one-time invite
+         *     token is returned in the response — it must be exchanged via
+         *     `POST /invites/consume`. Omitting `invite` (or setting it false)
+         *     creates an immediately `active` member with no invite step.
+         */
+        post: operations["createMember"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/members/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a member
+         * @description Requires `execution:read` and a resolvable active member as the calling actor.
+         */
+        get: operations["getMember"];
+        put?: never;
+        post?: never;
+        /**
+         * Deactivate a member
+         * @description Requires `execution:admin` and an active admin member as the
+         *     calling actor. Members are deactivated, never hard-deleted
+         *     (`status: deactivated`, `active: false`). The last active admin
+         *     in a tenant cannot be deactivated.
+         */
+        delete: operations["deactivateMember"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a member
+         * @description Requires `execution:admin` and an active admin member as the
+         *     calling actor. Only fields present in the body are changed.
+         *     Setting `status` (`invited`|`active`|`deactivated`) also derives
+         *     `active` (true only for `active`); setting `active` also derives
+         *     `status` (`active` or `deactivated`) — the two are kept in sync
+         *     regardless of which one the caller sends. Demoting the last
+         *     active admin away from `role=admin`, or setting `active=false` /
+         *     `status=deactivated` / `status=invited` on the last active admin,
+         *     is rejected.
+         */
+        patch: operations["updateMember"];
+        trace?: never;
+    };
+    "/members/{id}/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * (Re)issue an invite token for a member
+         * @description Requires `execution:admin` and an active admin member as the
+         *     calling actor. Issuing a new invite revokes any outstanding,
+         *     unconsumed invite for this member first — only one live invite
+         *     token exists per member at a time. Does not require the member
+         *     to currently be `status: invited` (re-inviting an active member
+         *     is allowed and does not change their status). Invite tokens
+         *     expire after 72 hours and are consumed via `POST /invites/consume`.
+         */
+        post: operations["createMemberInvite"];
+        /**
+         * Revoke a member's outstanding invite
+         * @description Requires `execution:admin` and an active admin member as the
+         *     calling actor. Revokes any outstanding, unconsumed invite for
+         *     this member. Does not change the member's `status`.
+         */
+        delete: operations["revokeMemberInvite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/members/{id}/identity-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link a surface identity to a member
+         * @description Requires `execution:admin` and an active admin member as the
+         *     calling actor. Links an external Slack, Teams, or email identity to
+         *     a member so surface approvals (§ Surfaces) resolve to this member's
+         *     approval authority.
+         */
+        post: operations["createMemberIdentityLink"];
+        /**
+         * Remove a surface identity link from a member
+         * @description Requires `execution:admin` and an active admin member as the calling actor.
+         */
+        delete: operations["deleteMemberIdentityLink"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1427,7 +2045,7 @@ export interface paths {
         put?: never;
         /**
          * Agent proposes an action
-         * @description The agent submits an action. The server evaluates it against the
+         * @description Requires `execution:propose`. The agent submits an action. The server evaluates it against the
          *     active policy and returns a decision. If decision=allow, the action
          *     can be executed immediately via /execute. If decision=confirm, the
          *     action requires human approval first. If decision=reject, no
@@ -1452,7 +2070,7 @@ export interface paths {
         /**
          * DISABLED: legacy proposal execution (bypassed the §6 gate)
          * @deprecated
-         * @description Disabled. This legacy v0.2 route dispatched a proposal through a payment rail with no §6 pre-execution gate — no policy decision, sanctions, balance, or amount-limit checks, and no audit before/after pair — which Engineering Standards §6 ("no execution path may bypass the gate") and §9.5 ("financial actions use PaymentIntent, not Proposal") forbid. It now always returns 422 `gate_no_policy_decision`. Execute money movement via `POST /actions/{action_id}/execute`, which runs the gate.
+         * @description Requires `execution:write`. Disabled. This legacy v0.2 route dispatched a proposal through a payment rail with no §6 pre-execution gate — no policy decision, sanctions, balance, or amount-limit checks, and no audit before/after pair — which Engineering Standards §6 ("no execution path may bypass the gate") and §9.5 ("financial actions use PaymentIntent, not Proposal") forbid. It now always returns 422 `gate_no_policy_decision`. Execute money movement via `POST /actions/{action_id}/execute`, which runs the gate.
          */
         post: operations["executeProposal"];
         delete?: never;
@@ -1468,7 +2086,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Execution status and trace */
+        /**
+         * Execution status and trace
+         * @description Requires `execution:read`.
+         */
         get: operations["getExecution"];
         put?: never;
         post?: never;
@@ -1487,7 +2108,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Human approval for a confirm-gated proposal */
+        /**
+         * Human approval for a confirm-gated proposal
+         * @description Requires `execution:write`. Legacy v0.2 approval: satisfied by
+         *     approver-id signature presence, with no org-role membership model
+         *     (that lives in the PaymentIntent / Members approval path — new
+         *     integrations should approve via `/payment-intents/*`).
+         */
         post: operations["approveProposal"];
         delete?: never;
         options?: never;
@@ -1504,7 +2131,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Agent escalates to human */
+        /**
+         * Agent escalates to human
+         * @description Requires `execution:propose`. Only emits an `execution.escalate`
+         *     audit event; does not itself change proposal state.
+         */
         post: operations["escalateProposal"];
         delete?: never;
         options?: never;
@@ -1519,7 +2150,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List configured agents for the current tenant */
+        /**
+         * List configured agents for the current tenant
+         * @description Requires `execution:read`.
+         */
         get: operations["listExecutionAgents"];
         put?: never;
         post?: never;
@@ -1540,9 +2174,12 @@ export interface paths {
         put?: never;
         /**
          * Register an external agent
-         * @description Registers a third-party agent for this tenant. Returns on-chain
-         *     attestation transaction hash after BrainMCPAgentRegistry registration
-         *     completes.
+         * @description Requires `execution:admin`. Registers a third-party agent for
+         *     this tenant with `state: pending_onchain`. This route does not
+         *     itself submit or confirm an on-chain transaction — `registered_tx`
+         *     is accepted as caller-supplied evidence and stored as-is;
+         *     `onchain_tx_hash` in the response comes from that same field, not
+         *     from a server-side chain call.
          */
         post: operations["registerExternalAgent"];
         delete?: never;
@@ -1558,10 +2195,39 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get agent configuration and on-chain registration */
+        /**
+         * Get agent configuration and on-chain registration
+         * @description Requires `execution:read`.
+         */
         get: operations["getExecutionAgent"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/execution/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * DEPRECATED: legacy MCP ping shim
+         * @deprecated
+         * @description Deprecated v0.2 back-compat shim, retained for the v0.3 transition
+         *     window. Requires an agent principal. Only the `ping` JSON-RPC method
+         *     is answered; every other method returns 501
+         *     `execution_agent_not_registered` and points the caller at the real
+         *     surface. Use POST /agents/mcp (services/mcp) instead, a JSON-RPC 2.0
+         *     server with the full tool, resource, and prompt surface.
+         */
+        post: operations["executionMcpShim"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1575,7 +2241,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Every audit event touching a Ledger row */
+        /**
+         * Every audit event touching a Ledger row
+         * @description Requires `audit:read`.
+         */
         get: operations["getAuditEntityHistory"];
         put?: never;
         post?: never;
@@ -1594,12 +2263,13 @@ export interface paths {
         };
         /**
          * Canonical, verifiable proof for an action (H-07)
-         * @description The flagship trust artifact. Assembles a single, independently
-         *     verifiable Proof for a PaymentIntent (or agent-action) from the §6 gate
-         *     trace, the evidence chain, the policy decision, and the append-only,
-         *     on-chain-anchored audit Merkle chain. Tenant-isolated: an action that
-         *     does not exist for the caller's tenant returns 404 (existence is never
-         *     leaked). `chain_anchor` is null until the containing batch is anchored
+         * @description Requires `audit:read`. The flagship trust artifact. Assembles a
+         *     single, independently verifiable Proof for a PaymentIntent (or
+         *     agent-action) from the §6 gate trace, the evidence chain, the
+         *     policy decision, and the append-only, on-chain-anchored audit
+         *     Merkle chain. Tenant-isolated: an action that does not exist for
+         *     the caller's tenant returns 404 (existence is never leaked).
+         *     `chain_anchor` is null until the containing batch is anchored
          *     on-chain.
          */
         get: operations["getProof"];
@@ -1643,10 +2313,11 @@ export interface paths {
         };
         /**
          * List undeliverable webhook events for an endpoint (H-20)
-         * @description Outbound webhook deliveries that failed are durably recorded here
-         *     instead of being lost. Each row tracks attempt_count and the last error;
-         *     once attempt_count reaches 5 the row is exhausted (replay no longer
-         *     auto-retries it). Tenant-isolated.
+         * @description Requires `audit:read`. Outbound webhook deliveries that failed
+         *     are durably recorded here instead of being lost. Each row tracks
+         *     attempt_count and the last error; once attempt_count reaches 5
+         *     the row is exhausted (replay no longer auto-retries it).
+         *     Tenant-isolated.
          */
         get: operations["listWebhookDeadLetters"];
         put?: never;
@@ -1668,11 +2339,64 @@ export interface paths {
         put?: never;
         /**
          * Replay dead-lettered webhook events (H-20)
-         * @description Re-delivers each dead-letter still under the attempt cap. A successful
+         * @description Requires `audit:write`. Re-delivers each dead-letter still under the attempt cap. A successful
          *     re-delivery clears the row; a failure bumps attempt_count. Idempotent
          *     (accepts Idempotency-Key). Tenant-isolated.
          */
         post: operations["replayWebhookDeadLetters"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a tenant (GDPR right to erasure)
+         * @description Self-only: requires `principal_type=user` and `principal.tenantId
+         *     === id`. Any other principal type, or a mismatched tenant id, is
+         *     rejected with `auth_tenant_mismatch`. Wipes every tenant-scoped row
+         *     across Raw, Canonical, Ledger, Wiki, Policy, and Execution tables.
+         *     The Merkle audit chain itself is preserved; the deletion is recorded
+         *     as a `tenant.deleted` audit event so the erasure is itself
+         *     verifiable. Blob artifacts referenced by deleted `raw_artifacts`
+         *     rows are not deleted synchronously: a `tenant_blob_purge_jobs` row
+         *     is enqueued for the privileged blob-purge worker to erase the
+         *     underlying bytes out-of-band (RFC 0003), satisfying GDPR Article 17
+         *     in full.
+         */
+        delete: operations["deleteTenant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reference/yield-venues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Public DeFi yield-venue catalog
+         * @description Public, always-on, rate-limited (60/min). The same catalog for
+         *     every tenant; carries no truth or provenance coupling and is not
+         *     Ledger data. Used by the Treasury demo scenario to split idle cash
+         *     across venues subject to each venue's `cap_pct`.
+         */
+        get: operations["listYieldVenues"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1686,7 +2410,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Query audit events */
+        /**
+         * Query audit events
+         * @description Requires `audit:read`.
+         */
         get: operations["queryAuditEvents"];
         put?: never;
         post?: never;
@@ -1703,7 +2430,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a single event with inclusion proof */
+        /**
+         * Get a single event with inclusion proof
+         * @description Requires `audit:read`.
+         */
         get: operations["getAuditEvent"];
         put?: never;
         post?: never;
@@ -1722,7 +2452,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Request an audit export (async) */
+        /**
+         * Request an audit export (async)
+         * @description Requires `audit:read` (not `audit:write` — exporting is a read
+         *     operation on the log). Only `format` is required; `since`/`until`
+         *     are optional (unbounded if omitted). `layers` is not implemented
+         *     and is ignored if sent — this endpoint currently enqueues the job
+         *     only, the BullMQ worker that materializes the export file is a
+         *     separate follow-up.
+         */
         post: operations["exportAudit"];
         delete?: never;
         options?: never;
@@ -1737,11 +2475,85 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the latest on-chain anchor for the current tenant */
+        /**
+         * Get the latest on-chain anchor for the current tenant
+         * @description Requires `audit:read`.
+         */
         get: operations["getLatestAnchor"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit/anchor/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish an on-demand anchor for the last 24 hours of events
+         * @description Requires `audit:admin`. Only registered when an on-chain
+         *     broadcaster is configured for this deployment — if not
+         *     configured, this path does not exist (404 route not found, not a
+         *     Brain error envelope). Per-tenant 60-second cooldown between
+         *     publishes.
+         */
+        post: operations["publishAnchor"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit/webhooks/endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List outbound audit webhook endpoints
+         * @description Requires `audit:read`. Secrets are masked to an 8-character preview.
+         */
+        get: operations["listAuditWebhookEndpoints"];
+        put?: never;
+        /**
+         * Register an outbound audit webhook endpoint
+         * @description Requires `audit:write`. The signing secret is generated
+         *     server-side and returned exactly once, in this response; it is
+         *     never retrievable again (subsequent list calls return only a
+         *     preview).
+         */
+        post: operations["createAuditWebhookEndpoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit/webhooks/endpoints/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove an outbound audit webhook endpoint
+         * @description Requires `audit:write`.
+         */
+        delete: operations["deleteAuditWebhookEndpoint"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1757,10 +2569,15 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Verify an event's inclusion against on-chain root
-         * @description Independent verification. Caller supplies an event hash, a Merkle
-         *     proof, and a claimed root. Server verifies the proof and the root's
-         *     on-chain presence. Returns true only if both hold.
+         * Verify an event's inclusion against a claimed Merkle root
+         * @description Public (no auth required). Pure Merkle inclusion verifier — no DB
+         *     access. Caller supplies an event hash, a Merkle proof, and a
+         *     claimed root; the server verifies only that the proof is valid
+         *     against that root. `onchain_block` is always `null`: this
+         *     endpoint does not check the root's on-chain presence (that would
+         *     need an RPC lookup, not implemented here) — a caller wanting full
+         *     on-chain confirmation must independently check `merkle_root`
+         *     against the anchor transaction.
          */
         post: operations["verifyInclusion"];
         delete?: never;
@@ -1799,7 +2616,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get one canonical obligation as a governed data product */
+        /**
+         * Get one canonical obligation as a governed data product
+         * @description Requires `canonical:read`.
+         */
         get: operations["getCanonicalObligation"];
         put?: never;
         post?: never;
@@ -1838,7 +2658,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get one canonical GL account as a governed data product */
+        /**
+         * Get one canonical GL account as a governed data product
+         * @description Requires `canonical:read`.
+         */
         get: operations["getCanonicalGlAccount"];
         put?: never;
         post?: never;
@@ -1877,7 +2700,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get one canonical journal entry (with its lines) as a governed data product */
+        /**
+         * Get one canonical journal entry (with its lines) as a governed data product
+         * @description Requires `canonical:read`.
+         */
         get: operations["getCanonicalJournalEntry"];
         put?: never;
         post?: never;
@@ -2100,15 +2926,25 @@ export interface components {
                 projector?: string | null;
             };
         };
+        /**
+         * @description Canonical error envelope (Engineering Standards §4.1). All error
+         *     responses wrap the error body under an `error` key; there is no
+         *     top-level `code`/`message`.
+         */
         Error: {
-            /** @description Machine-readable error code (see Engineering Standards section 3) */
-            code: string;
-            /** @description Human-readable error message */
-            message: string;
-            /** @description Correlation ID for support */
-            trace_id?: string;
-            details?: {
-                [key: string]: unknown;
+            error: {
+                /** @description Machine-readable error code, `{domain}_{condition}` snake_case (see Engineering Standards section 4.3). Stable once shipped; never renamed. */
+                code: string;
+                /** @description Human-readable error message */
+                message: string;
+                /** @description Optional structured context, e.g. a `reason` enum specific to the operation */
+                details?: {
+                    [key: string]: unknown;
+                };
+                /** @description Correlation ID for support, echoed from the request */
+                request_id: string;
+                /** @description Link to the published error reference for this code, e.g. https://docs.brain.fi/resources/errors#{code} */
+                docs_url: string;
             };
         };
         /**
@@ -2117,7 +2953,6 @@ export interface components {
          */
         RawSourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "agent_contributed" | "wiki_annotation" | "other";
         RawIngestResponse: {
-            /** Format: uuid */
             raw_id?: string;
             sha256?: string;
             source_type?: components["schemas"]["RawSourceType"];
@@ -2130,9 +2965,7 @@ export interface components {
             deduplicated?: boolean;
         };
         RawParsed: {
-            /** Format: uuid */
             id?: string;
-            /** Format: uuid */
             raw_artifact_id?: string;
             parser?: string;
             parser_version?: string;
@@ -2143,12 +2976,35 @@ export interface components {
             /** Format: date-time */
             extracted_at?: string;
         };
+        /**
+         * @description Connectable source-connector vocabulary for POST /sources. A subset of RawSourceType — excludes the non-connector origins (agent_contributed, wiki_annotation, other).
+         * @enum {string}
+         */
+        SourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "finch";
+        Source: {
+            id: string;
+            tenantId: string;
+            type: components["schemas"]["SourceType"];
+            /** @enum {string} */
+            status: "active" | "paused" | "error" | "disconnected";
+            /** Format: date-time */
+            last_synced_at: string | null;
+            metadata: {
+                [key: string]: unknown;
+            };
+            error_message: string | null;
+            /** @description True for connector types without a concrete adapter (netsuite, email_inbound, csv_upload, pdf_upload, alchemy_wallet, eth_address). Sync on a stub source returns immediately with notes:"stub". */
+            is_stub: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         /** @enum {string} */
         EntityKind: "account" | "counterparty" | "transaction" | "obligation" | "policy" | "agent";
         /** @enum {string} */
         Provenance: "extracted" | "inferred" | "ambiguous" | "human_confirmed" | "agent_contributed";
         WikiEntity: {
-            /** Format: uuid */
             id?: string;
             kind?: components["schemas"]["EntityKind"];
             attributes?: {
@@ -2165,11 +3021,8 @@ export interface components {
         /** @enum {string} */
         RelationKind: "transacted_with" | "owes" | "owed_by" | "governed_by";
         WikiRelation: {
-            /** Format: uuid */
             id?: string;
-            /** Format: uuid */
             src?: string;
-            /** Format: uuid */
             dst?: string;
             kind?: components["schemas"]["RelationKind"];
             attributes?: {
@@ -2184,10 +3037,8 @@ export interface components {
             source_evidence?: string[];
         };
         EvidenceChain: {
-            /** Format: uuid */
             entity_id?: string;
             chain?: {
-                /** Format: uuid */
                 raw_parsed_id?: string;
                 parser?: string;
                 confidence?: number;
@@ -2201,7 +3052,6 @@ export interface components {
             evidence_path?: {
                 step?: number;
                 description?: string;
-                /** Format: uuid */
                 entity_id?: string | null;
                 sql_query?: string | null;
                 result_summary?: string;
@@ -2213,26 +3063,42 @@ export interface components {
                 latency_ms?: number;
             };
         };
+        /**
+         * @description Phase 3 only accepts `kind` in `policy`/`agent` (WIKI_KINDS).
+         *     Annotating a Ledger-truth kind (account, counterparty,
+         *     transaction, obligation) returns `request_body_invalid` — that
+         *     write-through path is not yet implemented.
+         */
         EntityAnnotation: {
-            /** Format: uuid */
-            entity_id: string;
-            corrections: {
+            /** @enum {string} */
+            target: "entity";
+            /** @description Omit to create a new entity; provide to supersede an existing one (must already exist, else `wiki_entity_not_found`). */
+            entity_id?: string;
+            /** @enum {string} */
+            kind: "policy" | "agent";
+            /** @description Validated against the JSON Schema for `kind`. */
+            attributes?: {
                 [key: string]: unknown;
             };
-            note?: string;
+            /** @default 1 */
+            confidence: number;
         };
         RelationAnnotation: {
-            /** Format: uuid */
-            relation_id: string;
-            corrections: {
+            /** @enum {string} */
+            target: "relation";
+            src: string;
+            dst: string;
+            /** @description One of the registered RELATION_KINDS. */
+            kind: string;
+            /** @description Validated against the JSON Schema for `kind`. */
+            attributes?: {
                 [key: string]: unknown;
             };
-            note?: string;
+            /** @default 1 */
+            confidence: number;
         };
         Policy: {
-            /** Format: uuid */
             id?: string;
-            /** Format: uuid */
             tenant_id?: string;
             version?: number;
             content?: components["schemas"]["PolicyDSL"];
@@ -2249,7 +3115,16 @@ export interface components {
             onchain_tx_hash?: string | null;
         };
         PolicyDSL: {
+            version: number;
             rules: components["schemas"]["PolicyRule"][];
+            /** @description Named counterparty-id lists referenced by `when.counterparty_in` / `counterparty_not_in` */
+            lists?: {
+                [key: string]: string[];
+            };
+            /** @description Tenant-approved counterparty message templates */
+            message_templates?: {
+                [key: string]: unknown;
+            }[];
         };
         PolicyRule: {
             id: string;
@@ -2275,38 +3150,55 @@ export interface components {
             /** @enum {string} */
             execute: "auto" | "confirm" | "reject";
         };
+        /**
+         * @description Matches the policy VM's `Action` shape (services/policy/src/vm.ts).
+         *     Field names are `kind`/`counterparty_id`, not `type`/`counterparty`.
+         */
         ProposedAction: {
             /** @enum {string} */
-            type: "outbound_payment" | "inbound_payment" | "ledger_write" | "onchain_tx";
+            kind: "outbound_payment" | "inbound_payment" | "ledger_write" | "onchain_tx" | "agent_action";
             /** @description Entity ID of the counterparty */
-            counterparty?: string;
+            counterparty_id?: string | null;
             amount?: {
                 currency?: string;
-                value?: number;
-            };
-            /** @enum {string} */
-            rail?: "bank_ach" | "erp_writeback" | "onchain_base" | "notification";
-            metadata?: {
-                [key: string]: unknown;
-            };
+                /** @description Decimal string */
+                value?: string;
+            } | null;
+            agent_role?: string | null;
+            /**
+             * Format: date-time
+             * @description Defaults to the request time if omitted
+             */
+            timestamp?: string;
+            agent_id?: string | null;
+            /** @enum {string|null} */
+            tenant_category?: "business" | "consumer" | null;
+            confidence?: number | null;
+            evidence_score?: number | null;
+            /** @enum {string|null} */
+            risk_level?: "low" | "medium" | "high" | "critical" | null;
         };
         PolicyDecision: {
             /** @enum {string} */
-            decision?: "allow" | "confirm" | "reject";
-            trace?: {
-                rule_id?: string;
-                matched?: boolean;
-                explanation?: string;
+            outcome: "allow" | "confirm" | "reject";
+            matched_rule_id: string | null;
+            required_approvers: string[];
+            trace: {
+                rule_id: string;
+                matched: boolean;
+                checks: {
+                    /** @description The RuleWhen primitive checked, e.g. amount_lte */
+                    key?: string;
+                    passed?: boolean;
+                    detail?: string;
+                }[];
             }[];
-            required_approvers?: string[];
             policy_version?: number;
         };
         /** @enum {string} */
         ProposalStatus: "pending" | "approved" | "rejected" | "executed" | "failed" | "expired";
         Proposal: {
-            /** Format: uuid */
             id?: string;
-            /** Format: uuid */
             tenant_id?: string;
             proposing_agent?: string;
             action?: components["schemas"]["ProposedAction"];
@@ -2321,9 +3213,7 @@ export interface components {
         /** @enum {string} */
         ExecutionStatus: "started" | "succeeded" | "failed" | "timeout";
         Execution: {
-            /** Format: uuid */
             id?: string;
-            /** Format: uuid */
             proposal_id?: string;
             /** @enum {string} */
             rail?: "bank_ach" | "erp_writeback" | "onchain_base" | "notification";
@@ -2336,21 +3226,6 @@ export interface components {
             completed_at?: string | null;
             status?: components["schemas"]["ExecutionStatus"];
             error?: string | null;
-        };
-        /**
-         * @description Declarative scope document. Hashed and registered on-chain in
-         *     BrainMCPAgentRegistry for external agents.
-         */
-        AgentScope: {
-            allowed_actions?: ("read_wiki" | "propose_action" | "read_audit")[];
-            wiki_kinds_readable?: components["schemas"]["EntityKind"][];
-            action_types_proposable?: ("outbound_payment" | "inbound_payment" | "ledger_write" | "onchain_tx")[];
-            max_amount?: {
-                currency?: string;
-                value?: number;
-            };
-            /** Format: date-time */
-            valid_until?: string;
         };
         AuditEvent: {
             id?: string;
@@ -2446,6 +3321,75 @@ export interface components {
             /** @enum {string|null} */
             reconciliation_status?: "unreconciled" | "matched" | "partial" | "disputed" | null;
         };
+        /**
+         * @description A tenant approval-authority actor. Response field names are
+         *     camelCase, unlike the snake_case request bodies below and most
+         *     other Brain resources. `active` and `status` are kept in sync
+         *     server-side: `active` is true only when `status` is `active`.
+         */
+        Member: {
+            id: string;
+            tenantId: string;
+            email: string;
+            displayName: string;
+            /** @enum {string} */
+            role: "admin" | "approver" | "viewer";
+            /** @enum {string} */
+            status: "invited" | "active" | "deactivated";
+            active: boolean;
+            approval: {
+                domains: ("ap" | "ar" | "treasury" | "payroll" | "reconciliation")[];
+                /** @description Per-item approval limit in minor units (cents) */
+                perItemLimit: number;
+                /** @description Amount in minor units (cents) above which a distinct second member must also approve. Null means no second-approval threshold. */
+                requiresSecondApproverAbove: number | null;
+            };
+        };
+        MemberCreateRequest: {
+            /** @description Caller-supplied member id. Defaults to a generated user id. */
+            id?: string;
+            email: string;
+            /** @description Defaults to email if omitted. */
+            display_name?: string;
+            /** @enum {string} */
+            role: "admin" | "approver" | "viewer";
+            /**
+             * @description When true, member is created with status:invited and an invite_token is returned instead of being immediately active. A caller-supplied `status` field is accepted by the schema but ignored by create — only `invite` controls initial status.
+             * @default false
+             */
+            invite: boolean;
+            approval: {
+                domains: ("ap" | "ar" | "treasury" | "payroll" | "reconciliation")[];
+                /** @description Defaults to 0 if omitted. */
+                per_item_limit_cents?: number | string;
+                requires_second_approver_above_cents?: number | string | null;
+            };
+        };
+        /**
+         * @description All fields optional. Only fields present are changed. `status`
+         *     and `active` are kept in sync server-side regardless of which
+         *     one is sent (see PATCH /members/{id}).
+         */
+        MemberUpdateRequest: {
+            email?: string;
+            display_name?: string;
+            /** @enum {string} */
+            role?: "admin" | "approver" | "viewer";
+            /** @enum {string} */
+            status?: "invited" | "active" | "deactivated";
+            active?: boolean;
+            approval?: {
+                domains?: ("ap" | "ar" | "treasury" | "payroll" | "reconciliation")[];
+                per_item_limit_cents?: number | string;
+                requires_second_approver_above_cents?: number | string | null;
+            };
+        };
+        MemberIdentityLinkRequest: {
+            /** @enum {string} */
+            surface: "slack" | "teams" | "email";
+            /** @description Surface-specific external identity reference (Slack user id, Teams AAD object id, verified email address). */
+            external_ref: string;
+        };
         Counterparty: components["schemas"]["LedgerCommonFields"] & {
             name: string;
             display_name: string;
@@ -2472,6 +3416,30 @@ export interface components {
             /** @enum {string} */
             status: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
             linked_transaction_ids?: string[];
+        };
+        CashFlowSummary: {
+            tenantId: string;
+            /** Format: date-time */
+            since: string;
+            /** Format: date-time */
+            until: string;
+            currencies: {
+                currency: string;
+                /** @description Decimal string */
+                inflow: string;
+                /** @description Decimal string */
+                outflow: string;
+                /** @description Decimal string */
+                net: string;
+                transaction_count: number;
+                by_day: {
+                    /** @description YYYY-MM-DD */
+                    date: string;
+                    inflow: string;
+                    outflow: string;
+                    net: string;
+                }[];
+            }[];
         };
         Invoice: components["schemas"]["LedgerCommonFields"] & {
             invoice_number: string;
@@ -2988,6 +3956,412 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    siwxChallenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Challenge issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        nonce?: string;
+                        session_id?: string;
+                        /** @description EIP-4361 domain claim the message must bind to, e.g. api.brain.fi */
+                        domain?: string;
+                    };
+                };
+            };
+        };
+    };
+    siwxVerify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The EIP-4361 message text the wallet signed */
+                    message: string;
+                    /** @description Hex-encoded signature over `message` */
+                    signature: string;
+                    /** @description Session id returned by POST /auth/siwx/challenge */
+                    session_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Authenticated; token issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        access_token?: string;
+                        /** @enum {string} */
+                        token_type?: "Bearer";
+                        /** @description Token lifetime in seconds. Default 3600 for agent tokens. */
+                        expires_in?: number;
+                        principal?: {
+                            id?: string;
+                            /** @enum {string} */
+                            type?: "user" | "agent";
+                            tenantId?: string;
+                            scopes?: string[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description SIWX session expired/missing, or the message/signature failed EIP-4361 verification. Error code `auth_siwx_invalid`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The recovered address is not linked to a human owner and does not match an active registered agent. Error code `agent_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    linkWallet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    address: string;
+                    /** @enum {string} */
+                    principal_type: "human" | "agent";
+                    /** @description Defaults to the calling owner's id when principal_type=human. Required when principal_type=agent. */
+                    principal_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Wallet linked */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {boolean} */
+                        linked?: true;
+                        /** @description Lowercased */
+                        address?: string;
+                        /** @enum {string} */
+                        principal_type?: "human" | "agent";
+                        principal_id?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /**
+             * @description Missing `policy:write` scope, or the path `tenant_id` does not
+             *     match the authenticated tenant. Error code
+             *     `auth_scope_insufficient` or `auth_tenant_mismatch`.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    company_name?: string;
+                    founder: {
+                        /** Format: email */
+                        email: string;
+                        /** @description Defaults to email if omitted. */
+                        display_name?: string;
+                    };
+                    /** @description Platform identity reference for the founder (linked with surface:platform). */
+                    founder_external_ref: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Tenant created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tenant_id?: string;
+                        member?: components["schemas"]["Member"];
+                        session?: {
+                            token?: string;
+                            refresh_token?: string;
+                            /** @enum {integer} */
+                            expires_in?: 900;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /**
+             * @description Missing/invalid `X-Platform-Service-Auth` header (error code
+             *     `auth_token_invalid`, standard Error envelope), the platform
+             *     secret is not configured on this deployment (error code
+             *     `dependency_unavailable`), or the demo provisioning header
+             *     was also present — that last case returns a bare
+             *     `{ "reason": "platform_service_credential_required" }` body,
+             *     NOT the standard Error envelope.
+             */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"] | {
+                        /** @enum {string} */
+                        reason?: "platform_service_credential_required";
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    external_ref: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Session issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        token?: string;
+                        refresh_token?: string;
+                        /** @enum {integer} */
+                        expires_in?: 900;
+                        member?: components["schemas"]["Member"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Missing/invalid platform credential, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No member is linked to this external_ref, or the linked member is not active. Returns `{ "reason": "session_identity_unlinked" }`, NOT the standard Error envelope. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        reason?: "session_identity_unlinked";
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refresh tokens revoked */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {boolean} */
+                        revoked?: true;
+                    };
+                };
+            };
+            /** @description Caller is not a user-type principal. Error code `payment_intent_approval_invalid`, `details.reason=actor_unresolved`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    refreshSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    refresh_token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description New token pair issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        token?: string;
+                        refresh_token?: string;
+                        /** @enum {integer} */
+                        expires_in?: 900;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /**
+             * @description Refresh token is unknown, revoked, or expired, or it was
+             *     already rotated once before (reuse — the entire token family
+             *     is revoked as a side effect of this response). Error code
+             *     `auth_token_invalid`.
+             */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    consumeInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    invite_token: string;
+                    external_ref: string;
+                    display_name?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Invite consumed; member activated and session issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tenant_id?: string;
+                        member?: components["schemas"]["Member"];
+                        session?: {
+                            token?: string;
+                            refresh_token?: string;
+                            /** @enum {integer} */
+                            expires_in?: 900;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Missing/invalid platform credential, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Invite token is unknown (`{ "reason": "invite_invalid" }`,
+             *     NOT the standard Error envelope), or it was found but is
+             *     blocked: error code `invite_expired`, `invite_consumed`, or
+             *     `invite_revoked` (standard Error envelope for these three).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"] | {
+                        /** @enum {string} */
+                        reason?: "invite_invalid";
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
     ingestRaw: {
         parameters: {
             query?: never;
@@ -3124,6 +4498,15 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description Provider has no wired signature verification (stripe without configured credentials, alchemy, netsuite, generic_hmac). */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getRaw: {
@@ -3144,7 +4527,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** Format: uuid */
                         raw_id?: string;
                         sha256?: string;
                         /** Format: uri */
@@ -3156,8 +4538,16 @@ export interface operations {
                     };
                 };
             };
-            404: components["responses"]["NotFound"];
-            /** @description Artifact has been tombstoned */
+            /** @description No such artifact. Error code `raw_artifact_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Artifact has been tombstoned. Error code `raw_artifact_tombstoned`. */
             410: {
                 headers: {
                     [name: string]: unknown;
@@ -3186,13 +4576,27 @@ export interface operations {
                 };
                 content?: never;
             };
-            404: components["responses"]["NotFound"];
-            /** @description Already tombstoned */
+            /** @description No such artifact. Error code `raw_artifact_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already tombstoned. Returns `{ raw_id, tombstoned: true }`, not the Error schema. */
             410: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        raw_id?: string;
+                        /** @enum {boolean} */
+                        tombstoned?: true;
+                    };
+                };
             };
         };
     };
@@ -3214,7 +4618,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** Format: uuid */
                         parsed_id: string;
                         confidence: number;
                     };
@@ -3275,7 +4678,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** Format: uuid */
                         raw_id?: string;
                         parsed?: components["schemas"]["RawParsed"][];
                     };
@@ -3325,7 +4727,187 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
+            /** @description No such artifact. Error code `raw_artifact_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Artifact has been tombstoned. Error code `raw_artifact_tombstoned`. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listSources: {
+        parameters: {
+            query?: {
+                type?: components["schemas"]["SourceType"];
+                status?: "active" | "paused" | "error" | "disconnected";
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["Source"][];
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    connectSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    type: components["schemas"]["SourceType"];
+                    /** @description Adapter-specific credentials, validated per connector. Never echoed back in responses. */
+                    credentials: {
+                        [key: string]: unknown;
+                    };
+                    metadata?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Source connected */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Source"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Source"];
+                };
+            };
+            /** @description No such source. Error code `source_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    disconnectSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source disconnected */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Source"];
+                };
+            };
+            /** @description No such source. Error code `source_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    syncSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sync enqueued or running */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        job_id: string;
+                        source_id: string;
+                        /** @enum {string} */
+                        status: "enqueued" | "running";
+                        /** @enum {string} */
+                        notes?: "stub";
+                    };
+                };
+            };
+            /** @description No such source. Error code `source_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listAccounts: {
@@ -3541,7 +5123,20 @@ export interface operations {
                     };
                 };
             };
-            400: components["responses"]["BadRequest"];
+            /**
+             * @description Error code `request_body_invalid`; `details.reason` is one of
+             *     `payment_fields_not_allowed`, `unknown_field`, `field_not_editable`
+             *     (each with `details.fields` listing the offending keys), or
+             *     `invalid_type`.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             403: components["responses"]["Forbidden"];
         };
     };
@@ -3602,10 +5197,31 @@ export interface operations {
                     };
                 };
             };
-            400: components["responses"]["BadRequest"];
-            403: components["responses"]["Forbidden"];
+            /**
+             * @description Error code `request_body_invalid`; `details.reason` is one of
+             *     `payment_fields_not_allowed`, `unknown_field`, or
+             *     `field_not_editable` (with `details.fields` listing the
+             *     offending keys).
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Caller is not a user principal. Error code `payment_intent_approval_invalid`, `details.reason=actor_unresolved`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
-            /** @description Rename conflicts with another counterparty */
+            /** @description Rename conflicts with another counterparty. Error code `ledger_reconciliation_conflict`, `details.reason=name_conflict`. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3801,6 +5417,15 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description ReconciliationService not configured for this app instance. Error code `raw_source_unsupported`. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listReconciliationMatches: {
@@ -3827,6 +5452,38 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+        };
+    };
+    getCashFlows: {
+        parameters: {
+            query?: {
+                days?: number;
+                currency?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cash-flow summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashFlowSummary"];
+                };
+            };
+            /** @description Malformed `currency`. Error code `request_params_invalid`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listMemoryPages: {
@@ -3876,7 +5533,15 @@ export interface operations {
                     "application/json": components["schemas"]["WikiPage"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            /** @description No such page. Error code `wiki_page_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     regenerateMemoryPage: {
@@ -3965,7 +5630,15 @@ export interface operations {
                     };
                 };
             };
-            404: components["responses"]["NotFound"];
+            /** @description No such entity. Error code `wiki_entity_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getEntityEvidence: {
@@ -3989,6 +5662,15 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description No versions found for this entity. Error code `wiki_entity_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getEntityHistory: {
@@ -4009,13 +5691,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** Format: uuid */
                         entity_id?: string;
                         versions?: components["schemas"]["WikiEntity"][];
                     };
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description No versions found for this entity. Error code `wiki_entity_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     searchWiki: {
@@ -4107,14 +5797,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** Format: uuid */
                         annotation_id?: string;
-                        /** Format: uuid */
                         new_version_id?: string;
                     };
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description entity_id was provided but no such entity exists. Error code `wiki_entity_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Annotation rate limit exceeded. Error code `rate_limit_exceeded`. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getWikiSchema: {
@@ -4162,7 +5868,24 @@ export interface operations {
                     "application/json": components["schemas"]["Policy"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            /** @description Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No active policy for this tenant. Error code `policy_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listPolicyVersions: {
@@ -4188,6 +5911,15 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     composePolicy: {
@@ -4201,7 +5933,11 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PolicyDSL"];
+                "application/json": {
+                    content: components["schemas"]["PolicyDSL"];
+                    /** @default 1 */
+                    quorum_required?: number;
+                };
             };
         };
         responses: {
@@ -4212,14 +5948,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        content_hash?: string;
+                        policy_id?: string;
+                        /** @enum {string} */
+                        state?: "pending_signatures";
                         /** @description EIP-712 typed data document to sign */
-                        typed_data?: Record<string, never>;
-                        required_signers?: string[];
+                        signing_payload?: Record<string, never>;
                     };
                 };
             };
-            422: components["responses"]["UnprocessableEntity"];
+            /** @description `content` must be `{ version: number, rules: [] }`. Error code `policy_rule_invalid`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     signPolicy: {
@@ -4234,26 +5988,70 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    content_hash: string;
+                    policy_id: string;
                     signatures: {
-                        /** @description Signer address */
-                        signer?: string;
-                        signature?: string;
+                        /** @description Signer address (0x-prefixed) */
+                        address: string;
+                        /** @description EIP-712 signature (0x-prefixed) */
+                        signature: string;
                     }[];
                 };
             };
         };
         responses: {
-            /** @description Policy activated */
-            201: {
+            /** @description Signature recorded; policy activated if quorum was reached */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Policy"];
+                    "application/json": {
+                        policy?: components["schemas"]["Policy"];
+                        activated?: boolean;
+                    };
                 };
             };
-            /** @description Insufficient signatures */
+            /** @description `policy_id` and `signatures[]` are required. Error code `policy_signature_invalid`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description A signature did not verify, is a duplicate signer, or the
+             *     signer is not an authorized tenant signer. Error code
+             *     `policy_signature_invalid`.
+             */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such policy. Error code `policy_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Policy is not in `pending_signatures` state. Error code `policy_quorum_not_met`. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4275,7 +6073,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProposedAction"];
+                "application/json": {
+                    action: components["schemas"]["ProposedAction"];
+                };
             };
         };
         responses: {
@@ -4289,6 +6089,24 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No active policy for this tenant. Error code `policy_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     simulatePolicy: {
@@ -4319,6 +6137,24 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such policy version. Error code `policy_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     lintPolicy: {
@@ -4360,7 +6196,24 @@ export interface operations {
                     };
                 };
             };
-            400: components["responses"]["BadRequest"];
+            /** @description `policy_content` must be `{ version, rules[] }`. Error code `policy_rule_invalid`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     diffPolicy: {
@@ -4396,7 +6249,24 @@ export interface operations {
                     };
                 };
             };
-            404: components["responses"]["NotFound"];
+            /** @description Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description One or both versions not found. Error code `policy_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     simulateHistoricalPolicy: {
@@ -4431,11 +6301,35 @@ export interface operations {
                         would_allow?: number;
                         would_confirm?: number;
                         would_reject?: number;
-                        diff_vs_active?: Record<string, never>;
+                        /** @description Empty buckets when the tenant has no active policy to diff against. */
+                        diff_vs_active?: {
+                            newly_allowed: string[];
+                            newly_rejected: string[];
+                            /** @description Outcome changed but not into allow/reject (e.g. allow to confirm) */
+                            changed_other: string[];
+                            unchanged: number;
+                        };
                     };
                 };
             };
-            400: components["responses"]["BadRequest"];
+            /** @description `period_start`/`period_end` must be ISO dates, or `policy_content` must be `{ version, rules[] }`. Error code `request_body_invalid` or `policy_rule_invalid`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listAgents: {
@@ -4497,6 +6391,15 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description No such agent in the catalog. Error code `agent_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     proposeAgentAction: {
@@ -4516,20 +6419,15 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Proposal created with policy decision attached */
-            201: {
+            /** @description Always returned. This operation is not implemented. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        proposal_id?: string;
-                        policy_decision_id?: string;
-                        status?: string;
-                    };
+                    "application/json": components["schemas"]["Error"];
                 };
             };
-            400: components["responses"]["BadRequest"];
         };
     };
     listAgentActions: {
@@ -4700,7 +6598,7 @@ export interface operations {
         };
         responses: {
             /** @description Job enqueued */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4938,6 +6836,41 @@ export interface operations {
             400: components["responses"]["BadRequest"];
         };
     };
+    releaseAgentQuarantine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Quarantine released */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agent_id?: string;
+                        /** @enum {boolean} */
+                        quarantine_released?: true;
+                    };
+                };
+            };
+            /** @description No such agent, or the agent had no quarantine to release. Error code `execution_agent_not_registered`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     haltCategory: {
         parameters: {
             query?: never;
@@ -5063,7 +6996,15 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentIntent"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            /** @description No such PaymentIntent. Error code `payment_intent_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     approvePaymentIntent: {
@@ -5077,7 +7018,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Updated PaymentIntent */
+            /** @description Updated PaymentIntent. Status is `approved` if this was the final required approval, or `awaiting_second_approval` if a distinct second approval is still required. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5086,7 +7027,36 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentIntent"];
                 };
             };
-            400: components["responses"]["BadRequest"];
+            /**
+             * @description The approval authority gate rejected the actor. Error code
+             *     `payment_intent_approval_invalid`; `details.reason` is one of:
+             *     `actor_unresolved` (no resolvable active member for the
+             *     calling principal), `actor_inactive`, `domain_not_authorized`
+             *     (missing admin/approver role or the member's approval domains
+             *     do not cover this action), `actor_limit_exceeded` (amount
+             *     exceeds the member's per-item limit), `self_approval_blocked`
+             *     (the member is the payee, including an employee payee with an
+             *     unresolved email, `details.payee_unresolved=true`), or
+             *     `second_approval_required` (this member already signed and a
+             *     distinct second approver is still required).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The PaymentIntent is not in `pending_approval` or `awaiting_second_approval` state. Error code `payment_intent_invalid_state`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     rejectPaymentIntent: {
@@ -5115,7 +7085,15 @@ export interface operations {
                     "application/json": components["schemas"]["PaymentIntent"];
                 };
             };
-            400: components["responses"]["BadRequest"];
+            /** @description The PaymentIntent is not in a rejectable state. Error code `payment_intent_invalid_state`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     executePaymentIntent: {
@@ -5246,6 +7224,408 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    listMembers: {
+        parameters: {
+            query?: {
+                role?: "admin" | "approver" | "viewer";
+                domain?: "ap" | "ar" | "treasury" | "payroll" | "reconciliation";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Member list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        members?: components["schemas"]["Member"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Caller is not a resolvable active member. Error code `payment_intent_approval_invalid`, `details.reason=actor_unresolved`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Member created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        member: components["schemas"]["Member"];
+                        audit_id: string;
+                        /** @description Present only when the request set `invite: true`. Shown once; not retrievable again — reissue via POST /members/{id}/invites if lost. */
+                        invite_token?: string;
+                        /**
+                         * @description Present only when the request set `invite: true`.
+                         * @enum {integer}
+                         */
+                        invite_expires_in_hours?: 72;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Caller is not a resolvable active member, or is not an admin member. Error code `payment_intent_approval_invalid` (`details.reason=actor_unresolved`) or `auth_scope_insufficient`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Member */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"];
+                };
+            };
+            /** @description Caller is not a resolvable active member. Error code `payment_intent_approval_invalid`, `details.reason=actor_unresolved`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Member not found. Error code `agent_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deactivateMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Member deactivated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        member?: components["schemas"]["Member"];
+                        audit_id?: string;
+                    };
+                };
+            };
+            /**
+             * @description Caller is not a resolvable active admin member, or this member
+             *     is the last active admin. Error code `payment_intent_approval_invalid`
+             *     (`details.reason=actor_unresolved` or `details.reason=last_admin_protected`),
+             *     or `auth_scope_insufficient`.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Member not found. Error code `agent_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Member updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        member?: components["schemas"]["Member"];
+                        audit_id?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /**
+             * @description Caller is not a resolvable active admin member, or the edit
+             *     would demote or deactivate the last active admin. Error code
+             *     `payment_intent_approval_invalid` (`details.reason=actor_unresolved`
+             *     or `details.reason=last_admin_protected`), or `auth_scope_insufficient`.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Member not found. Error code `agent_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createMemberInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invite (re)issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Shown once. */
+                        invite_token?: string;
+                        /** Format: date-time */
+                        expires_at?: string;
+                    };
+                };
+            };
+            /** @description Caller is not a resolvable active admin member. Error code `payment_intent_approval_invalid` or `auth_scope_insufficient`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Member not found. Error code `agent_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    revokeMemberInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invite revoked (or none was outstanding) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {boolean} */
+                        revoked?: true;
+                    };
+                };
+            };
+            /** @description Caller is not a resolvable active admin member. Error code `payment_intent_approval_invalid` or `auth_scope_insufficient`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Member not found. Error code `agent_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createMemberIdentityLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberIdentityLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Identity link created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        audit_id?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Caller is not a resolvable active admin member. Error code `payment_intent_approval_invalid` or `auth_scope_insufficient`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Member not found. Error code `agent_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteMemberIdentityLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberIdentityLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Identity link removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        audit_id?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Caller is not a resolvable active admin member. Error code `payment_intent_approval_invalid` or `auth_scope_insufficient`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Member not found. Error code `agent_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     proposeAction: {
         parameters: {
             query?: never;
@@ -5286,7 +7666,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** Format: uuid */
                     proposal_id: string;
                     /** @default false */
                     dry_run?: boolean;
@@ -5325,7 +7704,15 @@ export interface operations {
                     "application/json": components["schemas"]["Execution"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            /** @description No such execution. Error code `execution_proposal_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     approveProposal: {
@@ -5338,8 +7725,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** Format: uuid */
                     proposal_id: string;
+                    /** @description Accepted but currently ignored by the implementation. */
                     approver_notes?: string;
                 };
             };
@@ -5355,6 +7742,24 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description No such proposal. Error code `execution_proposal_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Proposal is not pending approval. Error code `execution_proposal_invalid_state`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     escalateProposal: {
@@ -5367,19 +7772,25 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** Format: uuid */
                     proposal_id: string;
-                    reason: string;
+                    /** @description Truncated to 200 characters. Field name is `note`, not `reason`. */
+                    note?: string;
                 };
             };
         };
         responses: {
-            /** @description Escalated */
-            200: {
+            /** @description Escalation recorded */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        /** @enum {boolean} */
+                        escalated?: true;
+                        proposal_id?: string;
+                    };
+                };
             };
             400: components["responses"]["BadRequest"];
         };
@@ -5417,26 +7828,24 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    agent_id: string;
+                    role: string;
+                    display_name: string;
+                    scope_hash?: string;
                     /** @description Ethereum address of the agent */
-                    agent_address: string;
-                    scope: components["schemas"]["AgentScope"];
-                    /** @description EIP-712 signature authorizing this scope */
-                    tenant_signature?: string;
+                    onchain_address?: string;
+                    registered_tx?: string;
                 };
             };
         };
         responses: {
-            /** @description Registered */
+            /** @description Registered (pending_onchain) */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        agent_id?: string;
-                        onchain_tx_hash?: string;
-                        scope_hash?: string;
-                    };
+                    "application/json": components["schemas"]["Agent"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -5462,7 +7871,57 @@ export interface operations {
                     "application/json": components["schemas"]["Agent"];
                 };
             };
+            /** @description No such agent. Error code `execution_agent_not_registered`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    executionMcpShim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example ping */
+                    method: string;
+                    params?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description `method: ping` only */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok?: boolean;
+                    };
+                };
+            };
             400: components["responses"]["BadRequest"];
+            /** @description Any method other than `ping`. Error code `execution_agent_not_registered`. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getAuditEntityHistory: {
@@ -5532,12 +7991,14 @@ export interface operations {
                     };
                 };
             };
-            /** @description No proof for that action (or not visible to this tenant) */
+            /** @description No proof for that action (or not visible to this tenant). Error code `proof_not_found`. */
             404: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
         };
     };
@@ -5633,6 +8094,85 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    deleteTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tenant deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tenantId: string;
+                        /** @description Row count deleted per table */
+                        deletedRows: {
+                            [key: string]: number;
+                        };
+                        totalRows: number;
+                        /** @description Count of raw_artifacts rows that referenced a blob */
+                        blobArtifactCount: number;
+                        /** @description Every blob_uri from the deleted raw_artifacts rows, pending out-of-band purge */
+                        blobUrisPendingPurge: string[];
+                        /** @description The enqueued tenant_blob_purge_jobs row id. Null when the tenant uploaded no blobs. */
+                        blobPurgeJobId: string | null;
+                    };
+                };
+            };
+            /** @description Caller is not a user principal, or principal.tenantId does not match the path id. Error code `auth_scope_insufficient` or `auth_tenant_mismatch`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listYieldVenues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Venue catalog */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        venues?: {
+                            /** @description Stable slug for referencing a venue */
+                            id: string;
+                            name: string;
+                            /** @description Annual percentage yield, e.g. 4.2 = 4.2% */
+                            apy: number;
+                            /** @description Max share of deployable treasury allocatable to this venue, percent */
+                            cap_pct: number;
+                            /** @enum {string} */
+                            chain: "base";
+                        }[];
+                        /** @enum {string} */
+                        chain?: "base-sepolia";
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
     queryAuditEvents: {
         parameters: {
             query?: {
@@ -5693,6 +8233,15 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description No such event. Error code `audit_event_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     exportAudit: {
@@ -5708,10 +8257,9 @@ export interface operations {
                     /** @enum {string} */
                     format: "jsonl" | "csv";
                     /** Format: date-time */
-                    since: string;
+                    since?: string;
                     /** Format: date-time */
-                    until: string;
-                    layers?: ("raw" | "ledger" | "wiki" | "policy" | "agent" | "execution" | "audit")[];
+                    until?: string;
                 };
             };
         };
@@ -5723,14 +8271,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** Format: uuid */
+                        /** @description Not a Brain ID — currently `exp_<timestamp36>` */
                         job_id?: string;
-                        /** Format: uri */
-                        status_url?: string;
+                        /** @enum {string} */
+                        format?: "jsonl" | "csv";
+                        /** @enum {string} */
+                        status?: "enqueued";
                     };
                 };
             };
-            400: components["responses"]["BadRequest"];
+            /** @description `format` must be `jsonl` or `csv`. Error code `request_body_invalid`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getLatestAnchor: {
@@ -5749,18 +8307,182 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        id?: string;
                         merkle_root?: string;
                         event_count?: number;
                         /** Format: date-time */
                         period_start?: string;
                         /** Format: date-time */
                         period_end?: string;
-                        onchain_tx_hash?: string;
-                        onchain_block_number?: number;
+                        onchain_tx_hash?: string | null;
+                        onchain_block_number?: number | null;
                     };
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description No anchor published yet. Error code `audit_anchor_not_yet_published`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    publishAnchor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Anchor published */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id?: string;
+                        merkle_root?: string;
+                        event_count?: number;
+                        tx_hash?: string | null;
+                        basescan_url?: string | null;
+                    };
+                };
+            };
+            /** @description No audit events in the last 24 hours. Error code `audit_no_events`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Per-tenant publish cooldown (60s) still active. Error code `rate_limited`, `details.retry_after_seconds`. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listAuditWebhookEndpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Endpoint list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        endpoints?: {
+                            id?: string;
+                            url?: string;
+                            enabled_events?: string[] | null;
+                            enabled?: boolean;
+                            /** @description First 8 characters followed by "..." */
+                            secret_preview?: string;
+                            /** Format: date-time */
+                            created_at?: string;
+                        }[];
+                    };
+                };
+            };
+        };
+    };
+    createAuditWebhookEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: uri
+                     * @description Must start with https://
+                     */
+                    url: string;
+                    /** @description Subset of the forwarded event types. Omit for all forwarded events. */
+                    enabled_events?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Endpoint registered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id?: string;
+                        url?: string;
+                        enabled_events?: string[] | null;
+                        enabled?: boolean;
+                        /** @description Shown only in this response */
+                        secret?: string;
+                        /** Format: date-time */
+                        created_at?: string;
+                    };
+                };
+            };
+            /** @description `url` must be an `https://` string, or `enabled_events` includes an unsupported type. Error code `request_body_invalid`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteAuditWebhookEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Endpoint removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such endpoint. Error code `audit_event_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     verifyInclusion: {
@@ -5841,7 +8563,15 @@ export interface operations {
                     "application/json": components["schemas"]["CanonicalObligationProduct"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            /** @description No such canonical obligation. Error code `obligation_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listCanonicalGlAccounts: {
@@ -5890,7 +8620,15 @@ export interface operations {
                     "application/json": components["schemas"]["CanonicalGlAccountProduct"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            /** @description No such canonical GL account. Error code `ledger_row_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listCanonicalJournalEntries: {
@@ -5938,7 +8676,15 @@ export interface operations {
                     "application/json": components["schemas"]["CanonicalJournalEntryProduct"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            /** @description No such canonical journal entry. Error code `ledger_row_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
 }
