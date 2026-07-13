@@ -53,6 +53,15 @@ tags:
     description: Agent registration and action orchestration (Layer 5). Replaces the v0.1 Execution group; legacy /execution/* paths still resolve.
   - name: PaymentIntent
     description: PaymentIntent lifecycle — propose, approve, execute. Always passes the deterministic pre-execution gate (§6 of Engineering Standards).
+  - name: Members
+    description: Tenant members, roles, and approval authority. The normative actor model behind PaymentIntent approval and second-approval gating.
+  - name: Tenancy
+    description: |
+      Production tenant creation, platform-identity session exchange, and
+      member invites. Gated by a shared platform BFF credential
+      (`X-Platform-Service-Auth`), not a JWT bearer scope — a distinct
+      auth mechanism from the rest of the API. Separate from the sandbox
+      self-serve `Auth` group.
   - name: Execution
     description: DEPRECATED — use Agent and PaymentIntent. Retained for v0.3 transition.
     x-deprecated-superseded-by: [Agent, PaymentIntent]
@@ -66,6 +75,8 @@ tags:
     description: Self-serve onboarding & human (owner) authentication (RFC 0002). Public, rate-limited; available only when BRAIN_SELF_SERVE_SIGNUP is enabled.
   - name: Docs
     description: Public, read-only API documentation surface — the interactive reference UI and the raw OpenAPI contract it renders.
+  - name: Reference
+    description: Public, tenant-agnostic reference data with no truth or provenance coupling.
 
 paths:
   /docs:
@@ -234,6 +245,396 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
+  /auth/siwx/challenge:
+    post:
+      tags: [Auth]
+      summary: Request a Sign-In With X (EIP-4361) nonce
+      description: |
+        Public. Issues a one-time nonce, held server-side (Redis) with a
+        5-minute TTL under `session_id`. The caller embeds the nonce in the
+        EIP-4361 message it asks the wallet to sign, then posts the signed
+        message to POST /auth/siwx along with `session_id`.
+      operationId: siwxChallenge
+      security: [] # public
+      responses:
+        '200':
+          description: Challenge issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nonce: { type: string }
+                  session_id: { type: string }
+                  domain: { type: string, description: 'EIP-4361 domain claim the message must bind to, e.g. api.brain.fi' }
+
+  /auth/siwx:
+    post:
+      tags: [Auth]
+      summary: Sign in with a verified EIP-4361 (Sign-In With X) wallet signature
+      description: |
+        Public. Verifies the EIP-4361 message and signature; on success
+        resolves the recovered address to a principal and issues a token:
+
+          - A wallet linked to a human owner (RFC 0002 Phase D) mints an
+            owner JWT with the same management/read/approve scopes as
+            POST /auth/login, never propose/execute scopes.
+          - Otherwise the address must match an `active` row in the agent
+            registry (on-chain `BrainMCPAgentRegistry`-backed); the issued
+            token carries `principal_type=agent` with the scope set drawn
+            from the agent's registered role. An unregistered address
+            returns 404 (`agent_not_found`).
+
+        `session_id` is optional: when present, the stored nonce for that
+        session must match the message's nonce (single-use, then deleted);
+        when omitted, the message's own nonce is trusted as single-use.
+      operationId: siwxVerify
+      security: [] # public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message, signature]
+              properties:
+                message: { type: string, description: The EIP-4361 message text the wallet signed }
+                signature: { type: string, description: Hex-encoded signature over `message` }
+                session_id: { type: string, description: Session id returned by POST /auth/siwx/challenge }
+      responses:
+        '200':
+          description: Authenticated; token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string, enum: [Bearer] }
+                  expires_in: { type: integer, description: Token lifetime in seconds. Default 3600 for agent tokens. }
+                  principal:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      type: { type: string, enum: [user, agent] }
+                      tenantId: { type: string }
+                      scopes: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: SIWX session expired/missing, or the message/signature failed EIP-4361 verification. Error code `auth_siwx_invalid`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: The recovered address is not linked to a human owner and does not match an active registered agent. Error code `agent_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /tenants/{tenant_id}/wallets:
+    post:
+      tags: [Auth]
+      summary: Link a wallet address to the tenant (RFC 0002 Phase D)
+      description: |
+        Owner JWT required, gated on `policy:write`. The path `tenant_id`
+        must equal the authenticated principal's tenant. Once linked, the
+        address can sign in via POST /auth/siwx. A human link defaults
+        `principal_id` to the calling owner; an agent link must name the
+        agent id explicitly. Registered only when self-serve onboarding is
+        enabled.
+      operationId: linkWallet
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, principal_type]
+              properties:
+                address: { type: string, pattern: '^0x[0-9a-fA-F]{40}$' }
+                principal_type: { type: string, enum: [human, agent] }
+                principal_id:
+                  type: string
+                  description: Defaults to the calling owner's id when principal_type=human. Required when principal_type=agent.
+      responses:
+        '201':
+          description: Wallet linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linked: { type: boolean, enum: [true] }
+                  address: { type: string, description: Lowercased }
+                  principal_type: { type: string, enum: [human, agent] }
+                  principal_id: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: |
+            Missing `policy:write` scope, or the path `tenant_id` does not
+            match the authenticated tenant. Error code
+            `auth_scope_insufficient` or `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  #############################################################################
+  # TENANCY: production tenant creation, sessions, invites
+  #############################################################################
+
+  /tenants:
+    post:
+      tags: [Tenancy]
+      summary: Create a production tenant with its founder bootstrap admin
+      description: |
+        Public route (`skipAuth`), gated instead by the
+        `X-Platform-Service-Auth` shared secret header
+        (`BRAIN_PLATFORM_SERVICE_SECRET`) — not a JWT bearer scope.
+        Rate-limited to 20/minute. Creates `tenant.kind='production'`,
+        one active bootstrap admin member, a `platform`-surface identity
+        link for the founder, and an initial member session (access +
+        refresh token pair). Rejects the request outright if the demo
+        provisioning header (`X-Demo-Provision-Auth`) is also present, to
+        keep the demo and production tenant-creation paths from being
+        conflatable.
+      operationId: createTenant
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [founder, founder_external_ref]
+              properties:
+                company_name: { type: string }
+                founder:
+                  type: object
+                  required: [email]
+                  properties:
+                    email: { type: string, format: email }
+                    display_name: { type: string, description: Defaults to email if omitted. }
+                founder_external_ref:
+                  type: string
+                  description: Platform identity reference for the founder (linked with surface:platform).
+      responses:
+        '201':
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id: { type: string }
+                  member: { $ref: '#/components/schemas/Member' }
+                  session:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      refresh_token: { type: string }
+                      expires_in: { type: integer, enum: [900] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: |
+            Missing/invalid `X-Platform-Service-Auth` header (error code
+            `auth_token_invalid`, standard Error envelope), the platform
+            secret is not configured on this deployment (error code
+            `dependency_unavailable`), or the demo provisioning header
+            was also present — that last case returns a bare
+            `{ "reason": "platform_service_credential_required" }` body,
+            NOT the standard Error envelope.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Error'
+                  - type: object
+                    properties:
+                      reason: { type: string, enum: [platform_service_credential_required] }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /sessions:
+    post:
+      tags: [Tenancy]
+      summary: Exchange a platform identity for a member session
+      description: |
+        Public route (`skipAuth`), gated by `X-Platform-Service-Auth`.
+        Rate-limited to 60/minute. Resolves `external_ref` to a member
+        via its `platform`-surface identity link; the member must be
+        `status: active`.
+      operationId: createSession
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [external_ref]
+              properties:
+                external_ref: { type: string }
+      responses:
+        '200':
+          description: Session issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  refresh_token: { type: string }
+                  expires_in: { type: integer, enum: [900] }
+                  member: { $ref: '#/components/schemas/Member' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Missing/invalid platform credential, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: 'No member is linked to this external_ref, or the linked member is not active. Returns `{ "reason": "session_identity_unlinked" }`, NOT the standard Error envelope.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reason: { type: string, enum: [session_identity_unlinked] }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    delete:
+      tags: [Tenancy]
+      summary: Revoke the caller's member refresh tokens
+      description: |
+        Requires a `user`-type JWT principal (standard bearer auth, no
+        platform credential). Revokes every non-revoked refresh token
+        for the calling member; does not invalidate the current access
+        token, which remains valid until it expires.
+      operationId: deleteSession
+      responses:
+        '200':
+          description: Refresh tokens revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: boolean, enum: [true] }
+        '403':
+          description: Caller is not a user-type principal. Error code `payment_intent_approval_invalid`, `details.reason=actor_unresolved`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sessions/refresh:
+    post:
+      tags: [Tenancy]
+      summary: Rotate a refresh token for a new access + refresh token pair
+      description: |
+        Public route (`skipAuth`) — no platform credential or bearer
+        token required, only the refresh token itself. Rate-limited to
+        60/minute. Refresh tokens are single-use: a token that has
+        already been rotated once is treated as reuse (potential theft)
+        and revokes the entire token family.
+      operationId: refreshSession
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: New token pair issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  refresh_token: { type: string }
+                  expires_in: { type: integer, enum: [900] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: |
+            Refresh token is unknown, revoked, or expired, or it was
+            already rotated once before (reuse — the entire token family
+            is revoked as a side effect of this response). Error code
+            `auth_token_invalid`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /invites/consume:
+    post:
+      tags: [Tenancy]
+      summary: Consume a member invite token and open a session
+      description: |
+        Public route (`skipAuth`), gated by `X-Platform-Service-Auth`.
+        Rate-limited to 60/minute. Links the platform `external_ref` to
+        the invited member, activates the member (`status: invited` ->
+        `active`), marks the invite consumed, and issues an initial
+        member session. `display_name` overrides the member's display
+        name if provided.
+      operationId: consumeInvite
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invite_token, external_ref]
+              properties:
+                invite_token: { type: string }
+                external_ref: { type: string }
+                display_name: { type: string }
+      responses:
+        '200':
+          description: Invite consumed; member activated and session issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id: { type: string }
+                  member: { $ref: '#/components/schemas/Member' }
+                  session:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      refresh_token: { type: string }
+                      expires_in: { type: integer, enum: [900] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Missing/invalid platform credential, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: |
+            Invite token is unknown (`{ "reason": "invite_invalid" }`,
+            NOT the standard Error envelope), or it was found but is
+            blocked: error code `invite_expired`, `invite_consumed`, or
+            `invite_revoked` (standard Error envelope for these three).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Error'
+                  - type: object
+                    properties:
+                      reason: { type: string, enum: [invite_invalid] }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   #############################################################################
   # LAYER 1: RAW
   #############################################################################
@@ -243,9 +644,10 @@ paths:
       tags: [Raw]
       summary: Ingest a financial artifact
       description: |
-        Accepts a financial artifact via direct upload or URL reference.
-        Content is stored immutably with SHA-256 content addressing.
-        Duplicate artifacts (same tenant, same SHA-256) return the existing raw_id.
+        Requires `raw:write`. Accepts a financial artifact via direct
+        upload or URL reference. Content is stored immutably with SHA-256
+        content addressing. Duplicate artifacts (same tenant, same
+        SHA-256) return the existing raw_id.
       operationId: ingestRaw
       requestBody:
         required: true
@@ -367,9 +769,12 @@ paths:
       tags: [Raw]
       summary: Webhook ingestion from a known provider
       description: |
-        HMAC-authenticated webhook endpoint. Each provider has a pre-registered
-        signing secret. Request is rejected if the provider signature header
-        does not verify. Provider-specific.
+        HMAC-authenticated webhook endpoint (`skipAuth`; the provider
+        signature replaces bearer auth). Only `plaid` has signature
+        verification always wired; `stripe` verifies when
+        `stripeVerify` credentials are configured, else 501.
+        `alchemy`, `netsuite`, and `generic_hmac` are enum placeholders
+        with no wired verification yet and also return 501.
       operationId: ingestWebhook
       security: []  # HMAC signature replaces bearer auth
       parameters:
@@ -403,15 +808,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '501':
+          description: Provider has no wired signature verification (stripe without configured credentials, alchemy, netsuite, generic_hmac).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /raw/{raw_id}:
     get:
       tags: [Raw]
       summary: Retrieve a raw artifact
       description: |
-        Returns a short-lived signed URL (10 minute expiry) pointing at the
-        artifact in Azure Blob Storage. The artifact itself is served with
-        Content-Disposition: attachment.
+        Requires `raw:read`. Returns a short-lived signed URL (10 minute
+        expiry) pointing at the artifact in Azure Blob Storage. The
+        artifact itself is served with Content-Disposition: attachment.
       operationId: getRaw
       parameters:
         - $ref: '#/components/parameters/RawId'
@@ -423,15 +833,19 @@ paths:
               schema:
                 type: object
                 properties:
-                  raw_id: { type: string, format: uuid }
+                  raw_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
                   sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
                   signed_url: { type: string, format: uri }
                   expires_at: { type: string, format: date-time }
                   mime_type: { type: string }
                   bytes: { type: integer, minimum: 0 }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: No such artifact. Error code `raw_artifact_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '410':
-          description: Artifact has been tombstoned
+          description: Artifact has been tombstoned. Error code `raw_artifact_tombstoned`.
           content:
             application/json:
               schema:
@@ -440,27 +854,40 @@ paths:
       tags: [Raw]
       summary: Tombstone a raw artifact
       description: |
-        Writes a tombstone record. The underlying artifact is retained in
-        storage per regulatory retention policy but becomes inaccessible
-        via the API and is filtered from all Wiki derivations.
+        Requires `raw:admin` (not `raw:write`). Writes a tombstone record.
+        The underlying artifact is retained in storage per regulatory
+        retention policy but becomes inaccessible via the API and is
+        filtered from all Wiki derivations.
       operationId: tombstoneRaw
       parameters:
         - $ref: '#/components/parameters/RawId'
       responses:
         '204':
           description: Tombstoned
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: No such artifact. Error code `raw_artifact_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '410':
-          description: Already tombstoned
+          description: 'Already tombstoned. Returns `{ raw_id, tombstoned: true }`, not the Error schema.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  raw_id: { type: string }
+                  tombstoned: { type: boolean, enum: [true] }
 
   /raw/{raw_id}/extract:
     post:
       tags: [Raw]
       summary: Trigger document extraction for a raw artifact
       description: |
-        Explicitly sends the referenced artifact bytes to the configured
-        document extraction agent. This route is manual by design and is not
-        called automatically after raw ingestion.
+        Requires `raw:write`. Explicitly sends the referenced artifact
+        bytes to the configured document extraction agent. This route is
+        manual by design and is not called automatically after raw
+        ingestion.
       operationId: extractRawDocument
       parameters:
         - $ref: '#/components/parameters/RawId'
@@ -473,7 +900,7 @@ paths:
                 type: object
                 required: [parsed_id, confidence]
                 properties:
-                  parsed_id: { type: string, format: uuid }
+                  parsed_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
                   confidence: { type: number, minimum: 0, maximum: 1 }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -502,7 +929,7 @@ paths:
     get:
       tags: [Raw]
       summary: Retrieve parsed output for an artifact
-      description: Returns normalized output from all parser versions.
+      description: Requires `raw:read`. Returns normalized output from all parser versions.
       operationId: getRawParsed
       parameters:
         - $ref: '#/components/parameters/RawId'
@@ -523,7 +950,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  raw_id: { type: string, format: uuid }
+                  raw_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
                   parsed:
                     type: array
                     items:
@@ -533,13 +960,14 @@ paths:
       tags: [Raw]
       summary: Write a parsed (stage-3) record for an artifact
       description: >
-        Records one parser-output row for the referenced artifact. Called by
-        extraction workers and first-party extractor agents (e.g.
-        document_extractor); it is the stage-3 producer of `raw_parsed`.
-        Naturally idempotent on the (raw_artifact_id, parser, parser_version)
-        tuple: re-posting the same tuple returns the existing row with 200.
-        Writing into Ledger remains the Ledger normalize service's job; this
-        endpoint never touches Ledger.
+        Requires `raw:write`. Records one parser-output row for the
+        referenced artifact. Called by extraction workers and first-party
+        extractor agents (e.g. document_extractor); it is the stage-3
+        producer of `raw_parsed`. Naturally idempotent on the
+        (raw_artifact_id, parser, parser_version) tuple: re-posting the
+        same tuple returns the existing row with 200. Writing into Ledger
+        remains the Ledger normalize service's job; this endpoint never
+        touches Ledger.
       operationId: writeRawParsed
       parameters:
         - $ref: '#/components/parameters/RawId'
@@ -569,7 +997,156 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RawParsed' }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: No such artifact. Error code `raw_artifact_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '410':
+          description: Artifact has been tombstoned. Error code `raw_artifact_tombstoned`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sources:
+    post:
+      tags: [Raw]
+      summary: Connect a source
+      description: |
+        Connects a source connector for this tenant. Idempotent (config:
+        `idempotent: true`). Requires `raw:write`.
+      operationId: connectSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, credentials]
+              properties:
+                type: { $ref: '#/components/schemas/SourceType' }
+                credentials:
+                  type: object
+                  additionalProperties: true
+                  description: Adapter-specific credentials, validated per connector. Never echoed back in responses.
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '201':
+          description: Source connected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Source' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    get:
+      tags: [Raw]
+      summary: List connected sources
+      description: Requires `raw:read`.
+      operationId: listSources
+      parameters:
+        - name: type
+          in: query
+          schema: { $ref: '#/components/schemas/SourceType' }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, paused, error, disconnected] }
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: cursor
+          in: query
+          schema: { type: string, description: Accepted but not yet implemented; next_cursor is always null. }
+      responses:
+        '200':
+          description: Source list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Source' }
+                  next_cursor: { type: [string, "null"] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /sources/{source_id}:
+    get:
+      tags: [Raw]
+      summary: Get a source
+      description: Requires `raw:read`.
+      operationId: getSource
+      parameters:
+        - name: source_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Source
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Source' }
+        '404':
+          description: No such source. Error code `source_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Raw]
+      summary: Disconnect a source
+      description: Requires `raw:write`. Marks the source disconnected; does not delete previously ingested artifacts.
+      operationId: disconnectSource
+      parameters:
+        - name: source_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Source disconnected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Source' }
+        '404':
+          description: No such source. Error code `source_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sources/{source_id}/sync:
+    post:
+      tags: [Raw]
+      summary: Trigger a sync for a source
+      description: |
+        Requires `raw:write`. Stub connectors (netsuite, email_inbound,
+        csv_upload, pdf_upload, alchemy_wallet, eth_address) return
+        immediately with `notes: "stub"` rather than performing a real sync.
+      operationId: syncSource
+      parameters:
+        - name: source_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '202':
+          description: Sync enqueued or running
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, source_id, status]
+                properties:
+                  job_id: { type: string }
+                  source_id: { type: string }
+                  status: { type: string, enum: [enqueued, running] }
+                  notes: { type: string, enum: [stub] }
+        '404':
+          description: No such source. Error code `source_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   #############################################################################
   # LAYER 2: LEDGER
@@ -579,6 +1156,7 @@ paths:
     get:
       tags: [Ledger]
       summary: List accounts
+      description: Requires `ledger:read`.
       operationId: listAccounts
       parameters:
         - name: status
@@ -614,6 +1192,7 @@ paths:
     get:
       tags: [Ledger]
       summary: Account detail
+      description: Requires `ledger:read`.
       operationId: getAccount
       parameters:
         - name: account_id
@@ -636,6 +1215,7 @@ paths:
     get:
       tags: [Ledger]
       summary: Point-in-time balances
+      description: Requires `ledger:read`.
       operationId: listBalances
       parameters:
         - name: account_id
@@ -661,6 +1241,7 @@ paths:
     get:
       tags: [Ledger]
       summary: List transactions
+      description: Requires `ledger:read`.
       operationId: listTransactions
       parameters:
         - name: account_id
@@ -705,6 +1286,7 @@ paths:
     get:
       tags: [Ledger]
       summary: Transaction detail
+      description: Requires `ledger:read`.
       operationId: getTransaction
       parameters:
         - name: transaction_id
@@ -723,6 +1305,7 @@ paths:
     get:
       tags: [Ledger]
       summary: List/search counterparties
+      description: Requires `ledger:read`.
       operationId: listCounterparties
       parameters:
         - name: q
@@ -754,6 +1337,16 @@ paths:
     post:
       tags: [Ledger]
       summary: Manually create or merge a counterparty
+      description: |
+        Requires `ledger:write`. Identity-only: payment rail fields (IBAN,
+        account number, routing, SWIFT, BIC, wallet, bank details) are
+        rejected with `payment_fields_not_allowed`, never written. Unknown
+        body fields return `unknown_field`; server-controlled trust fields
+        (`provenance`, `confidence`, `verified_status`, `risk_level`)
+        return `field_not_editable`. Provenance is derived from the
+        principal, not the request body: user principals write
+        `human_confirmed`, agent and API partner principals write
+        `agent_contributed`.
       operationId: createCounterparty
       requestBody:
         required: true
@@ -796,12 +1389,21 @@ paths:
                   counterparty: { $ref: '#/components/schemas/Counterparty' }
                   created: { type: boolean }
                   merged: { type: boolean }
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400':
+          description: |
+            Error code `request_body_invalid`; `details.reason` is one of
+            `payment_fields_not_allowed`, `unknown_field`, `field_not_editable`
+            (each with `details.fields` listing the offending keys), or
+            `invalid_type`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /ledger/counterparties/{counterparty_id}:
     get:
       tags: [Ledger]
       summary: Counterparty detail
+      description: Requires `ledger:read`.
       operationId: getCounterparty
       parameters:
         - name: counterparty_id
@@ -818,6 +1420,14 @@ paths:
     patch:
       tags: [Ledger]
       summary: Edit counterparty identity fields
+      description: |
+        Requires `ledger:write` and a user principal (agent and API
+        partner principals are rejected). Identity-only, same field
+        restrictions as create: payment rail fields return
+        `payment_fields_not_allowed`, unknown fields return
+        `unknown_field`, server-controlled trust fields return
+        `field_not_editable`. Renaming preserves the previous name as an
+        alias; aliases are append-only.
       operationId: updateCounterpartyIdentity
       parameters:
         - name: counterparty_id
@@ -849,11 +1459,23 @@ paths:
                 type: object
                 properties:
                   counterparty: { $ref: '#/components/schemas/Counterparty' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '400':
+          description: |
+            Error code `request_body_invalid`; `details.reason` is one of
+            `payment_fields_not_allowed`, `unknown_field`, or
+            `field_not_editable` (with `details.fields` listing the
+            offending keys).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Caller is not a user principal. Error code `payment_intent_approval_invalid`, `details.reason=actor_unresolved`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Rename conflicts with another counterparty
+          description: Rename conflicts with another counterparty. Error code `ledger_reconciliation_conflict`, `details.reason=name_conflict`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -861,6 +1483,7 @@ paths:
     get:
       tags: [Ledger]
       summary: List obligations (bills, invoices, subscriptions)
+      description: Requires `ledger:read`.
       operationId: listObligations
       parameters:
         - name: status
@@ -890,11 +1513,12 @@ paths:
       tags: [Ledger]
       summary: Resolved cross-source view of an obligation (observations, authority, conflicts)
       description: |
-        The reconciled fact for one obligation: every source observation
-        retained, field-level authority (which source owns each field),
-        conflicts listed where sources disagree, and duplicate candidates
-        pending user review. The "explain this number, including where sources
-        disagree" surface (Phase 4 resolution / §13).
+        Requires `ledger:read`. The reconciled fact for one obligation:
+        every source observation retained, field-level authority (which
+        source owns each field), conflicts listed where sources disagree,
+        and duplicate candidates pending user review. The "explain this
+        number, including where sources disagree" surface (Phase 4
+        resolution / §13).
       operationId: resolveObligation
       parameters:
         - name: obligation_id
@@ -914,9 +1538,10 @@ paths:
       tags: [Ledger]
       summary: Resolved organization view of a counterparty (linked observations, facets)
       description: |
-        The reconciled organization for one counterparty: linked observations
-        across sources/types unioned into facets, name variants listed, and
-        duplicate candidates pending user review (Phase 4 resolution / §13).
+        Requires `ledger:read`. The reconciled organization for one
+        counterparty: linked observations across sources/types unioned
+        into facets, name variants listed, and duplicate candidates
+        pending user review (Phase 4 resolution / §13).
       operationId: resolveCounterparty
       parameters:
         - name: counterparty_id
@@ -936,10 +1561,11 @@ paths:
       tags: [Ledger]
       summary: Resolved money-pool view of an account (per-observation balances, links)
       description: |
-        The reconciled money pool for one account: balances reported per
-        observation (never adjudicated), confirmed-duplicate links followed,
-        candidates pending user review. Account duplicates never auto-match
-        (Phase 4 / §13), so member links here are human-confirmed.
+        Requires `ledger:read`. The reconciled money pool for one account:
+        balances reported per observation (never adjudicated),
+        confirmed-duplicate links followed, candidates pending user
+        review. Account duplicates never auto-match (Phase 4 / §13), so
+        member links here are human-confirmed.
       operationId: resolveAccount
       parameters:
         - name: account_id
@@ -958,6 +1584,7 @@ paths:
     get:
       tags: [Ledger]
       summary: List invoices
+      description: Requires `ledger:read`.
       operationId: listInvoices
       parameters:
         - name: status
@@ -984,9 +1611,9 @@ paths:
       tags: [Ledger]
       summary: Idempotently normalize a Raw artifact into Ledger rows
       description: |
-        Normalizes a raw_parsed row (or a raw_artifact_id + parser tuple) into
-        Ledger entities. Idempotent: re-running with the same input returns
-        the same Ledger row ids. Used by the extractor pipeline and by
+        Requires `ledger:write`. Normalizes a raw_parsed row into Ledger
+        entities. Idempotent: re-running with the same input returns the
+        same Ledger row ids. Used by the extractor pipeline and by
         /wiki/annotate's write-through path.
       operationId: normalizeRaw
       requestBody:
@@ -1025,6 +1652,7 @@ paths:
     post:
       tags: [Ledger]
       summary: Run the reconciliation engine over recent ledger rows
+      description: Requires `ledger:write`.
       operationId: runReconciliation
       requestBody:
         required: false
@@ -1052,10 +1680,16 @@ paths:
                   job_id: { type: string }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '501':
+          description: ReconciliationService not configured for this app instance. Error code `raw_source_unsupported`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /ledger/reconciliation-matches:
     get:
       tags: [Ledger]
       summary: List reconciliation matches
+      description: Requires `ledger:read`.
       operationId: listReconciliationMatches
       parameters:
         - name: status
@@ -1077,6 +1711,35 @@ paths:
                     items: { $ref: '#/components/schemas/ReconciliationMatch' }
         '400': { $ref: '#/components/responses/BadRequest' }
 
+  /ledger/cash_flows:
+    get:
+      tags: [Ledger]
+      summary: Cash-flow aggregation over a trailing window
+      description: |
+        Requires `ledger:read`. Aggregates transactions in the trailing
+        `days` window (default 30, max 365) by currency and by day. Pulls
+        up to 1000 transactions per request; very high-volume tenants may
+        not see the full window reflected (no cursor pagination yet).
+      operationId: getCashFlows
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, default: 30, minimum: 1, maximum: 365 }
+        - name: currency
+          in: query
+          schema: { type: string, pattern: '^[A-Z]{3}$' }
+      responses:
+        '200':
+          description: Cash-flow summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CashFlowSummary' }
+        '400':
+          description: Malformed `currency`. Error code `request_params_invalid`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   #############################################################################
   # LAYER 3: WIKI (memory)
   #############################################################################
@@ -1086,6 +1749,7 @@ paths:
     get:
       tags: [Wiki]
       summary: List/search wiki pages
+      description: Requires `wiki:read`.
       operationId: listMemoryPages
       parameters:
         - name: page_type
@@ -1116,6 +1780,7 @@ paths:
     get:
       tags: [Wiki]
       summary: Get a single wiki page
+      description: Requires `wiki:read`.
       operationId: getMemoryPage
       parameters:
         - name: slug_or_id
@@ -1128,12 +1793,20 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WikiPage' }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: No such page. Error code `wiki_page_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /memory/regenerate:
     post:
       tags: [Wiki]
       summary: Regenerate a wiki page from current Ledger state
+      description: |
+        Despite being a POST, requires only `wiki:read` (not `wiki:write`)
+        — regeneration re-derives the page from existing Ledger/Raw state
+        rather than writing new source-of-truth data.
       operationId: regenerateMemoryPage
       requestBody:
         required: true
@@ -1156,6 +1829,7 @@ paths:
     get:
       tags: [Wiki]
       summary: Semantic + lexical search across wiki pages
+      description: Requires `wiki:read`.
       operationId: searchMemory
       parameters:
         - name: q
@@ -1186,6 +1860,7 @@ paths:
     get:
       tags: [Wiki]
       summary: Fetch an entity with one-hop neighbors
+      description: Requires `wiki:read`.
       operationId: getWikiEntity
       parameters:
         - $ref: '#/components/parameters/EntityId'
@@ -1213,15 +1888,20 @@ paths:
                       properties:
                         relation: { $ref: '#/components/schemas/WikiRelation' }
                         entity: { $ref: '#/components/schemas/WikiEntity' }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: No such entity. Error code `wiki_entity_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /wiki/entity/{entity_id}/evidence:
     get:
       tags: [Wiki]
       summary: Retrieve the evidence chain for an entity
       description: |
-        Returns the full provenance chain: every raw_parsed record and
-        extraction path that produced this entity and its attributes.
+        Requires `wiki:read`. Returns the full provenance chain: every
+        raw_parsed record and extraction path that produced this entity
+        and its attributes.
       operationId: getEntityEvidence
       parameters:
         - $ref: '#/components/parameters/EntityId'
@@ -1234,10 +1914,16 @@ paths:
                 $ref: '#/components/schemas/EvidenceChain'
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: No versions found for this entity. Error code `wiki_entity_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /wiki/entity/{entity_id}/history:
     get:
       tags: [Wiki]
       summary: All temporal versions of an entity
+      description: Requires `wiki:read`.
       operationId: getEntityHistory
       parameters:
         - $ref: '#/components/parameters/EntityId'
@@ -1249,17 +1935,23 @@ paths:
               schema:
                 type: object
                 properties:
-                  entity_id: { type: string, format: uuid }
+                  entity_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
                   versions:
                     type: array
                     items:
                       $ref: '#/components/schemas/WikiEntity'
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: No versions found for this entity. Error code `wiki_entity_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /wiki/search:
     get:
       tags: [Wiki]
       summary: Search the Wiki
+      description: Requires `wiki:read`.
       operationId: searchWiki
       parameters:
         - name: kind
@@ -1304,10 +1996,11 @@ paths:
       tags: [Wiki]
       summary: Natural-language question against the Wiki
       description: |
-        Translates a natural-language question into a set of SQL queries
-        against the Wiki, executes them, and composes an answer with an
-        evidence path attached. This is the LLM-in-hot-path endpoint.
-        Costs apply per call; see pricing documentation.
+        Requires `wiki:read`. Translates a natural-language question into
+        a set of SQL queries against the Wiki, executes them, and
+        composes an answer with an evidence path attached. This is the
+        LLM-in-hot-path endpoint. Costs apply per call; see pricing
+        documentation.
       operationId: askWiki
       requestBody:
         required: true
@@ -1344,9 +2037,11 @@ paths:
       tags: [Wiki]
       summary: Human correction on an entity or relation
       description: |
-        Submits a structured correction. Corrections are applied as a new
-        temporal version with provenance=human_confirmed. The original
-        version is retained.
+        Requires `wiki:write`. Submits a structured correction. Corrections
+        are applied as a new temporal version with
+        provenance=human_confirmed. The original version is retained.
+        Rate-limited per (tenant, principal): 60/hour by default
+        (`WIKI_ANNOTATION_RATE_PER_HOUR`), checked before any write.
       operationId: annotateWiki
       requestBody:
         required: true
@@ -1364,14 +2059,25 @@ paths:
               schema:
                 type: object
                 properties:
-                  annotation_id: { type: string, format: uuid }
-                  new_version_id: { type: string, format: uuid }
+                  annotation_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+                  new_version_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: 'entity_id was provided but no such entity exists. Error code `wiki_entity_not_found`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Annotation rate limit exceeded. Error code `rate_limit_exceeded`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /wiki/schema:
     get:
       tags: [Wiki]
       summary: Retrieve current JSON schemas per entity and relation kind
+      description: Requires `wiki:read`.
       operationId: getWikiSchema
       parameters:
         - name: kind
@@ -1397,6 +2103,10 @@ paths:
     get:
       tags: [Policy]
       summary: Get the active policy for a tenant
+      description: |
+        Requires `policy:read`. The path `tenant_id` must equal the
+        authenticated principal's tenant (cross-tenant reads are rejected
+        with `auth_tenant_mismatch`, not 404).
       operationId: getActivePolicy
       parameters:
         - $ref: '#/components/parameters/TenantId'
@@ -1407,12 +2117,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Policy'
-        '404': { $ref: '#/components/responses/NotFound' }
+        '403':
+          description: Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No active policy for this tenant. Error code `policy_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /policy/{tenant_id}/versions:
     get:
       tags: [Policy]
       summary: List policy versions
+      description: Requires `policy:read` and matching path/token tenant.
       operationId: listPolicyVersions
       parameters:
         - $ref: '#/components/parameters/TenantId'
@@ -1429,12 +2149,19 @@ paths:
                     items: { $ref: '#/components/schemas/Policy' }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /policy/{tenant_id}/compose:
     post:
       tags: [Policy]
       summary: Compose a new policy, returns signing payload
       description: |
-        Validates the proposed policy against the DSL schema. Returns an
+        Requires `policy:write` and matching path/token tenant. Validates
+        the proposed policy against the DSL schema, inserts it in `draft`
+        state, transitions it to `pending_signatures`, and returns an
         EIP-712 typed-data signing payload. Caller then signs with the
         appropriate keys and submits via /sign.
       operationId: composePolicy
@@ -1445,7 +2172,12 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PolicyDSL'
+              type: object
+              required: [content]
+              properties:
+                content:
+                  $ref: '#/components/schemas/PolicyDSL'
+                quorum_required: { type: integer, default: 1 }
       responses:
         '200':
           description: Signing payload
@@ -1454,19 +2186,34 @@ paths:
               schema:
                 type: object
                 properties:
-                  content_hash: { type: string, pattern: '^0x[a-f0-9]{64}$' }
-                  typed_data:
+                  policy_id: { type: string }
+                  state: { type: string, enum: [pending_signatures] }
+                  signing_payload:
                     description: EIP-712 typed data document to sign
                     type: object
-                  required_signers:
-                    type: array
-                    items: { type: string }
-        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '400':
+          description: '`content` must be `{ version: number, rules: [] }`. Error code `policy_rule_invalid`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /policy/{tenant_id}/sign:
     post:
       tags: [Policy]
       summary: Submit signatures for a composed policy
+      description: |
+        Requires `policy:sign` and matching path/token tenant. Each
+        signature is verified against the EIP-712 typed data for the
+        policy; signers must be distinct and pre-authorized on the
+        tenant's on-chain signer allowlist. Once signature count reaches
+        `quorum_required` the policy transitions `pending_signatures` →
+        `active`; below quorum the signatures are recorded but the policy
+        stays `pending_signatures` (still 200, `activated: false`).
       operationId: signPolicy
       parameters:
         - $ref: '#/components/parameters/TenantId'
@@ -1476,25 +2223,52 @@ paths:
           application/json:
             schema:
               type: object
-              required: [content_hash, signatures]
+              required: [policy_id, signatures]
               properties:
-                content_hash: { type: string }
+                policy_id: { type: string }
                 signatures:
                   type: array
                   items:
                     type: object
+                    required: [address, signature]
                     properties:
-                      signer: { type: string, description: Signer address }
-                      signature: { type: string }
+                      address: { type: string, description: Signer address (0x-prefixed) }
+                      signature: { type: string, description: EIP-712 signature (0x-prefixed) }
       responses:
-        '201':
-          description: Policy activated
+        '200':
+          description: Signature recorded; policy activated if quorum was reached
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Policy'
+                type: object
+                properties:
+                  policy: { $ref: '#/components/schemas/Policy' }
+                  activated: { type: boolean }
+        '400':
+          description: '`policy_id` and `signatures[]` are required. Error code `policy_signature_invalid`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: |
+            A signature did not verify, is a duplicate signer, or the
+            signer is not an authorized tenant signer. Error code
+            `policy_signature_invalid`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No such policy. Error code `policy_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: Insufficient signatures
+          description: Policy is not in `pending_signatures` state. Error code `policy_quorum_not_met`.
           content:
             application/json:
               schema:
@@ -1504,6 +2278,10 @@ paths:
     post:
       tags: [Policy]
       summary: Evaluate a proposed action against active policy
+      description: |
+        Requires `policy:read` (despite being a POST — evaluation is a
+        read against the active policy, it writes nothing) and matching
+        path/token tenant.
       operationId: evaluatePolicy
       parameters:
         - $ref: '#/components/parameters/TenantId'
@@ -1512,7 +2290,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ProposedAction'
+              type: object
+              required: [action]
+              properties:
+                action: { $ref: '#/components/schemas/ProposedAction' }
       responses:
         '200':
           description: Decision and trace
@@ -1522,10 +2303,21 @@ paths:
                 $ref: '#/components/schemas/PolicyDecision'
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No active policy for this tenant. Error code `policy_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /policy/{tenant_id}/simulate:
     post:
       tags: [Policy]
       summary: Replay an action against a historical policy version
+      description: Requires `policy:read` and matching path/token tenant.
       operationId: simulatePolicy
       parameters:
         - $ref: '#/components/parameters/TenantId'
@@ -1548,10 +2340,21 @@ paths:
                 $ref: '#/components/schemas/PolicyDecision'
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No such policy version. Error code `policy_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /policy/{tenant_id}/lint:
     post:
       tags: [Policy]
       summary: Static-analyze a candidate policy before signing (H-18)
+      description: Requires `policy:read` and matching path/token tenant.
       operationId: lintPolicy
       parameters:
         - $ref: '#/components/parameters/TenantId'
@@ -1585,11 +2388,21 @@ paths:
                         rule_id: { type: [string, "null"] }
                         message: { type: string }
 
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400':
+          description: '`policy_content` must be `{ version, rules[] }`. Error code `policy_rule_invalid`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /policy/{tenant_id}/diff:
     post:
       tags: [Policy]
       summary: Semantic diff between two policy versions (H-18)
+      description: Requires `policy:read` and matching path/token tenant.
       operationId: diffPolicy
       parameters:
         - $ref: '#/components/parameters/TenantId'
@@ -1616,12 +2429,22 @@ paths:
                   added: { type: array, items: { type: object } }
                   removed: { type: array, items: { type: object } }
                   modified: { type: array, items: { type: object } }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '403':
+          description: Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: One or both versions not found. Error code `policy_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /policy/{tenant_id}/simulate-historical:
     post:
       tags: [Policy]
       summary: Replay the period's actions against a candidate policy (H-18)
+      description: Requires `policy:read` and matching path/token tenant.
       operationId: simulateHistoricalPolicy
       parameters:
         - $ref: '#/components/parameters/TenantId'
@@ -1648,8 +2471,28 @@ paths:
                   would_allow: { type: integer }
                   would_confirm: { type: integer }
                   would_reject: { type: integer }
-                  diff_vs_active: { type: object }
-        '400': { $ref: '#/components/responses/BadRequest' }
+                  diff_vs_active:
+                    type: object
+                    required: [newly_allowed, newly_rejected, changed_other, unchanged]
+                    description: Empty buckets when the tenant has no active policy to diff against.
+                    properties:
+                      newly_allowed: { type: array, items: { type: string } }
+                      newly_rejected: { type: array, items: { type: string } }
+                      changed_other:
+                        type: array
+                        items: { type: string }
+                        description: Outcome changed but not into allow/reject (e.g. allow to confirm)
+                      unchanged: { type: integer }
+        '400':
+          description: '`period_start`/`period_end` must be ISO dates, or `policy_content` must be `{ version, rules[] }`. Error code `request_body_invalid` or `policy_rule_invalid`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Path `tenant_id` does not match the authenticated tenant. Error code `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   #############################################################################
   # LAYER 5: AGENT (action orchestration; legacy /execution/* paths retained)
@@ -1666,9 +2509,10 @@ paths:
       summary: List agents available to the tenant (internal-agent catalog)
       operationId: listAgents
       description: |
-        Returns the first-party agent catalog (capability definitions). Internal
-        and external agents share these routes — kind/provenance is a metadata
-        field, not a separate path.
+        Requires `execution:read`. Returns the first-party agent catalog
+        (capability definitions). Internal and external agents share
+        these routes — kind/provenance is a metadata field, not a
+        separate path.
       parameters:
         - name: kind
           in: query
@@ -1707,6 +2551,7 @@ paths:
     get:
       tags: [Agent]
       summary: Agent detail (catalog definition + on-chain registration)
+      description: Requires `execution:read`.
       operationId: getAgent
       parameters:
         - name: agent_id
@@ -1725,6 +2570,11 @@ paths:
                   registration: { type: [object, "null"] }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: No such agent in the catalog. Error code `agent_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /agents/{agent_id}/propose:
     post:
       tags: [Agent]
@@ -1751,22 +2601,16 @@ paths:
               properties:
                 action: { type: object }
       responses:
-        '201':
-          description: Proposal created with policy decision attached
+        '404':
+          description: Always returned. This operation is not implemented.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  proposal_id: { type: string }
-                  policy_decision_id: { type: string }
-                  status: { type: string }
-
-        '400': { $ref: '#/components/responses/BadRequest' }
+              schema: { $ref: '#/components/schemas/Error' }
   /agents/{agent_id}/actions:
     get:
       tags: [Agent]
       summary: Recent actions/proposals for an agent
+      description: Requires `execution:read`. Implemented in the PaymentIntent routes module (`services/execution`), not agent-router.
       operationId: listAgentActions
       parameters:
         - name: agent_id
@@ -1887,7 +2731,10 @@ paths:
     post:
       tags: [Agent]
       summary: Routing decision only (no run)
-      description: Returns the selected agent + scoring reason. Advisory; the selected agent still proposes through the gated path.
+      description: |
+        Requires `execution:read`. Returns the selected agent + scoring
+        reason. Advisory; the selected agent still proposes through the
+        gated path.
       operationId: routeAgent
       requestBody:
         required: true
@@ -1907,10 +2754,12 @@ paths:
       tags: [Agent]
       summary: Route, resolve action, persist a run, and propose (shadow-aware)
       description: |
-        Routes an event/intent to an agent, resolves the action within it,
-        evaluates the §6 gate in dry-run, persists an `agent_runs` row, and
-        proposes through the existing path. A financial proposal from a shadowed
-        (un-promoted) agent terminates as `shadow_completed` and moves no money.
+        Requires `payment_intent:propose`. Routes an event/intent to an
+        agent, resolves the action within it, evaluates the §6 gate in
+        dry-run, persists an `agent_runs` row, and proposes through the
+        existing path. A financial proposal from a shadowed
+        (un-promoted) agent terminates as `shadow_completed` and moves no
+        money.
       operationId: runAgent
       requestBody:
         required: true
@@ -1934,6 +2783,7 @@ paths:
     post:
       tags: [Agent]
       summary: Enqueue an event-driven route/run job
+      description: Requires `payment_intent:propose`.
       operationId: enqueueAgentEvent
       requestBody:
         required: true
@@ -1941,7 +2791,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/AgentRouteRequest' }
       responses:
-        '200':
+        '202':
           description: Job enqueued
           content:
             application/json:
@@ -1956,6 +2806,7 @@ paths:
     get:
       tags: [Agent]
       summary: List agent runs
+      description: Requires `execution:read`.
       operationId: listAgentRuns
       parameters:
         - name: agent_id
@@ -1987,6 +2838,7 @@ paths:
     get:
       tags: [Agent]
       summary: Agent run detail
+      description: Requires `execution:read`.
       operationId: getAgentRun
       parameters:
         - name: run_id
@@ -2024,7 +2876,7 @@ paths:
     get:
       tags: [Agent]
       summary: Why this agent was selected for the run (H-25)
-      description: Which agents were candidates, why this one was selected (router multi-factor reason — score, evidence completeness, reputation, cost), and the runtime behavior hash.
+      description: Requires `execution:read`. Which agents were candidates, why this one was selected (router multi-factor reason — score, evidence completeness, reputation, cost), and the runtime behavior hash.
       operationId: getAgentRunWhy
       parameters:
         - name: run_id
@@ -2050,6 +2902,7 @@ paths:
     get:
       tags: [Agent]
       summary: Evidence chain the agent consumed for the run (H-25)
+      description: Requires `execution:read`.
       operationId: getAgentRunEvidence
       parameters:
         - name: run_id
@@ -2072,6 +2925,7 @@ paths:
     get:
       tags: [Agent]
       summary: The §6 gate check trace if a gate ran during the run (H-25)
+      description: Requires `execution:read`.
       operationId: getAgentRunGateTrace
       parameters:
         - name: run_id
@@ -2095,7 +2949,7 @@ paths:
     get:
       tags: [Agent]
       summary: Proof for the action the run produced (H-25 → H-07)
-      description: Proxies the Proof API for the run's PaymentIntent. 404 if the run produced no on-ledger action.
+      description: Requires `execution:read`. Proxies the Proof API for the run's PaymentIntent. 404 if the run produced no on-ledger action.
       operationId: getAgentRunProof
       parameters:
         - name: run_id
@@ -2114,6 +2968,7 @@ paths:
     get:
       tags: [Agent]
       summary: Routing decision detail
+      description: Requires `execution:read`.
       operationId: getRoutingDecision
       parameters:
         - name: id
@@ -2132,7 +2987,11 @@ paths:
     post:
       tags: [Agent]
       summary: Halt an agent — pause its in-flight intents and quarantine it
-      description: Tenant-root kill-switch (1b.3). Pauses all in-flight PaymentIntents from the agent and flips its state to `quarantined`.
+      description: |
+        Requires `payment_intent:approve` (not an execution-admin scope —
+        halt authority piggybacks on approval authority). Tenant-root
+        kill-switch (1b.3). Pauses all in-flight PaymentIntents from the
+        agent and flips its state to `quarantined`.
       operationId: haltAgent
       parameters:
         - name: agent_id
@@ -2152,11 +3011,41 @@ paths:
                   quarantined: { type: boolean }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+  /agents/{agent_id}/quarantine/release:
+    post:
+      tags: [Agent]
+      summary: Release an agent's contribution quarantine
+      description: |
+        Requires `payment_intent:approve` (same scope as halt). Clears
+        the quarantine so subsequent agent contributions extract
+        normally again. Idempotent (config `idempotent: true`). Does not
+        un-pause PaymentIntents paused by a prior halt.
+      operationId: releaseAgentQuarantine
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Quarantine released
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent_id: { type: string }
+                  quarantine_released: { type: boolean, enum: [true] }
+        '404':
+          description: No such agent, or the agent had no quarantine to release. Error code `execution_agent_not_registered`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /agents/halt-category:
     post:
       tags: [Agent]
       summary: Emergency-stop every agent in a category
-      description: Break-glass + tenant-root. Halts all agents of the given category.
+      description: Requires `payment_intent:approve`. Break-glass + tenant-root. Halts all agents of the given category.
       operationId: haltCategory
       requestBody:
         required: true
@@ -2190,6 +3079,7 @@ paths:
     post:
       tags: [PaymentIntent]
       summary: Create a PaymentIntent (proposed)
+      description: 'Requires `payment_intent:propose`. Idempotent (config `idempotent: true`).'
       operationId: createPaymentIntent
       requestBody:
         required: true
@@ -2273,6 +3163,7 @@ paths:
     get:
       tags: [PaymentIntent]
       summary: PaymentIntent detail with PolicyDecision and audit trail
+      description: Requires `execution:read`.
       operationId: getPaymentIntent
       parameters:
         - name: id
@@ -2285,12 +3176,27 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PaymentIntent' }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: No such PaymentIntent. Error code `payment_intent_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /payment-intents/{id}/approve:
     post:
       tags: [PaymentIntent]
       summary: Sign approval on a confirm-mode PaymentIntent
+      description: |
+        Requires `payment_intent:approve`. The actor resolves through
+        `ActorResolver` to a tenant member (session actors require
+        `principal_type=user`) and must pass, in order: active tenant
+        member, admin or approver role, authorized approval domain,
+        per-item limit, actor is not the payee, and (when the policy
+        decision or the member's own dual-control threshold requires it) a
+        distinct second approval. When a second, distinct approval is
+        still required the PaymentIntent moves to
+        `awaiting_second_approval` instead of `approved`; the same member
+        approving twice is rejected with `second_approval_required`.
       operationId: approvePaymentIntent
       parameters:
         - name: id
@@ -2299,16 +3205,37 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Updated PaymentIntent
+          description: Updated PaymentIntent. Status is `approved` if this was the final required approval, or `awaiting_second_approval` if a distinct second approval is still required.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PaymentIntent' }
 
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: The PaymentIntent is not in `pending_approval` or `awaiting_second_approval` state. Error code `payment_intent_invalid_state`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: |
+            The approval authority gate rejected the actor. Error code
+            `payment_intent_approval_invalid`; `details.reason` is one of:
+            `actor_unresolved` (no resolvable active member for the
+            calling principal), `actor_inactive`, `domain_not_authorized`
+            (missing admin/approver role or the member's approval domains
+            do not cover this action), `actor_limit_exceeded` (amount
+            exceeds the member's per-item limit), `self_approval_blocked`
+            (the member is the payee, including an employee payee with an
+            unresolved email, `details.payee_unresolved=true`), or
+            `second_approval_required` (this member already signed and a
+            distinct second approver is still required).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /payment-intents/{id}/reject:
     post:
       tags: [PaymentIntent]
       summary: Reject a PaymentIntent
+      description: Requires `payment_intent:approve`.
       operationId: rejectPaymentIntent
       parameters:
         - name: id
@@ -2330,13 +3257,17 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PaymentIntent' }
 
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: The PaymentIntent is not in a rejectable state. Error code `payment_intent_invalid_state`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /payment-intents/{id}/execute:
     post:
       tags: [PaymentIntent]
       summary: Execute an approved PaymentIntent through its rail
       description: |
-        Runs the deterministic 13-step pre-execution gate (§6 of Engineering
+        Requires `payment_intent:execute`. Runs the deterministic 13-step pre-execution gate (§6 of Engineering
         Standards), then durably hands the action to the execution outbox
         (H-04). On success the intent transitions approved → dispatching and a
         `pending` outbox row is enqueued atomically; the outbox worker then
@@ -2373,7 +3304,7 @@ paths:
     post:
       tags: [PaymentIntent]
       summary: Pause an approved PaymentIntent (kill-switch)
-      description: Holds an `approved` intent without a terminal transition (1b.3). approved → paused.
+      description: Requires `payment_intent:approve` (an approver can hold/release; tenant-root is the operational owner). Holds an `approved` intent without a terminal transition (1b.3). approved → paused.
       operationId: pausePaymentIntent
       parameters:
         - name: id
@@ -2396,7 +3327,7 @@ paths:
     post:
       tags: [PaymentIntent]
       summary: Resume a paused PaymentIntent
-      description: Re-runs the live §6 gate before re-entering `approved` (defends against Ledger state drift while paused). paused → approved.
+      description: Requires `payment_intent:approve`. Re-runs the live §6 gate before re-entering `approved` (defends against Ledger state drift while paused). paused → approved.
       operationId: resumePaymentIntent
       parameters:
         - name: id
@@ -2420,7 +3351,7 @@ paths:
       tags: [PaymentIntent]
       summary: Typed forensic record for a PaymentIntent
       description: |
-        Returns the intent, its executions (each with its typed rail receipt),
+        Requires `execution:read`. Returns the intent, its executions (each with its typed rail receipt),
         and the linking ids (policy_decision_id, evidence_ids). The policy
         decision, reservation, and audit chain are referenced by id and joined
         via their owning service APIs (2.4).
@@ -2447,6 +3378,347 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
 
   #############################################################################
+  # MEMBERS — tenant approval authority model
+  #############################################################################
+
+  /members:
+    get:
+      tags: [Members]
+      summary: List tenant members
+      description: |
+        Requires `execution:read` and a resolvable active member as the
+        calling actor (session actor resolution requires
+        `principal_type=user`; agent and machine principals are not
+        member-resolvable and receive 403).
+      operationId: listMembers
+      parameters:
+        - name: role
+          in: query
+          schema: { type: string, enum: [admin, approver, viewer] }
+        - name: domain
+          in: query
+          schema: { type: string, enum: [ap, ar, treasury, payroll, reconciliation] }
+      responses:
+        '200':
+          description: Member list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: '#/components/schemas/Member' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: Caller is not a resolvable active member. Error code `payment_intent_approval_invalid`, `details.reason=actor_unresolved`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    post:
+      tags: [Members]
+      summary: Create a member
+      description: |
+        Requires `execution:admin` and an active admin member as the
+        calling actor. When `invite: true`, the member is created with
+        `status: invited` (not immediately active) and a one-time invite
+        token is returned in the response — it must be exchanged via
+        `POST /invites/consume`. Omitting `invite` (or setting it false)
+        creates an immediately `active` member with no invite step.
+      operationId: createMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemberCreateRequest' }
+      responses:
+        '201':
+          description: Member created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [member, audit_id]
+                properties:
+                  member: { $ref: '#/components/schemas/Member' }
+                  audit_id: { type: string }
+                  invite_token:
+                    type: string
+                    description: 'Present only when the request set `invite: true`. Shown once; not retrievable again — reissue via POST /members/{id}/invites if lost.'
+                  invite_expires_in_hours:
+                    type: integer
+                    enum: [72]
+                    description: 'Present only when the request set `invite: true`.'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: Caller is not a resolvable active member, or is not an admin member. Error code `payment_intent_approval_invalid` (`details.reason=actor_unresolved`) or `auth_scope_insufficient`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /members/{id}:
+    get:
+      tags: [Members]
+      summary: Get a member
+      description: Requires `execution:read` and a resolvable active member as the calling actor.
+      operationId: getMember
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Member
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Member' }
+        '403':
+          description: Caller is not a resolvable active member. Error code `payment_intent_approval_invalid`, `details.reason=actor_unresolved`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Member not found. Error code `agent_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch:
+      tags: [Members]
+      summary: Update a member
+      description: |
+        Requires `execution:admin` and an active admin member as the
+        calling actor. Only fields present in the body are changed.
+        Setting `status` (`invited`|`active`|`deactivated`) also derives
+        `active` (true only for `active`); setting `active` also derives
+        `status` (`active` or `deactivated`) — the two are kept in sync
+        regardless of which one the caller sends. Demoting the last
+        active admin away from `role=admin`, or setting `active=false` /
+        `status=deactivated` / `status=invited` on the last active admin,
+        is rejected.
+      operationId: updateMember
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemberUpdateRequest' }
+      responses:
+        '200':
+          description: Member updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  member: { $ref: '#/components/schemas/Member' }
+                  audit_id: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: |
+            Caller is not a resolvable active admin member, or the edit
+            would demote or deactivate the last active admin. Error code
+            `payment_intent_approval_invalid` (`details.reason=actor_unresolved`
+            or `details.reason=last_admin_protected`), or `auth_scope_insufficient`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Member not found. Error code `agent_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Members]
+      summary: Deactivate a member
+      description: |
+        Requires `execution:admin` and an active admin member as the
+        calling actor. Members are deactivated, never hard-deleted
+        (`status: deactivated`, `active: false`). The last active admin
+        in a tenant cannot be deactivated.
+      operationId: deactivateMember
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Member deactivated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  member: { $ref: '#/components/schemas/Member' }
+                  audit_id: { type: string }
+        '403':
+          description: |
+            Caller is not a resolvable active admin member, or this member
+            is the last active admin. Error code `payment_intent_approval_invalid`
+            (`details.reason=actor_unresolved` or `details.reason=last_admin_protected`),
+            or `auth_scope_insufficient`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Member not found. Error code `agent_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /members/{id}/invites:
+    post:
+      tags: [Members]
+      summary: (Re)issue an invite token for a member
+      description: |
+        Requires `execution:admin` and an active admin member as the
+        calling actor. Issuing a new invite revokes any outstanding,
+        unconsumed invite for this member first — only one live invite
+        token exists per member at a time. Does not require the member
+        to currently be `status: invited` (re-inviting an active member
+        is allowed and does not change their status). Invite tokens
+        expire after 72 hours and are consumed via `POST /invites/consume`.
+      operationId: createMemberInvite
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Invite (re)issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invite_token: { type: string, description: Shown once. }
+                  expires_at: { type: string, format: date-time }
+        '403':
+          description: Caller is not a resolvable active admin member. Error code `payment_intent_approval_invalid` or `auth_scope_insufficient`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Member not found. Error code `agent_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Members]
+      summary: Revoke a member's outstanding invite
+      description: |
+        Requires `execution:admin` and an active admin member as the
+        calling actor. Revokes any outstanding, unconsumed invite for
+        this member. Does not change the member's `status`.
+      operationId: revokeMemberInvite
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Invite revoked (or none was outstanding)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: boolean, enum: [true] }
+        '403':
+          description: Caller is not a resolvable active admin member. Error code `payment_intent_approval_invalid` or `auth_scope_insufficient`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Member not found. Error code `agent_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /members/{id}/identity-links:
+    post:
+      tags: [Members]
+      summary: Link a surface identity to a member
+      description: |
+        Requires `execution:admin` and an active admin member as the
+        calling actor. Links an external Slack, Teams, or email identity to
+        a member so surface approvals (§ Surfaces) resolve to this member's
+        approval authority.
+      operationId: createMemberIdentityLink
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemberIdentityLinkRequest' }
+      responses:
+        '200':
+          description: Identity link created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  audit_id: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: Caller is not a resolvable active admin member. Error code `payment_intent_approval_invalid` or `auth_scope_insufficient`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Member not found. Error code `agent_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Members]
+      summary: Remove a surface identity link from a member
+      operationId: deleteMemberIdentityLink
+      description: Requires `execution:admin` and an active admin member as the calling actor.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemberIdentityLinkRequest' }
+      responses:
+        '200':
+          description: Identity link removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  audit_id: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: Caller is not a resolvable active admin member. Error code `payment_intent_approval_invalid` or `auth_scope_insufficient`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Member not found. Error code `agent_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  #############################################################################
   # LAYER 5 (legacy): EXECUTION — deprecated, retained for v0.3 transition
   #############################################################################
 
@@ -2455,7 +3727,7 @@ paths:
       tags: [Execution]
       summary: Agent proposes an action
       description: |
-        The agent submits an action. The server evaluates it against the
+        Requires `execution:propose`. The agent submits an action. The server evaluates it against the
         active policy and returns a decision. If decision=allow, the action
         can be executed immediately via /execute. If decision=confirm, the
         action requires human approval first. If decision=reject, no
@@ -2490,7 +3762,7 @@ paths:
       operationId: executeProposal
       deprecated: true
       description: >
-        Disabled. This legacy v0.2 route dispatched a proposal through a payment
+        Requires `execution:write`. Disabled. This legacy v0.2 route dispatched a proposal through a payment
         rail with no §6 pre-execution gate — no policy decision, sanctions,
         balance, or amount-limit checks, and no audit before/after pair — which
         Engineering Standards §6 ("no execution path may bypass the gate") and
@@ -2505,7 +3777,7 @@ paths:
               type: object
               required: [proposal_id]
               properties:
-                proposal_id: { type: string, format: uuid }
+                proposal_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
                 dry_run: { type: boolean, default: false }
       responses:
         '422':
@@ -2521,12 +3793,13 @@ paths:
     get:
       tags: [Execution]
       summary: Execution status and trace
+      description: Requires `execution:read`.
       operationId: getExecution
       parameters:
         - name: execution_id
           in: path
           required: true
-          schema: { type: string, format: uuid }
+          schema: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
       responses:
         '200':
           description: Execution record
@@ -2534,12 +3807,21 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Execution'
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: No such execution. Error code `execution_proposal_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /execution/approve:
     post:
       tags: [Execution]
       summary: Human approval for a confirm-gated proposal
+      description: |
+        Requires `execution:write`. Legacy v0.2 approval: satisfied by
+        approver-id signature presence, with no org-role membership model
+        (that lives in the PaymentIntent / Members approval path — new
+        integrations should approve via `/payment-intents/*`).
       operationId: approveProposal
       requestBody:
         required: true
@@ -2549,8 +3831,8 @@ paths:
               type: object
               required: [proposal_id]
               properties:
-                proposal_id: { type: string, format: uuid }
-                approver_notes: { type: string }
+                proposal_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+                approver_notes: { type: string, description: Accepted but currently ignored by the implementation. }
       responses:
         '200':
           description: Approved
@@ -2559,10 +3841,23 @@ paths:
               schema: { $ref: '#/components/schemas/Proposal' }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: No such proposal. Error code `execution_proposal_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Proposal is not pending approval. Error code `execution_proposal_invalid_state`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /execution/escalate:
     post:
       tags: [Execution]
       summary: Agent escalates to human
+      description: |
+        Requires `execution:propose`. Only emits an `execution.escalate`
+        audit event; does not itself change proposal state.
       operationId: escalateProposal
       requestBody:
         required: true
@@ -2570,19 +3865,27 @@ paths:
           application/json:
             schema:
               type: object
-              required: [proposal_id, reason]
+              required: [proposal_id]
               properties:
-                proposal_id: { type: string, format: uuid }
-                reason: { type: string }
+                proposal_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+                note: { type: string, maxLength: 200, description: 'Truncated to 200 characters. Field name is `note`, not `reason`.' }
       responses:
-        '200':
-          description: Escalated
+        '202':
+          description: Escalation recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  escalated: { type: boolean, enum: [true] }
+                  proposal_id: { type: string }
 
         '400': { $ref: '#/components/responses/BadRequest' }
   /execution/agents:
     get:
       tags: [Execution]
       summary: List configured agents for the current tenant
+      description: Requires `execution:read`.
       operationId: listExecutionAgents
       responses:
         '200':
@@ -2602,9 +3905,12 @@ paths:
       tags: [Execution]
       summary: Register an external agent
       description: |
-        Registers a third-party agent for this tenant. Returns on-chain
-        attestation transaction hash after BrainMCPAgentRegistry registration
-        completes.
+        Requires `execution:admin`. Registers a third-party agent for
+        this tenant with `state: pending_onchain`. This route does not
+        itself submit or confirm an on-chain transaction — `registered_tx`
+        is accepted as caller-supplied evidence and stored as-is;
+        `onchain_tx_hash` in the response comes from that same field, not
+        from a server-side chain call.
       operationId: registerExternalAgent
       requestBody:
         required: true
@@ -2612,33 +3918,30 @@ paths:
           application/json:
             schema:
               type: object
-              required: [agent_address, scope]
+              required: [agent_id, role, display_name]
               properties:
-                agent_address:
+                agent_id: { type: string }
+                role: { type: string }
+                display_name: { type: string }
+                scope_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+                onchain_address:
                   type: string
+                  pattern: '^0x[a-fA-F0-9]{40}$'
                   description: Ethereum address of the agent
-                scope:
-                  $ref: '#/components/schemas/AgentScope'
-                tenant_signature:
-                  type: string
-                  description: EIP-712 signature authorizing this scope
+                registered_tx: { type: string }
       responses:
         '201':
-          description: Registered
+          description: Registered (pending_onchain)
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  agent_id: { type: string }
-                  onchain_tx_hash: { type: string }
-                  scope_hash: { type: string }
+              schema: { $ref: '#/components/schemas/Agent' }
 
         '400': { $ref: '#/components/responses/BadRequest' }
   /execution/agents/{agent_id}:
     get:
       tags: [Execution]
       summary: Get agent configuration and on-chain registration
+      description: Requires `execution:read`.
       operationId: getExecutionAgent
       parameters:
         - name: agent_id
@@ -2651,16 +3954,60 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Agent' }
+        '404':
+          description: No such agent. Error code `execution_agent_not_registered`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /execution/mcp:
+    post:
+      tags: [Execution]
+      summary: 'DEPRECATED: legacy MCP ping shim'
+      operationId: executionMcpShim
+      deprecated: true
+      description: |
+        Deprecated v0.2 back-compat shim, retained for the v0.3 transition
+        window. Requires an agent principal. Only the `ping` JSON-RPC method
+        is answered; every other method returns 501
+        `execution_agent_not_registered` and points the caller at the real
+        surface. Use POST /agents/mcp (services/mcp) instead, a JSON-RPC 2.0
+        server with the full tool, resource, and prompt surface.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method]
+              properties:
+                method: { type: string, example: ping }
+                params: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: '`method: ping` only'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '501':
+          description: Any method other than `ping`. Error code `execution_agent_not_registered`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   #############################################################################
   # LAYER 6: AUDIT
   #############################################################################
 
-        '400': { $ref: '#/components/responses/BadRequest' }
   /audit/entity/{entityType}/{entityId}:
     get:
       tags: [Audit]
       summary: Every audit event touching a Ledger row
+      description: Requires `audit:read`.
       operationId: getAuditEntityHistory
       parameters:
         - name: entityType
@@ -2704,12 +4051,13 @@ paths:
       tags: [Audit]
       summary: Canonical, verifiable proof for an action (H-07)
       description: |
-        The flagship trust artifact. Assembles a single, independently
-        verifiable Proof for a PaymentIntent (or agent-action) from the §6 gate
-        trace, the evidence chain, the policy decision, and the append-only,
-        on-chain-anchored audit Merkle chain. Tenant-isolated: an action that
-        does not exist for the caller's tenant returns 404 (existence is never
-        leaked). `chain_anchor` is null until the containing batch is anchored
+        Requires `audit:read`. The flagship trust artifact. Assembles a
+        single, independently verifiable Proof for a PaymentIntent (or
+        agent-action) from the §6 gate trace, the evidence chain, the
+        policy decision, and the append-only, on-chain-anchored audit
+        Merkle chain. Tenant-isolated: an action that does not exist for
+        the caller's tenant returns 404 (existence is never leaked).
+        `chain_anchor` is null until the containing batch is anchored
         on-chain.
       operationId: getProof
       parameters:
@@ -2745,7 +4093,10 @@ paths:
                   rail_receipt: { type: [object, "null"] }
                   human_explanation: { type: string }
         '404':
-          description: No proof for that action (or not visible to this tenant)
+          description: No proof for that action (or not visible to this tenant). Error code `proof_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /proof/{action_id}/view:
     get:
@@ -2777,10 +4128,11 @@ paths:
       tags: [Audit]
       summary: List undeliverable webhook events for an endpoint (H-20)
       description: |
-        Outbound webhook deliveries that failed are durably recorded here
-        instead of being lost. Each row tracks attempt_count and the last error;
-        once attempt_count reaches 5 the row is exhausted (replay no longer
-        auto-retries it). Tenant-isolated.
+        Requires `audit:read`. Outbound webhook deliveries that failed
+        are durably recorded here instead of being lost. Each row tracks
+        attempt_count and the last error; once attempt_count reaches 5
+        the row is exhausted (replay no longer auto-retries it).
+        Tenant-isolated.
       operationId: listWebhookDeadLetters
       parameters:
         - name: endpoint_id
@@ -2815,7 +4167,7 @@ paths:
       tags: [Audit]
       summary: Replay dead-lettered webhook events (H-20)
       description: |
-        Re-delivers each dead-letter still under the attempt cap. A successful
+        Requires `audit:write`. Re-delivers each dead-letter still under the attempt cap. A successful
         re-delivery clears the row; a failure bumps attempt_count. Idempotent
         (accepts Idempotency-Key). Tenant-isolated.
       operationId: replayWebhookDeadLetters
@@ -2838,10 +4190,105 @@ paths:
                   still_failing: { type: integer }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  #############################################################################
+  # ADMIN: TENANT LIFECYCLE
+  #############################################################################
+
+  /tenants/{id}:
+    delete:
+      tags: [Admin]
+      summary: Delete a tenant (GDPR right to erasure)
+      description: |
+        Self-only: requires `principal_type=user` and `principal.tenantId
+        === id`. Any other principal type, or a mismatched tenant id, is
+        rejected with `auth_tenant_mismatch`. Wipes every tenant-scoped row
+        across Raw, Canonical, Ledger, Wiki, Policy, and Execution tables.
+        The Merkle audit chain itself is preserved; the deletion is recorded
+        as a `tenant.deleted` audit event so the erasure is itself
+        verifiable. Blob artifacts referenced by deleted `raw_artifacts`
+        rows are not deleted synchronously: a `tenant_blob_purge_jobs` row
+        is enqueued for the privileged blob-purge worker to erase the
+        underlying bytes out-of-band (RFC 0003), satisfying GDPR Article 17
+        in full.
+      operationId: deleteTenant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: Tenant deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tenantId, deletedRows, totalRows, blobArtifactCount, blobUrisPendingPurge, blobPurgeJobId]
+                properties:
+                  tenantId: { type: string }
+                  deletedRows:
+                    type: object
+                    additionalProperties: { type: integer }
+                    description: Row count deleted per table
+                  totalRows: { type: integer }
+                  blobArtifactCount:
+                    type: integer
+                    description: Count of raw_artifacts rows that referenced a blob
+                  blobUrisPendingPurge:
+                    type: array
+                    items: { type: string }
+                    description: Every blob_uri from the deleted raw_artifacts rows, pending out-of-band purge
+                  blobPurgeJobId:
+                    type: [string, "null"]
+                    description: The enqueued tenant_blob_purge_jobs row id. Null when the tenant uploaded no blobs.
+        '403':
+          description: Caller is not a user principal, or principal.tenantId does not match the path id. Error code `auth_scope_insufficient` or `auth_tenant_mismatch`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  #############################################################################
+  # REFERENCE — public, tenant-agnostic data
+  #############################################################################
+
+  /reference/yield-venues:
+    get:
+      tags: [Reference]
+      summary: Public DeFi yield-venue catalog
+      description: |
+        Public, always-on, rate-limited (60/min). The same catalog for
+        every tenant; carries no truth or provenance coupling and is not
+        Ledger data. Used by the Treasury demo scenario to split idle cash
+        across venues subject to each venue's `cap_pct`.
+      operationId: listYieldVenues
+      security: [] # public
+      responses:
+        '200':
+          description: Venue catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  venues:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, apy, cap_pct, chain]
+                      properties:
+                        id: { type: string, description: Stable slug for referencing a venue }
+                        name: { type: string }
+                        apy: { type: number, description: 'Annual percentage yield, e.g. 4.2 = 4.2%' }
+                        cap_pct: { type: number, description: 'Max share of deployable treasury allocatable to this venue, percent' }
+                        chain: { type: string, enum: [base] }
+                  chain: { type: string, enum: [base-sepolia] }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   /audit/events:
     get:
       tags: [Audit]
       summary: Query audit events
+      description: Requires `audit:read`.
       operationId: queryAuditEvents
       parameters:
         - name: layer
@@ -2882,12 +4329,13 @@ paths:
     get:
       tags: [Audit]
       summary: Get a single event with inclusion proof
+      description: Requires `audit:read`.
       operationId: getAuditEvent
       parameters:
         - name: event_id
           in: path
           required: true
-          schema: { type: string, format: uuid }
+          schema: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
       responses:
         '200':
           description: Event and proof
@@ -2908,10 +4356,22 @@ paths:
                       anchor_block: { type: integer }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: No such event. Error code `audit_event_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /audit/export:
     post:
       tags: [Audit]
       summary: Request an audit export (async)
+      description: |
+        Requires `audit:read` (not `audit:write` — exporting is a read
+        operation on the log). Only `format` is required; `since`/`until`
+        are optional (unbounded if omitted). `layers` is not implemented
+        and is ignored if sent — this endpoint currently enqueues the job
+        only, the BullMQ worker that materializes the export file is a
+        separate follow-up.
       operationId: exportAudit
       requestBody:
         required: true
@@ -2919,16 +4379,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [format, since, until]
+              required: [format]
               properties:
                 format: { type: string, enum: [jsonl, csv] }
                 since: { type: string, format: date-time }
                 until: { type: string, format: date-time }
-                layers:
-                  type: array
-                  items:
-                    type: string
-                    enum: [raw, ledger, wiki, policy, agent, execution, audit]
       responses:
         '202':
           description: Export job created
@@ -2937,14 +4392,20 @@ paths:
               schema:
                 type: object
                 properties:
-                  job_id: { type: string, format: uuid }
-                  status_url: { type: string, format: uri }
+                  job_id: { type: string, description: 'Not a Brain ID — currently `exp_<timestamp36>`' }
+                  format: { type: string, enum: [jsonl, csv] }
+                  status: { type: string, enum: [enqueued] }
 
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400':
+          description: '`format` must be `jsonl` or `csv`. Error code `request_body_invalid`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /audit/anchor/latest:
     get:
       tags: [Audit]
       summary: Get the latest on-chain anchor for the current tenant
+      description: Requires `audit:read`.
       operationId: getLatestAnchor
       responses:
         '200':
@@ -2954,23 +4415,158 @@ paths:
               schema:
                 type: object
                 properties:
+                  id: { type: string }
                   merkle_root: { type: string }
                   event_count: { type: integer }
                   period_start: { type: string, format: date-time }
                   period_end: { type: string, format: date-time }
-                  onchain_tx_hash: { type: string }
-                  onchain_block_number: { type: integer }
+                  onchain_tx_hash: { type: [string, "null"] }
+                  onchain_block_number: { type: [integer, "null"] }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: No anchor published yet. Error code `audit_anchor_not_yet_published`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /audit/anchor/publish:
+    post:
+      tags: [Audit]
+      summary: Publish an on-demand anchor for the last 24 hours of events
+      description: |
+        Requires `audit:admin`. Only registered when an on-chain
+        broadcaster is configured for this deployment — if not
+        configured, this path does not exist (404 route not found, not a
+        Brain error envelope). Per-tenant 60-second cooldown between
+        publishes.
+      operationId: publishAnchor
+      responses:
+        '200':
+          description: Anchor published
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  merkle_root: { type: string }
+                  event_count: { type: integer }
+                  tx_hash: { type: [string, "null"] }
+                  basescan_url: { type: [string, "null"] }
+        '404':
+          description: No audit events in the last 24 hours. Error code `audit_no_events`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Per-tenant publish cooldown (60s) still active. Error code `rate_limited`, `details.retry_after_seconds`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /audit/webhooks/endpoints:
+    post:
+      tags: [Audit]
+      summary: Register an outbound audit webhook endpoint
+      description: |
+        Requires `audit:write`. The signing secret is generated
+        server-side and returned exactly once, in this response; it is
+        never retrievable again (subsequent list calls return only a
+        preview).
+      operationId: createAuditWebhookEndpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri, description: Must start with https:// }
+                enabled_events:
+                  type: array
+                  items: { type: string }
+                  description: Subset of the forwarded event types. Omit for all forwarded events.
+      responses:
+        '201':
+          description: Endpoint registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  url: { type: string }
+                  enabled_events: { type: [array, "null"], items: { type: string } }
+                  enabled: { type: boolean }
+                  secret: { type: string, description: Shown only in this response }
+                  created_at: { type: string, format: date-time }
+        '400':
+          description: '`url` must be an `https://` string, or `enabled_events` includes an unsupported type. Error code `request_body_invalid`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      tags: [Audit]
+      summary: List outbound audit webhook endpoints
+      description: Requires `audit:read`. Secrets are masked to an 8-character preview.
+      operationId: listAuditWebhookEndpoints
+      responses:
+        '200':
+          description: Endpoint list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  endpoints:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        url: { type: string }
+                        enabled_events: { type: [array, "null"], items: { type: string } }
+                        enabled: { type: boolean }
+                        secret_preview: { type: string, description: First 8 characters followed by "..." }
+                        created_at: { type: string, format: date-time }
+
+  /audit/webhooks/endpoints/{id}:
+    delete:
+      tags: [Audit]
+      summary: Remove an outbound audit webhook endpoint
+      description: Requires `audit:write`.
+      operationId: deleteAuditWebhookEndpoint
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Endpoint removed
+        '404':
+          description: No such endpoint. Error code `audit_event_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /audit/verify:
     post:
       tags: [Audit]
-      summary: Verify an event's inclusion against on-chain root
+      summary: Verify an event's inclusion against a claimed Merkle root
       description: |
-        Independent verification. Caller supplies an event hash, a Merkle
-        proof, and a claimed root. Server verifies the proof and the root's
-        on-chain presence. Returns true only if both hold.
+        Public (no auth required). Pure Merkle inclusion verifier — no DB
+        access. Caller supplies an event hash, a Merkle proof, and a
+        claimed root; the server verifies only that the proof is valid
+        against that root. `onchain_block` is always `null`: this
+        endpoint does not check the root's on-chain presence (that would
+        need an RPC lookup, not implemented here) — a caller wanting full
+        on-chain confirmation must independently check `merkle_root`
+        against the anchor transaction.
       operationId: verifyInclusion
+      security: []
       requestBody:
         required: true
         content:
@@ -3030,6 +4626,7 @@ paths:
     get:
       tags: [Canonical]
       summary: Get one canonical obligation as a governed data product
+      description: Requires `canonical:read`.
       operationId: getCanonicalObligation
       parameters:
         - name: obligation_id
@@ -3042,7 +4639,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CanonicalObligationProduct' }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: No such canonical obligation. Error code `obligation_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /canonical/gl-accounts:
     get:
@@ -3077,6 +4678,7 @@ paths:
     get:
       tags: [Canonical]
       summary: Get one canonical GL account as a governed data product
+      description: Requires `canonical:read`.
       operationId: getCanonicalGlAccount
       parameters:
         - name: gl_account_id
@@ -3089,7 +4691,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CanonicalGlAccountProduct' }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: No such canonical GL account. Error code `ledger_row_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /canonical/journal-entries:
     get:
@@ -3121,6 +4727,7 @@ paths:
     get:
       tags: [Canonical]
       summary: Get one canonical journal entry (with its lines) as a governed data product
+      description: Requires `canonical:read`.
       operationId: getCanonicalJournalEntry
       parameters:
         - name: journal_entry_id
@@ -3133,7 +4740,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CanonicalJournalEntryProduct' }
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: No such canonical journal entry. Error code `ledger_row_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
 components:
 
@@ -3152,17 +4763,17 @@ components:
       name: raw_id
       in: path
       required: true
-      schema: { type: string, format: uuid }
+      schema: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
     EntityId:
       name: entity_id
       in: path
       required: true
-      schema: { type: string, format: uuid }
+      schema: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
     TenantId:
       name: tenant_id
       in: path
       required: true
-      schema: { type: string, format: uuid }
+      schema: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
 
   responses:
     BadRequest:
@@ -3455,20 +5066,32 @@ components:
 
     Error:
       type: object
-      required: [code, message]
+      required: [error]
+      description: |
+        Canonical error envelope (Engineering Standards §4.1). All error
+        responses wrap the error body under an `error` key; there is no
+        top-level `code`/`message`.
       properties:
-        code:
-          type: string
-          description: Machine-readable error code (see Engineering Standards section 3)
-        message:
-          type: string
-          description: Human-readable error message
-        trace_id:
-          type: string
-          description: Correlation ID for support
-        details:
+        error:
           type: object
-          additionalProperties: true
+          required: [code, message, request_id, docs_url]
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code, `{domain}_{condition}` snake_case (see Engineering Standards section 4.3). Stable once shipped; never renamed.
+            message:
+              type: string
+              description: Human-readable error message
+            details:
+              type: object
+              additionalProperties: true
+              description: Optional structured context, e.g. a `reason` enum specific to the operation
+            request_id:
+              type: string
+              description: Correlation ID for support, echoed from the request
+            docs_url:
+              type: string
+              description: Link to the published error reference for this code, e.g. https://docs.brain.fi/resources/errors#{code}
 
     #
     # Raw layer
@@ -3498,7 +5121,7 @@ components:
     RawIngestResponse:
       type: object
       properties:
-        raw_id: { type: string, format: uuid }
+        raw_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
         sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
         source_type: { $ref: '#/components/schemas/RawSourceType' }
         source_schema:
@@ -3513,8 +5136,8 @@ components:
     RawParsed:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        raw_artifact_id: { type: string, format: uuid }
+        id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+        raw_artifact_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
         parser: { type: string }
         parser_version: { type: string }
         extracted:
@@ -3522,6 +5145,42 @@ components:
           additionalProperties: true
         confidence: { type: number, minimum: 0, maximum: 1 }
         extracted_at: { type: string, format: date-time }
+
+    SourceType:
+      type: string
+      description: Connectable source-connector vocabulary for POST /sources. A subset of RawSourceType — excludes the non-connector origins (agent_contributed, wiki_annotation, other).
+      enum:
+        - plaid
+        - stripe
+        - netsuite
+        - email_inbound
+        - csv_upload
+        - pdf_upload
+        - alchemy_wallet
+        - eth_address
+        - merge_accounting
+        - finch
+
+    Source:
+      type: object
+      required: [id, tenantId, type, status, last_synced_at, metadata, error_message, is_stub, created_at, updated_at]
+      properties:
+        id: { type: string }
+        tenantId: { type: string }
+        type: { $ref: '#/components/schemas/SourceType' }
+        status:
+          type: string
+          enum: [active, paused, error, disconnected]
+        last_synced_at: { type: [string, "null"], format: date-time }
+        metadata:
+          type: object
+          additionalProperties: true
+        error_message: { type: [string, "null"] }
+        is_stub:
+          type: boolean
+          description: True for connector types without a concrete adapter (netsuite, email_inbound, csv_upload, pdf_upload, alchemy_wallet, eth_address). Sync on a stub source returns immediately with notes:"stub".
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     #
     # Wiki layer
@@ -3549,7 +5208,7 @@ components:
     WikiEntity:
       type: object
       properties:
-        id: { type: string, format: uuid }
+        id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
         kind: { $ref: '#/components/schemas/EntityKind' }
         attributes:
           type: object
@@ -3560,7 +5219,7 @@ components:
         confidence: { type: number, minimum: 0, maximum: 1 }
         source_evidence:
           type: array
-          items: { type: string, format: uuid }
+          items: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
 
     RelationKind:
       type: string
@@ -3573,9 +5232,9 @@ components:
     WikiRelation:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        src: { type: string, format: uuid }
-        dst: { type: string, format: uuid }
+        id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+        src: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+        dst: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
         kind: { $ref: '#/components/schemas/RelationKind' }
         attributes:
           type: object
@@ -3586,18 +5245,18 @@ components:
         confidence: { type: number, minimum: 0, maximum: 1 }
         source_evidence:
           type: array
-          items: { type: string, format: uuid }
+          items: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
 
     EvidenceChain:
       type: object
       properties:
-        entity_id: { type: string, format: uuid }
+        entity_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
         chain:
           type: array
           items:
             type: object
             properties:
-              raw_parsed_id: { type: string, format: uuid }
+              raw_parsed_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
               parser: { type: string }
               confidence: { type: number }
               extracted_fields:
@@ -3617,7 +5276,7 @@ components:
             properties:
               step: { type: integer }
               description: { type: string }
-              entity_id: { type: [string, "null"], format: uuid }
+              entity_id: { type: [string, "null"], pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
               sql_query: { type: [string, "null"] }
               result_summary: { type: string }
         llm_metadata:
@@ -3630,23 +5289,38 @@ components:
 
     EntityAnnotation:
       type: object
-      required: [entity_id, corrections]
+      required: [target, kind]
+      description: |
+        Phase 3 only accepts `kind` in `policy`/`agent` (WIKI_KINDS).
+        Annotating a Ledger-truth kind (account, counterparty,
+        transaction, obligation) returns `request_body_invalid` — that
+        write-through path is not yet implemented.
       properties:
-        entity_id: { type: string, format: uuid }
-        corrections:
+        target: { type: string, enum: [entity] }
+        entity_id:
+          type: string
+          pattern: '^ent_[0-9A-HJKMNP-TV-Z]{26}$'
+          description: Omit to create a new entity; provide to supersede an existing one (must already exist, else `wiki_entity_not_found`).
+        kind: { type: string, enum: [policy, agent] }
+        attributes:
           type: object
           additionalProperties: true
-        note: { type: string }
+          description: Validated against the JSON Schema for `kind`.
+        confidence: { type: number, minimum: 0, maximum: 1, default: 1.0 }
 
     RelationAnnotation:
       type: object
-      required: [relation_id, corrections]
+      required: [target, src, dst, kind]
       properties:
-        relation_id: { type: string, format: uuid }
-        corrections:
+        target: { type: string, enum: [relation] }
+        src: { type: string, pattern: '^ent_[0-9A-HJKMNP-TV-Z]{26}$' }
+        dst: { type: string, pattern: '^ent_[0-9A-HJKMNP-TV-Z]{26}$' }
+        kind: { type: string, description: One of the registered RELATION_KINDS. }
+        attributes:
           type: object
           additionalProperties: true
-        note: { type: string }
+          description: Validated against the JSON Schema for `kind`.
+        confidence: { type: number, minimum: 0, maximum: 1, default: 1.0 }
 
     #
     # Policy layer
@@ -3655,8 +5329,8 @@ components:
     Policy:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        tenant_id: { type: string, format: uuid }
+        id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+        tenant_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
         version: { type: integer }
         content:
           $ref: '#/components/schemas/PolicyDSL'
@@ -3676,11 +5350,20 @@ components:
 
     PolicyDSL:
       type: object
-      required: [rules]
+      required: [version, rules]
       properties:
+        version: { type: integer }
         rules:
           type: array
           items: { $ref: '#/components/schemas/PolicyRule' }
+        lists:
+          type: object
+          additionalProperties: { type: array, items: { type: string } }
+          description: Named counterparty-id lists referenced by `when.counterparty_in` / `counterparty_not_in`
+        message_templates:
+          type: array
+          items: { type: object, additionalProperties: true }
+          description: Tenant-approved counterparty message templates
 
     PolicyRule:
       type: object
@@ -3726,47 +5409,65 @@ components:
 
     ProposedAction:
       type: object
-      required: [type]
+      required: [kind]
+      description: |
+        Matches the policy VM's `Action` shape (services/policy/src/vm.ts).
+        Field names are `kind`/`counterparty_id`, not `type`/`counterparty`.
       properties:
-        type:
+        kind:
           type: string
           enum:
             - outbound_payment
             - inbound_payment
             - ledger_write
             - onchain_tx
-        counterparty:
-          type: string
+            - agent_action
+        counterparty_id:
+          type: [string, "null"]
           description: Entity ID of the counterparty
         amount:
-          type: object
+          type: [object, "null"]
           properties:
             currency: { type: string }
-            value: { type: number }
-        rail:
+            value: { type: string, description: Decimal string }
+        agent_role: { type: [string, "null"] }
+        timestamp:
           type: string
-          enum: [bank_ach, erp_writeback, onchain_base, notification]
-        metadata:
-          type: object
-          additionalProperties: true
+          format: date-time
+          description: Defaults to the request time if omitted
+        agent_id: { type: [string, "null"] }
+        tenant_category: { type: [string, "null"], enum: [business, consumer, null] }
+        confidence: { type: [number, "null"] }
+        evidence_score: { type: [number, "null"] }
+        risk_level: { type: [string, "null"], enum: [low, medium, high, critical, null] }
 
     PolicyDecision:
       type: object
+      required: [outcome, matched_rule_id, required_approvers, trace]
       properties:
-        decision:
+        outcome:
           type: string
           enum: [allow, confirm, reject]
+        matched_rule_id: { type: [string, "null"] }
+        required_approvers:
+          type: array
+          items: { type: string }
         trace:
           type: array
           items:
             type: object
+            required: [rule_id, matched, checks]
             properties:
               rule_id: { type: string }
               matched: { type: boolean }
-              explanation: { type: string }
-        required_approvers:
-          type: array
-          items: { type: string }
+              checks:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    key: { type: string, description: 'The RuleWhen primitive checked, e.g. amount_lte' }
+                    passed: { type: boolean }
+                    detail: { type: string }
         policy_version: { type: integer }
 
     #
@@ -3780,8 +5481,8 @@ components:
     Proposal:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        tenant_id: { type: string, format: uuid }
+        id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+        tenant_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
         proposing_agent: { type: string }
         action: { $ref: '#/components/schemas/ProposedAction' }
         policy_version: { type: integer }
@@ -3800,8 +5501,8 @@ components:
     Execution:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        proposal_id: { type: string, format: uuid }
+        id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+        proposal_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
         rail:
           type: string
           enum: [bank_ach, erp_writeback, onchain_base, notification]
@@ -3813,38 +5514,6 @@ components:
         status: { $ref: '#/components/schemas/ExecutionStatus' }
         error:
           type: [string, "null"]
-
-    AgentScope:
-      type: object
-      description: |
-        Declarative scope document. Hashed and registered on-chain in
-        BrainMCPAgentRegistry for external agents.
-      properties:
-        allowed_actions:
-          type: array
-          items:
-            type: string
-            enum: [read_wiki, propose_action, read_audit]
-        wiki_kinds_readable:
-          type: array
-          items: { $ref: '#/components/schemas/EntityKind' }
-        action_types_proposable:
-          type: array
-          items:
-            type: string
-            enum:
-              - outbound_payment
-              - inbound_payment
-              - ledger_write
-              - onchain_tx
-        max_amount:
-          type: object
-          properties:
-            currency: { type: string }
-            value: { type: number }
-        valid_until:
-          type: string
-          format: date-time
 
     #
     # Audit layer
@@ -3978,6 +5647,111 @@ components:
               type: [string, "null"]
               enum: [unreconciled, matched, partial, disputed]
 
+    Member:
+      type: object
+      required: [id, tenantId, email, displayName, role, status, active, approval]
+      description: |
+        A tenant approval-authority actor. Response field names are
+        camelCase, unlike the snake_case request bodies below and most
+        other Brain resources. `active` and `status` are kept in sync
+        server-side: `active` is true only when `status` is `active`.
+      properties:
+        id: { type: string }
+        tenantId: { type: string }
+        email: { type: string }
+        displayName: { type: string }
+        role:
+          type: string
+          enum: [admin, approver, viewer]
+        status:
+          type: string
+          enum: [invited, active, deactivated]
+        active: { type: boolean }
+        approval:
+          type: object
+          required: [domains, perItemLimit, requiresSecondApproverAbove]
+          properties:
+            domains:
+              type: array
+              items:
+                type: string
+                enum: [ap, ar, treasury, payroll, reconciliation]
+            perItemLimit:
+              type: integer
+              description: Per-item approval limit in minor units (cents)
+            requiresSecondApproverAbove:
+              type: [integer, "null"]
+              description: Amount in minor units (cents) above which a distinct second member must also approve. Null means no second-approval threshold.
+
+    MemberCreateRequest:
+      type: object
+      required: [email, role, approval]
+      properties:
+        id: { type: string, description: Caller-supplied member id. Defaults to a generated user id. }
+        email: { type: string }
+        display_name: { type: string, description: Defaults to email if omitted. }
+        role:
+          type: string
+          enum: [admin, approver, viewer]
+        invite:
+          type: boolean
+          default: false
+          description: When true, member is created with status:invited and an invite_token is returned instead of being immediately active. A caller-supplied `status` field is accepted by the schema but ignored by create — only `invite` controls initial status.
+        approval:
+          type: object
+          required: [domains]
+          properties:
+            domains:
+              type: array
+              items:
+                type: string
+                enum: [ap, ar, treasury, payroll, reconciliation]
+            per_item_limit_cents:
+              type: [integer, string]
+              description: Defaults to 0 if omitted.
+            requires_second_approver_above_cents:
+              type: [integer, string, "null"]
+
+    MemberUpdateRequest:
+      type: object
+      description: |
+        All fields optional. Only fields present are changed. `status`
+        and `active` are kept in sync server-side regardless of which
+        one is sent (see PATCH /members/{id}).
+      properties:
+        email: { type: string }
+        display_name: { type: string }
+        role:
+          type: string
+          enum: [admin, approver, viewer]
+        status:
+          type: string
+          enum: [invited, active, deactivated]
+        active: { type: boolean }
+        approval:
+          type: object
+          properties:
+            domains:
+              type: array
+              items:
+                type: string
+                enum: [ap, ar, treasury, payroll, reconciliation]
+            per_item_limit_cents:
+              type: [integer, string]
+            requires_second_approver_above_cents:
+              type: [integer, string, "null"]
+
+    MemberIdentityLinkRequest:
+      type: object
+      required: [surface, external_ref]
+      properties:
+        surface:
+          type: string
+          enum: [slack, teams, email]
+        external_ref:
+          type: string
+          description: Surface-specific external identity reference (Slack user id, Teams AAD object id, verified email address).
+
     Counterparty:
       allOf:
         - $ref: '#/components/schemas/LedgerCommonFields'
@@ -4024,6 +5798,35 @@ components:
             linked_transaction_ids:
               type: array
               items: { type: string }
+
+    CashFlowSummary:
+      type: object
+      required: [tenantId, since, until, currencies]
+      properties:
+        tenantId: { type: string }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        currencies:
+          type: array
+          items:
+            type: object
+            required: [currency, inflow, outflow, net, transaction_count, by_day]
+            properties:
+              currency: { type: string, pattern: '^[A-Z]{3}$' }
+              inflow: { type: string, description: Decimal string }
+              outflow: { type: string, description: Decimal string }
+              net: { type: string, description: Decimal string }
+              transaction_count: { type: integer }
+              by_day:
+                type: array
+                items:
+                  type: object
+                  required: [date, inflow, outflow, net]
+                  properties:
+                    date: { type: string, description: 'YYYY-MM-DD' }
+                    inflow: { type: string }
+                    outflow: { type: string }
+                    net: { type: string }
 
     Invoice:
       allOf:
