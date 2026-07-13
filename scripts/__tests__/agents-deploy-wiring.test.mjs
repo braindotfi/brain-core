@@ -145,3 +145,21 @@ test("production env example documents API to agents extraction wiring", () => {
     assert.match(envProdExample, new RegExp(`^${name}=`, "m"));
   }
 });
+
+test("production env example documents self-serve signup email delivery wiring", () => {
+  for (const name of [
+    "BRAIN_SELF_SERVE_SIGNUP",
+    "EMAIL_ENABLED",
+    "EMAIL_ENDPOINT",
+    "EMAIL_API_KEY",
+    "EMAIL_FROM",
+  ]) {
+    assert.match(envProdExample, new RegExp(`^${name}=`, "m"));
+  }
+  // The comment must not claim these vars are surface-gateway only — the api
+  // service's self-serve signup (services/api/src/onboarding/email-delivery.ts)
+  // reads the same EMAIL_ENDPOINT/EMAIL_API_KEY/EMAIL_FROM vars, gated by
+  // BRAIN_SELF_SERVE_SIGNUP instead of EMAIL_ENABLED.
+  assert.doesNotMatch(envProdExample, /surface-gateway service only/);
+  assert.match(envProdExample, /services\/api\/src\/onboarding\/email-delivery\.ts/);
+});
