@@ -11,14 +11,21 @@ export class BrainAPIError extends Error {
   readonly details: Record<string, unknown> | undefined;
 
   constructor(status: number, body: BrainErrorBody | undefined) {
-    const code = body?.code ?? "unknown";
-    const message = body?.message ?? `Brain API request failed with status ${status}`;
+    // The live API wraps errors in a `{ error: {...} }` envelope and names the
+    // correlation id `request_id`; the OpenAPI `Error` schema is the flatter
+    // legacy shape. Read the nested envelope first, fall back to the flat body
+    // so both real responses and spec-shaped bodies surface code/trace/details.
+    const env = (body as { error?: BrainErrorBody } | undefined)?.error ?? body;
+    const code = env?.code ?? "unknown";
+    const message = env?.message ?? `Brain API request failed with status ${status}`;
     super(`[${code}] ${message}`);
     this.name = "BrainAPIError";
     this.status = status;
     this.code = code;
-    this.traceId = body?.trace_id;
-    this.details = body?.details;
+    this.traceId =
+      (env as { request_id?: string; trace_id?: string } | undefined)?.request_id ??
+      env?.trace_id;
+    this.details = env?.details;
   }
 }
 

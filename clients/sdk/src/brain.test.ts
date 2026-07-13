@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { Brain, BRAIN_BASE_URLS } from "./brain.js";
-import { BrainAPIError } from "./errors.js";
+import { BrainAPIError, type BrainErrorBody } from "./errors.js";
 
 function mockFetch(
   status: number,
@@ -260,6 +260,20 @@ describe("Brain", () => {
         details: { field: "amount" },
       });
       expect(err.details).toEqual({ field: "amount" });
+    });
+
+    it("unwraps the live API's nested { error: {...} } envelope and prefers request_id", () => {
+      const err = new BrainAPIError(401, {
+        error: {
+          code: "auth_token_invalid",
+          message: "JWT verification failed",
+          request_id: "req_123",
+          details: { reason: "Invalid Compact JWS" },
+        },
+      } as unknown as BrainErrorBody);
+      expect(err.code).toBe("auth_token_invalid");
+      expect(err.traceId).toBe("req_123");
+      expect(err.details).toEqual({ reason: "Invalid Compact JWS" });
     });
   });
 });

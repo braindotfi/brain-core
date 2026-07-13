@@ -31,7 +31,7 @@ console.log(accounts);
 Run the quickstart:
 
 ```bash
-BRAIN_TOKEN=$(node tools/dev-token/dist/cli.js) \
+BRAIN_TOKEN=$(pnpm -C tools/dev-token exec tsx src/index.ts --tenant tnt_01GOLDEN00000000000000000) \
   pnpm -C clients/sdk exec tsx examples/quickstart.ts
 ```
 
@@ -144,7 +144,7 @@ Run these before each investor session:
 
 - [ ] **Seed fresh:** `DATABASE_URL=… BRAIN_TENANT_ID=tnt_01GOLDEN00000000000000000 BRAIN_ACTOR=usr_01GOLDEN00000000000000000 pnpm run demo:reset`. Completes in <30s
 - [ ] **Services up:** `pnpm run dev:up && BRAIN_DEMO_MODE=true pnpm -C services/api dev`. Wait for "listening on 3000"
-- [ ] **Dev token works:** `node tools/dev-token/dist/cli.js` returns a JWT
+- [ ] **Dev token works:** `pnpm -C tools/dev-token exec tsx src/index.ts --tenant tnt_01GOLDEN00000000000000000` returns a JWT
 - [ ] **Anchor publisher healthy:** env `ANCHOR_PUBLISHER_PRIVATE_KEY` and `BASE_SEPOLIA_RPC_URL` set; `ENABLE_ANCHOR_PUBLISHER=true`
 - [ ] **BaseScan reachable:** `curl -s https://sepolia.basescan.org` returns 200
 - [ ] **SDK quickstart green:** Beat 2 command returns 3+ accounts

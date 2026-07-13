@@ -170,7 +170,7 @@ await brain.agents.register({
 
 // Raw ingestion, pull from a URL
 await brain.raw.ingest({
-  sourceType: "document",
+  sourceType: "pdf_upload",
   url: "https://example.com/invoice.pdf",
 });
 
