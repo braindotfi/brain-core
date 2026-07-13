@@ -105,7 +105,17 @@ export class AgentsResource {
       params: { path: { agent_id: agentId } },
       body: { action: action as Record<string, never> },
     });
-    const body = unwrap(data, error, response.status);
+    // Deprecated route: the spec declares no 2xx response for this operation
+    // (it always 404s "not implemented" server-side today; POST /agents/run
+    // is the replacement), so `data` types as `undefined` and unwrap<T> can't
+    // infer a usable T here. Cast defensively and reuse the same throw guard
+    // so this still decodes if a caller's server predates the deprecation.
+    const body = data as
+      | { proposal_id?: string; policy_decision_id?: string; status?: string }
+      | undefined;
+    if (error !== undefined || body === undefined) {
+      throw new BrainAPIError(response.status, error);
+    }
     return {
       proposalId: body.proposal_id,
       policyDecisionId: body.policy_decision_id,

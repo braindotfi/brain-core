@@ -44,7 +44,6 @@ export interface ExportAuditRequest {
 
 export interface ExportAuditJob {
   jobId: string | undefined;
-  statusUrl: string | undefined;
 }
 
 export interface AnchorRecord {
@@ -85,8 +84,8 @@ export class AnchorResource {
       eventCount: body.event_count,
       periodStart: body.period_start,
       periodEnd: body.period_end,
-      onchainTxHash: body.onchain_tx_hash,
-      onchainBlockNumber: body.onchain_block_number,
+      onchainTxHash: body.onchain_tx_hash ?? undefined,
+      onchainBlockNumber: body.onchain_block_number ?? undefined,
     };
   }
 }
@@ -148,7 +147,6 @@ export class AuditResource {
     const body = unwrap(data, error, response.status);
     return {
       jobId: body.job_id,
-      statusUrl: body.status_url,
     };
   }
 

@@ -49,9 +49,9 @@ describe("Brain.policy", () => {
 
   it("compose returns camelCased signing payload", async () => {
     const { fetch, calls } = mockFetch(200, {
-      content_hash: "0xabc",
-      typed_data: { domain: { name: "Brain" } },
-      required_signers: ["0x111", "0x222"],
+      policy_id: "pol_1",
+      state: "pending_signatures",
+      signing_payload: { domain: { name: "Brain" } },
     });
     const brain = new Brain({ token: "k", fetch });
 
@@ -59,43 +59,50 @@ describe("Brain.policy", () => {
       rules: [{ kind: "limit", amount: "1000" }],
     } as never);
 
-    expect(payload.contentHash).toBe("0xabc");
-    expect(payload.requiredSigners).toEqual(["0x111", "0x222"]);
-    expect(payload.typedData).toBeDefined();
+    expect(payload.policyId).toBe("pol_1");
+    expect(payload.state).toBe("pending_signatures");
+    expect(payload.signingPayload).toEqual({ domain: { name: "Brain" } });
     expect(calls[0]?.url).toContain("/policy/acme/compose");
   });
 
-  it("compose defaults requiredSigners to empty array", async () => {
-    const { fetch } = mockFetch(200, { content_hash: "0xabc" });
+  it("compose defaults state and signingPayload when missing", async () => {
+    const { fetch } = mockFetch(200, { policy_id: "pol_1" });
     const brain = new Brain({ token: "k", fetch });
 
     const payload = await brain.policy.compose("acme", {} as never);
 
-    expect(payload.requiredSigners).toEqual([]);
+    expect(payload.state).toBe("pending_signatures");
+    expect(payload.signingPayload).toEqual({});
   });
 
-  it("sign submits content_hash and signatures snake_cased", async () => {
-    const { fetch, calls } = mockFetch(201, { version: 4 });
+  it("sign submits policy_id and signatures, returns policy + activated", async () => {
+    const { fetch, calls } = mockFetch(201, {
+      policy: { version: 4 },
+      activated: true,
+    });
     const brain = new Brain({ token: "k", fetch });
 
-    const policy = await brain.policy.sign("acme", {
-      contentHash: "0xabc",
-      signatures: [{ signer: "0x111", signature: "0xsig" }],
+    const result = await brain.policy.sign("acme", {
+      policyId: "pol_1",
+      signatures: [{ address: "0x111", signature: "0xsig" }],
     });
 
-    expect(policy).toEqual({ version: 4 });
+    expect(result).toEqual({ policy: { version: 4 }, activated: true });
     const body = await calls[0]!.text();
-    expect(body).toContain('"content_hash":"0xabc"');
-    expect(body).toContain('"signer":"0x111"');
+    expect(body).toContain('"policy_id":"pol_1"');
+    expect(body).toContain('"address":"0x111"');
     expect(body).toContain('"signature":"0xsig"');
   });
 
   it("activate is an alias for sign", async () => {
-    const { fetch, calls } = mockFetch(201, { version: 4 });
+    const { fetch, calls } = mockFetch(201, {
+      policy: { version: 4 },
+      activated: true,
+    });
     const brain = new Brain({ token: "k", fetch });
 
     await brain.policy.activate("acme", {
-      contentHash: "0xabc",
+      policyId: "pol_1",
       signatures: [],
     });
 
