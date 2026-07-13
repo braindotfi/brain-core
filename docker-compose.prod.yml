@@ -45,7 +45,9 @@ name: brain-prod
 x-brain-common-env: &brain-common-env
   NODE_ENV: production
   PORT: "3000"
-  SERVICE_VERSION: ${SERVICE_VERSION:-0.0.5}
+  # SERVICE_VERSION intentionally NOT set here — it is baked into the image at
+  # build time (git describe; see Dockerfile). Setting it via environment: or an
+  # env_file would override the image's baked value and re-pin a stale version.
   BRAIN_BASE_CHAIN_ID: "84532"
   AUTH_JWKS_URL: http://jwks:8085/.well-known/jwks.json
   AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
