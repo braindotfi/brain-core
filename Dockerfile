@@ -71,6 +71,13 @@ RUN pnpm -C tools/seed-golden-path run build
 FROM node:22-slim AS runtime
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
+# SERVICE_VERSION is the single source of truth reported by /health. CI bakes it
+# in from `git describe` (build-arg below); local builds fall back to 0.0.0-dev.
+# Do NOT set SERVICE_VERSION via environment:/env_file at runtime — that overrides
+# this baked value and re-pins a stale version. Humans only move the base semver
+# by tagging a tier (v0.1.0, v1.0.0); the -N-gSHA suffix is automatic.
+ARG SERVICE_VERSION=0.0.0-dev
+ENV SERVICE_VERSION=$SERVICE_VERSION
 
 RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
 
