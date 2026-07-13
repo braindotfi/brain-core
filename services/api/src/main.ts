@@ -261,6 +261,10 @@ const DEMO_MEMBER_SESSION_SCOPES = [
   "ledger:write", // manual counterparty (vendor) create+edit from the neobank UI
   "wiki:read",
   "raw:read",
+  // Ephemeral demo tenant only: lets member_token drive document ingest+extract
+  // (/v1/raw/ingest, /v1/raw/:id/extract). NOT added to PAYMENT_AGENT_SCOPES; the
+  // payment agent token stays raw:write-free (agents propose, they don't ingest).
+  "raw:write",
   "policy:read",
   "execution:read",
   "execution:admin",
