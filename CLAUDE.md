@@ -350,6 +350,44 @@ Run the surface webhook deployable as its own least-privilege process. The Slack
 Teams, and ESP credentials must not live in the core protocol service. Same repo,
 separate deploy.
 
+## Payment path (Tier 0 review notes, 2026-07-15)
+
+On-chain money rail is NOT ERC-4337. BrainSmartAccount has no EntryPoint /
+UserOperation / paymaster; the session-key holder calls `executeViaSessionKey`
+directly and the account enforces scope per call. Contracts under `contracts/src`
+are UNAUDITED and testnet-only.
+
+Submission path, single choke point: `PaymentIntentService.create()` sets status
+directly from the policy outcome (reject -> rejected, confirm -> pending_approval,
+allow -> approved). `execute()` requires `status === "approved"`, runs
+`runPreExecutionGate`, then atomically transitions `approved -> dispatching` and
+`outbox.enqueue`. The outbox worker (`services/execution/src/outbox/worker.ts`) is
+the ONLY on-chain submission site (`rail.dispatch()` -> onchain-base / x402-base /
+escrow-base). Enforced by `scripts/check-gate-bypass.mjs`. Audit-before is emitted
+in the gate before enqueue; the worker refuses to dispatch a row without
+`audit_before_id`.
+
+Two load-bearing caveats found in the Tier 0 review (see BRAIN_REVIEW.md):
+
+- Propose-only is POLICY-CONDITIONAL, not code-enforced. A policy `allow` outcome
+  reaches `rail.dispatch()` with zero human approval signatures; gate check 11
+  only requires signatures for `confirm`. There is no hard "on-chain action_type
+  => approval required" floor. Whether that violates the propose-only invariant
+  depends on whether a human-authored `allow` policy counts as the approval, an
+  open design-intent question before any value-bearing mainnet launch.
+- Session-key spend caps are the SOLE ceiling for x402_settle / escrow_release /
+  onchain_transfer (off-chain reservation gate is skipped for those). The shipped
+  ERC-20 grant script `contracts/script/GrantSessionKey.s.sol` grants a USDC key
+  in NATIVE mode (`capToken: 0`), so those caps are silently unenforced for token
+  transfers. Use ERC-20 mode (`capToken = token`) for any token-denominated key.
+
+The unaudited-escrow mainnet fence (`services/api/src/composition/escrow-audit-gate.ts`,
+wired in `main.ts` before the rail registry) is fail-closed and non-bypassable:
+`BRAIN_BASE_CHAIN_ID` drives both the gate and the EIP-155 chain id of every signed
+tx, so it cannot be set to dodge the gate while still landing a valid mainnet tx.
+It fences only chainId 8453 (not other mainnets) and trusts the env chain-id
+without probing the RPC, both currently mitigated by the same EIP-155 coupling.
+
 ## Copy
 
 No em dashes, no ampersands outside brand names, no emojis in docs, comments, or
