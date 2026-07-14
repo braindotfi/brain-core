@@ -1,15 +1,19 @@
 """HTTP client for the Brain API."""
 
 import base64
+import json
 from typing import Any
 
 import httpx
 
+from brain_agents.auth import expected_signature
+
 
 class BrainApiClient:
-    def __init__(self, base_url: str, token: str) -> None:
+    def __init__(self, base_url: str, token: str, service_secret: str = "") -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token
+        self._service_secret = service_secret
 
     async def propose(self, action: dict[str, Any], agent_id: str) -> dict[str, Any]:
         """POST /v1/execution/propose and return the ProposalRecord."""
@@ -60,6 +64,7 @@ class BrainApiClient:
         parser_version: str,
         extracted: dict[str, Any],
         confidence: float | None = None,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         """POST /v1/raw/{raw_id}/parsed — write one stage-3 parsed record.
 
@@ -67,6 +72,16 @@ class BrainApiClient:
         contributes parsed evidence without touching the table directly.
         Naturally idempotent on (raw_artifact_id, parser, parser_version).
         Returns the RawParsed row.
+
+        `tenant_id` forwards the caller's real tenant so a static
+        golden-tenant agent JWT can still write into the caller's own
+        tenant. Proven via the same HMAC scheme the api uses to sign its
+        own outbound X-Brain-Auth calls (see brain_agents.auth.expected_
+        signature), so the raw secret never goes over the wire, only a
+        signature bound to this exact request body. Only takes effect
+        when a service_secret was configured at construction; both
+        headers are omitted otherwise (unchanged back-compat behavior:
+        write lands in the JWT's own tenant).
         """
         json_body: dict[str, Any] = {
             "parser": parser,
@@ -76,11 +91,23 @@ class BrainApiClient:
         if confidence is not None:
             json_body["confidence"] = confidence
 
+        # Serialize once and send those exact bytes: the api verifies the
+        # HMAC over the raw request body, so signing and sending must agree
+        # byte-for-byte (same discipline as the api's own signAgentRequest).
+        body_bytes = json.dumps(json_body).encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/json",
+        }
+        if tenant_id is not None and self._service_secret != "":
+            headers["X-Brain-Write-Tenant"] = tenant_id
+            headers["X-Brain-Service-Auth"] = expected_signature(self._service_secret, body_bytes)
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{self._base_url}/v1/raw/{raw_id}/parsed",
-                json=json_body,
-                headers={"Authorization": f"Bearer {self._token}"},
+                content=body_bytes,
+                headers=headers,
             )
             resp.raise_for_status()
             result: dict[str, Any] = resp.json()

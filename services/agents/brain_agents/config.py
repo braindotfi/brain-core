@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     openai_ocr_model: str = "gpt-4o"
     brain_api_base_url: str = "http://localhost:3001"
     brain_api_token: str = ""
+    # Same secret the api side uses to HMAC-sign inbound X-Brain-Auth. Reused
+    # here (opposite direction) so post_parsed can prove to the api side that
+    # a caller-supplied tenant_id is trustworthy, not just any raw:write JWT.
+    brain_agents_inbound_secret: str = ""
 
     # Anomaly scheduler (autopilot). Off by default; provide tenant ids to enable.
     brain_anomaly_scan_interval_seconds: int = 3600

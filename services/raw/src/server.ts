@@ -42,10 +42,12 @@ export interface BuildRawAppOptions {
   logger?: ReturnType<typeof Fastify>["log"];
   /**
    * Backing store for the v0.3 /v1/sources/* surface. Defaults to a
-   * process-local in-memory repository — production wiring overrides
+   * process-local in-memory repository, production wiring overrides
    * with a Postgres-backed implementation (follow-up commit).
    */
   sourceRepository?: SourceRepository;
+  /** See RegisterParsedOptions.crossTenantServiceSecret. */
+  crossTenantServiceSecret?: string;
 }
 
 export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInstance> {
@@ -114,7 +116,11 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
     dedupTtlSeconds: opts.idempotencyTtlSeconds ?? 86_400,
   });
   await registerArtifact(app, opts.deps);
-  await registerParsed(app, opts.deps);
+  await registerParsed(app, opts.deps, {
+    ...(opts.crossTenantServiceSecret !== undefined
+      ? { crossTenantServiceSecret: opts.crossTenantServiceSecret }
+      : {}),
+  });
 
   // PLAN-FIRST #12: /v1/sources/* — source-connector lifecycle.
   const sourceService = new SourceService(opts.sourceRepository ?? new InMemorySourceRepository());
@@ -132,12 +138,14 @@ export interface RegisterRawPluginOptions {
   idempotencyStore?: IdempotencyStore;
   idempotencyTtlSeconds?: number;
   /**
-   * Backing store for /v1/sources/*. Defaults to in-memory — override with
+   * Backing store for /v1/sources/*. Defaults to in-memory, override with
    * `PostgresSourceRepository` in production for persistent, encrypted storage.
    */
   sourceRepository?: SourceRepository;
   /** Optional credential store (typically the same `PostgresSourceRepository` instance). */
   sourceCredentialStore?: SourceCredentialStore;
+  /** See RegisterParsedOptions.crossTenantServiceSecret. */
+  crossTenantServiceSecret?: string;
 }
 
 /**
@@ -184,7 +192,11 @@ export async function registerRawPlugin(
       : {}),
   });
   await registerArtifact(app, deps);
-  await registerParsed(app, deps);
+  await registerParsed(app, deps, {
+    ...(opts.crossTenantServiceSecret !== undefined
+      ? { crossTenantServiceSecret: opts.crossTenantServiceSecret }
+      : {}),
+  });
 
   // PLAN-FIRST #12: /v1/sources/* — source-connector lifecycle.
   const sourceService = new SourceService(

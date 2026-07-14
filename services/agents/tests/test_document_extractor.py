@@ -135,6 +135,9 @@ async def test_run_writes_parsed_record_and_returns_result(
     assert kwargs["parser_version"] == "1.0.0"
     assert kwargs["extracted"] == _PAYLOAD
     assert kwargs["confidence"] == 0.8
+    # The route forwards the request's own tenant_id so a static
+    # golden-tenant agent JWT can still write into the caller's tenant.
+    assert kwargs["tenant_id"] == "tnt_01TEST000000000000000000"
     mock_deps.brain_client.propose.assert_not_awaited()  # type: ignore[union-attr]
 
 

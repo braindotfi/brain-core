@@ -1,14 +1,15 @@
 /**
- * GET  /raw/{raw_id}/parsed  — list parser outputs (stage-2 returns []).
- * POST /raw/{raw_id}/parsed  — write one parser output (the stage-3 producer).
+ * GET  /raw/{raw_id}/parsed  -- list parser outputs (stage-2 returns []).
+ * POST /raw/{raw_id}/parsed  -- write one parser output (the stage-3 producer).
  *
  * The POST is the first writer of raw_parsed in the system. It is called by
  * extraction workers and first-party extractor agents (e.g. document_extractor)
  * and is the boundary-clean way for an agent to contribute parsed evidence:
  * Raw owns the table, the agent calls the API, and writing into Ledger stays
- * the Ledger normalize service's job. The write never touches Ledger.
+ * the Ledger normalize service job. The write never touches Ledger.
  */
 
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   brainError,
@@ -25,6 +26,99 @@ import type { RawDeps } from "../deps.js";
 
 const READ_SCOPE: Scope = "raw:read";
 const WRITE_SCOPE: Scope = "raw:write";
+
+export interface RegisterParsedOptions {
+  /**
+   * Shared secret proving the caller is a trusted first-party service (a
+   * Python extraction agent), not just any raw:write principal. When set AND
+   * the request carries a valid X-Brain-Service-Auth HMAC over the raw
+   * request body AND a non-empty X-Brain-Write-Tenant header, the write
+   * lands in that header tenant instead of the JWT request.principal.
+   * tenantId. An absent secret or a mismatched/missing signature leaves
+   * behavior unchanged (write to the JWT tenant). This lets a static
+   * golden-tenant agent JWT write parsed rows into the caller real tenant
+   * without widening the JWT own authority. Mirrors the existing api-to-
+   * agents X-Brain-Auth scheme (services/api/src/agents/sign-agent-
+   * request.ts / services/agents/brain_agents/auth.py) so the raw secret
+   * itself never travels on the wire, only a body-bound signature.
+   */
+  crossTenantServiceSecret?: string;
+}
+
+const SERVICE_AUTH_PREFIX = "sha256=";
+
+/**
+ * Same construction as brain_agents.auth.expected_signature /
+ * services/api/src/agents/sign-agent-request.ts: sha256=hex(hmac(secret,
+ * body)). Computed over the RAW request body bytes -- the caller must sign
+ * and send the exact same bytes for this to verify.
+ */
+function computeServiceAuthSignature(secret: string, rawBody: Buffer): string {
+  return SERVICE_AUTH_PREFIX + createHmac("sha256", secret).update(rawBody).digest("hex");
+}
+
+/**
+ * Constant-time compare of a request-supplied HMAC signature against the
+ * one computed over the raw body. Length-checked first so timingSafeEqual
+ * (which throws on mismatched buffer lengths) never sees unequal-length
+ * input. False whenever the raw body is unavailable or the header is
+ * missing/malformed -- never throws, the caller falls back to the JWT
+ * tenant on any doubt.
+ */
+function verifyServiceAuthSignature(
+  rawBody: Buffer | undefined,
+  headerValue: string | undefined,
+  secret: string,
+): boolean {
+  if (rawBody === undefined) return false;
+  if (headerValue === undefined || !headerValue.startsWith(SERVICE_AUTH_PREFIX)) return false;
+  const expected = computeServiceAuthSignature(secret, rawBody);
+  const expectedBuf = Buffer.from(expected, "utf8");
+  const providedBuf = Buffer.from(headerValue, "utf8");
+  return providedBuf.length === expectedBuf.length && timingSafeEqual(providedBuf, expectedBuf);
+}
+
+/**
+ * The raw JSON content-type parser (server.ts) stashes the exact request
+ * bytes on the parsed body as `__rawBody` so signature verification can run
+ * over the same bytes the caller signed. Returns undefined for any other
+ * shape (never throws -- an absent raw body just fails the HMAC check).
+ */
+function extractRawBody(body: unknown): Buffer | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const candidate = (body as Record<string, unknown>)["__rawBody"];
+  return Buffer.isBuffer(candidate) ? candidate : undefined;
+}
+
+/**
+ * Resolve which tenant a parsed write should land in. Defaults to the JWT
+ * principal own tenant; only deviates when a configured service secret
+ * verifies an X-Brain-Service-Auth HMAC over the raw request body AND a
+ * target tenant is named via X-Brain-Write-Tenant. Fails closed: no
+ * configured secret, or any signature mismatch, means the header is
+ * always ignored.
+ */
+function resolveWriteTenantId(
+  request: FastifyRequest,
+  principalTenantId: string,
+  crossTenantServiceSecret: string | undefined,
+): string {
+  if (crossTenantServiceSecret === undefined || crossTenantServiceSecret.length === 0) {
+    return principalTenantId;
+  }
+  const providedAuth = request.headers["x-brain-service-auth"];
+  const providedAuthValue = Array.isArray(providedAuth) ? providedAuth[0] : providedAuth;
+  const rawBody = extractRawBody(request.body);
+  if (!verifyServiceAuthSignature(rawBody, providedAuthValue, crossTenantServiceSecret)) {
+    return principalTenantId;
+  }
+  const targetTenant = request.headers["x-brain-write-tenant"];
+  const targetTenantValue = Array.isArray(targetTenant) ? targetTenant[0] : targetTenant;
+  if (typeof targetTenantValue !== "string" || targetTenantValue.length === 0) {
+    return principalTenantId;
+  }
+  return targetTenantValue;
+}
 
 export interface RawParsedWriteBody {
   parser: string;
@@ -92,7 +186,11 @@ function serializeParsed(p: RawParsedRow): Record<string, unknown> {
   };
 }
 
-export async function registerParsed(app: FastifyInstance, deps: RawDeps): Promise<void> {
+export async function registerParsed(
+  app: FastifyInstance,
+  deps: RawDeps,
+  opts: RegisterParsedOptions = {},
+): Promise<void> {
   app.get(
     "/raw/:raw_id/parsed",
     async (
@@ -150,17 +248,21 @@ export async function registerParsed(app: FastifyInstance, deps: RawDeps): Promi
       }
 
       const body = parseRawParsedWriteBody(request.body);
-      const tenantId = request.principal.tenantId;
+      const writeTenantId = resolveWriteTenantId(
+        request,
+        request.principal.tenantId,
+        opts.crossTenantServiceSecret,
+      );
       const actor = request.principal.id;
 
-      const result = await withTenantScope(deps.pool, tenantId, async (c) => {
+      const result = await withTenantScope(deps.pool, writeTenantId, async (c) => {
         const artifact = await findArtifactById(c, id);
         if (artifact === null) return { kind: "not_found" as const };
         if (artifact.tombstoned_at !== null) return { kind: "tombstoned" as const };
         const { row, created } = await insertParsed(c, {
           id: newRawParsedId(),
           rawArtifactId: id,
-          tenantId,
+          tenantId: writeTenantId,
           parser: body.parser,
           parserVersion: body.parser_version,
           extracted: body.extracted,
@@ -178,10 +280,10 @@ export async function registerParsed(app: FastifyInstance, deps: RawDeps): Promi
         });
       }
 
-      // Audit — §1 principle 4. `extracted` may carry PII, so the log body
-      // records only identifiers + a content hash of the payload (§6.1).
+      // Audit -- section 1 principle 4. extracted may carry PII, so the log
+      // body records only identifiers + a content hash of the payload.
       await deps.audit.emit({
-        tenantId,
+        tenantId: writeTenantId,
         layer: "raw",
         actor,
         action: result.created ? "raw.parsed.write" : "raw.parsed.deduplicated",

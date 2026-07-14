@@ -14,6 +14,7 @@ import httpx
 import pytest
 import respx
 
+from brain_agents.auth import expected_signature
 from brain_agents.client import BrainApiClient
 
 BASE = "http://localhost:3001"
@@ -192,6 +193,91 @@ async def test_post_parsed_omits_confidence_when_none() -> None:
         )
 
     assert "confidence" not in captured
+
+
+async def test_post_parsed_forwards_signed_tenant_header_when_service_secret_configured() -> None:
+    """With a service_secret AND a tenant_id, post_parsed proves the caller
+    to the api side via an HMAC over the exact request body (never the raw
+    secret itself) so the write can land in the caller's own tenant instead
+    of the static agent JWT's golden tenant."""
+    seen_headers: dict[str, str] = {}
+    seen_body: bytes = b""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.update(dict(request.headers))
+        nonlocal seen_body
+        seen_body = request.content
+        return httpx.Response(201, json={"id": "prs_01TEST"})
+
+    raw_id = "raw_01TESTCCCCCCCCCCCCCCCCCC"
+    with respx.mock() as mock:
+        mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").mock(side_effect=handler)
+        client = BrainApiClient(BASE, TOKEN, service_secret="shared-secret")
+        await client.post_parsed(
+            raw_id=raw_id,
+            parser="doc_obligation_v1",
+            parser_version="1.0.0",
+            extracted={"amount": "10.00"},
+            tenant_id="tnt_x",
+        )
+
+    assert seen_headers.get("x-brain-write-tenant") == "tnt_x"
+    # The raw secret must never appear on the wire, only a signature bound
+    # to the exact body sent.
+    assert seen_headers.get("x-brain-service-auth") != "shared-secret"
+    assert seen_headers.get("x-brain-service-auth") == expected_signature(
+        "shared-secret", seen_body
+    )
+
+
+async def test_post_parsed_omits_tenant_headers_when_tenant_id_not_given() -> None:
+    """Back-compat: a configured service_secret alone must not add headers
+    unless the caller actually names a tenant_id."""
+    seen_headers: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.update(dict(request.headers))
+        return httpx.Response(201, json={"id": "prs_01TEST"})
+
+    raw_id = "raw_01TESTDDDDDDDDDDDDDDDDDD"
+    with respx.mock() as mock:
+        mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").mock(side_effect=handler)
+        client = BrainApiClient(BASE, TOKEN, service_secret="shared-secret")
+        await client.post_parsed(
+            raw_id=raw_id,
+            parser="doc_obligation_v1",
+            parser_version="1.0.0",
+            extracted={"amount": "10.00"},
+        )
+
+    assert "x-brain-write-tenant" not in seen_headers
+    assert "x-brain-service-auth" not in seen_headers
+
+
+async def test_post_parsed_omits_tenant_headers_when_no_service_secret_configured() -> None:
+    """Back-compat: passing tenant_id without a configured service_secret must
+    not leak the tenant header (the api side would ignore it anyway, but the
+    client should not send an unproven header)."""
+    seen_headers: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.update(dict(request.headers))
+        return httpx.Response(201, json={"id": "prs_01TEST"})
+
+    raw_id = "raw_01TESTEEEEEEEEEEEEEEEEEE"
+    with respx.mock() as mock:
+        mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").mock(side_effect=handler)
+        client = BrainApiClient(BASE, TOKEN)
+        await client.post_parsed(
+            raw_id=raw_id,
+            parser="doc_obligation_v1",
+            parser_version="1.0.0",
+            extracted={"amount": "10.00"},
+            tenant_id="tnt_x",
+        )
+
+    assert "x-brain-write-tenant" not in seen_headers
+    assert "x-brain-service-auth" not in seen_headers
 
 
 @pytest.mark.parametrize("status", [400, 404, 500])
