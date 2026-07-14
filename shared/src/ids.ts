@@ -91,6 +91,9 @@ export const ID_PREFIX = {
   // RFC 0003 — transactional audit outbox for purge-lifecycle events. One row per
   // lifecycle transition; delivered to the audit service by the purge worker.
   tenantBlobPurgeAuditOutbox: "tbo",
+  // Per-customer API-key auth (token-exchange model). Public id for a row in
+  // api_keys; distinct from the token/agent ids minted alongside it.
+  apiKey: "akey",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];
@@ -146,6 +149,7 @@ export const newWebhookEndpointId = (): string => brainId(ID_PREFIX.webhookEndpo
 export const newExecutionOutboxId = (): string => brainId(ID_PREFIX.executionOutbox);
 export const newLedgerReservationId = (): string => brainId(ID_PREFIX.ledgerReservation);
 export const newWebhookDeadLetterId = (): string => brainId(ID_PREFIX.webhookDeadLetter);
+export const newApiKeyId = (): string => brainId(ID_PREFIX.apiKey);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.

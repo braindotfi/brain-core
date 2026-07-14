@@ -37,14 +37,14 @@ describe("createBrainHttpClient", () => {
 
     const http = createBrainHttpClient({
       token: "k",
-      baseUrl: "https://api.sandbox.brain.fi/v1",
+      baseUrl: "https://staging-api.brain.fi/v1",
       fetch: fetchMock as unknown as typeof fetch,
     });
 
     await http.GET("/audit/anchor/latest");
 
     const request = fetchMock.mock.calls[0]?.[0] as Request;
-    expect(request.url).toBe("https://api.sandbox.brain.fi/v1/audit/anchor/latest");
+    expect(request.url).toBe("https://staging-api.brain.fi/v1/audit/anchor/latest");
   });
 
   it("merges extra headers", async () => {

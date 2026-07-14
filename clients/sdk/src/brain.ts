@@ -37,7 +37,7 @@ import type { components } from "./generated/openapi.js";
 
 export interface BrainOptions extends Omit<BrainHttpClientOptions, "baseUrl"> {
   /** Named environment shorthand. Ignored when `baseUrl` is set explicitly. */
-  environment?: "production" | "sandbox" | "local";
+  environment?: "production" | "sandbox" | "staging" | "local";
   /** Explicit base URL override. Takes precedence over `environment`. */
   baseUrl?: string;
   /** Tenant ID attached to compound helpers (`brain.pay`, `brain.ask`). */
@@ -49,9 +49,13 @@ export interface PayResult {
   execution: ExecutionReceipt | undefined;
 }
 
-export const BRAIN_BASE_URLS: Record<"production" | "sandbox" | "local", string> = {
+export const BRAIN_BASE_URLS: Record<"production" | "sandbox" | "staging" | "local", string> = {
   production: "https://api.brain.fi/v1",
-  sandbox: "https://api.brain.dev/v1",
+  // There is no separate sandbox host: "sandbox" and "staging" are the same
+  // shared testnet environment (staging-api.brain.fi), kept as two enum
+  // values for naming familiarity.
+  sandbox: "https://staging-api.brain.fi/v1",
+  staging: "https://staging-api.brain.fi/v1",
   local: "http://localhost:3000/v1",
 };
 
@@ -89,13 +93,20 @@ export class Brain {
   readonly wiki: WikiResource;
   readonly policy: PolicyResource;
   readonly cashFlow: CashFlowResource;
-  private readonly _token: string;
+  private readonly _token: string | undefined;
+  private readonly _apiKey: string | undefined;
   private readonly _fetch: typeof globalThis.fetch;
   private readonly compounds: CompoundsResource;
 
   constructor(options: BrainOptions) {
-    if (!options.token || typeof options.token !== "string") {
-      throw new Error("Brain: token is required (pass a JWT string)");
+    const hasToken = typeof options.token === "string" && options.token.length > 0;
+    const hasApiKey = typeof options.apiKey === "string" && options.apiKey.length > 0;
+    if (hasToken === hasApiKey) {
+      throw new Error(
+        hasToken
+          ? "Brain: pass exactly one of `token` or `apiKey`, not both"
+          : "Brain: exactly one of `token` or `apiKey` is required (pass a JWT string as `token`, or a `brain_sk_...` key as `apiKey`)",
+      );
     }
     const fetch = options.fetch ?? globalThis.fetch;
     if (typeof fetch !== "function") {
@@ -104,6 +115,7 @@ export class Brain {
     this.baseUrl = resolveBaseUrl(options);
     this.defaultTenantId = options.defaultTenantId;
     this._token = options.token;
+    this._apiKey = options.apiKey;
     this._fetch = fetch;
     this.http = createBrainHttpClient({ ...options, baseUrl: this.baseUrl, fetch });
     this.accounts = new AccountsResource(this.http);
@@ -159,7 +171,8 @@ export class Brain {
   }
 
   getMaskedToken(): string {
-    return this._token.length > 11 ? `${this._token.slice(0, 11)}***` : "***";
+    const value = this._token ?? this._apiKey ?? "";
+    return value.length > 11 ? `${value.slice(0, 11)}***` : "***";
   }
 
   getMaskedApiKey(): string {

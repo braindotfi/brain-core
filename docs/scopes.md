@@ -35,18 +35,33 @@ developer-friendly reference; the runtime check is the code.
 | `audit:admin`            | human (tenant root)   | Anchor management and compliance export            |
 | `surfaces:admin`         | human (tenant admin)  | Install or revoke Slack, Teams, and email surfaces |
 
-## External-Agent Permitted Scopes
+## Per-Principal-Type Scope Caps
 
-External agents registered in `BrainMCPAgentRegistry` may hold **at most three scopes**:
+Each non-human credential class has its own scope allowlist, both defined in
+`shared/src/auth/scopes.ts`:
 
-```
-wiki:read
-raw:write
-execution:propose
-```
+- **MCP agents** registered in `BrainMCPAgentRegistry` hold
+  `AGENT_PERMITTED_SCOPES` (5 scopes): `ledger:read`, `wiki:read`, `raw:write`,
+  `payment_intent:propose`, `execution:propose`.
+- **Per-customer API keys** hold `API_KEY_PERMITTED_SCOPES` (9 scopes): the
+  agent set plus the read verbs `raw:read`, `policy:read`, `execution:read`, and
+  `audit:read`. API keys may read their own tenant's audit trail, which the
+  MCP-agent set withholds. Neither set includes any
+  `approve`/`execute`/`admin`/`sign`/`policy:write` scope, so neither class can
+  move money or administer anything.
 
-Any JWT from a `principal_type=agent` carrying a scope outside this set is rejected
-at the auth boundary (`shared/src/auth/scopes.ts: AGENT_PERMITTED_SCOPES`).
+These caps are enforced **at issuance, not at verify time**:
+
+- API-key issuance validates the requested scopes against `API_KEY_PERMITTED_SCOPES`
+  (`parseIssuedScopes` in `services/api/src/production-tenancy/api-key-routes.ts`).
+- SIWX agent tokens draw their scopes from fixed per-role sets that stay within the
+  allowlist (`scopesForRole` in `services/api/src/auth/siwx.ts`).
+
+The JWT verifier (`projectPrincipal` in `shared/src/auth/jwt.ts`) does **not**
+re-apply these per-principal-type caps. It only rejects a token whose scopes fall
+outside the full `VALID_SCOPES` vocabulary. A token minted with an in-vocabulary but
+principal-inappropriate scope would still verify: the caps are trusted to have been
+applied when the token was issued.
 
 ## Divergence from docs.brain.fi
 

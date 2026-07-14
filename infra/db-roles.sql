@@ -197,7 +197,7 @@ GRANT SELECT ON audit_events TO brain_audit_publisher;
 
 -- brain_resolver: cross-tenant SELECT only, for the webhook/SIWX/login/session resolvers.
 GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links,
-  member_invites, session_refresh_tokens TO brain_resolver;
+  member_invites, session_refresh_tokens, api_keys TO brain_resolver;
 
 -- brain_surface_gateway: tenant-scoped webhook decisions and delivery state.
 -- No ledger_* or execution_outbox grants. The handoff stops at approvals.

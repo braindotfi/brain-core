@@ -238,6 +238,9 @@ export const BRAIN_ERROR_CODES = [
   "invite_expired",
   "invite_consumed",
   "invite_revoked",
+
+  // Per-customer API keys
+  "api_key_not_found",
 ] as const;
 
 export type BrainErrorCode = (typeof BRAIN_ERROR_CODES)[number];
@@ -339,6 +342,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   invite_expired: 403,
   invite_consumed: 403,
   invite_revoked: 403,
+  api_key_not_found: 404,
 
   // 422 — semantic precondition unsatisfiable (ledger evidence/balance, gate
   // approval/decision preconditions)
