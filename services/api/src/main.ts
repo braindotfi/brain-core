@@ -830,6 +830,8 @@ async function main(): Promise<void> {
     hasResolveEvidence: resolveEvidence !== undefined,
     hasDetectDuplicates: detectDuplicates !== undefined,
     hasSumActiveReservations: sumActiveReservations !== undefined,
+    hasAttestCounterpartyAgent: attestCounterpartyAgent !== undefined,
+    hasSumAgentWindowSpend: sumAgentWindowSpend !== undefined,
     hasResolveObligationConfidence: resolveObligationConfidence !== undefined,
     hasResolveObligationDirection: resolveObligationDirection !== undefined,
   });

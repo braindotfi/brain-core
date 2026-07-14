@@ -49,7 +49,7 @@ BrainEscrow lock/release.
 - [x] T0-9 fixed: API boot now checks explicit BASE_RPC_URL eth_chainId against BRAIN_BASE_CHAIN_ID.
 - [ ] T0-10 pending
 - [ ] T0-11 product decision pending
-- [ ] T0-12 pending
+- [x] T0-12 fixed: Production boot now fences attestCounterpartyAgent and sumAgentWindowSpend.
 - [ ] T0-13 confirm intent pending
 
 ### Mainnet fence verdict: INTACT and not bypassable via any escrow funds path

@@ -5,6 +5,8 @@ const allWired = {
   hasResolveEvidence: true,
   hasDetectDuplicates: true,
   hasSumActiveReservations: true,
+  hasAttestCounterpartyAgent: true,
+  hasSumAgentWindowSpend: true,
   hasResolveObligationConfidence: true,
   hasResolveObligationDirection: true,
 };
@@ -17,6 +19,8 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasSumActiveReservations: false,
+        hasAttestCounterpartyAgent: false,
+        hasSumAgentWindowSpend: false,
         hasResolveObligationConfidence: false,
         hasResolveObligationDirection: false,
       }),
@@ -30,6 +34,8 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasSumActiveReservations: false,
+        hasAttestCounterpartyAgent: false,
+        hasSumAgentWindowSpend: false,
         hasResolveObligationConfidence: false,
         hasResolveObligationDirection: false,
       }),
@@ -43,6 +49,8 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasSumActiveReservations: false,
+        hasAttestCounterpartyAgent: false,
+        hasSumAgentWindowSpend: false,
         hasResolveObligationConfidence: false,
         hasResolveObligationDirection: false,
       }),
@@ -101,6 +109,26 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
     ).toThrow(/sumActiveReservations/);
   });
 
+  it("throws in production when attestCounterpartyAgent is missing (check 5.5)", () => {
+    expect(() =>
+      assertMoneyPathLoadersWiredInProduction({
+        nodeEnv: "production",
+        ...allWired,
+        hasAttestCounterpartyAgent: false,
+      }),
+    ).toThrow(/attestCounterpartyAgent/);
+  });
+
+  it("throws in production when sumAgentWindowSpend is missing (check 8.5)", () => {
+    expect(() =>
+      assertMoneyPathLoadersWiredInProduction({
+        nodeEnv: "production",
+        ...allWired,
+        hasSumAgentWindowSpend: false,
+      }),
+    ).toThrow(/sumAgentWindowSpend/);
+  });
+
   it("throws in production when resolveObligationDirection is missing (H-1)", () => {
     // Batch 10 H-1 regression: the §6 gate's outflow-receivable rejection
     // is silently dormant when this loader is absent. Production booting
@@ -122,11 +150,13 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasSumActiveReservations: false,
+        hasAttestCounterpartyAgent: false,
+        hasSumAgentWindowSpend: false,
         hasResolveObligationConfidence: false,
         hasResolveObligationDirection: false,
       }),
     ).toThrow(
-      /resolveEvidence.*detectDuplicates.*sumActiveReservations.*resolveObligationConfidence.*resolveObligationDirection/s,
+      /resolveEvidence.*detectDuplicates.*sumActiveReservations.*attestCounterpartyAgent.*sumAgentWindowSpend.*resolveObligationConfidence.*resolveObligationDirection/s,
     );
   });
 });
