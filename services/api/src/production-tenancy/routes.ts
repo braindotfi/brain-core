@@ -19,7 +19,6 @@ import {
   findActiveProductionAgentToken,
   insertProductionAgentToken,
   revokeProductionAgentTokens,
-  SERVICE_AGENT_TOKEN_TTL_SECONDS,
   SERVICE_TOKEN_SCOPES,
   type AgentTokenSeed,
 } from "../onboarding/service-token.js";
