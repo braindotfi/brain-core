@@ -24,7 +24,14 @@
  */
 
 import type { TenantScopedClient, Scope } from "@brain/shared";
-import { newPolicyId, newUserId } from "@brain/shared";
+import {
+  computeAgentScopeHash,
+  newAgentId,
+  newPolicyId,
+  newTokenId,
+  newUserId,
+  PAYMENT_AGENT_SCOPES,
+} from "@brain/shared";
 import { contentHash } from "@brain/policy";
 import { insertBootstrapAdminMember, bootstrapPlaceholderEmail } from "./bootstrap-member.js";
 import { buildDefaultPolicyDocument } from "./provision.js";
@@ -46,6 +53,26 @@ export const SERVICE_TOKEN_SCOPES: readonly Scope[] = [
   "payment_intent:propose",
   "audit:read",
 ];
+
+export const BFF_SERVICE_AGENT_DISPLAY_NAME = "BFF Service Agent";
+export const SERVICE_AGENT_TOKEN_TTL_SECONDS = 60 * 60;
+
+export interface EnsureBffServiceAgentResult {
+  agentId: string;
+  created: boolean;
+}
+
+export interface AgentTokenSeed {
+  tenantId: string;
+  agentId: string;
+  tokenId: string;
+  expiresAt: number;
+}
+
+interface ActiveTokenRow {
+  id: string;
+  expires_at_epoch: string | number;
+}
 
 /**
  * Idempotently seed the owner user, bootstrap admin member, and active
@@ -95,4 +122,92 @@ export async function ensureTenantBootstrapped(
      ON CONFLICT DO NOTHING`,
     [policyId, tenantId, JSON.stringify(defaultPolicy), defaultPolicyHash, ownerUserId],
   );
+}
+
+export async function ensureBffServiceAgent(
+  c: TenantScopedClient,
+  tenantId: string,
+  smartAccount: string,
+): Promise<EnsureBffServiceAgentResult> {
+  const existing = await c.query<{ id: string }>(
+    `SELECT id FROM agents
+       WHERE display_name = $1 AND state = 'active'
+       ORDER BY created_at ASC LIMIT 1`,
+    [BFF_SERVICE_AGENT_DISPLAY_NAME],
+  );
+  if (existing.rows[0]) return { agentId: existing.rows[0].id, created: false };
+
+  const scopeHash = Buffer.from(computeAgentScopeHash(PAYMENT_AGENT_SCOPES).slice(2), "hex");
+  const agentId = newAgentId();
+  await c.query(
+    `INSERT INTO agents (id, tenant_id, kind, role, display_name, scope_hash, onchain_address, state, registered_at, created_at, contribution_count, quarantine_threshold)
+     VALUES ($1, $2, 'internal', 'payment', $3, $4, $5, 'active', now(), now(), 0, 100)`,
+    [agentId, tenantId, BFF_SERVICE_AGENT_DISPLAY_NAME, scopeHash, smartAccount],
+  );
+  return { agentId, created: true };
+}
+
+export async function findActiveProductionAgentToken(
+  c: TenantScopedClient,
+  tenantId: string,
+  agentId: string,
+): Promise<AgentTokenSeed | null> {
+  const { rows } = await c.query<ActiveTokenRow>(
+    `SELECT id, extract(epoch from expires_at)::bigint AS expires_at_epoch
+       FROM production_agent_tokens
+      WHERE tenant_id = $1
+        AND agent_id = $2
+        AND revoked_at IS NULL
+        AND expires_at > now()
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [tenantId, agentId],
+  );
+  const row = rows[0];
+  if (row === undefined) return null;
+  return {
+    tenantId,
+    agentId,
+    tokenId: row.id,
+    expiresAt: Number(row.expires_at_epoch),
+  };
+}
+
+export async function insertProductionAgentToken(
+  c: TenantScopedClient,
+  tenantId: string,
+  agentId: string,
+  ttlSeconds = SERVICE_AGENT_TOKEN_TTL_SECONDS,
+): Promise<AgentTokenSeed> {
+  const tokenId = newTokenId();
+  const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+  await c.query(
+    `INSERT INTO production_agent_tokens (id, tenant_id, agent_id, expires_at)
+     VALUES ($1, $2, $3, to_timestamp($4))`,
+    [tokenId, tenantId, agentId, expiresAt],
+  );
+  return { tenantId, agentId, tokenId, expiresAt };
+}
+
+export async function revokeProductionAgentTokens(
+  c: TenantScopedClient,
+  tenantId: string,
+  agentId: string,
+): Promise<AgentTokenSeed[]> {
+  const { rows } = await c.query<ActiveTokenRow>(
+    `UPDATE production_agent_tokens
+        SET revoked_at = now()
+      WHERE tenant_id = $1
+        AND agent_id = $2
+        AND revoked_at IS NULL
+        AND expires_at > now()
+      RETURNING id, extract(epoch from expires_at)::bigint AS expires_at_epoch`,
+    [tenantId, agentId],
+  );
+  return rows.map((row) => ({
+    tenantId,
+    agentId,
+    tokenId: row.id,
+    expiresAt: Number(row.expires_at_epoch),
+  }));
 }

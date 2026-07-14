@@ -131,6 +131,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "executions", column: "tenant_id" },
   { table: "approvals", column: "tenant_id" },
   { table: "proposals", column: "tenant_id" },
+  { table: "production_agent_tokens", column: "tenant_id" },
   { table: "agents", column: "tenant_id" },
 
   // ---- Layer 6: Audit (metadata only; events + anchors preserved) ----

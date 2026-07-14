@@ -45,6 +45,7 @@ export const VERBS = [
   "create",
   "exchange",
   "consume",
+  "agent-mint",
 ] as const;
 export type Verb = (typeof VERBS)[number];
 
@@ -82,6 +83,7 @@ export const VALID_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "audit:admin",
   "surfaces:admin",
   "tenant:create",
+  "tenant:agent-mint",
   "session:exchange",
   "invite:consume",
 ]);

@@ -208,6 +208,8 @@ check(
 
 const productionTenancy = read("services/api/src/production-tenancy/routes.ts");
 const productionContract = read("docs/contracts/production-tenancy.md");
+const productionAgentsContract = read("docs/contracts/production-agents.md");
+const productionTenancyTests = read("services/api/src/production-tenancy/routes.test.ts");
 const memberRoutesSource = read("services/execution/src/members/routes.ts");
 check(
   "production tenancy contract is present",
@@ -224,6 +226,70 @@ check(
     productionTenancy.includes("VALUES ($1, 'production', FALSE, 'admin')") &&
     productionTenancy.includes('request.headers["x-demo-provision-auth"]'),
   "POST /v1/tenants must create tenant.kind production and reject demo provision credentials",
+);
+const productionTenantRouteStart = productionTenancy.indexOf('"/tenants"');
+const productionTenantAgentStart = productionTenancy.indexOf(
+  "ensureBffServiceAgent",
+  productionTenantRouteStart,
+);
+const productionTenantAgentTokenStart = productionTenancy.indexOf(
+  "insertProductionAgentToken",
+  productionTenantRouteStart,
+);
+const productionTenantReplyStart = productionTenancy.indexOf("reply.status(201)", productionTenantRouteStart);
+check(
+  "production agents contract is present",
+  productionAgentsContract.includes("Production Agent Principals") &&
+    productionAgentsContract.includes("POST /v1/tenants/{tenant_id}/agent-token") &&
+    productionAgentsContract.includes("SERVICE_TOKEN_SCOPES") &&
+    productionAgentsContract.includes("actor_unresolved"),
+  "docs/contracts/production-agents.md must describe production agent creation, token rotation, scopes, and actor rejection",
+);
+check(
+  "production tenant creation atomically creates the BFF service agent and token",
+  productionTenantRouteStart >= 0 &&
+    productionTenantAgentStart > productionTenantRouteStart &&
+    productionTenantAgentTokenStart > productionTenantAgentStart &&
+    productionTenantAgentTokenStart < productionTenantReplyStart &&
+    productionTenancy.includes("agent: serializeAgentToken"),
+  "POST /v1/tenants must create the production BFF service agent and token before replying",
+);
+const productionAgentTokenRouteStart = productionTenancy.indexOf('"/tenants/:tenantId/agent-token"');
+const productionAgentTokenRouteEnd = productionTenancy.indexOf('"/sessions"', productionAgentTokenRouteStart);
+const productionAgentTokenRouteBody = productionTenancy.slice(
+  productionAgentTokenRouteStart,
+  productionAgentTokenRouteEnd,
+);
+check(
+  "production agent-token route is production-only, idempotent, and rotation revokes prior token ids",
+  productionAgentTokenRouteStart >= 0 &&
+    productionAgentTokenRouteBody.includes('"tenant:agent-mint"') &&
+    productionAgentTokenRouteBody.includes('tenant.kind !== "production"') &&
+    productionAgentTokenRouteBody.includes("findActiveProductionAgentToken") &&
+    productionAgentTokenRouteBody.includes("revokeProductionAgentTokens") &&
+    productionAgentTokenRouteBody.includes("revocation.revoke"),
+  "POST /v1/tenants/:tenantId/agent-token must require tenant:agent-mint, reject non-production tenants, return-or-mint, and revoke rotated token ids",
+);
+const signAgentTokenStart = productionTenancy.indexOf("async function signAgentToken");
+const signAgentTokenEnd = productionTenancy.indexOf("async function insertRefreshToken", signAgentTokenStart);
+const signAgentTokenBody = productionTenancy.slice(signAgentTokenStart, signAgentTokenEnd);
+check(
+  "production agent tokens use SERVICE_TOKEN_SCOPES",
+  signAgentTokenBody.includes("type: \"agent\"") &&
+    signAgentTokenBody.includes("scopes: SERVICE_TOKEN_SCOPES") &&
+    serviceTokenScopesBlock.includes('"payment_intent:propose"') &&
+    !DANGEROUS_SERVICE_TOKEN_SCOPES.some((scope) => serviceTokenScopesBlock.includes(`"${scope}"`)),
+  "production agent tokens must reuse SERVICE_TOKEN_SCOPES and exclude approve, execute, sign, write, and admin scopes",
+);
+check(
+  "production agent principal tests pin member and approval actor rejection",
+  productionTenancyTests.includes("production-minted agent tokens authenticate as agents") &&
+    productionTenancyTests.includes("GET") &&
+    productionTenancyTests.includes('url: "/members"') &&
+    productionTenancyTests.includes("ActorResolver") &&
+    productionTenancyTests.includes("actor_unresolved") &&
+    productionTenancyTests.includes('principal_type: "agent"'),
+  "production agent contract tests must prove production-minted agent tokens cannot resolve as members or approval actors",
 );
 check(
   "session exchange fails closed on unlinked platform identity",
@@ -253,7 +319,9 @@ check(
 check(
   "service-token rejects production tenants",
   apiMainForServiceToken.includes("production_tenant_uses_sessions") &&
-    apiMainForServiceToken.includes("service-token is not a production session exchange path"),
+    apiMainForServiceToken.includes("service-token is not a production session exchange path") &&
+    productionTenancyTests.includes("rejects production agent minting for non-production tenants") &&
+    serviceTokenModule.includes("must stay disabled for live-money or multi-customer production"),
   "POST /v1/auth/service-token must not be a competing production user-session exchange path",
 );
 

@@ -211,19 +211,48 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Create a production tenant with its founder bootstrap admin
+         * Create a production tenant with its founder bootstrap admin and agent
          * @description Public route (`skipAuth`), gated instead by the
          *     `X-Platform-Service-Auth` shared secret header
          *     (`BRAIN_PLATFORM_SERVICE_SECRET`) — not a JWT bearer scope.
          *     Rate-limited to 20/minute. Creates `tenant.kind='production'`,
          *     one active bootstrap admin member, a `platform`-surface identity
-         *     link for the founder, and an initial member session (access +
-         *     refresh token pair). Rejects the request outright if the demo
+         *     link for the founder, an initial member session (access +
+         *     refresh token pair), and the tenant's propose-only BFF service
+         *     agent token. Rejects the request outright if the demo
          *     provisioning header (`X-Demo-Provision-Auth`) is also present, to
          *     keep the demo and production tenant-creation paths from being
          *     conflatable.
          */
         post: operations["createTenant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{tenantId}/agent-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Return or rotate a production tenant's propose-only agent token
+         * @description Public route (`skipAuth`), gated instead by the
+         *     `X-Platform-Service-Auth` shared secret header with the
+         *     `tenant:agent-mint` operational scope. Production-only. Returns the
+         *     active BFF service agent token when one exists, or mints one when no
+         *     active token exists. Pass `{ "rotate": true }` to revoke the prior
+         *     token id and mint a replacement. The token is a
+         *     `principal_type=agent` JWT using the shared service-token propose-only
+         *     scope set. It cannot approve, execute, sign, administer, or resolve as
+         *     a member.
+         */
+        post: operations["mintProductionAgentToken"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3430,6 +3459,26 @@ export interface components {
                 requiresSecondApproverAbove: number | null;
             };
         };
+        /**
+         * @description Propose-only production BFF service agent credential. This is not a
+         *     member session and cannot approve, execute, sign, administer, or
+         *     resolve as a member.
+         */
+        ProductionAgentToken: {
+            id: string;
+            /** @description Bearer JWT returned only to the platform caller. */
+            token: string;
+            /** @enum {string} */
+            principal_type: "agent";
+            subject: string;
+            tenant_id: string;
+            token_id: string;
+            scopes: ("ledger:read" | "wiki:read" | "raw:read" | "raw:write" | "policy:read" | "execution:read" | "execution:propose" | "payment_intent:propose" | "audit:read")[];
+            /** @enum {integer} */
+            expires_in: 3600;
+            /** @enum {string} */
+            use: "propose-only agent workflows";
+        };
         MemberCreateRequest: {
             /** @description Caller-supplied member id. Defaults to a generated user id. */
             id?: string;
@@ -4221,6 +4270,7 @@ export interface operations {
                             /** @enum {integer} */
                             expires_in?: 900;
                         };
+                        agent?: components["schemas"]["ProductionAgentToken"];
                     };
                 };
             };
@@ -4243,6 +4293,76 @@ export interface operations {
                         /** @enum {string} */
                         reason?: "platform_service_credential_required";
                     };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    mintProductionAgentToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description Revoke the active token id before minting a replacement.
+                     * @default false
+                     */
+                    rotate?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Existing active token returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionAgentToken"];
+                };
+            };
+            /** @description Agent token minted or rotated */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionAgentToken"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Missing/invalid platform credential, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Tenant is not production. Error code `auth_scope_insufficient`, details.reason `production_agent_required`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Tenant does not exist. Error code `tenant_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             429: components["responses"]["RateLimited"];

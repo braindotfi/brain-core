@@ -49,9 +49,7 @@ import {
   newPolicyId,
   newTenantId,
   newUserId,
-  newAgentId,
   isBrainId,
-  computeAgentScopeHash,
   PAYMENT_AGENT_SCOPES,
   InMemoryAuditEmitter,
   AGENT_PERMITTED_SCOPES,
@@ -69,7 +67,12 @@ import {
   registerWalletRoutes,
   PostgresWalletIdentityReader,
 } from "./onboarding/wallet-identities.js";
-import { ensureTenantBootstrapped, SERVICE_TOKEN_SCOPES } from "./onboarding/service-token.js";
+import {
+  ensureBffServiceAgent,
+  ensureTenantBootstrapped,
+  SERVICE_AGENT_TOKEN_TTL_SECONDS,
+  SERVICE_TOKEN_SCOPES,
+} from "./onboarding/service-token.js";
 import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
 import { logBootCapabilities } from "./capabilities.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
@@ -458,13 +461,14 @@ async function main(): Promise<void> {
   const DEMO_GOLDEN_USER = "user_00000000020000000000000001" as const;
   const DEMO_GOLDEN_TENANT = "tnt_00000000010000000000000000" as const;
 
+  const revocationStore = new RedisRevocationStore(redis);
   const jwtVerifier = new JwtVerifier({
     jwksUrl: cfg.AUTH_JWKS_URL,
     ...(cfg.BRAIN_DEMO_MODE ? { secret: DEMO_SIGN_SECRET } : {}),
     issuer: cfg.AUTH_ISSUER,
     audience: cfg.AUTH_AUDIENCE,
     clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
-    revocation: new RedisRevocationStore(redis),
+    revocation: revocationStore,
   });
 
   // -- blob adapter — azure or s3 in production, memory in local dev ---
@@ -1761,6 +1765,7 @@ async function main(): Promise<void> {
             resolverPool,
             audit,
             signer: siwxSigner,
+            revocation: revocationStore,
             ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
               ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
               : {}),
@@ -2349,10 +2354,6 @@ async function main(): Promise<void> {
               const smartAccount =
                 process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ??
                 "0x0000000000000000000000000000000000000000";
-              const scopeHash = Buffer.from(
-                computeAgentScopeHash(PAYMENT_AGENT_SCOPES).slice(2),
-                "hex",
-              );
               let tenantCreated = false;
               let agentCreated = false;
               const agentId = await withTenantScope(pool, tenantId, async (c) => {
@@ -2387,31 +2388,19 @@ async function main(): Promise<void> {
                 // in this same transaction, before the tenant is usable.
                 await ensureTenantBootstrapped(c, tenantId);
 
-                const existing = await c.query<{ id: string }>(
-                  `SELECT id FROM agents
-                     WHERE display_name = 'BFF Service Agent' AND state = 'active'
-                     ORDER BY created_at ASC LIMIT 1`,
-                );
-                if (existing.rows[0]) return existing.rows[0].id;
-                agentCreated = true;
-                const newId = newAgentId();
-                await c.query(
-                  `INSERT INTO agents (id, tenant_id, kind, role, display_name, scope_hash, onchain_address, state, registered_at, created_at, contribution_count, quarantine_threshold)
-                   VALUES ($1, $2, 'internal', 'payment', 'BFF Service Agent', $3, $4, 'active', now(), now(), 0, 100)`,
-                  [newId, tenantId, scopeHash, smartAccount],
-                );
-                return newId;
+                const agent = await ensureBffServiceAgent(c, tenantId, smartAccount);
+                agentCreated = agent.created;
+                return agent.agentId;
               });
 
-              const SERVICE_TOKEN_TTL_S = 60 * 60; // 1 hour
               const tokenId = newTokenId();
               const token = await siwxSigner.sign({
                 id: agentId,
                 type: "agent",
                 tenantId,
                 tokenId,
-                expiresAt: Math.floor(Date.now() / 1000) + SERVICE_TOKEN_TTL_S,
-                // M1: reads + propose only. payment_intent:approve dropped —
+                expiresAt: Math.floor(Date.now() / 1000) + SERVICE_AGENT_TOKEN_TTL_SECONDS,
+                // M1: reads + propose only. payment_intent:approve dropped.
                 // approval authority belongs to a human member (authenticated
                 // separately), never to this agent-typed token. Single source
                 // of truth in onboarding/service-token.ts so this list and
@@ -2419,7 +2408,7 @@ async function main(): Promise<void> {
                 scopes: SERVICE_TOKEN_SCOPES,
               });
 
-              // H2: audit the mint itself — this is a production credential
+              // H2: audit the mint itself. This is a sandbox credential
               // grant and a tenant/agent materialisation, both auditable
               // events elsewhere in this file (policy.activate, member
               // mutations); this route was silently exempt.
@@ -2437,7 +2426,7 @@ async function main(): Promise<void> {
                 tenant_id: tenantId,
                 agent_id: agentId,
                 token,
-                expires_in: SERVICE_TOKEN_TTL_S,
+                expires_in: SERVICE_AGENT_TOKEN_TTL_SECONDS,
               };
             },
           );

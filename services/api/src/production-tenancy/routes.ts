@@ -9,10 +9,19 @@ import {
   withTenantScope,
   type AuditEmitter,
   type JwtSigner,
+  type RevocationStore,
   type Scope,
   type TenantScopedClient,
 } from "@brain/shared";
 import { insertBootstrapAdminMember } from "../onboarding/bootstrap-member.js";
+import {
+  ensureBffServiceAgent,
+  findActiveProductionAgentToken,
+  insertProductionAgentToken,
+  revokeProductionAgentTokens,
+  SERVICE_TOKEN_SCOPES,
+  type AgentTokenSeed,
+} from "../onboarding/service-token.js";
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
@@ -33,7 +42,9 @@ export interface ProductionTenancyRoutesDeps {
   resolverPool: Pool;
   audit: AuditEmitter;
   signer: JwtSigner;
+  revocation?: RevocationStore;
   platformSecret?: string;
+  smartAccount?: string;
 }
 
 interface MemberRow {
@@ -75,6 +86,10 @@ interface InviteRow {
   requires_second_approver_above_cents: string | number | bigint | null;
 }
 
+interface TenantKindRow {
+  kind: "production" | "demo";
+}
+
 export async function registerProductionTenancyRoutes(
   app: FastifyInstance,
   deps: ProductionTenancyRoutesDeps,
@@ -105,8 +120,10 @@ export async function registerProductionTenancyRoutes(
       const tenantId = newTenantId();
       const memberId = newUserId();
       const sessionSeed = newSessionSeed(tenantId, memberId);
+      const smartAccount =
+        deps.smartAccount ?? process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ?? zeroAddress();
 
-      await withTenantScope(deps.pool, tenantId, async (client) => {
+      const agentResult = await withTenantScope(deps.pool, tenantId, async (client) => {
         await client.query(
           `INSERT INTO tenants (id, kind, sandbox, created_via)
            VALUES ($1, 'production', FALSE, 'admin')`,
@@ -126,18 +143,22 @@ export async function registerProductionTenancyRoutes(
         });
         await insertPlatformIdentityLink(client, tenantId, memberId, externalRef);
         await insertRefreshToken(client, sessionSeed);
+        const agent = await ensureBffServiceAgent(client, tenantId, smartAccount);
+        const agentToken = await insertProductionAgentToken(client, tenantId, agent.agentId);
+        return { agentId: agent.agentId, agentCreated: agent.created, agentToken };
       });
 
       const member = await findMemberInTenant(deps.pool, tenantId, memberId);
       if (member === null) throw brainError("internal_server_error", "bootstrap member missing");
       const token = await signMemberToken(deps.signer, sessionSeed);
+      const agentToken = await signAgentToken(deps.signer, agentResult.agentToken);
       await deps.audit.emit({
         tenantId,
         layer: "execution",
         actor: memberId,
         action: "tenant.created",
         inputs: { company_name: typeof body?.company_name === "string" ? body.company_name : null },
-        outputs: { tenant_id: tenantId, member_id: memberId },
+        outputs: { tenant_id: tenantId, member_id: memberId, agent_id: agentResult.agentId },
       });
       await deps.audit.emit({
         tenantId,
@@ -146,6 +167,18 @@ export async function registerProductionTenancyRoutes(
         action: "member.changed",
         inputs: { mutation: "bootstrap", before: null },
         outputs: { after: serializeMember(member) },
+      });
+      await deps.audit.emit({
+        tenantId,
+        layer: "agent",
+        actor: agentResult.agentId,
+        action: "auth.production_agent_token.minted",
+        inputs: { tenant_created: true, agent_created: agentResult.agentCreated, rotated: false },
+        outputs: {
+          tenant_id: tenantId,
+          agent_id: agentResult.agentId,
+          token_id: agentResult.agentToken.tokenId,
+        },
       });
 
       reply.status(201);
@@ -157,7 +190,87 @@ export async function registerProductionTenancyRoutes(
           refresh_token: sessionSeed.refreshToken,
           expires_in: ACCESS_TOKEN_TTL_SECONDS,
         },
+        agent: serializeAgentToken(agentResult.agentId, agentToken, agentResult.agentToken),
       };
+    },
+  );
+
+  app.post(
+    "/tenants/:tenantId/agent-token",
+    { config: { skipAuth: true, rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      assertPlatformCredential(request, deps.platformSecret, "tenant:agent-mint");
+      const { tenantId } = request.params as { tenantId: string };
+      const body = request.body as { rotate?: unknown } | undefined;
+      const rotate = body?.rotate === true;
+      const smartAccount =
+        deps.smartAccount ?? process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ?? zeroAddress();
+
+      let revoked: AgentTokenSeed[] = [];
+      const result = await withTenantScope(deps.pool, tenantId, async (client) => {
+        const tenant = await findTenantKind(client, tenantId);
+        if (tenant === null) {
+          throw brainError("tenant_not_found", "tenant does not exist", { statusOverride: 404 });
+        }
+        if (tenant.kind !== "production") {
+          throw brainError("auth_scope_insufficient", "tenant is not production", {
+            statusOverride: 403,
+            details: { reason: "production_agent_required" },
+          });
+        }
+
+        const agent = await ensureBffServiceAgent(client, tenantId, smartAccount);
+        if (rotate) {
+          revoked = await revokeProductionAgentTokens(client, tenantId, agent.agentId);
+        } else {
+          const existing = await findActiveProductionAgentToken(client, tenantId, agent.agentId);
+          if (existing !== null) {
+            return {
+              agentId: agent.agentId,
+              agentCreated: agent.created,
+              token: existing,
+              tokenCreated: false,
+            };
+          }
+        }
+
+        const token = await insertProductionAgentToken(client, tenantId, agent.agentId);
+        return {
+          agentId: agent.agentId,
+          agentCreated: agent.created,
+          token,
+          tokenCreated: true,
+        };
+      });
+
+      const revocation = deps.revocation;
+      if (rotate && revocation !== undefined) {
+        await Promise.all(
+          revoked.map((token) => revocation.revoke(token.tokenId, token.expiresAt)),
+        );
+      }
+
+      const token = await signAgentToken(deps.signer, result.token);
+      await deps.audit.emit({
+        tenantId,
+        layer: "agent",
+        actor: result.agentId,
+        action: "auth.production_agent_token.minted",
+        inputs: {
+          rotated: rotate,
+          agent_created: result.agentCreated,
+          token_created: result.tokenCreated,
+        },
+        outputs: {
+          tenant_id: tenantId,
+          agent_id: result.agentId,
+          token_id: result.token.tokenId,
+          revoked_token_ids: revoked.map((row) => row.tokenId),
+        },
+      });
+
+      reply.status(result.tokenCreated ? 201 : 200);
+      return serializeAgentToken(result.agentId, token, result.token);
     },
   );
 
@@ -310,7 +423,7 @@ export async function registerProductionTenancyRoutes(
 export function assertPlatformCredential(
   request: FastifyRequest,
   secret: string | undefined,
-  scope: "tenant:create" | "session:exchange" | "invite:consume",
+  scope: "tenant:create" | "tenant:agent-mint" | "session:exchange" | "invite:consume",
 ): void {
   if (secret === undefined || secret.length === 0) {
     throw brainError("dependency_unavailable", "BRAIN_PLATFORM_SERVICE_SECRET is not configured", {
@@ -363,6 +476,17 @@ async function signMemberToken(signer: JwtSigner, seed: SessionSeed): Promise<st
   });
 }
 
+async function signAgentToken(signer: JwtSigner, seed: AgentTokenSeed): Promise<string> {
+  return signer.sign({
+    id: seed.agentId,
+    type: "agent",
+    tenantId: seed.tenantId,
+    tokenId: seed.tokenId,
+    expiresAt: seed.expiresAt,
+    scopes: SERVICE_TOKEN_SCOPES,
+  });
+}
+
 async function insertRefreshToken(client: TenantScopedClient, seed: SessionSeed): Promise<void> {
   await client.query(
     `INSERT INTO session_refresh_tokens
@@ -392,6 +516,17 @@ async function insertPlatformIdentityLink(
      DO UPDATE SET member_id = EXCLUDED.member_id, linked_at = now()`,
     [tenantId, memberId, externalRef],
   );
+}
+
+async function findTenantKind(
+  client: TenantScopedClient,
+  tenantId: string,
+): Promise<TenantKindRow | null> {
+  const { rows } = await client.query<TenantKindRow>(
+    `SELECT kind FROM tenants WHERE id = $1 LIMIT 1`,
+    [tenantId],
+  );
+  return rows[0] ?? null;
 }
 
 async function findMemberInTenant(
@@ -550,6 +685,20 @@ function serializeMember(member: MemberRow) {
   };
 }
 
+function serializeAgentToken(agentId: string, token: string, seed: AgentTokenSeed) {
+  return {
+    id: agentId,
+    token,
+    principal_type: "agent",
+    subject: agentId,
+    tenant_id: seed.tenantId,
+    token_id: seed.tokenId,
+    scopes: SERVICE_TOKEN_SCOPES,
+    expires_in: Math.max(0, seed.expiresAt - Math.floor(Date.now() / 1000)),
+    use: "propose-only agent workflows",
+  };
+}
+
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw brainError("request_body_invalid", `${name} required`);
@@ -567,4 +716,8 @@ export function hashToken(token: string): string {
 
 function isPast(value: Date | string): boolean {
   return new Date(value).getTime() <= Date.now();
+}
+
+function zeroAddress(): string {
+  return "0x0000000000000000000000000000000000000000";
 }
