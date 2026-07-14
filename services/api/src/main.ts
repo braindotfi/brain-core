@@ -237,13 +237,14 @@ import { buildPaymentIntentService } from "./composition/payment-intent-service.
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
 import { assertRuntimeDbRoles } from "./composition/runtime-db-roles.js";
 import {
+  assertBaseRpcChainId,
   assertDeployedEscrowBytecode,
   assertEscrowAuditApproved,
   readAuditChainApproved,
   readAuditStatusApproved,
   readDeployedBytecodeExpectation,
 } from "./composition/escrow-audit-gate.js";
-import { makeBaseGetCode } from "./composition/eth-getcode.js";
+import { makeBaseGetChainId, makeBaseGetCode } from "./composition/eth-getcode.js";
 import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
 import { closeAllPools } from "./composition/close-pools.js";
 import { runShutdown } from "./composition/shutdown.js";
@@ -366,11 +367,17 @@ async function main(): Promise<void> {
   // invariant (not env-gated); a no-op while every connector is first-party.
   assertRegistryPartnerIsolation();
 
-  // Refuse to boot against Base mainnet (chainId=8453) with BRAIN_ESCROW_ADDRESS
-  // configured unless BOTH the committed audit record (contracts/audit-status.json
-  // status "approved", R-01) AND an operator env attestation are present. Silent
-  // on Base Sepolia + when no escrow is wired. Logic + tests live in
-  // composition/escrow-audit-gate.ts.
+  await assertBaseRpcChainId({
+    configuredChainId: cfg.BRAIN_BASE_CHAIN_ID,
+    rpcUrl: cfg.BASE_RPC_URL,
+    getChainId:
+      cfg.BASE_RPC_URL !== undefined ? makeBaseGetChainId(cfg.BASE_RPC_URL) : async () => cfg.BRAIN_BASE_CHAIN_ID,
+  });
+
+  // Refuse to boot against any non-testnet chain with BRAIN_ESCROW_ADDRESS
+  // configured unless BOTH the committed audit record and an operator env
+  // attestation are present. Silent on explicit testnets and when no escrow is
+  // wired. Logic and tests live in composition/escrow-audit-gate.ts.
   assertEscrowAuditApproved({
     chainId: cfg.BRAIN_BASE_CHAIN_ID,
     escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,

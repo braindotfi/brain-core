@@ -44,9 +44,9 @@ BrainEscrow lock/release.
 - [x] T0-3 fixed: TS session-key helper shapes now require explicit capToken and raw integer token-unit amounts.
 - [x] T0-4 fixed: Agent behavior updates and revocations now bind per-agent nonces in their EIP-712 payloads.
 - [ ] T0-5 product decision pending
-- [ ] T0-6 pending
-- [ ] T0-8 pending
-- [ ] T0-9 pending
+- [x] T0-6 fixed: Deploy scripts now require Base Sepolia chain id before broadcasting.
+- [x] T0-8 fixed: Escrow audit and bytecode gates now require the full audit path on any non-testnet chain.
+- [x] T0-9 fixed: API boot now checks explicit BASE_RPC_URL eth_chainId against BRAIN_BASE_CHAIN_ID.
 - [ ] T0-10 pending
 - [ ] T0-11 product decision pending
 - [ ] T0-12 pending

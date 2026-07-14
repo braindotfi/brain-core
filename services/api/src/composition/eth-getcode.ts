@@ -24,3 +24,8 @@ export function makeBaseGetCode(
     return code ?? "0x";
   };
 }
+
+export function makeBaseGetChainId(rpcUrl: string): () => Promise<number> {
+  const client = createPublicClient({ chain: baseSepolia, transport: http(rpcUrl) });
+  return async (): Promise<number> => client.getChainId();
+}

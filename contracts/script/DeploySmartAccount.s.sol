@@ -12,7 +12,13 @@ import {BrainSmartAccount} from "../src/BrainSmartAccount.sol";
 ///
 /// TENANT_ID defaults to keccak256("demo-tenant").
 contract DeploySmartAccount is Script {
+    uint256 internal constant BASE_SEPOLIA_CHAIN_ID = 84_532;
+
+    error WrongChain(uint256 chainId);
+
     function run() external {
+        if (block.chainid != BASE_SEPOLIA_CHAIN_ID) revert WrongChain(block.chainid);
+
         address owner = vm.envAddress("SMART_ACCOUNT_OWNER");
         address policyRegistry = vm.envAddress("BRAIN_POLICY_REGISTRY");
         bytes32 tenantId = vm.envOr("SMART_ACCOUNT_TENANT_ID", keccak256("demo-tenant"));
