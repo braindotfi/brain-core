@@ -21,6 +21,7 @@ import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import {
   AGENT_PERMITTED_SCOPES,
+  PAYMENT_AGENT_SCOPES,
   brainError,
   computeAgentScopeHash,
   newAgentId,
@@ -31,7 +32,6 @@ import {
   type JwtSigner,
   type Scope,
 } from "@brain/shared";
-import { SERVICE_TOKEN_SCOPES } from "../onboarding/service-token.js";
 import { assertPlatformCredential, hashToken, newSecretToken } from "./routes.js";
 
 const API_KEY_PREFIX = "brain_sk_";
@@ -202,33 +202,48 @@ export async function registerApiKeyRoutes(
       assertPlatformCredential(request, deps.platformSecret, "tenant:create");
       const { tenantId, keyId } = request.params as { tenantId: string; keyId: string };
 
-      // Idempotent revoke: a leaked key must be killable, and re-revoking an
-      // already-revoked (or never-existent) key id is not an error worth its
-      // own 404 code here -- 204 either way.
-      const agentId = await withTenantScope(deps.pool, tenantId, async (client) => {
+      // Three-way outcome so a typo'd key id 404s (route is platform-secret
+      // gated -- the caller is trusted, so revealing existence leaks nothing)
+      // while re-revoking an already-revoked key stays a silent no-op (no
+      // repeat audit event, no repeat agent update).
+      const outcome = await withTenantScope(deps.pool, tenantId, async (client) => {
         const { rows } = await client.query<{ agent_id: string }>(
-          `UPDATE api_keys SET revoked_at = COALESCE(revoked_at, now())
-             WHERE tenant_id = $1 AND key_id = $2
+          `UPDATE api_keys SET revoked_at = now()
+             WHERE tenant_id = $1 AND key_id = $2 AND revoked_at IS NULL
            RETURNING agent_id`,
           [tenantId, keyId],
         );
         const row = rows[0];
-        if (row === undefined) return null;
-        await client.query(`UPDATE agents SET state = 'revoked' WHERE tenant_id = $1 AND id = $2`, [
-          tenantId,
-          row.agent_id,
-        ]);
-        return row.agent_id;
+        if (row !== undefined) {
+          await client.query(`UPDATE agents SET state = 'revoked' WHERE tenant_id = $1 AND id = $2`, [
+            tenantId,
+            row.agent_id,
+          ]);
+          return { status: "revoked" as const, agentId: row.agent_id };
+        }
+        // No row updated -- either already revoked or never existed.
+        // Disambiguate with a plain existence check.
+        const { rows: existing } = await client.query<{ found: number }>(
+          `SELECT 1 AS found FROM api_keys WHERE tenant_id = $1 AND key_id = $2 LIMIT 1`,
+          [tenantId, keyId],
+        );
+        return existing[0] === undefined
+          ? { status: "not_found" as const }
+          : { status: "already_revoked" as const };
       });
 
-      if (agentId !== null) {
+      if (outcome.status === "not_found") {
+        throw brainError("api_key_not_found", "api key does not exist", { statusOverride: 404 });
+      }
+
+      if (outcome.status === "revoked") {
         await deps.audit.emit({
           tenantId,
           layer: "agent",
-          actor: agentId,
+          actor: outcome.agentId,
           action: "auth.api_key.revoked",
           inputs: {},
-          outputs: { key_id: keyId, agent_id: agentId },
+          outputs: { key_id: keyId, agent_id: outcome.agentId },
         });
       }
 
@@ -254,19 +269,29 @@ function exchangeUnauthorized(
   };
 }
 
+// Default (no `scopes` in the issuance body) grants the same read+propose set
+// as the demo payment-agent role -- ledger:read, wiki:read,
+// payment_intent:propose, execution:propose. It is a proper subset of
+// AGENT_PERMITTED_SCOPES (verified below), unlike the old default of
+// SERVICE_TOKEN_SCOPES which included audit:read/policy:read/raw:read/
+// execution:read -- none of which an agent-typed key may hold.
+const DEFAULT_ISSUED_SCOPES: readonly Scope[] = PAYMENT_AGENT_SCOPES;
+
 function parseIssuedScopes(input: unknown): Scope[] {
-  if (input === undefined) return [...SERVICE_TOKEN_SCOPES];
-  if (!Array.isArray(input) || input.length === 0) {
+  const candidate = input === undefined ? DEFAULT_ISSUED_SCOPES : input;
+  if (!Array.isArray(candidate) || candidate.length === 0) {
     throw brainError("request_body_invalid", "scopes must be a non-empty array of strings");
   }
-  for (const s of input) {
+  // Same allowlist check for the default and the explicit path -- defense in
+  // depth so the default can never silently drift past the agent cap.
+  for (const s of candidate) {
     if (typeof s !== "string" || !AGENT_PERMITTED_SCOPES.has(s as Scope)) {
       throw brainError("request_body_invalid", `scope not permitted for an agent-typed key: ${String(s)}`, {
         details: { scope: s },
       });
     }
   }
-  return input as Scope[];
+  return candidate as Scope[];
 }
 
 function parseExpiresAt(input: unknown): string | null {

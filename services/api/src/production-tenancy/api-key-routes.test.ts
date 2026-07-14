@@ -4,6 +4,7 @@ import {
   authPlugin,
   errorHandlerPlugin,
   requestIdPlugin,
+  AGENT_PERMITTED_SCOPES,
   InMemoryAuditEmitter,
   JwtSigner,
   JwtVerifier,
@@ -102,11 +103,18 @@ function makeAppPool(store: FakeStore) {
       if (sql.includes("UPDATE api_keys SET revoked_at")) {
         const [tenantId, keyId] = values as [string, string];
         const found = [...store.apiKeys.values()].find(
-          (r) => r.tenant_id === tenantId && r.key_id === keyId,
+          (r) => r.tenant_id === tenantId && r.key_id === keyId && r.revoked_at === null,
         );
         if (found === undefined) return { rows: [], rowCount: 0 };
-        found.revoked_at = found.revoked_at ?? new Date().toISOString();
+        found.revoked_at = new Date().toISOString();
         return { rows: [{ agent_id: found.agent_id }], rowCount: 1 };
+      }
+      if (sql.includes("SELECT 1 AS found FROM api_keys")) {
+        const [tenantId, keyId] = values as [string, string];
+        const found = [...store.apiKeys.values()].some(
+          (r) => r.tenant_id === tenantId && r.key_id === keyId,
+        );
+        return found ? { rows: [{ found: 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
       }
       if (sql.includes("UPDATE agents SET state = 'revoked'")) {
         const [, id] = values as [string, string];
@@ -318,7 +326,7 @@ describe("per-customer API-key auth (token-exchange model)", () => {
     }
   });
 
-  it("revoking a never-issued key id is a no-op 204 (idempotent kill switch)", async () => {
+  it("404s revocation of a never-issued key id", async () => {
     const tenantId = newTenantId();
     const store = makeStore(tenantId);
     const { app, audit } = await buildApp(store);
@@ -328,8 +336,73 @@ describe("per-customer API-key auth (token-exchange model)", () => {
         url: `/tenants/${tenantId}/api-keys/akey_never_issued`,
         headers: { "x-platform-service-auth": PLATFORM_SECRET },
       });
-      expect(res.statusCode).toBe(204);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe("api_key_not_found");
       expect(audit.events.map((e) => e.action)).not.toContain("auth.api_key.revoked");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("double-revoke: first call revokes and audits, second is an idempotent 204 no-op", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const { app, audit } = await buildApp(store);
+    try {
+      const issue = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/api-keys`,
+        headers: { "x-platform-service-auth": PLATFORM_SECRET },
+        payload: {},
+      });
+      const { key_id: keyId } = issue.json();
+
+      const revoke1 = await app.inject({
+        method: "DELETE",
+        url: `/tenants/${tenantId}/api-keys/${keyId}`,
+        headers: { "x-platform-service-auth": PLATFORM_SECRET },
+      });
+      expect(revoke1.statusCode).toBe(204);
+      const revokedCountAfterFirst = audit.events.filter(
+        (e) => e.action === "auth.api_key.revoked",
+      ).length;
+      expect(revokedCountAfterFirst).toBe(1);
+
+      const revoke2 = await app.inject({
+        method: "DELETE",
+        url: `/tenants/${tenantId}/api-keys/${keyId}`,
+        headers: { "x-platform-service-auth": PLATFORM_SECRET },
+      });
+      expect(revoke2.statusCode).toBe(204);
+      const revokedCountAfterSecond = audit.events.filter(
+        (e) => e.action === "auth.api_key.revoked",
+      ).length;
+      expect(revokedCountAfterSecond).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("default (no scopes in body) issuance stays within AGENT_PERMITTED_SCOPES", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const { app } = await buildApp(store);
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/api-keys`,
+        headers: { "x-platform-service-auth": PLATFORM_SECRET },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(201);
+      const { scopes } = res.json();
+      expect(scopes.length).toBeGreaterThan(0);
+      for (const s of scopes as string[]) {
+        expect(AGENT_PERMITTED_SCOPES.has(s as never)).toBe(true);
+      }
+      // audit:read (part of the old SERVICE_TOKEN_SCOPES default) must never
+      // be granted to an agent-typed key.
+      expect(scopes).not.toContain("audit:read");
     } finally {
       await app.close();
     }
