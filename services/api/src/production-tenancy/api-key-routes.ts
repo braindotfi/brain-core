@@ -20,8 +20,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import {
-  AGENT_PERMITTED_SCOPES,
-  PAYMENT_AGENT_SCOPES,
+  API_KEY_PERMITTED_SCOPES,
   brainError,
   computeAgentScopeHash,
   newAgentId,
@@ -269,13 +268,21 @@ function exchangeUnauthorized(
   };
 }
 
-// Default (no `scopes` in the issuance body) grants the same read+propose set
-// as the demo payment-agent role -- ledger:read, wiki:read,
-// payment_intent:propose, execution:propose. It is a proper subset of
-// AGENT_PERMITTED_SCOPES (verified below), unlike the old default of
-// SERVICE_TOKEN_SCOPES which included audit:read/policy:read/raw:read/
-// execution:read -- none of which an agent-typed key may hold.
-const DEFAULT_ISSUED_SCOPES: readonly Scope[] = PAYMENT_AGENT_SCOPES;
+// Default (no `scopes` in the issuance body) grants a read+propose+audit set --
+// ledger:read, wiki:read, raw:read, policy:read, execution:read, audit:read,
+// execution:propose, payment_intent:propose. A proper subset of
+// API_KEY_PERMITTED_SCOPES (verified below); `raw:write` (document ingestion)
+// is opt-in only via explicit scopes, not granted by default.
+const DEFAULT_ISSUED_SCOPES: readonly Scope[] = [
+  "ledger:read",
+  "wiki:read",
+  "raw:read",
+  "policy:read",
+  "execution:read",
+  "audit:read",
+  "execution:propose",
+  "payment_intent:propose",
+];
 
 function parseIssuedScopes(input: unknown): Scope[] {
   const candidate = input === undefined ? DEFAULT_ISSUED_SCOPES : input;
@@ -283,10 +290,10 @@ function parseIssuedScopes(input: unknown): Scope[] {
     throw brainError("request_body_invalid", "scopes must be a non-empty array of strings");
   }
   // Same allowlist check for the default and the explicit path -- defense in
-  // depth so the default can never silently drift past the agent cap.
+  // depth so the default can never silently drift past the api-key cap.
   for (const s of candidate) {
-    if (typeof s !== "string" || !AGENT_PERMITTED_SCOPES.has(s as Scope)) {
-      throw brainError("request_body_invalid", `scope not permitted for an agent-typed key: ${String(s)}`, {
+    if (typeof s !== "string" || !API_KEY_PERMITTED_SCOPES.has(s as Scope)) {
+      throw brainError("request_body_invalid", `scope not permitted for an api key: ${String(s)}`, {
         details: { scope: s },
       });
     }

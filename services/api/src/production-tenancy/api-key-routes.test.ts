@@ -4,13 +4,14 @@ import {
   authPlugin,
   errorHandlerPlugin,
   requestIdPlugin,
-  AGENT_PERMITTED_SCOPES,
+  API_KEY_PERMITTED_SCOPES,
   InMemoryAuditEmitter,
   JwtSigner,
   JwtVerifier,
   newTenantId,
 } from "@brain/shared";
 import { registerApiKeyRoutes } from "./api-key-routes.js";
+import { registerProofRoutes } from "../proof/routes.js";
 
 const HS256_KEY = {
   kty: "oct",
@@ -173,6 +174,12 @@ async function buildApp(store: FakeStore): Promise<{ app: FastifyInstance; audit
     tenantId: request.principal?.tenantId,
     scopes: request.principal?.scopes,
   }));
+  // The real audit:read-gated route (GET /proof/:action_id), mounted so a
+  // lifecycle test can prove an issued key's audit:read scope actually
+  // clears requireScope on a real handler, not just a stand-in. buildProof
+  // always misses (404) -- the point is confirming we get past the 401/403
+  // scope gate, not exercising the proof assembler.
+  await registerProofRoutes(app, { buildProof: async () => null });
   await app.ready();
   return { app, audit };
 }
@@ -287,7 +294,7 @@ describe("per-customer API-key auth (token-exchange model)", () => {
     }
   });
 
-  it("400s issuance for a scope outside AGENT_PERMITTED_SCOPES", async () => {
+  it("400s issuance for a scope outside API_KEY_PERMITTED_SCOPES", async () => {
     const tenantId = newTenantId();
     const store = makeStore(tenantId);
     const { app } = await buildApp(store);
@@ -383,7 +390,7 @@ describe("per-customer API-key auth (token-exchange model)", () => {
     }
   });
 
-  it("default (no scopes in body) issuance stays within AGENT_PERMITTED_SCOPES", async () => {
+  it("default (no scopes in body) issuance stays within API_KEY_PERMITTED_SCOPES, includes audit:read, excludes money-move scopes", async () => {
     const tenantId = newTenantId();
     const store = makeStore(tenantId);
     const { app } = await buildApp(store);
@@ -398,11 +405,50 @@ describe("per-customer API-key auth (token-exchange model)", () => {
       const { scopes } = res.json();
       expect(scopes.length).toBeGreaterThan(0);
       for (const s of scopes as string[]) {
-        expect(AGENT_PERMITTED_SCOPES.has(s as never)).toBe(true);
+        expect(API_KEY_PERMITTED_SCOPES.has(s as never)).toBe(true);
       }
-      // audit:read (part of the old SERVICE_TOKEN_SCOPES default) must never
-      // be granted to an agent-typed key.
-      expect(scopes).not.toContain("audit:read");
+      // Product decision: a default-issued API key CAN read its own tenant's
+      // audit trail.
+      expect(scopes).toContain("audit:read");
+      // But it can never move money or administer anything.
+      for (const moneyMove of ["payment_intent:approve", "payment_intent:execute", "execution:admin"]) {
+        expect(scopes).not.toContain(moneyMove);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a default-issued key's audit:read scope actually clears a real audit-gated route (GET /proof/:id)", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const { app } = await buildApp(store);
+    try {
+      const issue = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/api-keys`,
+        headers: { "x-platform-service-auth": PLATFORM_SECRET },
+        payload: {},
+      });
+      const issued = issue.json();
+      expect(issued.scopes).toContain("audit:read");
+
+      const exchange = await app.inject({
+        method: "POST",
+        url: "/auth/api-key",
+        headers: { "x-api-key": issued.api_key },
+      });
+      const { token } = exchange.json();
+
+      const proof = await app.inject({
+        method: "GET",
+        url: "/proof/action_never_issued",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      // 404 (buildProof stubbed to always miss), NOT 401/403 -- proves
+      // requireScope("audit:read") on the real proof route passed.
+      expect(proof.statusCode).toBe(404);
+      expect(proof.json().error.code).toBe("proof_not_found");
     } finally {
       await app.close();
     }
