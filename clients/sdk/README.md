@@ -51,12 +51,11 @@ This package is the source-of-truth client that backs every code example on
 
 ## Quickstart against the hosted sandbox
 
-`https://api.brain.dev` is a dead host — DNS is not live. Until
-`api.sandbox.brain.fi` (the sandbox's canonical name, see `environment:
-"sandbox"` below) is live, use the **staging** environment
-(`https://staging-api.brain.fi`) for hosted quickstarts. It runs in demo
-mode with a pre-seeded golden-path dataset (Brain Inc. accounts, Stripe
-counterparty, invoices).
+There is no separate sandbox host: the sandbox/testnet environment IS
+**staging** (`https://staging-api.brain.fi`, also reachable via
+`environment: "sandbox"` below — both names resolve to the same host). It
+runs in demo mode with a pre-seeded golden-path dataset (Brain Inc.
+accounts, Stripe counterparty, invoices).
 
 **Step 1. Get a demo token:**
 
@@ -111,10 +110,9 @@ const brain = new Brain({ token: process.env.BRAIN_TOKEN! });
 ```
 
 **`environment`** selects a named base URL (`production` | `sandbox` |
-`staging` | `local`); `baseUrl` overrides it explicitly. `staging`
-(`https://staging-api.brain.fi/v1`) is the live hosted environment to use
-today — `sandbox` (`https://api.sandbox.brain.fi/v1`) is the canonical
-sandbox name but its DNS is not live yet (infra follow-up).
+`staging` | `local`); `baseUrl` overrides it explicitly. `sandbox` and
+`staging` are the same live shared testnet host
+(`https://staging-api.brain.fi/v1`) — two names, one environment.
 
 ### High-Level (`Brain` Class)
 

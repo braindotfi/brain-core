@@ -51,9 +51,10 @@ export interface PayResult {
 
 export const BRAIN_BASE_URLS: Record<"production" | "sandbox" | "staging" | "local", string> = {
   production: "https://api.brain.fi/v1",
-  // note: api.sandbox.brain.fi DNS is not live yet (infra follow-up) — this is the
-  // one canonical sandbox name used across docs/CI/the OpenAPI spec.
-  sandbox: "https://api.sandbox.brain.fi/v1",
+  // There is no separate sandbox host: "sandbox" and "staging" are the same
+  // shared testnet environment (staging-api.brain.fi), kept as two enum
+  // values for naming familiarity.
+  sandbox: "https://staging-api.brain.fi/v1",
   staging: "https://staging-api.brain.fi/v1",
   local: "http://localhost:3000/v1",
 };

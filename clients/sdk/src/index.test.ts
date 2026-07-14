@@ -6,7 +6,8 @@ const goodKey = "brain_sk_test_abc123def456";
 describe("BRAIN_BASE_URLS", () => {
   it("publishes a base URL for each named environment", () => {
     expect(BRAIN_BASE_URLS.production).toBe("https://api.brain.fi/v1");
-    expect(BRAIN_BASE_URLS.sandbox).toBe("https://api.sandbox.brain.fi/v1");
+    // sandbox and staging are the same shared testnet host.
+    expect(BRAIN_BASE_URLS.sandbox).toBe("https://staging-api.brain.fi/v1");
     expect(BRAIN_BASE_URLS.staging).toBe("https://staging-api.brain.fi/v1");
   });
 });
@@ -18,7 +19,7 @@ describe("resolveBaseUrl", () => {
 
   it("honors environment=sandbox", () => {
     expect(resolveBaseUrl({ token: goodKey, environment: "sandbox" })).toBe(
-      "https://api.sandbox.brain.fi/v1",
+      "https://staging-api.brain.fi/v1",
     );
   });
 
