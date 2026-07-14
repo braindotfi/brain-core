@@ -53,7 +53,7 @@ This package is the source-of-truth client that backs every code example on
 
 There is no separate sandbox host: the sandbox/testnet environment IS
 **staging** (`https://staging-api.brain.fi`, also reachable via
-`environment: "sandbox"` below — both names resolve to the same host). It
+`environment: "sandbox"` below. Both names resolve to the same host). It
 runs in demo mode with a pre-seeded golden-path dataset (Brain Inc.
 accounts, Stripe counterparty, invoices).
 
@@ -89,9 +89,9 @@ pnpm run demo:reset
 
 ### Authentication
 
-Pass exactly one of `apiKey` or `token` — passing both, or neither, throws.
+Pass exactly one of `apiKey` or `token`. Passing both, or neither, throws.
 
-**`apiKey` (recommended)** — a long-lived Brain API key (`brain_sk_...`),
+**`apiKey` (recommended)**. A long-lived Brain API key (`brain_sk_...`),
 issued by a platform operator. The SDK exchanges it lazily for a short-lived
 bearer token on first use (`POST {baseUrl}/auth/api-key`), caches it, and
 transparently re-exchanges on expiry or a 401:
@@ -102,7 +102,7 @@ import { Brain } from "@brainfinance/sdk";
 const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY! });
 ```
 
-**`token`** — a static JWT (e.g. from `brain.dev/demo/token` or your own
+**`token`**. A static JWT (e.g. from `brain.dev/demo/token` or your own
 auth flow). Sent as-is on every request, no exchange:
 
 ```typescript
@@ -112,7 +112,7 @@ const brain = new Brain({ token: process.env.BRAIN_TOKEN! });
 **`environment`** selects a named base URL (`production` | `sandbox` |
 `staging` | `local`); `baseUrl` overrides it explicitly. `sandbox` and
 `staging` are the same live shared testnet host
-(`https://staging-api.brain.fi/v1`) — two names, one environment.
+(`https://staging-api.brain.fi/v1`). Two names, one environment.
 
 ### High-Level (`Brain` Class)
 
