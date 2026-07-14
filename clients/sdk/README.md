@@ -51,28 +51,31 @@ This package is the source-of-truth client that backs every code example on
 
 ## Quickstart against the hosted sandbox
 
-The Brain sandbox is hosted at `https://api.brain.dev/v1` and runs in demo
+`https://api.brain.dev` is a dead host — DNS is not live. Until
+`api.sandbox.brain.fi` (the sandbox's canonical name, see `environment:
+"sandbox"` below) is live, use the **staging** environment
+(`https://staging-api.brain.fi`) for hosted quickstarts. It runs in demo
 mode with a pre-seeded golden-path dataset (Brain Inc. accounts, Stripe
 counterparty, invoices).
 
 **Step 1. Get a demo token:**
 
 ```bash
-export BRAIN_TOKEN=$(curl -s https://api.brain.dev/v1/demo/token | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).token))")
+export BRAIN_TOKEN=$(curl -s https://staging-api.brain.fi/v1/demo/token | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).token))")
 ```
 
 **Step 2. Run the quickstart:**
 
 ```bash
-BRAIN_BASE_URL=https://api.brain.dev/v1 \
+BRAIN_BASE_URL=https://staging-api.brain.fi/v1 \
   npx tsx clients/sdk/examples/quickstart.ts
 ```
 
 Or from within the workspace after `pnpm install`:
 
 ```bash
-BRAIN_TOKEN=$(curl -s https://api.brain.dev/v1/demo/token | jq -r .token) \
-BRAIN_BASE_URL=https://api.brain.dev/v1 \
+BRAIN_TOKEN=$(curl -s https://staging-api.brain.fi/v1/demo/token | jq -r .token) \
+BRAIN_BASE_URL=https://staging-api.brain.fi/v1 \
   pnpm -C clients/sdk exec tsx examples/quickstart.ts
 ```
 
@@ -84,6 +87,34 @@ pnpm run demo:reset
 ```
 
 ## Usage
+
+### Authentication
+
+Pass exactly one of `apiKey` or `token` — passing both, or neither, throws.
+
+**`apiKey` (recommended)** — a long-lived Brain API key (`brain_sk_...`),
+issued by a platform operator. The SDK exchanges it lazily for a short-lived
+bearer token on first use (`POST {baseUrl}/auth/api-key`), caches it, and
+transparently re-exchanges on expiry or a 401:
+
+```typescript
+import { Brain } from "@brainfinance/sdk";
+
+const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY! });
+```
+
+**`token`** — a static JWT (e.g. from `brain.dev/demo/token` or your own
+auth flow). Sent as-is on every request, no exchange:
+
+```typescript
+const brain = new Brain({ token: process.env.BRAIN_TOKEN! });
+```
+
+**`environment`** selects a named base URL (`production` | `sandbox` |
+`staging` | `local`); `baseUrl` overrides it explicitly. `staging`
+(`https://staging-api.brain.fi/v1`) is the live hosted environment to use
+today — `sandbox` (`https://api.sandbox.brain.fi/v1`) is the canonical
+sandbox name but its DNS is not live yet (infra follow-up).
 
 ### High-Level (`Brain` Class)
 
@@ -203,6 +234,9 @@ const http = createBrainHttpClient({
 
 const { data, error } = await http.GET("/audit/anchor/latest");
 ```
+
+`createBrainHttpClient` accepts `apiKey` in place of `token` too, with the
+same lazy-exchange behavior described above.
 
 The client is fully typed against the OpenAPI spec. Path, query, body, and
 response shapes are inferred, there is no hand-written type surface to drift.

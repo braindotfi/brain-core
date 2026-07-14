@@ -5,9 +5,10 @@
  *   TOKEN=$(pnpm -C tools/dev-token exec tsx src/index.ts --tenant <tnt_id>)
  *   BRAIN_TOKEN=$TOKEN pnpm -C clients/sdk exec tsx examples/quickstart.ts
  *
- * Or against the hosted demo endpoint:
- *   BRAIN_TOKEN=$(curl -s https://api.brain.dev/v1/demo/token | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).token)") \
- *   BRAIN_BASE_URL=https://api.brain.dev/v1 \
+ * Or against the hosted demo endpoint (api.brain.dev is a dead host; use
+ * staging until api.sandbox.brain.fi DNS is live — see BRAIN_BASE_URLS):
+ *   BRAIN_TOKEN=$(curl -s https://staging-api.brain.fi/v1/demo/token | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).token)") \
+ *   BRAIN_BASE_URL=https://staging-api.brain.fi/v1 \
  *   pnpm -C clients/sdk exec tsx examples/quickstart.ts
  */
 
