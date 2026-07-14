@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { maskedRuntimeSha256 } from "@brain/shared";
 import {
+  assertBaseRpcChainId,
   assertDeployedEscrowBytecode,
   assertEscrowAuditApproved,
   readAuditChainApproved,
@@ -121,10 +122,54 @@ describe("readAuditStatusApproved", () => {
 });
 
 describe("assertEscrowAuditApproved", () => {
+  it("fails closed when BASE_RPC_URL reports a different chain id than config", async () => {
+    await expect(
+      assertBaseRpcChainId({
+        configuredChainId: 84_532,
+        rpcUrl: "https://example.invalid",
+        getChainId: async () => 8453,
+      }),
+    ).rejects.toThrow(/BASE_RPC_URL reports chainId=8453/);
+  });
+
+  it("passes when BASE_RPC_URL reports the configured chain id", async () => {
+    await expect(
+      assertBaseRpcChainId({
+        configuredChainId: 84_532,
+        rpcUrl: "https://example.invalid",
+        getChainId: async () => 84_532,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("skips RPC chain-id probing when BASE_RPC_URL is not configured", async () => {
+    const getChainId = vi.fn(async () => 8453);
+    await expect(
+      assertBaseRpcChainId({
+        configuredChainId: 84_532,
+        rpcUrl: undefined,
+        getChainId,
+      }),
+    ).resolves.toBeUndefined();
+    expect(getChainId).not.toHaveBeenCalled();
+  });
+
   it("is silent on Base Sepolia (84_532) regardless of audit flag", () => {
     expect(() =>
       assertEscrowAuditApproved({
         chainId: 84_532,
+        escrowAddress: ANY_ADDR,
+        auditApproved: "false",
+        auditStatusApproved: false,
+        auditChainApproved: false,
+      }),
+    ).not.toThrow();
+  });
+
+  it("is silent on local Foundry chain (31_337) regardless of audit flag", () => {
+    expect(() =>
+      assertEscrowAuditApproved({
+        chainId: 31_337,
         escrowAddress: ANY_ADDR,
         auditApproved: "false",
         auditStatusApproved: false,
@@ -249,8 +294,8 @@ describe("assertEscrowAuditApproved", () => {
     ).not.toThrow();
   });
 
-  it("does not accept any other chain id as mainnet (defensive)", () => {
-    for (const id of [1, 10, 137, 42_161, 84_531]) {
+  it("requires audit approval on every non-testnet chain id with escrow configured", () => {
+    for (const id of [1, 10, 137, 42_161]) {
       expect(() =>
         assertEscrowAuditApproved({
           chainId: id,
@@ -258,6 +303,20 @@ describe("assertEscrowAuditApproved", () => {
           auditApproved: "false",
           auditStatusApproved: false,
           auditChainApproved: false,
+        }),
+      ).toThrow(new RegExp(`chainId=${String(id)}`));
+    }
+  });
+
+  it("passes on any non-testnet chain only when the full audit path is satisfied", () => {
+    for (const id of [1, 10, 137, 42_161]) {
+      expect(() =>
+        assertEscrowAuditApproved({
+          chainId: id,
+          escrowAddress: ANY_ADDR,
+          auditApproved: "true",
+          auditStatusApproved: true,
+          auditChainApproved: true,
         }),
       ).not.toThrow();
     }
@@ -276,7 +335,7 @@ describe("assertDeployedEscrowBytecode", () => {
     return "0x" + buf.toString("hex");
   }
 
-  it("is silent on non-mainnet (no eth_getCode call)", async () => {
+  it("is silent on explicit testnet (no eth_getCode call)", async () => {
     const getCode = vi.fn();
     await expect(
       assertDeployedEscrowBytecode({
@@ -288,6 +347,22 @@ describe("assertDeployedEscrowBytecode", () => {
       }),
     ).resolves.toBeUndefined();
     expect(getCode).not.toHaveBeenCalled();
+  });
+
+  it("checks deployed bytecode on every non-testnet chain", async () => {
+    for (const id of [1, 10, 137, 42_161]) {
+      const getCode = vi.fn(async () => withImmutables(0xff));
+      await expect(
+        assertDeployedEscrowBytecode({
+          chainId: id,
+          escrowAddress: ANY_ADDR,
+          expectedRuntimeSha256: EXPECTED,
+          immutableReferences: REFS,
+          getCode,
+        }),
+      ).resolves.toBeUndefined();
+      expect(getCode).toHaveBeenCalledWith(ANY_ADDR);
+    }
   });
 
   it("is silent on mainnet when no escrow address is set", async () => {

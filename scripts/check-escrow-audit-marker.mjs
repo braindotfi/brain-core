@@ -9,7 +9,7 @@
  *
  * Scans every committed env/config file (env, env.example, .env.*, YAML
  * values, Terraform .tf, shell exports) and fails when ALL of:
- *   1. `BRAIN_BASE_CHAIN_ID=8453` (or YAML `BRAIN_BASE_CHAIN_ID: 8453`)
+ *   1. `BRAIN_BASE_CHAIN_ID` is set to a non-testnet chain
  *   2. `BRAIN_ESCROW_ADDRESS=0x...` (non-empty)
  *   3. `BRAIN_ESCROW_AUDIT_APPROVED=true` is NOT set
  * appear in the same file.
@@ -18,8 +18,9 @@
  * ALSO set the audit-approved flag in the same module. Splitting across
  * files defeats the boot fence at runtime too.
  *
- * Sepolia (`84532`) is silent: no audit required there. Mainnet without
- * an escrow address is silent: not registering the rail.
+ * Base Sepolia (`84532`) and local Foundry (`31337`) are silent: no audit
+ * required there. Mainnet without an escrow address is silent: not registering
+ * the rail.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -135,7 +136,7 @@ function inspect(path) {
   const escrowAddr = assignments.get("BRAIN_ESCROW_ADDRESS");
   const auditApproved = assignments.get("BRAIN_ESCROW_AUDIT_APPROVED");
   const auditReceipt = assignments.get("BRAIN_ESCROW_AUDIT_RECEIPT");
-  if (chainId !== "8453") return null;
+  if (chainId === undefined || chainId === "84532" || chainId === "31337") return null;
   if (escrowAddr === undefined || escrowAddr.length === 0 || escrowAddr === "null") return null;
   // Mainnet attestation is satisfied by EITHER:
   //   - BRAIN_ESCROW_AUDIT_APPROVED=true (legacy bare-boolean), OR
@@ -162,7 +163,7 @@ function main() {
     console.error("escrow-audit-marker guard: FAIL");
     for (const v of violations) {
       console.error(
-        `  ${v.path}: BRAIN_BASE_CHAIN_ID=${v.chainId} (mainnet) + BRAIN_ESCROW_ADDRESS=${v.escrowAddr} but BRAIN_ESCROW_AUDIT_APPROVED=${v.auditApproved} AND BRAIN_ESCROW_AUDIT_RECEIPT=${v.auditReceipt}`,
+        `  ${v.path}: BRAIN_BASE_CHAIN_ID=${v.chainId} (non-testnet) + BRAIN_ESCROW_ADDRESS=${v.escrowAddr} but BRAIN_ESCROW_AUDIT_APPROVED=${v.auditApproved} AND BRAIN_ESCROW_AUDIT_RECEIPT=${v.auditReceipt}`,
       );
     }
     console.error(
@@ -174,7 +175,7 @@ function main() {
         "    diligence metadata pointing at the audit report), or\n" +
         '  - BRAIN_ESCROW_AUDIT_APPROVED="true" (legacy bare-boolean attestation)\n' +
         "Or, until audit clears, either remove BRAIN_ESCROW_ADDRESS or target\n" +
-        "Sepolia (BRAIN_BASE_CHAIN_ID=84532).",
+        "Base Sepolia (BRAIN_BASE_CHAIN_ID=84532) or local Foundry (31337).",
     );
     process.exit(1);
   }

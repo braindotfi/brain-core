@@ -65,6 +65,11 @@ The output of these checks feeds directly into Policy. A tenant policy can refer
 | **Anchorer keys on HSMs**         | Hardware-backed signing for `BrainAuditAnchor`                                                                                |
 | **Session-key enforcement**       | On-chain scope, spend caps, `policyVersion` binding, and replay nonce enforced in `executeViaSessionKey`                      |
 
+Additional Tier 0 hardening now makes the escrow audit gate non-testnet-wide,
+checks explicit `BASE_RPC_URL` chain id at boot, rejects ERC20 selectors in
+native-mode session-key grants, and replay-protects agent behavior updates and
+revocations with per-agent EIP-712 nonces.
+
 ### Privacy of Audit Anchors
 
 On-chain anchors must not leak tenant data.

@@ -20,7 +20,13 @@ import {BrainEscrow} from "../src/BrainEscrow.sol";
 ///         --broadcast`. A mainnet run happens ONLY after the audit clears, using
 ///         the multi-sig as deployer (§10.4); the arbiter is the production Safe.
 contract DeployEscrow is Script {
+    uint256 internal constant BASE_SEPOLIA_CHAIN_ID = 84_532;
+
+    error WrongChain(uint256 chainId);
+
     function run() external returns (BrainEscrow escrow) {
+        if (block.chainid != BASE_SEPOLIA_CHAIN_ID) revert WrongChain(block.chainid);
+
         address arbiter = vm.envAddress("BRAIN_ESCROW_ARBITER");
 
         vm.startBroadcast();

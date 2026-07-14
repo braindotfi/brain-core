@@ -145,10 +145,20 @@ describe("projections (RFC §7.5 mapping)", () => {
   it("toSessionKeyShape maps the permission onto BrainSmartAccount's session-key shape", () => {
     expect(toSessionKeyShape(permission())).toEqual({
       holder: SPENDER,
-      maxPerPeriod: "100.00",
+      allowedTargets: [USDC],
+      allowedSelectors: ["0xa9059cbb"],
+      capToken: USDC,
+      maxPerTx: "100000000",
+      maxPerPeriod: "100000000",
       periodSeconds: 86_400,
       validAfter: 1_000,
       validUntil: 2_000_000,
     });
+  });
+
+  it("toSessionKeyShape rejects precision beyond raw USDC units", () => {
+    expect(() => toSessionKeyShape(permission({ allowance: "1.0000001" }))).toThrow(
+      "amount has more precision than the token supports",
+    );
   });
 });

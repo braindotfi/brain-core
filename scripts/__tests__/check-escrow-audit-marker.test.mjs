@@ -45,6 +45,13 @@ test("Sepolia (84532) with escrow address but no audit flag: silent", () => {
   assert.equal(r.code, 0);
 });
 
+test("local Foundry (31337) with escrow address but no audit flag: silent", () => {
+  const r = runGuard({
+    ".env": `BRAIN_BASE_CHAIN_ID=31337\nBRAIN_ESCROW_ADDRESS=${ADDR}\n`,
+  });
+  assert.equal(r.code, 0);
+});
+
 test("mainnet (8453) with no escrow address: silent", () => {
   const r = runGuard({
     ".env": `BRAIN_BASE_CHAIN_ID=8453\n`,
@@ -69,6 +76,16 @@ test("mainnet + escrow address + audit_approved missing: FAIL", () => {
   assert.equal(r.code, 1);
   assert.match(r.stderr, /BRAIN_BASE_CHAIN_ID=8453.*BRAIN_ESCROW_ADDRESS=0xab/);
   assert.match(r.stderr, /BRAIN_ESCROW_AUDIT_APPROVED=\(unset\)/);
+});
+
+test("other non-testnet chain + escrow address + audit_approved missing: FAIL", () => {
+  for (const chainId of ["1", "10", "137", "42161"]) {
+    const r = runGuard({
+      ".env": `BRAIN_BASE_CHAIN_ID=${chainId}\nBRAIN_ESCROW_ADDRESS=${ADDR}\n`,
+    });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, new RegExp(`BRAIN_BASE_CHAIN_ID=${chainId}`));
+  }
 });
 
 test("mainnet + escrow address + audit_approved=false: FAIL", () => {

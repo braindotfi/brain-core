@@ -1,11 +1,10 @@
 /**
- * Production fence for unaudited escrow on Base mainnet.
+ * Production fence for unaudited escrow on non-testnet chains.
  *
  * The external smart-contract audit (Task #37) is the gating dependency for
- * mainnet promotion. Until that audit signs off, the api refuses to boot when:
- *   chainId === 8453               (Base mainnet)
- *   AND BRAIN_ESCROW_ADDRESS set   (EscrowBaseRail would register)
- *   AND BRAIN_ESCROW_AUDIT_APPROVED !== "true"
+ * mainnet promotion. Until that audit signs off, the api refuses to boot when
+ * BRAIN_ESCROW_ADDRESS is set on any chain id outside the explicit testnet
+ * allowlist.
  *
  * On Base Sepolia (84_532) the fence is silent: the testnet escrow address is
  * already deployed and used in dev/staging.
@@ -31,7 +30,32 @@ import {
   parseAuditStatus,
 } from "@brain/shared";
 
-const BASE_MAINNET_CHAIN_ID = 8453;
+const ESCROW_AUDIT_TESTNET_CHAIN_IDS = new Set([84_532, 31_337]);
+
+export function isEscrowAuditTestnet(chainId: number): boolean {
+  return ESCROW_AUDIT_TESTNET_CHAIN_IDS.has(chainId);
+}
+
+export interface RpcChainIdGateInput {
+  /** cfg.BRAIN_BASE_CHAIN_ID. */
+  configuredChainId: number;
+  /** Explicit BASE_RPC_URL. Undefined means there is no operator-supplied Base RPC to prove. */
+  rpcUrl: string | undefined;
+  /** eth_chainId seam: resolves the RPC endpoint's actual chain id. */
+  getChainId: () => Promise<number>;
+}
+
+export async function assertBaseRpcChainId(input: RpcChainIdGateInput): Promise<void> {
+  if (input.rpcUrl === undefined) return;
+  const actualChainId = await input.getChainId();
+  if (actualChainId !== input.configuredChainId) {
+    throw new Error(
+      `BASE_RPC_URL reports chainId=${String(actualChainId)} but BRAIN_BASE_CHAIN_ID is ` +
+        `${String(input.configuredChainId)}. Refusing to start because the escrow and rail ` +
+        "fences must be bound to the RPC chain actually used for transactions.",
+    );
+  }
+}
 
 /**
  * Resolve and read contracts/audit-status.json, returning whether the record
@@ -126,12 +150,12 @@ export interface DeployedBytecodeGateInput {
 }
 
 /**
- * On Base mainnet, with an escrow address configured, verify the DEPLOYED escrow
+ * On non-testnet chains, with an escrow address configured, verify the DEPLOYED escrow
  * bytecode matches the audited runtime bytecode (immutable-masked) via
  * `eth_getCode`. Throws on any mismatch so a wrong / unaudited / tampered
  * deployment becomes a CrashLoopBackoff rather than a silent funds-custody risk.
  *
- * Silent on non-mainnet chains and when no escrow address is set. Mainnet escrow
+ * Silent on explicit testnet chains and when no escrow address is set. Mainnet escrow
  * is ALSO gated by assertEscrowAuditApproved (the committed-approved + chain +
  * env checks) — this is the on-chain half: "and the code on-chain is the code we
  * audited". Async because eth_getCode is a network read.
@@ -142,7 +166,7 @@ export interface DeployedBytecodeGateInput {
 export async function assertDeployedEscrowBytecode(
   input: DeployedBytecodeGateInput,
 ): Promise<void> {
-  if (input.chainId !== BASE_MAINNET_CHAIN_ID) return;
+  if (isEscrowAuditTestnet(input.chainId)) return;
   if (input.escrowAddress === undefined) return;
 
   const expected = input.expectedRuntimeSha256;
@@ -159,7 +183,8 @@ export async function assertDeployedEscrowBytecode(
   const result = deployedRuntimeMatches(deployed, expected, refs);
   if (!result.match) {
     throw new Error(
-      `Deployed escrow bytecode at ${input.escrowAddress} (Base mainnet) does NOT match the audited ` +
+      `Deployed escrow bytecode at ${input.escrowAddress} on chainId=${String(input.chainId)} ` +
+        "does NOT match the audited " +
         `runtime bytecode: ${result.reason ?? "mismatch"}. The on-chain contract is not the audited ` +
         "build. Refusing to start.",
     );
@@ -201,9 +226,9 @@ export interface EscrowAuditGateInput {
 }
 
 /**
- * Throws when the configured escrow address would be wired against Base
- * mainnet without an explicit audit attestation. Silent on all non-mainnet
- * chains, and silent on mainnet when no escrow address is set.
+ * Throws when the configured escrow address would be wired against any
+ * non-testnet chain without an explicit audit attestation. Silent on explicit
+ * testnet chains, and silent when no escrow address is set.
  *
  * Mainnet boot requires BOTH halves:
  *   1. the committed audit record — contracts/audit-status.json status
@@ -218,7 +243,7 @@ export interface EscrowAuditGateInput {
  * the reviewed, committed file must also say approved.
  */
 export function assertEscrowAuditApproved(input: EscrowAuditGateInput): void {
-  if (input.chainId !== BASE_MAINNET_CHAIN_ID) return;
+  if (isEscrowAuditTestnet(input.chainId)) return;
   if (input.escrowAddress === undefined) return;
   const hasReceipt = typeof input.auditReceipt === "string" && input.auditReceipt.length > 0;
   const hasEnvAttestation = input.auditApproved === "true" || hasReceipt;
@@ -240,8 +265,8 @@ export function assertEscrowAuditApproved(input: EscrowAuditGateInput): void {
     );
   }
   throw new Error(
-    `BRAIN_ESCROW_ADDRESS is set on Base mainnet (chainId=${String(
-      BASE_MAINNET_CHAIN_ID,
+    `BRAIN_ESCROW_ADDRESS is set on a non-testnet chain (chainId=${String(
+      input.chainId,
     )}) but mainnet escrow boot is not cleared: ${missing.join("; ")}. The external ` +
       "smart-contract audit (R-01) must complete, contracts/audit-status.json must be " +
       'updated to status "approved" from the final report, and the operator must set ' +

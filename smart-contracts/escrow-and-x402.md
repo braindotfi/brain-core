@@ -5,7 +5,7 @@ For agent-to-agent (M2M) commerce where a payment must be **conditioned on job c
 {% hint style="warning" %}
 **`BrainEscrow` is UNAUDITED and Base Sepolia testnet only.** It is a pre-audit reference implementation (RFC 0001 §7.6). Immutable (no admin, no upgrade, no pause), and it must clear an external security audit before any mainnet address is funded.
 
-The api enforces this in code: at boot, if `BRAIN_BASE_CHAIN_ID === 8453` (Base mainnet) and `BRAIN_ESCROW_ADDRESS` is set, the api refuses to start unless **both** of the following hold. (1) The committed audit record `contracts/audit-status.json` has status `approved`. This is the reviewed source of truth, and `scripts/check-audit-status.mjs` will not let it be marked `approved` without an auditor, the audited commit, a report reference, and zero unresolved critical/high findings. (2) An explicit operator attestation in the environment: `BRAIN_ESCROW_AUDIT_RECEIPT="<url/filepath/hash pointing at the audit report>"` (preferred. Carries the diligence metadata) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` bare-boolean. Requiring both means a bare env flag can no longer bypass a pending audit. Either signal must only be set after the external audit signs off and the deployed bytecode is verified to match the audited bytecode. See `contracts/audit-status.json` and `services/api/src/composition/escrow-audit-gate.ts`.
+The api enforces this in code: at boot, if `BRAIN_ESCROW_ADDRESS` is set on any chain outside the explicit testnet allowlist, the api refuses to start unless **both** of the following hold. (1) The committed audit record `contracts/audit-status.json` has status `approved` for that chain. This is the reviewed source of truth, and `scripts/check-audit-status.mjs` will not let it be marked `approved` without an auditor, the audited commit, a report reference, and zero unresolved critical/high findings. (2) An explicit operator attestation in the environment: `BRAIN_ESCROW_AUDIT_RECEIPT="<url/filepath/hash pointing at the audit report>"` (preferred. Carries the diligence metadata) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` bare-boolean. Requiring both means a bare env flag can no longer bypass a pending audit. The api also checks explicit `BASE_RPC_URL` with `eth_chainId` against `BRAIN_BASE_CHAIN_ID` before wiring EVM rails. Either audit signal must only be set after the external audit signs off and the deployed bytecode is verified to match the audited bytecode. See `contracts/audit-status.json` and `services/api/src/composition/escrow-audit-gate.ts`.
 {% endhint %}
 
 | Mechanism       | Use case                                                                |
@@ -46,6 +46,10 @@ Before a release is gated through, the §6 pre-execution gate reads `getEscrow(e
 ### X402 Machine-Native Payments
 
 For HTTP-native settlement, Brain integrates **x402**: the resource server returns `402 Payment Required` with payment instructions; the calling agent retries with an x402 payment header backed by the tenant's smart account; settlement and audit happen in the same flow.
+
+{% hint style="warning" %}
+x402 is outside the `BrainEscrow` audit fence because it does not call the escrow contract. It is still a production money rail and is boot-fenced as a live rail. A separate Tier 0 review item remains open on whether `x402_settle` should require a recorded human approval signature even when tenant policy returns `allow`. Until that product decision is made, do not describe x402 as inheriting escrow's audit gate or as having a hard per-action human-approval floor.
+{% endhint %}
 
 ```
 Agent                      Resource Server

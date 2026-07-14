@@ -27,7 +27,7 @@ contract BrainMCPAgentRegistryTest is Test {
     function _signerChangeDigest(address s, bool allowed, uint256 nonce) internal view returns (bytes32) {
         bytes32 typeHash = keccak256("TenantSignerChange(bytes32 tenantId,address signer,bool allowed,uint256 nonce)");
         bytes32 structHash = keccak256(abi.encode(typeHash, TENANT, s, allowed, nonce));
-        return keccak256(abi.encodePacked(hex"19_01", _domainSep(), structHash));
+        return keccak256(abi.encodePacked(hex"1901", _domainSep(), structHash));
     }
 
     function _regDigest(bytes32 agentId, address addr, bytes32 scope) internal view returns (bytes32) {
@@ -35,13 +35,13 @@ contract BrainMCPAgentRegistryTest is Test {
             "AgentRegistration(bytes32 agentId,address agentAddress,bytes32 tenantId,bytes32 scopeHash,bytes32 behaviorHash)"
         );
         bytes32 structHash = keccak256(abi.encode(typeHash, agentId, addr, TENANT, scope, BEHAVIOR));
-        return keccak256(abi.encodePacked(hex"19_01", _domainSep(), structHash));
+        return keccak256(abi.encodePacked(hex"1901", _domainSep(), structHash));
     }
 
     function _revDigest(bytes32 agentId) internal view returns (bytes32) {
-        bytes32 typeHash = keccak256("AgentRevocation(bytes32 agentId,bytes32 tenantId)");
-        bytes32 structHash = keccak256(abi.encode(typeHash, agentId, TENANT));
-        return keccak256(abi.encodePacked(hex"19_01", _domainSep(), structHash));
+        bytes32 typeHash = keccak256("AgentRevocation(bytes32 agentId,bytes32 tenantId,uint256 nonce)");
+        bytes32 structHash = keccak256(abi.encode(typeHash, agentId, TENANT, registry.revocationNonce(agentId)));
+        return keccak256(abi.encodePacked(hex"1901", _domainSep(), structHash));
     }
 
     function _sign(uint256 pk, bytes32 digest) internal pure returns (bytes memory) {
@@ -109,6 +109,7 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes memory revSig = _sign(signerPk, _revDigest(agentId));
         registry.revokeAgent(agentId, revSig);
         assertFalse(registry.isAuthorized(agentId, TENANT));
+        assertEq(registry.revocationNonce(agentId), 1);
     }
 
     function test_admin_can_rebootstrap_after_lockout() public {
@@ -139,9 +140,22 @@ contract BrainMCPAgentRegistryTest is Test {
     }
 
     function _behaviorDigest(bytes32 agentId, bytes32 behaviorHash) internal view returns (bytes32) {
-        bytes32 typeHash = keccak256("AgentBehaviorUpdate(bytes32 agentId,bytes32 tenantId,bytes32 behaviorHash)");
-        bytes32 structHash = keccak256(abi.encode(typeHash, agentId, TENANT, behaviorHash));
-        return keccak256(abi.encodePacked(hex"19_01", _domainSep(), structHash));
+        bytes32 typeHash =
+            keccak256("AgentBehaviorUpdate(bytes32 agentId,bytes32 tenantId,bytes32 behaviorHash,uint256 nonce)");
+        bytes32 structHash =
+            keccak256(abi.encode(typeHash, agentId, TENANT, behaviorHash, registry.behaviorNonce(agentId)));
+        return keccak256(abi.encodePacked(hex"1901", _domainSep(), structHash));
+    }
+
+    function _behaviorDigestWithNonce(bytes32 agentId, bytes32 behaviorHash, uint256 nonce)
+        internal
+        view
+        returns (bytes32)
+    {
+        bytes32 typeHash =
+            keccak256("AgentBehaviorUpdate(bytes32 agentId,bytes32 tenantId,bytes32 behaviorHash,uint256 nonce)");
+        bytes32 structHash = keccak256(abi.encode(typeHash, agentId, TENANT, behaviorHash, nonce));
+        return keccak256(abi.encodePacked(hex"1901", _domainSep(), structHash));
     }
 
     function test_updateBehaviorHash_reattests() public {
@@ -149,15 +163,37 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes32 agentId = keccak256("agent");
         bytes32 scope = keccak256("scope");
         address a = vm.addr(externalPk);
-        registry.registerAgent(
-            agentId, a, TENANT, scope, BEHAVIOR, _sign(signerPk, _regDigest(agentId, a, scope))
-        );
+        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, _sign(signerPk, _regDigest(agentId, a, scope)));
         assertEq(registry.getAgent(agentId).behaviorHash, BEHAVIOR);
 
         // Promote to a new behavior with a fresh tenant-signed attestation.
         bytes32 next = keccak256("behavior.v2");
         registry.updateBehaviorHash(agentId, next, _sign(signerPk, _behaviorDigest(agentId, next)));
         assertEq(registry.getAgent(agentId).behaviorHash, next);
+        assertEq(registry.behaviorNonce(agentId), 1);
+    }
+
+    function test_updateBehaviorHash_rejectsCapturedHistoricalSignatureReplay() public {
+        _bootstrapSigner(signer);
+        bytes32 agentId = keccak256("agent");
+        bytes32 scope = keccak256("scope");
+        address a = vm.addr(externalPk);
+        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, _sign(signerPk, _regDigest(agentId, a, scope)));
+
+        bytes32 older = keccak256("behavior.old");
+        bytes memory olderSig = _sign(signerPk, _behaviorDigestWithNonce(agentId, older, 0));
+        registry.updateBehaviorHash(agentId, older, olderSig);
+        assertEq(registry.getAgent(agentId).behaviorHash, older);
+        assertEq(registry.behaviorNonce(agentId), 1);
+
+        bytes32 newer = keccak256("behavior.new");
+        registry.updateBehaviorHash(agentId, newer, _sign(signerPk, _behaviorDigest(agentId, newer)));
+        assertEq(registry.getAgent(agentId).behaviorHash, newer);
+        assertEq(registry.behaviorNonce(agentId), 2);
+
+        vm.expectRevert();
+        registry.updateBehaviorHash(agentId, older, olderSig);
+        assertEq(registry.getAgent(agentId).behaviorHash, newer);
     }
 
     function test_updateBehaviorHash_rejectsNonSigner() public {
@@ -165,9 +201,7 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes32 agentId = keccak256("agent");
         bytes32 scope = keccak256("scope");
         address a = vm.addr(externalPk);
-        registry.registerAgent(
-            agentId, a, TENANT, scope, BEHAVIOR, _sign(signerPk, _regDigest(agentId, a, scope))
-        );
+        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, _sign(signerPk, _regDigest(agentId, a, scope)));
         bytes32 next = keccak256("behavior.v2");
         // Compute the signature BEFORE expectRevert: _behaviorDigest() makes an
         // external call (registry.domainSeparator()), and a bare expectRevert

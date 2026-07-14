@@ -126,6 +126,12 @@ registry.revokeAgent(agentId, tenantSignature);
 
 Revocation (signed by a tenant signer) sets `revokedAt` to the current block timestamp. `isAuthorized` then returns false, and Brain refuses to grant or use session keys for the agent. Revocation is permanent for that `agentId`; promoting a new model/prompt/tools instead uses `updateBehaviorHash`.
 
+Behavior updates and revocations are replay-protected. Their EIP-712 payloads
+include per-agent nonces (`behaviorNonce(agentId)` and
+`revocationNonce(agentId)`) that increment on accepted updates, so a previously
+observed signature cannot later roll an agent back to an older behavior hash or
+replay a stale lifecycle action.
+
 ### Reputation lives in a separate contract
 
 Reputation is **not** stored in this registry. It lives in [`BrainReputationRegistry`](brainreputationregistry.md). An _ERC-8004-style_ per-agent pointer / Merkle root (RFC 0001, **UNAUDITED testnet**). This registry's deployed `AgentRegistration` struct stores only `agentId`, `agentAddress`, `tenantId`, `scopeHash`, and `behaviorHash`. There is **no** `reputationRoot` field here. Policy reads the reputation pointer as a **tighten-only threshold input**; it is never a money gate or a §6 precondition.
@@ -162,7 +168,7 @@ The deployed registry stores identity + scope as `agentId`/`tenantId`/`scopeHash
 `registerAgent` now also takes a `behaviorHash = keccak256(model_id, model_version, prompt_template_hash, tool_manifest_hash)`, emitted on `AgentRegistered` and stored on the registration. This freezes the agent's behavior at a known version. Enterprise security teams get a "the agent cannot silently change its model/prompt/tools" guarantee.
 
 - The §6 gate adds **check 1.5**: the runtime `behaviorHash` must equal the registered value, or the action is rejected regardless of every other signal.
-- Promotion to a new behavior requires fresh tenant re-attestation via `updateBehaviorHash(agentId, behaviorHash, tenantSignature)` (EIP-712 signed by a tenant signer). The on-chain analogue of re-signing the ScopeAttestation.
+- Promotion to a new behavior requires fresh tenant re-attestation via `updateBehaviorHash(agentId, behaviorHash, tenantSignature)` (EIP-712 signed by a tenant signer) with the current `behaviorNonce(agentId)`. The on-chain analogue of re-signing the ScopeAttestation.
 
 ### What's Next
 

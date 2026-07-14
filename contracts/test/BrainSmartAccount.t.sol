@@ -7,6 +7,7 @@ import {BrainSmartAccount} from "../src/BrainSmartAccount.sol";
 contract Target {
     uint256 public counter;
     event Ping(uint256 n);
+
     function ping(uint256 n) external payable {
         counter += n;
         emit Ping(n);
@@ -224,18 +225,14 @@ contract BrainSmartAccountTest is Test {
     function test_execute_rejectsTargetNotAllowed() public {
         _grantBasicKey(address(target));
         vm.prank(holder);
-        vm.expectRevert(
-            abi.encodeWithSelector(BrainSmartAccount.TargetNotAllowed.selector, address(0xDEAD))
-        );
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.TargetNotAllowed.selector, address(0xDEAD)));
         acct.executeViaSessionKey(0, address(0xDEAD), 0, abi.encodeCall(Target.ping, (1)));
     }
 
     function test_execute_rejectsSelectorNotAllowed() public {
         _grantBasicKey(address(target));
         vm.prank(holder);
-        vm.expectRevert(
-            abi.encodeWithSelector(BrainSmartAccount.SelectorNotAllowed.selector, bytes4(0xdeadbeef))
-        );
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.SelectorNotAllowed.selector, bytes4(0xdeadbeef)));
         acct.executeViaSessionKey(0, address(target), 0, hex"deadbeef");
     }
 
@@ -421,6 +418,41 @@ contract BrainSmartAccountTest is Test {
         });
         vm.prank(ownerKey);
         acct.grantSessionKey(key);
+    }
+
+    function test_grant_nativeModeRejectsErc20TransferSelector() public {
+        MockERC20 token = new MockERC20();
+        address[] memory targets = new address[](1);
+        targets[0] = address(token);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = 0xa9059cbb; // transfer(address,uint256)
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: 0,
+            validUntil: block.timestamp + 3600,
+            allowedTargets: targets,
+            allowedSelectors: selectors,
+            capToken: address(0),
+            maxPerTx: 100e18,
+            maxPerPeriod: 500e18,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+
+        vm.prank(ownerKey);
+        vm.expectRevert(
+            abi.encodeWithSelector(BrainSmartAccount.Erc20SelectorRequiresTokenCap.selector, bytes4(0xa9059cbb))
+        );
+        acct.grantSessionKey(key);
+    }
+
+    function test_grant_erc20ModeStillAllowsTransferSelector() public {
+        MockERC20 token = new MockERC20();
+        _grantERC20Key(address(token));
+
+        BrainSmartAccount.SessionKey memory key = acct.sessionKey(holder);
+        assertEq(key.capToken, address(token));
+        assertEq(key.allowedSelectors.length, 3);
     }
 
     function test_erc20_transfer_respectsPerTxCap() public {
@@ -835,8 +867,7 @@ contract BrainSmartAccountTest is Test {
         vm.prank(ownerKey);
         vm.expectRevert(
             abi.encodeWithSelector(
-                BrainSmartAccount.NonDecodableSelectorInErc20Mode.selector,
-                MockUSDC.donateToCharity.selector
+                BrainSmartAccount.NonDecodableSelectorInErc20Mode.selector, MockUSDC.donateToCharity.selector
             )
         );
         acct.grantSessionKey(key);

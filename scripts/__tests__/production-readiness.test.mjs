@@ -40,6 +40,20 @@ test("escrowAuditFence: Sepolia is green regardless of audit/env", () => {
     "green",
   );
 });
+test("escrowAuditFence: local Foundry is green regardless of audit/env", () => {
+  assert.equal(
+    escrowAuditFence({ chainId: "31337", escrowAddr: true, ...noAtt, auditStatus: PENDING }).status,
+    "green",
+  );
+});
+test("escrowAuditFence: other mainnets require audit/env", () => {
+  for (const chainId of ["1", "10", "137", "42161"]) {
+    assert.equal(
+      escrowAuditFence({ chainId, escrowAddr: true, ...noAtt, auditStatus: PENDING }).status,
+      "red",
+    );
+  }
+});
 test("escrowAuditFence: mainnet with no escrow address is green (silent)", () => {
   assert.equal(
     escrowAuditFence({ chainId: "8453", escrowAddr: false, ...noAtt, auditStatus: PENDING }).status,

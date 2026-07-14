@@ -219,10 +219,10 @@ function readAuditStatus() {
 
 /**
  * Pure escrow-audit fence row, mirroring assertEscrowAuditApproved EXACTLY so
- * the report and the runtime fence can never disagree: on Base mainnet (8453)
+ * the report and the runtime fence can never disagree: on any non-testnet chain
  * with an escrow address, boot requires BOTH the committed audit record
  * (audit-status.json status=approved) AND an operator env attestation. Exported
- * for direct parity testing. Silent (green) on non-mainnet or no escrow address.
+ * for direct parity testing. Silent (green) on explicit testnets or no escrow address.
  */
 export function escrowAuditFence({
   chainId,
@@ -233,11 +233,12 @@ export function escrowAuditFence({
   auditStatus,
 }) {
   const name = "Escrow audit (mainnet)";
-  if (chainId !== "8453" || !escrowAddr) {
+  const testnet = chainId === "84532" || chainId === "31337";
+  if (testnet || !escrowAddr) {
     return {
       name,
       status: "green",
-      note: chainId === "8453" ? "no escrow address (silent)" : `Sepolia (chain ${chainId})`,
+      note: !escrowAddr ? "no escrow address (silent)" : `testnet (chain ${chainId})`,
     };
   }
   if (auditStatus.approved && attested) {

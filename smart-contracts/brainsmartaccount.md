@@ -69,6 +69,7 @@ The ERC20 mode constraints close two finding classes the external audit would ot
 
 - a USDC-denominated cap can't be misread against an 18-decimal token (unit-blindness, R-06)
 - a session key can't be granted with a non-decodable selector that silently bypasses caps (unmetered call, R-07)
+- a token-transfer selector can't be granted in NATIVE mode, where `msg.value == 0` would leave token amounts unmetered
 
 ### EIP-712 ScopeAttestation
 
@@ -146,6 +147,7 @@ Even if the off-chain backend is compromised, on-chain enforcement rejects any c
 | Malicious target re-enters `executeViaSessionKey` | Reverts: `ReentrantCall`                           |
 | Owner grants a key with an empty allowlist        | Reverts: `TargetsRequired` / `SelectorsRequired`   |
 | Owner grants a key with a zero `policyVersion`    | Reverts: `PolicyVersionMismatch`                   |
+| ERC20 selector granted in NATIVE mode             | Reverts: `Erc20SelectorRequiresTokenCap`           |
 
 ## Kill-Switch: Pause vs Revoke
 
