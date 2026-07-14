@@ -309,6 +309,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/api-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange a customer API key for a short-lived agent JWT
+         * @description Public (`skipAuth`), gated instead by the `X-Api-Key` header
+         *     (`brain_sk_...`, issued by POST /tenants/{tenantId}/api-keys) — not
+         *     a bearer token. Rate-limited to 30/minute. A missing key, an unknown
+         *     key, a revoked key, and an expired key all return the SAME generic
+         *     401 (never leaks which condition failed). On success mints a
+         *     `principal_type=agent` JWT scoped to the key's granted scopes,
+         *     valid for 1 hour. Registered only when `BRAIN_API_KEY_AUTH_ENABLED`
+         *     is set; otherwise the route does not exist (404).
+         */
+        post: operations["exchangeApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{tenantId}/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a customer API key for a tenant
+         * @description Public route (`skipAuth`), gated instead by the
+         *     `X-Platform-Service-Auth` shared secret header, the same fence as
+         *     POST /tenants. Rate-limited to 20/minute. Creates a new
+         *     `kind='external', role='partner'` agent for the tenant and an
+         *     `api_keys` row holding only the key's sha256 hash; the plaintext
+         *     key (`brain_sk_...`) is returned exactly once in this response and
+         *     cannot be retrieved again. `scopes` defaults to a read + propose +
+         *     `audit:read` set when omitted; every requested scope must be within
+         *     the API-key scope cap (a strict subset of the full scope vocabulary
+         *     — no `*:admin`, `*:write` other than `raw:write`, or
+         *     `payment_intent:approve`/`execute`). Registered only when
+         *     `BRAIN_API_KEY_AUTH_ENABLED` is set; otherwise the route does not
+         *     exist (404).
+         */
+        post: operations["issueApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{tenantId}/api-keys/{keyId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a customer API key
+         * @description Public route (`skipAuth`), gated instead by the
+         *     `X-Platform-Service-Auth` shared secret header, the same fence as
+         *     POST /tenants. Rate-limited to 20/minute. Revokes the key and
+         *     marks its agent `state='revoked'`. Idempotent: revoking an
+         *     already-revoked key returns 204 with no audit event, only an
+         *     unknown key id 404s. Registered only when `BRAIN_API_KEY_AUTH_ENABLED`
+         *     is set; otherwise the route does not exist (404).
+         */
+        delete: operations["revokeApiKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/raw/ingest": {
         parameters: {
             query?: never;
@@ -4357,6 +4442,162 @@ export interface operations {
                         /** @enum {string} */
                         reason?: "invite_invalid";
                     };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    exchangeApiKey: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Customer API key, format: brain_sk_... */
+                "X-Api-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authenticated; agent token issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        token?: string;
+                        /** @enum {string} */
+                        token_type?: "Bearer";
+                        /** @enum {integer} */
+                        expires_in?: 3600;
+                        tenant_id?: string;
+                        agent_id?: string;
+                        scopes?: string[];
+                    };
+                };
+            };
+            /** @description X-Api-Key header missing, or does not match an active, unrevoked, unexpired key. Error code `auth_header_invalid`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    issueApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Optional label for the key. */
+                    name?: string;
+                    /** @description Defaults to a read + propose + audit:read set. Every entry must be within the API-key scope cap. */
+                    scopes?: string[];
+                    /**
+                     * Format: date-time
+                     * @description Optional expiry. Never expires when omitted.
+                     */
+                    expires_at?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description API key issued; plaintext key returned exactly once */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Plaintext key, format: brain_sk_.... Shown only in this response. */
+                        api_key?: string;
+                        key_id?: string;
+                        agent_id?: string;
+                        tenant_id?: string;
+                        scopes?: string[];
+                        name?: string | null;
+                        /** Format: date-time */
+                        expires_at?: string | null;
+                    };
+                };
+            };
+            /** @description A requested scope is outside the API-key scope cap, or `expires_at` is not a valid ISO 8601 timestamp. Error code `request_body_invalid`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Missing/invalid `X-Platform-Service-Auth` header, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Tenant does not exist. Error code `tenant_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    revokeApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: string;
+                keyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Key revoked (or already revoked) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing/invalid `X-Platform-Service-Auth` header, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No API key with this id exists for this tenant. Error code `api_key_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             429: components["responses"]["RateLimited"];
