@@ -1,14 +1,14 @@
 {
   "$schema": "https://docs.brain.fi/schemas/risk-register-v1.json",
   "schema_version": "v1",
-  "comment": "Machine-readable mirror of docs/risk-register.md. Read by scripts/production-readiness.mjs. Open + P0 \u2192 red row in the aggregator; open + P1 \u2192 yellow; mitigating + P0 \u2192 yellow; closed \u2192 not surfaced. When this file changes, update the .md mirror in the same PR.",
+  "comment": "Machine-readable mirror of docs/risk-register.md. Read by scripts/production-readiness.mjs. Open + P0 → red row in the aggregator; open + P1 → yellow; mitigating + P0 → yellow; closed → not surfaced. When this file changes, update the .md mirror in the same PR.",
   "risks": [
     {
       "id": "R-01",
       "title": "External smart-contract audit not yet complete (BrainEscrow)",
       "priority": "P0",
       "status": "open",
-      "mitigation_summary": "Mainnet boot-fenced (escrow-audit-gate.ts) + CI guard (check-escrow-audit-marker) + 4 Foundry invariants on the contract. The deployed on-chain bytecode is also verified at mainnet boot against the audited immutable-masked runtime hash via eth_getCode (assertDeployedEscrowBytecode), and the audit-build evidence (compiler + source-tree + creation/runtime bytecode hashes + immutable_references + approved_chain_ids) is recomputed from the working tree in CI (verify-audited-build.mjs) so a contract or toolchain change cannot ride an older approval.",
+      "mitigation_summary": "Mainnet deploy is boot-fenced: composition/escrow-audit-gate.ts refuses to start the api when BRAIN_ESCROW_ADDRESS is set on any non-testnet chain unless the committed audit record is approved for that chain and the operator sets BRAIN_ESCROW_AUDIT_RECEIPT or BRAIN_ESCROW_AUDIT_APPROVED=\"true\". API boot checks explicit BASE_RPC_URL with eth_chainId and refuses to start when it differs from BRAIN_BASE_CHAIN_ID. CI guard check-escrow-audit-marker catches the same misconfig at PR-review time before the boot fence has to fire. The deployed on-chain bytecode is verified at mainnet boot against the audited immutable-masked runtime hash via eth_getCode (assertDeployedEscrowBytecode), and audit-build evidence is recomputed from the working tree in CI (verify-audited-build.mjs), so a contract or toolchain change cannot ride an older approval.",
       "exit_criteria": [
         "external audit completes with no critical or high findings",
         "audited commit SHA + tag pinned in contracts/AUDIT-SCOPE.md",
@@ -74,12 +74,12 @@
       "title": "Full money-movement E2E not yet enforced in CI",
       "priority": "P1",
       "status": "mitigating",
-      "mitigation_summary": "A money_movement_e2e job now runs on EVERY PR (.github/workflows/pr.yml) against a real pg+redis stack + booted demo API: the full chain provision->ingest->normalize->propose->policy->execute, plus assertions that the \u00a76 gate ran checks 8/9.5/11.5 (none not_applicable, read from the proof's gate_checks) and that three negatives are actively rejected (duplicate payment, excessive-amount policy reject, missing-approval). audit-before->after linkage is now asserted in strict mode (the executed PI's proof must contain payment_intent.execute.before preceding payment_intent.execute.after, with the after event chained via prev_event_hash). Remaining: localstack-in-CI for the blob path (EC1) and full strict-proof (on-chain merkle anchor) mode, which needs a CI-available Base RPC; receivable-direction / low-confidence negatives are layerable follow-ups.",
+      "mitigation_summary": "A money_movement_e2e job now runs on EVERY PR (.github/workflows/pr.yml) against a real pg+redis stack + booted demo API: the full chain provision->ingest->normalize->propose->policy->execute, plus assertions that the §6 gate ran checks 8/9.5/11.5 (none not_applicable, read from the proof's gate_checks) and that three negatives are actively rejected (duplicate payment, excessive-amount policy reject, missing-approval). audit-before->after linkage is now asserted in strict mode (the executed PI's proof must contain payment_intent.execute.before preceding payment_intent.execute.after, with the after event chained via prev_event_hash). Remaining: localstack-in-CI for the blob path (EC1) and full strict-proof (on-chain merkle anchor) mode, which needs a CI-available Base RPC; receivable-direction / low-confidence negatives are layerable follow-ups.",
       "exit_criteria": [
         "deterministic local-stack-in-CI (pg+redis+localstack+boot binary in GH Actions)",
         "golden-path demo runs in strict mode on every PR",
-        "any \u00a76 check 8 / 9.5 / 11.5 going not_applicable fails the build",
-        "audit-before \u2192 audit-after linkage asserted"
+        "any §6 check 8 / 9.5 / 11.5 going not_applicable fails the build",
+        "audit-before → audit-after linkage asserted"
       ],
       "owner": "engineering+infra",
       "evidence": [
@@ -138,7 +138,7 @@
       "status": "mitigating",
       "mitigation_summary": "Batch 8 P5: error-path coverage added to onchainExecutor (read/write error propagation, receipt-hash sourcing), plaidClient (Plaid API error verbatim), and x402Client (full lifecycle: decimals read, transfer revert, receipt timeout, facilitator 5xx + network error, idempotency-key forwarding, chain selection). PostgresSourceRepository was already at 16-test coverage (reviewer's claim of near-zero was stale). 23 rail-adapter unit tests now pass (was 6). Per-file >=80% line/function/statement coverage gates are now wired into services/api/vitest.config.ts for each money-touching rail adapter (onchainExecutor, plaidClient, x402Client), so a single adapter regressing below 80% fails CI even while the aggregate stays high (verified: forcing onchainExecutor's gate above its real coverage fails the run). The first exit criterion (line-coverage parity wired into test:coverage) is met; the second now has gated scaffolding (R-14): tests/e2e/onchain-executor.testnet.e2e.test.ts drives the real rail against a deployed BrainSmartAccount via the opt-in testnet_onchain_executor_e2e CI job, runnable once testnet fixtures are provisioned (R-03-adjacent).",
       "exit_criteria": [
-        "Coverage parity with the \u00a76 gate measured at >=80% line coverage on the adapter files (next step: wire coverage gates into test:coverage)",
+        "Coverage parity with the §6 gate measured at >=80% line coverage on the adapter files (next step: wire coverage gates into test:coverage)",
         "Integration tests on testnet for at least the onchain executor end-to-end (scaffolding shipped in R-14; runs once testnet fixtures/secrets are provisioned)"
       ],
       "owner": "engineering",
@@ -179,7 +179,10 @@
       "closed_at": "2026-05-30",
       "closed_by": "batch 8 P2",
       "mitigation_summary": "BrainSmartAccount.sol contract NatSpec rewritten: now describes the actual design ('Smart account with directly-called session keys. Not ERC-4337: there is no EntryPoint, no UserOperation, no paymaster'). AUDIT-SCOPE.md mirror updated. Surfaced by Opus 4.8 (F-11).",
-      "evidence": ["contracts/src/BrainSmartAccount.sol:4-30", "contracts/AUDIT-SCOPE.md:131-145"]
+      "evidence": [
+        "contracts/src/BrainSmartAccount.sol:4-30",
+        "contracts/AUDIT-SCOPE.md:131-145"
+      ]
     },
     {
       "id": "R-11",

@@ -47,7 +47,7 @@ BrainEscrow lock/release.
 - [x] T0-6 fixed: Deploy scripts now require Base Sepolia chain id before broadcasting.
 - [x] T0-8 fixed: Escrow audit and bytecode gates now require the full audit path on any non-testnet chain.
 - [x] T0-9 fixed: API boot now checks explicit BASE_RPC_URL eth_chainId against BRAIN_BASE_CHAIN_ID.
-- [ ] T0-10 pending
+- [ ] T0-10 open: x402 is live-rail fenced but lacks an equivalent hard human-approval floor; tied to T0-11 product decision.
 - [ ] T0-11 product decision pending
 - [x] T0-12 fixed: Production boot now fences attestCounterpartyAgent and sumAgentWindowSpend.
 - [ ] T0-13 confirm intent pending

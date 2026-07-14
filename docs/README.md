@@ -22,6 +22,8 @@ Use these docs for the current production-readiness picture:
   event, watcher, and reconciliation map.
 - `docs/risk-register.md` and `docs/risk-register.json`: human-readable and
   machine-readable production risk register.
+- `docs/audit/findings/tier-0-contracts-payment.md`: Tier 0 contract and
+  payment-path review remediation status.
 - `docs/r03-staging-deploy-runbook.md`: staging deploy and release-candidate
   evidence runbook.
 
