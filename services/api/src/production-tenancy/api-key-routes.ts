@@ -214,10 +214,10 @@ export async function registerApiKeyRoutes(
         );
         const row = rows[0];
         if (row !== undefined) {
-          await client.query(`UPDATE agents SET state = 'revoked' WHERE tenant_id = $1 AND id = $2`, [
-            tenantId,
-            row.agent_id,
-          ]);
+          await client.query(
+            `UPDATE agents SET state = 'revoked' WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, row.agent_id],
+          );
           return { status: "revoked" as const, agentId: row.agent_id };
         }
         // No row updated -- either already revoked or never existed.

@@ -34,7 +34,11 @@ interface ApiKeyExchangeResponse {
   scopes: string[];
 }
 
-function apiKeyError(status: number, body: BrainErrorBody | undefined, fallbackMessage: string): BrainAPIError {
+function apiKeyError(
+  status: number,
+  body: BrainErrorBody | undefined,
+  fallbackMessage: string,
+): BrainAPIError {
   return new BrainAPIError(
     status,
     body ?? {
@@ -143,7 +147,9 @@ export function createBrainHttpClient(options: BrainHttpClientOptions): BrainHtt
     throw new Error("createBrainHttpClient: pass exactly one of `token` or `apiKey`, not both");
   }
   if (!options.token && !options.apiKey) {
-    throw new Error("createBrainHttpClient: token is required (pass a JWT string), or pass apiKey instead");
+    throw new Error(
+      "createBrainHttpClient: token is required (pass a JWT string), or pass apiKey instead",
+    );
   }
 
   const baseUrl = options.baseUrl ?? "https://api.brain.fi/v1";

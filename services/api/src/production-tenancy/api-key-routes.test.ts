@@ -145,7 +145,9 @@ function makeResolverPool(store: FakeStore) {
   };
 }
 
-async function buildApp(store: FakeStore): Promise<{ app: FastifyInstance; audit: InMemoryAuditEmitter }> {
+async function buildApp(
+  store: FakeStore,
+): Promise<{ app: FastifyInstance; audit: InMemoryAuditEmitter }> {
   const app = Fastify({ logger: false });
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
@@ -159,7 +161,12 @@ async function buildApp(store: FakeStore): Promise<{ app: FastifyInstance; audit
     }),
   });
   const audit = new InMemoryAuditEmitter();
-  const signer = new JwtSigner({ issuer: ISSUER, audience: AUDIENCE, key: HS256_KEY, algorithm: "HS256" });
+  const signer = new JwtSigner({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    key: HS256_KEY,
+    algorithm: "HS256",
+  });
   await registerApiKeyRoutes(app, {
     pool: makeAppPool(store) as never,
     resolverPool: makeResolverPool(store) as never,
@@ -411,7 +418,11 @@ describe("per-customer API-key auth (token-exchange model)", () => {
       // audit trail.
       expect(scopes).toContain("audit:read");
       // But it can never move money or administer anything.
-      for (const moneyMove of ["payment_intent:approve", "payment_intent:execute", "execution:admin"]) {
+      for (const moneyMove of [
+        "payment_intent:approve",
+        "payment_intent:execute",
+        "execution:admin",
+      ]) {
         expect(scopes).not.toContain(moneyMove);
       }
     } finally {

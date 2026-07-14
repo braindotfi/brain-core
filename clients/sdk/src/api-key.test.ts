@@ -40,7 +40,8 @@ function exchangeOk(token: string): Response {
   );
 }
 
-const jsonOk = () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+const jsonOk = () =>
+  new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
 
 describe("Brain constructor: token/apiKey validation", () => {
   it("throws when neither token nor apiKey is provided", () => {
