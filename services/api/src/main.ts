@@ -371,7 +371,9 @@ async function main(): Promise<void> {
     configuredChainId: cfg.BRAIN_BASE_CHAIN_ID,
     rpcUrl: cfg.BASE_RPC_URL,
     getChainId:
-      cfg.BASE_RPC_URL !== undefined ? makeBaseGetChainId(cfg.BASE_RPC_URL) : async () => cfg.BRAIN_BASE_CHAIN_ID,
+      cfg.BASE_RPC_URL !== undefined
+        ? makeBaseGetChainId(cfg.BASE_RPC_URL)
+        : async () => cfg.BRAIN_BASE_CHAIN_ID,
   });
 
   // Refuse to boot against any non-testnet chain with BRAIN_ESCROW_ADDRESS

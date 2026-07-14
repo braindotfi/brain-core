@@ -78,6 +78,7 @@ can never sign a valid mainnet tx. Defense in depth: `check-gate-bypass.mjs`,
 rail.
 
 #### T0-8 (MEDIUM), Escrow audit gate hardcodes 8453; "any non-testnet chain" not literally enforced
+
 - Location: `services/api/src/composition/escrow-audit-gate.ts:34,145,221`.
 - Both fences early-return for any `chainId !== 8453`, so Ethereum (1), Optimism
   (10), Arbitrum (42161), Polygon (137) are not fenced. Mitigated today because
@@ -88,6 +89,7 @@ rail.
   explicit testnet allowlist and refuse any chain id not on it.
 
 #### T0-9 (LOW), Fence trusts self-declared BRAIN_BASE_CHAIN_ID, never probes the RPC's real chain id
+
 - Location: `services/api/src/composition/escrow-audit-gate.ts` (reads via
   `eth-getcode.ts`); the gate never calls `eth_chainId` on `BASE_RPC_URL`.
 - Fail-closed in every direction traced today (thanks to the EIP-155 coupling), so
@@ -96,6 +98,7 @@ rail.
   `eth_chainId` at boot and assert it equals `BRAIN_BASE_CHAIN_ID`.
 
 #### T0-10 (MEDIUM), x402 USDC mainnet settlement is not covered by the escrow audit fence
+
 - Location: `services/api/src/rails/x402Client.ts:31,34,47`.
 - x402 uses the same `chainId === 8453 ? base : baseSepolia` selection and, on
   8453, `transfer`s real USDC. It does not touch BrainEscrow, so it is
@@ -107,6 +110,7 @@ rail.
 ### Findings
 
 #### T0-1 (HIGH), ERC-20 (USDC) session key granted in NATIVE mode: spend caps silently unenforced
+
 - Location: `contracts/script/GrantSessionKey.s.sol:43-54` (root cause enabled by
   `contracts/src/BrainSmartAccount.sol:174-198` and `:311-330`).
 - This is the repo's designated "ERC-20 variant" grant script. It allowlists the
@@ -143,6 +147,7 @@ rail.
   token-denominated cap can never be silently issued as NATIVE.
 
 #### T0-2 (MEDIUM), grantSessionKey permits an ERC-20 token target in NATIVE mode (root cause of T0-1)
+
 - Location: `contracts/src/BrainSmartAccount.sol:174-198`.
 - In NATIVE mode (`capToken == 0`) there is no restriction preventing an ERC-20
   token contract from appearing in `allowedTargets` with a transfer selector. The
@@ -155,6 +160,7 @@ rail.
   ERC-20 mode.
 
 #### T0-3 (LOW), Two latent TS session-key helpers repeat the NATIVE-mode / decimals mistake
+
 - `services/execution/src/rails/session-keys.ts:16-64`
   (`derivePerTaskSessionKey` / `PerTaskSessionKeyParams`): the params type has no
   `capToken` field at all and documents amounts as "wei", and `allowedSelectors`
@@ -174,6 +180,7 @@ rail.
   builders.
 
 #### T0-4 (MEDIUM), BrainMCPAgentRegistry.updateBehaviorHash has no replay protection
+
 - Location: `contracts/src/BrainMCPAgentRegistry.sol:161-178`.
 - The EIP-712 digest for `updateBehaviorHash` binds only
   (agentId, tenantId, behaviorHash): no nonce, no deadline, no monotonic
@@ -197,6 +204,7 @@ rail.
   `signerNonce` pattern already in the contract.
 
 #### T0-5 (LOW), ERC-20 `approve` allowances survive session-key revocation / pause
+
 - Location: `contracts/src/BrainSmartAccount.sol:205-251` (revoke/pause) vs the
   ERC-20 allowlist including `approve` (`GrantSessionKey.s.sol:41`,
   `BrainSmartAccount.sol:190`).
@@ -214,6 +222,7 @@ rail.
   allowances and require the owner to zero them on incident response.
 
 #### T0-6 (LOW), Deploy scripts have no on-chain chain-id fence
+
 - Location: `contracts/script/DeployEscrow.s.sol:22-33` (and peers).
 - The "UNAUDITED / testnet only" status is enforced procedurally (docstring says
   to pass `--rpc-url base_sepolia`), not by code. Nothing in the deploy script
@@ -223,6 +232,7 @@ rail.
   deploy script would be cheap defense in depth.
 
 #### T0-7 (INFO), Minor contract hardening observations
+
 - `BrainSmartAccount.grantSessionKey` does not validate `validAfter < validUntil`;
   a key with `validAfter >= validUntil` is permanently inactive (footgun, not a
   vuln). `contracts/src/BrainSmartAccount.sol:174`.
@@ -239,6 +249,7 @@ rail.
   `contracts/src/BrainMCPAgentRegistry.sol:136`.
 
 #### T0-11 (HIGH), Propose-only is policy-conditional: no hard code gate forces human approval for on-chain actions
+
 - Location: `shared/src/gate/gate.ts:855` (check 11 only runs for outcome
   `confirm`); `services/execution/src/payment-intents/PaymentIntentService.ts:415-420`
   (`allow` -> `approved` with no signature); `:937-949` (`execute` requires only
@@ -283,6 +294,7 @@ rail.
   by a miscapped NATIVE-mode key would have NO effective ceiling at any layer.
 
 #### T0-12 (MEDIUM), Dormant-safety-loader containment for gate checks 5.5 and 8.5 is lint-only, not a boot fence
+
 - Location: `shared/src/gate/gate.ts` (checks degrade to `not_applicable`/pass when
   their loader is absent: 1.5, 5.5, 6.6, 6.7, 8, 8.5, 9.5, 11.5); production fences
   `services/api/src/main.ts:821` (`assertMoneyPathLoadersWiredInProduction`) and
@@ -303,6 +315,7 @@ rail.
   lint that a refactor can slip past.
 
 #### T0-13 (LOW), x402_settle and escrow_release skip the off-chain balance/reservation gate (confirm intent)
+
 - Location: `services/execution/src/payment-intents/PaymentIntentService.ts:76`
   (`requiresExecutionReservation()` returns false for `x402_settle` /
   `escrow_release`); `shared/src/gate/gate.ts:737` (check 8 `not_applicable` for

@@ -179,10 +179,7 @@
       "closed_at": "2026-05-30",
       "closed_by": "batch 8 P2",
       "mitigation_summary": "BrainSmartAccount.sol contract NatSpec rewritten: now describes the actual design ('Smart account with directly-called session keys. Not ERC-4337: there is no EntryPoint, no UserOperation, no paymaster'). AUDIT-SCOPE.md mirror updated. Surfaced by Opus 4.8 (F-11).",
-      "evidence": [
-        "contracts/src/BrainSmartAccount.sol:4-30",
-        "contracts/AUDIT-SCOPE.md:131-145"
-      ]
+      "evidence": ["contracts/src/BrainSmartAccount.sol:4-30", "contracts/AUDIT-SCOPE.md:131-145"]
     },
     {
       "id": "R-11",

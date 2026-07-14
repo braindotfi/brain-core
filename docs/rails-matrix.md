@@ -52,16 +52,16 @@ rail with all required env vars set; otherwise the boot fence at
 
 ### `x402_base`
 
-| Attribute          | Value                                                                                        |
-| ------------------ | -------------------------------------------------------------------------------------------- |
-| Description        | Per-call USDC settlement via Coinbase x402 facilitator                                       |
-| Implementation     | `X402BaseRail` against a real `X402Client`                                                   |
-| Chain              | `BRAIN_BASE_CHAIN_ID` (default 84532 Sepolia; 8453 mainnet)                                  |
-| Required env       | `BRAIN_X402_FACILITATOR_URL`, `BRAIN_X402_USDC_ADDRESS`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL` |
-| Production allowed | yes                                                                                          |
-| Audit required     | no                                                                                           |
+| Attribute          | Value                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Description        | Per-call USDC settlement via Coinbase x402 facilitator                                                                   |
+| Implementation     | `X402BaseRail` against a real `X402Client`                                                                               |
+| Chain              | `BRAIN_BASE_CHAIN_ID` (default 84532 Sepolia; 8453 mainnet)                                                              |
+| Required env       | `BRAIN_X402_FACILITATOR_URL`, `BRAIN_X402_USDC_ADDRESS`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL`                             |
+| Production allowed | yes                                                                                                                      |
+| Audit required     | no                                                                                                                       |
 | Approval caveat    | Human approval is policy-conditional today; a hard per-action approval floor for x402 remains a Tier 0 product decision. |
-| Failure mode       | facilitator 4xx/5xx → audit-after `ok: false`                                                |
+| Failure mode       | facilitator 4xx/5xx → audit-after `ok: false`                                                                            |
 
 ### `escrow_base`
 
@@ -73,7 +73,7 @@ rail with all required env vars set; otherwise the boot fence at
 | Required env       | `BRAIN_ESCROW_ADDRESS`, `BRAIN_ONCHAIN_SMART_ACCOUNT`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL`                                                                                                                                  |
 | Production allowed | yes                                                                                                                                                                                                                         |
 | Audit required     | **yes**                                                                                                                                                                                                                     |
-| Mainnet boot fence | `composition/escrow-audit-gate.ts`: throws on boot if escrow is set on any non-testnet chain without committed audit approval for that chain plus `BRAIN_ESCROW_AUDIT_RECEIPT` or `BRAIN_ESCROW_AUDIT_APPROVED="true"`       |
+| Mainnet boot fence | `composition/escrow-audit-gate.ts`: throws on boot if escrow is set on any non-testnet chain without committed audit approval for that chain plus `BRAIN_ESCROW_AUDIT_RECEIPT` or `BRAIN_ESCROW_AUDIT_APPROVED="true"`      |
 | Audit attestation  | Either `BRAIN_ESCROW_AUDIT_RECEIPT` (preferred. URL/filepath/hash pointing at the audit report) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` boolean. The receipt is preferred because it carries diligence metadata. |
 | Failure mode       | `release()` revert → audit-after `ok: false`                                                                                                                                                                                |
 
