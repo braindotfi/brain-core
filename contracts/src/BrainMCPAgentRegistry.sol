@@ -51,14 +51,14 @@ contract BrainMCPAgentRegistry {
     bytes32 private constant _REGISTER_TYPEHASH = keccak256(
         "AgentRegistration(bytes32 agentId,address agentAddress,bytes32 tenantId,bytes32 scopeHash,bytes32 behaviorHash)"
     );
-    bytes32 private constant _REVOKE_TYPEHASH = keccak256("AgentRevocation(bytes32 agentId,bytes32 tenantId)");
-    bytes32 private constant _BEHAVIOR_TYPEHASH = keccak256(
-        "AgentBehaviorUpdate(bytes32 agentId,bytes32 tenantId,bytes32 behaviorHash)"
-    );
-    bytes32 private constant _SIGNER_TYPEHASH = keccak256("TenantSignerChange(bytes32 tenantId,address signer,bool allowed,uint256 nonce)");
-    bytes32 private constant _DOMAIN_TYPEHASH = keccak256(
-        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-    );
+    bytes32 private constant _REVOKE_WITH_NONCE_TYPEHASH =
+        keccak256("AgentRevocation(bytes32 agentId,bytes32 tenantId,uint256 nonce)");
+    bytes32 private constant _BEHAVIOR_WITH_NONCE_TYPEHASH =
+        keccak256("AgentBehaviorUpdate(bytes32 agentId,bytes32 tenantId,bytes32 behaviorHash,uint256 nonce)");
+    bytes32 private constant _SIGNER_TYPEHASH =
+        keccak256("TenantSignerChange(bytes32 tenantId,address signer,bool allowed,uint256 nonce)");
+    bytes32 private constant _DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
     bytes32 private immutable _hashedName;
     bytes32 private immutable _hashedVersion;
@@ -67,6 +67,8 @@ contract BrainMCPAgentRegistry {
 
     address public immutable initialAdmin;
     mapping(bytes32 => uint256) public signerNonce;
+    mapping(bytes32 => uint256) public behaviorNonce;
+    mapping(bytes32 => uint256) public revocationNonce;
 
     error AgentAlreadyRegistered(bytes32 agentId);
     error AgentNotRegistered(bytes32 agentId);
@@ -158,21 +160,18 @@ contract BrainMCPAgentRegistry {
     ///         re-attestation (an EIP-712 signature over the new behaviorHash)
     ///         from a tenant signer — the on-chain analogue of re-signing the
     ///         ScopeAttestation when the model/prompt/tools change (2.3).
-    function updateBehaviorHash(
-        bytes32 agentId,
-        bytes32 behaviorHash,
-        bytes calldata tenantSignature
-    ) external {
+    function updateBehaviorHash(bytes32 agentId, bytes32 behaviorHash, bytes calldata tenantSignature) external {
         AgentRegistration storage r = _agents[agentId];
         if (r.registeredAt == 0) revert AgentNotRegistered(agentId);
         if (r.revokedAt != 0) revert AgentRevokedError(agentId);
 
-        bytes32 digest = _hashBehaviorUpdate(agentId, r.tenantId, behaviorHash);
+        bytes32 digest = _hashBehaviorUpdate(agentId, r.tenantId, behaviorHash, behaviorNonce[agentId]);
         address recovered = _recover(digest, tenantSignature);
         if (recovered == address(0) || !_tenantSigners[r.tenantId][recovered]) {
             revert NotTenantSigner(recovered);
         }
 
+        behaviorNonce[agentId] += 1;
         r.behaviorHash = behaviorHash;
         emit AgentBehaviorUpdated(agentId, r.tenantId, behaviorHash);
     }
@@ -182,12 +181,13 @@ contract BrainMCPAgentRegistry {
         if (r.registeredAt == 0) revert AgentNotRegistered(agentId);
         if (r.revokedAt != 0) revert AgentRevokedError(agentId);
 
-        bytes32 digest = _hashRevocation(agentId, r.tenantId);
+        bytes32 digest = _hashRevocation(agentId, r.tenantId, revocationNonce[agentId]);
         address recovered = _recover(digest, tenantSignature);
         if (recovered == address(0) || !_tenantSigners[r.tenantId][recovered]) {
             revert NotTenantSigner(recovered);
         }
 
+        revocationNonce[agentId] += 1;
         r.revokedAt = block.timestamp;
         emit AgentRevoked(agentId, r.tenantId);
     }
@@ -218,15 +218,7 @@ contract BrainMCPAgentRegistry {
     }
 
     function _buildDomainSeparator() private view returns (bytes32) {
-        return keccak256(
-            abi.encode(
-                _DOMAIN_TYPEHASH,
-                _hashedName,
-                _hashedVersion,
-                block.chainid,
-                address(this)
-            )
-        );
+        return keccak256(abi.encode(_DOMAIN_TYPEHASH, _hashedName, _hashedVersion, block.chainid, address(this)));
     }
 
     function _hashRegistration(
@@ -236,33 +228,34 @@ contract BrainMCPAgentRegistry {
         bytes32 scopeHash,
         bytes32 behaviorHash
     ) private view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(_REGISTER_TYPEHASH, agentId, agentAddress, tenantId, scopeHash, behaviorHash)
+        );
+        return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
+    }
+
+    function _hashBehaviorUpdate(bytes32 agentId, bytes32 tenantId, bytes32 behaviorHash, uint256 nonce)
+        private
+        view
+        returns (bytes32)
+    {
         bytes32 structHash =
-            keccak256(abi.encode(_REGISTER_TYPEHASH, agentId, agentAddress, tenantId, scopeHash, behaviorHash));
-        return keccak256(abi.encodePacked(hex"19_01", domainSeparator(), structHash));
+            keccak256(abi.encode(_BEHAVIOR_WITH_NONCE_TYPEHASH, agentId, tenantId, behaviorHash, nonce));
+        return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 
-    function _hashBehaviorUpdate(
-        bytes32 agentId,
-        bytes32 tenantId,
-        bytes32 behaviorHash
-    ) private view returns (bytes32) {
-        bytes32 structHash = keccak256(abi.encode(_BEHAVIOR_TYPEHASH, agentId, tenantId, behaviorHash));
-        return keccak256(abi.encodePacked(hex"19_01", domainSeparator(), structHash));
+    function _hashRevocation(bytes32 agentId, bytes32 tenantId, uint256 nonce) private view returns (bytes32) {
+        bytes32 structHash = keccak256(abi.encode(_REVOKE_WITH_NONCE_TYPEHASH, agentId, tenantId, nonce));
+        return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 
-    function _hashRevocation(bytes32 agentId, bytes32 tenantId) private view returns (bytes32) {
-        bytes32 structHash = keccak256(abi.encode(_REVOKE_TYPEHASH, agentId, tenantId));
-        return keccak256(abi.encodePacked(hex"19_01", domainSeparator(), structHash));
-    }
-
-    function _hashSignerChange(
-        bytes32 tenantId,
-        address signer,
-        bool allowed,
-        uint256 nonce
-    ) private view returns (bytes32) {
+    function _hashSignerChange(bytes32 tenantId, address signer, bool allowed, uint256 nonce)
+        private
+        view
+        returns (bytes32)
+    {
         bytes32 structHash = keccak256(abi.encode(_SIGNER_TYPEHASH, tenantId, signer, allowed, nonce));
-        return keccak256(abi.encodePacked(hex"19_01", domainSeparator(), structHash));
+        return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 
     function _recover(bytes32 digest, bytes calldata sig) private pure returns (address) {

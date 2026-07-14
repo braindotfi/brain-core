@@ -42,7 +42,7 @@ BrainEscrow lock/release.
 - [x] T0-1 fixed: GrantSessionKey now grants ERC20-mode keys with capToken set to the allowed token.
 - [x] T0-2 fixed: BrainSmartAccount rejects native-mode grants that allowlist decodable ERC20 selectors.
 - [x] T0-3 fixed: TS session-key helper shapes now require explicit capToken and raw integer token-unit amounts.
-- [ ] T0-4 pending
+- [x] T0-4 fixed: Agent behavior updates and revocations now bind per-agent nonces in their EIP-712 payloads.
 - [ ] T0-5 product decision pending
 - [ ] T0-6 pending
 - [ ] T0-8 pending
