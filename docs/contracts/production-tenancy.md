@@ -20,10 +20,11 @@ playground only.
 POST /v1/tenants (auth: platform service credential)
 body: { company_name, founder: { email, display_name }, founder_external_ref }
 -> 201 { tenant_id, member: {...bootstrap admin...}, session: { token, refresh_token,
-expires_in } }
+expires_in }, agent: {...propose-only production BFF service agent...} }
 Semantics: atomic - tenant + bootstrap admin member (role admin, all domains, high limit,
-active) + identity link (surface "platform", external_ref = founder_external_ref) + session,
-one transaction. No seeded data. Audit: tenant.created, member.changed.
+active) + identity link (surface "platform", external_ref = founder_external_ref) + session +
+production BFF service agent + initial agent token, one transaction. No seeded data. Audit:
+tenant.created, member.changed, auth.production_agent_token.minted.
 
 ## Sessions (exchange model; ACTOR = SESSION preserved)
 
@@ -66,8 +67,13 @@ member.changed carries status transitions.
 
 POST /v1/auth/service-token remains a sandbox and testnet BFF break-glass credential for
 agent propose-only workflows. It is not a production user-session exchange path, it does not
-mint member-resolvable user tokens, and it must reject tenant.kind = "production". The
-production path for human sessions is POST /v1/sessions.
+mint member-resolvable user tokens, and it must reject tenant.kind = "production".
+
+Production tenants have their own agent path, governed by
+`docs/contracts/production-agents.md`: POST /v1/tenants creates the initial production BFF
+service agent and token, and POST /v1/tenants/{tenant_id}/agent-token returns or rotates that
+agent token. These paths are mutually exclusive by tenant.kind. The production path for human
+sessions remains POST /v1/sessions.
 
 ## Invariants (pinned by tests)
 
@@ -85,3 +91,5 @@ production path for human sessions is POST /v1/sessions.
 7. Actor is never read from any payload on any path in this contract (existing rule,
    re-asserted here).
 8. Agent principals remain never member-resolvable (unchanged; re-pinned).
+9. Production tenants use `docs/contracts/production-agents.md` for propose-only agent
+   principals; they never use POST /v1/auth/service-token.

@@ -390,15 +390,16 @@ paths:
   /tenants:
     post:
       tags: [Tenancy]
-      summary: Create a production tenant with its founder bootstrap admin
+      summary: Create a production tenant with its founder bootstrap admin and agent
       description: |
         Public route (`skipAuth`), gated instead by the
         `X-Platform-Service-Auth` shared secret header
         (`BRAIN_PLATFORM_SERVICE_SECRET`) — not a JWT bearer scope.
         Rate-limited to 20/minute. Creates `tenant.kind='production'`,
         one active bootstrap admin member, a `platform`-surface identity
-        link for the founder, and an initial member session (access +
-        refresh token pair). Rejects the request outright if the demo
+        link for the founder, an initial member session (access +
+        refresh token pair), and the tenant's propose-only BFF service
+        agent token. Rejects the request outright if the demo
         provisioning header (`X-Demo-Provision-Auth`) is also present, to
         keep the demo and production tenant-creation paths from being
         conflatable.
@@ -438,6 +439,7 @@ paths:
                       token: { type: string }
                       refresh_token: { type: string }
                       expires_in: { type: integer, enum: [900] }
+                  agent: { $ref: '#/components/schemas/ProductionAgentToken' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401':
           description: |
@@ -456,6 +458,67 @@ paths:
                   - type: object
                     properties:
                       reason: { type: string, enum: [platform_service_credential_required] }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /tenants/{tenantId}/agent-token:
+    post:
+      tags: [Tenancy]
+      summary: Return or rotate a production tenant's propose-only agent token
+      description: |
+        Public route (`skipAuth`), gated instead by the
+        `X-Platform-Service-Auth` shared secret header with the
+        `tenant:agent-mint` operational scope. Production-only. Returns the
+        active BFF service agent token when one exists, or mints one when no
+        active token exists. Pass `{ "rotate": true }` to revoke the prior
+        token id and mint a replacement. The token is a
+        `principal_type=agent` JWT using the shared service-token propose-only
+        scope set. It cannot approve, execute, sign, administer, or resolve as
+        a member.
+      operationId: mintProductionAgentToken
+      security: []
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rotate:
+                  type: boolean
+                  default: false
+                  description: Revoke the active token id before minting a replacement.
+      responses:
+        '200':
+          description: Existing active token returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductionAgentToken' }
+        '201':
+          description: Agent token minted or rotated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductionAgentToken' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Missing/invalid platform credential, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Tenant is not production. Error code `auth_scope_insufficient`, details.reason `production_agent_required`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Tenant does not exist. Error code `tenant_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
   /sessions:
@@ -5832,6 +5895,37 @@ components:
             requiresSecondApproverAbove:
               type: [integer, "null"]
               description: Amount in minor units (cents) above which a distinct second member must also approve. Null means no second-approval threshold.
+
+    ProductionAgentToken:
+      type: object
+      required: [id, token, principal_type, subject, tenant_id, token_id, scopes, expires_in, use]
+      description: |
+        Propose-only production BFF service agent credential. This is not a
+        member session and cannot approve, execute, sign, administer, or
+        resolve as a member.
+      properties:
+        id: { type: string, pattern: '^agent_[0-9A-HJKMNP-TV-Z]{26}$' }
+        token: { type: string, description: Bearer JWT returned only to the platform caller. }
+        principal_type: { type: string, enum: [agent] }
+        subject: { type: string, pattern: '^agent_[0-9A-HJKMNP-TV-Z]{26}$' }
+        tenant_id: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        token_id: { type: string, pattern: '^token_[0-9A-HJKMNP-TV-Z]{26}$' }
+        scopes:
+          type: array
+          items:
+            type: string
+            enum:
+              - ledger:read
+              - wiki:read
+              - raw:read
+              - raw:write
+              - policy:read
+              - execution:read
+              - execution:propose
+              - payment_intent:propose
+              - audit:read
+        expires_in: { type: integer, enum: [3600] }
+        use: { type: string, enum: [propose-only agent workflows] }
 
     MemberCreateRequest:
       type: object

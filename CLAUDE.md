@@ -213,7 +213,8 @@ Done
   `docs/contracts/production-tenancy.md`. Production tenants are created only by
   `POST /v1/tenants` with the platform service credential. The route creates
   `tenant.kind='production'`, one active bootstrap admin member, a platform
-  identity link, and a user-principal member session. It seeds no demo data.
+  identity link, a user-principal member session, and the tenant's propose-only
+  BFF service agent with an initial agent token. It seeds no demo data.
 - Demo tenancy remains structurally separate. `/v1/demo/provision-run` stamps
   `tenant.kind='demo'`, can never create production tenants, and still returns
   split propose-only agent tokens and user-principal member tokens. Production
@@ -230,9 +231,17 @@ Done
   Invite tokens are returned once, stored hashed, and consume is atomic. Invited
   members have `status='invited'`, cannot approve, cannot hold sessions, and do
   not count toward the last-admin guard.
-- `/v1/auth/service-token` remains sandbox and testnet only. It mints
-  propose-only agent credentials and rejects `tenant.kind='production'`; it is
-  not a competing production user-session exchange path.
+- Production agent principals are governed by
+  `docs/contracts/production-agents.md`. There are two mutually exclusive
+  agent-minting paths by tenant kind: `/v1/auth/service-token` remains sandbox
+  and testnet only for demo tenants, while production tenants use
+  `POST /v1/tenants` for the initial BFF service agent and
+  `POST /v1/tenants/{tenant_id}/agent-token` for return-or-rotate. Both paths
+  use propose-only agent scopes. Neither path mints approval, execution, sign,
+  admin, or member-resolvable credentials.
+- `/v1/auth/service-token` remains sandbox and testnet only. It rejects
+  `tenant.kind='production'`; it is not a competing production user-session
+  exchange path and not a competing production agent path.
 
 ### Deployment
 
@@ -313,6 +322,7 @@ Update this table on every promote.
 | Tenant bootstrap member (PR #218)                                       | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
 | Bootstrap member session split: member_token in provision-run (PR #219) | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
 | Production tenancy, sessions, and invites                               | Pending | No         | No, pending merge and post-deploy `/v1/tenants` probe                                                 |
+| Production agent principals                                             | Pending | No         | No, pending merge and post-deploy `/v1/tenants` plus `/v1/tenants/{tenant_id}/agent-token` probe      |
 
 Provision-run returns `tokens.member.token` for user-principal member and
 approval workflows and `tokens.agent.token` for propose-only agent workflows.
