@@ -127,8 +127,7 @@ function appPool(member = memberRow()) {
           )
           .sort((a, b) => b.expires_at_epoch - a.expires_at_epoch)[0];
         return Promise.resolve({
-          rows:
-            row === undefined ? [] : [{ id: row.id, expires_at_epoch: row.expires_at_epoch }],
+          rows: row === undefined ? [] : [{ id: row.id, expires_at_epoch: row.expires_at_epoch }],
           rowCount: row === undefined ? 0 : 1,
         });
       }

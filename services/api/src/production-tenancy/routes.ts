@@ -245,7 +245,9 @@ export async function registerProductionTenancyRoutes(
 
       const revocation = deps.revocation;
       if (rotate && revocation !== undefined) {
-        await Promise.all(revoked.map((token) => revocation.revoke(token.tokenId, token.expiresAt)));
+        await Promise.all(
+          revoked.map((token) => revocation.revoke(token.tokenId, token.expiresAt)),
+        );
       }
 
       const token = await signAgentToken(deps.signer, result.token);
