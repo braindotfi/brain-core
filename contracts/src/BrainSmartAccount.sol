@@ -40,17 +40,17 @@ contract BrainSmartAccount {
         ///      transferFrom and value=0. When zero, NATIVE-mode: caps apply
         ///      to msg.value in wei; non-value calls pass un-metered.
         address capToken;
-        uint256 maxPerTx;       // per-call cap in capToken units (or wei in NATIVE mode)
-        uint256 maxPerPeriod;   // cumulative cap per periodSeconds window (same units)
-        uint256 periodSeconds;  // e.g. 86400 for daily; 0 disables period accounting
-        bytes32 policyVersion;  // must equal the expected policy digest at exec
+        uint256 maxPerTx; // per-call cap in capToken units (or wei in NATIVE mode)
+        uint256 maxPerPeriod; // cumulative cap per periodSeconds window (same units)
+        uint256 periodSeconds; // e.g. 86400 for daily; 0 disables period accounting
+        bytes32 policyVersion; // must equal the expected policy digest at exec
     }
 
     /// @dev ERC20 selector constants for cap-decode and grant-time validation.
     ///      Centralised so adding a new decodable selector requires updating
     ///      both grantSessionKey and executeViaSessionKey together.
-    bytes4 private constant _SELECTOR_TRANSFER = 0xa9059cbb;     // transfer(address,uint256)
-    bytes4 private constant _SELECTOR_APPROVE = 0x095ea7b3;      // approve(address,uint256)
+    bytes4 private constant _SELECTOR_TRANSFER = 0xa9059cbb; // transfer(address,uint256)
+    bytes4 private constant _SELECTOR_APPROVE = 0x095ea7b3; // approve(address,uint256)
     bytes4 private constant _SELECTOR_TRANSFER_FROM = 0x23b872dd; // transferFrom(address,address,uint256)
 
     event SessionKeyGranted(address indexed holder, bytes32 policyVersion, uint256 validUntil);
@@ -127,6 +127,7 @@ contract BrainSmartAccount {
     error NonDecodableSelectorInErc20Mode(bytes4 selector);
     error ValueNotAllowedInErc20Mode();
     error TargetMustEqualCapTokenInErc20Mode();
+    error Erc20SelectorRequiresTokenCap(bytes4 selector);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -189,6 +190,16 @@ contract BrainSmartAccount {
                 bytes4 s = key.allowedSelectors[i];
                 if (s != _SELECTOR_TRANSFER && s != _SELECTOR_APPROVE && s != _SELECTOR_TRANSFER_FROM) {
                     revert NonDecodableSelectorInErc20Mode(s);
+                }
+            }
+        } else {
+            // NATIVE mode meters msg.value only. Decodable ERC20 selectors
+            // would move token units with value == 0, so force such keys into
+            // ERC20 mode where capToken identifies the token being metered.
+            for (uint256 i = 0; i < key.allowedSelectors.length; ++i) {
+                bytes4 s = key.allowedSelectors[i];
+                if (s == _SELECTOR_TRANSFER || s == _SELECTOR_APPROVE || s == _SELECTOR_TRANSFER_FROM) {
+                    revert Erc20SelectorRequiresTokenCap(s);
                 }
             }
         }
@@ -283,7 +294,10 @@ contract BrainSmartAccount {
         if (key.allowedTargets.length != 0) {
             bool ok;
             for (uint256 i = 0; i < key.allowedTargets.length; ++i) {
-                if (key.allowedTargets[i] == target) { ok = true; break; }
+                if (key.allowedTargets[i] == target) {
+                    ok = true;
+                    break;
+                }
             }
             if (!ok) revert TargetNotAllowed(target);
         }
@@ -295,7 +309,10 @@ contract BrainSmartAccount {
         if (key.allowedSelectors.length != 0) {
             bool ok;
             for (uint256 i = 0; i < key.allowedSelectors.length; ++i) {
-                if (key.allowedSelectors[i] == selector) { ok = true; break; }
+                if (key.allowedSelectors[i] == selector) {
+                    ok = true;
+                    break;
+                }
             }
             if (!ok) revert SelectorNotAllowed(selector);
         }
@@ -356,13 +373,7 @@ contract BrainSmartAccount {
         if (!success) revert CallFailed(ret);
 
         emit AgentActionExecuted(
-            tenantId,
-            bytes32(bytes20(msg.sender)),
-            key.policyVersion,
-            target,
-            selector,
-            capAmount,
-            keccak256(data)
+            tenantId, bytes32(bytes20(msg.sender)), key.policyVersion, target, selector, capAmount, keccak256(data)
         );
         return ret;
     }

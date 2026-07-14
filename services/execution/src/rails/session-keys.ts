@@ -19,6 +19,7 @@ export interface PerTaskSessionKeyParams {
   readonly validUntil: string;
   readonly allowedTargets: readonly string[];
   readonly allowedSelectors: readonly string[];
+  readonly capToken: string;
   readonly maxPerTx: string;
   readonly maxPerPeriod: string;
   readonly periodSeconds: string;
@@ -30,12 +31,17 @@ export interface DerivePerTaskKeyInput {
   readonly holder: string;
   /** The exact on-chain target this key may call (the resolved counterparty). */
   readonly targetAddress: string;
-  /** Exact amount in base units (wei) — both per-tx and per-period cap. */
-  readonly amountWei: bigint | string;
+  /**
+   * Token whose raw units denominate the cap. Use address(0) only for native
+   * ETH value transfers whose cap is denominated in wei.
+   */
+  readonly capToken: string;
+  /** Exact raw integer units in capToken units, or wei for native ETH. */
+  readonly amountRawUnits: bigint | string;
   /** Registered policy version digest (0x-hex) the key is bound to. */
   readonly policyVersion: string;
-  /** Allowed selectors (empty = any). Restrict to the rail's transfer selector in prod. */
-  readonly allowedSelectors?: readonly string[];
+  /** Allowed selectors. Must match the selected target and cap mode. */
+  readonly allowedSelectors: readonly string[];
   /** Unix seconds "now"; defaults to Date.now()/1000. */
   readonly nowSeconds?: number;
   /** Validity window in seconds; defaults to 600 (~10 min). */
@@ -48,14 +54,15 @@ export function derivePerTaskSessionKey(input: DerivePerTaskKeyInput): PerTaskSe
   const now = input.nowSeconds ?? Math.floor(Date.now() / 1000);
   const ttl = input.ttlSeconds ?? DEFAULT_TASK_KEY_TTL_SECONDS;
   const amount = (
-    typeof input.amountWei === "bigint" ? input.amountWei : BigInt(input.amountWei)
+    typeof input.amountRawUnits === "bigint" ? input.amountRawUnits : BigInt(input.amountRawUnits)
   ).toString();
   return {
     holder: input.holder,
     validAfter: String(now),
     validUntil: String(now + ttl),
     allowedTargets: [input.targetAddress], // exactly this counterparty
-    allowedSelectors: input.allowedSelectors ?? [],
+    allowedSelectors: input.allowedSelectors,
+    capToken: input.capToken,
     maxPerTx: amount, // exact amount
     maxPerPeriod: amount, // and no more across the key's lifetime
     periodSeconds: String(ttl), // the accounting window == the key lifetime

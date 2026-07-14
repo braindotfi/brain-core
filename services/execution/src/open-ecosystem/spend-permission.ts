@@ -121,14 +121,23 @@ export function toMicropaymentWindowCap(
  */
 export function toSessionKeyShape(p: SpendPermission): {
   holder: string;
+  allowedTargets: readonly string[];
+  allowedSelectors: readonly string[];
+  capToken: string;
+  maxPerTx: string;
   maxPerPeriod: string;
   periodSeconds: number;
   validAfter: number;
   validUntil: number;
 } {
+  const allowanceRawUnits = decimalToRawUnits(p.allowance, 6);
   return {
     holder: p.spender,
-    maxPerPeriod: p.allowance,
+    allowedTargets: [p.token],
+    allowedSelectors: ["0xa9059cbb"],
+    capToken: p.token,
+    maxPerTx: allowanceRawUnits,
+    maxPerPeriod: allowanceRawUnits,
     periodSeconds: p.period,
     validAfter: p.start,
     validUntil: p.end,
@@ -158,4 +167,14 @@ function toScaled8(s: string): bigint {
   const [intPart = "0", fracPart = ""] = s.split(".");
   const frac = (fracPart + "00000000").slice(0, 8);
   return BigInt((intPart === "" ? "0" : intPart) + frac);
+}
+
+function decimalToRawUnits(s: string, decimals: number): string {
+  if (!DECIMAL.test(s)) throw new Error("amount must be a positive decimal");
+  const [intPart = "0", fracPart = ""] = s.split(".");
+  if (fracPart.length > decimals) {
+    throw new Error("amount has more precision than the token supports");
+  }
+  const frac = (fracPart + "0".repeat(decimals)).slice(0, decimals);
+  return BigInt((intPart === "" ? "0" : intPart) + frac).toString();
 }

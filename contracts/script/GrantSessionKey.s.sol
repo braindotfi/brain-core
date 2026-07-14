@@ -46,7 +46,7 @@ contract GrantSessionKey is Script {
             validUntil: block.timestamp + 30 days,
             allowedTargets: targets,
             allowedSelectors: selectors,
-            capToken: address(0),
+            capToken: allowedToken,
             maxPerTx: 1_000e6,
             maxPerPeriod: 10_000e6,
             periodSeconds: 86_400,
@@ -61,6 +61,9 @@ contract GrantSessionKey is Script {
         console2.log("  smartAccount =", smartAccount);
         console2.log("  holder       =", holder);
         console2.log("  allowedToken =", allowedToken);
+        console2.log("  capToken     =", key.capToken);
+        console2.log("  maxPerTx     =", key.maxPerTx);
+        console2.log("  maxPerPeriod =", key.maxPerPeriod);
         console2.log("  validUntil   =", key.validUntil);
         console2.log("  policyVersion=", vm.toString(key.policyVersion));
     }
