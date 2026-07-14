@@ -78,6 +78,7 @@ import { startTenantBlobPurgeWorker } from "./tenant-deletion/blob-purge-worker.
 import { registerTenantDeletionRoute } from "./tenant-deletion/route.js";
 import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
 import { registerProductionTenancyRoutes } from "./production-tenancy/routes.js";
+import { registerApiKeyRoutes } from "./production-tenancy/api-key-routes.js";
 import { registerProofViewRoute } from "./proof/view.js";
 import { registerAuditHealthRoute } from "./audit-health/route.js";
 import {
@@ -1765,6 +1766,23 @@ async function main(): Promise<void> {
               : {}),
           }),
         );
+        // Per-customer API-key auth (token-exchange model). POST
+        // /v1/auth/api-key mints an agent JWT from a customer-held
+        // brain_sk_... key; issue/revoke are platform-secret gated, same
+        // fence as POST /v1/tenants above. Registered only when enabled.
+        if (cfg.BRAIN_API_KEY_AUTH_ENABLED) {
+          await v1.register(async (child) =>
+            registerApiKeyRoutes(child, {
+              pool,
+              resolverPool,
+              audit,
+              signer: siwxSigner,
+              ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
+                ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
+                : {}),
+            }),
+          );
+        }
         // RFC 0002 Phase D: SIWX resolves a wallet linked to a HUMAN owner to an
         // owner JWT (email-or-wallet login). Cross-tenant read ⇒ privileged pool.
         // Always wired — additive and harmless (returns null absent any link, so

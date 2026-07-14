@@ -307,7 +307,7 @@ export async function registerProductionTenancyRoutes(
   );
 }
 
-function assertPlatformCredential(
+export function assertPlatformCredential(
   request: FastifyRequest,
   secret: string | undefined,
   scope: "tenant:create" | "session:exchange" | "invite:consume",
@@ -557,11 +557,11 @@ function requireString(value: unknown, name: string): string {
   return value.trim();
 }
 
-function newSecretToken(): string {
+export function newSecretToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-function hashToken(token: string): string {
+export function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
