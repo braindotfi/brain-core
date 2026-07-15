@@ -242,6 +242,15 @@ Done
 - `/v1/auth/service-token` remains sandbox and testnet only. It rejects
   `tenant.kind='production'`; it is not a competing production user-session
   exchange path and not a competing production agent path.
+- Tier 0 Group B closed the hard approval-floor decision for on-chain money
+  movement. `onchain_transfer` and `escrow_release` require at least one
+  recorded human approval before dispatch even when policy returns `allow`.
+  `x402_settle` may execute without per-action approval only when the matched
+  signed policy rule sets `onchain_settlement_permitted: true` and
+  `x402_autonomous_max_amount: { currency, value }` covering the amount.
+  Missing or malformed policy data fails closed to human approval. `x402_settle`
+  and `escrow_release` intentionally skip `ledger_reservations`; their spend
+  ceilings are the on-chain session-key caps and escrow `remaining` amount.
 
 ### Deployment
 

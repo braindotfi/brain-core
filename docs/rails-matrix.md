@@ -40,28 +40,29 @@ rail with all required env vars set; otherwise the boot fence at
 
 ### `onchain_base`
 
-| Attribute          | Value                                                         |
-| ------------------ | ------------------------------------------------------------- |
-| Description        | ERC-20 transfer on Base via `BrainSmartAccount` session key   |
-| Implementation     | `OnchainBaseRail` over viem with KMS-signed session key       |
-| Chain              | `BRAIN_BASE_CHAIN_ID` (default 84532 Sepolia; 8453 mainnet)   |
-| Required env       | `BRAIN_SESSION_KEY`, `BASE_RPC_URL`                           |
-| Production allowed | yes                                                           |
-| Audit required     | no (BrainSmartAccount in audit scope; not gated by this rail) |
-| Failure mode       | viem revert or RPC timeout → audit-after `ok: false`          |
+| Attribute          | Value                                                              |
+| ------------------ | ------------------------------------------------------------------ |
+| Description        | ERC-20 transfer on Base via `BrainSmartAccount` session key        |
+| Implementation     | `OnchainBaseRail` over viem with KMS-signed session key            |
+| Chain              | `BRAIN_BASE_CHAIN_ID` (default 84532 Sepolia; 8453 mainnet)        |
+| Required env       | `BRAIN_SESSION_KEY`, `BASE_RPC_URL`                                |
+| Production allowed | yes                                                                |
+| Audit required     | no (BrainSmartAccount in audit scope; not gated by this rail)      |
+| Approval floor     | Required. Policy `allow` routes to human approval before dispatch. |
+| Failure mode       | viem revert or RPC timeout → audit-after `ok: false`               |
 
 ### `x402_base`
 
-| Attribute          | Value                                                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| Description        | Per-call USDC settlement via Coinbase x402 facilitator                                                                   |
-| Implementation     | `X402BaseRail` against a real `X402Client`                                                                               |
-| Chain              | `BRAIN_BASE_CHAIN_ID` (default 84532 Sepolia; 8453 mainnet)                                                              |
-| Required env       | `BRAIN_X402_FACILITATOR_URL`, `BRAIN_X402_USDC_ADDRESS`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL`                             |
-| Production allowed | yes                                                                                                                      |
-| Audit required     | no                                                                                                                       |
-| Approval caveat    | Human approval is policy-conditional today; a hard per-action approval floor for x402 remains a Tier 0 product decision. |
-| Failure mode       | facilitator 4xx/5xx → audit-after `ok: false`                                                                            |
+| Attribute          | Value                                                                                                                                         |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Description        | Per-call USDC settlement via Coinbase x402 facilitator                                                                                        |
+| Implementation     | `X402BaseRail` against a real `X402Client`                                                                                                    |
+| Chain              | `BRAIN_BASE_CHAIN_ID` (default 84532 Sepolia; 8453 mainnet)                                                                                   |
+| Required env       | `BRAIN_X402_FACILITATOR_URL`, `BRAIN_X402_USDC_ADDRESS`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL`                                                  |
+| Production allowed | yes                                                                                                                                           |
+| Audit required     | no                                                                                                                                            |
+| Approval floor     | Required unless the signed policy rule sets `onchain_settlement_permitted: true` and an `x402_autonomous_max_amount` cap covering the amount. |
+| Failure mode       | facilitator 4xx/5xx → audit-after `ok: false`                                                                                                 |
 
 ### `escrow_base`
 
@@ -73,9 +74,23 @@ rail with all required env vars set; otherwise the boot fence at
 | Required env       | `BRAIN_ESCROW_ADDRESS`, `BRAIN_ONCHAIN_SMART_ACCOUNT`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL`                                                                                                                                  |
 | Production allowed | yes                                                                                                                                                                                                                         |
 | Audit required     | **yes**                                                                                                                                                                                                                     |
+| Approval floor     | Required. Policy `allow` routes to human approval before dispatch.                                                                                                                                                          |
 | Mainnet boot fence | `composition/escrow-audit-gate.ts`: throws on boot if escrow is set on any non-testnet chain without committed audit approval for that chain plus `BRAIN_ESCROW_AUDIT_RECEIPT` or `BRAIN_ESCROW_AUDIT_APPROVED="true"`      |
 | Audit attestation  | Either `BRAIN_ESCROW_AUDIT_RECEIPT` (preferred. URL/filepath/hash pointing at the audit report) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` boolean. The receipt is preferred because it carries diligence metadata. |
 | Failure mode       | `release()` revert → audit-after `ok: false`                                                                                                                                                                                |
+
+### On-chain Approval And Reservation Rules
+
+`onchain_transfer` and `escrow_release` always require a recorded human approval
+before dispatch, regardless of policy outcome. `x402_settle` may execute without
+per-action approval only when the matched signed policy rule explicitly sets
+`onchain_settlement_permitted: true` and
+`x402_autonomous_max_amount: { currency, value }`, and the amount is at or below
+that cap. Missing or malformed policy data fails closed to human approval.
+
+`x402_settle` and `escrow_release` intentionally skip the off-chain
+`ledger_reservations` ceiling. Their spend ceilings are the on-chain session-key
+caps and escrow `remaining` amount, with the approval floor above those caps.
 
 ### `erp_writeback`
 
