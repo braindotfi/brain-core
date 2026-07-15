@@ -714,7 +714,11 @@ describe("PaymentIntentService.execute — x402 gate-loader pass-through (2C-C)"
       resolveAgent: async () => GATE_AGENT,
       resolveAccount: async () => USDC_ACCOUNT,
       resolveCounterparty: async () => AGENT_CP,
-      evaluatePolicy: async () => POLICY_DECISION,
+      evaluatePolicy: async () => ({
+        ...POLICY_DECISION,
+        onchain_settlement_permitted: true,
+        x402_autonomous_max_amount: { currency: "USDC", value: "1.00" },
+      }),
       resolvePrincipal: async () => GATE_PRINCIPAL,
       attestCounterpartyAgent: async (_ctx, input) => {
         calls.push(input);
@@ -791,7 +795,11 @@ describe("PaymentIntentService.execute — x402 gate-loader pass-through (2C-C)"
       resolveAgent: async () => GATE_AGENT,
       resolveAccount: async () => USDC_ACCOUNT,
       resolveCounterparty: async () => AGENT_CP,
-      evaluatePolicy: async () => POLICY_DECISION,
+      evaluatePolicy: async () => ({
+        ...POLICY_DECISION,
+        onchain_settlement_permitted: true,
+        x402_autonomous_max_amount: { currency: "USDC", value: "1.00" },
+      }),
       resolvePrincipal: async () => GATE_PRINCIPAL,
       attestCounterpartyAgent: async () => ({ attested: true, registered: true, paused: false }),
     });

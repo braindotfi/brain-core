@@ -101,7 +101,7 @@ function makeDeps(overrides: Partial<GateDependencies> = {}): {
       ledger_snapshot_hash: "0xdead",
       trace: [],
     }),
-    resolveApprovals: async (): Promise<GateApprovalState> => ({ signedRoles: [] }),
+    resolveApprovals: async (): Promise<GateApprovalState> => ({ signedRoles: ["approver"] }),
     ...overrides,
   };
   return { deps, audit };

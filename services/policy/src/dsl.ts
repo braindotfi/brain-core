@@ -78,6 +78,18 @@ export interface PolicyRule {
    * amount.gt rules; the threshold is part of the content-hashed (signed) doc.
    */
   approval_required_above?: AmountLiteral;
+  /**
+   * Signed permission for on-chain settlement rails on this rule. False or
+   * absent means the gate either rejects the on-chain settlement or treats the
+   * dimension as unexpressed, depending on the action context.
+   */
+  onchain_settlement_permitted?: boolean;
+  /**
+   * Explicit signed cap for autonomous x402 settlement. Rules that omit this
+   * field do not authorize approval-free x402 execution, even when execute is
+   * auto. The execution gate fails closed on malformed or wrong-currency caps.
+   */
+  x402_autonomous_max_amount?: AmountLiteral;
 }
 
 /**

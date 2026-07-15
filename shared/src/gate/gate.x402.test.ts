@@ -127,7 +127,7 @@ function makeDeps(overrides: Partial<GateDependencies> = {}): {
     resolveAccount: async () => USD_ACCOUNT,
     resolveCounterparty: async () => TRUSTED_CP,
     evaluatePolicy: async () => makeDecision(),
-    resolveApprovals: async (): Promise<GateApprovalState> => ({ signedRoles: [] }),
+    resolveApprovals: async (): Promise<GateApprovalState> => ({ signedRoles: ["approver"] }),
     ...overrides,
   };
   return { deps, audit };
@@ -508,5 +508,146 @@ describe("§6 — x402 happy path threads 3.5 / 5.5 / 6.5 / 8.5 then audit-befor
     }
     expect(audit.events).toHaveLength(1);
     expect(audit.events[0]!.action).toBe("payment_intent.execute.before");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tier 0 Group B — hard human-approval floor for on-chain money movement.
+// ---------------------------------------------------------------------------
+
+describe("§6 — hard human-approval floor for on-chain actions", () => {
+  const x402FloorDeps = (decision: Partial<GatePolicyDecision>, signedRoles: string[] = []) =>
+    makeDeps({
+      resolveAccount: async () => USDC_ACCOUNT,
+      resolveCounterparty: async () => AGENT_CP,
+      evaluatePolicy: async () => makeDecision(decision),
+      resolveApprovals: async () => ({ signedRoles }),
+    });
+
+  it("blocks onchain_transfer with allow and no recorded approval", async () => {
+    const { deps } = makeDeps({
+      evaluatePolicy: async () => makeDecision({ outcome: "allow" }),
+      resolveApprovals: async () => ({ signedRoles: [] }),
+    });
+    const result = await run(deps, defaultIntent({ action_type: "onchain_transfer" }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(11);
+      expect(result.failedCheck.detail!.reason).toBe("hard_human_approval_floor_required");
+    }
+  });
+
+  it("allows onchain_transfer with allow after a recorded approval", async () => {
+    const { deps } = makeDeps({
+      evaluatePolicy: async () => makeDecision({ outcome: "allow" }),
+      resolveApprovals: async () => ({ signedRoles: ["approver"] }),
+    });
+    const result = await run(deps, defaultIntent({ action_type: "onchain_transfer" }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("blocks escrow_release with allow and no recorded approval", async () => {
+    const { deps } = makeDeps({
+      evaluatePolicy: async () => makeDecision({ outcome: "allow" }),
+      resolveApprovals: async () => ({ signedRoles: [] }),
+    });
+    const result = await run(deps, defaultIntent({ action_type: "escrow_release" }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(11);
+      expect(result.failedCheck.detail!.action_type).toBe("escrow_release");
+    }
+  });
+
+  it("allows x402_settle autonomously when policy permits on-chain settlement and amount is within cap", async () => {
+    const { deps } = x402FloorDeps({
+      outcome: "allow",
+      onchain_settlement_permitted: true,
+      x402_autonomous_max_amount: { currency: "USDC", value: "1.00" },
+    });
+    const result = await run(deps, x402Intent());
+    expect(result.ok).toBe(true);
+  });
+
+  it("blocks x402_settle without approval when the amount exceeds the autonomous cap", async () => {
+    const { deps } = x402FloorDeps({
+      outcome: "allow",
+      onchain_settlement_permitted: true,
+      x402_autonomous_max_amount: { currency: "USDC", value: "0.99" },
+    });
+    const result = await run(deps, x402Intent());
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(11);
+      expect(result.failedCheck.detail!.reason).toBe("hard_human_approval_floor_required");
+    }
+  });
+
+  it("allows over-cap x402_settle after a recorded approval", async () => {
+    const { deps } = x402FloorDeps(
+      {
+        outcome: "allow",
+        onchain_settlement_permitted: true,
+        x402_autonomous_max_amount: { currency: "USDC", value: "0.99" },
+      },
+      ["approver"],
+    );
+    const result = await run(deps, x402Intent());
+    expect(result.ok).toBe(true);
+  });
+
+  it("requires approval when x402 autonomous policy is absent", async () => {
+    const { deps } = x402FloorDeps({
+      outcome: "allow",
+      onchain_settlement_permitted: true,
+    });
+    const result = await run(deps, x402Intent());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failedCheck.index).toBe(11);
+  });
+
+  it("requires approval when x402 autonomous cap is malformed", async () => {
+    const { deps } = x402FloorDeps({
+      outcome: "allow",
+      onchain_settlement_permitted: true,
+      x402_autonomous_max_amount: { currency: "USDC", value: "not-a-decimal" },
+    });
+    const result = await run(deps, x402Intent());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failedCheck.index).toBe(11);
+  });
+
+  it("keeps confirm and reject behavior unchanged", async () => {
+    const confirm = await run(
+      makeDeps({
+        evaluatePolicy: async () =>
+          makeDecision({ outcome: "confirm", required_approvers: ["admin"] }),
+        resolveApprovals: async () => ({ signedRoles: [] }),
+      }).deps,
+      defaultIntent({ action_type: "onchain_transfer" }),
+    );
+    expect(confirm.ok).toBe(false);
+    if (!confirm.ok) {
+      expect(confirm.failedCheck.index).toBe(11);
+      expect(confirm.failedCheck.detail!.missing).toEqual(["admin"]);
+    }
+
+    const reject = await run(
+      makeDeps({
+        evaluatePolicy: async () => makeDecision({ outcome: "reject", matched_rule_id: "deny" }),
+      }).deps,
+      defaultIntent({ action_type: "onchain_transfer" }),
+    );
+    expect(reject.ok).toBe(false);
+    if (!reject.ok) expect(reject.failedCheck.index).toBe(3);
+  });
+
+  it("does not require approval for ACH allow outcomes", async () => {
+    const { deps } = makeDeps({
+      evaluatePolicy: async () => makeDecision({ outcome: "allow" }),
+      resolveApprovals: async () => ({ signedRoles: [] }),
+    });
+    const result = await run(deps, defaultIntent({ action_type: "ach_outbound" }));
+    expect(result.ok).toBe(true);
   });
 });

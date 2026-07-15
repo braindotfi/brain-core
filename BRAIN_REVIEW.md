@@ -43,14 +43,14 @@ BrainEscrow lock/release.
 - [x] T0-2 fixed: BrainSmartAccount rejects native-mode grants that allowlist decodable ERC20 selectors.
 - [x] T0-3 fixed: TS session-key helper shapes now require explicit capToken and raw integer token-unit amounts.
 - [x] T0-4 fixed: Agent behavior updates and revocations now bind per-agent nonces in their EIP-712 payloads.
-- [ ] T0-5 product decision pending
+- [x] T0-5 fixed: payment-key grants no longer include ERC20 approve.
 - [x] T0-6 fixed: Deploy scripts now require Base Sepolia chain id before broadcasting.
 - [x] T0-8 fixed: Escrow audit and bytecode gates now require the full audit path on any non-testnet chain.
 - [x] T0-9 fixed: API boot now checks explicit BASE_RPC_URL eth_chainId against BRAIN_BASE_CHAIN_ID.
-- [ ] T0-10 open: x402 is live-rail fenced but lacks an equivalent hard human-approval floor; tied to T0-11 product decision.
-- [ ] T0-11 product decision pending
+- [x] T0-10 fixed: x402 autonomy now requires signed on-chain permission and a policy-authored per-action cap.
+- [x] T0-11 fixed: on-chain actions now have a hard recorded-human-approval floor, with a capped x402 carve-out.
 - [x] T0-12 fixed: Production boot now fences attestCounterpartyAgent and sumAgentWindowSpend.
-- [ ] T0-13 confirm intent pending
+- [x] T0-13 closed: off-chain reservations are intentionally skipped for x402_settle and escrow_release.
 
 ### Mainnet fence verdict: INTACT and not bypassable via any escrow funds path
 
@@ -106,6 +106,11 @@ rail.
   gated only by the generic `rails-prod-fence`, not by any audit gate. Flagged so
   x402 is not assumed to inherit the escrow fence's protection; confirm the
   rails-prod-fence provides an equivalent human-approval + prod guard for x402.
+- Group B closure: x402 settlement now has the equivalent gate-level human
+  approval floor unless the matched signed policy rule sets both
+  `onchain_settlement_permitted: true` and `x402_autonomous_max_amount` covering
+  the action amount. Missing, malformed, wrong-currency, or over-cap data routes
+  to recorded human approval before dispatch.
 
 ### Findings
 
@@ -220,6 +225,10 @@ rail.
   payment key's selector allowlist (a payment key arguably only needs
   `transfer`), or document that revocation does not revoke outstanding
   allowances and require the owner to zero them on incident response.
+- Group B closure: the payment-key grant script now issues only ERC20
+  `transfer` and `transferFrom`. `approve` remains supported by
+  BrainSmartAccount for non-payment keys, and revocation still cannot claw back
+  any pre-existing token allowance.
 
 #### T0-6 (LOW), Deploy scripts have no on-chain chain-id fence
 
@@ -292,6 +301,13 @@ rail.
   session-key cap is the sole spend ceiling, and T0-1 shows that cap can be
   silently zero (NATIVE-mode miscap). An `allow`-outcome on-chain transfer executed
   by a miscapped NATIVE-mode key would have NO effective ceiling at any layer.
+- Group B closure: gate check 11 now enforces a hard human-approval floor for
+  `onchain_transfer` and `escrow_release` regardless of policy outcome. For
+  `x402_settle`, approval-free execution is allowed only when the signed policy
+  rule explicitly permits on-chain settlement and carries an
+  `x402_autonomous_max_amount` cap that covers the amount. `create()` mirrors the
+  same decision so approval-required on-chain `allow` intents enter
+  `pending_approval` instead of sitting in `approved` but blocked at execute time.
 
 #### T0-12 (MEDIUM), Dormant-safety-loader containment for gate checks 5.5 and 8.5 is lint-only, not a boot fence
 
@@ -326,6 +342,10 @@ rail.
   sets `micropayment_window_cap`). Intended per the comments, but confirm the
   on-chain caps are the deliberate sole ceiling, and note the T0-1 compounding
   above, since a NATIVE-mode miscap removes that sole ceiling.
+- Group B closure: this is confirmed as intentional. `x402_settle` and
+  `escrow_release` rely on on-chain caps as the spend ceiling and intentionally
+  skip the off-chain reservation gate. The B1 hard human-approval floor now sits
+  above those caps.
 
 ### Confirmed-correct invariants (audit questions answered)
 
@@ -362,20 +382,19 @@ bug classes the brief named:
 
 1. T0-1 (HIGH): the shipped ERC-20 session-key grant script silently produces an
    uncapped USDC key (cap-denomination class). Contract-level root cause T0-2.
-2. T0-11 (HIGH): a policy `allow` outcome takes an on-chain payment intent to
-   submission with no recorded human approval, and no hard code gate forces
-   per-action approval for on-chain action types (propose-only is
-   policy-conditional, not code-enforced). Needs a design-intent decision.
+2. T0-11 (HIGH) is closed by Group B: on-chain `allow` outcomes now require a
+   recorded human approval before dispatch, except for policy-authored,
+   value-capped x402 autonomy.
 
 T0-4 (behaviorHash replay), T0-10 (x402 outside the escrow fence), T0-12
-(lint-only loader containment for 5.5/8.5), and T0-8 (gate hardcodes 8453) are the
-medium tier. The propose-only invariant, as literally stated in the brief, is NOT
-enforced by code today; whether that is a defect or an accepted design depends on
-whether a human-authored `allow` policy counts as the required approval, which is
-the one question to resolve before a production on-chain launch. Overall Tier 0
-readiness: NOT READY for a value-bearing on-chain mainnet launch until T0-1 and
-T0-11 are resolved; the testnet posture is sound and the escrow mainnet fence
-correctly holds the line in the meantime.
+(lint-only loader containment for 5.5/8.5), and T0-8 (gate hardcodes 8453) were
+the medium tier and are now closed by the remediation branches. The propose-only
+invariant now has code-level enforcement for on-chain money movement: policy
+`allow` no longer auto-dispatches `onchain_transfer` or `escrow_release`, and x402
+autonomy requires explicit signed policy permission plus a per-action cap. Overall
+Tier 0 readiness is materially improved, with the remaining production launch
+gates moving to external audit, bytecode verification, and exercised deployment
+evidence rather than unresolved Tier 0 contract-path findings.
 
 ### Positives worth recording
 

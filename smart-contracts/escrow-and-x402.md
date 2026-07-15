@@ -48,7 +48,7 @@ Before a release is gated through, the §6 pre-execution gate reads `getEscrow(e
 For HTTP-native settlement, Brain integrates **x402**: the resource server returns `402 Payment Required` with payment instructions; the calling agent retries with an x402 payment header backed by the tenant's smart account; settlement and audit happen in the same flow.
 
 {% hint style="warning" %}
-x402 is outside the `BrainEscrow` audit fence because it does not call the escrow contract. It is still a production money rail and is boot-fenced as a live rail. A separate Tier 0 review item remains open on whether `x402_settle` should require a recorded human approval signature even when tenant policy returns `allow`. Until that product decision is made, do not describe x402 as inheriting escrow's audit gate or as having a hard per-action human-approval floor.
+x402 is outside the `BrainEscrow` audit fence because it does not call the escrow contract. It is still a production money rail and is boot-fenced as a live rail. `x402_settle` may execute without per-action human approval only when the matched signed policy rule explicitly sets `onchain_settlement_permitted: true` and an `x402_autonomous_max_amount` cap that covers the amount. Missing, malformed, wrong-currency, or over-cap policy data fails closed to the human approval path.
 {% endhint %}
 
 ```

@@ -27,6 +27,7 @@ import {
   type PaymentIntentStatus,
   type ServiceCallContext,
   runPreExecutionGate,
+  requiresHardHumanApprovalFloor,
   type GateAccount,
   type GateAgent,
   type GateCounterparty,
@@ -412,10 +413,11 @@ export class PaymentIntentService implements IPaymentIntentService {
     });
     const decision = await this.deps.evaluatePolicy(ctx, stub);
 
+    const requiresApprovalFloor = requiresHardHumanApprovalFloor(stub, decision);
     const status: PaymentIntentStatus =
       decision.outcome === "reject"
         ? "rejected"
-        : decision.outcome === "allow"
+        : decision.outcome === "allow" && !requiresApprovalFloor
           ? "approved"
           : "pending_approval";
 

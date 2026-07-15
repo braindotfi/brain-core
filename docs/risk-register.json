@@ -246,6 +246,21 @@
         "scripts/production-readiness.mjs (On-chain executor testnet E2E row)",
         "tests/e2e/README.md (suite + env + granted-key fixture)"
       ]
+    },
+    {
+      "id": "R-15",
+      "title": "x402 and escrow releases intentionally skip off-chain reservations",
+      "priority": "P2",
+      "status": "closed",
+      "closed_at": "2026-07-15",
+      "closed_by": "Tier 0 Group B decision",
+      "mitigation_summary": "Confirmed by owner decision: x402_settle and escrow_release intentionally skip the off-chain ledger_reservations ceiling. Their spend ceilings are on-chain caps: BrainSmartAccount session-key maxPerTx and maxPerPeriod for x402, and BrainEscrow remaining for escrow_release. Gate check 6.6 binds escrow remaining before release. Gate check 11 now adds the hard human-approval floor above those caps: onchain_transfer and escrow_release always need a recorded human approval, while x402 autonomy requires signed onchain_settlement_permitted plus x402_autonomous_max_amount at or above the action amount. Missing or malformed policy cap data fails closed to human approval.",
+      "evidence": [
+        "shared/src/gate/gate.ts (hard approval floor and x402 autonomous cap)",
+        "services/execution/src/payment-intents/PaymentIntentService.ts (reservation skip and create routing)",
+        "docs/audit/findings/tier-0-contracts-payment.md",
+        "docs/rails-matrix.md"
+      ]
     }
   ]
 }

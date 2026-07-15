@@ -68,6 +68,15 @@ For agent-to-agent settlement (x402 USDC-on-Base and `BrainEscrow` releases), RF
 
 The on-chain readers for 3.5 / 5.5 / 6.6 / 8.5 are deferred live-wiring; until they are configured those checks stay dormant, so the gate is unchanged for non-settlement payments.
 
+Check 11 also enforces the hard human-approval floor for on-chain money
+movement. `onchain_transfer` and `escrow_release` require at least one recorded
+human approval even when policy returns `allow`. `x402_settle` can remain
+approval-free only when the matched signed policy rule sets
+`onchain_settlement_permitted: true` and `x402_autonomous_max_amount` with the
+same currency and a value greater than or equal to the intent amount. Otherwise
+the gate fails with `hard_human_approval_floor_required` until a human approval
+is recorded.
+
 ### Audit Emission
 
 The gate emits two audit events per step.
