@@ -243,6 +243,7 @@ export async function normalizeStripeArtifact(
           currency: currencyOf(o),
           due_date: isoFromEpoch(typeof dueBy === "number" ? dueBy : o.created),
           status: "disputed",
+          external_key: `stripe:dispute:${o.id}`,
           direction: "payable",
           ...common,
           confidence: OBLIGATION_CONFIDENCE,

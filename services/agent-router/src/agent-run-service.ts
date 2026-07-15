@@ -22,7 +22,12 @@ import type {
   TenantCategory,
 } from "@brain/shared";
 import type { AgentPolicyStatus, AgentRunStatus, InternalAgentDefinition } from "@brain/schemas";
-import { proposeAction, type InternalAgentHandler, type ProposeDeps } from "@brain/internal-agents";
+import {
+  proposeAction,
+  validateAgentPayload,
+  type InternalAgentHandler,
+  type ProposeDeps,
+} from "@brain/internal-agents";
 import type { AgentRouter } from "./router.js";
 import type { ActionResolver } from "./action-resolver.js";
 import type { EvidenceGatherer } from "./evidence-gatherer.js";
@@ -236,12 +241,57 @@ export class AgentRunService {
         shadowMode: false,
       });
     }
+    if (bundle.critical_missing) {
+      return this.terminalRun(ctx, {
+        agentId,
+        category,
+        executionMode,
+        status: "missing_evidence",
+        reason: {
+          ...reasonWithAction,
+          critical_missing: true,
+          missing_required_evidence: bundle.missing_required_evidence,
+        },
+        routingDecisionId: routing.id,
+        input,
+        confidence: decision.confidence,
+        evidenceScore: bundle.evidence_score,
+        action: resolution.action,
+        failureReason: "critical_missing_evidence",
+        shadowMode: false,
+      });
+    }
 
     const proposed = handler.build({
       action: resolution.action,
       context: input.context ?? {},
       evidence: bundle,
     });
+    if (proposed.channel === "agent") {
+      const validation = validateAgentPayload(agentId, proposed.action);
+      if (!validation.ok) {
+        return this.terminalRun(ctx, {
+          agentId,
+          category,
+          executionMode,
+          status: "failed",
+          reason: {
+            ...reasonWithAction,
+            payload_validation: {
+              status: "invalid",
+              missing_fields: validation.missing,
+            },
+          },
+          routingDecisionId: routing.id,
+          input,
+          confidence: decision.confidence,
+          evidenceScore: bundle.evidence_score,
+          action: resolution.action,
+          failureReason: "payload_invalid",
+          shadowMode: false,
+        });
+      }
+    }
     const shadowed = this.deps.isShadowed(agentId);
 
     // SHADOW MODE: a financial proposal moves no money when the agent is

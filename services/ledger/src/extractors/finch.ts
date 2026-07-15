@@ -181,6 +181,7 @@ export async function normalizeFinchArtifact(
           currency: "USD",
           due_date: new Date(payDate).toISOString(),
           status: "upcoming",
+          external_key: `finch:pay_run:${run.id}`,
           direction: "payable",
           ...common,
           confidence: OBLIGATION_CONFIDENCE,

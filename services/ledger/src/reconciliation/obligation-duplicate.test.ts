@@ -81,6 +81,19 @@ describe("ObligationDuplicateMatcher — material ambiguity defers to review", (
       false,
     );
   });
+
+  it("does not link same-amount recurring obligations with different invoice identities", async () => {
+    const { pool, queries } = fakePool({
+      [LOW_TRUST]: [docObservation({ identity_key: "INV-1001" })],
+      [INDEPENDENT]: [billObservation({ identity_key: "INV-1002" })],
+    });
+    const { deps } = makeDeps(pool);
+    const result = await new ObligationDuplicateMatcher().run(deps, makeInput());
+    expect(result.matchesProduced).toHaveLength(0);
+    expect(queries.some((q) => q.text.includes("INSERT INTO ledger_reconciliation_matches"))).toBe(
+      false,
+    );
+  });
 });
 
 describe("ObligationDuplicateMatcher — scan filters", () => {
@@ -108,5 +121,6 @@ describe("ObligationDuplicateMatcher — scan filters", () => {
     expect(q.text).toContain("status NOT IN ('paid','cancelled')");
     expect(q.text).toContain("currency = $3");
     expect(q.text).toContain("direction IS NOT DISTINCT FROM $4");
+    expect(q.text).toContain("identity_key");
   });
 });

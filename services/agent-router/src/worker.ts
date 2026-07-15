@@ -21,7 +21,12 @@ import type { InternalAgentDefinition } from "@brain/schemas";
 import type { AgentRouter } from "./router.js";
 import type { EvidenceGatherer } from "./evidence-gatherer.js";
 import type { ActionResolver } from "./action-resolver.js";
-import { proposeAction, type InternalAgentHandler, type ProposeDeps } from "@brain/internal-agents";
+import {
+  proposeAction,
+  validateAgentPayload,
+  type InternalAgentHandler,
+  type ProposeDeps,
+} from "@brain/internal-agents";
 import type { RoutingInput } from "./types.js";
 
 export interface RouteAndProposeDeps {
@@ -132,11 +137,30 @@ export async function routeAndPropose(
       reason: `execution_mode_${decision.execution_mode}`,
     };
   }
+  if (bundle.critical_missing) {
+    return {
+      selected_agent_id: decision.selected_agent_id,
+      action,
+      status: "missing_evidence",
+      reason: `critical_missing_evidence:${bundle.missing_required_evidence.join(",")}`,
+    };
+  }
   const proposed = handler.build({
     action,
     context: input.context ?? {},
     evidence: bundle,
   });
+  if (proposed.channel === "agent") {
+    const validation = validateAgentPayload(decision.selected_agent_id, proposed.action);
+    if (!validation.ok) {
+      return {
+        selected_agent_id: decision.selected_agent_id,
+        action,
+        status: "failed",
+        reason: `payload_invalid:${validation.missing.join(",")}`,
+      };
+    }
+  }
 
   // SHADOW GATE (parity with AgentRunService /agents/run): a financial proposal
   // moves no money — and is NOT created — when the agent is shadowed, OR

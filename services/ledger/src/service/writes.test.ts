@@ -78,6 +78,29 @@ describe("upsertCounterpartyRow — agent counterparties (RFC 0001)", () => {
     // onchain_address ($14) defaults to null for an off-chain counterparty.
     expect(insert.values[13]).toBeNull();
   });
+
+  it("uses an ON CONFLICT upsert instead of SELECT then INSERT", async () => {
+    const { pool, calls } = capturingPool({
+      "INSERT INTO ledger_counterparties": [
+        { id: "cp_v", type: "vendor", agent_id: null, created: true },
+      ],
+    });
+    const audit = new InMemoryAuditEmitter();
+    const { created } = await upsertCounterpartyRow(pool, audit, ctx, {
+      name: "Acme",
+      type: "vendor",
+      source_ids: ["raw_1"],
+      evidence_ids: [],
+      provenance: "extracted",
+      confidence: 0.9,
+    });
+
+    expect(created).toBe(true);
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_counterparties"))!;
+    expect(insert.text).toContain("ON CONFLICT");
+    expect(insert.text).toContain("canonical_counterparty_id IS NULL");
+    expect(calls.some((c) => c.text.includes("SELECT * FROM ledger_counterparties"))).toBe(false);
+  });
 });
 
 describe("recordTransactionRow — on-chain settlement hash (RFC 0001)", () => {
@@ -192,8 +215,8 @@ describe("upsertObligationRow (RFC 0004)", () => {
   });
 
   it("returns the existing row (created=false) when the dedup key matches", async () => {
-    const { pool } = capturingPool({
-      "SELECT * FROM ledger_obligations": [{ id: "obl_existing", confidence: 0.5 }],
+    const { pool, calls } = capturingPool({
+      "INSERT INTO ledger_obligations": [{ id: "obl_existing", confidence: 0.5, created: false }],
     });
     const audit = new InMemoryAuditEmitter();
     const { row, created } = await upsertObligationRow(pool, audit, ctx, {
@@ -203,7 +226,29 @@ describe("upsertObligationRow (RFC 0004)", () => {
     });
     expect(created).toBe(false);
     expect(row.id).toBe("obl_existing");
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"))!;
+    expect(insert.text).toContain("ON CONFLICT");
+    expect(calls.some((c) => c.text.includes("SELECT * FROM ledger_obligations"))).toBe(false);
     expect(audit.events[0]!.action).toBe("ledger.obligation.deduplicated");
+  });
+
+  it("prefers an external natural key for obligation dedup", async () => {
+    const { pool, calls } = capturingPool({
+      "INSERT INTO ledger_obligations": [{ id: "obl_external", confidence: 0.5, created: true }],
+    });
+    const audit = new InMemoryAuditEmitter();
+    const { row, created } = await upsertObligationRow(pool, audit, ctx, {
+      ...baseArgs,
+      external_key: "stripe:dispute:dp_123",
+      provenance: "agent_contributed",
+      confidence: 0.4,
+    });
+
+    expect(created).toBe(true);
+    expect(row.id).toBe("obl_external");
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"))!;
+    expect(insert.text).toContain("ON CONFLICT (owner_id, external_key)");
+    expect(insert.values).toContain("stripe:dispute:dp_123");
   });
 
   it.each([

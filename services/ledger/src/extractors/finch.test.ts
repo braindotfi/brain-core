@@ -161,6 +161,7 @@ describe("normalizeFinchArtifact — finch_payroll_v1", () => {
     expect(obl.values).toContain("5000.00");
     expect(obl.values).toContain("payable");
     expect(obl.values).toContain("upcoming");
+    expect(obl.values).toContain("finch:pay_run:pay_2");
     // Aggregates only in extensions — no per-individual compensation.
     const metadata = obl.values.find(
       (v) => typeof v === "string" && (v as string).includes("payment_id"),

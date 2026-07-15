@@ -26,7 +26,6 @@ import {
   withTenantScope,
   type AuditEmitter,
   type ServiceCallContext,
-  type TenantScopedClient,
 } from "@brain/shared";
 
 /** §3.2 of Brain_MVP_Architecture.md — agent-contributed rows are capped. */
@@ -120,46 +119,45 @@ export async function upsertCounterpartyRow(
   const normalized = (args.normalized_name ?? normalizeName(args.name)).slice(0, 200);
 
   const result = await withTenantScope(pool, ctx.tenantId, async (c) => {
-    const existing = await findByNormalizedName(c, normalized, args.type);
-    if (existing !== null) {
-      // Light merge: append new aliases + new source/evidence ids without
-      // duplicates. Provenance/confidence don't downgrade here — that's a
-      // dedicated promote/demote path.
-      const aliases = mergeUnique(existing.aliases, args.aliases ?? []);
-      const sourceIds = mergeUnique(existing.source_ids, args.source_ids);
-      const evidenceIds = mergeUnique(existing.evidence_ids, args.evidence_ids);
-      const { rows } = await c.query<CounterpartyRow>(
-        `UPDATE ledger_counterparties
-            SET aliases = $1,
-                source_ids = $2,
-                evidence_ids = $3,
-                risk_level = CASE WHEN $7 THEN COALESCE($4, risk_level) ELSE risk_level END,
-                verified_status = CASE WHEN $7 THEN COALESCE($5, verified_status) ELSE verified_status END,
-                metadata = COALESCE($6::jsonb, metadata),
-                updated_at = now()
-          WHERE id = $8
-          RETURNING *`,
-        [
-          aliases,
-          sourceIds,
-          evidenceIds,
-          args.risk_level ?? null,
-          args.verified_status ?? null,
-          args.metadata !== undefined ? JSON.stringify(args.metadata) : null,
-          args.merge_trust_state ?? true,
-          existing.id,
-        ],
-      );
-      return { row: rows[0]!, created: false };
-    }
     const id = newCounterpartyId();
-    const { rows } = await c.query<CounterpartyRow>(
+    const { rows } = await c.query<CounterpartyRow & { created?: boolean }>(
       `INSERT INTO ledger_counterparties
          (id, owner_id, name, normalized_name, type, risk_level, verified_status,
           aliases, linked_accounts, source_ids, evidence_ids, provenance, confidence, agent_id,
           onchain_address, metadata)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,ARRAY[]::TEXT[],$9,$10,$11,$12,$13,$14,$15::jsonb)
-       RETURNING *`,
+       ON CONFLICT (owner_id, normalized_name, type)
+       WHERE normalized_name IS NOT NULL AND canonical_counterparty_id IS NULL
+       DO UPDATE SET
+          aliases = (
+            SELECT ARRAY(
+              SELECT DISTINCT x
+                FROM unnest(ledger_counterparties.aliases || EXCLUDED.aliases) AS x
+            )
+          ),
+          source_ids = (
+            SELECT ARRAY(
+              SELECT DISTINCT x
+                FROM unnest(ledger_counterparties.source_ids || EXCLUDED.source_ids) AS x
+            )
+          ),
+          evidence_ids = (
+            SELECT ARRAY(
+              SELECT DISTINCT x
+                FROM unnest(ledger_counterparties.evidence_ids || EXCLUDED.evidence_ids) AS x
+            )
+          ),
+          risk_level = CASE
+            WHEN $16 THEN COALESCE(EXCLUDED.risk_level, ledger_counterparties.risk_level)
+            ELSE ledger_counterparties.risk_level
+          END,
+          verified_status = CASE
+            WHEN $16 THEN COALESCE(EXCLUDED.verified_status, ledger_counterparties.verified_status)
+            ELSE ledger_counterparties.verified_status
+          END,
+          metadata = ledger_counterparties.metadata || EXCLUDED.metadata,
+          updated_at = now()
+       RETURNING *, (xmax = 0) AS created`,
       [
         id,
         ctx.tenantId,
@@ -176,9 +174,11 @@ export async function upsertCounterpartyRow(
         args.agent_id ?? null,
         args.onchain_address ?? null,
         JSON.stringify(args.metadata ?? {}),
+        args.merge_trust_state ?? true,
       ],
     );
-    return { row: rows[0]!, created: true };
+    const row = rows[0]!;
+    return { row, created: row.created ?? true };
   });
 
   await audit.emit({
@@ -447,6 +447,12 @@ export interface UpsertObligationArgs {
   recurrence?: string;
   status: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
   /**
+   * Namespaced provider natural key, such as stripe:dispute:dp_123 or
+   * finch:pay_run:pay_123. Preferred over the legacy content tuple because it
+   * is stable across provider retries and concurrent ingests.
+   */
+  external_key?: string;
+  /**
    * payable = we owe the counterparty (vendor side).
    * receivable = the counterparty owes us (customer side).
    * Optional so existing call sites keep compiling; when omitted the row
@@ -463,11 +469,11 @@ export interface UpsertObligationArgs {
 }
 
 /**
- * Idempotent obligation insert. The table carries no external id, so the
- * dedup key is (counterparty_id, type, amount_due, currency, due_date):
- * re-extracting the same document is a no-op. Like every writer here, the
- * agent-contributed confidence ceiling (§3.2) applies, so a document-derived
- * obligation lands at confidence <= 0.5.
+ * Idempotent obligation insert. A provider natural key is preferred when
+ * supplied. Otherwise the dedup key is (counterparty_id, type, amount_due,
+ * currency, due_date): re-extracting the same document is a no-op. Like every
+ * writer here, the agent-contributed confidence ceiling (§3.2) applies, so a
+ * document-derived obligation lands at confidence <= 0.5.
  */
 export async function upsertObligationRow(
   pool: Pool,
@@ -500,25 +506,34 @@ export async function upsertObligationRow(
   }
 
   const result = await withTenantScope(pool, ctx.tenantId, async (c) => {
-    const existing = await c.query<ObligationRow>(
-      `SELECT * FROM ledger_obligations
-        WHERE counterparty_id = $1 AND type = $2 AND amount_due = $3
-          AND currency = $4 AND due_date = $5
-        LIMIT 1`,
-      [args.counterparty_id, args.type, args.amount_due, args.currency, dueDateIso.toISOString()],
-    );
-    if (existing.rows[0] !== undefined) {
-      return { row: existing.rows[0], created: false };
-    }
-
     const id = newObligationId();
-    const { rows } = await c.query<ObligationRow>(
+    const conflictTarget =
+      args.external_key !== undefined
+        ? "(owner_id, external_key) WHERE external_key IS NOT NULL"
+        : "(owner_id, counterparty_id, type, amount_due, currency, due_date) WHERE external_key IS NULL";
+    const { rows } = await c.query<ObligationRow & { created?: boolean }>(
       `INSERT INTO ledger_obligations
          (id, owner_id, type, counterparty_id, amount_due, minimum_due, currency,
           due_date, recurrence, status, source_ids, evidence_ids, provenance, confidence,
-          direction, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,COALESCE($16::jsonb,'{}'::jsonb))
-       RETURNING *`,
+          direction, metadata, external_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,COALESCE($16::jsonb,'{}'::jsonb),$17)
+       ON CONFLICT ${conflictTarget}
+       DO UPDATE SET
+          source_ids = (
+            SELECT ARRAY(
+              SELECT DISTINCT x
+                FROM unnest(ledger_obligations.source_ids || EXCLUDED.source_ids) AS x
+            )
+          ),
+          evidence_ids = (
+            SELECT ARRAY(
+              SELECT DISTINCT x
+                FROM unnest(ledger_obligations.evidence_ids || EXCLUDED.evidence_ids) AS x
+            )
+          ),
+          metadata = ledger_obligations.metadata || EXCLUDED.metadata,
+          updated_at = now()
+       RETURNING *, (xmax = 0) AS created`,
       [
         id,
         ctx.tenantId,
@@ -536,9 +551,11 @@ export async function upsertObligationRow(
         conf,
         args.direction ?? null,
         args.metadata !== undefined ? JSON.stringify(args.metadata) : null,
+        args.external_key ?? null,
       ],
     );
-    return { row: rows[0]!, created: true };
+    const row = rows[0]!;
+    return { row, created: row.created ?? true };
   });
 
   await audit.emit({
@@ -562,20 +579,6 @@ export async function upsertObligationRow(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-async function findByNormalizedName(
-  c: TenantScopedClient,
-  normalized: string,
-  type: string,
-): Promise<CounterpartyRow | null> {
-  const { rows } = await c.query<CounterpartyRow>(
-    `SELECT * FROM ledger_counterparties
-      WHERE normalized_name = $1 AND type = $2
-      LIMIT 1`,
-    [normalized, type],
-  );
-  return rows[0] ?? null;
-}
 
 export function normalizeName(s: string): string {
   return s

@@ -96,6 +96,14 @@ function ledgerStatus(canonicalStatus: string | null, dueDate: string | null): s
   return dueDate !== null ? "due" : "upcoming";
 }
 
+function ledgerCurrency(canonicalCurrency: string | null): string {
+  if (canonicalCurrency === null) return "USD";
+  if (!/^[A-Z]{3}$/.test(canonicalCurrency)) {
+    throw new Error("currency must be a 3-letter ISO 4217 code");
+  }
+  return canonicalCurrency;
+}
+
 /** Upsert one canonical counterparty into the Ledger projection; returns the Ledger id. */
 export async function projectCanonicalCounterparty(
   c: TenantScopedClient,
@@ -201,7 +209,7 @@ export async function projectCanonicalObligation(
       row.type,
       counterpartyId,
       row.amount,
-      row.currency ?? "USD",
+      ledgerCurrency(row.currency),
       dueDate,
       ledgerStatus(row.status, row.due_date),
       row.direction,

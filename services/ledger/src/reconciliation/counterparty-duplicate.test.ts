@@ -73,6 +73,28 @@ describe("CounterpartyDuplicateMatcher — confident identity links", () => {
 });
 
 describe("CounterpartyDuplicateMatcher — uncertainty defers to review", () => {
+  it("loads prefix-blocked fuzzy peers and records duplicate_possible", async () => {
+    const { pool, queries } = fakePool({
+      [RECENT]: [cp()],
+      [PEERS]: [
+        cp({
+          id: "cp_b",
+          name: "Acme Industrial Supply LLC",
+          normalized_name: "acme_industrial_supply_llc",
+          type: "vendor",
+        }),
+      ],
+    });
+    const { deps } = makeDeps(pool);
+    const result = await new CounterpartyDuplicateMatcher().run(deps, makeInput());
+
+    expect(result.matchesProduced).toHaveLength(1);
+    const peerQuery = findQuery(queries, PEERS)!;
+    expect(peerQuery.text).toContain("LIKE $3");
+    const insert = findQuery(queries, "INSERT INTO ledger_reconciliation_matches")!;
+    expect(insert.values).toContain("duplicate_possible");
+  });
+
   it("records nothing when no peer shares the normalized name", async () => {
     const { pool, queries } = fakePool({ [RECENT]: [cp()], [PEERS]: [] });
     const { deps } = makeDeps(pool);

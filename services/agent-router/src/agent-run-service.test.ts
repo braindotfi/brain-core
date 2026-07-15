@@ -9,6 +9,7 @@ import {
   internalAgentDefinitions,
   internalAgentHandlers,
   type Evidence,
+  type InternalAgentHandler,
 } from "@brain/internal-agents";
 import { AgentRouter } from "./router.js";
 import { ActionResolver } from "./action-resolver.js";
@@ -33,6 +34,24 @@ const PAYMENT_CONTEXT = {
   destination_counterparty_id: "cp_vendor",
   amount: "125.00",
   currency: "USD",
+};
+const COMPLETE_COLLECTIONS_HANDLER: InternalAgentHandler = {
+  agent_key: "collections",
+  actions: ["draft_followup", "send_followup", "create_task", "escalate", "propose_payment_plan"],
+  build: (input) => ({
+    channel: "agent",
+    action: {
+      type: input.action,
+      invoice_id: "inv_1",
+      counterparty_id: "cp_1",
+      amount_due: "125.00",
+      days_overdue: 7,
+      recommended_tone: "firm",
+      draft_message: "Please remit payment for invoice inv_1.",
+      next_escalation_date: "2026-05-29",
+      evidence_refs: input.evidence.items.map((i) => i.ref),
+    },
+  }),
 };
 
 function makeStore(): {
@@ -62,6 +81,8 @@ function makeService(
   onCreatePI: () => void,
   opts: {
     evidence?: Evidence[];
+    routerEvidence?: Evidence[];
+    handlers?: Record<string, InternalAgentHandler>;
     isShadowed?: (agentId: string) => boolean;
   } = {},
 ): AgentRunService {
@@ -89,13 +110,13 @@ function makeService(
     router: new AgentRouter({
       catalog: () => Object.values(internalAgentDefinitions),
       classifier: new RulesIntentClassifier(),
-      evidence: new StaticEvidenceGatherer(opts.evidence ?? EVIDENCE),
+      evidence: new StaticEvidenceGatherer(opts.routerEvidence ?? opts.evidence ?? EVIDENCE),
       getScopedCapabilities: () => new Set(scoped),
       getTenantCategory: () => "business",
       audit: new InMemoryAuditEmitter(),
     }),
     actionResolver: new ActionResolver({ classifier: new RulesIntentClassifier() }),
-    handlers: internalAgentHandlers,
+    handlers: opts.handlers ?? internalAgentHandlers,
     definitions: internalAgentDefinitions,
     evidence: new StaticEvidenceGatherer(opts.evidence ?? EVIDENCE),
     propose: { agents, paymentIntents },
@@ -136,6 +157,7 @@ describe("AgentRunService (shadow mode)", () => {
       ["collections_followup"],
       () => (proposed += 1),
       () => {},
+      { handlers: { ...internalAgentHandlers, collections: COMPLETE_COLLECTIONS_HANDLER } },
     );
     const result = await svc.run(CTX, { tenant_id: "tnt_acme", event: "invoice.overdue" });
     expect(result.selected_agent_id).toBe("collections");
@@ -203,5 +225,69 @@ describe("AgentRunService (shadow mode)", () => {
     expect(createdPI).toBe(0);
     expect(runs.at(-1)?.status).toBe("notify_only");
     expect(runs.at(-1)?.failureReason).toBe("execution_mode_notify_only");
+  });
+
+  it("records missing_evidence when the gathered bundle has critical missing evidence", async () => {
+    const { store, runs } = makeStore();
+    let createdPI = 0;
+    const svc = makeService(
+      store,
+      ["payment_propose"],
+      () => {},
+      () => {
+        createdPI += 1;
+      },
+      {
+        isShadowed: () => false,
+        routerEvidence: EVIDENCE,
+        evidence: [
+          { kind: "invoice", ref: "inv_1" },
+          { kind: "counterparty", ref: "cp_1" },
+        ],
+      },
+    );
+
+    const result = await svc.run(CTX, {
+      tenant_id: "tnt_acme",
+      event: "bill.due_soon",
+      context: PAYMENT_CONTEXT,
+    });
+
+    expect(result.selected_agent_id).toBe("payment");
+    expect(result.status).toBe("missing_evidence");
+    expect(createdPI).toBe(0);
+    expect(runs.at(-1)?.status).toBe("missing_evidence");
+    expect(runs.at(-1)?.failureReason).toBe("critical_missing_evidence");
+    expect(runs.at(-1)?.reason).toMatchObject({
+      critical_missing: true,
+      missing_required_evidence: ["payment_destination"],
+    });
+  });
+
+  it("records failed when an agent-channel payload omits required fields", async () => {
+    const { store, runs } = makeStore();
+    let proposed = 0;
+    const svc = makeService(
+      store,
+      ["collections_followup"],
+      () => {
+        proposed += 1;
+      },
+      () => {},
+    );
+
+    const result = await svc.run(CTX, { tenant_id: "tnt_acme", event: "invoice.overdue" });
+
+    expect(result.selected_agent_id).toBe("collections");
+    expect(result.status).toBe("failed");
+    expect(proposed).toBe(0);
+    expect(runs.at(-1)?.status).toBe("failed");
+    expect(runs.at(-1)?.failureReason).toBe("payload_invalid");
+    expect(runs.at(-1)?.reason).toMatchObject({
+      payload_validation: {
+        status: "invalid",
+        missing_fields: expect.arrayContaining(["amount_due", "draft_message"]),
+      },
+    });
   });
 });

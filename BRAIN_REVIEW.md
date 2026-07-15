@@ -527,7 +527,21 @@ legacy ingestion, reconciliation, and connector correctness.
       intent.
 - [ ] T2-7 remains product scope: Collections and Cash still need real dunning,
       forecasting, and sweep algorithms.
-- [ ] T2-8, T2-9, T2-18, T2-22 through T2-25 remain follow-up work.
+- [ ] T2-8 remains product scope: Collections still needs real message-variable
+      population instead of the shared fallback proposal shape.
+- [x] T2-9 fixed: both agent propose paths now fail closed as `missing_evidence`
+      when the selected evidence bundle reports `critical_missing`, even if
+      routing allowed the agent.
+- [x] T2-18 partially fixed for review scope: the agent payload validator is now
+      enforced before proposal creation, so malformed agent-channel payloads
+      fail closed. Fraud anomaly scoring remains product scope.
+- [x] T2-22 and T2-23 fixed: Ledger direct-write counterparty and obligation
+      dedup now use database unique constraints plus `INSERT ... ON CONFLICT`.
+      Obligation writes prefer connector natural keys where available.
+- [x] T2-24 fixed: Stripe delta pulls re-read the committed watermark second
+      with `created[gte]`, and existing idempotency keys absorb stable replays.
+- [x] T2-25b fixed: projected obligations now reject malformed non-null
+      currency values instead of defaulting known-invalid input to USD.
 - [x] T2-26 fixed: bank account numbers, IBANs, and routing numbers are now
       forbidden in agent traces under the same policy path as card numbers.
 
@@ -539,6 +553,8 @@ longer lift confidence, and legacy normalization no longer treats the first
 failed row as terminal data loss. The main agent-output gating bypasses are also
 closed for the live propose paths covered here: required evidence, execution
 mode, confidence, evidence score, and risk level now reach the gates instead of
-being advisory-only fields. Remaining Tier 2 work is connector dedup and
-watermark correctness, workflow payload completeness, and product-level
-implementation depth for Collections and Cash.
+being advisory-only fields. The deferred connector integrity issues are now
+closed with database-backed dedup, connector natural keys, Stripe same-second
+watermark replay, and projection currency validation. Remaining Tier 2 work is
+product-level implementation depth for Collections, Cash, and fraud anomaly
+scoring.
