@@ -3,8 +3,10 @@
  *
  * Raw LLM inputs/outputs and tool-call payloads are field-level redacted BEFORE
  * being stored in the redacted view (agent_reasoning_traces.tool_calls_redacted /
- * output_structured). The raw blob is encrypted at rest with a per-tenant KMS key
- * and is only readable with the audit:incident_investigation scope.
+ * output_structured). Forbidden fields, including card numbers and bank account
+ * identifiers, reject the trace before redacted or raw trace storage. Raw blobs
+ * that pass redaction are encrypted at rest with a per-tenant KMS key and are
+ * only readable with the audit:incident_investigation scope.
  *
  * The canonical policy document is schemas/redaction-policies/agent-trace-v1.json;
  * DEFAULT_AGENT_TRACE_POLICY mirrors it and a test asserts they stay in sync.
@@ -34,13 +36,8 @@ export const DEFAULT_AGENT_TRACE_POLICY: RedactionPolicy = {
   id: "agent-trace-v1",
   version: 1,
   description:
-    "Default field-level redaction policy for agent reasoning traces (INV-9). Applied to raw LLM inputs/outputs and tool-call payloads BEFORE they are stored in the redacted view. The raw blob is encrypted at rest with a per-tenant KMS key and is only readable with the audit:incident_investigation scope.",
+    "Default field-level redaction policy for agent reasoning traces (INV-9). Applied to raw LLM inputs/outputs and tool-call payloads BEFORE they are stored in the redacted view. Forbidden card and bank account identifier fields reject the trace before redacted or raw trace storage. Raw blobs that pass redaction are encrypted at rest with a per-tenant KMS key and are only readable with the audit:incident_investigation scope.",
   rules: [
-    {
-      name: "account_numbers",
-      match: ["account_number", "account_no", "acct", "iban", "routing_number"],
-      transform: "mask_last4",
-    },
     {
       name: "counterparty_names",
       match: ["counterparty_name", "payee", "payer", "vendor_name", "merchant_name"],
@@ -67,6 +64,11 @@ export const DEFAULT_AGENT_TRACE_POLICY: RedactionPolicy = {
         "plaid_access_token",
         "api_key",
         "private_key",
+        "account_number",
+        "account_no",
+        "acct",
+        "iban",
+        "routing_number",
         "card_number",
         "cvv",
         "pin",
@@ -109,8 +111,8 @@ function ruleFor(policy: RedactionPolicy, key: string): RedactionRule | undefine
 
 /**
  * Apply `policy` to `payload`, returning a redacted clone. Recurses into nested
- * objects and arrays. Throws if a `forbid` field (bank credentials) is present —
- * those must never reach storage.
+ * objects and arrays. Throws if a `forbid` field is present, including account
+ * identifiers and bank credentials, because those must never reach storage.
  */
 export function redact(policy: RedactionPolicy, payload: unknown, opts: RedactOptions): unknown {
   if (Array.isArray(payload)) {
