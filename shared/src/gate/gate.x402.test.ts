@@ -17,7 +17,7 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { InMemoryAuditEmitter } from "../audit/emitter.js";
-import { isX402AutonomousAllowed, runPreExecutionGate } from "./gate.js";
+import { isFiatAutonomousAllowed, isX402AutonomousAllowed, runPreExecutionGate } from "./gate.js";
 import type {
   GateAccount,
   GateAgent,
@@ -219,6 +219,94 @@ describe("§6 — check 3.5: on-chain settlement permitted (RFC 0001 §6.5)", ()
       expect(row?.passed).toBe(true);
       expect(row?.detail?.not_applicable).toBe(true);
     }
+  });
+});
+
+describe("§6 -- fiat approval floor", () => {
+  it("wire requires a recorded human approval even when policy allows", async () => {
+    const { deps } = makeDeps({ resolveApprovals: async () => ({ signedRoles: [] }) });
+    const result = await run(deps, defaultIntent({ action_type: "wire" }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(11);
+      expect(result.failedCheck.detail?.reason).toBe("hard_human_approval_floor_required");
+    }
+  });
+
+  it("wire passes the floor once an approval is recorded", async () => {
+    const { deps } = makeDeps({ resolveApprovals: async () => ({ signedRoles: ["approver"] }) });
+    const result = await run(deps, defaultIntent({ action_type: "wire" }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("ACH may execute autonomously under the signed matched-rule cap", async () => {
+    const { deps } = makeDeps({
+      resolveApprovals: async () => ({ signedRoles: [] }),
+      evaluatePolicy: async () =>
+        makeDecision({ ach_autonomous_max_amount: { currency: "USD", value: "75.00" } }),
+    });
+    const result = await run(deps, defaultIntent({ action_type: "ach_outbound", amount: "50.00" }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("ACH inbound uses the same signed cap contract", async () => {
+    const { deps } = makeDeps({
+      resolveApprovals: async () => ({ signedRoles: [] }),
+      evaluatePolicy: async () =>
+        makeDecision({ ach_autonomous_max_amount: { currency: "USD", value: "75.00" } }),
+    });
+    const result = await run(deps, defaultIntent({ action_type: "ach_inbound", amount: "50.00" }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("card may execute autonomously under the signed matched-rule cap", async () => {
+    const { deps } = makeDeps({
+      resolveApprovals: async () => ({ signedRoles: [] }),
+      evaluatePolicy: async () =>
+        makeDecision({ card_autonomous_max_amount: { currency: "USD", value: "75.00" } }),
+    });
+    const result = await run(deps, defaultIntent({ action_type: "card_payment", amount: "50.00" }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("ACH without a cap fails closed at the approval floor", async () => {
+    const { deps } = makeDeps({ resolveApprovals: async () => ({ signedRoles: [] }) });
+    const result = await run(deps, defaultIntent({ action_type: "ach_outbound" }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.detail?.reason).toBe("hard_human_approval_floor_required");
+    }
+  });
+
+  it("ACH over cap, wrong-currency cap, and malformed caps are not autonomous", () => {
+    const intent = defaultIntent({ action_type: "ach_outbound", amount: "80.00" });
+    expect(
+      isFiatAutonomousAllowed(
+        intent,
+        makeDecision({ ach_autonomous_max_amount: { currency: "USD", value: "75.00" } }),
+      ),
+    ).toBe(false);
+    expect(
+      isFiatAutonomousAllowed(
+        intent,
+        makeDecision({ ach_autonomous_max_amount: { currency: "EUR", value: "90.00" } }),
+      ),
+    ).toBe(false);
+    expect(
+      isFiatAutonomousAllowed(
+        intent,
+        makeDecision({ ach_autonomous_max_amount: { currency: "USD", value: "bad" } }),
+      ),
+    ).toBe(false);
+  });
+
+  it("the fiat floor kill-switch disables fiat-only floors", async () => {
+    const { deps } = makeDeps({
+      fiatHumanApprovalFloorEnabled: false,
+      resolveApprovals: async () => ({ signedRoles: [] }),
+    });
+    const result = await run(deps, defaultIntent({ action_type: "wire" }));
+    expect(result.ok).toBe(true);
   });
 });
 
@@ -707,9 +795,13 @@ describe("§6 — hard human-approval floor for on-chain actions", () => {
     if (!reject.ok) expect(reject.failedCheck.index).toBe(3);
   });
 
-  it("does not require approval for ACH allow outcomes", async () => {
+  it("allows ACH only when the matched policy cap covers the amount", async () => {
     const { deps } = makeDeps({
-      evaluatePolicy: async () => makeDecision({ outcome: "allow" }),
+      evaluatePolicy: async () =>
+        makeDecision({
+          outcome: "allow",
+          ach_autonomous_max_amount: { currency: "USD", value: "100.00" },
+        }),
       resolveApprovals: async () => ({ signedRoles: [] }),
     });
     const result = await run(deps, defaultIntent({ action_type: "ach_outbound" }));

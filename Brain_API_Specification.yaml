@@ -3224,16 +3224,16 @@ paths:
                   quarantined: { type: boolean }
 
         '400': { $ref: '#/components/responses/BadRequest' }
-  /agents/{agent_id}/quarantine/release:
+  /agents/{agent_id}/contribution-hold/release:
     post:
       tags: [Agent]
-      summary: Release an agent's contribution quarantine
+      summary: Release an agent's contribution hold
       description: |
         Requires `payment_intent:approve` (same scope as halt). Clears
-        the quarantine so subsequent agent contributions extract
+        the contribution hold so subsequent agent contributions extract
         normally again. Idempotent (config `idempotent: true`). Does not
         un-pause PaymentIntents paused by a prior halt.
-      operationId: releaseAgentQuarantine
+      operationId: releaseContributionHold
       parameters:
         - name: agent_id
           in: path
@@ -3241,16 +3241,16 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Quarantine released
+          description: Contribution hold released
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   agent_id: { type: string }
-                  quarantine_released: { type: boolean, enum: [true] }
+                  contribution_hold_released: { type: boolean, enum: [true] }
         '404':
-          description: No such agent, or the agent had no quarantine to release. Error code `execution_agent_not_registered`.
+          description: No such agent, or the agent had no contribution hold to release. Error code `execution_agent_not_registered`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

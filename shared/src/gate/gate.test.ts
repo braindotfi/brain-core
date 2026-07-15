@@ -70,6 +70,7 @@ function makeDecision(overrides: Partial<GatePolicyDecision> = {}): GatePolicyDe
     required_approvers: [],
     ledger_snapshot_hash: "0xdeadbeef",
     trace: [],
+    ach_autonomous_max_amount: { currency: "USD", value: "1000000.00" },
     ...overrides,
   };
 }

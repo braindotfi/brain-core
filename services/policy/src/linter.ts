@@ -33,6 +33,8 @@ export interface LintOptions {
   recentMatchCounts?: Readonly<Record<string, number>>;
   /** Threshold above which an approval path is required (default USD 10000). */
   highValueThreshold?: AmountLiteral;
+  /** Escalate the production confidence floor from warning to hard error. */
+  confidenceFloorReject?: boolean;
 }
 
 const DEFAULT_CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "ETH", "USDC", "USDT"];
@@ -66,6 +68,13 @@ function parseRoles(require: string | undefined): string[] {
   return [require];
 }
 
+function confidenceBounds(doc: PolicyDocument): Array<{ ruleId: string; value: number }> {
+  return doc.rules.flatMap((rule) => {
+    const value = rule.when["agent.confidence.gte"];
+    return typeof value === "number" ? [{ ruleId: rule.id, value }] : [];
+  });
+}
+
 export function lintPolicy(doc: PolicyDocument, opts: LintOptions = {}): LintFinding[] {
   const currencies = new Set(opts.supportedCurrencies ?? DEFAULT_CURRENCIES);
   const roles = new Set(opts.knownRoles ?? DEFAULT_ROLES);
@@ -79,6 +88,24 @@ export function lintPolicy(doc: PolicyDocument, opts: LintOptions = {}): LintFin
   ): void => {
     findings.push({ severity, code, rule_id, message });
   };
+
+  const floorSeverity: LintSeverity = opts.confidenceFloorReject === true ? "ERROR" : "WARN";
+  const floors = confidenceBounds(doc);
+  if (floors.length === 0) {
+    add(
+      floorSeverity,
+      "confidence_floor_missing",
+      null,
+      "Activating policy does not contain agent.confidence.gte.",
+    );
+  } else if (!floors.some((floor) => floor.value > 0.5)) {
+    add(
+      floorSeverity,
+      "confidence_floor_too_low",
+      floors[0]?.ruleId ?? null,
+      "Activating policy requires agent.confidence.gte strictly greater than 0.5.",
+    );
+  }
 
   // Track a catch-all (matches everything) for the unreachable-rule check.
   let catchAllSeen: string | null = null;

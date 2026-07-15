@@ -152,7 +152,7 @@ import {
   listAgentRuns,
   findRoutingDecision,
   transitionAgent,
-  releaseAgentQuarantine,
+  releaseContributionHold,
 } from "@brain/execution";
 import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
 import { parseEther } from "viem";
@@ -640,6 +640,7 @@ async function main(): Promise<void> {
           contractAddress: cfg.POLICY_REGISTRY_ADDRESS as `0x${string}`,
           rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
         }),
+    confidenceFloorReject: cfg.BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT,
   };
 
   const policyService = new PolicyService({
@@ -871,6 +872,7 @@ async function main(): Promise<void> {
     metrics,
     enqueue: routingEnqueue,
     recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
+    fiatHumanApprovalFloorEnabled: cfg.BRAIN_FIAT_HUMAN_APPROVAL_FLOOR_ENABLED,
   });
 
   // Build the live rail registry. When credentials are present the real rails
@@ -1693,6 +1695,7 @@ async function main(): Promise<void> {
             attestCounterpartyAgent,
             sumAgentWindowSpend,
             sumActiveReservations,
+            fiatHumanApprovalFloorEnabled: cfg.BRAIN_FIAT_HUMAN_APPROVAL_FLOOR_ENABLED,
             resolveEvidence,
             detectDuplicates,
             resolveObligationConfidence,
@@ -1761,9 +1764,9 @@ async function main(): Promise<void> {
             isShadowed,
             // H-25: run-history sub-resources (evidence / gate-trace / proof / why).
             runHistory: makeRunLoaders(pool, proofBuilder),
-            // H-09: release an agent's contribution quarantine.
-            releaseAgentQuarantine: (ctx, agentId) =>
-              withTenantScope(pool, ctx.tenantId, (c) => releaseAgentQuarantine(c, agentId)),
+            // H-09: release an agent's contribution hold.
+            releaseContributionHold: (ctx, agentId) =>
+              withTenantScope(pool, ctx.tenantId, (c) => releaseContributionHold(c, agentId)),
             enqueueRouteJob: async (jobCtx, payload) => {
               if (payload.event === undefined || !isDomainEvent(payload.event)) {
                 throw brainError(
@@ -1987,6 +1990,7 @@ async function main(): Promise<void> {
                 id: "auto-small-payment",
                 applies_to: ["outbound_payment"],
                 when: { "amount.lte": { currency: "USD", value: "1000.00" } },
+                ach_autonomous_max_amount: { currency: "USD", value: "1000.00" },
                 execute: "auto",
               },
               {

@@ -47,12 +47,12 @@ function principal(): Principal {
   };
 }
 
-function fakePool(): Pool {
+function fakePool(content: unknown = { version: 1, rules: [] }): Pool {
   const pending = {
     id: POLICY_ID,
     tenant_id: TENANT,
     version: 1,
-    content: { version: 1, rules: [] },
+    content,
     content_hash: CONTENT_HASH,
     signers: null,
     state: "pending_signatures",
@@ -76,14 +76,17 @@ function fakePool(): Pool {
   return { connect: async () => client } as unknown as Pool;
 }
 
-function buildDeps(authorized: Set<string>): PolicyDeps {
+function buildDeps(authorized: Set<string>, over: Partial<PolicyDeps> = {}): PolicyDeps {
   return {
-    pool: fakePool(),
+    pool: over.pool ?? fakePool(),
     audit: { emit: vi.fn(async () => undefined) } as unknown as PolicyDeps["audit"],
     chainId: CHAIN_ID,
     policyRegistryAddress: REGISTRY,
     isAuthorizedSigner: async (_tenant: string, address: string) =>
       authorized.has(address.toLowerCase()),
+    ...(over.confidenceFloorReject !== undefined
+      ? { confidenceFloorReject: over.confidenceFloorReject }
+      : {}),
   };
 }
 
@@ -158,6 +161,63 @@ describe("POST /policy/:tenant_id/sign — quorum binding (security)", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json().activated).toBe(true);
+    expect(res.json().warnings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "confidence_floor_missing" })]),
+    );
+    await app.close();
+  });
+
+  it("rejects activation when confidence floor reject mode is enabled", async () => {
+    const a = newAccount();
+    const b = newAccount();
+    const app = await buildApp(
+      buildDeps(new Set([a.address.toLowerCase(), b.address.toLowerCase()]), {
+        confidenceFloorReject: true,
+      }),
+    );
+
+    const res = await postSign(app, [
+      { address: a.address, signature: await sign(a) },
+      { address: b.address, signature: await sign(b) },
+    ]);
+
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe("policy_rule_invalid");
+    expect(res.json().error.details.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "confidence_floor_missing", severity: "ERROR" }),
+      ]),
+    );
+    await app.close();
+  });
+
+  it("activates without warning when the confidence floor is above 0.5", async () => {
+    const a = newAccount();
+    const b = newAccount();
+    const app = await buildApp(
+      buildDeps(new Set([a.address.toLowerCase(), b.address.toLowerCase()]), {
+        pool: fakePool({
+          version: 1,
+          rules: [
+            {
+              id: "reject-low-confidence",
+              applies_to: ["any"],
+              when: { "agent.confidence.gte": 0.51 },
+              execute: "reject",
+            },
+          ],
+        }),
+      }),
+    );
+
+    const res = await postSign(app, [
+      { address: a.address, signature: await sign(a) },
+      { address: b.address, signature: await sign(b) },
+    ]);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().activated).toBe(true);
+    expect(res.json().warnings).toEqual([]);
     await app.close();
   });
 });

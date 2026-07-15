@@ -133,9 +133,9 @@ readiness evidence until closed:
 1. Add an on-chain event ingestion runbook with cursor schema, finality policy,
    reorg handling, dead-letter handling, and replay procedure.
 2. Add an agent incident runbook that covers MCP revocation, session-key pause,
-   smart-account pause, quarantine, proof export, and audit replay.
+   smart-account pause, agent quarantine, proof export, and audit replay.
 3. Add dashboards for agent scope drift, rejected MCP calls, agent proposal
-   volume, raw contribution quarantine, on-chain watcher lag, and receipt
+   volume, contribution-hold depth, on-chain watcher lag, and receipt
    correlation failures.
 4. Add release evidence that Base Sepolia exercises `SessionKeyGranted`,
    `AgentActionExecuted`, and audit-anchor verification from a real transaction.

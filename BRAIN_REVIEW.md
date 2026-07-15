@@ -464,20 +464,18 @@ audit-anchor sweep, trust state machine, RLS posture, and DB role separation.
       HTTP propose routes pin agent-token attribution to the authenticated
       agent principal while leaving human sessions non-agent-attributed, and
       the dead actions `tenantId` body field is removed.
-- [ ] Group B awaiting decision: fiat-rail autonomous carve-out, production
-      confidence-floor linter escalation, and quarantine surface rename remain
-      behavior-sensitive defaults or breaking API naming proposals.
+- [x] Group B fixed: fiat rails now have a default-on human approval floor,
+      production confidence-floor activation lint is wired with a reject-mode
+      flag, and the H-09 contribution intake surface is renamed to
+      contribution hold.
 
 ### Tier 1 verdict update
 
-The mergeable core HIGH defects from the Tier 1 review are fixed on
-`fix/tier-1-policy-gating`: audit sweep observability no longer fails silently,
-and halted agents can no longer dispatch already-queued outbox rows after the
-worker observes quarantine. P3 fail-closed hardening and P5 route hygiene are
-also fixed on the branch. The Tier 1 follow-up pass fixes the P4 DB
-least-privilege items, API FORCE RLS gap, outbox guard boot fence, and the
-operator restore route. The remaining Tier 1 items are Group B product and
-security decisions: whether fiat rails need the same autonomous cap model as
-x402, whether the confidence-floor linter warning should reject production
-policy activation, and whether to make a breaking rename of the contribution
-quarantine surface.
+The mergeable core HIGH defects from the Tier 1 review are fixed. Audit sweep
+observability no longer fails silently, and halted agents can no longer dispatch
+already-queued outbox rows after the worker observes quarantine. P3 fail-closed
+hardening, P5 route hygiene, P4 DB least-privilege items, the API FORCE RLS gap,
+the outbox guard boot fence, and the operator restore route are fixed. Group B
+is also fixed: fiat rails now match the x402 signed-cap autonomy model where
+applicable, production confidence-floor lint is wired at activation, and the
+old H-09 contribution intake wording has been replaced by contribution hold.

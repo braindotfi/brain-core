@@ -74,6 +74,7 @@ function makeDecision(): GatePolicyDecision {
     required_approvers: [],
     ledger_snapshot_hash: "0xdeadbeef",
     trace: [],
+    ach_autonomous_max_amount: { currency: "USD", value: "100.00" },
   };
 }
 

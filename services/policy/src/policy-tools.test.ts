@@ -143,6 +143,54 @@ describe("lintPolicy", () => {
     expect(codes(withCounts)).toContain("zero_recent_matches");
   });
 
+  it("warns when an activating policy has no confidence floor", () => {
+    const findings = lintPolicy(
+      doc([{ id: "r", applies_to: ["any"], when: {}, execute: "reject" }]),
+    );
+    const finding = findings.find((x) => x.code === "confidence_floor_missing");
+    expect(finding?.severity).toBe("WARN");
+  });
+
+  it("warns when the confidence floor is not strictly above 0.5", () => {
+    const findings = lintPolicy(
+      doc([
+        {
+          id: "r",
+          applies_to: ["any"],
+          when: { "agent.confidence.gte": 0.5 },
+          execute: "auto",
+        },
+      ]),
+    );
+    const finding = findings.find((x) => x.code === "confidence_floor_too_low");
+    expect(finding?.severity).toBe("WARN");
+    expect(finding?.rule_id).toBe("r");
+  });
+
+  it("reject mode escalates the confidence floor finding to ERROR", () => {
+    const findings = lintPolicy(
+      doc([{ id: "r", applies_to: ["any"], when: {}, execute: "reject" }]),
+      { confidenceFloorReject: true },
+    );
+    const finding = findings.find((x) => x.code === "confidence_floor_missing");
+    expect(finding?.severity).toBe("ERROR");
+  });
+
+  it("accepts a confidence floor strictly above 0.5", () => {
+    const findings = lintPolicy(
+      doc([
+        {
+          id: "r",
+          applies_to: ["any"],
+          when: { "agent.confidence.gte": 0.51 },
+          execute: "reject",
+        },
+      ]),
+    );
+    expect(codes(findings)).not.toContain("confidence_floor_missing");
+    expect(codes(findings)).not.toContain("confidence_floor_too_low");
+  });
+
   it("a tight, fully-constrained auto rule produces no ERRORs", () => {
     const safe = doc([
       {

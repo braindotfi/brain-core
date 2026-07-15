@@ -290,6 +290,8 @@ export interface PaymentIntentServiceDeps {
     client: TenantScopedClient,
     input: { tenantId: string; agentId: string; amount: string; currency: string },
   ) => Promise<void>;
+  /** Operational kill-switch for the fiat human approval floor. Defaults on. */
+  fiatHumanApprovalFloorEnabled?: boolean;
 }
 
 /** On-chain dispatch params merged into the outbox payload by PaymentIntentService.execute. */
@@ -413,7 +415,9 @@ export class PaymentIntentService implements IPaymentIntentService {
     });
     const decision = await this.deps.evaluatePolicy(ctx, stub);
 
-    const requiresApprovalFloor = requiresHardHumanApprovalFloor(stub, decision);
+    const requiresApprovalFloor = requiresHardHumanApprovalFloor(stub, decision, {
+      fiatHumanApprovalFloorEnabled: this.deps.fiatHumanApprovalFloorEnabled,
+    });
     const status: PaymentIntentStatus =
       decision.outcome === "reject"
         ? "rejected"
@@ -746,6 +750,7 @@ export class PaymentIntentService implements IPaymentIntentService {
       resolveAccount: (accountId) => this.deps.resolveAccount(ctx, accountId),
       resolveCounterparty: (cpId) => this.deps.resolveCounterparty(ctx, cpId),
       evaluatePolicy: (i) => this.deps.evaluatePolicy(ctx, i),
+      fiatHumanApprovalFloorEnabled: this.deps.fiatHumanApprovalFloorEnabled,
       resolveApprovals: async (intentId, activePolicyVersion) => ({
         // P0.4: count only currently-valid signatures; stale (superseded policy
         // version) and revoked signatures are excluded from quorum.

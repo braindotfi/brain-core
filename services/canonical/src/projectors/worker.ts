@@ -102,9 +102,9 @@ interface PendingParsedRow {
 }
 
 // Object types this worker projects, across both canonical domains served by
-// the merge_accounting_v1 parser. Counterparty/GL pages sort ahead of the
-// obligation/journal pages that reference them (object_type ASC: contact,
-// gl_account, invoice, journal_entry), so references resolve in one cycle.
+// the merge_accounting_v1 parser. The SQL poll uses an explicit dependency
+// order instead of lexical collation so reference pages are processed before
+// pages that point at them.
 const ALL_PROJECTABLE_OBJECT_TYPES: readonly string[] = [
   ...PROJECTABLE_OBJECT_TYPES,
   "invoice",
@@ -181,14 +181,21 @@ export async function runProjectionCycle(
   let rows: PendingParsedRow[];
   try {
     // Cross-tenant poll — requires BYPASSRLS or superuser in production.
-    // gl_account pages first so journal lines can resolve their GL reference.
+    // Reference pages first so dependent rows can resolve in the same cycle.
     const result = await deps.pool.query<PendingParsedRow>(
       `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted
          FROM raw_parsed rp
         WHERE rp.parser = $1
           AND rp.extracted->>'object_type' = ANY($2::text[])
           AND ${PENDING_EXCLUSION}
-        ORDER BY rp.extracted->>'object_type' ASC, rp.extracted_at ASC
+        ORDER BY CASE rp.extracted->>'object_type'
+                   WHEN 'contact' THEN 0
+                   WHEN 'gl_account' THEN 1
+                   WHEN 'invoice' THEN 2
+                   WHEN 'journal_entry' THEN 3
+                   ELSE 9
+                 END,
+                 rp.extracted_at ASC
         LIMIT $3`,
       [MERGE_ACCOUNTING_PARSER, [...ALL_PROJECTABLE_OBJECT_TYPES], batchSize],
     );

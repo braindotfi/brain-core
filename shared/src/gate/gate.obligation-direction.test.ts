@@ -76,6 +76,7 @@ function makeDeps(overrides: Partial<GateDependencies> = {}): {
       required_approvers: [],
       ledger_snapshot_hash: "0xdead",
       trace: [],
+      ach_autonomous_max_amount: { currency: "USD", value: "100.00" },
     }),
     resolveApprovals: async (): Promise<GateApprovalState> => ({ signedRoles: [] }),
     ...overrides,

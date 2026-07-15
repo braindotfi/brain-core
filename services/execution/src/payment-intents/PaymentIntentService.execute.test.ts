@@ -171,6 +171,7 @@ const POLICY_DECISION: GatePolicyDecision = {
   required_evidence_kinds: [],
   counterparty_verification_threshold: null,
   amount_upper_bound: null,
+  ach_autonomous_max_amount: { currency: "USD", value: "1000000.00" },
 };
 
 // ---------------------------------------------------------------------------

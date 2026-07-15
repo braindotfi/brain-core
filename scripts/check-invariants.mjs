@@ -463,6 +463,68 @@ check(
   "ledger.counterparty.updated must remain in the outbound webhook event allowlist",
 );
 
+const gateSource = read("shared/src/gate/gate.ts");
+const hardFloorStart = gateSource.indexOf("export function requiresHardHumanApprovalFloor");
+const hardFloorEnd = gateSource.indexOf(
+  "// ---------------------------------------------------------------------------",
+  hardFloorStart,
+);
+const hardFloorBody = gateSource.slice(hardFloorStart, hardFloorEnd);
+check(
+  "fiat rails have a default-on human approval floor with signed ACH and card caps",
+  hardFloorBody.includes('intent.action_type === "wire"') &&
+    hardFloorBody.includes("isFiatAutonomousAllowed") &&
+    hardFloorBody.includes("fiatHumanApprovalFloorEnabled") &&
+    gateSource.includes("ach_autonomous_max_amount") &&
+    gateSource.includes("card_autonomous_max_amount"),
+  "wire must require human approval by default, while ACH and card autonomy must require signed cap fields",
+);
+
+const policyServiceSource = read("services/policy/src/service.ts");
+check(
+  "policy service exposes fiat autonomy caps only from the matched rule",
+  policyServiceSource.includes(
+    "ach_autonomous_max_amount: matchedRule?.ach_autonomous_max_amount ?? null",
+  ) &&
+    policyServiceSource.includes(
+      "card_autonomous_max_amount: matchedRule?.card_autonomous_max_amount ?? null",
+    ),
+  "PolicyService.evaluateForGate must thread ACH and card caps from the matched signed policy rule",
+);
+
+const policyRoutesSource = read("services/policy/src/routes.ts");
+const policyLinterSource = read("services/policy/src/linter.ts");
+check(
+  "policy activation lints the production confidence floor",
+  policyLinterSource.includes("confidence_floor_missing") &&
+    policyLinterSource.includes("confidence_floor_too_low") &&
+    policyLinterSource.includes("floor.value > 0.5") &&
+    policyRoutesSource.includes("confidenceFloorReject: deps.confidenceFloorReject === true") &&
+    policyRoutesSource.includes("policy confidence floor failed activation"),
+  "policy activation must warn or reject when agent.confidence.gte is missing or not strictly greater than 0.5",
+);
+
+const agentApiSource = read("services/agent-router/src/agent-api.ts");
+const executionAgentHoldSource = read("services/execution/src/agents/quarantine.ts");
+const openApiSource = read("Brain_API_Specification.yaml");
+const sdkOpenApiSource = read("clients/sdk/src/generated/openapi.d.ts");
+const agentContributionProtocolSource = read("protocol/agent-contributions.md");
+check(
+  "H-09 public surface uses contribution hold naming",
+  agentApiSource.includes('"/agents/:agent_id/contribution-hold/release"') &&
+    agentApiSource.includes("releaseContributionHold") &&
+    agentApiSource.includes("contribution_hold_released") &&
+    executionAgentHoldSource.includes("contribution_hold_cleared_at") &&
+    openApiSource.includes("/agents/{agent_id}/contribution-hold/release") &&
+    openApiSource.includes("operationId: releaseContributionHold") &&
+    sdkOpenApiSource.includes('"/agents/{agent_id}/contribution-hold/release"') &&
+    sdkOpenApiSource.includes("releaseContributionHold") &&
+    agentContributionProtocolSource.includes("/v1/agents/{agent_id}/contribution-hold/release") &&
+    !agentApiSource.includes("quarantine/release") &&
+    !executionAgentHoldSource.includes("releaseAgentQuarantine"),
+  "the contribution intake hold route and repository helpers must not use the old contribution quarantine naming",
+);
+
 const bad = checks.filter((c) => !c.ok);
 if (bad.length > 0) {
   for (const c of bad) {

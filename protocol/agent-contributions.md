@@ -70,17 +70,17 @@ The Raw artifact carries everything an auditor would need.
 
 ### Quarantine and Trust Escalation
 
-Brain does not auto-extract from agent contributions on the first N artifacts. By default, the first contributions from a newly registered agent land in **quarantine**: they're stored, hashed, attributed, but not fed into the extraction pipeline.
+Brain does not auto-extract from agent contributions on the first N artifacts. By default, the first contributions from a newly registered agent land in **contribution hold**: they're stored, hashed, attributed, but not fed into the extraction pipeline.
 
-| Phase                                       | Behavior                                        |
-| ------------------------------------------- | ----------------------------------------------- |
-| **Quarantine (default: first 5 artifacts)** | Stored and visible to the tenant; not extracted |
-| **Tenant approves agent**                   | Future contributions auto-flow to extraction    |
-| **Tenant revokes**                          | Future contributions rejected at the MCP layer  |
+| Phase                                              | Behavior                                        |
+| -------------------------------------------------- | ----------------------------------------------- |
+| **Contribution hold (default: first 5 artifacts)** | Stored and visible to the tenant; not extracted |
+| **Tenant approves agent**                          | Future contributions auto-flow to extraction    |
+| **Tenant revokes**                                 | Future contributions rejected at the MCP layer  |
 
 This is the safety valve that keeps malicious or buggy agents from polluting the Ledger before the tenant has had a chance to look at what they're contributing.
 
-The threshold is per-agent (`quarantine_threshold`, default 5): the first N contributions are held and the counter increments on each; once over the threshold, or once a human releases the agent via `POST /v1/agents/{agent_id}/quarantine/release`, contributions extract automatically. Release is owner-scoped and idempotent.
+The threshold is per-agent (`quarantine_threshold`, default 5): the first N contributions are held and the counter increments on each; once over the threshold, or once a human releases the agent via `POST /v1/agents/{agent_id}/contribution-hold/release`, contributions extract automatically. Release is owner-scoped and idempotent.
 
 ### Confidence Ceiling
 
