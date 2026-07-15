@@ -86,12 +86,14 @@ export async function normalizePlaidArtifact(
   const sourceIds = [input.rawArtifactId];
   const evidenceIds = [input.rawParsedId];
 
-  const accounts = (input.payload.accounts as PlaidAccountPayload[] | undefined) ?? [];
-  const transactions = (input.payload.transactions as PlaidTransactionPayload[] | undefined) ?? [];
+  const accounts = Array.isArray(input.payload.accounts) ? input.payload.accounts : [];
+  const transactions = Array.isArray(input.payload.transactions) ? input.payload.transactions : [];
 
   // 1. Accounts. Build a map external_account_id → ledger id for the next pass.
   const accountIdMap = new Map<string, string>();
-  for (const acct of accounts) {
+  for (const rawAcct of accounts) {
+    const acct = parsePlaidAccount(rawAcct);
+    if (acct === null) continue;
     const { row } = await upsertAccountRow(pool, audit, ctx, {
       external_account_id: acct.account_id,
       ...(acct.official_name !== undefined ? { institution: acct.official_name } : {}),
@@ -112,7 +114,9 @@ export async function normalizePlaidArtifact(
 
   // 2. Transactions. Skip pending. For each tx: upsert counterparty (if
   //    merchant_name present), then record the transaction.
-  for (const tx of transactions) {
+  for (const rawTx of transactions) {
+    const tx = parsePlaidTransaction(rawTx);
+    if (tx === null) continue;
     if (tx.pending === true) continue;
     const accountId = accountIdMap.get(tx.account_id);
     if (accountId === undefined) {
@@ -139,7 +143,7 @@ export async function normalizePlaidArtifact(
     const { row } = await recordTransactionRow(pool, audit, ctx, {
       account_id: accountId,
       external_transaction_id: tx.transaction_id,
-      amount: Math.abs(tx.amount).toFixed(2),
+      amount: centsToDecimal(Math.round(Math.abs(tx.amount) * 100)),
       currency: (tx.iso_currency_code ?? "USD").toUpperCase(),
       direction,
       transaction_date: new Date(tx.date).toISOString(),
@@ -184,4 +188,32 @@ function numericOrNull(v: number | null | undefined): string | null {
   if (v === null || v === undefined) return null;
   if (!Number.isFinite(v)) return null;
   return v.toFixed(8);
+}
+
+function centsToDecimal(cents: number): string {
+  const whole = Math.trunc(cents / 100).toString();
+  const frac = (cents % 100).toString().padStart(2, "0");
+  return `${whole}.${frac}`;
+}
+
+function parsePlaidAccount(raw: unknown): PlaidAccountPayload | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const acct = raw as Partial<PlaidAccountPayload>;
+  if (typeof acct.account_id !== "string" || acct.account_id.length === 0) return null;
+  if (typeof acct.name !== "string" || acct.name.length === 0) return null;
+  if (typeof acct.type !== "string") return null;
+  return acct as PlaidAccountPayload;
+}
+
+function parsePlaidTransaction(raw: unknown): PlaidTransactionPayload | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const tx = raw as Partial<PlaidTransactionPayload>;
+  if (typeof tx.transaction_id !== "string" || tx.transaction_id.length === 0) return null;
+  if (typeof tx.account_id !== "string" || tx.account_id.length === 0) return null;
+  if (typeof tx.amount !== "number" || !Number.isFinite(tx.amount)) return null;
+  if (typeof tx.date !== "string" || Number.isNaN(new Date(tx.date).getTime())) return null;
+  if (tx.iso_currency_code !== null && tx.iso_currency_code !== undefined) {
+    if (typeof tx.iso_currency_code !== "string" || tx.iso_currency_code.length === 0) return null;
+  }
+  return tx as PlaidTransactionPayload;
 }
