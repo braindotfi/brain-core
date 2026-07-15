@@ -103,6 +103,42 @@ describe("normalizeStripeArtifact — stripe_v1", () => {
     expect(audit.events.some((e) => e.action === "ledger.transaction.posted")).toBe(true);
   });
 
+  it("skips one charge when its write fails and continues the batch", async () => {
+    const calls: { text: string; values: unknown[] }[] = [];
+    const client = {
+      query: vi.fn(async (text: string, values: unknown[] = []) => {
+        calls.push({ text, values });
+        if (/^(BEGIN|COMMIT|ROLLBACK)/.test(text.trim())) return { rows: [], rowCount: 0 };
+        if (text.startsWith("SELECT set_config")) return { rows: [], rowCount: 0 };
+        if (text.includes("INSERT INTO ledger_accounts")) {
+          return { rows: [{ id: "acct_LEDGER", account_type: "payment_processor" }], rowCount: 1 };
+        }
+        if (text.includes("INSERT INTO ledger_transactions")) {
+          if (values[3] === "ch_bad") throw new Error("bad charge row");
+          return { rows: [{ id: `tx_${String(values[3])}` }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+
+    const created = await normalizeStripeArtifact(
+      pool,
+      new InMemoryAuditEmitter(),
+      ctx,
+      input("charge", [
+        { id: "ch_bad", amount: 100, currency: "usd", created: 1, status: "succeeded" },
+        { id: "ch_good", amount: 200, currency: "usd", created: 2, status: "succeeded" },
+      ]),
+    );
+
+    expect(created).toContainEqual({ entity: "transaction", id: "tx_ch_good" });
+    expect(calls.filter((c) => c.text.includes("INSERT INTO ledger_transactions"))).toHaveLength(
+      2,
+    );
+  });
+
   it("lands payouts as OUTFLOW transactions (AC: correct direction)", async () => {
     const { pool, calls } = capturingPool({
       ...ACCOUNT_ROUTE,

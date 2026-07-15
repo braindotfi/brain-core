@@ -24,11 +24,27 @@ import {
   leasedCycle,
   withTenantScope,
   type AuditEmitter,
+  type MetricsEmitter,
 } from "@brain/shared";
 import type { ManagedWorker } from "@brain/shared";
 import { LedgerService } from "../service/LedgerService.js";
 import { registeredParsers } from "../extractors/registry.js";
 import type { LedgerDeps } from "../deps.js";
+
+export const DEFAULT_MAX_NORMALIZATION_ATTEMPTS = 5;
+
+interface PendingNormalizeRow {
+  id: string;
+  tenant_id: string;
+  parser: string;
+}
+
+export interface NormalizeCycleDeps {
+  pool: Pool;
+  audit?: AuditEmitter;
+  metrics?: MetricsEmitter;
+  normalizeRow?: (row: PendingNormalizeRow, actor: string) => Promise<void>;
+}
 
 /**
  * Record the per-row normalization outcome. The cross-tenant poll uses the
@@ -41,14 +57,31 @@ export async function recordNormalizationResult(
   pool: Pool,
   row: { id: string; tenant_id: string; parser: string },
   errorMessage: string | null,
-): Promise<void> {
-  await withTenantScope(pool, row.tenant_id, async (c) => {
-    await c.query(
-      `INSERT INTO normalization_log (raw_parsed_id, tenant_id, parser, normalized_at, error)
-       VALUES ($1, $2, $3, now(), $4)
-       ON CONFLICT (raw_parsed_id) DO NOTHING`,
-      [row.id, row.tenant_id, row.parser, errorMessage],
+  opts?: { maxAttempts?: number },
+): Promise<{ attempts: number; quarantined: boolean }> {
+  const maxAttempts = opts?.maxAttempts ?? DEFAULT_MAX_NORMALIZATION_ATTEMPTS;
+  return withTenantScope(pool, row.tenant_id, async (c) => {
+    const { rows } = await c.query<{ attempts: number; quarantined: boolean }>(
+      `INSERT INTO normalization_log
+         (raw_parsed_id, tenant_id, parser, normalized_at, error, attempts, quarantined)
+       VALUES ($1, $2, $3, now(), $4, CASE WHEN $4::text IS NULL THEN 0 ELSE 1 END, false)
+       ON CONFLICT (raw_parsed_id) DO UPDATE SET
+         tenant_id = EXCLUDED.tenant_id,
+         parser = EXCLUDED.parser,
+         normalized_at = now(),
+         error = EXCLUDED.error,
+         attempts = CASE
+           WHEN EXCLUDED.error IS NULL THEN 0
+           ELSE normalization_log.attempts + 1
+         END,
+         quarantined = CASE
+           WHEN EXCLUDED.error IS NULL THEN false
+           ELSE (normalization_log.attempts + 1) >= $5
+         END
+       RETURNING attempts, quarantined`,
+      [row.id, row.tenant_id, row.parser, errorMessage, maxAttempts],
     );
+    return rows[0] ?? { attempts: errorMessage === null ? 0 : 1, quarantined: false };
   });
 }
 
@@ -59,6 +92,8 @@ export interface NormalizeWorkerOptions {
   batchSize?: number;
   /** Actor id attributed to normalization audit events. */
   actor?: string;
+  /** Failed rows quarantined after this many attempts. Default: 5. */
+  maxAttempts?: number;
 }
 
 export type NormalizeWorker = ManagedWorker;
@@ -71,57 +106,16 @@ export function startNormalizeWorker(
   const batchSize = opts?.batchSize ?? 20;
   const actor = opts?.actor ?? "sys_normalize_worker";
 
-  const ledgerDeps: LedgerDeps = { pool: deps.pool, audit: deps.audit };
-  const ledgerService = new LedgerService(ledgerDeps);
-
-  async function poll(): Promise<void> {
-    let rows: Array<{ id: string; tenant_id: string; parser: string }>;
-    try {
-      // Cross-tenant poll — requires BYPASSRLS or superuser in production.
-      const result = await deps.pool.query<{ id: string; tenant_id: string; parser: string }>(
-        `SELECT rp.id, rp.tenant_id, rp.parser
-           FROM raw_parsed rp
-          WHERE rp.parser = ANY($2::text[])
-            AND NOT EXISTS (
-              SELECT 1 FROM normalization_log nl
-               WHERE nl.raw_parsed_id = rp.id
-            )
-          ORDER BY rp.extracted_at ASC
-          LIMIT $1`,
-        [batchSize, registeredParsers()],
-      );
-      rows = result.rows;
-    } catch (err) {
-      console.error("[normalizeWorker] poll query failed:", err);
-      return;
-    }
-
-    for (const row of rows) {
-      let errorMessage: string | null = null;
-      try {
-        await ledgerService.normalizeFromRaw(
-          { tenantId: row.tenant_id, actor, requestId: `normalize_${row.id}` },
-          row.id,
-        );
-      } catch (err) {
-        errorMessage = err instanceof Error ? err.message : String(err);
-        console.error(`[normalizeWorker] normalizeFromRaw failed for ${row.id}:`, errorMessage);
-      }
-
-      try {
-        await recordNormalizationResult(deps.pool, row, errorMessage);
-      } catch (err) {
-        console.error(`[normalizeWorker] failed to write normalization_log for ${row.id}:`, err);
-      }
-    }
-  }
-
   // Advisory lease: only one replica normalizes at a time (multi-replica safe).
   return startManagedInterval(
     leasedCycle({
       pool: deps.pool,
       lockKey: "brain_worker_normalize",
-      cycle: poll,
+      cycle: () =>
+        runNormalizeCycle(
+          { pool: deps.pool, audit: deps.audit },
+          { batchSize, actor, maxAttempts: opts?.maxAttempts },
+        ),
       name: "normalize",
     }),
     intervalMs,
@@ -131,4 +125,73 @@ export function startNormalizeWorker(
       onError: (err) => console.error("[normalizeWorker] cycle failed:", err),
     },
   );
+}
+
+/** One normalize cycle. Exported for tests; startNormalizeWorker schedules it. */
+export async function runNormalizeCycle(
+  deps: NormalizeCycleDeps,
+  opts?: NormalizeWorkerOptions,
+): Promise<void> {
+  const batchSize = opts?.batchSize ?? 20;
+  const actor = opts?.actor ?? "sys_normalize_worker";
+  const maxAttempts = opts?.maxAttempts ?? DEFAULT_MAX_NORMALIZATION_ATTEMPTS;
+  const normalizeRow =
+    deps.normalizeRow ??
+    (async (row: PendingNormalizeRow, rowActor: string) => {
+      if (deps.audit === undefined) {
+        throw new Error("normalize audit emitter is required");
+      }
+      const ledgerDeps: LedgerDeps = { pool: deps.pool, audit: deps.audit };
+      const ledgerService = new LedgerService(ledgerDeps);
+      await ledgerService.normalizeFromRaw(
+        { tenantId: row.tenant_id, actor: rowActor, requestId: `normalize_${row.id}` },
+        row.id,
+      );
+    });
+
+  let rows: PendingNormalizeRow[];
+  try {
+    // Cross-tenant poll requires BYPASSRLS or superuser in production. Failed
+    // rows stay eligible until they are quarantined; successful and quarantined
+    // rows are terminal.
+    const result = await deps.pool.query<PendingNormalizeRow>(
+      `SELECT rp.id, rp.tenant_id, rp.parser
+         FROM raw_parsed rp
+        WHERE rp.parser = ANY($2::text[])
+          AND NOT EXISTS (
+            SELECT 1 FROM normalization_log nl
+             WHERE nl.raw_parsed_id = rp.id
+               AND (nl.error IS NULL OR nl.quarantined)
+          )
+        ORDER BY rp.extracted_at ASC
+        LIMIT $1`,
+      [batchSize, registeredParsers()],
+    );
+    rows = result.rows;
+  } catch (err) {
+    console.error("[normalizeWorker] poll query failed:", err);
+    return;
+  }
+
+  for (const row of rows) {
+    let errorMessage: string | null = null;
+    try {
+      await normalizeRow(row, actor);
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[normalizeWorker] normalizeFromRaw failed for ${row.id}:`, errorMessage);
+    }
+
+    try {
+      const result = await recordNormalizationResult(deps.pool, row, errorMessage, { maxAttempts });
+      if (errorMessage !== null && result.quarantined) {
+        deps.metrics?.increment("brain.ledger.normalize.quarantined.count", {
+          parser: row.parser,
+          tenant_id: row.tenant_id,
+        });
+      }
+    } catch (err) {
+      console.error(`[normalizeWorker] failed to write normalization_log for ${row.id}:`, err);
+    }
+  }
 }

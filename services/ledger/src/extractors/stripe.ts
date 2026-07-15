@@ -142,112 +142,116 @@ export async function normalizeStripeArtifact(
     const o = raw as StripeObject;
     if (typeof o.id !== "string" || o.id.length === 0) continue;
 
-    if (objectType === "charge" && accountId !== null) {
-      const { row } = await recordTransactionRow(pool, audit, ctx, {
-        account_id: accountId,
-        external_transaction_id: o.id,
-        amount: centsToDecimal(o.amount ?? 0),
-        currency: currencyOf(o),
-        direction: "inflow",
-        transaction_date: isoFromEpoch(o.created),
-        status: chargeStatus(o.status),
-        ...(typeof o.description === "string" ? { description_raw: o.description } : {}),
-        ...common,
-        confidence: TRANSACTION_CONFIDENCE,
-      });
-      created.push({ entity: "transaction", id: row.id });
-      continue;
-    }
+    try {
+      if (objectType === "charge" && accountId !== null) {
+        const { row } = await recordTransactionRow(pool, audit, ctx, {
+          account_id: accountId,
+          external_transaction_id: o.id,
+          amount: centsToDecimal(o.amount ?? 0),
+          currency: currencyOf(o),
+          direction: "inflow",
+          transaction_date: isoFromEpoch(o.created),
+          status: chargeStatus(o.status),
+          ...(typeof o.description === "string" ? { description_raw: o.description } : {}),
+          ...common,
+          confidence: TRANSACTION_CONFIDENCE,
+        });
+        created.push({ entity: "transaction", id: row.id });
+        continue;
+      }
 
-    if (objectType === "payout" && accountId !== null) {
-      const { row } = await recordTransactionRow(pool, audit, ctx, {
-        account_id: accountId,
-        external_transaction_id: o.id,
-        amount: centsToDecimal(o.amount ?? 0),
-        currency: currencyOf(o),
-        direction: "outflow",
-        transaction_date: isoFromEpoch(o.created),
-        status: payoutStatus(o.status),
-        description_raw: "Stripe payout",
-        ...common,
-        confidence: TRANSACTION_CONFIDENCE,
-      });
-      created.push({ entity: "transaction", id: row.id });
-      continue;
-    }
+      if (objectType === "payout" && accountId !== null) {
+        const { row } = await recordTransactionRow(pool, audit, ctx, {
+          account_id: accountId,
+          external_transaction_id: o.id,
+          amount: centsToDecimal(o.amount ?? 0),
+          currency: currencyOf(o),
+          direction: "outflow",
+          transaction_date: isoFromEpoch(o.created),
+          status: payoutStatus(o.status),
+          description_raw: "Stripe payout",
+          ...common,
+          confidence: TRANSACTION_CONFIDENCE,
+        });
+        created.push({ entity: "transaction", id: row.id });
+        continue;
+      }
 
-    if (objectType === "refund" && accountId !== null) {
-      const { row } = await recordTransactionRow(pool, audit, ctx, {
-        account_id: accountId,
-        external_transaction_id: o.id,
-        amount: centsToDecimal(o.amount ?? 0),
-        currency: currencyOf(o),
-        direction: "outflow",
-        transaction_date: isoFromEpoch(o.created),
-        status: chargeStatus(o.status),
-        description_raw: "Stripe refund",
-        ...common,
-        confidence: TRANSACTION_CONFIDENCE,
-      });
-      created.push({ entity: "transaction", id: row.id });
-      continue;
-    }
+      if (objectType === "refund" && accountId !== null) {
+        const { row } = await recordTransactionRow(pool, audit, ctx, {
+          account_id: accountId,
+          external_transaction_id: o.id,
+          amount: centsToDecimal(o.amount ?? 0),
+          currency: currencyOf(o),
+          direction: "outflow",
+          transaction_date: isoFromEpoch(o.created),
+          status: chargeStatus(o.status),
+          description_raw: "Stripe refund",
+          ...common,
+          confidence: TRANSACTION_CONFIDENCE,
+        });
+        created.push({ entity: "transaction", id: row.id });
+        continue;
+      }
 
-    if (objectType === "balance_transaction" && accountId !== null) {
-      // Fee entries only: the money-moving entries (charge / payout /
-      // refund) are covered by their source-object pages, and writing both
-      // would double-count.
-      if (o.type !== "stripe_fee" && o.type !== "fee") continue;
-      const { row } = await recordTransactionRow(pool, audit, ctx, {
-        account_id: accountId,
-        external_transaction_id: o.id,
-        amount: centsToDecimal(o.amount ?? 0),
-        currency: currencyOf(o),
-        direction: "outflow",
-        transaction_date: isoFromEpoch(o.created),
-        status: "posted",
-        description_raw: o.description ?? "Stripe fee",
-        ...common,
-        confidence: TRANSACTION_CONFIDENCE,
-      });
-      created.push({ entity: "transaction", id: row.id });
-      continue;
-    }
+      if (objectType === "balance_transaction" && accountId !== null) {
+        // Fee entries only: the money-moving entries (charge / payout /
+        // refund) are covered by their source-object pages, and writing both
+        // would double-count.
+        if (o.type !== "stripe_fee" && o.type !== "fee") continue;
+        const { row } = await recordTransactionRow(pool, audit, ctx, {
+          account_id: accountId,
+          external_transaction_id: o.id,
+          amount: centsToDecimal(o.amount ?? 0),
+          currency: currencyOf(o),
+          direction: "outflow",
+          transaction_date: isoFromEpoch(o.created),
+          status: "posted",
+          description_raw: o.description ?? "Stripe fee",
+          ...common,
+          confidence: TRANSACTION_CONFIDENCE,
+        });
+        created.push({ entity: "transaction", id: row.id });
+        continue;
+      }
 
-    if (objectType === "customer") {
-      const name = typeof o.name === "string" && o.name.length > 0 ? o.name : (o.email ?? o.id);
-      const { row } = await upsertCounterpartyRow(pool, audit, ctx, {
-        name,
-        type: "customer",
-        ...common,
-        confidence: COUNTERPARTY_CONFIDENCE,
-        metadata: { stripe: { customer_id: o.id, email: o.email ?? null } },
-      });
-      created.push({ entity: "counterparty", id: row.id });
-      continue;
-    }
+      if (objectType === "customer") {
+        const name = typeof o.name === "string" && o.name.length > 0 ? o.name : (o.email ?? o.id);
+        const { row } = await upsertCounterpartyRow(pool, audit, ctx, {
+          name,
+          type: "customer",
+          ...common,
+          confidence: COUNTERPARTY_CONFIDENCE,
+          metadata: { stripe: { customer_id: o.id, email: o.email ?? null } },
+        });
+        created.push({ entity: "counterparty", id: row.id });
+        continue;
+      }
 
-    if (objectType === "dispute") {
-      const { row: processor } = await upsertCounterpartyRow(pool, audit, ctx, {
-        name: "Stripe",
-        type: "other",
-        ...common,
-        confidence: COUNTERPARTY_CONFIDENCE,
-      });
-      const dueBy = o.evidence_details?.due_by;
-      const { row } = await upsertObligationRow(pool, audit, ctx, {
-        type: "other",
-        counterparty_id: processor.id,
-        amount_due: centsToDecimal(o.amount ?? 0),
-        currency: currencyOf(o),
-        due_date: isoFromEpoch(typeof dueBy === "number" ? dueBy : o.created),
-        status: "disputed",
-        direction: "payable",
-        ...common,
-        confidence: OBLIGATION_CONFIDENCE,
-      });
-      created.push({ entity: "counterparty", id: processor.id });
-      created.push({ entity: "obligation", id: row.id });
+      if (objectType === "dispute") {
+        const { row: processor } = await upsertCounterpartyRow(pool, audit, ctx, {
+          name: "Stripe",
+          type: "other",
+          ...common,
+          confidence: COUNTERPARTY_CONFIDENCE,
+        });
+        const dueBy = o.evidence_details?.due_by;
+        const { row } = await upsertObligationRow(pool, audit, ctx, {
+          type: "other",
+          counterparty_id: processor.id,
+          amount_due: centsToDecimal(o.amount ?? 0),
+          currency: currencyOf(o),
+          due_date: isoFromEpoch(typeof dueBy === "number" ? dueBy : o.created),
+          status: "disputed",
+          direction: "payable",
+          ...common,
+          confidence: OBLIGATION_CONFIDENCE,
+        });
+        created.push({ entity: "counterparty", id: processor.id });
+        created.push({ entity: "obligation", id: row.id });
+        continue;
+      }
+    } catch {
       continue;
     }
   }
