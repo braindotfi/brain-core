@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { assertMoneyPathLoadersWiredInProduction } from "./payment-loaders-prod-fence.js";
 
 const allWired = {
+  hasResolveTenantFlags: true,
   hasResolveEvidence: true,
   hasDetectDuplicates: true,
   hasSumActiveReservations: true,
@@ -16,6 +17,7 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
     expect(() =>
       assertMoneyPathLoadersWiredInProduction({
         nodeEnv: "development",
+        hasResolveTenantFlags: false,
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasSumActiveReservations: false,
@@ -31,6 +33,7 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
     expect(() =>
       assertMoneyPathLoadersWiredInProduction({
         nodeEnv: "test",
+        hasResolveTenantFlags: false,
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasSumActiveReservations: false,
@@ -46,6 +49,7 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
     expect(() =>
       assertMoneyPathLoadersWiredInProduction({
         nodeEnv: undefined,
+        hasResolveTenantFlags: false,
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasSumActiveReservations: false,
@@ -71,6 +75,16 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         hasResolveObligationConfidence: false,
       }),
     ).toThrow(/resolveObligationConfidence/);
+  });
+
+  it("throws in production when resolveTenantFlags is missing (check 1.5)", () => {
+    expect(() =>
+      assertMoneyPathLoadersWiredInProduction({
+        nodeEnv: "production",
+        ...allWired,
+        hasResolveTenantFlags: false,
+      }),
+    ).toThrow(/resolveTenantFlags/);
   });
 
   it("throws in production when resolveEvidence is missing", () => {
@@ -147,6 +161,7 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
     expect(() =>
       assertMoneyPathLoadersWiredInProduction({
         nodeEnv: "production",
+        hasResolveTenantFlags: false,
         hasResolveEvidence: false,
         hasDetectDuplicates: false,
         hasSumActiveReservations: false,
@@ -156,7 +171,7 @@ describe("assertMoneyPathLoadersWiredInProduction", () => {
         hasResolveObligationDirection: false,
       }),
     ).toThrow(
-      /resolveEvidence.*detectDuplicates.*sumActiveReservations.*attestCounterpartyAgent.*sumAgentWindowSpend.*resolveObligationConfidence.*resolveObligationDirection/s,
+      /resolveTenantFlags.*resolveEvidence.*detectDuplicates.*sumActiveReservations.*attestCounterpartyAgent.*sumAgentWindowSpend.*resolveObligationConfidence.*resolveObligationDirection/s,
     );
   });
 });

@@ -246,7 +246,10 @@ import {
   readDeployedBytecodeExpectation,
 } from "./composition/escrow-audit-gate.js";
 import { makeBaseGetChainId, makeBaseGetCode } from "./composition/eth-getcode.js";
-import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
+import {
+  assertAtLeastOneLiveRailInProduction,
+  assertEscrowRailHasStateLoader,
+} from "./composition/rails-prod-fence.js";
 import { closeAllPools } from "./composition/close-pools.js";
 import { runShutdown } from "./composition/shutdown.js";
 import { resolveComposition, POOL_ENV } from "./composition/process-roles.js";
@@ -830,6 +833,7 @@ async function main(): Promise<void> {
   // wired in production. Same fail-closed posture as the rail/escrow fences.
   assertMoneyPathLoadersWiredInProduction({
     nodeEnv: process.env.NODE_ENV,
+    hasResolveTenantFlags: resolveTenantFlags !== undefined,
     hasResolveEvidence: resolveEvidence !== undefined,
     hasDetectDuplicates: detectDuplicates !== undefined,
     hasSumActiveReservations: sumActiveReservations !== undefined,
@@ -954,6 +958,10 @@ async function main(): Promise<void> {
       entries: liveNames.map((name) => ({ name, live: true })),
     };
   })();
+  assertEscrowRailHasStateLoader({
+    escrowRailLive: railsBuild.entries.some((entry) => entry.name === "escrow_base" && entry.live),
+    hasResolveEscrowState: resolveEscrowState !== undefined,
+  });
   const rails: RailRegistry = railsBuild.rails;
 
   const executionDeps: ExecutionDeps = {

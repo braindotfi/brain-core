@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { assertAtLeastOneLiveRailInProduction } from "./rails-prod-fence.js";
+import {
+  assertAtLeastOneLiveRailInProduction,
+  assertEscrowRailHasStateLoader,
+} from "./rails-prod-fence.js";
 
 describe("assertAtLeastOneLiveRailInProduction", () => {
   it("is silent in development with zero live rails (dev-stub path)", () => {
@@ -36,5 +39,25 @@ describe("assertAtLeastOneLiveRailInProduction", () => {
     expect(() =>
       assertAtLeastOneLiveRailInProduction({ nodeEnv: undefined, liveRailCount: 0 }),
     ).not.toThrow();
+  });
+});
+
+describe("assertEscrowRailHasStateLoader", () => {
+  it("is silent when escrow rail is not live", () => {
+    expect(() =>
+      assertEscrowRailHasStateLoader({ escrowRailLive: false, hasResolveEscrowState: false }),
+    ).not.toThrow();
+  });
+
+  it("is silent when escrow rail and state loader are both wired", () => {
+    expect(() =>
+      assertEscrowRailHasStateLoader({ escrowRailLive: true, hasResolveEscrowState: true }),
+    ).not.toThrow();
+  });
+
+  it("throws when escrow rail is live without resolveEscrowState", () => {
+    expect(() =>
+      assertEscrowRailHasStateLoader({ escrowRailLive: true, hasResolveEscrowState: false }),
+    ).toThrow(/resolveEscrowState/);
   });
 });

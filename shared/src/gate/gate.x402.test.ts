@@ -17,7 +17,7 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { InMemoryAuditEmitter } from "../audit/emitter.js";
-import { runPreExecutionGate } from "./gate.js";
+import { isX402AutonomousAllowed, runPreExecutionGate } from "./gate.js";
 import type {
   GateAccount,
   GateAgent,
@@ -59,6 +59,17 @@ function x402Intent(overrides: Partial<GatePaymentIntent> = {}): GatePaymentInte
     amount: "1.00",
     destination_counterparty_id: "cp_agent",
     settlement: { asset: "USDC", network: "base", amount: "1.00", pay_to: PAY_TO },
+    ...overrides,
+  });
+}
+
+function escrowIntent(overrides: Partial<GatePaymentIntent> = {}): GatePaymentIntent {
+  return defaultIntent({
+    action_type: "escrow_release",
+    currency: "USDC",
+    amount: "1.00",
+    destination_counterparty_id: "cp_agent",
+    escrow: { escrowId: `0x${"01".repeat(32)}`, jobTermsHash: `0x${"02".repeat(32)}` },
     ...overrides,
   });
 }
@@ -208,6 +219,60 @@ describe("§6 — check 3.5: on-chain settlement permitted (RFC 0001 §6.5)", ()
       expect(row?.passed).toBe(true);
       expect(row?.detail?.not_applicable).toBe(true);
     }
+  });
+});
+
+describe("§6 — on-chain action context fails closed", () => {
+  it("rejects x402_settle at 6.5 when settlement context is missing", async () => {
+    const { deps } = makeDeps({
+      resolveAccount: async () => USDC_ACCOUNT,
+      resolveCounterparty: async () => AGENT_CP,
+      evaluatePolicy: async () => makeDecision({ onchain_settlement_permitted: true }),
+    });
+    const intentWithoutSettlement = x402Intent();
+    delete intentWithoutSettlement.settlement;
+    const result = await run(deps, intentWithoutSettlement);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(6.5);
+      expect(result.failedCheck.name).toBe("x402_payment_context_valid");
+      expect(result.failedCheck.detail!.failures).toContain(
+        "x402_settle requires settlement context",
+      );
+    }
+  });
+
+  it("rejects escrow_release at 6.6 when escrow context is missing", async () => {
+    const { deps } = makeDeps({
+      resolveAccount: async () => USDC_ACCOUNT,
+      resolveCounterparty: async () => AGENT_CP,
+      evaluatePolicy: async () => makeDecision({ outcome: "allow" }),
+    });
+    const intentWithoutEscrow = escrowIntent();
+    delete intentWithoutEscrow.escrow;
+    const result = await run(deps, intentWithoutEscrow);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(6.6);
+      expect(result.failedCheck.name).toBe("escrow_state_bound");
+      expect(result.failedCheck.detail!.failures).toContain(
+        "escrow_release requires escrow context",
+      );
+    }
+  });
+
+  it("does not allow x402 autonomy without settlement context", () => {
+    const intentWithoutSettlement = x402Intent();
+    delete intentWithoutSettlement.settlement;
+    expect(
+      isX402AutonomousAllowed(intentWithoutSettlement, {
+        ...makeDecision({
+          outcome: "allow",
+          onchain_settlement_permitted: true,
+          x402_autonomous_max_amount: { currency: "USDC", value: "1.00" },
+        }),
+      }),
+    ).toBe(false);
   });
 });
 
@@ -551,7 +616,7 @@ describe("§6 — hard human-approval floor for on-chain actions", () => {
       evaluatePolicy: async () => makeDecision({ outcome: "allow" }),
       resolveApprovals: async () => ({ signedRoles: [] }),
     });
-    const result = await run(deps, defaultIntent({ action_type: "escrow_release" }));
+    const result = await run(deps, escrowIntent());
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.failedCheck.index).toBe(11);
