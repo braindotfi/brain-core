@@ -124,6 +124,7 @@ function makeDeps(over: Partial<AgentApiDeps> = {}): AgentApiDeps {
     },
     enqueueRouteJob: vi.fn(async () => ({ jobId: "job_1" })),
     haltAgent: vi.fn(async () => ({ paused: ["pi_1"], quarantined: true })),
+    restoreAgent: vi.fn(async () => ({ restored: true as const })),
     isShadowed: (id: string) => id !== "payment",
     releaseAgentQuarantine: vi.fn(async () => true),
     runHistory,
@@ -343,6 +344,29 @@ describe("POST /v1/agents/{agent_id}/halt", () => {
     expect(body.agent_id).toBe("payment");
     expect(body.paused).toEqual(["pi_1"]);
     expect(body.quarantined).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/agents/{agent_id}/restore
+// ---------------------------------------------------------------------------
+
+describe("POST /v1/agents/{agent_id}/restore", () => {
+  it("restores the agent and echoes the agent id", async () => {
+    const deps = makeDeps();
+    const app = await buildApp(deps);
+    const res = await app.inject({ method: "POST", url: "/agents/payment/restore" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ agent_id: "payment", restored: true });
+    expect(deps.restoreAgent).toHaveBeenCalledWith(expect.anything(), "payment");
+  });
+
+  it("requires the operator halt scope", async () => {
+    const deps = makeDeps();
+    const app = await buildApp(deps, ["execution:read"]);
+    const res = await app.inject({ method: "POST", url: "/agents/payment/restore" });
+    expect(res.statusCode).toBe(403);
+    expect(deps.restoreAgent).not.toHaveBeenCalled();
   });
 });
 

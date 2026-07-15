@@ -247,6 +247,23 @@ Done
   The execution outbox worker rechecks the creator agent row with a locking read
   immediately before rail dispatch and parks rows in `reconciling` if the agent
   is missing or no longer active.
+- Production boot refuses to start the execution worker without that outbox
+  pre-dispatch guard. Operators can restore a halted agent with
+  `POST /v1/agents/{id}/restore`; the route only moves `quarantined` to
+  `active` and rejects every other state.
+- DB roles are least privilege by runtime path. `brain_privileged` is a
+  deploy seed and verifier fallback role only, not an API runtime role, and it
+  cannot insert `audit_events`. Raw worker and ledger projector roles have no
+  DELETE grants. The canonical projector has DELETE only on
+  `canonical_journal_line`, matching the journal-line replacement path.
+- Tenant deletion uses the `brain_tenant_deletion` BYPASSRLS role, but every
+  DELETE statement is generated through a checked helper requiring an exact
+  `tenant_id`, `owner_id`, or `id` predicate. Predicate-less erasure SQL is a
+  test failure.
+- API-owned tenant tables apply FORCE ROW LEVEL SECURITY in
+  `services/api/migrations/0015_force_rls.sql`: `tenants`,
+  `wallet_identities`, `tenant_blob_purge_jobs`,
+  `tenant_blob_purge_audit_outbox`, and `email_verifications`.
 - HTTP propose surfaces pin agent-token `created_by_agent_id` attribution to
   the authenticated agent principal. Human user sessions without an admin
   override store `created_by_agent_id=null` rather than masquerading as agents.

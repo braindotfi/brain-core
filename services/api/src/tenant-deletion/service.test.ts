@@ -3,7 +3,12 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { InMemoryAuditEmitter, newTenantId, newUserId } from "@brain/shared";
 import type { Pool } from "pg";
-import { TenantDeletionService, TENANT_SCOPED_TABLES, PRESERVED_TABLES } from "./service.js";
+import {
+  TenantDeletionService,
+  TENANT_SCOPED_TABLES,
+  PRESERVED_TABLES,
+  assertTenantDeleteStatement,
+} from "./service.js";
 
 const TENANT = newTenantId();
 const USER = newUserId();
@@ -65,6 +70,27 @@ describe("TenantDeletionService", () => {
     const deletes = calls.filter((c) => c.startsWith("DELETE FROM "));
     expect(deletes.some((d) => d.includes("audit_events"))).toBe(false);
     expect(deletes.some((d) => d.includes("audit_anchors"))).toBe(false);
+  });
+
+  it("only emits DELETEs with the exact tenant predicate shape", async () => {
+    const pool = fakePool({});
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+    await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+
+    const client = await pool.connect();
+    const calls = vi.mocked(client.query).mock.calls.map((c) => c[0] as string);
+    const deletes = calls.filter((c) => c.startsWith("DELETE FROM "));
+    expect(deletes.length).toBeGreaterThan(20);
+    for (const sql of deletes) {
+      expect(sql).toMatch(/^DELETE FROM [a-z_][a-z0-9_]* WHERE (tenant_id|owner_id|id) = \$1$/);
+    }
+  });
+
+  it("rejects predicate-less DELETE statements", () => {
+    expect(() => assertTenantDeleteStatement("DELETE FROM tenants", "id")).toThrow(
+      /exact id = \$1 predicate/,
+    );
   });
 
   it("emits a tenant.deleted audit event with the per-table breakdown", async () => {

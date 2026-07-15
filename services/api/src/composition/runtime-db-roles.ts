@@ -57,6 +57,7 @@ export async function assertRuntimeDbRoles(input: {
       forbidden: [
         { table: "canonical_journal_entry", privilege: "INSERT" },
         { table: "ledger_payment_intents", privilege: "INSERT" },
+        { table: "raw_artifacts", privilege: "DELETE" },
         { table: "audit_integrity_findings", privilege: "SELECT" },
       ],
     },
@@ -69,6 +70,7 @@ export async function assertRuntimeDbRoles(input: {
         { table: "raw_parsed", privilege: "INSERT" },
         { table: "ledger_payment_intents", privilege: "INSERT" },
         { table: "execution_outbox", privilege: "INSERT" },
+        { table: "canonical_journal_entry", privilege: "DELETE" },
         { table: "audit_integrity_findings", privilege: "SELECT" },
       ],
     },
@@ -80,6 +82,7 @@ export async function assertRuntimeDbRoles(input: {
       forbidden: [
         { table: "ledger_payment_intents", privilege: "INSERT" },
         { table: "canonical_journal_entry", privilege: "INSERT" },
+        { table: "ledger_obligations", privilege: "DELETE" },
         { table: "execution_outbox", privilege: "INSERT" },
         { table: "audit_integrity_findings", privilege: "SELECT" },
       ],

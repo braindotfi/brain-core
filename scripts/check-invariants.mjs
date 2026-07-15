@@ -145,7 +145,8 @@ check(
   "outbox worker rechecks dispatch safety before rail dispatch",
   beforeDispatchIndex >= 0 &&
     railDispatchIndex > beforeDispatchIndex &&
-    apiMain.includes("beforeDispatch: (_ctx, row)") &&
+    apiMain.includes("const outboxBeforeDispatch") &&
+    apiMain.includes("beforeDispatch: outboxBeforeDispatch") &&
     apiMain.includes("FOR SHARE") &&
     apiMain.includes('agent.state !== "active"'),
   "execution outbox must re-resolve creator agent state and refuse dispatch after a kill-switch quarantine",

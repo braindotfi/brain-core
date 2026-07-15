@@ -72,6 +72,11 @@ export interface AgentApiDeps {
     agentId: string,
   ) => Promise<{ paused: string[]; quarantined: boolean }>;
   /**
+   * Operator restore after a kill-switch quarantine. Must be a compare-and-swap
+   * from quarantined to active; every other state fails closed.
+   */
+  readonly restoreAgent: (ctx: ServiceCallContext, agentId: string) => Promise<{ restored: true }>;
+  /**
    * H-09: release an agent's contribution quarantine (operator action). Returns
    * false when the agent is not visible to the tenant (→ 404). Injected from the
    * composition root (the agents table lives in @brain/execution).
@@ -198,6 +203,17 @@ export async function registerAgentApiRoutes(
       const ctx = assertCtx(request);
       requireScope(ctx.scopes ?? [], SCOPE_HALT);
       const result = await deps.haltAgent(ctx, request.params.agent_id);
+      return { agent_id: request.params.agent_id, ...result };
+    },
+  );
+
+  // POST /v1/agents/{agent_id}/restore — operator CAS restore from quarantine.
+  app.post(
+    "/agents/:agent_id/restore",
+    async (request: FastifyRequest<{ Params: { agent_id: string } }>) => {
+      const ctx = assertCtx(request);
+      requireScope(ctx.scopes ?? [], SCOPE_HALT);
+      const result = await deps.restoreAgent(ctx, request.params.agent_id);
       return { agent_id: request.params.agent_id, ...result };
     },
   );

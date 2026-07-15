@@ -166,6 +166,23 @@ describe("assertDbRoles", () => {
     ).rejects.toThrow(/must NOT have UPDATE on audit_events/);
   });
 
+  it("throws when brain_privileged can INSERT audit_events", async () => {
+    await expect(
+      assertDbRoles(
+        [
+          {
+            label: "privileged",
+            query: fakeQuery(privRole, { "audit_events:INSERT": true }),
+            mustBypassRls: true,
+            expectedRole: "brain_privileged",
+            forbidden: [{ table: "audit_events", privilege: "INSERT" }],
+          },
+        ],
+        { enforce: true },
+      ),
+    ).rejects.toThrow(/must NOT have INSERT on audit_events/);
+  });
+
   it("does not throw in non-enforce (dev) mode but still reports violations + logs", async () => {
     const log = vi.fn();
     const res = await assertDbRoles(

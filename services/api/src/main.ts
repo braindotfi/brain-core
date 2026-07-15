@@ -254,6 +254,7 @@ import { closeAllPools } from "./composition/close-pools.js";
 import { runShutdown } from "./composition/shutdown.js";
 import { resolveComposition, POOL_ENV } from "./composition/process-roles.js";
 import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
+import { assertOutboxDispatchGuardWiredInProduction } from "./composition/outbox-dispatch-guard-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
 import { assertServiceTokenFences } from "./composition/service-token-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
@@ -1039,6 +1040,37 @@ async function main(): Promise<void> {
     }
   };
 
+  const outboxBeforeDispatch = (
+    _ctx: ServiceCallContext,
+    row: { tenant_id: string; payment_intent_id: string },
+  ) =>
+    withTenantScope(pool, row.tenant_id, async (c) => {
+      const intent = await LedgerPaymentIntents.findById(c, row.payment_intent_id);
+      if (intent === null) {
+        return { ok: false as const, reason: "payment_intent_missing" };
+      }
+      if (intent.created_by_agent_id === null) {
+        return { ok: true as const };
+      }
+      const { rows } = await c.query<{ state: string }>(
+        `SELECT state FROM agents WHERE id = $1 FOR SHARE`,
+        [intent.created_by_agent_id],
+      );
+      const agent = rows[0];
+      if (agent === undefined) {
+        return { ok: false as const, reason: "agent_missing" };
+      }
+      if (agent.state !== "active") {
+        return { ok: false as const, reason: `agent_state=${agent.state}` };
+      }
+      return { ok: true as const };
+    });
+  assertOutboxDispatchGuardWiredInProduction({
+    nodeEnv: cfg.NODE_ENV,
+    executionWorkerEnabled: composition.workers.has("execution"),
+    beforeDispatchConfigured: outboxBeforeDispatch !== undefined,
+  });
+
   const outboxWorker = composition.workers.has("execution")
     ? startOutboxWorker(
         {
@@ -1047,28 +1079,7 @@ async function main(): Promise<void> {
           executor: paymentIntentService,
           audit,
           withPrivileged,
-          beforeDispatch: (_ctx, row) =>
-            withTenantScope(pool, row.tenant_id, async (c) => {
-              const intent = await LedgerPaymentIntents.findById(c, row.payment_intent_id);
-              if (intent === null) {
-                return { ok: false, reason: "payment_intent_missing" };
-              }
-              if (intent.created_by_agent_id === null) {
-                return { ok: true };
-              }
-              const { rows } = await c.query<{ state: string }>(
-                `SELECT state FROM agents WHERE id = $1 FOR SHARE`,
-                [intent.created_by_agent_id],
-              );
-              const agent = rows[0];
-              if (agent === undefined) {
-                return { ok: false, reason: "agent_missing" };
-              }
-              if (agent.state !== "active") {
-                return { ok: false, reason: `agent_state=${agent.state}` };
-              }
-              return { ok: true };
-            }),
+          beforeDispatch: outboxBeforeDispatch,
           workerId: `outbox-worker-${process.pid}`,
         },
         { intervalMs: 1_000 },
@@ -1796,6 +1807,33 @@ async function main(): Promise<void> {
                 outputs: { paused_count: paused.length, paused_intent_ids: paused, quarantined },
               });
               return { paused, quarantined };
+            },
+            restoreAgent: async (restoreCtx, agentId) => {
+              await withTenantScope(pool, restoreCtx.tenantId, async (c) => {
+                const agent = await findAgent(c, agentId);
+                if (agent === null) {
+                  throw brainError("execution_agent_not_registered", `no such agent ${agentId}`, {
+                    statusOverride: 404,
+                  });
+                }
+                if (agent.state !== "quarantined") {
+                  throw brainError(
+                    "execution_agent_not_registered",
+                    `agent ${agentId} is ${agent.state}, not quarantined`,
+                    { statusOverride: 409 },
+                  );
+                }
+                await transitionAgent(c, agentId, "quarantined", "active");
+              });
+              await audit.emit({
+                tenantId: restoreCtx.tenantId,
+                layer: "agent",
+                actor: restoreCtx.actor,
+                action: "agent.restored",
+                inputs: { agent_id: agentId },
+                outputs: { state: "active" },
+              });
+              return { restored: true };
             },
           }),
         );

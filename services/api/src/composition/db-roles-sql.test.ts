@@ -36,24 +36,36 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     }
   });
 
-  it("does NOT add the new roles to the blanket all-tables grant", () => {
+  it("does NOT add privileged roles to the blanket all-tables grant", () => {
     const blanket = SQL.match(/GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES[\s\S]*?;/);
     expect(blanket).not.toBeNull();
     for (const role of ROLES) {
       expect(blanket?.[0]).not.toContain(role);
     }
-    // brain_privileged retains the blanket grant (deploy-time seed one-shot).
-    expect(blanket?.[0]).toContain("brain_privileged");
+    expect(blanket?.[0]).not.toContain("brain_privileged");
+    expect(blanket?.[0]).toContain("brain_app");
+  });
+
+  it("limits brain_privileged to the seed and verifier footprint", () => {
+    expect(SQL).toContain(
+      "GRANT SELECT, INSERT, UPDATE ON tenants, policies, members TO brain_privileged",
+    );
+    expect(SQL).toContain("GRANT SELECT, INSERT, UPDATE, DELETE ON agents TO brain_privileged");
+    expect(SQL).toContain(
+      "GRANT SELECT, INSERT, UPDATE ON audit_verifier_checkpoint TO brain_privileged",
+    );
+    expect(SQL).toContain("GRANT SELECT, INSERT ON audit_integrity_findings TO brain_privileged");
   });
 
   it("scopes each worker role to its layer", () => {
-    expect(SQL).toMatch(/GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO brain_raw_worker/);
-    expect(SQL).toMatch(/GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO brain_canonical_projector/);
+    expect(SQL).toMatch(/GRANT SELECT, INSERT, UPDATE ON %s TO brain_raw_worker/);
+    expect(SQL).toMatch(/GRANT SELECT, INSERT, UPDATE ON %s TO brain_canonical_projector/);
+    expect(SQL).toContain("GRANT DELETE ON canonical_journal_line TO brain_canonical_projector");
     expect(SQL).toContain("GRANT SELECT ON raw_parsed TO brain_canonical_projector");
     // ledger projector: SELECT canonical_*, write ONLY the three projection targets.
     expect(SQL).toMatch(/GRANT SELECT ON %s TO brain_ledger_projector/);
     expect(SQL).toMatch(
-      /GRANT SELECT, INSERT, UPDATE, DELETE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties\s+TO brain_ledger_projector/,
+      /GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties\s+TO brain_ledger_projector/,
     );
     // execution worker: outbox only.
     expect(SQL).toContain(
@@ -78,6 +90,10 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     for (const role of ROLES) {
       expect(revoke?.[0], `${role} not in audit_events REVOKE`).toContain(role);
     }
+    const insertRevoke = SQL.match(/REVOKE INSERT ON audit_events\s+FROM[\s\S]*?;/);
+    expect(insertRevoke).not.toBeNull();
+    expect(insertRevoke?.[0]).toContain("brain_privileged");
+    expect(insertRevoke?.[0]).not.toContain("brain_app");
   });
 
   it("keeps forensic state off-limits to every new role except the verifier", () => {

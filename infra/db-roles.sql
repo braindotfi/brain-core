@@ -96,14 +96,29 @@ ALTER ROLE brain_resolver            WITH LOGIN PASSWORD :'brain_resolver_passwo
 ALTER ROLE brain_tenant_deletion     WITH LOGIN PASSWORD :'brain_tenant_deletion_password' BYPASSRLS;
 ALTER ROLE brain_surface_gateway     WITH LOGIN PASSWORD :'brain_surface_gateway_password' NOBYPASSRLS;
 
--- brain_app + brain_privileged get full DML on the application schema; neither
--- owns the tables (the migration/owner role does), so RLS applies to brain_app.
+-- brain_app gets request-path DML on the application schema; it does not own the
+-- tables, so RLS applies to it. brain_privileged is intentionally excluded from
+-- the blanket runtime grant and receives only the seed and verifier footprint
+-- below.
 GRANT USAGE ON SCHEMA public TO brain_app, brain_privileged, brain_wiki_reader;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public
-  TO brain_app, brain_privileged;
+  TO brain_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO brain_app, brain_privileged;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO brain_app, brain_privileged;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO brain_app;
+
+-- brain_privileged: deploy-time seed one-shot and audit verifier fallback only.
+-- It is BYPASSRLS but not a live API runtime role. Keep the table footprint
+-- explicit so a seed compromise cannot append audit_events or mutate unrelated
+-- live-money tables.
+GRANT SELECT, INSERT, UPDATE ON tenants, policies, members TO brain_privileged;
+GRANT SELECT, INSERT, UPDATE, DELETE ON agents TO brain_privileged;
+GRANT SELECT, INSERT, UPDATE ON ledger_counterparty_payment_instructions
+  TO brain_privileged;
+GRANT SELECT, INSERT ON ledger_documents, ledger_invoices, ledger_obligations,
+  ledger_payment_intents TO brain_privileged;
+GRANT SELECT, INSERT, UPDATE ON audit_verifier_checkpoint TO brain_privileged;
+GRANT SELECT, INSERT ON audit_integrity_findings TO brain_privileged;
 
 -- brain_wiki_reader: SELECT on everything (read Ledger truth), but write only
 -- the wiki_* projection tables. New tables default to SELECT-only for it.
@@ -144,23 +159,26 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO
   brain_execution_worker, brain_audit_verifier, brain_tenant_deletion,
   brain_surface_gateway;
 
--- brain_raw_worker: full DML on the raw layer (sync + interpret workers).
+-- brain_raw_worker: raw layer writes. No worker delete path exists.
 DO $$
 DECLARE t regclass;
 BEGIN
   FOR t IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'raw\_%'
-  LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO brain_raw_worker', t); END LOOP;
+  LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE ON %s TO brain_raw_worker', t); END LOOP;
 END $$;
 
--- brain_canonical_projector: full DML on canonical_*, SELECT on raw_parsed (input).
+-- brain_canonical_projector: canonical writes, SELECT on raw_parsed (input).
+-- Only canonical_journal_line is deleted by the projector, as a line-replace
+-- step during journal-entry upsert.
 DO $$
 DECLARE t regclass;
 BEGIN
   FOR t IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'canonical\_%'
-  LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO brain_canonical_projector', t); END LOOP;
+  LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE ON %s TO brain_canonical_projector', t); END LOOP;
 END $$;
+GRANT DELETE ON canonical_journal_line TO brain_canonical_projector;
 GRANT SELECT ON raw_parsed TO brain_canonical_projector;
 
 -- brain_ledger_projector: SELECT on canonical_* (input); DML ONLY on the three
@@ -172,7 +190,7 @@ BEGIN
            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'canonical\_%'
   LOOP EXECUTE format('GRANT SELECT ON %s TO brain_ledger_projector', t); END LOOP;
 END $$;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties
+GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties
   TO brain_ledger_projector;
 -- The ledger_counterparties writer trigger (ledger/0027) is plain plpgsql and
 -- runs as the invoking role, INSERTing into ledger_counterparty_payment_instructions.
@@ -244,6 +262,11 @@ GRANT SELECT, INSERT, UPDATE ON tenant_blob_purge_jobs, tenant_blob_purge_audit_
 -- the audit verifier/publisher keep their SELECT (only mutation is stripped).
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
   FROM brain_app, brain_privileged, brain_wiki_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway;
+REVOKE INSERT ON audit_events
+  FROM brain_privileged, brain_wiki_reader,
        brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
        brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
        brain_resolver, brain_tenant_deletion, brain_surface_gateway;
