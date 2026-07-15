@@ -6,7 +6,7 @@
  * leaves uncovered: the GET /agents filter combinations, the various 404
  * throws (agent_not_found / agent_run_not_found / proof_not_found /
  * action_not_found / execution_agent_not_registered), the runHistory
- * present-vs-absent branches, releaseAgentQuarantine present/absent,
+ * present-vs-absent branches, releaseContributionHold present/absent,
  * halt-category valid vs invalid, and toRoutingInput's "one of event or intent"
  * 400.
  */
@@ -126,7 +126,7 @@ function makeDeps(over: Partial<AgentApiDeps> = {}): AgentApiDeps {
     haltAgent: vi.fn(async () => ({ paused: ["pi_1"], quarantined: true })),
     restoreAgent: vi.fn(async () => ({ restored: true as const })),
     isShadowed: (id: string) => id !== "payment",
-    releaseAgentQuarantine: vi.fn(async () => true),
+    releaseContributionHold: vi.fn(async () => true),
     runHistory,
     ...over,
   };
@@ -371,37 +371,37 @@ describe("POST /v1/agents/{agent_id}/restore", () => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /v1/agents/{agent_id}/quarantine/release (releaseAgentQuarantine branch)
+// POST /v1/agents/{agent_id}/contribution-hold/release
 // ---------------------------------------------------------------------------
 
-describe("POST /v1/agents/{agent_id}/quarantine/release", () => {
+describe("POST /v1/agents/{agent_id}/contribution-hold/release", () => {
   it("releases when the loader returns true", async () => {
     const app = await buildApp(makeDeps());
     const res = await app.inject({
       method: "POST",
-      url: "/agents/payment/quarantine/release",
+      url: "/agents/payment/contribution-hold/release",
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ agent_id: "payment", quarantine_released: true });
+    expect(res.json()).toEqual({ agent_id: "payment", contribution_hold_released: true });
   });
 
   it("404s when the loader returns false (agent not visible)", async () => {
-    const app = await buildApp(makeDeps({ releaseAgentQuarantine: vi.fn(async () => false) }));
+    const app = await buildApp(makeDeps({ releaseContributionHold: vi.fn(async () => false) }));
     const res = await app.inject({
       method: "POST",
-      url: "/agents/payment/quarantine/release",
+      url: "/agents/payment/contribution-hold/release",
     });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe("execution_agent_not_registered");
   });
 
   it("404s when the loader is not wired at all", async () => {
-    const { releaseAgentQuarantine: _omit, ...rest } = makeDeps();
+    const { releaseContributionHold: _omit, ...rest } = makeDeps();
     void _omit;
     const app = await buildApp(rest);
     const res = await app.inject({
       method: "POST",
-      url: "/agents/payment/quarantine/release",
+      url: "/agents/payment/contribution-hold/release",
     });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe("execution_agent_not_registered");

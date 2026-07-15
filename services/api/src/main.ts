@@ -152,7 +152,7 @@ import {
   listAgentRuns,
   findRoutingDecision,
   transitionAgent,
-  releaseAgentQuarantine,
+  releaseContributionHold,
 } from "@brain/execution";
 import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
 import { parseEther } from "viem";
@@ -1764,9 +1764,9 @@ async function main(): Promise<void> {
             isShadowed,
             // H-25: run-history sub-resources (evidence / gate-trace / proof / why).
             runHistory: makeRunLoaders(pool, proofBuilder),
-            // H-09: release an agent's contribution quarantine.
-            releaseAgentQuarantine: (ctx, agentId) =>
-              withTenantScope(pool, ctx.tenantId, (c) => releaseAgentQuarantine(c, agentId)),
+            // H-09: release an agent's contribution hold.
+            releaseContributionHold: (ctx, agentId) =>
+              withTenantScope(pool, ctx.tenantId, (c) => releaseContributionHold(c, agentId)),
             enqueueRouteJob: async (jobCtx, payload) => {
               if (payload.event === undefined || !isDomainEvent(payload.event)) {
                 throw brainError(

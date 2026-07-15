@@ -1,10 +1,10 @@
--- H-09 agent contribution quarantine.
+-- H-09 agent contribution hold.
 --
--- The architecture promises that an agent's first N contributions are quarantined
--- (held out of the extraction pipeline) until a tenant operator releases the
--- agent, after which contributions extract normally. Until now only the 0.5
+-- The architecture promises that an agent's first N contributions are held out
+-- of the extraction pipeline until a tenant operator releases the hold, after
+-- which contributions extract normally. Until now only the 0.5
 -- agent-contributed confidence ceiling existed. These columns make the
--- first-N-quarantine real; the 0.5 ceiling stays in place regardless.
+-- first-N hold real; the 0.5 ceiling stays in place regardless.
 
 BEGIN;
 

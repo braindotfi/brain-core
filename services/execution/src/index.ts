@@ -143,13 +143,13 @@ export type {
 // Repository primitives exposed for boot-binary dependency wiring.
 export { findAgent, findUser, transitionAgent } from "./repository.js";
 export type { AgentRow, UserRow } from "./repository.js";
-// H-09 agent-contribution quarantine.
+// H-09 agent contribution hold.
 export {
   shouldQuarantineContribution,
   recordContributionAndDecide,
-  releaseAgentQuarantine,
-  requireReleaseAgentQuarantine,
-  type AgentQuarantineState,
+  releaseContributionHold,
+  requireReleaseContributionHold,
+  type AgentContributionHoldState,
 } from "./agents/quarantine.js";
 
 // Agent-run persistence (Agent Autonomy v3, 1a.3 + 1a.5).

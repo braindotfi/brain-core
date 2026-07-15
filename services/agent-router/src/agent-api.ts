@@ -77,11 +77,11 @@ export interface AgentApiDeps {
    */
   readonly restoreAgent: (ctx: ServiceCallContext, agentId: string) => Promise<{ restored: true }>;
   /**
-   * H-09: release an agent's contribution quarantine (operator action). Returns
-   * false when the agent is not visible to the tenant (→ 404). Injected from the
-   * composition root (the agents table lives in @brain/execution).
+   * H-09: release an agent's contribution hold (operator action). Returns
+   * false when the agent is not visible to the tenant. Injected from the
+   * composition root because the agents table lives in @brain/execution.
    */
-  readonly releaseAgentQuarantine?: (ctx: ServiceCallContext, agentId: string) => Promise<boolean>;
+  readonly releaseContributionHold?: (ctx: ServiceCallContext, agentId: string) => Promise<boolean>;
   /**
    * H-25 Agent Run History loaders. Cross-cutting reads (evidence chain, the §6
    * gate trace via the run's action, the H-07 proof, the routing decision +
@@ -218,24 +218,24 @@ export async function registerAgentApiRoutes(
     },
   );
 
-  // POST /v1/agents/{agent_id}/quarantine/release — clear the contribution
-  // quarantine so subsequent agent contributions extract normally (H-09).
+  // POST /v1/agents/{agent_id}/contribution-hold/release
+  // Clear the H-09 contribution hold so subsequent agent contributions extract.
   app.post(
-    "/agents/:agent_id/quarantine/release",
+    "/agents/:agent_id/contribution-hold/release",
     { config: { idempotent: true } },
     async (request: FastifyRequest<{ Params: { agent_id: string } }>) => {
       const ctx = assertCtx(request);
       requireScope(ctx.scopes ?? [], SCOPE_HALT);
       const agentId = request.params.agent_id;
-      const released = deps.releaseAgentQuarantine
-        ? await deps.releaseAgentQuarantine(ctx, agentId)
+      const released = deps.releaseContributionHold
+        ? await deps.releaseContributionHold(ctx, agentId)
         : false;
       if (!released) {
         throw brainError("execution_agent_not_registered", `no such agent ${agentId}`, {
           statusOverride: 404,
         });
       }
-      return { agent_id: agentId, quarantine_released: true };
+      return { agent_id: agentId, contribution_hold_released: true };
     },
   );
 

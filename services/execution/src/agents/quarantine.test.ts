@@ -1,5 +1,5 @@
 /**
- * H-09 agent-contribution quarantine tests.
+ * H-09 agent contribution hold tests.
  *
  * NOTE: the spec's prose test ("6th, no release → quarantined") contradicts its
  * own concrete ingest rule (`contribution_count <= quarantine_threshold` →
@@ -14,7 +14,7 @@ import type { TenantScopedClient } from "@brain/shared";
 import {
   shouldQuarantineContribution,
   recordContributionAndDecide,
-  releaseAgentQuarantine,
+  releaseContributionHold,
 } from "./quarantine.js";
 
 describe("shouldQuarantineContribution", () => {
@@ -24,7 +24,7 @@ describe("shouldQuarantineContribution", () => {
         shouldQuarantineContribution({
           contributionCount: n,
           quarantineThreshold: 5,
-          quarantineClearedAt: null,
+          contributionHoldClearedAt: null,
         }),
       ).toBe(true);
     }
@@ -35,7 +35,7 @@ describe("shouldQuarantineContribution", () => {
       shouldQuarantineContribution({
         contributionCount: 6,
         quarantineThreshold: 5,
-        quarantineClearedAt: null,
+        contributionHoldClearedAt: null,
       }),
     ).toBe(false);
   });
@@ -45,7 +45,7 @@ describe("shouldQuarantineContribution", () => {
       shouldQuarantineContribution({
         contributionCount: 2,
         quarantineThreshold: 5,
-        quarantineClearedAt: new Date(),
+        contributionHoldClearedAt: new Date(),
       }),
     ).toBe(false);
   });
@@ -64,7 +64,13 @@ describe("recordContributionAndDecide", () => {
   it("increments the counter and quarantines an early contribution", async () => {
     const c = fakeClient((sql) =>
       sql.includes("UPDATE agents")
-        ? [{ contribution_count: 3, quarantine_threshold: 5, quarantine_cleared_at: null }]
+        ? [
+            {
+              contribution_count: 3,
+              quarantine_threshold: 5,
+              contribution_hold_cleared_at: null,
+            },
+          ]
         : [],
     );
     const r = await recordContributionAndDecide(c, "agent_1");
@@ -73,7 +79,11 @@ describe("recordContributionAndDecide", () => {
 
   it("does not quarantine once released", async () => {
     const c = fakeClient(() => [
-      { contribution_count: 2, quarantine_threshold: 5, quarantine_cleared_at: new Date() },
+      {
+        contribution_count: 2,
+        quarantine_threshold: 5,
+        contribution_hold_cleared_at: new Date(),
+      },
     ]);
     const r = await recordContributionAndDecide(c, "agent_1");
     expect(r?.quarantined).toBe(false);
@@ -85,14 +95,14 @@ describe("recordContributionAndDecide", () => {
   });
 });
 
-describe("releaseAgentQuarantine", () => {
-  it("returns true when the agent's quarantine is cleared", async () => {
+describe("releaseContributionHold", () => {
+  it("returns true when the agent's contribution hold is cleared", async () => {
     const c = fakeClient((sql) => (sql.includes("UPDATE agents") ? [{ id: "agent_1" }] : []));
-    expect(await releaseAgentQuarantine(c, "agent_1")).toBe(true);
+    expect(await releaseContributionHold(c, "agent_1")).toBe(true);
   });
 
   it("returns false (→ 404) for a cross-tenant agent", async () => {
     const c = fakeClient(() => []);
-    expect(await releaseAgentQuarantine(c, "agent_b")).toBe(false);
+    expect(await releaseContributionHold(c, "agent_b")).toBe(false);
   });
 });
