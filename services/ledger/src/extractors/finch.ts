@@ -88,23 +88,27 @@ export async function normalizeFinchArtifact(
       const ind = raw as FinchIndividual;
       if (typeof ind.id !== "string") continue;
       const name = [ind.first_name, ind.last_name].filter(Boolean).join(" ") || ind.id;
-      const { row } = await upsertCounterpartyRow(pool, audit, ctx, {
-        name,
-        type: "employee",
-        ...common,
-        confidence: COUNTERPARTY_CONFIDENCE,
-        metadata: {
-          // PII tag: downstream surfaces (Wiki projection, agent traces,
-          // model prompts) filter on this flag.
-          pii: true,
-          finch: {
-            individual_id: ind.id,
-            department: ind.department?.name ?? null,
-            is_active: ind.is_active ?? null,
+      try {
+        const { row } = await upsertCounterpartyRow(pool, audit, ctx, {
+          name,
+          type: "employee",
+          ...common,
+          confidence: COUNTERPARTY_CONFIDENCE,
+          metadata: {
+            // PII tag: downstream surfaces (Wiki projection, agent traces,
+            // model prompts) filter on this flag.
+            pii: true,
+            finch: {
+              individual_id: ind.id,
+              department: ind.department?.name ?? null,
+              is_active: ind.is_active ?? null,
+            },
           },
-        },
-      });
-      created.push({ entity: "counterparty", id: row.id });
+        });
+        created.push({ entity: "counterparty", id: row.id });
+      } catch {
+        continue;
+      }
     }
     return created;
   }
@@ -142,46 +146,50 @@ export async function normalizeFinchArtifact(
         individual_count: run.individual_ids?.length ?? null,
       };
 
-      if (new Date(payDate).getTime() <= now) {
-        const { row } = await recordTransactionRow(pool, audit, ctx, {
-          account_id: account.id,
-          external_transaction_id: run.id,
-          amount: centsToDecimal(cents),
+      try {
+        if (new Date(payDate).getTime() <= now) {
+          const { row } = await recordTransactionRow(pool, audit, ctx, {
+            account_id: account.id,
+            external_transaction_id: run.id,
+            amount: centsToDecimal(cents),
+            currency: "USD",
+            direction: "outflow",
+            transaction_date: new Date(payDate).toISOString(),
+            status: "posted",
+            description_raw: "Payroll run",
+            ...common,
+            confidence: TRANSACTION_CONFIDENCE,
+          });
+          created.push({ entity: "transaction", id: row.id });
+          continue;
+        }
+
+        if (processorCpId === null) {
+          const { row: cp } = await upsertCounterpartyRow(pool, audit, ctx, {
+            name: "Payroll (Finch)",
+            type: "other",
+            ...common,
+            confidence: COUNTERPARTY_CONFIDENCE,
+          });
+          processorCpId = cp.id;
+          created.push({ entity: "counterparty", id: cp.id });
+        }
+        const { row } = await upsertObligationRow(pool, audit, ctx, {
+          type: "payroll",
+          counterparty_id: processorCpId,
+          amount_due: centsToDecimal(cents),
           currency: "USD",
-          direction: "outflow",
-          transaction_date: new Date(payDate).toISOString(),
-          status: "posted",
-          description_raw: "Payroll run",
+          due_date: new Date(payDate).toISOString(),
+          status: "upcoming",
+          direction: "payable",
           ...common,
-          confidence: TRANSACTION_CONFIDENCE,
+          confidence: OBLIGATION_CONFIDENCE,
+          metadata: { finch: aggregates },
         });
-        created.push({ entity: "transaction", id: row.id });
+        created.push({ entity: "obligation", id: row.id });
+      } catch {
         continue;
       }
-
-      if (processorCpId === null) {
-        const { row: cp } = await upsertCounterpartyRow(pool, audit, ctx, {
-          name: "Payroll (Finch)",
-          type: "other",
-          ...common,
-          confidence: COUNTERPARTY_CONFIDENCE,
-        });
-        processorCpId = cp.id;
-        created.push({ entity: "counterparty", id: cp.id });
-      }
-      const { row } = await upsertObligationRow(pool, audit, ctx, {
-        type: "payroll",
-        counterparty_id: processorCpId,
-        amount_due: centsToDecimal(cents),
-        currency: "USD",
-        due_date: new Date(payDate).toISOString(),
-        status: "upcoming",
-        direction: "payable",
-        ...common,
-        confidence: OBLIGATION_CONFIDENCE,
-        metadata: { finch: aggregates },
-      });
-      created.push({ entity: "obligation", id: row.id });
     }
     return created;
   }

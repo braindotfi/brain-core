@@ -1,6 +1,8 @@
 import {
   agentProposal,
-  readString,
+  requireCurrency,
+  requireDecimalAmount,
+  requireStringField,
   type HandlerInput,
   type InternalAgentHandler,
   type ProposedAction,
@@ -26,10 +28,11 @@ export const treasuryHandler: InternalAgentHandler = {
         channel: "payment_intent",
         intent: {
           action_type: "onchain_transfer",
-          source_account_id: readString(c.source_account_id),
-          destination_counterparty_id: readString(c.destination_counterparty_id),
-          amount: readString(c.amount, "0"),
-          currency: readString(c.currency, "USD"),
+          source_account_id: requireStringField(c, "source_account_id"),
+          destination_counterparty_id: requireStringField(c, "destination_counterparty_id"),
+          amount: requireDecimalAmount(c, "amount"),
+          currency: requireCurrency(c, "currency"),
+          confidence: input.evidence.evidence_score,
           evidence_ids: input.evidence.items.map((i) => i.ref),
         },
       };

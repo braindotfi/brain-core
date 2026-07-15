@@ -146,6 +146,7 @@ async function loadIndependentObservations(
       `SELECT id, counterparty_id, amount_due::TEXT, currency, due_date, direction
          FROM ledger_obligations
         WHERE provenance IN ('extracted','human_confirmed')
+          AND status NOT IN ('paid','cancelled')
           AND id <> $1
           AND counterparty_id IN (
             SELECT $2::text

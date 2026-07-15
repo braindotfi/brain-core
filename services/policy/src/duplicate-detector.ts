@@ -15,6 +15,7 @@
  *   - rule 6           → migration 0026 (ledger_counterparty_payment_instructions)
  *                        populated by migration 0027 (Postgres AFTER UPDATE
  *                        trigger on linked_accounts / onchain_address).
+ *   - rule 7           → migration 0034 (ledger_reconciliation_matches)
  */
 
 import type { TenantScopedClient } from "@brain/shared";
@@ -67,6 +68,53 @@ export async function detectDuplicates(
         rule: "obligation_already_settled",
         detail: `obligation ${pi.obligationId} already has an executed payment`,
         conflicting_payment_intent_id: ex[0].id,
+      });
+    }
+
+    // 7 — reconciliation_obligation_duplicate_paid. Follow the confirmed
+    // obligation_duplicate graph so cross-source observations of the same bill
+    // cannot be paid independently just because they use different
+    // counterparty rows or obligation ids.
+    const { rows: linked } = await client.query<{
+      obligation_id: string;
+      status: string | null;
+      payment_intent_id: string | null;
+    }>(
+      `WITH RECURSIVE linked_obligations(id) AS (
+          SELECT $1::text
+          UNION
+          SELECT CASE
+                   WHEN m.left_entity_id = linked_obligations.id THEN m.right_entity_id
+                   ELSE m.left_entity_id
+                 END
+            FROM ledger_reconciliation_matches m
+            JOIN linked_obligations
+              ON m.left_entity_id = linked_obligations.id
+              OR m.right_entity_id = linked_obligations.id
+           WHERE m.match_type = 'obligation_duplicate'
+             AND m.status = 'matched'
+             AND m.left_entity_type = 'obligation'
+             AND m.right_entity_type = 'obligation'
+        )
+        SELECT l.id AS obligation_id, o.status, pi2.id AS payment_intent_id
+          FROM linked_obligations l
+          LEFT JOIN ledger_obligations o ON o.id = l.id
+          LEFT JOIN ledger_payment_intents pi2
+            ON pi2.obligation_id = l.id
+           AND pi2.status = 'executed'
+           AND pi2.id <> $2
+         WHERE l.id <> $1
+           AND (o.status = 'paid' OR pi2.id IS NOT NULL)
+         LIMIT 1`,
+      [pi.obligationId, pi.id],
+    );
+    if (linked[0] !== undefined) {
+      collisions.push({
+        rule: "reconciliation_obligation_duplicate_paid",
+        detail: `linked duplicate obligation ${linked[0].obligation_id} is already paid`,
+        ...(linked[0].payment_intent_id !== null
+          ? { conflicting_payment_intent_id: linked[0].payment_intent_id }
+          : {}),
       });
     }
   }

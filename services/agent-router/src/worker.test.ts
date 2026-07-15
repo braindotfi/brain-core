@@ -7,7 +7,7 @@ import {
 } from "@brain/shared";
 import { AgentRouter } from "./router.js";
 import { RulesIntentClassifier } from "./intent-classifier.js";
-import { StaticEvidenceGatherer } from "./evidence-gatherer.js";
+import { StaticEvidenceGatherer, type EvidenceGatherer } from "./evidence-gatherer.js";
 import { ActionResolver } from "./action-resolver.js";
 import {
   internalAgentCatalog,
@@ -21,14 +21,26 @@ const CTX: ServiceCallContext = { tenantId: "tnt_acme", actor: "agent_system" };
 const EVIDENCE: Evidence[] = [
   { kind: "invoice", ref: "inv_1" },
   { kind: "counterparty", ref: "cp_1" },
+  { kind: "payment_destination", ref: "pd_1" },
   { kind: "balance", ref: "bal_1" },
   { kind: "transaction", ref: "tx_1" },
 ];
+const PAYMENT_CONTEXT = {
+  source_account_id: "acct_source",
+  destination_counterparty_id: "cp_vendor",
+  amount: "125.00",
+  currency: "USD",
+};
 
 let proposeCalls = 0;
 let createPICalls = 0;
 function makeDeps(
-  opts: { scoped?: string[]; isShadowed?: (agentId: string) => boolean } = {},
+  opts: {
+    scoped?: string[];
+    isShadowed?: (agentId: string) => boolean;
+    evidence?: EvidenceGatherer;
+    paymentIntents?: IPaymentIntentService;
+  } = {},
 ): RouteAndProposeDeps {
   proposeCalls = 0;
   createPICalls = 0;
@@ -47,17 +59,19 @@ function makeDeps(
     },
   } as unknown as IAgentService;
   // A shadowed financial proposal must never reach create() — it throws if it does.
-  const paymentIntents = {
-    create: async () => {
-      createPICalls += 1;
-      throw new Error("payment intent must not be created in shadow mode");
-    },
-  } as unknown as IPaymentIntentService;
+  const paymentIntents =
+    opts.paymentIntents ??
+    ({
+      create: async () => {
+        createPICalls += 1;
+        throw new Error("payment intent must not be created in shadow mode");
+      },
+    } as unknown as IPaymentIntentService);
   return {
     router: new AgentRouter({
       catalog: () => internalAgentCatalog,
       classifier: new RulesIntentClassifier(),
-      evidence: new StaticEvidenceGatherer(EVIDENCE),
+      evidence: opts.evidence ?? new StaticEvidenceGatherer(EVIDENCE),
       getScopedCapabilities: () =>
         new Set(opts.scoped ?? ["collections_followup", "treasury_sweep", "reconciliation_review"]),
       audit: new InMemoryAuditEmitter(),
@@ -65,7 +79,7 @@ function makeDeps(
     handlers: internalAgentHandlers,
     definitions: internalAgentDefinitions,
     actionResolver: new ActionResolver({ classifier: new RulesIntentClassifier() }),
-    evidence: new StaticEvidenceGatherer(EVIDENCE),
+    evidence: opts.evidence ?? new StaticEvidenceGatherer(EVIDENCE),
     propose: { agents, paymentIntents },
     // Default: not shadowed (existing non-financial tests propose through).
     isShadowed: opts.isShadowed ?? (() => false),
@@ -135,7 +149,7 @@ describe("routeAndPropose", () => {
     const deps = makeDeps({ scoped: ["payment_propose"], isShadowed: () => true });
     const result = await routeAndPropose(
       CTX,
-      { tenant_id: "tnt_acme", event: "bill.due_soon" },
+      { tenant_id: "tnt_acme", event: "bill.due_soon", context: PAYMENT_CONTEXT },
       deps,
     );
     expect(result.selected_agent_id).toBe("payment");
@@ -146,14 +160,50 @@ describe("routeAndPropose", () => {
     expect(proposeCalls).toBe(0);
   });
 
-  it("creates a financial proposal when the agent is NOT shadowed (live path)", async () => {
+  it("creates a financial proposal when the agent is NOT shadowed and execution mode permits it", async () => {
     // Same financial route, but live → the proposal flows through to create().
     // create() throws here by design, proving the gate let it through (we don't
     // assert success, only that the shadow gate did not short-circuit).
-    const deps = makeDeps({ scoped: ["payment_propose"], isShadowed: () => false });
+    const deps = makeDeps({
+      scoped: ["payment_propose"],
+      isShadowed: () => false,
+    });
     await expect(
-      routeAndPropose(CTX, { tenant_id: "tnt_acme", event: "bill.due_soon" }, deps),
+      routeAndPropose(
+        CTX,
+        { tenant_id: "tnt_acme", event: "bill.due_soon", context: PAYMENT_CONTEXT },
+        deps,
+      ),
     ).rejects.toThrow(/payment intent must not be created/);
     expect(createPICalls).toBe(1); // the gate let the financial proposal through
+  });
+
+  it("does not propose when required evidence makes the route notify_only", async () => {
+    let created = 0;
+    const deps = makeDeps({
+      scoped: ["payment_propose"],
+      isShadowed: () => false,
+      evidence: new StaticEvidenceGatherer([
+        { kind: "invoice", ref: "inv_1" },
+        { kind: "counterparty", ref: "cp_1" },
+      ]),
+      paymentIntents: {
+        create: async () => {
+          created += 1;
+          return { id: "pi_1", status: "proposed", policy_decision_id: null };
+        },
+      } as unknown as IPaymentIntentService,
+    });
+
+    const result = await routeAndPropose(
+      CTX,
+      { tenant_id: "tnt_acme", event: "bill.due_soon" },
+      deps,
+    );
+
+    expect(result.selected_agent_id).toBe("payment");
+    expect(result.status).toBe("notify_only");
+    expect(result.reason).toBe("execution_mode_notify_only");
+    expect(created).toBe(0);
   });
 });

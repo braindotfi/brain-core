@@ -210,12 +210,6 @@ export class AgentRunService {
       ...(input.context !== undefined ? { context: input.context } : {}),
       requiredEvidence: definition.required_evidence,
     });
-    const proposed = handler.build({
-      action: resolution.action,
-      context: input.context ?? {},
-      evidence: bundle,
-    });
-
     const reasonWithAction = {
       ...reason,
       action: resolution.action,
@@ -226,6 +220,28 @@ export class AgentRunService {
       // promoted and the run path calls gate.evaluate({ dryRun: true }).
       policy_dryrun_outcome: null,
     };
+    if (executionMode === "reject" || executionMode === "notify_only") {
+      return this.terminalRun(ctx, {
+        agentId,
+        category,
+        executionMode,
+        status: executionMode === "reject" ? "rejected" : "notify_only",
+        reason: reasonWithAction,
+        routingDecisionId: routing.id,
+        input,
+        confidence: decision.confidence,
+        evidenceScore: bundle.evidence_score,
+        action: resolution.action,
+        failureReason: `execution_mode_${executionMode}`,
+        shadowMode: false,
+      });
+    }
+
+    const proposed = handler.build({
+      action: resolution.action,
+      context: input.context ?? {},
+      evidence: bundle,
+    });
     const shadowed = this.deps.isShadowed(agentId);
 
     // SHADOW MODE: a financial proposal moves no money when the agent is
@@ -318,6 +334,8 @@ export class AgentRunService {
       routingDecisionId: string;
       input: RoutingInput;
       confidence: number;
+      evidenceScore?: number | null;
+      action?: string | null;
       failureReason: string;
       shadowMode: boolean;
     },
@@ -334,7 +352,9 @@ export class AgentRunService {
       routingDecisionId: args.routingDecisionId,
       eventType: args.input.event ?? null,
       intent: args.input.intent ?? null,
+      action: args.action ?? null,
       confidence: args.confidence,
+      evidenceScore: args.evidenceScore ?? null,
       failureReason: args.failureReason,
     });
     return {
@@ -342,7 +362,7 @@ export class AgentRunService {
       routing_decision_id: args.routingDecisionId,
       run_id: run.id,
       selected_agent_id: args.agentId,
-      action: null,
+      action: args.action ?? null,
       shadow_mode: args.shadowMode,
       reason: args.reason,
     };

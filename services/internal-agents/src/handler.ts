@@ -16,6 +16,7 @@ import type {
   IPaymentIntentService,
   ServiceCallContext,
 } from "@brain/shared";
+import { brainError } from "@brain/shared";
 import type { EvidenceBundle } from "./evidence.js";
 
 export type ProposedAction =
@@ -62,6 +63,30 @@ export async function proposeAction(
 
 function str(v: unknown, fallback = ""): string {
   return typeof v === "string" ? v : fallback;
+}
+
+export function requireStringField(context: Record<string, unknown>, field: string): string {
+  const value = context[field];
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+  throw brainError("request_body_invalid", `${field} is required`);
+}
+
+export function requireDecimalAmount(context: Record<string, unknown>, field: string): string {
+  const value = requireStringField(context, field);
+  if (!/^\d+(\.\d+)?$/.test(value) || value === "0") {
+    throw brainError("request_body_invalid", `${field} must be a positive decimal string`);
+  }
+  return value;
+}
+
+export function requireCurrency(context: Record<string, unknown>, field: string): string {
+  const value = requireStringField(context, field).toUpperCase();
+  if (!/^[A-Z]{3,6}$/.test(value)) {
+    throw brainError("request_body_invalid", `${field} must be a currency code`);
+  }
+  return value;
 }
 
 /** Shared helper: shape a non-financial agent proposal from context + evidence. */

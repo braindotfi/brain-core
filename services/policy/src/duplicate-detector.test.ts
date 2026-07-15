@@ -9,21 +9,23 @@ import type { DuplicateCheckInput } from "./duplicate-detector.js";
 function fakeClient(hits: Record<string, unknown[]>): TenantScopedClient {
   return {
     query: vi.fn(async (text: string) => {
-      const key = text.includes("FROM ledger_obligations")
-        ? "obligation_status"
-        : text.includes("invoice_id = $1")
-          ? "invoice_already_paid"
-          : text.includes("obligation_id = $1")
-            ? "obligation_executed"
-            : text.includes("interval '30 days'")
-              ? "vendor_30d"
-              : text.includes("interval '10 minutes'")
-                ? "recent_10m"
-                : text.includes("evidence_ids &&")
-                  ? "raw_used"
-                  : text.includes("ledger_counterparty_payment_instructions")
-                    ? "dest_changed"
-                    : "other";
+      const key = text.includes("ledger_reconciliation_matches")
+        ? "obligation_duplicate_graph"
+        : text.includes("FROM ledger_obligations")
+          ? "obligation_status"
+          : text.includes("invoice_id = $1")
+            ? "invoice_already_paid"
+            : text.includes("obligation_id = $1")
+              ? "obligation_executed"
+              : text.includes("interval '30 days'")
+                ? "vendor_30d"
+                : text.includes("interval '10 minutes'")
+                  ? "recent_10m"
+                  : text.includes("evidence_ids &&")
+                    ? "raw_used"
+                    : text.includes("ledger_counterparty_payment_instructions")
+                      ? "dest_changed"
+                      : "other";
       const rows = hits[key] ?? [];
       return { rows, rowCount: rows.length };
     }),
@@ -68,6 +70,33 @@ describe("detectDuplicates", () => {
       input(),
     );
     expect(r.collisions.map((c) => c.rule)).toContain("obligation_already_settled");
+  });
+
+  it("rejects payment of a reconciliation-linked duplicate obligation after its peer executed", async () => {
+    const r = await detectDuplicates(
+      fakeClient({
+        obligation_duplicate_graph: [
+          {
+            obligation_id: "obl_peer",
+            payment_intent_id: "pi_ALREADY_EXECUTED",
+            status: "due",
+          },
+        ],
+      }),
+      input({
+        id: "pi_SECOND",
+        obligationId: "obl_second",
+        counterpartyId: "cp_qbo_acme",
+      }),
+    );
+
+    expect(r.passed).toBe(false);
+    expect(r.collisions).toContainEqual(
+      expect.objectContaining({
+        rule: "reconciliation_obligation_duplicate_paid",
+        conflicting_payment_intent_id: "pi_ALREADY_EXECUTED",
+      }),
+    );
   });
 
   it("flags payment_intent_recently_executed inside the 10-minute window", async () => {

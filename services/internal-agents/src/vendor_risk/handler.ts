@@ -4,21 +4,27 @@ import {
   type InternalAgentHandler,
   type ProposedAction,
 } from "../handler.js";
+import type { EvidenceRef } from "../evidence.js";
 
 /**
  * Vendor Risk actions are non-financial proposals (flag, require approval,
  * block, escalate). When risk evidence (counterparty_history) backs a vendor
- * or destination change, a flag is escalated to a block_payment proposal.
+ * or destination change, a flag/approval action is escalated to a
+ * block_payment proposal.
  * High-risk: the policy template routes these to confirm/reject, never auto.
  */
 export const vendorRiskHandler: InternalAgentHandler = {
   agent_key: "vendor_risk",
   actions: ["flag_vendor_risk", "require_approval", "block_payment", "escalate"],
   build(input: HandlerInput): ProposedAction {
-    const hasRiskEvidence = input.evidence.items.some((i) => i.kind === "counterparty_history");
-    // Escalate a flag to a payment block when risk evidence is present.
+    const hasRiskEvidence = input.evidence.items.some(hasRiskIndicator);
+    // Escalate to a payment block only when the evidence contains a concrete
+    // risk indicator. Mere history presence is not a risk signal.
     const action =
-      hasRiskEvidence && (input.action === "flag_vendor_risk" || input.action === "block_payment")
+      hasRiskEvidence &&
+      (input.action === "flag_vendor_risk" ||
+        input.action === "require_approval" ||
+        input.action === "block_payment")
         ? "block_payment"
         : input.action;
     return {
@@ -32,3 +38,11 @@ export const vendorRiskHandler: InternalAgentHandler = {
     };
   },
 };
+
+function hasRiskIndicator(item: EvidenceRef): boolean {
+  if (item.kind !== "counterparty_history") return false;
+  if (item.risk_flag === true) return true;
+  const severity = item.severity;
+  if (severity === "high" || severity === "critical") return true;
+  return typeof item.risk_score === "number" && item.risk_score >= 0.7;
+}

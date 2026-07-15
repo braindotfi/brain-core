@@ -109,6 +109,40 @@ describe("normalizeFinchArtifact — finch_payroll_v1", () => {
     expect(created.map((r) => r.entity)).toEqual(["account", "transaction"]);
   });
 
+  it("skips one pay run when its write fails and continues the batch", async () => {
+    const calls: { text: string; values: unknown[] }[] = [];
+    const client = {
+      query: vi.fn(async (text: string, values: unknown[] = []) => {
+        calls.push({ text, values });
+        if (/^(BEGIN|COMMIT|ROLLBACK)/.test(text.trim())) return { rows: [], rowCount: 0 };
+        if (text.startsWith("SELECT set_config")) return { rows: [], rowCount: 0 };
+        if (text.includes("INSERT INTO ledger_accounts")) {
+          return { rows: [{ id: "acct_PAYROLL" }], rowCount: 1 };
+        }
+        if (text.includes("INSERT INTO ledger_transactions")) {
+          if (values[3] === "pay_bad") throw new Error("bad pay run");
+          return { rows: [{ id: `tx_${String(values[3])}` }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+
+    const created = await normalizeFinchArtifact(
+      pool,
+      new InMemoryAuditEmitter(),
+      ctx,
+      input("pay_run", [
+        { id: "pay_bad", pay_date: "2026-06-05", company_debit: { amount: 100 } },
+        { id: "pay_good", pay_date: "2026-06-05", company_debit: { amount: 200 } },
+      ]),
+    );
+
+    expect(created).toContainEqual({ entity: "transaction", id: "tx_pay_good" });
+    expect(calls.filter((c) => c.text.includes("INSERT INTO ledger_transactions"))).toHaveLength(2);
+  });
+
   it("lands an upcoming pay run as a payroll obligation due at the pay date (AC)", async () => {
     const { pool, calls } = capturingPool({
       ...ACCOUNT_ROUTE,
