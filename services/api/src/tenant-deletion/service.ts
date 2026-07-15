@@ -2,8 +2,11 @@
  * Tenant deletion service (GDPR right-to-erasure).
  *
  * Walks every tenant-scoped table across the six layers and deletes rows for
- * the target tenant. Runs in a single transaction under the brain_privileged
- * role (BYPASSRLS) so cross-tenant access barriers don't block the cleanup.
+ * the target tenant. Runs in a single transaction under the tenant-deletion
+ * BYPASSRLS role so cross-tenant access barriers do not block cleanup.
+ * BYPASSRLS is retained because the service must erase rows after the tenant
+ * request scope is ending, but every DELETE is built by tenantDeleteStatement,
+ * which rejects statements without the exact tenant predicate shape.
  *
  * Audit posture:
  *   - audit_events and audit_anchors are NOT deleted. The audit chain is the
@@ -178,6 +181,31 @@ export interface TenantDeletionDeps {
   audit: AuditEmitter;
 }
 
+export type TenantDeletionPredicateColumn = "owner_id" | "tenant_id" | "id";
+
+export function assertTenantDeleteStatement(
+  sql: string,
+  column: TenantDeletionPredicateColumn,
+): void {
+  const normalized = sql.replace(/\s+/g, " ").trim();
+  const re = new RegExp(`^DELETE FROM [a-z_][a-z0-9_]* WHERE ${column} = \\$1$`, "i");
+  if (!re.test(normalized)) {
+    throw new Error(`tenant deletion DELETE must include exact ${column} = $1 predicate`);
+  }
+}
+
+export function tenantDeleteStatement(
+  table: string,
+  column: TenantDeletionPredicateColumn,
+): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(table)) {
+    throw new Error(`invalid tenant deletion table name: ${table}`);
+  }
+  const sql = `DELETE FROM ${table} WHERE ${column} = $1`;
+  assertTenantDeleteStatement(sql, column);
+  return sql;
+}
+
 export class TenantDeletionService {
   public constructor(private readonly deps: TenantDeletionDeps) {}
 
@@ -219,16 +247,16 @@ export class TenantDeletionService {
         });
       }
       for (const { table, column } of TENANT_SCOPED_TABLES) {
-        const res = await client.query(`DELETE FROM ${table} WHERE ${column} = $1`, [
-          targetTenantId,
-        ]);
+        const res = await client.query(tenantDeleteStatement(table, column), [targetTenantId]);
         const count = res.rowCount ?? 0;
         deletedRows[table] = count;
         totalRows += count;
       }
       // tenants is keyed by `id` (it IS the tenant registry), not tenant_id.
       // Delete it last so children referencing tenants don't FK-violate.
-      const tenantsRes = await client.query(`DELETE FROM tenants WHERE id = $1`, [targetTenantId]);
+      const tenantsRes = await client.query(tenantDeleteStatement("tenants", "id"), [
+        targetTenantId,
+      ]);
       const tenantsCount = tenantsRes.rowCount ?? 0;
       deletedRows.tenants = tenantsCount;
       totalRows += tenantsCount;
