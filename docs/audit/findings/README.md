@@ -86,11 +86,11 @@ The `IWikiMemoryService.annotate` implementation in `main.ts` (lines 348–355) 
 
 ## Findings from `database/migrations-and-rls.md` (2026-05-26)
 
-### F-12: `tenants` table missing FORCE ROW LEVEL SECURITY migration
+### F-12: API-owned tenant tables missing FORCE ROW LEVEL SECURITY migration
 
-**Severity:** Medium | **Status:** Open
+**Severity:** Medium | **Status:** Remediated
 **Surfaces in:** `database/migrations-and-rls.md`
-`services/api/migrations/0001_tenants.sql` enables RLS on the `tenants` table but no api-service migration applies `FORCE ROW LEVEL SECURITY`. The `infra/db-roles.sql` DO $$ loop covers all RLS-enabled tables (including `tenants`) in production. However, in a development environment where only `tools/migrate up` is run without `db-roles.sql`, the table owner connects and bypasses RLS entirely on the tenant registry. The most security-critical table in the system (`id = current_setting('app.tenant_id', true)` is the root isolation predicate). **Fix:** add `services/api/migrations/0003_force_rls.sql` with `ALTER TABLE tenants FORCE ROW LEVEL SECURITY;`.
+`services/api/migrations/0015_force_rls.sql` applies `FORCE ROW LEVEL SECURITY` to the API-owned tenant tables called out by the Tier 1 follow-up: `tenants`, `wallet_identities`, `tenant_blob_purge_jobs`, `tenant_blob_purge_audit_outbox`, and `email_verifications`. The operator `infra/db-roles.sql` sweep remains as defense in depth.
 
 ### F-13: `rls-coverage.test.ts` does not cover `owner_id`-keyed ledger tables
 
