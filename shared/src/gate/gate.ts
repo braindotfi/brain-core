@@ -35,7 +35,7 @@ import type { GateCheck, GateOutcome, GateResult } from "./types.js";
 // rail in services/execution carries the same constants for its own validation).
 const X402_ASSET = "USDC";
 const X402_NETWORK = "base";
-const X402_DECIMAL = /^\d+(\.\d+)?$/;
+const AUTONOMOUS_CAP_DECIMAL = /^\d+(\.\d+)?$/;
 const ONCHAIN_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
 // ---------------------------------------------------------------------------
@@ -142,6 +142,18 @@ export interface GatePolicyDecision {
    * approval before execution.
    */
   x402_autonomous_max_amount?: { currency: string; value: string } | null;
+  /**
+   * Explicit policy-authored per-action cap that authorizes autonomous ACH
+   * execution. Missing, malformed, wrong-currency, or over-cap values require
+   * a recorded human approval before execution.
+   */
+  ach_autonomous_max_amount?: { currency: string; value: string } | null;
+  /**
+   * Explicit policy-authored per-action cap that authorizes autonomous card
+   * execution. Missing, malformed, wrong-currency, or over-cap values require
+   * a recorded human approval before execution.
+   */
+  card_autonomous_max_amount?: { currency: string; value: string } | null;
 }
 
 export interface GatePrincipal {
@@ -319,6 +331,11 @@ export interface GateDependencies {
    */
   resolveObligationProvenance?: (intent: GatePaymentIntent) => Promise<string | null>;
   /**
+   * Operational kill-switch for the fiat rail approval floor. Defaults true.
+   * Intended only for emergency rollback of the new wire, ACH, and card floor.
+   */
+  fiatHumanApprovalFloorEnabled?: boolean | undefined;
+  /**
    * Optional metrics sink (item 11). When wired, the gate emits at termination:
    *   - brain.gate.check.count   {check, outcome ∈ pass|fail|not_applicable, dry_run}
    *   - brain.gate.outcome.count {outcome ∈ ok|fail, dry_run}
@@ -377,13 +394,35 @@ export function isX402AutonomousAllowed(
   const cap = decision.x402_autonomous_max_amount;
   if (!isAmountCap(cap)) return false;
   if (cap.currency !== intent.currency) return false;
-  if (!X402_DECIMAL.test(cap.value) || !X402_DECIMAL.test(intent.amount)) return false;
+  if (!AUTONOMOUS_CAP_DECIMAL.test(cap.value) || !AUTONOMOUS_CAP_DECIMAL.test(intent.amount)) {
+    return false;
+  }
+  return cmpDecimal(intent.amount, cap.value) <= 0;
+}
+
+export function isFiatAutonomousAllowed(
+  intent: GatePaymentIntent,
+  decision: GatePolicyDecision,
+): boolean {
+  if (decision.outcome !== "allow") return false;
+  const cap =
+    intent.action_type === "ach_outbound" || intent.action_type === "ach_inbound"
+      ? decision.ach_autonomous_max_amount
+      : intent.action_type === "card_payment"
+        ? decision.card_autonomous_max_amount
+        : null;
+  if (!isAmountCap(cap)) return false;
+  if (cap.currency !== intent.currency) return false;
+  if (!AUTONOMOUS_CAP_DECIMAL.test(cap.value) || !AUTONOMOUS_CAP_DECIMAL.test(intent.amount)) {
+    return false;
+  }
   return cmpDecimal(intent.amount, cap.value) <= 0;
 }
 
 export function requiresHardHumanApprovalFloor(
   intent: GatePaymentIntent,
   decision: GatePolicyDecision,
+  options: { fiatHumanApprovalFloorEnabled?: boolean | undefined } = {},
 ): boolean {
   if (decision.outcome !== "allow") return false;
   if (intent.action_type === "onchain_transfer" || intent.action_type === "escrow_release") {
@@ -391,6 +430,14 @@ export function requiresHardHumanApprovalFloor(
   }
   if (intent.action_type === "x402_settle") {
     return !isX402AutonomousAllowed(intent, decision);
+  }
+  if (options.fiatHumanApprovalFloorEnabled === false) return false;
+  if (intent.action_type === "wire") return true;
+  if (intent.action_type === "ach_outbound" || intent.action_type === "ach_inbound") {
+    return !isFiatAutonomousAllowed(intent, decision);
+  }
+  if (intent.action_type === "card_payment") {
+    return !isFiatAutonomousAllowed(intent, decision);
   }
   return false;
 }
@@ -664,7 +711,7 @@ export async function runPreExecutionGate(
     if (input.intent.currency !== s.asset) {
       failures.push("intent currency does not match settled asset");
     }
-    if (!X402_DECIMAL.test(s.amount)) {
+    if (!AUTONOMOUS_CAP_DECIMAL.test(s.amount)) {
       failures.push("settlement amount is not a decimal string");
     } else if (cmpDecimal(s.amount, input.intent.amount) !== 0) {
       failures.push("settlement amount does not match intent amount");
@@ -911,11 +958,11 @@ export async function runPreExecutionGate(
 
   // 11 — approval granted when required. Pass the active policy version so
   // signatures against a superseded version are staled and excluded (P0.4).
-  // Production on-chain actions also have a hard human-approval floor: policy
-  // allow does not dispatch onchain_transfer or escrow_release without at least
-  // one recorded approval, and x402_settle is autonomous only when the policy
-  // explicitly carries an x402_autonomous_max_amount cap that covers the amount.
-  const hardApprovalFloorRequired = requiresHardHumanApprovalFloor(input.intent, decision);
+  // Production irreversible or uncapped money movement has a hard human
+  // approval floor. x402, ACH, and card autonomy require signed policy caps.
+  const hardApprovalFloorRequired = requiresHardHumanApprovalFloor(input.intent, decision, {
+    fiatHumanApprovalFloorEnabled: deps.fiatHumanApprovalFloorEnabled,
+  });
   if (decision.outcome === "confirm" || hardApprovalFloorRequired) {
     const approvals = await deps.resolveApprovals(input.intent.id, decision.policy_version);
     const signedSet = new Set(approvals.signedRoles);

@@ -204,6 +204,8 @@ export class PolicyService {
         ? { onchain_settlement_permitted: matchedRule.onchain_settlement_permitted }
         : {}),
       x402_autonomous_max_amount: matchedRule?.x402_autonomous_max_amount ?? null,
+      ach_autonomous_max_amount: matchedRule?.ach_autonomous_max_amount ?? null,
+      card_autonomous_max_amount: matchedRule?.card_autonomous_max_amount ?? null,
       // P0.4: the active policy version, threaded to approval staleness checks.
       policy_version: active.version,
     };

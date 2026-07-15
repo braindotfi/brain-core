@@ -118,6 +118,7 @@ function makeService(
     ) => Promise<"payable" | "receivable" | null>;
     decision?: GatePolicyDecision;
     onPolicy?: (intent: GatePaymentIntent) => void;
+    fiatHumanApprovalFloorEnabled?: boolean;
   } = {},
 ): PaymentIntentService {
   return new PaymentIntentService({
@@ -133,6 +134,9 @@ function makeService(
       opts.onPolicy?.(intent);
       return opts.decision ?? DECISION;
     },
+    ...(opts.fiatHumanApprovalFloorEnabled !== undefined
+      ? { fiatHumanApprovalFloorEnabled: opts.fiatHumanApprovalFloorEnabled }
+      : {}),
     ...(opts.resolveObligationConfidence !== undefined
       ? { resolveObligationConfidence: opts.resolveObligationConfidence }
       : {}),
@@ -334,6 +338,87 @@ describe("PaymentIntentService.create — hard human-approval floor routing", ()
     await service.create(ctx, { ...baseInput, action_type: "onchain_transfer" });
 
     expect(insertStatus(calls)).toBe("pending_approval");
+  });
+
+  it("routes allow-outcome wire to pending_approval", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit, {
+      decision: { ...DECISION, outcome: "allow" },
+    });
+
+    await service.create(ctx, { ...baseInput, action_type: "wire" });
+
+    expect(insertStatus(calls)).toBe("pending_approval");
+  });
+
+  it("keeps ACH approved when the matched policy rule cap covers the amount", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit, {
+      decision: {
+        ...DECISION,
+        outcome: "allow",
+        ach_autonomous_max_amount: { currency: "USD", value: "125.00" },
+      },
+    });
+
+    await service.create(ctx, { ...baseInput, action_type: "ach_outbound", amount: "100.00" });
+
+    expect(insertStatus(calls)).toBe("approved");
+  });
+
+  it("routes ACH to pending_approval when the cap is missing", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit, {
+      decision: { ...DECISION, outcome: "allow" },
+    });
+
+    await service.create(ctx, { ...baseInput, action_type: "ach_outbound", amount: "100.00" });
+
+    expect(insertStatus(calls)).toBe("pending_approval");
+  });
+
+  it("keeps card approved when the matched policy rule cap covers the amount", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit, {
+      decision: {
+        ...DECISION,
+        outcome: "allow",
+        card_autonomous_max_amount: { currency: "USD", value: "125.00" },
+      },
+    });
+
+    await service.create(ctx, { ...baseInput, action_type: "card_payment", amount: "100.00" });
+
+    expect(insertStatus(calls)).toBe("approved");
+  });
+
+  it("routes card to pending_approval when the cap is missing", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit, {
+      decision: { ...DECISION, outcome: "allow" },
+    });
+
+    await service.create(ctx, { ...baseInput, action_type: "card_payment", amount: "100.00" });
+
+    expect(insertStatus(calls)).toBe("pending_approval");
+  });
+
+  it("keeps fiat allow outcomes approved when the fiat floor kill-switch is off", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit, {
+      decision: { ...DECISION, outcome: "allow" },
+      fiatHumanApprovalFloorEnabled: false,
+    });
+
+    await service.create(ctx, { ...baseInput, action_type: "wire" });
+
+    expect(insertStatus(calls)).toBe("approved");
   });
 
   it("keeps x402_settle approved when the policy authorizes autonomous settlement within cap", async () => {

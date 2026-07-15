@@ -90,6 +90,16 @@ export interface PolicyRule {
    * auto. The execution gate fails closed on malformed or wrong-currency caps.
    */
   x402_autonomous_max_amount?: AmountLiteral;
+  /**
+   * Explicit signed cap for autonomous ACH execution. Rules that omit this
+   * field do not authorize approval-free ACH execution.
+   */
+  ach_autonomous_max_amount?: AmountLiteral;
+  /**
+   * Explicit signed cap for autonomous card execution. Rules that omit this
+   * field do not authorize approval-free card execution.
+   */
+  card_autonomous_max_amount?: AmountLiteral;
 }
 
 /**

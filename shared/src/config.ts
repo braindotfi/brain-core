@@ -268,6 +268,16 @@ const envSchema = z.object({
     .transform((v) => v === "true")
     .default("false"),
 
+  // ---- Money-path policy gates ----
+  BRAIN_FIAT_HUMAN_APPROVAL_FLOOR_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("true"),
+  BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
+
   // ---- Plaid (consumed by tools/plaid-sandbox and Raw webhook verifier) ----
   PLAID_CLIENT_ID: optionalNonEmptyString(),
   PLAID_SECRET: optionalNonEmptyString(),

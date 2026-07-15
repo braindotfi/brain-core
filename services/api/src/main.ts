@@ -871,6 +871,7 @@ async function main(): Promise<void> {
     metrics,
     enqueue: routingEnqueue,
     recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
+    fiatHumanApprovalFloorEnabled: cfg.BRAIN_FIAT_HUMAN_APPROVAL_FLOOR_ENABLED,
   });
 
   // Build the live rail registry. When credentials are present the real rails
@@ -1693,6 +1694,7 @@ async function main(): Promise<void> {
             attestCounterpartyAgent,
             sumAgentWindowSpend,
             sumActiveReservations,
+            fiatHumanApprovalFloorEnabled: cfg.BRAIN_FIAT_HUMAN_APPROVAL_FLOOR_ENABLED,
             resolveEvidence,
             detectDuplicates,
             resolveObligationConfidence,

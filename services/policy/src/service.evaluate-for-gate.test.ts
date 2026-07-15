@@ -20,7 +20,7 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import { PolicyService } from "./service.js";
-import type { PolicyDocument } from "./dsl.js";
+import { contentHashHex, type PolicyDocument } from "./dsl.js";
 
 const POLICY: PolicyDocument = {
   version: 1,
@@ -134,5 +134,57 @@ describe("PolicyService.evaluateForGate — confidence gating (RFC 0004 §5.2)",
     expect(decision.outcome).toBe("allow");
     expect(decision.onchain_settlement_permitted).toBe(true);
     expect(decision.x402_autonomous_max_amount).toEqual({ currency: "USDC", value: "1.00" });
+  });
+
+  it("threads signed ACH and card autonomy fields from the matched rule", async () => {
+    const policy: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "fiat-auto",
+          applies_to: ["any"],
+          when: { "amount.lte": { currency: "USD", value: "100.00" } },
+          execute: "auto",
+          ach_autonomous_max_amount: { currency: "USD", value: "100.00" },
+          card_autonomous_max_amount: { currency: "USD", value: "50.00" },
+        },
+      ],
+    };
+    const svc = new PolicyService({
+      pool: poolWithActivePolicy(policy),
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    const decision = await svc.evaluateForGate(ctx, {
+      ...intent(1),
+      action_type: "ach_outbound",
+      amount: "25.00",
+      currency: "USD",
+    });
+
+    expect(decision.outcome).toBe("allow");
+    expect(decision.ach_autonomous_max_amount).toEqual({ currency: "USD", value: "100.00" });
+    expect(decision.card_autonomous_max_amount).toEqual({ currency: "USD", value: "50.00" });
+  });
+
+  it("includes fiat autonomy caps in the content hash", () => {
+    const withoutCap: PolicyDocument = {
+      version: 1,
+      rules: [{ id: "fiat-auto", applies_to: ["any"], when: {}, execute: "auto" }],
+    };
+    const withCap: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "fiat-auto",
+          applies_to: ["any"],
+          when: {},
+          execute: "auto",
+          ach_autonomous_max_amount: { currency: "USD", value: "100.00" },
+        },
+      ],
+    };
+
+    expect(contentHashHex(withCap)).not.toEqual(contentHashHex(withoutCap));
   });
 });
