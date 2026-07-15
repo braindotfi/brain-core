@@ -25,11 +25,19 @@
   `POST /v1/agents/{agent_id}/restore`; the route only transitions
   `quarantined` to `active` and fails closed for every other state.
 
-## Awaiting Decision
+## Group B Fixed
 
-- B1: Fiat-rail autonomous execution cap. This changes live payment semantics
-  and should be accepted as a policy decision before implementation.
-- B2: Production confidence-floor linter escalation from warning to reject. The
-  warning path can be promoted after policy authors confirm the minimum floor.
-- B3: Rename one of the quarantine surfaces. This is a breaking API copy and
-  route decision, so it is tracked as a proposal rather than merged here.
+- B1: Fiat-rail approval floor is implemented. `wire` always requires a
+  recorded human approval when policy allows. `ach_outbound`, `ach_inbound`,
+  and `card_payment` can execute autonomously only when the matched signed
+  policy rule carries a covering per-action cap:
+  `ach_autonomous_max_amount` or `card_autonomous_max_amount`.
+- B2: Policy activation now runs the production confidence-floor lint. Missing
+  `agent.confidence.gte` or a bound `<= 0.5` returns a structured warning by
+  default. `BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT=true` escalates the same
+  finding to an activation reject.
+- B3: The H-09 contribution intake surface is renamed from contribution
+  quarantine to contribution hold. The breaking route is now
+  `POST /v1/agents/{agent_id}/contribution-hold/release`; the DB column is
+  `contribution_hold_cleared_at`. Agent lifecycle state `quarantined` and the
+  halt or restore routes remain unchanged.

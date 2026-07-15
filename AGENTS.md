@@ -57,6 +57,20 @@ closed as `self_approval_blocked` with `payee_unresolved=true`. Vendor payees
 with unresolved email still pass in v1 as an accepted residual gap until
 canonical vendor identity links are first-class in Ledger.
 
+Fiat rails have a default-on human approval floor. `wire` always requires a
+recorded human approval when policy allows. ACH and card can execute
+autonomously only when the matched signed policy rule carries a covering
+`ach_autonomous_max_amount` or `card_autonomous_max_amount`.
+
+Policy activation lints for `agent.confidence.gte > 0.5`. The default is a
+structured warning; `BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT=true` makes it a hard
+activation reject.
+
+H-09 contribution intake uses contribution-hold naming:
+`POST /v1/agents/{id}/contribution-hold/release` and
+`agents.contribution_hold_cleared_at`. The agent lifecycle state `quarantined`
+remains the kill-switch state.
+
 Member mutations emit `member.changed` audit events with before and after
 envelopes and return `audit_id`. Awaiting second approval emits
 `proposal.awaiting_second_approval`; the outbound webhook allowlist also accepts

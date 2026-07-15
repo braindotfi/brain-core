@@ -251,6 +251,10 @@ Done
   pre-dispatch guard. Operators can restore a halted agent with
   `POST /v1/agents/{id}/restore`; the route only moves `quarantined` to
   `active` and rejects every other state.
+- H-09 contribution intake uses contribution-hold naming. The operator release
+  route is `POST /v1/agents/{id}/contribution-hold/release`, backed by
+  `agents.contribution_hold_cleared_at`. The agent lifecycle state
+  `quarantined` is still the kill-switch state and is not renamed.
 - DB roles are least privilege by runtime path. `brain_privileged` is a
   deploy seed and verifier fallback role only, not an API runtime role, and it
   cannot insert `audit_events`. Raw worker and ledger projector roles have no
@@ -289,6 +293,16 @@ Done
   Missing or malformed policy data fails closed to human approval. `x402_settle`
   and `escrow_release` intentionally skip `ledger_reservations`; their spend
   ceilings are the on-chain session-key caps and escrow `remaining` amount.
+- Tier 1 Group B applies the same human-approval posture to fiat rails. `wire`
+  always requires a recorded human approval when policy allows. ACH and card
+  can execute autonomously only when the matched signed policy rule carries a
+  covering `ach_autonomous_max_amount` or `card_autonomous_max_amount`. The
+  emergency rollback flag is `BRAIN_FIAT_HUMAN_APPROVAL_FLOOR_ENABLED`; it
+  defaults true.
+- Policy activation runs the production confidence-floor lint. Missing
+  `agent.confidence.gte` or a bound `<= 0.5` returns a structured warning by
+  default. `BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT=true` turns that same finding
+  into an activation reject.
 
 ### Deployment
 
