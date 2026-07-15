@@ -359,6 +359,46 @@ Run the surface webhook deployable as its own least-privilege process. The Slack
 Teams, and ESP credentials must not live in the core protocol service. Same repo,
 separate deploy.
 
+## Policy / gating layer (Tier 1 review notes, 2026-07-15)
+
+Gating invariants confirmed by the Tier 1 review (findings in BRAIN_REVIEW.md):
+
+- The pre-execution gate (`shared/src/gate/gate.ts` `runPreExecutionGate`) is the
+  single fail-closed choke point. It has no try/catch: every loader exception
+  propagates and aborts `execute()` before `outbox.enqueue`. Do not add a catch
+  that turns a loader error into a pass.
+- The seven always-applicable gate loaders (checks 9.5, 11.5, 8, 5.5, 8.5,
+  obligation confidence, obligation direction) MUST stay covered by
+  `assertMoneyPathLoadersWiredInProduction`
+  (`services/api/src/composition/payment-loaders-prod-fence.ts`). A check that
+  degrades to `not_applicable` when its loader is absent is a dormant safety
+  loader; if you add such a check, add its loader to that boot fence, not just to
+  the source-grep lint.
+- Confidence floor is NOT a DB default. It is an `agent.confidence.gte` rule seeded
+  into the tenant's active signed policy, and only the self-serve path
+  (`services/api/src/onboarding/provision.ts`, `DEFAULT_CONFIDENCE_FLOOR = 0.6`)
+  seeds it. Production `POST /v1/tenants` seeds no policy at all; it is safe only
+  because policy eval fails closed (`policy_not_found`) on a missing active policy.
+  Never introduce a permissive default policy or a `getActive` fallback without
+  guaranteeing a floor, or production tenants become the under-gated population.
+- Any cross-tenant sweep/reconcile/verifier job MUST run on a BYPASSRLS pool, never
+  the request `brain_app` pool. On the FORCE-RLS request pool with no `app.tenant_id`
+  set, a cross-tenant scan matches ZERO rows and reports a permanent false-clean
+  (this is the T1-20 audit-anchor reconciler defect). The consistency verifier gets
+  this right (`auditVerifierPool`); copy that pattern for any new sweep.
+- Background workers use `startManagedInterval`, which swallows cycle errors to a
+  log-only `onError`. A detective control on that helper needs its own
+  cycle-failure counter and a last-success heartbeat gauge, or a crashed sweep is
+  invisible (T1-21).
+- The agent kill-switch must quarantine the agent FIRST (so gate check 1 fails for
+  in-flight and new `execute()`), then pause, atomically; and the outbox worker
+  should re-check agent state before dispatch. Today it does neither (T1-4), so a
+  halted agent can still settle a row already in the outbox.
+- Tenant scope is derived server-side from the authenticated principal in every
+  money-path route; never scope off a request-body/query `tenant_id`. The GUC is
+  set transaction-local in `withTenantScope`, so it cannot leak across pooled
+  connections. Keep it that way.
+
 ## Copy
 
 No em dashes, no ampersands outside brand names, no emojis in docs, comments, or

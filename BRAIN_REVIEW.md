@@ -412,3 +412,421 @@ evidence rather than unresolved Tier 0 contract-path findings.
 - BrainAuditAnchor: two-step publisher rotation, idempotent (tenant, root)
   publication, and domain-separated Merkle inclusion (0x00 leaf / 0x01 internal)
   that resists second-preimage.
+
+---
+
+## Tier 1: Policy + Gating
+
+Repo: braindotfi/brain-core. Branch: review/tier-1-policy-gating.
+Model: Opus 4.8. Scope: the pre-execution gate and its deterministic checks;
+propose-only enforcement across every entry point (agent, API, MCP, surface
+adapters); RLS policies and the audit-anchor sweep; confidence floor defaults at
+provisioning; the trust state machine (grant / revoke / pause / restore); and DB
+role separation. Emphasis on fail-closed vs fail-silent. Audit only.
+
+### Checklist
+
+- [x] Pre-execution gate: full check set, fail-closed vs degrade-to-not_applicable (T1-14, T1-15)
+- [x] Dormant safety loaders: every check's loader guaranteed present in production (T1-16, T1-17; 7 always-on loaders fenced)
+- [x] Group B hard-approval floor: adversarial bypass probe (no bypass; see gate positives)
+- [x] Propose-only across every entry point (API, MCP, surface, agent): holds; see positives + T1-7, T1-8
+- [x] Policy-bypass via omitted/spoofable tenant parameter across all endpoints: none found (intra-tenant T1-8 only)
+- [x] RLS policy coverage + tenant GUC pool-leakage: no leak; GUC transaction-local (T1-23 low; positives)
+- [x] Audit-anchor sweep fails loudly, not silently: FAILS SILENTLY (T1-20, T1-21, T1-22)
+- [x] Confidence floor default set on every provisioning path + fail-closed enforcement (T1-1, T1-2, T1-3)
+- [x] Trust state machine: transitions, races, partial-state failures (T1-4, T1-5, T1-6)
+- [x] DB role separation: eight-role least-privilege, no role broader than needed (T1-9, T1-10, T1-11, T1-12)
+- [x] Final Tier 1 verdict (below)
+
+### Tier 1 verdict
+
+The gating layer is structurally sound in its core guarantees: execution is a
+genuine single choke point, tenant scoping is server-derived with no
+omitted/spoofable-tenant bypass and no RLS leak (GUC is transaction-local), the
+gate does not swallow loader exceptions, audit-before-execute ordering holds, the
+seven always-applicable gate loaders are covered by the production boot fence, and
+the Group B hard-approval floor survived adversarial probing. But two named past
+bug classes recurred, one as an ACTIVE production defect:
+
+1. T1-20 (HIGH): the audit-anchor reconciler runs its cross-tenant scan on the
+   FORCE-RLS `brain_app` request pool, so in production it matches zero rows every
+   cycle and the `orphan_detected` alert never fires. This is exactly the "RLS
+   audit-anchor sweep silently failing in production" class, live today. T1-21
+   (HIGH) and T1-22 (MEDIUM) compound it: cycle failures are swallowed log-only
+   with no failure/heartbeat metric, and the health endpoint reports "safe" for a
+   dead verifier. Net: the tamper-evidence anchoring can fail in production
+   unobserved.
+2. T1-4 (HIGH): the agent kill-switch does not stop in-flight dispatch and is
+   non-atomic and mis-ordered, so a halted agent can still settle on-chain.
+
+MEDIUM: T1-14 (on-chain gate checks key on optional context, not action_type, a
+fail-silent skip that also lets autonomous x402 execute with recipient/asset
+unvalidated), T1-1 (production tenants get no confidence floor; safe only via
+fail-closed no-policy eval), T1-7 (the gate-bypass CI guard does not scan the
+actual money-signing sinks), T1-9 / T1-10 (over-broad `brain_privileged` and
+`brain_tenant_deletion` grants). Lows and info: T1-2/T1-3, T1-5/T1-6, T1-8,
+T1-11/T1-12/T1-13, T1-15 through T1-19, T1-23.
+
+Cross-tier: the propose-only-is-policy-conditional design question (T0-11) extends
+to FIAT rails (a policy `allow` on ach/wire/card auto-executes with no approval);
+this is design intent to confirm, not a new defect.
+
+Overall Tier 1 readiness: the money path is well-gated at execution, but the
+DETECTIVE control (audit-anchor integrity monitoring) is silently broken in
+production and the agent kill-switch has a real hole. T1-20/T1-21 and T1-4 are the
+priorities before relying on production audit-tamper detection or the kill-switch.
+
+### Findings
+
+_Review in progress. Findings land here as each area is verified._
+
+#### T1-1 (MEDIUM, latent), Production POST /v1/tenants establishes no confidence floor (no policy at all)
+- Location: `services/api/src/production-tenancy/routes.ts` (tenant-create tx, no
+  policy insert) vs `services/api/src/onboarding/provision.ts:146,177` (self-serve
+  inserts `buildDefaultPolicyDocument()` with `DEFAULT_CONFIDENCE_FLOOR = 0.6`).
+- The confidence floor is not a DB/migration default; it is an
+  `agent.confidence.gte` rule inside the tenant's active signed PolicyDocument,
+  seeded per provisioning path. Self-serve seeds it; the production path creates
+  the tenant, bootstrap admin member, identity link, and BFF agent but inserts NO
+  policies row. Verified: grep of the production route shows no policy/seed insert.
+- Safe today (fail-closed): with no active policy, `getActive`
+  (`services/policy/src/repository.ts:78`) returns null and `evaluateForGate`
+  (`services/policy/src/service.ts:62,133`) throws `policy_not_found`;
+  `PaymentIntentService.create` does not catch it, so no intent can be created or
+  executed against a floor-less production tenant. It fails closed, not open.
+- Why it still matters: the "every fresh tenant has a 0.6 floor" guarantee was
+  applied to self-serve only. The production population's safety rests entirely on
+  the separate no-policy throw. If any permissive default policy or a `getActive`
+  fallback were ever introduced, production tenants would be the exact under-gated
+  population with no floor and nothing in provisioning to catch it. The floor is a
+  per-path constant, not an invariant by construction.
+- Note: seeding no default policy on production may be intentional (production
+  tenants author and sign their own policy). If so, the real gap is that nothing
+  guarantees that first signed policy CONTAINS a confidence floor.
+- Suggested fix (not applied): either seed a default signed policy on the
+  production path too, or enforce a minimum confidence-floor rule in the policy
+  linter at activation, so a floor is guaranteed by construction rather than by
+  remembering to set it per path.
+
+#### T1-2 (LOW, non-production), Demo and golden-path seeds ship floor-less permissive policies
+- Location: `services/api/src/demo/brainsaas-seed.ts:581-663` (`seedPolicy`) and
+  `tools/seed-golden-path/src/cli.ts` (`DEMO_POLICY`).
+- Both insert active policies with no `agent.confidence.gte` rule and catch-all
+  `when:{} execute:auto` rules for `onchain_tx` / `agent_action`. A
+  document-extracted obligation (confidence <= 0.5) driving an `agent_action`
+  would match unconditionally and auto-allow with no floor. Contained: demo
+  tenants are `kind='demo'`, sandbox/testnet only, never promotable to production,
+  and the mainnet escrow fence blocks 8453; golden-path is a local dev fixture.
+  Worth aligning these fixtures with the shipped self-serve floor so they are not
+  mistaken for the reference default.
+
+#### T1-3 (LOW, structural), No single choke point for the confidence-floor default
+- The floor lives as `DEFAULT_CONFIDENCE_FLOOR` in `provision.ts` and is applied
+  only where `buildDefaultPolicyDocument()` is called. A new provisioning path
+  inherits nothing and can silently omit the floor, as the production and demo
+  paths already show. The only backstop is the fail-closed `policy_not_found`
+  throw, which covers the no-policy case but not a policy-present-without-floor
+  case. Centralizing floor seeding (or linting for it at policy activation) would
+  make it structural.
+
+_Positive verified: policy evaluation fails closed on a missing active policy, and
+the VM `agent.confidence.gte` operator fails closed on a missing/null confidence
+(`services/policy/src/vm.ts:199-203`), so the original silent-pass bug cannot recur
+through an absent policy or a missing confidence signal._
+
+#### T1-4 (HIGH), Agent kill-switch does not stop in-flight dispatch; halt is non-atomic and mis-ordered
+- Location: `services/api/src/main.ts:1738-1750` (`haltAgent`);
+  `services/execution/src/payment-intents/PaymentIntentService.ts:896-922`
+  (`pauseByAgent`, filters `status='approved'`);
+  `services/execution/src/outbox/worker.ts:148-200` (only pre-dispatch guard is
+  `audit_before_id` at `:162`).
+- `haltAgent` runs two separate transactions in the wrong order: it
+  `pauseByAgent` first (pausing only `status='approved'` intents), THEN quarantines
+  the agent (`active -> quarantined`) in a second `withTenantScope`. Verified.
+- Three failures, all confirmed against the code:
+  - Post-gate escape: an intent that `execute()` already moved
+    `approved -> dispatching` sits as a pending `execution_outbox` row. `pauseByAgent`
+    never sees it (wrong status filter), and the outbox worker dispatches any row
+    with a set `audit_before_id` WITHOUT re-checking agent state (worker.ts:162 is
+    the only guard, then `rail.dispatch()` at :176). So money still moves on-chain
+    after the operator hits the kill-switch.
+  - TOCTOU race: because the agent is quarantined AFTER the pause, a concurrent
+    `execute()` in the gap passes gate check 1 (agent still `active`,
+    `gate.ts:466-472`) and moves an intent into `dispatching`, escaping the pause.
+  - Non-atomic: a crash between the two transactions leaves intents paused but the
+    agent still `active` (fail-open on agent state); it keeps proposing.
+- Severity capped by contracts being testnet-only today, but as a safety-control
+  correctness defect the kill-switch has a real hole.
+- Suggested fix (not applied): quarantine the agent FIRST and pause in ONE
+  transaction, and have the outbox worker re-resolve the creator agent's state and
+  refuse to dispatch a row whose agent is `quarantined`/`revoked` (fail closed to
+  `reconciling`). Verified-good: the ordinary revoke-between-propose-and-execute
+  case IS blocked, because gate check 1 re-checks `state === "active"` every
+  `execute()`.
+
+#### T1-5 (MEDIUM), No reachable trust `restore` transition + "quarantine" naming collision
+- Location: `services/execution/src/state-machines.ts:80` (permits
+  `quarantined -> active`, but nothing calls it);
+  `services/agent-router/src/agent-api.ts:194-224`.
+- A kill-switched (`quarantined`) agent has no route back to `active` short of
+  re-registration/DB surgery. Worse, `/agents/:id/halt` sets
+  `agents.state='quarantined'` while `/agents/:id/quarantine/release` clears a
+  DIFFERENT column (`quarantine_cleared_at`, the H-09 contribution quarantine), so
+  an operator "releasing" a halted agent changes nothing about its state. Fails
+  closed (stuck-denied), but an operability defect and operator-confusion footgun.
+  Fix: add an explicit resume route that CAS-transitions `quarantined -> active`,
+  and rename one of the two "quarantine" surfaces.
+
+#### T1-6 (LOW/MEDIUM), api-key revoke bypasses the state-machine guard
+- Location: `services/api/src/production-tenancy/api-key-routes.ts:217-220`.
+- `UPDATE agents SET state='revoked' WHERE tenant_id=$1 AND id=$2` runs with no
+  from-state guard and no `transitionAgent`, contradicting the state-machine's
+  "only these helpers mutate state" invariant (it will flip a `failed` agent to
+  `revoked`, an undefined transition). Security-safe (revoked = deny), but route it
+  through the canonical guard so there is one writer.
+
+#### T1-7 (MEDIUM), CI gate-bypass guard does not scan the actual money-signing sinks
+- Location: `scripts/check-gate-bypass.mjs:32` (`SCAN_DIR = "services/execution/src"`)
+  vs the signing sinks in `services/api/src/rails/onchainExecutor.ts:83`
+  (`writeContract` -> `executeViaSessionKey`) and
+  `services/api/src/rails/x402Client.ts:47` (USDC settle).
+- The guard that enforces the single-choke-point invariant scans only
+  `services/execution/src`, so the files that actually sign and submit funds are
+  outside its coverage. The invariant holds today (those clients are only invoked
+  by rail classes the worker dispatches), but a future direct call to
+  `onchainExecutor.execute()` / the x402 client / a new `.dispatch()` from any
+  `services/api` or `services/ledger` route would NOT be caught. Because Tier 0
+  leaned on this guard as the enforcement of "one submission site," the blind spot
+  weakens that guarantee. Fix: extend the guard to also scan `services/api/src/rails`
+  (and assert those clients are imported only by rail classes).
+
+#### T1-8 (LOW), Intra-tenant proposal attribution is spoofable via body agent_id
+- Location: `services/execution/src/routes.ts:63`
+  (`proposingAgent = request.body?.agent_id ?? principal.id`);
+  `services/execution/src/payment-intents/routes.ts` (same pattern on create).
+- `created_by_agent_id` is taken from an untrusted body field. Not a fund or
+  cross-tenant bypass (tenant is server-derived, and gate check 1 requires
+  `created_by_agent_id === principal.id` at execute, so a spoof fails closed), but
+  it misattributes proposals to another agent within the same tenant. The MCP tool
+  correctly forces `agent_id = ctx.agent.id`; the HTTP routes should match unless
+  an admin scope is present.
+
+#### T1-9 (MEDIUM), brain_privileged retains cross-tenant INSERT on audit_events (and blanket DML)
+- Location: `infra/db-roles.sql:102-103` (blanket
+  `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES` to `brain_privileged`) vs
+  `:243-247` (revokes only `UPDATE, DELETE, TRUNCATE` on `audit_events`).
+- INSERT on `audit_events` survives the revoke, so a `brain_privileged` (BYPASSRLS)
+  connection can inject forged audit rows for any tenant before anchoring, plus
+  retains full cross-tenant DML on money-path tables. Exposure is capped because
+  `brain_privileged` is seed-only and is NOT wired into any API runtime pool
+  (verified: `main.ts` builds only the least-privilege pools), but it is the
+  single broadest grant in the model. Fix: replace the blanket `ALL TABLES` grant
+  with the seed's real table footprint, and add `INSERT` to the `audit_events`
+  revoke for `brain_privileged`.
+
+#### T1-10 (MEDIUM), brain_tenant_deletion is BYPASSRLS with broad DELETE across every RLS table
+- Location: `infra/db-roles.sql:96` (BYPASSRLS) + `:218-224` (DO-loop
+  `GRANT SELECT, DELETE` on every RLS-enabled table).
+- Because it bypasses RLS, any erasure statement that omits or mis-binds the tenant
+  predicate deletes across ALL tenants (fail-open cross-tenant delete). The
+  in-file comment acknowledges this is the erasure concern. Erasure runs one tenant
+  at a time and could instead be RLS-scoped like `brain_app` so a bug fails closed.
+  Fix: RLS-scope the erasure worker, or assert an explicit tenant filter on every
+  DELETE.
+
+#### T1-11 (LOW), Unused DELETE grants on projector / raw-worker roles
+- Location: `infra/db-roles.sql:153` (`brain_raw_worker`), `:162`
+  (`brain_canonical_projector`), `:175` (`brain_ledger_projector`).
+- These are append/upsert projectors; DELETE is likely never exercised. Grant only
+  `SELECT, INSERT, UPDATE` unless a delete path is verified in the worker source.
+  Defense in depth.
+
+#### T1-12 (LOW, doc), Stale privilege claim in the outbox worker docstring
+- Location: `services/execution/src/outbox/worker.ts:18-24` states cross-tenant ops
+  run on `brain_privileged (BYPASSRLS)`, but the wiring uses the tighter
+  `brain_execution_worker` pool (`main.ts:996,1022-1025`). The code is correct and
+  tighter than the comment; update the comment.
+
+#### T1-13 (INFO), Dead tenantId field on the action-create body type
+- Location: `services/execution/src/actions/routes.ts:52` declares
+  `CreateActionBody.tenantId?` but it is never read (scoping uses
+  `request.principal.tenantId`). Safely ignored, but remove it so a client cannot
+  believe it is honored.
+
+#### T1-14 (MEDIUM), On-chain gate checks key on an optional context field, not action_type: fail-silent skip
+- Location: `shared/src/gate/gate.ts:551` (check 3.5), `:640` (check 6.5), `:679`
+  (check 6.6), and `isX402AutonomousAllowed` at `:369-381` (never inspects
+  `intent.settlement`).
+- Checks 3.5 (on-chain settlement permitted), 6.5 (x402 asset/network/recipient/
+  amount match), and 6.6 (escrow state) only run when the intent carries
+  `settlement`/`escrow` context (`if (input.intent.settlement !== undefined)`).
+  But the dispatch rail is chosen by `action_type` alone (`railFor`,
+  `PaymentIntentService.ts:1379-1397`). So an `x402_settle` with
+  `settlement === undefined` routes to the x402 rail while 3.5 and 6.5 are
+  silently skipped, and an `escrow_release` with `escrow === undefined` skips 6.6.
+  The gate treats "no context" as "not an on-chain settlement," which is false for
+  an on-chain action_type.
+- Compounds with the Group B floor: `isX402AutonomousAllowed` grants autonomy from
+  the policy cap + intent amount/currency WITHOUT requiring settlement context, so
+  an `x402_settle` with an autonomous cap and no persisted `pay_to` executes
+  autonomously (no approval) with the settled asset and recipient never validated
+  by the gate. The context is enforced only at the HTTP route boundary
+  (`routes.ts:161-181`); `create()` itself does not require it, so a non-route
+  caller (invoice-shortcut / agent path) can mint such an intent.
+- Suggested fix (not applied): make the gate fail closed on structural mismatch:
+  for `action_type === "x402_settle"` require `intent.settlement` (else reject at
+  6.5), for `escrow_release` require `intent.escrow` (else reject at 6.6), and have
+  `isX402AutonomousAllowed` require settlement context present. Do not treat a
+  missing context on an on-chain action_type as `not_applicable`.
+
+#### T1-15 (LOW/MEDIUM), Check 3 is a blacklist: a non-canonical policy outcome fails open
+- Location: `shared/src/gate/gate.ts:534-543` (check 3 rejects only on
+  `matched_rule_id === null` or `outcome === "reject"`).
+- The confirm-quorum branch fires only on `outcome === "confirm"` and the hard
+  floor only on `outcome === "allow"`, so any `decision.outcome` that is neither
+  `allow`/`confirm`/`reject` but carries a `matched_rule_id` passes checks 3, 10,
+  and 11 with zero approvals and no floor. Reachability is low (the outcome is a
+  typed three-value union written from policy eval), so this is defense-in-depth,
+  but it is a whitelist-vs-blacklist fail-open against the stated "fail closed on
+  any uncertainty" invariant. Fix: check 3 should require
+  `outcome === "allow" || outcome === "confirm"` and reject anything else.
+
+#### T1-16 (LOW), resolveTenantFlags (check 1.5) has no production boot fence
+- Location: `services/api/src/composition/payment-loaders-prod-fence.ts` (omits
+  `resolveTenantFlags`); wired unconditionally today at `main.ts:659-661`.
+- No live exposure, but if a refactor made it conditional/absent,
+  `requireBehaviorHash` would read `false` for every tenant (`gate.ts:487`),
+  silently disabling behavior-hash pinning for a tenant that explicitly opted in: a
+  fail-silent downgrade of a mandatory control with nothing to catch it at boot
+  (unlike 5.5/8.5). Fix: add `hasResolveTenantFlags` to the fence.
+
+#### T1-17 (LOW), Check 6.6 escrow-state binding relies on implicit env coupling, not a fence
+- Location: `resolveEscrowState` wired iff `BRAIN_ESCROW_ADDRESS` set
+  (`main.ts:771-778`); the escrow rail requires the same env to register. So today,
+  whenever `escrow_release` can dispatch, the loader is present, and escrow_release
+  also always hits the hard-approval floor and the mainnet escrow-audit-gate. But
+  the safety rests on an env-var overlap, not an explicit invariant. Fix: assert
+  "if the escrow rail is registered, resolveEscrowState must be wired."
+
+#### T1-18 (LOW, info), Gate metric emission is not exception-guarded despite the "never fail a gate" contract
+- Location: `shared/src/gate/gate.ts:413-430` (called at `failGate` and success);
+  docstring at `:328` promises metric failures never fail a gate, but `emitMetrics`
+  has no try/catch. A throwing metrics sink throws out of `runPreExecutionGate`.
+  Fails CLOSED (execute aborts, no money moves), so not a security hole, but a
+  liveness/DoS risk contradicting the documented contract. Fix: wrap emission in
+  try/catch.
+
+#### T1-19 (LOW, info), x402 and escrow rails have no typed receipt schema
+- Location: `services/execution/src/outbox/receipts.ts:35-41`
+  (`railKeyForActionType` returns null for `x402_settle` / `escrow_release`), so
+  `validateRailReceipt` enforces nothing for the two newest on-chain rails,
+  weakening the forensic-replay guarantee that onchain_transfer/ACH/wire have. Not
+  a gate fail-open; a completeness gap.
+
+_Gate positives verified: `runPreExecutionGate` has no try/catch and no loader
+error is swallowed as a pass (every loader exception propagates and aborts execute
+before enqueue); audit-before (check 13) is emitted after checks 1-12 and its id is
+written into the outbox row in the same transaction as `approved -> dispatching`;
+the seven always-applicable loaders (9.5, 11.5, 8, 5.5, 8.5, obligation confidence/
+direction) are all covered by the production boot fence; and the Group B floor
+survived adversarial probing (no action_type bypass, exact currency/decimal
+matching, floor independent of `required_approvers`, create-vs-gate disagreement can
+only strand an intent, never under-approve a dispatch). One residual: approval
+staleness is enforced only when `decision.policy_version` is populated, which
+production eval always does._
+
+#### T1-20 (HIGH), Anchor reconciler runs its cross-tenant scan on the RLS-restricted request pool: permanent silent false-clean in production
+- Location: `services/audit/src/reconciler.ts:58` (unscoped `deps.pool.query`) +
+  `services/api/src/main.ts:1108` (passes the request `pool`).
+- This is the named bug class ("RLS audit-anchor sweep silently failing in
+  production"), and it is an ACTIVE production defect, not latent. The orphan scan
+  enumerates cross-tenant with no tenant GUC set:
+  `SELECT ... FROM audit_anchors WHERE onchain_tx_hash IS NULL AND onchain_status
+  <> 'reverted'`. But it runs on the request-path `pool`, which connects as
+  `brain_app` (NOBYPASSRLS, `infra/db-roles.sql`) and `audit_anchors` has
+  `FORCE ROW LEVEL SECURITY` (`services/audit/migrations/0007`) with a
+  `tenant_id = current_setting('app.tenant_id', true)` policy (`0002`). With
+  `app.tenant_id` unset the predicate is `tenant_id = NULL`, so the scan matches
+  ZERO rows every cycle and reports `{recovered: 0, flagged: 0}` success.
+- Consequence: orphaned anchors (roots that never landed on-chain) are never
+  healed, and the ops alert `audit.anchor.orphan_detected` never fires, in
+  production. The tamper-evidence chain to Base is silently unmonitored.
+- Damning corroboration: the SIBLING job `startAuditConsistencyVerifier` is
+  deliberately handed the BYPASSRLS `auditVerifierPool` with an explicit comment
+  (`main.ts:1121-1124`) warning that the request `pool` "would match zero rows and
+  report a permanent false-clean." The reconciler needed the same treatment and
+  did not get it. Not caught by tests: `reconciler.test.ts` uses a fake pool with
+  canned rows, and dev/compose runs as a BYPASSRLS superuser, so it only fails in
+  production.
+- Suggested fix (not applied): pass a BYPASSRLS least-privilege reader pool to
+  `startAnchorReconciler` (matching the verifier), and add an integration test that
+  runs the scan under a NOBYPASSRLS role to prove non-zero visibility.
+
+#### T1-21 (HIGH), Audit sweep cycle failures are swallowed log-only, with no failure counter or heartbeat
+- Location: `shared/src/workers/managed-interval.ts:53-62` (catches and calls
+  `onError`, loop never rejects); both audit workers pass a log-only `onError`
+  (`services/audit/src/reconciler.ts:125`,
+  `services/audit/src/audit-consistency.ts:527`).
+- If an entire cycle throws (DB pool unreachable, checkpoint lock/query error, RPC
+  failure, unhandled exception) the result is: no throw, no crash, no error-counter
+  increment, no page. The consistency gauges are emitted only on the success path,
+  so a throwing cycle leaves them STALE (dashboards see no spike). There is no
+  per-cycle heartbeat / last-success gauge and no cycle-failure counter, so a
+  verifier that crashes every cycle is indistinguishable from a healthy idle one.
+  Same silent-failure shape as T1-20, one level up (whole loop vs one query).
+- Suggested fix (not applied): increment a dedicated `cycle_failed` counter in
+  `onError`, emit a `last_success_at` heartbeat each completed cycle, alert on
+  staleness/absence, and escalate repeated consecutive failures.
+
+#### T1-22 (MEDIUM), Audit health rollup ignores verifier staleness: a dead verifier reports "safe"
+- Location: `services/api/src/audit-health/route.ts:53-68`
+  (`deriveAuditHealthStatus`).
+- The rollup escalates only on `lastPassStatus === "failed"`, open findings, or
+  outbox exhaustion. `secondsSinceCleanFullPass` is computed and returned in the
+  body but never used in the status. So if the verifier completes one clean pass
+  then dies every cycle (T1-21) or stalls, `lastPassStatus` stays `"clean"` and the
+  endpoint reports `status: "safe"` indefinitely while integrity is no longer being
+  verified, misleading any alert keyed on `status`. Fix: factor staleness into the
+  status (exceeding a few multiples of the interval -> degraded/critical).
+
+#### T1-23 (LOW), Five api-service tenant tables ENABLE but do not FORCE RLS in-migration
+- Location: `services/api/migrations/` for `tenants`, `wallet_identities`,
+  `tenant_blob_purge_jobs`, `tenant_blob_purge_audit_outbox`, `email_verifications`
+  (ENABLE without `FORCE ROW LEVEL SECURITY`; every other service ships a
+  `*_force_rls.sql`, and newer api tables like `api_keys` /
+  `production_agent_tokens` do pin FORCE).
+- Low because runtime roles are non-owner (ENABLE alone enforces RLS for them) and
+  the deploy reruns `infra/db-roles.sql` which FORCEs every RLS table. But a DB
+  built from migrations alone, or an owner-role maintenance connection, would lack
+  FORCE on these five, and `assertRuntimeDbRoles` does not assert FORCE is set.
+  Fix: add an `api/migrations/*_force_rls.sql` matching the other services.
+
+_RLS positives verified (no finding): across all service migrations (208 CREATE
+POLICY statements) every policy references `app.tenant_id` (via tenant_id /
+owner_id / brain_tenant_id); no `USING (true)` / `WITH CHECK (true)`; INSERT and
+UPDATE write paths carry WITH CHECK, so no cross-tenant write hole. The tenant GUC
+is set transaction-local (`set_config(..., true)` inside a BEGIN/COMMIT in
+`withTenantScope`), so a pooled connection cannot leak a prior tenant's GUC. The
+global forensic tables (`audit_integrity_findings`, `audit_verifier_checkpoint`)
+are intentionally RLS-exempt but locked down by REVOKE + append-only grants, and
+the production boot fence `assertRuntimeDbRoles` proves per-pool role identity,
+BYPASSRLS posture, and a forbidden-privilege matrix. The T1-20 defect is a
+false-clean (over-restrictive), not a leak._
+
+_Positives verified (no finding): execution is a genuine single choke point,
+`rail.dispatch()` reachable only from the outbox worker after the gate; every
+money-path route derives tenantId server-side from the authenticated principal
+(no route scopes off a body/query tenant, verified across API, MCP, surface
+gateway, agent-router); gate check 1 re-checks `agent.state === "active"` at every
+execute; the reputation module is tighten-only; and the boot-time DB-role
+verification harness (`runtime-db-roles.ts`) fails closed in production. The
+surface gateway's `execution.enqueue` port is a no-op stub, so surfaces cannot
+reach a rail at all._
+
+_Cross-reference to T0-11: propose-only is policy-conditional for FIAT rails too.
+The Group B hard-approval floor covers only `onchain_transfer`, `escrow_release`,
+and non-autonomous `x402_settle`; a policy `allow` on ach/wire/card still reaches
+`outbox.enqueue` with zero approval signatures (`gate.ts` requiresHardHumanApproval
+Floor returns false for fiat). This is the same design-intent question as T0-11,
+now confirmed to extend to fiat auto-execution, not a separate defect._
+
