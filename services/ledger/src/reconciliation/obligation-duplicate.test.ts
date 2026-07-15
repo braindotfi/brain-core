@@ -105,6 +105,7 @@ describe("ObligationDuplicateMatcher — scan filters", () => {
     expect(q.text).toContain("counterparty_id IN (");
     expect(q.text).toContain("SELECT $2::text");
     expect(q.text).toContain("match_type = 'counterparty_duplicate'");
+    expect(q.text).toContain("status NOT IN ('paid','cancelled')");
     expect(q.text).toContain("currency = $3");
     expect(q.text).toContain("direction IS NOT DISTINCT FROM $4");
   });
