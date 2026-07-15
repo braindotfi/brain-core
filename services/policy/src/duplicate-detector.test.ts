@@ -12,20 +12,20 @@ function fakeClient(hits: Record<string, unknown[]>): TenantScopedClient {
       const key = text.includes("ledger_reconciliation_matches")
         ? "obligation_duplicate_graph"
         : text.includes("FROM ledger_obligations")
-        ? "obligation_status"
-        : text.includes("invoice_id = $1")
-          ? "invoice_already_paid"
-          : text.includes("obligation_id = $1")
-            ? "obligation_executed"
-            : text.includes("interval '30 days'")
-              ? "vendor_30d"
-              : text.includes("interval '10 minutes'")
-                ? "recent_10m"
-                : text.includes("evidence_ids &&")
-                  ? "raw_used"
-                  : text.includes("ledger_counterparty_payment_instructions")
-                    ? "dest_changed"
-                    : "other";
+          ? "obligation_status"
+          : text.includes("invoice_id = $1")
+            ? "invoice_already_paid"
+            : text.includes("obligation_id = $1")
+              ? "obligation_executed"
+              : text.includes("interval '30 days'")
+                ? "vendor_30d"
+                : text.includes("interval '10 minutes'")
+                  ? "recent_10m"
+                  : text.includes("evidence_ids &&")
+                    ? "raw_used"
+                    : text.includes("ledger_counterparty_payment_instructions")
+                      ? "dest_changed"
+                      : "other";
       const rows = hits[key] ?? [];
       return { rows, rowCount: rows.length };
     }),

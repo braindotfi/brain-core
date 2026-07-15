@@ -69,8 +69,6 @@ describe("normalizePlaidArtifact", () => {
 
     expect(created.map((row) => row.entity)).toEqual(["account", "transaction"]);
     expect(calls.filter((c) => c.text.includes("INSERT INTO ledger_accounts"))).toHaveLength(1);
-    expect(calls.filter((c) => c.text.includes("INSERT INTO ledger_transactions"))).toHaveLength(
-      1,
-    );
+    expect(calls.filter((c) => c.text.includes("INSERT INTO ledger_transactions"))).toHaveLength(1);
   });
 });

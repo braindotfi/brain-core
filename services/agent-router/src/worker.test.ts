@@ -56,11 +56,11 @@ function makeDeps(
   const paymentIntents =
     opts.paymentIntents ??
     ({
-    create: async () => {
-      createPICalls += 1;
-      throw new Error("payment intent must not be created in shadow mode");
-    },
-  } as unknown as IPaymentIntentService);
+      create: async () => {
+        createPICalls += 1;
+        throw new Error("payment intent must not be created in shadow mode");
+      },
+    } as unknown as IPaymentIntentService);
   return {
     router: new AgentRouter({
       catalog: () => internalAgentCatalog,

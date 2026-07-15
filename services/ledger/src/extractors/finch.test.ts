@@ -140,9 +140,7 @@ describe("normalizeFinchArtifact — finch_payroll_v1", () => {
     );
 
     expect(created).toContainEqual({ entity: "transaction", id: "tx_pay_good" });
-    expect(calls.filter((c) => c.text.includes("INSERT INTO ledger_transactions"))).toHaveLength(
-      2,
-    );
+    expect(calls.filter((c) => c.text.includes("INSERT INTO ledger_transactions"))).toHaveLength(2);
   });
 
   it("lands an upcoming pay run as a payroll obligation due at the pay date (AC)", async () => {

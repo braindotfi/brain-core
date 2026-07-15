@@ -134,9 +134,7 @@ describe("normalizeStripeArtifact — stripe_v1", () => {
     );
 
     expect(created).toContainEqual({ entity: "transaction", id: "tx_ch_good" });
-    expect(calls.filter((c) => c.text.includes("INSERT INTO ledger_transactions"))).toHaveLength(
-      2,
-    );
+    expect(calls.filter((c) => c.text.includes("INSERT INTO ledger_transactions"))).toHaveLength(2);
   });
 
   it("lands payouts as OUTFLOW transactions (AC: correct direction)", async () => {

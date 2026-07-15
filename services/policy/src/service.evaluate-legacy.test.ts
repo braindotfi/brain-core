@@ -1,6 +1,11 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, newAgentId, newTenantId, type ServiceCallContext } from "@brain/shared";
+import {
+  InMemoryAuditEmitter,
+  newAgentId,
+  newTenantId,
+  type ServiceCallContext,
+} from "@brain/shared";
 import { PolicyService } from "./service.js";
 import type { PolicyDocument } from "./dsl.js";
 

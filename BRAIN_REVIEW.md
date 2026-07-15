@@ -485,3 +485,60 @@ applicable, production confidence-floor lint is wired at activation, and the
 old H-09 contribution intake wording has been replaced by contribution hold.
 The follow-up rail-routing hardening also closes the latent fail-open-by-
 omission path where an unlisted action type could have reached a money rail.
+
+---
+
+## Tier 2: Workflows + Platform
+
+Repo: braindotfi/brain-core. Source review branch:
+review/tier-2-workflows-platform. Scope: workflow logic, agent-output gating,
+legacy ingestion, reconciliation, and connector correctness.
+
+### Fix status
+
+- [x] T2-1 fixed: duplicate-payment detection now follows the confirmed
+      `obligation_duplicate` reconciliation match graph and rejects a payment
+      when any linked obligation observation is already paid or has an executed
+      payment intent.
+- [x] T2-2 fixed: independent obligation observations used for corroboration
+      now exclude `paid` and `cancelled` rows.
+- [x] T2-20 fixed: legacy normalization now retries failed rows until a bounded
+      attempt budget, then quarantines and emits
+      `brain.ledger.normalize.quarantined.count`. Stripe and Finch extractor
+      loops skip per-object write failures instead of dropping the rest of the
+      batch.
+- [x] T2-21 fixed: Plaid normalization validates each account and transaction
+      object at runtime and skips malformed records while continuing the batch.
+- [x] T2-13 and T2-12 fixed: the event-driven agent route path now gathers the
+      selected agent's required evidence and enforces `notify_only` or `reject`
+      execution modes before any proposal is created. `/agents/run` enforces
+      the same no-proposal behavior.
+- [x] T2-14 fixed: `PolicyService.evaluateLegacy` threads `agent_id`,
+      `confidence`, `evidence_score`, and `risk_level` into the VM action so
+      agent-output policy primitives gate non-financial agent proposals.
+- [x] T2-15 and T2-11 fixed: payment and treasury money proposals set intent
+      `confidence` from the gathered evidence score instead of relying on the
+      PaymentIntent default.
+- [x] T2-16 and T2-17 fixed: vendor risk escalation now requires explicit risk
+      indicators, and `require_approval` can escalate to `block_payment` when
+      those indicators are present.
+- [x] T2-19 fixed: payment and treasury handlers reject missing ids, malformed
+      decimal amounts, and malformed currency values before building a payment
+      intent.
+- [ ] T2-7 remains product scope: Collections and Cash still need real dunning,
+      forecasting, and sweep algorithms.
+- [ ] T2-8, T2-9, T2-18, T2-22 through T2-25 remain follow-up work.
+- [ ] T2-26 remains a product and security sign-off decision: bank account
+      identifiers in agent traces are still masked, not forbidden.
+
+### Tier 2 verdict update
+
+The mergeable money-integrity core is closed for this pass: reconciliation-linked
+duplicate obligations cannot be paid independently, settled obligations no
+longer lift confidence, and legacy normalization no longer treats the first
+failed row as terminal data loss. The main agent-output gating bypasses are also
+closed for the live propose paths covered here: required evidence, execution
+mode, confidence, evidence score, and risk level now reach the gates instead of
+being advisory-only fields. Remaining Tier 2 work is connector dedup and
+watermark correctness, workflow payload completeness, and product-level
+implementation depth for Collections and Cash.
