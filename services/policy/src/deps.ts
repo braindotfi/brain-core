@@ -18,4 +18,6 @@ export interface PolicyDeps {
    * allowlist cannot be confirmed (e.g. RPC failure).
    */
   isAuthorizedSigner: (tenantId: string, address: string) => Promise<boolean>;
+  /** When true, policy activation rejects missing or too-low confidence floors. */
+  confidenceFloorReject?: boolean;
 }

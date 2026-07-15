@@ -640,6 +640,7 @@ async function main(): Promise<void> {
           contractAddress: cfg.POLICY_REGISTRY_ADDRESS as `0x${string}`,
           rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
         }),
+    confidenceFloorReject: cfg.BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT,
   };
 
   const policyService = new PolicyService({

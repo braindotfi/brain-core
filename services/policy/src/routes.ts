@@ -140,7 +140,7 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
         throw brainError("policy_signature_invalid", "policy_id and signatures[] required");
       }
 
-      const { row, activated } = await withTenantScope(deps.pool, tenant, async (c) => {
+      const { row, activated, warnings } = await withTenantScope(deps.pool, tenant, async (c) => {
         const existing = await c.query<PolicyRow>(`SELECT * FROM policies WHERE id = $1 LIMIT 1`, [
           body.policy_id,
         ]);
@@ -202,10 +202,29 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
         await setSigners(c, r.id, body.signatures!);
 
         let activatedRow: PolicyRow = r;
+        let activationWarnings: ReturnType<typeof lintPolicy> = [];
         if (body.signatures!.length >= r.quorum_required) {
+          const findings = lintPolicy(r.content, {
+            confidenceFloorReject: deps.confidenceFloorReject === true,
+          });
+          const confidenceFindings = findings.filter(
+            (f) => f.code === "confidence_floor_missing" || f.code === "confidence_floor_too_low",
+          );
+          const blocking = confidenceFindings.filter((f) => f.severity === "ERROR");
+          if (blocking.length > 0) {
+            throw brainError("policy_rule_invalid", "policy confidence floor failed activation", {
+              statusOverride: 422,
+              details: { findings: blocking },
+            });
+          }
+          activationWarnings = confidenceFindings.filter((f) => f.severity === "WARN");
           activatedRow = await transition(c, r.id, "pending_signatures", "active");
         }
-        return { row: activatedRow, activated: activatedRow.state === "active" };
+        return {
+          row: activatedRow,
+          activated: activatedRow.state === "active",
+          warnings: activationWarnings,
+        };
       });
 
       await deps.audit.emit({
@@ -218,7 +237,7 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
       });
 
       reply.status(200);
-      return { policy: serialize(row), activated };
+      return { policy: serialize(row), activated, warnings };
     },
   );
 
@@ -291,7 +310,9 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
     ) => {
       const tenant = assertTenantAccess(request, request.params.tenant_id, READ);
       const content = parsePolicyContent(request.body?.policy_content);
-      const findings = lintPolicy(content);
+      const findings = lintPolicy(content, {
+        confidenceFloorReject: deps.confidenceFloorReject === true,
+      });
       reply.status(200);
       return {
         tenant_id: tenant,
