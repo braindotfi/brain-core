@@ -9,7 +9,9 @@ import type { DuplicateCheckInput } from "./duplicate-detector.js";
 function fakeClient(hits: Record<string, unknown[]>): TenantScopedClient {
   return {
     query: vi.fn(async (text: string) => {
-      const key = text.includes("FROM ledger_obligations")
+      const key = text.includes("ledger_reconciliation_matches")
+        ? "obligation_duplicate_graph"
+        : text.includes("FROM ledger_obligations")
         ? "obligation_status"
         : text.includes("invoice_id = $1")
           ? "invoice_already_paid"
@@ -68,6 +70,33 @@ describe("detectDuplicates", () => {
       input(),
     );
     expect(r.collisions.map((c) => c.rule)).toContain("obligation_already_settled");
+  });
+
+  it("rejects payment of a reconciliation-linked duplicate obligation after its peer executed", async () => {
+    const r = await detectDuplicates(
+      fakeClient({
+        obligation_duplicate_graph: [
+          {
+            obligation_id: "obl_peer",
+            payment_intent_id: "pi_ALREADY_EXECUTED",
+            status: "due",
+          },
+        ],
+      }),
+      input({
+        id: "pi_SECOND",
+        obligationId: "obl_second",
+        counterpartyId: "cp_qbo_acme",
+      }),
+    );
+
+    expect(r.passed).toBe(false);
+    expect(r.collisions).toContainEqual(
+      expect.objectContaining({
+        rule: "reconciliation_obligation_duplicate_paid",
+        conflicting_payment_intent_id: "pi_ALREADY_EXECUTED",
+      }),
+    );
   });
 
   it("flags payment_intent_recently_executed inside the 10-minute window", async () => {
