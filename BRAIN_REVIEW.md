@@ -433,24 +433,32 @@ audit-anchor sweep, trust state machine, RLS posture, and DB role separation.
 - [x] T1-4 fixed: `/v1/agents/{id}/halt` quarantines first, then pauses approved
       intents in one tenant transaction; the execution outbox worker rechecks creator
       agent state before rail dispatch and parks blocked rows in `reconciling`.
-- [ ] T1-14 pending: on-chain gate context must fail closed based on
-      `action_type`.
-- [ ] T1-15 pending: policy outcome check should whitelist `allow` and `confirm`.
-- [ ] T1-16 pending: production loader fence should include
-      `resolveTenantFlags`.
-- [ ] T1-17 pending: escrow rail registration should assert
-      `resolveEscrowState` is wired.
-- [ ] T1-18 pending: gate metric emission should be exception-guarded.
-- [ ] T1-7 pending: gate-bypass guard should scan API rail signing sinks.
+- [x] T1-14 fixed: on-chain gate context now fails closed from
+      `action_type`; `x402_settle` requires settlement context and
+      `escrow_release` requires escrow context.
+- [x] T1-15 fixed: policy outcome check now whitelists canonical `allow` and
+      `confirm` outcomes and rejects anything else.
+- [x] T1-16 fixed: the production loader fence now requires
+      `resolveTenantFlags` so behavior-hash pinning cannot be silently
+      disabled.
+- [x] T1-17 fixed: boot now asserts a live `escrow_base` rail has
+      `resolveEscrowState` wired.
+- [x] T1-18 fixed: gate metric emission is exception-guarded and cannot change
+      a gate decision.
+- [x] T1-7 fixed: the gate-bypass guard now scans API rail signing sinks and
+      rail-client imports.
 - [ ] T1-9/T1-10/T1-11/T1-23 pending: DB role and FORCE RLS hardening remains
       to be tightened after source-footprint verification.
-- [ ] T1-6/T1-8/T1-13 pending: small route attribution and hygiene fixes remain.
+- [x] T1-6/T1-8/T1-13 fixed: API-key revoke uses the agent state machine,
+      HTTP propose routes pin ordinary caller attribution to the authenticated
+      principal id, and the dead actions `tenantId` body field is removed.
 
 ### Tier 1 verdict update
 
 The mergeable core HIGH defects from the Tier 1 review are fixed on
 `fix/tier-1-policy-gating`: audit sweep observability no longer fails silently,
 and halted agents can no longer dispatch already-queued outbox rows after the
-worker observes quarantine. The remaining Tier 1 work is fail-closed hardening,
-DB least-privilege tightening, and route hygiene. P3a changes on-chain gate
-behavior and should be reviewed separately before merge.
+worker observes quarantine. P3 fail-closed hardening and P5 route hygiene are
+also fixed on the branch. The remaining Tier 1 work is P4 DB least-privilege
+tightening and FORCE RLS follow-up, which needs a separate source-footprint
+verification pass before narrowing production grants.
