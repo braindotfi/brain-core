@@ -411,6 +411,47 @@ Run the surface webhook deployable as its own least-privilege process. The Slack
 Teams, and ESP credentials must not live in the core protocol service. Same repo,
 separate deploy.
 
+## Workflows and connectors (Tier 2 review notes, 2026-07-15)
+
+State confirmed by the Tier 2 review (findings in BRAIN_REVIEW.md):
+
+- The four public workflows (Invoice = vendor_risk + payment + fraud_anomaly;
+  Collections; Cash = treasury + cash_forecast; Close = reconciliation) are
+  propose-only sound but largely SCAFFOLDING. Collections and Cash have no real
+  dunning/forecast/sweep logic; handlers fall through to the generic
+  `agentProposal()`; the per-agent payload contracts in
+  `services/internal-agents/src/payloads.ts` are declared but never populated and
+  `validateAgentPayload` has no production callers. Do not present these as shipped.
+- The agent-output gating primitives (`agent.confidence.gte`,
+  `agent.evidence_score.gte`, `agent.risk_level.lte`) are largely UNENFORCED for
+  agent proposals: the event path hardcodes `requiredEvidence: []`
+  (`services/agent-router/src/worker.ts`), `evaluateLegacy`
+  (`services/policy/src/service.ts`) never threads those fields into the Action, and
+  handlers omit `confidence` (defaults to 1.0). Their safety rests entirely on the
+  downstream Tier 0/1 gate and approval floors, not on the agents.
+- Ingestion has TWO paths. Merge and document obligations flow through the canonical
+  projector (retry + quarantine + metrics). Plaid, Stripe, and Finch still write the
+  Ledger directly via the legacy `services/ledger/src/workers/normalizeWorker.ts`,
+  which NEVER retries a failed row (a failed normalize writes a `normalization_log`
+  row and the poll excludes any logged row) and has no batch transaction, so a
+  malformed record silently and permanently drops the rest of the batch. Prefer the
+  canonical path; do not add new direct-write connectors without retry/quarantine.
+- Reconciliation identifies duplicate obligations (`obligation_duplicate` matches),
+  but the payment path and the duplicate gate (check 11.5) never consult
+  `ledger_reconciliation_matches`, so a cross-source duplicate (same amount, different
+  counterparty_id) can be paid twice. Any duplicate-payment defense must resolve the
+  reconciliation match graph, not just obligation_id/counterparty_id equality.
+- Bank details: manual entry is correctly rejected (identity-only counterparty
+  routes) and the payment-instructions table stores only DB-computed hashes. One open
+  item: `services/execution/src/redaction.ts` masks (not forbids) account_number /
+  iban / routing_number and persists the raw agent-trace blob encrypted at rest, so a
+  bank number typed into a tool-call payload is retained under incident scope. Decide
+  whether that should be forbidden like card_number.
+- BrainMVB (the reference client at the sibling repo) never calls a brain-core
+  endpoint that does not exist, and never persists manual bank details client-side.
+  But its Plaid/Stripe integration routes lack auth (shared `DEMO_USER`) and several
+  pages blend fabricated demo records into live feeds with no marker. Prototype-grade.
+
 ## Copy
 
 No em dashes, no ampersands outside brand names, no emojis in docs, comments, or

@@ -479,3 +479,421 @@ the outbox guard boot fence, and the operator restore route are fixed. Group B
 is also fixed: fiat rails now match the x402 signed-cap autonomy model where
 applicable, production confidence-floor lint is wired at activation, and the
 old H-09 contribution intake wording has been replaced by contribution hold.
+
+---
+
+## Tier 2: Workflows + Platform
+
+Repos: braindotfi/brain-core (workflow logic) and braindotfi/BrainMVB (platform
+UI, reviewed at /Users/damon/BrainMVB). Branch: review/tier-2-workflows-platform.
+Scope: the four public workflows (Invoice = vendor_risk + payment + fraud_anomaly;
+Collections; Cash = treasury + cash_forecast; Close = reconciliation); the five
+MVP ingestion connectors (Plaid, Stripe, Merge/accounting, Finch/payroll,
+document/email); and BrainMVB and its calls into brain-core. Two hard invariants:
+core leads and client follows (BrainMVB never assumes an endpoint brain-core does
+not expose), and manually entered bank details are never persisted. Audit only.
+
+### Checklist
+
+- [x] Invoice Agent (vendor_risk + payment + fraud_anomaly): T2-13..T2-19; propose-only holds
+- [x] Collections Agent: scaffolding, not implemented (T2-7, T2-8, T2-9)
+- [x] Cash Agent (treasury + cash_forecast): scaffolding + money-handling bugs (T2-7, T2-10, T2-11)
+- [x] Close Agent (reconciliation): double-pay gap T2-1; corroboration T2-2; matching T2-3..T2-6
+- [x] Five connectors: T2-20 silent drop (HIGH), T2-21..T2-25 validation/dedup/watermark
+- [x] Invariant: manual bank details never persisted: HOLDS (one sign-off flag T2-26)
+- [x] Invariant: core leads / client follows: HOLDS (every endpoint exists)
+- [x] BrainMVB: auth/tenant sound except T2-27 (unauth integration routes); T2-28..T2-31
+- [x] Final Tier 2 verdict (below)
+
+### Findings
+
+_Review in progress. Invoice Agent, connectors, and BrainMVB findings still landing._
+
+#### Close Agent (reconciliation)
+
+#### T2-1 (HIGH), Reconciliation-linked duplicate obligations can both be paid (double-pay gap)
+- Location: `services/ledger/src/reconciliation/obligation-duplicate.ts:43-103` (links
+  duplicates) vs `services/policy/src/duplicate-detector.ts:25-148` (gate check 11.5)
+  and `services/execution/src/payment-intents/PaymentIntentService.ts:390` (create).
+- The obligation-duplicate matcher is the only mechanism that recognizes two
+  obligation rows as the same real-world bill, persisting a `obligation_duplicate`
+  `matched` row. But VERIFIED: nothing in the policy or execution path references
+  `ledger_reconciliation_matches` (grep of services/policy/src + services/execution/src
+  returns zero). The duplicate gate's five rules key off `invoice_id`, `obligation_id`,
+  or `destination_counterparty_id` equality. Two obligations for the same bill have
+  the same amount+currency, so the only rule that could catch a cross-source pair is
+  rule 3 (counterparty_id + amount), which fails when the two obligations reference
+  DIFFERENT counterparty rows (the exact cross-source case the matcher exists for).
+- Failure scenario: a document-extracted invoice creates obligation A (counterparty
+  row "Acme (Plaid)") and the accounting sync creates obligation B for the same bill
+  (counterparty row "Acme (QBO)"). Reconciliation links A and B. A payment intent
+  against A and a separate one against B both reach `executed`. Real double payment.
+- Amplified by T2-4 (the counterparty matcher that would merge those rows is dead).
+- Suggested fix (not applied): add a duplicate-gate/detector rule that resolves the
+  obligation through the reconciliation match graph and rejects if any linked
+  observation already has an executed payment intent or `status='paid'`.
+
+#### T2-2 (MEDIUM-HIGH), Corroboration lift has no status filter: an already-paid obligation raises a low-trust obligation's confidence
+- Location: `services/ledger/src/reconciliation/obligation-duplicate.ts:132-177`
+  (`loadIndependentObservations`); VERIFIED the query filters the right-side
+  candidate only by `provenance IN ('extracted','human_confirmed')`, currency,
+  direction, and due-date window, with NO `status` filter.
+- So an obligation already `status='paid'` can corroborate a still-open low-trust
+  obligation, and `applyCorroborationLift` (`persist.ts:135-164`) raises the open
+  obligation's confidence toward 0.9. Because `resolveEffectiveConfidence`
+  (`PaymentIntentService.ts:333-356`) caps intent confidence at the obligation's, and
+  the VM checks `agent.confidence.gte` against it, this can flip a document-extracted
+  obligation from needs-approval to autonomous-eligible for a bill already shown as
+  settled. (Impact bounded on the hard-floored rails, but real for fiat carve-out
+  eligibility.) Fix: add `AND status NOT IN ('paid','cancelled')` to the right-side
+  query.
+
+#### T2-3 (MEDIUM), Obligation-duplicate score ignores identity, over-matching recurring bills
+- Location: `obligation-duplicate.ts:57-60` (score = amountScore*0.65 + dateScore*0.35).
+- No invoice-number/description signal. Two distinct same-vendor same-amount
+  obligations within the 7-day window (subscriptions, rent, biweekly invoices) score
+  >= 0.8 and auto-link, feeding the T2-2 corroboration path with a false positive.
+
+#### T2-4 (MEDIUM), Counterparty fuzzy-match is effectively dead code
+- Location: `services/ledger/src/reconciliation/counterparty-duplicate.ts:141-169`
+  requires an EXACT `normalized_name` match to become a candidate, and `normalizeName`
+  (`services/ledger/src/service/writes.ts:580-587`) does not strip legal suffixes. So
+  the probabilistic name-match branch (`counterparty-duplicate.ts:57-65`) can never
+  fire in production: "Acme ... Inc" (Plaid) vs "Acme ... LLC" (QBO) never become
+  candidates, never link, and the obligation-duplicate matcher (which relies on a
+  prior counterparty link) never fires for that vendor. The code's own comment
+  acknowledges the fuzzy path is deferred. This amplifies T2-1.
+
+#### T2-5 / T2-6 (LOW), Matching hygiene
+- `scoring.ts:47` substring tier (`na.includes(nb)`) can false-positive on short
+  normalized names (word-boundary fix advised once T2-4 is addressed). The eight
+  non-duplicate matchers (`invoice_payment`, `transaction_receipt`, etc.) auto-commit
+  the single best candidate with no ambiguous/runner-up tier
+  (`persist.ts:173`), so a wrong pick marks a transaction reconciled and can mask the
+  real unmatched item.
+
+_Close Agent positive: the reconciliation agent is propose-only (returns
+`agentProposal`, never a payment_intent channel; ReconciliationService touches no
+execution/outbox API). Its only money-path leverage is the confidence field, which
+T2-1/T2-2 show is consumed downstream without adequate safeguards._
+
+#### Collections Agent and Cash Agent (treasury + cash_forecast)
+
+#### T2-7 (HIGH, production-readiness), Collections and Cash agents are scaffolding, not implementations
+- Location: `services/internal-agents/src/collections/handler.ts:13-15`,
+  `cash_forecast/handler.ts:18-31`, `treasury/handler.ts:37`; generic fallback
+  `handler.ts:68-78`; declared-but-unpopulated contract `payloads.ts:53-61,169-179`.
+- There is no dunning/prioritization algorithm in Collections and no forecast/sweep
+  math in Cash. Every action resolves to the generic `agentProposal()` that forwards
+  only invoice_id/counterparty_id/evidence_refs. The richer per-agent payload
+  contracts (days_overdue, amount_due, available_cash, projected_inflows, net
+  position, confidence band) are declared "required" but never populated and
+  `validateAgentPayload` has no callers. No cross-tenant scanner emits the trigger
+  events (`invoice.overdue`, `cash.balance_high`, etc.). These workflows are wired but
+  not implemented. Consistent with the known doc-ingestion deploy gap. This is a
+  readiness finding: the four public workflows cannot be presented as shipped.
+
+#### T2-8 (MEDIUM), Dunning message variables are never populated
+- Location: `collections/policy.template.json` (`collections_payment_reminder`
+  allowed_variables) vs the payload from `handler.ts:68-78`.
+- `amount_due`, `days_overdue`, `due_date`, `counterparty_name` are never set, so a
+  drafted reminder renders with blank/undefined fields. The agent's own stated
+  deliverable (the dunning message) is broken by construction. (Non-financial rail.)
+
+#### T2-9 (MEDIUM), Fail-open under Ledger degradation
+- Location: `services/api/src/agents/evidence-providers.ts:183-254` (best-effort
+  `try/catch` -> empty evidence), `services/agent-router/src/worker.ts:76-171` (never
+  checks `bundle.critical_missing` before proposing), unconditional `execute:"auto"`
+  policy rule.
+- A Ledger read failure silently yields an empty evidence bundle and the proposal
+  proceeds to auto-approval anyway, rather than failing closed. Quality/correctness
+  issue (these agents are non-financial); the pattern is the concern.
+
+#### T2-10 (LOW-MEDIUM), Treasury silently coerces a non-string amount/currency
+- Location: `treasury/handler.ts:29-32`, `readString` at `handler.ts:63-65`.
+- `readString(c.amount, "0")` returns the fallback for any non-string (e.g. a JSON
+  number), so a numeric `amount` becomes `"0"` and `currency` defaults to `"USD"`.
+  CORRECTION to the sub-agent's claim: this does NOT produce a silent auto-approved
+  zero-value transfer, because `PaymentIntentService.create` rejects `amount === "0"`
+  (fail-closed) and `propose_transfer` hardcodes `action_type: "onchain_transfer"`
+  which is always hard-floored (T0-11). So the real defect is a robustness bug: a
+  legitimate numeric amount is silently dropped and the transfer spuriously rejected
+  (or mis-denominated to USD) instead of coerced. Fix: validate/coerce the type and
+  fail loudly on a malformed amount.
+
+#### T2-11 (MEDIUM), Treasury omits confidence on the intent (defaults to 1.0)
+- Location: `treasury/handler.ts:24-35` never sets `confidence`;
+  `IPaymentIntentService` defaults an omitted confidence to 1.0.
+- A sweep/transfer built from weak evidence still asserts full confidence, defeating
+  an `agent.confidence.gte` gate. This is the confidence-floor-bypass pattern the
+  Tier 1 notes flag. Bounded for treasury today because it hardcodes onchain_transfer
+  (hard-floored), but dangerous if the pattern is copied to a fiat rail. Fix:
+  `confidence: input.evidence.evidence_score`.
+
+#### T2-12 (LOW-MEDIUM), execution_mode / minimum_confidence computed but not enforced
+- Location: `services/agent-router/src/router.ts:128-136` computes `execution_mode`
+  (including a `notify_only` downgrade below `minimum_confidence`) but
+  `worker.ts:76-171` never reads `decision.execution_mode` before proposing. So the
+  per-agent minimum_confidence thresholds are audited but not gating the proposal
+  path.
+
+_Collections/Cash positive: propose-only holds. `propose_transfer` is reachable only
+via an explicit `requested_action` (never event-triggered per
+`treasury/definition.ts:28-34` + `action-resolver.ts:94-121`), and all three agents
+call `IPaymentIntentService.create`, never `.execute`._
+
+#### Invoice Agent (vendor_risk + payment + fraud_anomaly)
+
+Cross-cutting theme: the "H-16 agent-output gating primitives" (agent.confidence.gte,
+agent.evidence_score.gte, agent.risk_level.lte) that are supposed to gate agent
+behavior are LARGELY UNENFORCED across the agent workflows, via three compounding
+defects (T2-13, T2-14, T2-15). The Tier 0/1 hard approval floors still stand between
+any proposal and money movement, so these are efficacy/defense-in-depth failures, not
+a direct autonomous-payment hole. Propose-only is structurally sound for all three
+modules (vendor_risk/fraud_anomaly only emit `channel:"agent"`; payment only
+`.create`, never `.execute`).
+
+#### T2-13 (HIGH), Event-driven propose path hardcodes requiredEvidence: [], so evidence completeness always reports full
+- Location: `services/agent-router/src/worker.ts:125` (`requiredEvidence: []`);
+  `scoreEvidence` at `services/internal-agents/src/evidence.ts:118-127` returns
+  `completeness:1, evidence_score:1, critical_missing:false` for an empty list.
+- VERIFIED. The event-triggered path (the real trigger path for
+  `vendor.bank_details_changed`, `payment.destination_changed`,
+  `duplicate_charge.detected`, `transaction.unusual`) gathers evidence with an empty
+  required list, so the bundle reports complete even when zero required evidence kinds
+  were gathered. The synchronous path (`agent-run-service.ts:211`) correctly passes
+  `definition.required_evidence`. Fix: pass the selected agent's `required_evidence` at
+  `worker.ts:125`.
+
+#### T2-14 (HIGH), Agent-output gating primitives silently no-op for the non-financial agent channel
+- Location: `services/policy/src/service.ts:65-73` (`evaluateLegacy` Action build).
+- VERIFIED the Action carries only kind/counterparty_id/amount/agent_role/timestamp;
+  it never reads confidence, evidence_score, risk_level, or agent_id from the
+  proposal, though the DSL defines `agent.confidence.gte` / `agent.evidence_score.gte`
+  / `agent.risk_level.lte` for exactly this (`dsl.ts:63-67`). Since vendor_risk and
+  fraud_anomaly (both risk_level high) only ever produce `channel:"agent"` proposals,
+  `evaluateLegacy` is their sole policy path, so a tenant CANNOT gate these high-risk
+  agents on confidence/evidence/risk. Fix: thread those fields into the Action (which
+  also requires the handlers to populate them, T2-18).
+
+#### T2-15 (HIGH), Payment agent omits confidence: defaults to 1.0 on the fiat rail
+- Location: `services/internal-agents/src/payment/handler.ts:27-35` (builds
+  `ach_outbound`/`onchain_transfer` with no `confidence`); default 1.0 per
+  `IPaymentIntentService`; `resolveEffectiveConfidence` only caps when `obligation_id`
+  is set (the handler sets `invoice_id`, not `obligation_id`).
+- A payment proposal built from thin evidence asserts confidence 1.0, defeating the
+  agent's own `minimum_confidence: 0.85` and any tenant `agent.confidence.gte` floor.
+  Same pattern as T2-11 (treasury) but on `ach_outbound` (a fiat rail eligible for the
+  autonomous cap carve-out), so more consequential. Fix:
+  `confidence: input.evidence.evidence_score`.
+
+#### T2-16 (HIGH), vendor_risk flags on evidence KIND presence, not risk content
+- Location: `services/internal-agents/src/vendor_risk/handler.ts:18`
+  (`hasRiskEvidence = items.some(i => i.kind === "counterparty_history")`).
+- VERIFIED. The escalation reads only whether a `counterparty_history` item is present,
+  never its content/severity. Since that kind is required for full evidence, the
+  best-evidenced proposals trip `block_payment` whether the history is clean or flagged,
+  while a vendor with NO history (the unknown, arguably riskier case) never escalates.
+  There is no risk-scoring file under `vendor_risk/`. The module cannot actually
+  distinguish a risky vendor from a clean one. (Non-financial, so an efficacy defect,
+  not a money hole.)
+
+#### T2-17 (MEDIUM), payment.destination_changed can never escalate to block_payment
+- Location: `vendor_risk/definition.ts:22` (maps to `require_approval`) +
+  `vendor_risk/handler.ts:20-23` (escalates only when action is
+  `flag_vendor_risk`/`block_payment`).
+- The classic BEC/bank-swap fraud trigger is permanently capped at "needs a human to
+  approve" and can never be hard-blocked by any amount of risk evidence, contradicting
+  the handler's own docstring. Impact bounded because require_approval still forces a
+  human, so it is not unsafe, just less protective than intended. Fix: include
+  `require_approval` in the escalation set or add a destination-change block branch.
+
+#### T2-18 (MEDIUM), fraud_anomaly computes nothing; contract fields are dead
+- Location: `fraud_anomaly/handler.ts:14-16` (generic `agentProposal` fallback);
+  `AGENT_PAYLOAD_REQUIRED_FIELDS.fraud_anomaly` (`payloads.ts:150-156`) requires
+  anomaly_type/anomaly_score/transaction_id/recommended_action, none populated;
+  `validateAgentPayload` (`payloads.ts:169-179`) has no production callers.
+- fraud_anomaly repackages context into a generic flag with no anomaly type or score
+  for a reviewer; detection is entirely delegated to whatever external system emits the
+  trigger event. Same scaffolding gap as T2-7 (vendor_risk output has the same
+  contract mismatch). Fix: wire `validateAgentPayload` into the propose path (fail
+  closed on malformed payload) and populate the declared fields.
+
+#### T2-19 (MEDIUM), Payment handler: empty-id FK crash and silent wrong-currency default
+- Location: `payment/handler.ts:29-32`, `readString` at `handler.ts:63-65`.
+- Missing/`non-string` account/counterparty ids default to `""` and only fail at the
+  DB FK constraint (an unhandled job error with no `payment_intent.created` audit),
+  rather than a clean typed reject. And a non-string `currency` silently defaults to
+  `"USD"` (a numeric amount is caught by create's `!== "0"` check, but a numeric
+  currency is NOT caught anywhere), so a wrong-currency intent can be created. Fix:
+  validate required context fields and coerce/reject types in the handler.
+
+_Also observed (Invoice): the router's `execution_mode` is computed but not enforced
+for the agent channel (same defect as T2-12), and `execute_payment` is a misleading
+action name (payment only ever calls `.create`, never `.execute`) (LOW)._
+
+#### Ingestion connectors (Plaid, Stripe, Merge, Finch, document/email)
+
+Two write paths exist: Plaid/Stripe/Finch write the Ledger directly via the legacy
+normalize worker; Merge and document obligations flow through the canonical projector
+(retry + quarantine + metrics). The asymmetry is the root of the worst finding.
+
+#### T2-20 (HIGH), Legacy normalize worker never retries a failed row: partial-batch writes and permanent silent data loss
+- Location: `services/ledger/src/workers/normalizeWorker.ts:81-92` (poll) and `:110-114`
+  (`recordNormalizationResult` called unconditionally with the error).
+- VERIFIED. The poll excludes any `raw_parsed` row that has ANY `normalization_log`
+  row, and a FAILED normalize writes a log row (with error set), so a failed row is
+  never re-polled. `normalizeFromRaw` writes each item in its own transaction with no
+  enclosing batch transaction, so a mid-batch exception (e.g. a malformed Stripe
+  amount, an undefined Plaid field) commits items 1..k, aborts, logs the row failed,
+  and items k+1..n are dropped forever. No metric, no quarantine, no replay (contrast
+  the canonical worker's `error IS NULL OR quarantined` + bounded retries + metric +
+  `replayQuarantined()`). Real financial transactions/obligations from Plaid, Stripe,
+  and Finch can be silently and permanently lost while the tenant's balances look
+  clean. Fix: mirror the canonical worker (retry/quarantine/metric) and make each
+  extractor loop catch-and-skip per malformed item.
+
+#### T2-21 (MEDIUM-HIGH), Plaid extractor has no runtime payload validation
+- Location: `services/ledger/src/extractors/plaid.ts:89-90` (bare `as` casts, no shape
+  check); interpreter only checks top-level arrays exist.
+- Unlike Stripe (`stripe.ts:99-107,143`), Finch (`finch.ts:70-77`), and doc-obligation
+  (full validator), Plaid does no per-object runtime guard. A transaction missing
+  `transaction_id` passes `undefined` into a parameterized query, throwing an obscure
+  pg error that (per T2-20) drops the rest of the batch. Fix: add per-object type
+  guards and skip malformed individual records.
+
+#### T2-22 (MEDIUM), Content-keyed obligation dedup can silently merge distinct obligations
+- Location: `services/ledger/src/service/writes.ts:472-560` (`upsertObligationRow`
+  dedups on counterparty_id/type/amount_due/currency/due_date, no natural key).
+- Two genuinely distinct obligations sharing that tuple (two same-day disputes for the
+  same amount, coinciding payroll runs) collapse into one row (`created:false`),
+  under-reporting a real payable/receivable. The canonical path correctly keys on the
+  provider's natural id. Fix: accept an optional external/natural key and prefer it.
+
+#### T2-23 (MEDIUM), No DB uniqueness backstop for the dedup keys
+- Location: `ledger_counterparties` (`migrations/0002`) and `ledger_obligations`
+  (`migrations/0007`) have plain indexes, not UNIQUE, despite the `writes.ts:1-18`
+  header claiming `INSERT ... ON CONFLICT`. The writers do SELECT-then-INSERT.
+- Correctness rests entirely on the normalize worker's advisory-lock single-flight. A
+  second worker without the lock, a future direct-call path, or a lock bug would create
+  divergent duplicate rows with no DB guard. (`ledger_accounts`/`ledger_transactions`
+  DO have UNIQUE constraints.) Fix: add UNIQUE constraints and real ON CONFLICT.
+
+#### T2-24 (MEDIUM), Stripe incremental pull can skip same-second objects at the watermark
+- Location: `services/raw/src/adapters/stripe.ts:126-154` (commits max `created`, next
+  pull filters `created[gt]` strictly). Stripe `created` is 1-second resolution, so an
+  object created in the same second as the committed watermark but after the walk
+  finished is permanently excluded. Fix: use `created[gte]` with idempotency-key dedup,
+  or track seen-ids-at-watermark.
+
+#### T2-25 (LOW), Money-formatting and currency-default hygiene
+- `plaid.ts:142` uses float `Math.abs(tx.amount).toFixed(2)` (float rounding pitfalls)
+  instead of the integer-cents path Stripe/Finch use. `services/ledger/src/projection/
+  obligations.ts:204` defaults a malformed/non-ISO currency to `"USD"` (not just a
+  missing one), a misclassification risk for non-USD tenants; a known-invalid currency
+  should fail/quarantine, not silently become USD. INFO: the doc-obligation canonical
+  projector validates type/amount more loosely than the legacy validator (DB CHECK
+  mostly covers it), and Merge `payment`/`tax_rate` pages are ingested but never
+  projected (completeness gap).
+
+#### Bank-detail-never-persisted invariant
+
+_HOLDS for manual entry and every connector path checked. Manual counterparty
+create/edit rejects payment-rail fields (`PAYMENT_FIELD_RE` +
+identity-only allowlist, `services/ledger/src/routes/index.ts:426-536`), the error
+echoes field NAMES not values, and no request logger dumps bodies.
+`ledger_counterparty_payment_instructions` stores only sha256 hashes computed inside a
+DB trigger (the app never sees the raw value); `linked_accounts` is never written to a
+non-empty value anywhere. Audit events log only hashed/short identifiers. Verified._
+
+#### T2-26 (MEDIUM, flag for sign-off), Agent-trace redaction masks (not forbids) bank account numbers, and the raw blob is persisted
+- Location: `services/execution/src/redaction.ts:40-43` (`account_number`, `iban`,
+  `routing_number` -> `mask_last4`) vs `:62-75` (`card_number`/`cvv`/`pin`/`private_key`
+  -> `forbid`). The file header states the raw, unredacted blob is persisted, encrypted
+  at rest per-tenant, readable under `audit:incident_investigation`.
+- VERIFIED. This is a narrower path than manual counterparty create (already rejected):
+  if a user or agent types/relays a bank account number or IBAN into an agent tool-call
+  payload, the raw value is captured in the encrypted trace blob (access-controlled, not
+  plaintext, but persisted in the literal sense the invariant states). Not a violation
+  of the documented counterparty contract, but the "never persisted anywhere" wording
+  and the actual mask-not-forbid + encrypted-persist design diverge. Needs a
+  product/security decision: either forbid bank account numbers like card numbers, or
+  document that they are encrypted-persisted under incident scope.
+
+#### BrainMVB platform
+
+Positives verified: the core-leads-client-follows invariant HOLDS (every brain-core
+endpoint BrainMVB calls exists in brain-core code, including the 404/422/501-tolerant
+extract route); no manually entered bank detail is persisted client-side (manual vendor
+create is identity-only and the BFF re-filters to an allowlist); tenant and approval
+actor are derived server-side (no client-supplied tenant_id is trusted anywhere in
+client/src); secrets stay server-side; and error handling is strong (a single
+approval-rejection reason map, consistent isLoading/isError/success states, verbatim
+brain-core error relay).
+
+#### T2-27 (HIGH), Plaid/Stripe integration routes have no auth and share a hardcoded DEMO_USER
+- Location: `/Users/damon/BrainMVB/server/routes.ts:548` (`const DEMO_USER = "demo-user"`)
+  and the routes at `:550,559,605,612,622,644,696,941` (none use `requireAuth`, while
+  document/rules routes at `:728,737,909` do).
+- VERIFIED. `POST /api/integrations/plaid/exchange` lets any UNAUTHENTICATED caller link
+  a real Plaid bank account into the single shared `demo-user` bucket, and any other
+  unauthenticated caller can list (`institution_name`, account masks) or `disconnect`
+  it. Real functioning code, not a stub; the comment acknowledges it is prototype-only.
+  Must gain `requireAuth` + `req.session.userId` scoping before shipping beyond a
+  single-operator demo.
+
+#### T2-28 (HIGH), Fabricated settled-payment rows are always injected into the live activity feed
+- Location: `/Users/damon/BrainMVB/client/src/pages/ActivityPage.tsx:286-300`
+  (`ADOBE_SETTLED`, `COMCAST_SETTLED`, `MERIDIAN_RECEIVABLE_SETTLED`, `GUSTO_RECON_SETTLED`
+  from `mockProposals.ts`).
+- VERIFIED. The comment states they "always appear in the 'Brain Did' tab regardless of
+  what brain-core returns." A real/production tenant with zero completed payments sees
+  four fabricated "Brain paid X" rows with no demo/example marker; no `synthetic` flag
+  exists in the type system to distinguish them. Fix: gate behind a demo-mode flag and
+  render an explicit Example badge.
+
+#### T2-29 (MEDIUM-HIGH) / T2-30 (MEDIUM), Empty live tabs silently backfilled with fake data
+- `AuditLogPage.tsx:121-136` backfills an empty tab with `DEMO_AUDIT_RECORDS` with no
+  indicator: materially misleading on the compliance-facing decision-history surface for
+  a tenant genuinely clean in a category. `VendorsPage.tsx:284-298` backfills an empty
+  vendor trust tab with one fake vendor (correctly gated behind isLoading/isError, so no
+  flash-of-fake, but a real empty category still renders a fake vendor). RulesPage and
+  Add-Vendor are clean (no silent fallback).
+
+#### T2-31 (LOW-MEDIUM), Full PAN/CVC captured via a non-tokenizing form that no-ops
+- Location: `/Users/damon/BrainMVB/client/src/components/BillingModals.tsx:188-295`,
+  `SettingsPage.tsx:778-786`. The subscription-billing card form captures full card
+  number, expiry, and CVC into React state; only the last 4 are kept and nothing is
+  transmitted or persisted (safe today). But it is a custom non-tokenizing input; if ever
+  wired to a processor, replace with a tokenizing SDK (Stripe Elements) before any
+  network call. LOW: `web3.ts:5` embeds the Alchemy key in the client bundle (standard
+  Vite pattern; verify domain-restriction), and `server/auth.ts:83` falls back to a
+  boot-time random `SESSION_SECRET` (multi-instance session-consistency footgun).
+
+### Tier 2 verdict
+
+The four public workflows are, structurally, propose-only sound (no module can call
+`.execute()`; money still requires the gate and the Tier 0/1 approval floors), and two
+hard invariants hold well: BrainMVB never calls a brain-core endpoint that does not
+exist (core leads, client follows), and manually entered bank details are not persisted
+through the manual-counterparty or connector paths. But two themes dominate:
+
+1. The workflows are largely SCAFFOLDING with UNENFORCED GATING (T2-7 Collections/Cash
+   not implemented; T2-13/T2-14/T2-15 the agent-output confidence/evidence/risk
+   primitives are defeated on the live path; T2-16 vendor_risk cannot tell risky from
+   clean; T2-18 fraud_anomaly computes no score). They cannot be presented as shipped,
+   and their safety today rests entirely on the downstream gate, not on the agents.
+2. Real correctness/money-integrity gaps in the data layer: T2-1 (reconciliation-linked
+   duplicate obligations can both be paid, a genuine double-pay path), T2-20 (legacy
+   ingestion silently and permanently drops failed records), and T2-2 (already-paid
+   obligations corroborate confidence). T2-27/T2-28 in BrainMVB (unauthenticated bank
+   linking; fabricated settled payments shown as real) are the platform-side headliners.
+
+Priorities before this tier can be called production-ready: T2-1 (double-pay),
+T2-20 (silent ingestion loss), T2-27 (unauth bank linking), T2-28 (fabricated activity),
+then the agent-gating cluster (T2-13/14/15) and the confidence/dedup items. T2-26
+(bank-detail-in-trace) needs a product decision. Overall Tier 2 readiness: NOT
+production-ready; the money path is gated, but the workflows are demo-grade and the
+ingestion + reconciliation + platform layers have real correctness and trust-boundary
+gaps.
+
