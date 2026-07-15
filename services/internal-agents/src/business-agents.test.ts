@@ -211,7 +211,7 @@ describe("integration", () => {
     expect(outcomeToDecision(decision.outcome)).toBe("ESCALATE");
   });
 
-  it("Vendor Risk blocks payment.destination_changed when risk evidence is present", () => {
+  it("Vendor Risk blocks payment.destination_changed when flagged risk evidence is present", () => {
     const withRisk = vendorRiskHandler.build({
       action: "flag_vendor_risk",
       context: { counterparty_id: "cp_1", payment_destination: "dest_2" },
@@ -219,10 +219,10 @@ describe("integration", () => {
     });
     // FULL lacks counterparty_history; add it explicitly for the block path.
     const withHistory = vendorRiskHandler.build({
-      action: "flag_vendor_risk",
+      action: "require_approval",
       context: { counterparty_id: "cp_1" },
       evidence: {
-        items: [{ kind: "counterparty_history", ref: "hist_1" }],
+        items: [{ kind: "counterparty_history", ref: "hist_1", risk_flag: true }],
         completeness: 1,
         evidence_score: 1,
         missing_required_evidence: [],
@@ -236,6 +236,25 @@ describe("integration", () => {
     // Without risk history it stays a flag.
     if (withRisk.channel === "agent") {
       expect(withRisk.action.type).toBe("flag_vendor_risk");
+    }
+  });
+
+  it("Vendor Risk does not block on clean counterparty history presence alone", () => {
+    const cleanHistory = vendorRiskHandler.build({
+      action: "flag_vendor_risk",
+      context: { counterparty_id: "cp_1" },
+      evidence: {
+        items: [{ kind: "counterparty_history", ref: "hist_clean", severity: "low" }],
+        completeness: 1,
+        evidence_score: 1,
+        missing_required_evidence: [],
+        critical_missing: false,
+      },
+    });
+
+    expect(cleanHistory.channel).toBe("agent");
+    if (cleanHistory.channel === "agent") {
+      expect(cleanHistory.action.type).toBe("flag_vendor_risk");
     }
   });
 
