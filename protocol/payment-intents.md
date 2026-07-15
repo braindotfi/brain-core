@@ -99,6 +99,12 @@ Two rails are real:
 
 Both are idempotency-keyed by the outbox row so a crash-retry never moves money twice. `erp_writeback` (NetSuite) remains a fail-closed stub. The M2M settlement action types `x402_settle` / `escrow_release` map to the `x402_base` / `escrow_base` rails (USDC on Base / `BrainEscrow`). They do not create ledger balance reservations because their spend is enforced by the settlement wallet or locked escrow state rather than by an off-chain ledger account hold. The live SDK wiring (Plaid / viem+KMS) and the sandbox/anvil round-trips are a follow-up; see `services/execution/README.md`.
 
+For on-chain money movement, policy `allow` is not always enough to dispatch.
+`onchain_transfer` and `escrow_release` require at least one recorded human
+approval before execution. `x402_settle` may stay autonomous only when the signed
+policy rule permits on-chain settlement and sets an `x402_autonomous_max_amount`
+cap that covers the amount.
+
 ### State Transitions
 
 | From               | To                 | Trigger                                                                  |
