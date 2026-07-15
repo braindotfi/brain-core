@@ -240,6 +240,7 @@ describe("normalizeStripeArtifact — stripe_v1", () => {
     expect(obl.values).toContain("1250.00");
     expect(obl.values).toContain("disputed");
     expect(obl.values).toContain("payable");
+    expect(obl.values).toContain("stripe:dispute:dp_1");
     expect(created.map((r) => r.entity)).toEqual(["counterparty", "obligation"]);
   });
 

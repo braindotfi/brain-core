@@ -131,20 +131,7 @@ describe("LedgerService.upsertCounterparty", () => {
   it("merges aliases into existing counterparty (deduplicated by normalized_name)", async () => {
     const audit = new InMemoryAuditEmitter();
     const { pool } = fakePool({
-      "FROM ledger_counterparties\n      WHERE normalized_name": [
-        {
-          ...rowCommon(),
-          id: "cp_EXISTING",
-          name: "Acme",
-          normalized_name: "acme",
-          type: "vendor",
-          aliases: ["Acme Inc"],
-          linked_accounts: [],
-          source_ids: ["raw_old"],
-          evidence_ids: ["prs_old"],
-        },
-      ],
-      "UPDATE ledger_counterparties": [
+      "INSERT INTO ledger_counterparties": [
         {
           ...rowCommon(),
           id: "cp_EXISTING",
@@ -155,6 +142,7 @@ describe("LedgerService.upsertCounterparty", () => {
           linked_accounts: [],
           source_ids: ["raw_old", "raw_abc"],
           evidence_ids: ["prs_old", "prs_def"],
+          created: false,
         },
       ],
     });
@@ -329,21 +317,7 @@ describe("LedgerService manual counterparty endpoints", () => {
   it("does not downgrade trust state when manual create dedupes into an existing row", async () => {
     const audit = new InMemoryAuditEmitter();
     const { pool, calls } = fakePool({
-      "FROM ledger_counterparties\n      WHERE normalized_name": [
-        {
-          ...rowCommon(),
-          id: "cp_existing",
-          name: "Acme",
-          normalized_name: "acme",
-          type: "vendor",
-          risk_level: "low",
-          verified_status: "sanctions_cleared",
-          aliases: [],
-          linked_accounts: [],
-          metadata: {},
-        },
-      ],
-      "UPDATE ledger_counterparties": [
+      "INSERT INTO ledger_counterparties": [
         {
           ...rowCommon(),
           id: "cp_existing",
@@ -355,6 +329,7 @@ describe("LedgerService manual counterparty endpoints", () => {
           aliases: ["Acme LLC"],
           linked_accounts: [],
           metadata: {},
+          created: false,
         },
       ],
     });
@@ -365,9 +340,10 @@ describe("LedgerService manual counterparty endpoints", () => {
     );
     expect(result.created).toBe(false);
     expect(result.counterparty.verified_status).toBe("sanctions_cleared");
-    const update = calls.find((c) => c.text.includes("UPDATE ledger_counterparties"))!;
-    expect(update.values[4]).toBe("unverified");
-    expect(update.values[6]).toBe(false);
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_counterparties"))!;
+    expect(insert.text).toContain("ON CONFLICT");
+    expect(insert.values[6]).toBe("unverified");
+    expect(insert.values[15]).toBe(false);
   });
 
   it("renames with the previous name preserved as an alias and audits changed fields", async () => {
