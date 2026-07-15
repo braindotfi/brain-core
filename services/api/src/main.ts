@@ -1808,6 +1808,33 @@ async function main(): Promise<void> {
               });
               return { paused, quarantined };
             },
+            restoreAgent: async (restoreCtx, agentId) => {
+              await withTenantScope(pool, restoreCtx.tenantId, async (c) => {
+                const agent = await findAgent(c, agentId);
+                if (agent === null) {
+                  throw brainError("execution_agent_not_registered", `no such agent ${agentId}`, {
+                    statusOverride: 404,
+                  });
+                }
+                if (agent.state !== "quarantined") {
+                  throw brainError(
+                    "execution_agent_not_registered",
+                    `agent ${agentId} is ${agent.state}, not quarantined`,
+                    { statusOverride: 409 },
+                  );
+                }
+                await transitionAgent(c, agentId, "quarantined", "active");
+              });
+              await audit.emit({
+                tenantId: restoreCtx.tenantId,
+                layer: "agent",
+                actor: restoreCtx.actor,
+                action: "agent.restored",
+                inputs: { agent_id: agentId },
+                outputs: { state: "active" },
+              });
+              return { restored: true };
+            },
           }),
         );
         // SIWX (agent auth) — always wired. Production requires AUTH_SIGN_KEY
