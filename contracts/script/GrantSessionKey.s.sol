@@ -19,7 +19,7 @@ import {BrainSmartAccount} from "../src/BrainSmartAccount.sol";
 /// "any target / any selector" key was a footgun). This script therefore grants
 /// a key scoped to:
 ///   - allowedTargets   = [allowedToken]                 (e.g. USDC on Base)
-///   - allowedSelectors = [transfer, transferFrom, approve]
+///   - allowedSelectors = [transfer, transferFrom]
 ///   - maxPerTx         = 1_000e6   (1,000 USDC; 6-decimal token)
 ///   - maxPerPeriod     = 10_000e6  (10,000 USDC / day)
 ///   - periodSeconds    = 86_400    (daily cumulative window)
@@ -29,16 +29,19 @@ import {BrainSmartAccount} from "../src/BrainSmartAccount.sol";
 ///
 /// Tune the caps/target for the specific deployment before broadcasting.
 contract GrantSessionKey is Script {
+    function paymentSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = 0xa9059cbb; // transfer(address,uint256)
+        selectors[1] = 0x23b872dd; // transferFrom(address,address,uint256)
+    }
+
     function run(address smartAccount, address holder, address allowedToken) external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
 
         address[] memory targets = new address[](1);
         targets[0] = allowedToken;
 
-        bytes4[] memory selectors = new bytes4[](3);
-        selectors[0] = 0xa9059cbb; // transfer(address,uint256)
-        selectors[1] = 0x23b872dd; // transferFrom(address,address,uint256)
-        selectors[2] = 0x095ea7b3; // approve(address,uint256)
+        bytes4[] memory selectors = paymentSelectors();
 
         BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
             holder: holder,

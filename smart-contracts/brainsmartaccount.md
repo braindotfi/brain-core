@@ -71,6 +71,12 @@ The ERC20 mode constraints close two finding classes the external audit would ot
 - a session key can't be granted with a non-decodable selector that silently bypasses caps (unmetered call, R-07)
 - a token-transfer selector can't be granted in NATIVE mode, where `msg.value == 0` would leave token amounts unmetered
 
+BrainSmartAccount still supports `approve` as a decodable ERC20 selector for
+general scoped keys. The payment-key issuance script does not grant `approve`;
+payment keys are limited to `transfer` and `transferFrom`. Revoking or pausing a
+session key stops future `executeViaSessionKey` calls but cannot claw back any
+ERC20 allowance that already exists at the token contract.
+
 ### EIP-712 ScopeAttestation
 
 The agent's signature includes a tenant-signed scope attestation.
