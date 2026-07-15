@@ -75,6 +75,7 @@ describe("BRAIN_ERROR_CODES registry", () => {
       "agent_proposal_not_found",
       "agent_proposal_invalid_state",
       "agent_idempotency_conflict",
+      "action_type_not_executable",
       "payment_intent_approval_required",
       "payment_intent_approval_invalid",
     ];

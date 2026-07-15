@@ -468,6 +468,10 @@ audit-anchor sweep, trust state machine, RLS posture, and DB role separation.
       production confidence-floor activation lint is wired with a reject-mode
       flag, and the H-09 contribution intake surface is renamed to
       contribution hold.
+- [x] Group B defense-in-depth fixed: executable PaymentIntent action types now
+      come from one allowlist shared by the HTTP route, MCP tool, MCP resource,
+      and service. `other` and unknown action types are rejected at create time,
+      and `railFor` fails closed instead of defaulting to `bank_ach`.
 
 ### Tier 1 verdict update
 
@@ -479,3 +483,5 @@ the outbox guard boot fence, and the operator restore route are fixed. Group B
 is also fixed: fiat rails now match the x402 signed-cap autonomy model where
 applicable, production confidence-floor lint is wired at activation, and the
 old H-09 contribution intake wording has been replaced by contribution hold.
+The follow-up rail-routing hardening also closes the latent fail-open-by-
+omission path where an unlisted action type could have reached a money rail.
