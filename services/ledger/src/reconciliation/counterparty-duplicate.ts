@@ -12,8 +12,9 @@
  *  - deterministic business key: exact normalized-name equality across rows
  *    of different type or disjoint sources → 0.85 (confident, `matched`)
  *  - identity bonus: equal email in namespaced metadata → +0.1
- *  - probabilistic: nameScore containment / token overlap → candidate
- *    territory (`duplicate_possible`, §13 user review)
+ *  - probabilistic: normalized-prefix block, then nameScore containment /
+ *    token overlap → candidate territory (`duplicate_possible`, §13 user
+ *    review)
  *
  * Symmetric identity matching: each unordered pair is considered once, with
  * sides ordered by row id so findExistingMatch's (left, right) dedup key is
@@ -58,7 +59,7 @@ function pairScore(a: CounterpartyRow, b: CounterpartyRow): number {
   const exact =
     a.normalized_name !== null && a.normalized_name === b.normalized_name
       ? EXACT_NAME_SCORE
-      : nameScore(a.name, b.name) * 0.75; // probabilistic tier tops out below confident
+      : nameScore(a.name, b.name) * 0.8; // probabilistic tier tops out below confident
   const emailA = emailOf(a);
   const bonus = emailA !== null && emailA === emailOf(b) ? EMAIL_BONUS : 0;
   return Math.min(exact + bonus, 0.95);
@@ -143,29 +144,37 @@ async function loadUnlinkedPeers(
   ctx: ServiceCallContext,
   row: CounterpartyRow,
 ): Promise<CounterpartyRow[]> {
+  if (row.normalized_name === null) return [];
+  const prefix = blockingPrefix(row.normalized_name);
   return withTenantScope(pool, ctx.tenantId, async (c) => {
     const { rows } = await c.query<CounterpartyRow>(
-      // Peer candidates: a different row sharing the normalized name (the
-      // deterministic key; (normalized_name, type) uniqueness means a peer is
-      // always a DIFFERENT type) and not already linked to this row in either
-      // direction. Probabilistic name matching over the whole table is
-      // deferred until a blocking index exists (flagged, not silent).
+      // Peer candidates: exact normalized-name peers for the deterministic
+      // tier, plus normalized-prefix peers for the probabilistic tier. The
+      // prefix block is backed by the text_pattern_ops index in ledger/0045 so
+      // fuzzy matching is reachable without scanning the whole table.
       `SELECT id, name, normalized_name, type, provenance, confidence,
               COALESCE(metadata, '{}'::jsonb) AS metadata, created_at
          FROM ledger_counterparties peer
         WHERE peer.id <> $1
-          AND peer.normalized_name = $2
+          AND peer.normalized_name IS NOT NULL
+          AND (peer.normalized_name = $2 OR peer.normalized_name LIKE $3)
           AND NOT EXISTS (
             SELECT 1 FROM ledger_reconciliation_matches m
              WHERE m.match_type = 'counterparty_duplicate'
                AND m.status IN ('matched','duplicate_possible')
                AND ((m.left_entity_id = LEAST($1, peer.id) AND m.right_entity_id = GREATEST($1, peer.id)))
           )
-        LIMIT $3`,
-      [row.id, row.normalized_name, MAX_PEERS_PER_ROW],
+        LIMIT $4`,
+      [row.id, row.normalized_name, `${prefix}%`, MAX_PEERS_PER_ROW],
     );
     return rows;
   });
+}
+
+function blockingPrefix(normalizedName: string): string {
+  const [firstToken] = normalizedName.split("_");
+  const token = firstToken ?? normalizedName;
+  return token.length >= 3 ? token : normalizedName.slice(0, 3);
 }
 
 function defaultSince(days: number): Date {

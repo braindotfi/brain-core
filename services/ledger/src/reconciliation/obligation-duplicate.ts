@@ -9,6 +9,7 @@
  *   - RIGHT: independent obligations (provenance extracted/human_confirmed),
  *     same counterparty, same currency, same direction, different row
  *   - amount exact-or-near (65%), due_date within ±7 days (35%)
+ *   - when both rows carry an identity key, conflicting identities do not match
  *
  * Resolution semantics (§11 "Resolved", §13): observations are LINKED, never
  * destructively merged. A score >= 0.8 records a confident `matched` row and
@@ -31,6 +32,7 @@ interface ObligationObservation {
   currency: string;
   due_date: Date;
   direction: string | null;
+  identity_key: string | null;
 }
 
 const CONFIDENT_THRESHOLD = 0.8;
@@ -39,6 +41,15 @@ const MAX_LEFT = 100;
 const MAX_RIGHT_PER_LEFT = 10;
 const SCAN_WINDOW_DAYS_DEFAULT = 60;
 const DATE_WINDOW_DAYS = 7;
+const IDENTITY_KEY_SQL = `COALESCE(
+  NULLIF(metadata->>'invoice_number', ''),
+  NULLIF(metadata->>'external_id', ''),
+  NULLIF(metadata->>'description', ''),
+  NULLIF(metadata->'merge'->>'invoice_id', ''),
+  NULLIF(metadata->'document'->>'invoice_number', ''),
+  NULLIF(metadata->'stripe'->>'dispute_id', ''),
+  NULLIF(external_key, '')
+)`;
 
 export class ObligationDuplicateMatcher implements Matcher {
   public readonly matchType = "obligation_duplicate" as const;
@@ -54,6 +65,7 @@ export class ObligationDuplicateMatcher implements Matcher {
       const candidates = await loadIndependentObservations(deps.pool, input.ctx, left);
       let best: { right: ObligationObservation; score: number } | null = null;
       for (const right of candidates) {
+        if (hasConflictingIdentity(left, right)) continue;
         const score = combine([
           { score: amountScore(left.amount_due, right.amount_due), weight: 0.65 },
           { score: dateScore(left.due_date, right.due_date, DATE_WINDOW_DAYS), weight: 0.35 },
@@ -109,7 +121,8 @@ async function loadLowTrustObligations(
 ): Promise<ObligationObservation[]> {
   return withTenantScope(pool, ctx.tenantId, async (c) => {
     const { rows } = await c.query<ObligationObservation>(
-      `SELECT id, counterparty_id, amount_due::TEXT, currency, due_date, direction
+      `SELECT id, counterparty_id, amount_due::TEXT, currency, due_date, direction,
+              ${IDENTITY_KEY_SQL} AS identity_key
          FROM ledger_obligations
         WHERE provenance IN ('agent_contributed','customer_asserted')
           AND status IN ('upcoming','due','overdue')
@@ -143,7 +156,8 @@ async function loadIndependentObservations(
       // matching by a literal counterparty_id would miss cross-source payables;
       // we match across the resolved counterparty set instead. Requires
       // counterparty_duplicate to have run first (the reconciliation order).
-      `SELECT id, counterparty_id, amount_due::TEXT, currency, due_date, direction
+      `SELECT id, counterparty_id, amount_due::TEXT, currency, due_date, direction,
+              ${IDENTITY_KEY_SQL} AS identity_key
          FROM ledger_obligations
         WHERE provenance IN ('extracted','human_confirmed')
           AND status NOT IN ('paid','cancelled')
@@ -175,6 +189,10 @@ async function loadIndependentObservations(
     );
     return rows;
   });
+}
+
+function hasConflictingIdentity(a: ObligationObservation, b: ObligationObservation): boolean {
+  return a.identity_key !== null && b.identity_key !== null && a.identity_key !== b.identity_key;
 }
 
 function defaultSince(days: number): Date {
