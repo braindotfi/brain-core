@@ -1990,6 +1990,7 @@ async function main(): Promise<void> {
                 id: "auto-small-payment",
                 applies_to: ["outbound_payment"],
                 when: { "amount.lte": { currency: "USD", value: "1000.00" } },
+                ach_autonomous_max_amount: { currency: "USD", value: "1000.00" },
                 execute: "auto",
               },
               {

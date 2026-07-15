@@ -465,7 +465,10 @@ check(
 
 const gateSource = read("shared/src/gate/gate.ts");
 const hardFloorStart = gateSource.indexOf("export function requiresHardHumanApprovalFloor");
-const hardFloorEnd = gateSource.indexOf("// ---------------------------------------------------------------------------", hardFloorStart);
+const hardFloorEnd = gateSource.indexOf(
+  "// ---------------------------------------------------------------------------",
+  hardFloorStart,
+);
 const hardFloorBody = gateSource.slice(hardFloorStart, hardFloorEnd);
 check(
   "fiat rails have a default-on human approval floor with signed ACH and card caps",
@@ -503,12 +506,20 @@ check(
 
 const agentApiSource = read("services/agent-router/src/agent-api.ts");
 const executionAgentHoldSource = read("services/execution/src/agents/quarantine.ts");
+const openApiSource = read("Brain_API_Specification.yaml");
+const sdkOpenApiSource = read("clients/sdk/src/generated/openapi.d.ts");
+const agentContributionProtocolSource = read("protocol/agent-contributions.md");
 check(
   "H-09 public surface uses contribution hold naming",
   agentApiSource.includes('"/agents/:agent_id/contribution-hold/release"') &&
     agentApiSource.includes("releaseContributionHold") &&
     agentApiSource.includes("contribution_hold_released") &&
     executionAgentHoldSource.includes("contribution_hold_cleared_at") &&
+    openApiSource.includes("/agents/{agent_id}/contribution-hold/release") &&
+    openApiSource.includes("operationId: releaseContributionHold") &&
+    sdkOpenApiSource.includes('"/agents/{agent_id}/contribution-hold/release"') &&
+    sdkOpenApiSource.includes("releaseContributionHold") &&
+    agentContributionProtocolSource.includes("/v1/agents/{agent_id}/contribution-hold/release") &&
     !agentApiSource.includes("quarantine/release") &&
     !executionAgentHoldSource.includes("releaseAgentQuarantine"),
   "the contribution intake hold route and repository helpers must not use the old contribution quarantine naming",

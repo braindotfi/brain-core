@@ -221,7 +221,22 @@ ok "PaymentIntent $PI_ID (policy: $OUTCOME)"; record "propose" ok "$PI_ID"
 header "8. Approve (if confirm)"
 start_step
 if [[ "$OUTCOME" == "confirm" || "$OUTCOME" == "confirmed" || "$OUTCOME" == "pending_approval" ]]; then
-  req POST "/payment-intents/$PI_ID/approve" '{}' >/dev/null && ok "auto-signed approver"
+  APPROVE=$(curl -s -X POST "$V1/payment-intents/$PI_ID/approve" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}')
+  APPROVE_ERR=$(echo "$APPROVE" | jq -r '.error.code // empty')
+  if [[ -n "$APPROVE_ERR" ]]; then
+    fail "approval rejected: $APPROVE_ERR - $(echo "$APPROVE" | jq -r '.error.message // ""')"
+    echo "  detail: $(echo "$APPROVE" | jq -c '.error.details // {}')" >&2
+    record "approve" fail "$PI_ID"
+    exit 1
+  fi
+  APPROVED_STATUS=$(echo "$APPROVE" | jq -r '.status // empty')
+  if [[ "$APPROVED_STATUS" != "approved" ]]; then
+    fail "approval did not approve intent: status=${APPROVED_STATUS:-unknown}"
+    record "approve" fail "$PI_ID"
+    exit 1
+  fi
+  ok "auto-signed approver"
   record "approve" ok "$PI_ID"
 else
   ok "no approval required (status=$OUTCOME)"; record "approve" ok ""

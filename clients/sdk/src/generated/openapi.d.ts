@@ -1796,7 +1796,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/agents/{agent_id}/quarantine/release": {
+    "/agents/{agent_id}/contribution-hold/release": {
         parameters: {
             query?: never;
             header?: never;
@@ -1806,13 +1806,13 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Release an agent's contribution quarantine
+         * Release an agent's contribution hold
          * @description Requires `payment_intent:approve` (same scope as halt). Clears
-         *     the quarantine so subsequent agent contributions extract
+         *     the contribution hold so subsequent agent contributions extract
          *     normally again. Idempotent (config `idempotent: true`). Does not
          *     un-pause PaymentIntents paused by a prior halt.
          */
-        post: operations["releaseAgentQuarantine"];
+        post: operations["releaseContributionHold"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7197,7 +7197,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
         };
     };
-    releaseAgentQuarantine: {
+    releaseContributionHold: {
         parameters: {
             query?: never;
             header?: never;
@@ -7208,7 +7208,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Quarantine released */
+            /** @description Contribution hold released */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7217,11 +7217,11 @@ export interface operations {
                     "application/json": {
                         agent_id?: string;
                         /** @enum {boolean} */
-                        quarantine_released?: true;
+                        contribution_hold_released?: true;
                     };
                 };
             };
-            /** @description No such agent, or the agent had no quarantine to release. Error code `execution_agent_not_registered`. */
+            /** @description No such agent, or the agent had no contribution hold to release. Error code `execution_agent_not_registered`. */
             404: {
                 headers: {
                     [name: string]: unknown;
