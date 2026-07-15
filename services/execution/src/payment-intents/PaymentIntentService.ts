@@ -425,7 +425,9 @@ export class PaymentIntentService implements IPaymentIntentService {
       LedgerPaymentIntents.insert(c, {
         id: newPaymentIntentId(),
         ownerId: ctx.tenantId,
-        createdByAgentId: input.agent_id ?? ctx.actor,
+        createdByAgentId:
+          input.agent_id ??
+          (ctx.principalType === undefined || ctx.principalType === "agent" ? ctx.actor : null),
         actionType: input.action_type,
         sourceAccountId: input.source_account_id,
         destinationCounterpartyId: input.destination_counterparty_id,

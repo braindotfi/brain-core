@@ -49,11 +49,15 @@ function assertCtx(request: FastifyRequest): ServiceCallContext {
   };
 }
 
-function proposedAgentId(request: FastifyRequest, requestedAgentId: string | undefined): string {
+function proposedAgentId(
+  request: FastifyRequest,
+  requestedAgentId: string | undefined,
+): string | undefined {
   if (requestedAgentId !== undefined && request.principal!.scopes.includes(SCOPE_ADMIN)) {
     return requestedAgentId;
   }
-  return request.principal!.id;
+  if (request.principal!.type === "agent") return request.principal!.id;
+  return undefined;
 }
 
 interface CreateActionBody {
@@ -129,6 +133,7 @@ export async function registerActionRoutes(
         }
       }
 
+      const agentId = proposedAgentId(request, b.agent_id);
       const intent = await service.create(ctx, {
         action_type: piType as never,
         source_account_id: b.source_account_id ?? "acct_PENDING",
@@ -136,7 +141,7 @@ export async function registerActionRoutes(
         amount: b.amount ?? "0",
         currency: b.currency ?? "USD",
         ...(b.invoiceId !== undefined ? { invoice_id: b.invoiceId } : {}),
-        agent_id: proposedAgentId(request, b.agent_id),
+        ...(agentId !== undefined ? { agent_id: agentId } : {}),
         ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
       });
       reply.status(201);

@@ -450,8 +450,9 @@ audit-anchor sweep, trust state machine, RLS posture, and DB role separation.
 - [ ] T1-9/T1-10/T1-11/T1-23 pending: DB role and FORCE RLS hardening remains
       to be tightened after source-footprint verification.
 - [x] T1-6/T1-8/T1-13 fixed: API-key revoke uses the agent state machine,
-      HTTP propose routes pin ordinary caller attribution to the authenticated
-      principal id, and the dead actions `tenantId` body field is removed.
+      HTTP propose routes pin agent-token attribution to the authenticated
+      agent principal while leaving human sessions non-agent-attributed, and
+      the dead actions `tenantId` body field is removed.
 
 ### Tier 1 verdict update
 

@@ -46,11 +46,15 @@ function assertCtx(request: FastifyRequest): ServiceCallContext {
   };
 }
 
-function proposedAgentId(request: FastifyRequest, requestedAgentId: string | undefined): string {
+function proposedAgentId(
+  request: FastifyRequest,
+  requestedAgentId: string | undefined,
+): string | undefined {
   if (requestedAgentId !== undefined && request.principal!.scopes.includes(SCOPE_ADMIN)) {
     return requestedAgentId;
   }
-  return request.principal!.id;
+  if (request.principal!.type === "agent") return request.principal!.id;
+  return undefined;
 }
 
 interface CreateBody {
@@ -135,6 +139,7 @@ export async function registerPaymentIntentRoutes(
           throw brainError("invoice_shortcut_invalid", "invoice_id is required for pay_invoice");
         }
         const resolved = await resolveShortcut(ctx, b.invoice_id);
+        const agentId = proposedAgentId(request, b.agent_id);
         const intent = await service.create(ctx, {
           action_type: resolved.action_type as never,
           source_account_id: resolved.source_account_id,
@@ -146,7 +151,7 @@ export async function registerPaymentIntentRoutes(
           ...(resolved.obligation_id !== undefined
             ? { obligation_id: resolved.obligation_id }
             : {}),
-          agent_id: proposedAgentId(request, b.agent_id),
+          ...(agentId !== undefined ? { agent_id: agentId } : {}),
         });
         reply.status(201);
         return intent;
@@ -186,6 +191,7 @@ export async function registerPaymentIntentRoutes(
           "escrow_release requires 0x bytes32 escrow_id and job_terms_hash",
         );
       }
+      const agentId = proposedAgentId(request, b.agent_id);
       const intent = await service.create(ctx, {
         action_type: b.action_type as never,
         source_account_id: b.source_account_id,
@@ -194,7 +200,7 @@ export async function registerPaymentIntentRoutes(
         currency: b.currency,
         ...(b.obligation_id !== undefined ? { obligation_id: b.obligation_id } : {}),
         ...(b.invoice_id !== undefined ? { invoice_id: b.invoice_id } : {}),
-        agent_id: proposedAgentId(request, b.agent_id),
+        ...(agentId !== undefined ? { agent_id: agentId } : {}),
         ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
         ...(b.action_type === "x402_settle" && b.pay_to !== undefined ? { pay_to: b.pay_to } : {}),
         ...(b.action_type === "escrow_release" &&

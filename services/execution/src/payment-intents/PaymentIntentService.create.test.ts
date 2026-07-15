@@ -158,6 +158,12 @@ function insertConfidence(calls: { sql: string; values: unknown[] }[]): unknown 
   return insert?.values[13];
 }
 
+function insertCreatedByAgent(calls: { sql: string; values: unknown[] }[]): unknown {
+  const insert = calls.find((c) => c.sql.includes("INSERT INTO ledger_payment_intents"));
+  // created_by_agent_id is the 3rd positional param ($3) -> values index 2.
+  return insert?.values[2];
+}
+
 function insertStatus(calls: { sql: string; values: unknown[] }[]): unknown {
   const insert = calls.find((c) => c.sql.includes("INSERT INTO ledger_payment_intents"));
   // status is the 11th positional param ($11) -> values index 10.
@@ -165,6 +171,18 @@ function insertStatus(calls: { sql: string; values: unknown[] }[]): unknown {
 }
 
 describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", () => {
+  it("stores null created_by_agent_id for user principals without an agent override", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit);
+    const inputNoAgent: CreatePaymentIntentInput = { ...baseInput };
+    delete inputNoAgent.agent_id;
+
+    await service.create({ ...ctx, principalType: "user" }, inputNoAgent);
+
+    expect(insertCreatedByAgent(calls)).toBeNull();
+  });
+
   it("caps the intent confidence at the referenced obligation's", async () => {
     const audit = new InMemoryAuditEmitter();
     const { pool, calls } = makeFakePool();

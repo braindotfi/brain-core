@@ -247,11 +247,12 @@ Done
   The execution outbox worker rechecks the creator agent row with a locking read
   immediately before rail dispatch and parks rows in `reconciling` if the agent
   is missing or no longer active.
-- HTTP propose surfaces pin ordinary `created_by_agent_id` attribution to the
-  authenticated principal id. A caller-supplied `agent_id` is honored only when
-  the token carries `execution:admin`, matching the MCP propose tool. API-key
-  revocation uses the canonical agent state machine rather than a raw state
-  update.
+- HTTP propose surfaces pin agent-token `created_by_agent_id` attribution to
+  the authenticated agent principal. Human user sessions without an admin
+  override store `created_by_agent_id=null` rather than masquerading as agents.
+  A caller-supplied `agent_id` is honored only when the token carries
+  `execution:admin`, matching the MCP propose tool. API-key revocation uses the
+  canonical agent state machine rather than a raw state update.
 - Audit anchor orphan recovery and audit consistency verification run on the
   audit-verifier pool, not the request pool. Both workers emit cycle-failure
   counters and last-success heartbeats. `/internal/audit/health` treats stale

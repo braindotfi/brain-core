@@ -29,10 +29,10 @@ const REQUESTED_AGENT = newAgentId();
 const ACCT = newAccountId();
 const CP = newCounterpartyId();
 
-function principal(scopes: Scope[]): Principal {
+function principal(scopes: Scope[], type: Principal["type"] = "agent"): Principal {
   return {
-    id: AUTH_AGENT,
-    type: "agent",
+    id: type === "agent" ? AUTH_AGENT : "user_01TEST0000000000000000000",
+    type,
     tenantId: TENANT,
     scopes,
     tokenId: "tok_01TEST0000000000000000000",
@@ -185,6 +185,29 @@ describe("propose route agent attribution", () => {
     });
 
     expect(create.mock.calls[0]?.[1].agent_id).toBe(REQUESTED_AGENT);
+    await app.close();
+  });
+
+  it("does not pass a caller-supplied agent id from a non-admin user session", async () => {
+    const { service, create } = createService();
+    const app = await buildApp(principal(["payment_intent:propose"], "user"));
+    await registerPaymentIntentRoutes(app, service);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/payment-intents",
+      payload: {
+        action_type: "ach_outbound",
+        source_account_id: ACCT,
+        destination_counterparty_id: CP,
+        amount: "100.00",
+        currency: "USD",
+        agent_id: REQUESTED_AGENT,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(create.mock.calls[0]?.[1].agent_id).toBeUndefined();
     await app.close();
   });
 
