@@ -30,6 +30,7 @@ export const treasuryHandler: InternalAgentHandler = {
           destination_counterparty_id: readString(c.destination_counterparty_id),
           amount: readString(c.amount, "0"),
           currency: readString(c.currency, "USD"),
+          confidence: input.evidence.evidence_score,
           evidence_ids: input.evidence.items.map((i) => i.ref),
         },
       };

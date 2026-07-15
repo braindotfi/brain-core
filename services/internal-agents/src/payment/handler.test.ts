@@ -13,6 +13,11 @@ const EVIDENCE: EvidenceBundle = {
   critical_missing: false,
 };
 
+const LOW_EVIDENCE: EvidenceBundle = {
+  ...EVIDENCE,
+  evidence_score: 0.42,
+};
+
 describe("paymentHandler — ACH branch", () => {
   it("emits ach_outbound when rail is absent", () => {
     const proposed = paymentHandler.build({
@@ -33,6 +38,24 @@ describe("paymentHandler — ACH branch", () => {
     expect(proposed.intent.amount).toBe("100");
     expect(proposed.intent.currency).toBe("USD");
     expect(proposed.intent.evidence_ids).toEqual(["inv_1", "cp_1"]);
+    expect(proposed.intent.confidence).toBe(1);
+  });
+
+  it("sets intent confidence from the evidence score", () => {
+    const proposed = paymentHandler.build({
+      action: "propose_payment",
+      context: {
+        source_account_id: "acct_1",
+        destination_counterparty_id: "cp_2",
+        amount: "100",
+        currency: "USD",
+      },
+      evidence: LOW_EVIDENCE,
+    });
+
+    expect(proposed.channel).toBe("payment_intent");
+    if (proposed.channel !== "payment_intent") return;
+    expect(proposed.intent.confidence).toBe(0.42);
   });
 
   it("emits ach_outbound when rail is 'ach'", () => {
