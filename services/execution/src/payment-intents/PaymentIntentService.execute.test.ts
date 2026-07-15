@@ -28,7 +28,7 @@ import type {
   TenantScopedClient,
 } from "@brain/shared";
 import type { Pool } from "pg";
-import { PaymentIntentService } from "./PaymentIntentService.js";
+import { PaymentIntentService, railFor } from "./PaymentIntentService.js";
 import { ApprovalService } from "../approvals/ApprovalService.js";
 import { OutboxService } from "../outbox/OutboxService.js";
 import type { PaymentIntentRow } from "@brain/ledger";
@@ -76,6 +76,25 @@ const APPROVED_INTENT_ROW: PaymentIntentRow = {
   created_at: new Date("2026-01-01T00:00:00Z"),
   updated_at: new Date("2026-01-01T00:00:00Z"),
 };
+
+describe("railFor", () => {
+  it.each([
+    ["ach_outbound", "bank_ach"],
+    ["ach_inbound", "bank_ach"],
+    ["wire", "bank_ach"],
+    ["card_payment", "bank_ach"],
+    ["onchain_transfer", "onchain_base"],
+    ["x402_settle", "x402_base"],
+    ["escrow_release", "escrow_base"],
+    ["erp_writeback", "erp_writeback"],
+  ])("maps %s to %s", (actionType, rail) => {
+    expect(railFor(actionType)).toBe(rail);
+  });
+
+  it.each(["other", "future_money_rail"])("fails closed for %s", (actionType) => {
+    expect(() => railFor(actionType)).toThrow(/not executable/);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Fake pool factory

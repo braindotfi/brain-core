@@ -15,6 +15,11 @@
 
 import { brainError, type PaymentIntentStatus } from "@brain/shared";
 import {
+  EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES,
+  isExecutablePaymentIntentActionType,
+  type ExecutablePaymentIntentActionType,
+} from "@brain/execution";
+import {
   optionalNumber,
   optionalString,
   requireString,
@@ -24,15 +29,7 @@ import {
 } from "./types.js";
 
 interface PaymentIntentProposeInput {
-  action_type:
-    | "ach_outbound"
-    | "ach_inbound"
-    | "wire"
-    | "onchain_transfer"
-    | "erp_writeback"
-    | "card_payment"
-    | "x402_settle"
-    | "escrow_release";
+  action_type: ExecutablePaymentIntentActionType;
   source_account_id: string;
   destination_counterparty_id: string;
   amount: string;
@@ -46,20 +43,6 @@ interface PaymentIntentProposeInput {
   escrow_id?: string;
   job_terms_hash?: string;
 }
-
-const ACTION_TYPES = new Set([
-  "ach_outbound",
-  "ach_inbound",
-  "wire",
-  "onchain_transfer",
-  "erp_writeback",
-  "card_payment",
-  // On-chain settlement types — first-class on the HTTP route and the §6 gate,
-  // now requestable by NAME from MCP too. There is no implicit resolver from
-  // onchain_transfer; the agent names x402_settle / escrow_release directly.
-  "x402_settle",
-  "escrow_release",
-]);
 
 /** EVM address shape for the x402 settlement recipient (mirrors the HTTP route). */
 const ONCHAIN_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -86,7 +69,7 @@ export const paymentIntentProposeTool: Tool<PaymentIntentProposeInput> = {
       "currency",
     ],
     properties: {
-      action_type: { type: "string", enum: Array.from(ACTION_TYPES) },
+      action_type: { type: "string", enum: [...EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES] },
       source_account_id: { type: "string" },
       destination_counterparty_id: { type: "string" },
       amount: { type: "string", pattern: "^\\d+(\\.\\d+)?$" },
@@ -102,11 +85,11 @@ export const paymentIntentProposeTool: Tool<PaymentIntentProposeInput> = {
   },
   parseInput(params): PaymentIntentProposeInput {
     const actionType = requireString(params, "action_type");
-    if (!ACTION_TYPES.has(actionType)) {
+    if (!isExecutablePaymentIntentActionType(actionType)) {
       throw {
         code: "request_params_invalid",
         message: "action_type invalid",
-        details: { action_type: actionType, allowed: Array.from(ACTION_TYPES) },
+        details: { action_type: actionType, allowed: EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES },
       };
     }
     const onchain = actionType === "x402_settle" || actionType === "escrow_release";
@@ -122,7 +105,7 @@ export const paymentIntentProposeTool: Tool<PaymentIntentProposeInput> = {
       };
     }
     const out: PaymentIntentProposeInput = {
-      action_type: actionType as PaymentIntentProposeInput["action_type"],
+      action_type: actionType,
       source_account_id: requireString(params, "source_account_id"),
       destination_counterparty_id: requireString(params, "destination_counterparty_id"),
       amount: requireString(params, "amount"),

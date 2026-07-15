@@ -8,6 +8,7 @@
  */
 
 import { brainError } from "@brain/shared";
+import { EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES } from "@brain/execution";
 import type { ResourceDescriptor, ResourceListResult, ResourceReadResult } from "./types.js";
 import type { ToolContext } from "./tools/types.js";
 
@@ -67,26 +68,25 @@ export const RESOURCE_DESCRIPTORS: ReadonlyArray<ResourceDescriptor> = [
 const ACTION_TYPE_CATALOG = {
   description:
     "action_type vocabulary for payment_intent.propose. On-chain settlement types are named explicitly (no implicit resolver from onchain_transfer).",
-  action_types: [
-    { action_type: "ach_outbound", currency: "ISO-4217 (3-letter)", required_fields: [] },
-    { action_type: "ach_inbound", currency: "ISO-4217 (3-letter)", required_fields: [] },
-    { action_type: "wire", currency: "ISO-4217 (3-letter)", required_fields: [] },
-    { action_type: "card_payment", currency: "ISO-4217 (3-letter)", required_fields: [] },
-    { action_type: "erp_writeback", currency: "ISO-4217 (3-letter)", required_fields: [] },
-    { action_type: "onchain_transfer", currency: "ISO-4217 (3-letter)", required_fields: [] },
-    {
-      action_type: "x402_settle",
-      currency: "USDC",
-      required_fields: ["pay_to"],
-      note: "pay_to = 0x EVM recipient; §6 gate check 6.5 re-validates it against the counterparty address.",
-    },
-    {
-      action_type: "escrow_release",
-      currency: "USDC",
-      required_fields: ["escrow_id", "job_terms_hash"],
-      note: "0x bytes32 escrow_id + job_terms_hash; §6 gate check 6.6 binds them to the on-chain BrainEscrow lock.",
-    },
-  ],
+  action_types: EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES.map((actionType) => {
+    if (actionType === "x402_settle") {
+      return {
+        action_type: actionType,
+        currency: "USDC",
+        required_fields: ["pay_to"],
+        note: "pay_to = 0x EVM recipient; §6 gate check 6.5 re-validates it against the counterparty address.",
+      };
+    }
+    if (actionType === "escrow_release") {
+      return {
+        action_type: actionType,
+        currency: "USDC",
+        required_fields: ["escrow_id", "job_terms_hash"],
+        note: "0x bytes32 escrow_id + job_terms_hash; §6 gate check 6.6 binds them to the on-chain BrainEscrow lock.",
+      };
+    }
+    return { action_type: actionType, currency: "ISO-4217 (3-letter)", required_fields: [] };
+  }),
 } as const;
 
 export interface ResourceScopeRequirement {

@@ -17,6 +17,11 @@ export * from "./state-machines.js";
 
 // Phase 4 — PaymentIntent lifecycle + non-financial agent proposals.
 export { PaymentIntentService } from "./payment-intents/PaymentIntentService.js";
+export {
+  EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES,
+  isExecutablePaymentIntentActionType,
+  type ExecutablePaymentIntentActionType,
+} from "./payment-intents/action-types.js";
 export { AgentService } from "./AgentService.js";
 export type { AgentServiceDeps } from "./AgentService.js";
 export {

@@ -71,6 +71,7 @@ import {
   type ApprovalRejectionReason,
 } from "../members/authorizeApproval.js";
 import type { ActorContext, MemberLookup } from "../members/types.js";
+import { assertExecutablePaymentIntentActionType } from "./action-types.js";
 
 const EXECUTION_RESERVATION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -391,6 +392,8 @@ export class PaymentIntentService implements IPaymentIntentService {
     ctx: ServiceCallContext,
     input: CreatePaymentIntentInput,
   ): Promise<PaymentIntent> {
+    assertExecutablePaymentIntentActionType(input.action_type);
+
     if (!/^\d+(\.\d+)?$/.test(input.amount) || input.amount === "0") {
       throw brainError("request_body_invalid", "amount must be a positive decimal string");
     }
@@ -1374,7 +1377,7 @@ export class PaymentIntentService implements IPaymentIntentService {
 
 // ---------- helpers -------------------------------------------------------
 
-function railFor(actionType: string): string {
+export function railFor(actionType: string): string {
   switch (actionType) {
     case "ach_outbound":
     case "ach_inbound":
@@ -1392,7 +1395,9 @@ function railFor(actionType: string): string {
     case "erp_writeback":
       return "erp_writeback";
     default:
-      return "bank_ach";
+      throw brainError("action_type_not_executable", "action_type is not executable", {
+        details: { action_type: actionType },
+      });
   }
 }
 

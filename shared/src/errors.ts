@@ -95,6 +95,7 @@ export const BRAIN_ERROR_CODES = [
   "execution_idempotency_conflict",
   "execution_agent_not_registered",
   "payment_intent_not_found",
+  "action_type_not_executable",
   "payment_intent_invalid_state",
   "payment_intent_gate_failed",
   // Batch 10 H-2: an intent referenced an obligation_id that did not resolve
@@ -309,6 +310,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   wiki_temporal_range_invalid: 400,
   policy_rule_invalid: 400,
   audit_proof_invalid: 400,
+  action_type_not_executable: 400,
 
   // 401 — bad signature is auth-class
   raw_webhook_signature_invalid: 401,

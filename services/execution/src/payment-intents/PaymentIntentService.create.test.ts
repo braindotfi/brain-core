@@ -28,6 +28,7 @@ import type { PaymentIntentRow } from "@brain/ledger";
 import { PaymentIntentService } from "./PaymentIntentService.js";
 import { ApprovalService } from "../approvals/ApprovalService.js";
 import { OutboxService } from "../outbox/OutboxService.js";
+import { EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES } from "./action-types.js";
 
 const TENANT = newTenantId();
 const AGENT = newAgentId();
@@ -175,6 +176,50 @@ function insertStatus(calls: { sql: string; values: unknown[] }[]): unknown {
 }
 
 describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", () => {
+  it.each(["other", "future_money_rail"])(
+    "rejects non-executable action_type %s",
+    async (actionType) => {
+      const audit = new InMemoryAuditEmitter();
+      const { pool, calls } = makeFakePool();
+      const service = makeService(pool, audit);
+
+      await expect(
+        service.create(ctx, {
+          ...baseInput,
+          action_type: actionType as CreatePaymentIntentInput["action_type"],
+        }),
+      ).rejects.toMatchObject({ code: "action_type_not_executable" });
+
+      expect(calls.some((c) => c.sql.includes("INSERT INTO ledger_payment_intents"))).toBe(false);
+    },
+  );
+
+  it.each(EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES)(
+    "accepts executable action_type %s",
+    async (actionType) => {
+      const audit = new InMemoryAuditEmitter();
+      const { pool, calls } = makeFakePool();
+      const service = makeService(pool, audit);
+
+      await service.create(ctx, {
+        ...baseInput,
+        action_type: actionType,
+        currency: actionType === "x402_settle" || actionType === "escrow_release" ? "USDC" : "USD",
+        ...(actionType === "x402_settle"
+          ? { pay_to: "0x1111111111111111111111111111111111111111" }
+          : {}),
+        ...(actionType === "escrow_release"
+          ? {
+              escrow_id: `0x${"1".repeat(64)}`,
+              job_terms_hash: `0x${"2".repeat(64)}`,
+            }
+          : {}),
+      });
+
+      expect(calls.some((c) => c.sql.includes("INSERT INTO ledger_payment_intents"))).toBe(true);
+    },
+  );
+
   it("stores null created_by_agent_id for user principals without an agent override", async () => {
     const audit = new InMemoryAuditEmitter();
     const { pool, calls } = makeFakePool();

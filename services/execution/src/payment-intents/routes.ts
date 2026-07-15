@@ -19,6 +19,7 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import type { PaymentIntentService } from "./PaymentIntentService.js";
+import { isExecutablePaymentIntentActionType } from "./action-types.js";
 import type { ResolvedInvoiceShortcut } from "./invoice-shortcut.js";
 
 /** P0.5: resolves the `pay_invoice` shortcut into a full create payload. */
@@ -82,24 +83,9 @@ const ONCHAIN_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 /** bytes32 hex shape for escrow id + job-terms commitment (RFC 0001 §7.6). */
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 
-const ACTION_TYPES = new Set([
-  "ach_outbound",
-  "ach_inbound",
-  "wire",
-  "onchain_transfer",
-  "erp_writeback",
-  "card_payment",
-  // x402 USDC-on-Base settlement (RFC 0001 §7.1) and escrow release (RFC 0001
-  // §7.6). Shadow-first: accepting the action type only makes the intent
-  // creatable + §6-gated; it cannot settle until the commerce agent is in
-  // LIVE_AGENTS and the rail is registered at boot (RailRegistry fails closed).
-  "x402_settle",
-  "escrow_release",
-]);
-
 /** Whether `t` is an action type the create route accepts (exported for tests). */
 export function isAcceptedActionType(t: string | undefined): boolean {
-  return t !== undefined && ACTION_TYPES.has(t);
+  return isExecutablePaymentIntentActionType(t);
 }
 
 /**
