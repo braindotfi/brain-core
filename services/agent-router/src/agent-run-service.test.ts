@@ -28,6 +28,12 @@ const EVIDENCE: Evidence[] = [
   { kind: "payment_destination", ref: "pd_1" },
   { kind: "balance", ref: "bal_1" },
 ];
+const PAYMENT_CONTEXT = {
+  source_account_id: "acct_source",
+  destination_counterparty_id: "cp_vendor",
+  amount: "125.00",
+  currency: "USD",
+};
 
 function makeStore(): {
   store: AgentRunStore;
@@ -110,7 +116,11 @@ describe("AgentRunService (shadow mode)", () => {
       () => (proposed += 1),
       () => (createdPI += 1),
     );
-    const result = await svc.run(CTX, { tenant_id: "tnt_acme", event: "bill.due_soon" });
+    const result = await svc.run(CTX, {
+      tenant_id: "tnt_acme",
+      event: "bill.due_soon",
+      context: PAYMENT_CONTEXT,
+    });
     expect(result.selected_agent_id).toBe("payment");
     expect(result.status).toBe("shadow_completed");
     expect(result.shadow_mode).toBe(true);

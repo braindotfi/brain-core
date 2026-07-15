@@ -25,6 +25,12 @@ const EVIDENCE: Evidence[] = [
   { kind: "balance", ref: "bal_1" },
   { kind: "transaction", ref: "tx_1" },
 ];
+const PAYMENT_CONTEXT = {
+  source_account_id: "acct_source",
+  destination_counterparty_id: "cp_vendor",
+  amount: "125.00",
+  currency: "USD",
+};
 
 let proposeCalls = 0;
 let createPICalls = 0;
@@ -143,7 +149,7 @@ describe("routeAndPropose", () => {
     const deps = makeDeps({ scoped: ["payment_propose"], isShadowed: () => true });
     const result = await routeAndPropose(
       CTX,
-      { tenant_id: "tnt_acme", event: "bill.due_soon" },
+      { tenant_id: "tnt_acme", event: "bill.due_soon", context: PAYMENT_CONTEXT },
       deps,
     );
     expect(result.selected_agent_id).toBe("payment");
@@ -163,7 +169,11 @@ describe("routeAndPropose", () => {
       isShadowed: () => false,
     });
     await expect(
-      routeAndPropose(CTX, { tenant_id: "tnt_acme", event: "bill.due_soon" }, deps),
+      routeAndPropose(
+        CTX,
+        { tenant_id: "tnt_acme", event: "bill.due_soon", context: PAYMENT_CONTEXT },
+        deps,
+      ),
     ).rejects.toThrow(/payment intent must not be created/);
     expect(createPICalls).toBe(1); // the gate let the financial proposal through
   });
