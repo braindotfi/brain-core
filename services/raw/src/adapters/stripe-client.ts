@@ -54,10 +54,10 @@ async function stripeGet(
 export async function stripeListPage(
   apiKey: string,
   path: string,
-  opts: { createdGt?: number; startingAfter?: string; limit?: number },
+  opts: { createdGte?: number; startingAfter?: string; limit?: number },
 ): Promise<StripeListPage> {
   const params: Record<string, string> = { limit: String(opts.limit ?? 100) };
-  if (opts.createdGt !== undefined) params["created[gt]"] = String(opts.createdGt);
+  if (opts.createdGte !== undefined) params["created[gte]"] = String(opts.createdGte);
   if (opts.startingAfter !== undefined) params["starting_after"] = opts.startingAfter;
 
   const body = await stripeGet(apiKey, path, params);

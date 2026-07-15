@@ -119,7 +119,7 @@ describe("StripeAdapter.fetchIncremental (cursor pull)", () => {
     // No /v1/account re-fetch once the checkpoint carries the id.
   });
 
-  it("pulls only deltas behind the committed watermark", async () => {
+  it("pulls deltas inclusively at the committed watermark", async () => {
     const { calls } = mockStripe({
       "/v1/charges": () => ({
         object: "list",
@@ -144,9 +144,42 @@ describe("StripeAdapter.fetchIncremental (cursor pull)", () => {
     });
 
     const url = calls.find((c) => c.url.includes("charges"))!.url;
-    expect(decodeURIComponent(url)).toContain("created[gt]=300");
+    expect(decodeURIComponent(url)).toContain("created[gte]=300");
     expect(result.nextCheckpoint).toMatchObject({ watermark_created: 900 });
     expect(result.artifacts[0]!.envelope?.sourceSchema).toBe("stripe.charges.v1");
+  });
+
+  it("re-pulls the watermark second so late same-second objects are not skipped", async () => {
+    const { calls } = mockStripe({
+      "/v1/charges": () => ({
+        object: "list",
+        data: [
+          { id: "ch_late", created: 900 },
+          { id: "ch_prior", created: 900 },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const result = await StripeAdapter.fetchIncremental!({
+      tenantId: "tnt_1",
+      credentials: CREDS,
+      partition: {
+        ...PARTITION,
+        objectType: "charge",
+        committedCheckpoint: {
+          stripe_account_id: "acct_S1",
+          watermark_created: 900,
+          page_after: null,
+          pending_watermark: null,
+        },
+      },
+    });
+
+    const url = calls.find((c) => c.url.includes("charges"))!.url;
+    expect(decodeURIComponent(url)).toContain("created[gte]=900");
+    expect(result.nextCheckpoint).toMatchObject({ watermark_created: 900 });
+    expect(result.artifacts[0]!.envelope?.idempotencyKey).toBe("src_stripe1:charge:900:start");
   });
 
   it("returns no artifact for an empty delta page but still finalizes the checkpoint", async () => {

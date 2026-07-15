@@ -7,8 +7,9 @@
  *
  *  - Backfill walks pages newest-first via `starting_after` until
  *    `has_more` is false, accumulating the highest `created` seen.
- *  - Delta runs filter `created[gt] = watermark` and page the same way, so
- *    only objects newer than the committed high-water mark are re-pulled.
+ *  - Delta runs filter `created[gte] = watermark` and page the same way, so
+ *    late objects created in the same second as the committed high-water mark
+ *    are re-pulled instead of skipped. Page idempotency absorbs stable replays.
  *  - The checkpoint commits `watermark_created` only when a walk completes;
  *    a crash mid-walk resumes from `page_after` and the envelope
  *    idempotency key (stable per page position) absorbs the replay.
@@ -133,7 +134,9 @@ export const StripeAdapter: SourceAdapter = {
     const accountId = checkpoint.stripe_account_id ?? (await stripeAccountId(apiKey));
 
     const page = await stripeListPage(apiKey, target.path, {
-      ...(checkpoint.watermark_created !== null ? { createdGt: checkpoint.watermark_created } : {}),
+      ...(checkpoint.watermark_created !== null
+        ? { createdGte: checkpoint.watermark_created }
+        : {}),
       ...(checkpoint.page_after !== null ? { startingAfter: checkpoint.page_after } : {}),
     });
 
