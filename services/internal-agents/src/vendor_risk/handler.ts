@@ -4,6 +4,7 @@ import {
   type InternalAgentHandler,
   type ProposedAction,
 } from "../handler.js";
+import type { EvidenceRef } from "../evidence.js";
 
 /**
  * Vendor Risk actions are non-financial proposals (flag, require approval,
@@ -38,11 +39,10 @@ export const vendorRiskHandler: InternalAgentHandler = {
   },
 };
 
-function hasRiskIndicator(item: Record<string, unknown>): boolean {
-  if (item["kind"] !== "counterparty_history") return false;
-  if (item["risk_flag"] === true) return true;
-  const severity = item["severity"];
+function hasRiskIndicator(item: EvidenceRef): boolean {
+  if (item.kind !== "counterparty_history") return false;
+  if (item.risk_flag === true) return true;
+  const severity = item.severity;
   if (severity === "high" || severity === "critical") return true;
-  const riskScore = item["risk_score"];
-  return typeof riskScore === "number" && riskScore >= 0.7;
+  return typeof item.risk_score === "number" && item.risk_score >= 0.7;
 }

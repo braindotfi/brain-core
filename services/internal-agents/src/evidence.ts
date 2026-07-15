@@ -33,6 +33,10 @@ export interface EvidenceRef {
   /** Redacted excerpt (per the run's redaction policy). */
   readonly excerpt?: string;
   readonly field_refs?: readonly string[];
+  /** Optional workflow risk signals carried by evidence providers. */
+  readonly risk_flag?: boolean;
+  readonly severity?: "low" | "medium" | "high" | "critical" | string;
+  readonly risk_score?: number;
   /** Computed during scoring: true when older than its required max_age. */
   readonly stale?: boolean;
 }
