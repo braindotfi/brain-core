@@ -122,8 +122,16 @@ export async function routeAndPropose(
   const bundle = await deps.evidence.gather({
     tenantId: ctx.tenantId,
     ...(input.context !== undefined ? { context: input.context } : {}),
-    requiredEvidence: [],
+    requiredEvidence: definition.required_evidence,
   });
+  if (decision.execution_mode === "reject" || decision.execution_mode === "notify_only") {
+    return {
+      selected_agent_id: decision.selected_agent_id,
+      action,
+      status: decision.execution_mode === "reject" ? "rejected" : "notify_only",
+      reason: `execution_mode_${decision.execution_mode}`,
+    };
+  }
   const proposed = handler.build({
     action,
     context: input.context ?? {},

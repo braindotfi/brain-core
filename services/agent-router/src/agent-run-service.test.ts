@@ -25,6 +25,7 @@ const CTX: ServiceCallContext = { tenantId: "tnt_acme", actor: "agent_system" };
 const EVIDENCE: Evidence[] = [
   { kind: "invoice", ref: "inv_1" },
   { kind: "counterparty", ref: "cp_1" },
+  { kind: "payment_destination", ref: "pd_1" },
   { kind: "balance", ref: "bal_1" },
 ];
 
@@ -53,6 +54,10 @@ function makeService(
   scoped: string[],
   onPropose: () => void,
   onCreatePI: () => void,
+  opts: {
+    evidence?: Evidence[];
+    isShadowed?: (agentId: string) => boolean;
+  } = {},
 ): AgentRunService {
   const agents = {
     propose: async () => {
@@ -78,7 +83,7 @@ function makeService(
     router: new AgentRouter({
       catalog: () => Object.values(internalAgentDefinitions),
       classifier: new RulesIntentClassifier(),
-      evidence: new StaticEvidenceGatherer(EVIDENCE),
+      evidence: new StaticEvidenceGatherer(opts.evidence ?? EVIDENCE),
       getScopedCapabilities: () => new Set(scoped),
       getTenantCategory: () => "business",
       audit: new InMemoryAuditEmitter(),
@@ -86,11 +91,11 @@ function makeService(
     actionResolver: new ActionResolver({ classifier: new RulesIntentClassifier() }),
     handlers: internalAgentHandlers,
     definitions: internalAgentDefinitions,
-    evidence: new StaticEvidenceGatherer(EVIDENCE),
+    evidence: new StaticEvidenceGatherer(opts.evidence ?? EVIDENCE),
     propose: { agents, paymentIntents },
     store,
     getTenantCategory: () => "business",
-    isShadowed: () => true,
+    isShadowed: opts.isShadowed ?? (() => true),
   });
 }
 
@@ -159,5 +164,34 @@ describe("AgentRunService (shadow mode)", () => {
     expect(result.selected_agent_id).toBe("treasury");
     expect(result.status).toBe("missing_action");
     expect(runs.at(-1)?.status).toBe("missing_action");
+  });
+
+  it("records notify_only without proposing when required evidence is missing", async () => {
+    const { store, runs } = makeStore();
+    let createdPI = 0;
+    const svc = makeService(
+      store,
+      ["payment_propose"],
+      () => {},
+      () => {
+        createdPI += 1;
+      },
+      {
+        isShadowed: () => false,
+        evidence: [
+          { kind: "invoice", ref: "inv_1" },
+          { kind: "counterparty", ref: "cp_1" },
+          { kind: "balance", ref: "bal_1" },
+        ],
+      },
+    );
+
+    const result = await svc.run(CTX, { tenant_id: "tnt_acme", event: "bill.due_soon" });
+
+    expect(result.selected_agent_id).toBe("payment");
+    expect(result.status).toBe("notify_only");
+    expect(createdPI).toBe(0);
+    expect(runs.at(-1)?.status).toBe("notify_only");
+    expect(runs.at(-1)?.failureReason).toBe("execution_mode_notify_only");
   });
 });
