@@ -337,7 +337,7 @@ function isAmountShape(v: unknown): v is { currency: string; value: string } {
   return typeof o["currency"] === "string" && typeof o["value"] === "string";
 }
 
-function isRiskLevel(v: unknown): v is Action["risk_level"] {
+function isRiskLevel(v: unknown): v is NonNullable<Action["risk_level"]> {
   return v === "low" || v === "medium" || v === "high" || v === "critical";
 }
 
