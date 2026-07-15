@@ -41,6 +41,13 @@ const WRITE: Scope = "execution:write";
 const READ: Scope = "execution:read";
 const ADMIN: Scope = "execution:admin";
 
+function proposedAgentId(principal: NonNullable<FastifyRequest["principal"]>, requested?: string) {
+  if (requested !== undefined && principal.scopes.includes(ADMIN)) {
+    return requested;
+  }
+  return principal.id;
+}
+
 export async function registerExecutionRoutes(
   app: FastifyInstance,
   deps: ExecutionDeps,
@@ -60,7 +67,7 @@ export async function registerExecutionRoutes(
         throw brainError("request_body_invalid", "action required");
       }
       const decision = await deps.evaluatePolicy(principal.tenantId, action);
-      const proposingAgent = request.body?.agent_id ?? principal.id;
+      const proposingAgent = proposedAgentId(principal, request.body?.agent_id);
 
       const row = await withTenantScope(deps.pool, principal.tenantId, (c) =>
         insertProposal(c, {

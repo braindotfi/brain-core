@@ -31,6 +31,7 @@ const SCOPE_PROPOSE: Scope = "payment_intent:propose";
 const SCOPE_APPROVE: Scope = "payment_intent:approve";
 const SCOPE_EXECUTE: Scope = "payment_intent:execute";
 const SCOPE_READ: Scope = "execution:read";
+const SCOPE_ADMIN: Scope = "execution:admin";
 
 function assertCtx(request: FastifyRequest): ServiceCallContext {
   if (request.principal === undefined) {
@@ -43,6 +44,13 @@ function assertCtx(request: FastifyRequest): ServiceCallContext {
     principalType: request.principal.type,
     scopes: request.principal.scopes,
   };
+}
+
+function proposedAgentId(request: FastifyRequest, requestedAgentId: string | undefined): string {
+  if (requestedAgentId !== undefined && request.principal!.scopes.includes(SCOPE_ADMIN)) {
+    return requestedAgentId;
+  }
+  return request.principal!.id;
 }
 
 interface CreateBody {
@@ -138,7 +146,7 @@ export async function registerPaymentIntentRoutes(
           ...(resolved.obligation_id !== undefined
             ? { obligation_id: resolved.obligation_id }
             : {}),
-          ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
+          agent_id: proposedAgentId(request, b.agent_id),
         });
         reply.status(201);
         return intent;
@@ -186,7 +194,7 @@ export async function registerPaymentIntentRoutes(
         currency: b.currency,
         ...(b.obligation_id !== undefined ? { obligation_id: b.obligation_id } : {}),
         ...(b.invoice_id !== undefined ? { invoice_id: b.invoice_id } : {}),
-        ...(b.agent_id !== undefined ? { agent_id: b.agent_id } : {}),
+        agent_id: proposedAgentId(request, b.agent_id),
         ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
         ...(b.action_type === "x402_settle" && b.pay_to !== undefined ? { pay_to: b.pay_to } : {}),
         ...(b.action_type === "escrow_release" &&
