@@ -69,6 +69,10 @@ export class PolicyService {
         ? { currency: raw["amount"].currency, value: raw["amount"].value }
         : null,
       agent_role: typeof raw["agent_role"] === "string" ? raw["agent_role"] : null,
+      agent_id: typeof raw["agent_id"] === "string" ? raw["agent_id"] : null,
+      confidence: typeof raw["confidence"] === "number" ? raw["confidence"] : null,
+      evidence_score: typeof raw["evidence_score"] === "number" ? raw["evidence_score"] : null,
+      risk_level: isRiskLevel(raw["risk_level"]) ? raw["risk_level"] : null,
       timestamp: new Date(),
     };
 
@@ -331,6 +335,10 @@ function isAmountShape(v: unknown): v is { currency: string; value: string } {
   if (v === null || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
   return typeof o["currency"] === "string" && typeof o["value"] === "string";
+}
+
+function isRiskLevel(v: unknown): v is Action["risk_level"] {
+  return v === "low" || v === "medium" || v === "high" || v === "critical";
 }
 
 function sha256Action(action: Record<string, unknown>): string {
