@@ -116,6 +116,7 @@ function makeService(
       ctx: ServiceCallContext,
       id: string,
     ) => Promise<"payable" | "receivable" | null>;
+    decision?: GatePolicyDecision;
     onPolicy?: (intent: GatePaymentIntent) => void;
   } = {},
 ): PaymentIntentService {
@@ -130,7 +131,7 @@ function makeService(
     resolvePrincipal: async () => GATE_PRINCIPAL,
     evaluatePolicy: async (_ctx, intent) => {
       opts.onPolicy?.(intent);
-      return DECISION;
+      return opts.decision ?? DECISION;
     },
     ...(opts.resolveObligationConfidence !== undefined
       ? { resolveObligationConfidence: opts.resolveObligationConfidence }
@@ -155,6 +156,12 @@ function insertConfidence(calls: { sql: string; values: unknown[] }[]): unknown 
   const insert = calls.find((c) => c.sql.includes("INSERT INTO ledger_payment_intents"));
   // confidence is the 14th positional param ($14) -> values index 13.
   return insert?.values[13];
+}
+
+function insertStatus(calls: { sql: string; values: unknown[] }[]): unknown {
+  const insert = calls.find((c) => c.sql.includes("INSERT INTO ledger_payment_intents"));
+  // status is the 11th positional param ($11) -> values index 10.
+  return insert?.values[10];
 }
 
 describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", () => {
@@ -295,5 +302,64 @@ describe("PaymentIntentService.create — obligation-direction gate (Codex 2026-
     const service = makeService(pool, audit); // no resolveObligationDirection
     await service.create(ctx, baseInput);
     expect(calls.some((c) => c.sql.includes("INSERT INTO ledger_payment_intents"))).toBe(true);
+  });
+});
+
+describe("PaymentIntentService.create — hard human-approval floor routing", () => {
+  it("routes allow-outcome onchain_transfer to pending_approval", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit, {
+      decision: { ...DECISION, outcome: "allow" },
+    });
+
+    await service.create(ctx, { ...baseInput, action_type: "onchain_transfer" });
+
+    expect(insertStatus(calls)).toBe("pending_approval");
+  });
+
+  it("keeps x402_settle approved when the policy authorizes autonomous settlement within cap", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit, {
+      decision: {
+        ...DECISION,
+        outcome: "allow",
+        onchain_settlement_permitted: true,
+        x402_autonomous_max_amount: { currency: "USDC", value: "2.00" },
+      },
+    });
+
+    await service.create(ctx, {
+      ...baseInput,
+      action_type: "x402_settle",
+      amount: "1.00",
+      currency: "USDC",
+      pay_to: "0x" + "ab".repeat(20),
+    });
+
+    expect(insertStatus(calls)).toBe("approved");
+  });
+
+  it("routes x402_settle to pending_approval when the autonomous cap is missing", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const service = makeService(pool, audit, {
+      decision: {
+        ...DECISION,
+        outcome: "allow",
+        onchain_settlement_permitted: true,
+      },
+    });
+
+    await service.create(ctx, {
+      ...baseInput,
+      action_type: "x402_settle",
+      amount: "1.00",
+      currency: "USDC",
+      pay_to: "0x" + "ab".repeat(20),
+    });
+
+    expect(insertStatus(calls)).toBe("pending_approval");
   });
 });

@@ -104,4 +104,35 @@ describe("PolicyService.evaluateForGate — confidence gating (RFC 0004 §5.2)",
     const decision = await service().evaluateForGate(ctx, intent(undefined));
     expect(decision.outcome).toBe("reject");
   });
+
+  it("threads signed on-chain x402 autonomy fields into the gate decision", async () => {
+    const policy: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "x402-auto",
+          applies_to: ["any"],
+          when: { "amount.lte": { currency: "USDC", value: "1.00" } },
+          execute: "auto",
+          onchain_settlement_permitted: true,
+          x402_autonomous_max_amount: { currency: "USDC", value: "1.00" },
+        },
+      ],
+    };
+    const svc = new PolicyService({
+      pool: poolWithActivePolicy(policy),
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    const decision = await svc.evaluateForGate(ctx, {
+      ...intent(1),
+      action_type: "x402_settle",
+      amount: "1.00",
+      currency: "USDC",
+    });
+
+    expect(decision.outcome).toBe("allow");
+    expect(decision.onchain_settlement_permitted).toBe(true);
+    expect(decision.x402_autonomous_max_amount).toEqual({ currency: "USDC", value: "1.00" });
+  });
 });

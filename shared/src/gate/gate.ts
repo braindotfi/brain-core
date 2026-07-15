@@ -135,6 +135,13 @@ export interface GatePolicyDecision {
    * reader are wired; otherwise check 8.5 adds no row.
    */
   micropayment_window_cap?: { currency: string; value: string; window_seconds: number };
+  /**
+   * Explicit policy-authored per-action cap that authorizes autonomous x402
+   * settlement. Presence of this field is the signed authorization. Missing,
+   * malformed, wrong-currency, or over-cap values require a recorded human
+   * approval before execution.
+   */
+  x402_autonomous_max_amount?: { currency: string; value: string } | null;
 }
 
 export interface GatePrincipal {
@@ -357,6 +364,34 @@ export function gateTraceCacheKey(intent: GatePaymentIntent): string {
     evidence: [...intent.evidence_ids].sort(),
   });
   return `gate:dryrun:${createHash("sha256").update(canonical).digest("hex")}`;
+}
+
+export function isX402AutonomousAllowed(
+  intent: GatePaymentIntent,
+  decision: GatePolicyDecision,
+): boolean {
+  if (intent.action_type !== "x402_settle") return false;
+  if (decision.outcome !== "allow") return false;
+  if (decision.onchain_settlement_permitted !== true) return false;
+  const cap = decision.x402_autonomous_max_amount;
+  if (!isAmountCap(cap)) return false;
+  if (cap.currency !== intent.currency) return false;
+  if (!X402_DECIMAL.test(cap.value) || !X402_DECIMAL.test(intent.amount)) return false;
+  return cmpDecimal(intent.amount, cap.value) <= 0;
+}
+
+export function requiresHardHumanApprovalFloor(
+  intent: GatePaymentIntent,
+  decision: GatePolicyDecision,
+): boolean {
+  if (decision.outcome !== "allow") return false;
+  if (intent.action_type === "onchain_transfer" || intent.action_type === "escrow_release") {
+    return true;
+  }
+  if (intent.action_type === "x402_settle") {
+    return !isX402AutonomousAllowed(intent, decision);
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -852,15 +887,29 @@ export async function runPreExecutionGate(
 
   // 11 — approval granted when required. Pass the active policy version so
   // signatures against a superseded version are staled and excluded (P0.4).
-  if (decision.outcome === "confirm") {
+  // Production on-chain actions also have a hard human-approval floor: policy
+  // allow does not dispatch onchain_transfer or escrow_release without at least
+  // one recorded approval, and x402_settle is autonomous only when the policy
+  // explicitly carries an x402_autonomous_max_amount cap that covers the amount.
+  const hardApprovalFloorRequired = requiresHardHumanApprovalFloor(input.intent, decision);
+  if (decision.outcome === "confirm" || hardApprovalFloorRequired) {
     const approvals = await deps.resolveApprovals(input.intent.id, decision.policy_version);
     const signedSet = new Set(approvals.signedRoles);
-    const missing = decision.required_approvers.filter((r) => !signedSet.has(r));
-    if (missing.length > 0) {
+    if (decision.outcome === "confirm") {
+      const missing = decision.required_approvers.filter((r) => !signedSet.has(r));
+      if (missing.length > 0) {
+        return failGate(11, "approval_granted_when_required", {
+          required: decision.required_approvers,
+          signed: approvals.signedRoles,
+          missing,
+        });
+      }
+    }
+    if (hardApprovalFloorRequired && approvals.signedRoles.length === 0) {
       return failGate(11, "approval_granted_when_required", {
-        required: decision.required_approvers,
+        reason: "hard_human_approval_floor_required",
+        action_type: input.intent.action_type,
         signed: approvals.signedRoles,
-        missing,
       });
     }
   }
@@ -1005,4 +1054,10 @@ function compareBig(a: string, b: string): number {
   if (a < b) return -1;
   if (a > b) return 1;
   return 0;
+}
+
+function isAmountCap(v: unknown): v is { currency: string; value: string } {
+  if (v === null || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return typeof o["currency"] === "string" && typeof o["value"] === "string";
 }
