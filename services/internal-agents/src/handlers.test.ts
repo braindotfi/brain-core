@@ -90,7 +90,12 @@ describe("Treasury handler", () => {
   it("escalates a transfer above the approval threshold to confirm", () => {
     const proposed = treasuryHandler.build({
       action: "propose_transfer",
-      context: { destination_counterparty_id: "cp_2", amount: "50000", currency: "USD" },
+      context: {
+        source_account_id: "acct_1",
+        destination_counterparty_id: "cp_2",
+        amount: "50000",
+        currency: "USD",
+      },
       evidence: EVIDENCE,
     });
     const decision = evaluate(
@@ -103,7 +108,12 @@ describe("Treasury handler", () => {
   it("rejects a transfer outside the per-tx envelope cap", () => {
     const proposed = treasuryHandler.build({
       action: "propose_transfer",
-      context: { destination_counterparty_id: "cp_2", amount: "250000", currency: "USD" },
+      context: {
+        source_account_id: "acct_1",
+        destination_counterparty_id: "cp_2",
+        amount: "250000",
+        currency: "USD",
+      },
       evidence: EVIDENCE,
     });
     const decision = evaluate(

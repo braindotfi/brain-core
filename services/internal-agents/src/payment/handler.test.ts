@@ -58,6 +58,46 @@ describe("paymentHandler — ACH branch", () => {
     expect(proposed.intent.confidence).toBe(0.42);
   });
 
+  it("rejects missing ids and malformed money fields before creating an intent shape", () => {
+    expect(() =>
+      paymentHandler.build({
+        action: "propose_payment",
+        context: {
+          source_account_id: "acct_1",
+          amount: "100",
+          currency: "USD",
+        },
+        evidence: EVIDENCE,
+      }),
+    ).toThrow(/destination_counterparty_id/);
+
+    expect(() =>
+      paymentHandler.build({
+        action: "propose_payment",
+        context: {
+          source_account_id: "acct_1",
+          destination_counterparty_id: "cp_2",
+          amount: 100,
+          currency: "USD",
+        },
+        evidence: EVIDENCE,
+      }),
+    ).toThrow(/amount/);
+
+    expect(() =>
+      paymentHandler.build({
+        action: "propose_payment",
+        context: {
+          source_account_id: "acct_1",
+          destination_counterparty_id: "cp_2",
+          amount: "100",
+          currency: 840,
+        },
+        evidence: EVIDENCE,
+      }),
+    ).toThrow(/currency/);
+  });
+
   it("emits ach_outbound when rail is 'ach'", () => {
     const proposed = paymentHandler.build({
       action: "execute_payment",
