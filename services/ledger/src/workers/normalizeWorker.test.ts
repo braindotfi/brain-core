@@ -99,7 +99,7 @@ describe("runNormalizeCycle", () => {
   it("quarantines permanently failing rows and emits a metric", async () => {
     const tenantId = newTenantId();
     const row = { id: "prs_bad", tenant_id: tenantId, parser: "stripe_v1" };
-    const metricsCalls: Array<{ name: string; tags?: Record<string, unknown> }> = [];
+    const metricsCalls: Array<{ name: string; tags?: Record<string, unknown> | undefined }> = [];
     const metrics = {
       increment: (name: string, tags?: Record<string, unknown>) => {
         metricsCalls.push({ name, tags });

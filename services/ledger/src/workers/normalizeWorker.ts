@@ -114,7 +114,11 @@ export function startNormalizeWorker(
       cycle: () =>
         runNormalizeCycle(
           { pool: deps.pool, audit: deps.audit },
-          { batchSize, actor, maxAttempts: opts?.maxAttempts },
+          {
+            batchSize,
+            actor,
+            ...(opts?.maxAttempts !== undefined ? { maxAttempts: opts.maxAttempts } : {}),
+          },
         ),
       name: "normalize",
     }),
