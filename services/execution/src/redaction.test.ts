@@ -5,9 +5,12 @@ import { DEFAULT_AGENT_TRACE_POLICY, redact, type RedactionPolicy } from "./reda
 const OPTS = { tenantHashKey: "tnt_acme_key" };
 
 describe("redact", () => {
-  it("masks account numbers to last 4", () => {
-    const out = redact(DEFAULT_AGENT_TRACE_POLICY, { account_number: "123456789" }, OPTS);
-    expect(out).toEqual({ account_number: "****6789" });
+  it("forbids bank account identifiers instead of masking them", () => {
+    for (const field of ["account_number", "account_no", "acct", "iban", "routing_number"]) {
+      expect(() => redact(DEFAULT_AGENT_TRACE_POLICY, { [field]: "123456789" }, OPTS)).toThrow(
+        new RegExp(`forbidden field "${field}"`),
+      );
+    }
   });
 
   it("hashes counterparty names recoverably and deterministically", () => {
@@ -46,12 +49,13 @@ describe("redact", () => {
   });
 
   it("recurses into nested objects and arrays", () => {
-    const out = redact(
-      DEFAULT_AGENT_TRACE_POLICY,
-      { tool: "x", args: [{ account_number: "999988887777" }] },
-      OPTS,
-    ) as { tool: string; args: Array<{ account_number: string }> };
-    expect(out.args[0]!.account_number).toBe("****7777");
+    expect(() =>
+      redact(
+        DEFAULT_AGENT_TRACE_POLICY,
+        { tool: "x", args: [{ account_number: "999988887777" }] },
+        OPTS,
+      ),
+    ).toThrow(/forbidden field "account_number"/);
   });
 
   it("stays in sync with the canonical policy JSON", () => {

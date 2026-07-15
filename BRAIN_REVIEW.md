@@ -528,8 +528,8 @@ legacy ingestion, reconciliation, and connector correctness.
 - [ ] T2-7 remains product scope: Collections and Cash still need real dunning,
       forecasting, and sweep algorithms.
 - [ ] T2-8, T2-9, T2-18, T2-22 through T2-25 remain follow-up work.
-- [ ] T2-26 remains a product and security sign-off decision: bank account
-      identifiers in agent traces are still masked, not forbidden.
+- [x] T2-26 fixed: bank account numbers, IBANs, and routing numbers are now
+      forbidden in agent traces under the same policy path as card numbers.
 
 ### Tier 2 verdict update
 

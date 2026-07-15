@@ -1,13 +1,8 @@
 {
   "id": "agent-trace-v1",
   "version": 1,
-  "description": "Default field-level redaction policy for agent reasoning traces (INV-9). Applied to raw LLM inputs/outputs and tool-call payloads BEFORE they are stored in the redacted view. The raw blob is encrypted at rest with a per-tenant KMS key and is only readable with the audit:incident_investigation scope.",
+  "description": "Default field-level redaction policy for agent reasoning traces (INV-9). Applied to raw LLM inputs/outputs and tool-call payloads BEFORE they are stored in the redacted view. Forbidden card and bank account identifier fields reject the trace before redacted or raw trace storage. Raw blobs that pass redaction are encrypted at rest with a per-tenant KMS key and are only readable with the audit:incident_investigation scope.",
   "rules": [
-    {
-      "name": "account_numbers",
-      "match": ["account_number", "account_no", "acct", "iban", "routing_number"],
-      "transform": "mask_last4"
-    },
     {
       "name": "counterparty_names",
       "match": ["counterparty_name", "payee", "payer", "vendor_name", "merchant_name"],
@@ -34,6 +29,11 @@
         "plaid_access_token",
         "api_key",
         "private_key",
+        "account_number",
+        "account_no",
+        "acct",
+        "iban",
+        "routing_number",
         "card_number",
         "cvv",
         "pin"
