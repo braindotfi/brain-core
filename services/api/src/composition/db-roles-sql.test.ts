@@ -59,6 +59,9 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(SQL).toContain(
       "GRANT SELECT, INSERT, UPDATE ON execution_outbox TO brain_execution_worker",
     );
+    // audit verifier: audit_events read, audit_anchors scan/heal, forensic cursor.
+    expect(SQL).toContain("GRANT SELECT ON audit_events TO brain_audit_verifier");
+    expect(SQL).toContain("GRANT SELECT, UPDATE ON audit_anchors TO brain_audit_verifier");
   });
 
   it("scopes the read-only roles to SELECT", () => {

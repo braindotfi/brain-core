@@ -98,6 +98,7 @@ function makeDeps(opts: {
   markReconcilingReturns?: number;
   completeThrows?: boolean;
   failExecutionThrows?: boolean;
+  beforeDispatch?: Parameters<typeof processClaimedRow>[0]["beforeDispatch"];
 }): {
   deps: Parameters<typeof runOutboxCycle>[0];
   outbox: FakeOutbox;
@@ -136,6 +137,7 @@ function makeDeps(opts: {
     withPrivileged: <T>(
       fn: (c: { query: () => Promise<{ rows: never[]; rowCount: number }> }) => Promise<T>,
     ) => fn({ query: async () => ({ rows: [], rowCount: 0 }) }),
+    ...(opts.beforeDispatch !== undefined ? { beforeDispatch: opts.beforeDispatch } : {}),
     workerId: "worker_test",
   };
   return { deps, outbox, executor, audit };
@@ -323,6 +325,30 @@ describe("processClaimedRow", () => {
     const stuck = audit.events.find((e) => e.action === "execution.outbox.stuck");
     expect(stuck).toBeDefined();
     expect(String(stuck?.outputs.last_error)).toContain("audit_before_id");
+  });
+
+  it("refuses to dispatch when the pre-dispatch guard blocks the creator agent", async () => {
+    const beforeDispatch = vi.fn(async () => ({
+      ok: false as const,
+      reason: "agent_state=quarantined",
+    }));
+    const { deps, outbox, executor, audit } = makeDeps({
+      beforeDispatch,
+      dispatch: validAchReceipt,
+    });
+    const row = makeRow();
+    const outcome = await processClaimedRow(deps, row);
+
+    expect(outcome).toBe("reconciling");
+    expect(beforeDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: TENANT, actor: "worker_test" }),
+      row,
+    );
+    expect(outbox.markReconciling).toHaveBeenCalledTimes(1);
+    expect(executor.completeExecution).not.toHaveBeenCalled();
+    expect(deps.rails.get("bank_ach").dispatch).not.toHaveBeenCalled();
+    const stuck = audit.events.find((e) => e.action === "execution.outbox.stuck");
+    expect(String(stuck?.outputs.last_error)).toContain("agent_state=quarantined");
   });
 });
 

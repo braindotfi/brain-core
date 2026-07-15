@@ -412,3 +412,45 @@ evidence rather than unresolved Tier 0 contract-path findings.
 - BrainAuditAnchor: two-step publisher rotation, idempotent (tenant, root)
   publication, and domain-separated Merkle inclusion (0x00 leaf / 0x01 internal)
   that resists second-preimage.
+
+---
+
+## Tier 1: Policy + Gating
+
+Repo: braindotfi/brain-core. Branch: review/tier-1-policy-gating.
+Model: Opus 4.8. Scope: pre-execution policy gate, propose-only enforcement,
+audit-anchor sweep, trust state machine, RLS posture, and DB role separation.
+
+### Fix status
+
+- [x] T1-20 fixed: anchor orphan recovery now uses the audit-verifier BYPASSRLS
+      pool, not the request pool, so the cross-tenant orphan scan cannot false-clean
+      under FORCE RLS.
+- [x] T1-21 fixed: anchor reconciler and audit consistency workers now emit
+      cycle-failure counters and last-success heartbeat gauges.
+- [x] T1-22 fixed: `/internal/audit/health` escalates stale verifier evidence
+      instead of reporting `safe` forever after one old clean pass.
+- [x] T1-4 fixed: `/v1/agents/{id}/halt` quarantines first, then pauses approved
+      intents in one tenant transaction; the execution outbox worker rechecks creator
+      agent state before rail dispatch and parks blocked rows in `reconciling`.
+- [ ] T1-14 pending: on-chain gate context must fail closed based on
+      `action_type`.
+- [ ] T1-15 pending: policy outcome check should whitelist `allow` and `confirm`.
+- [ ] T1-16 pending: production loader fence should include
+      `resolveTenantFlags`.
+- [ ] T1-17 pending: escrow rail registration should assert
+      `resolveEscrowState` is wired.
+- [ ] T1-18 pending: gate metric emission should be exception-guarded.
+- [ ] T1-7 pending: gate-bypass guard should scan API rail signing sinks.
+- [ ] T1-9/T1-10/T1-11/T1-23 pending: DB role and FORCE RLS hardening remains
+      to be tightened after source-footprint verification.
+- [ ] T1-6/T1-8/T1-13 pending: small route attribution and hygiene fixes remain.
+
+### Tier 1 verdict update
+
+The mergeable core HIGH defects from the Tier 1 review are fixed on
+`fix/tier-1-policy-gating`: audit sweep observability no longer fails silently,
+and halted agents can no longer dispatch already-queued outbox rows after the
+worker observes quarantine. The remaining Tier 1 work is fail-closed hardening,
+DB least-privilege tightening, and route hygiene. P3a changes on-chain gate
+behavior and should be reviewed separately before merge.

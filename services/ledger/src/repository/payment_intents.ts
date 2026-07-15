@@ -67,6 +67,20 @@ export async function listPaymentIntents(
   return rows;
 }
 
+export async function pauseApprovedPaymentIntentsByAgent(
+  client: TenantScopedClient,
+  agentId: string,
+): Promise<string[]> {
+  const { rows } = await client.query<{ id: string }>(
+    `UPDATE ledger_payment_intents
+        SET status = 'paused', updated_at = now()
+      WHERE created_by_agent_id = $1 AND status = 'approved'
+      RETURNING id`,
+    [agentId],
+  );
+  return rows.map((row) => row.id);
+}
+
 // ---------------------------------------------------------------------------
 // Phase-4 write helpers. Called by services/execution/src/payment-intents.
 // services/ledger keeps the SQL surface for the table — every PaymentIntent

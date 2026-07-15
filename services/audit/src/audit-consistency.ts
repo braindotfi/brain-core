@@ -25,8 +25,8 @@ import type { AuditEventInput, ManagedWorker, MetricsEmitter } from "@brain/shar
 
 export interface AuditConsistencyDeps {
   /**
-   * MUST be the cross-tenant privileged pool (the BYPASSRLS `brain_privileged`
-   * role), NOT the request-path pool. The fork/gap queries scan every tenant's
+   * MUST be the cross-tenant audit-verifier pool with BYPASSRLS, NOT the
+   * request-path pool. The fork/gap queries scan every tenant's
    * chain and deliberately set no `app.tenant_id`; under the request role's
    * `FORCE ROW LEVEL SECURITY` that predicate (`tenant_id =
    * current_setting('app.tenant_id', true)`) matches ZERO rows, so the verifier
@@ -519,12 +519,16 @@ export function startAuditConsistencyVerifier(
     async () => {
       await checkAuditConsistency(deps);
       await verifyContentHashCursor(deps);
+      deps.metrics?.gauge("brain.audit.consistency.last_success_at", Date.now() / 1000);
     },
     intervalMs,
     {
       name: "audit-consistency",
       runImmediately: true,
-      onError: (err) => console.error("[audit-consistency] cycle failed:", err),
+      onError: (err) => {
+        deps.metrics?.increment("brain.audit.consistency.cycle_failed.count");
+        console.error("[audit-consistency] cycle failed:", err);
+      },
     },
   );
 }

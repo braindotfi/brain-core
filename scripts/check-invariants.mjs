@@ -118,6 +118,52 @@ check(
   "demo provision-run must return a propose-only agent token and separate user member token",
 );
 
+const anchorReconciler = read("services/audit/src/reconciler.ts");
+check(
+  "anchor reconciler uses the audit-verifier pool for cross-tenant scans",
+  anchorReconciler.includes("privilegedPool: Pool") &&
+    anchorReconciler.includes("deps.privilegedPool.query<OrphanRow>") &&
+    apiMain.includes("privilegedPool: auditVerifierPool") &&
+    apiMain.includes("startAnchorReconciler"),
+  "audit-anchor orphan recovery must not run cross-tenant scans on the request pool under FORCE RLS",
+);
+
+const auditHealthRoute = read("services/api/src/audit-health/route.ts");
+check(
+  "audit health status treats stale verifier evidence as critical",
+  auditHealthRoute.includes("AUDIT_VERIFIER_STALE_AFTER_SECONDS") &&
+    auditHealthRoute.includes(
+      "verifier.secondsSinceCleanFullPass > AUDIT_VERIFIER_STALE_AFTER_SECONDS",
+    ),
+  "/internal/audit/health must not report safe when the verifier heartbeat is stale",
+);
+
+const outboxWorker = read("services/execution/src/outbox/worker.ts");
+const beforeDispatchIndex = outboxWorker.indexOf("deps.beforeDispatch");
+const railDispatchIndex = outboxWorker.indexOf("rail.dispatch(");
+check(
+  "outbox worker rechecks dispatch safety before rail dispatch",
+  beforeDispatchIndex >= 0 &&
+    railDispatchIndex > beforeDispatchIndex &&
+    apiMain.includes("beforeDispatch: (_ctx, row)") &&
+    apiMain.includes("FOR SHARE") &&
+    apiMain.includes('agent.state !== "active"'),
+  "execution outbox must re-resolve creator agent state and refuse dispatch after a kill-switch quarantine",
+);
+
+const haltAgentIndex = apiMain.indexOf("haltAgent: async");
+const haltBlockEnd = apiMain.indexOf("return { paused, quarantined };", haltAgentIndex);
+const haltBlock = apiMain.slice(haltAgentIndex, haltBlockEnd);
+check(
+  "agent halt quarantines before pausing in one tenant transaction",
+  haltAgentIndex >= 0 &&
+    haltBlock.includes("await withTenantScope(") &&
+    haltBlock.indexOf("transitionAgent(") >= 0 &&
+    haltBlock.indexOf("LedgerPaymentIntents.pauseApprovedByAgent") >
+      haltBlock.indexOf("transitionAgent("),
+  "/v1/agents/{id}/halt must quarantine the agent before pausing approved intents, inside one tenant-scoped transaction",
+);
+
 const actorResolverSource = read("services/execution/src/members/ActorResolver.ts");
 const agentPrincipalGuardIndex = actorResolverSource.indexOf('input.ctx.principalType !== "user"');
 const sessionLookupIndex = actorResolverSource.indexOf(
@@ -236,7 +282,10 @@ const productionTenantAgentTokenStart = productionTenancy.indexOf(
   "insertProductionAgentToken",
   productionTenantRouteStart,
 );
-const productionTenantReplyStart = productionTenancy.indexOf("reply.status(201)", productionTenantRouteStart);
+const productionTenantReplyStart = productionTenancy.indexOf(
+  "reply.status(201)",
+  productionTenantRouteStart,
+);
 check(
   "production agents contract is present",
   productionAgentsContract.includes("Production Agent Principals") &&
@@ -254,8 +303,13 @@ check(
     productionTenancy.includes("agent: serializeAgentToken"),
   "POST /v1/tenants must create the production BFF service agent and token before replying",
 );
-const productionAgentTokenRouteStart = productionTenancy.indexOf('"/tenants/:tenantId/agent-token"');
-const productionAgentTokenRouteEnd = productionTenancy.indexOf('"/sessions"', productionAgentTokenRouteStart);
+const productionAgentTokenRouteStart = productionTenancy.indexOf(
+  '"/tenants/:tenantId/agent-token"',
+);
+const productionAgentTokenRouteEnd = productionTenancy.indexOf(
+  '"/sessions"',
+  productionAgentTokenRouteStart,
+);
 const productionAgentTokenRouteBody = productionTenancy.slice(
   productionAgentTokenRouteStart,
   productionAgentTokenRouteEnd,
@@ -271,11 +325,14 @@ check(
   "POST /v1/tenants/:tenantId/agent-token must require tenant:agent-mint, reject non-production tenants, return-or-mint, and revoke rotated token ids",
 );
 const signAgentTokenStart = productionTenancy.indexOf("async function signAgentToken");
-const signAgentTokenEnd = productionTenancy.indexOf("async function insertRefreshToken", signAgentTokenStart);
+const signAgentTokenEnd = productionTenancy.indexOf(
+  "async function insertRefreshToken",
+  signAgentTokenStart,
+);
 const signAgentTokenBody = productionTenancy.slice(signAgentTokenStart, signAgentTokenEnd);
 check(
   "production agent tokens use SERVICE_TOKEN_SCOPES",
-  signAgentTokenBody.includes("type: \"agent\"") &&
+  signAgentTokenBody.includes('type: "agent"') &&
     signAgentTokenBody.includes("scopes: SERVICE_TOKEN_SCOPES") &&
     serviceTokenScopesBlock.includes('"payment_intent:propose"') &&
     !DANGEROUS_SERVICE_TOKEN_SCOPES.some((scope) => serviceTokenScopesBlock.includes(`"${scope}"`)),
@@ -297,7 +354,10 @@ check(
     productionTenancy.includes("findMemberByPlatformExternalRef") &&
     productionTenancy.includes('reason: "session_identity_unlinked"') &&
     productionTenancy.indexOf('reason: "session_identity_unlinked"') <
-      productionTenancy.indexOf("insertRefreshToken(client, sessionSeed)", productionTenancy.indexOf('"/sessions"')),
+      productionTenancy.indexOf(
+        "insertRefreshToken(client, sessionSeed)",
+        productionTenancy.indexOf('"/sessions"'),
+      ),
   "POST /v1/sessions must return session_identity_unlinked before creating any session state",
 );
 check(
@@ -320,7 +380,9 @@ check(
   "service-token rejects production tenants",
   apiMainForServiceToken.includes("production_tenant_uses_sessions") &&
     apiMainForServiceToken.includes("service-token is not a production session exchange path") &&
-    productionTenancyTests.includes("rejects production agent minting for non-production tenants") &&
+    productionTenancyTests.includes(
+      "rejects production agent minting for non-production tenants",
+    ) &&
     serviceTokenModule.includes("must stay disabled for live-money or multi-customer production"),
   "POST /v1/auth/service-token must not be a competing production user-session exchange path",
 );

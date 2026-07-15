@@ -10,12 +10,13 @@
  * are older than the grace window are surfaced as `audit.anchor.orphan_detected`
  * for ops.
  *
- * The orphan scan is cross-tenant (a system job) and uses the pool directly,
- * matching the normalize worker. The per-anchor write is tenant-scoped.
+ * The orphan scan is cross-tenant (a system job) and uses the audit-verifier
+ * pool directly. The per-anchor write is tenant-scoped.
  */
 
 import { startManagedInterval, withTenantScope, type AuditEmitter } from "@brain/shared";
 import type { ManagedWorker } from "@brain/shared";
+import type { MetricsEmitter } from "@brain/shared";
 import type { Pool } from "pg";
 import { setAnchorTxHash } from "./repository.js";
 
@@ -28,9 +29,15 @@ export interface AnchorEventReader {
 }
 
 export interface ReconcilerDeps {
-  pool: Pool;
+  /**
+   * Cross-tenant BYPASSRLS audit-verifier pool. The orphan scan deliberately
+   * runs without a tenant GUC; using the request pool would see zero rows under
+   * FORCE RLS and report a false-clean cycle.
+   */
+  privilegedPool: Pool;
   reader: AnchorEventReader;
   audit: AuditEmitter;
+  metrics?: MetricsEmitter;
 }
 
 export interface ReconcileOptions {
@@ -55,7 +62,7 @@ export async function reconcileOrphanedAnchors(
   const graceMs = opts.orphanGraceMs ?? 60 * 60 * 1000;
   const now = Date.now();
 
-  const { rows } = await deps.pool.query<OrphanRow>(
+  const { rows } = await deps.privilegedPool.query<OrphanRow>(
     `SELECT id, tenant_id, merkle_root, created_at
        FROM audit_anchors
       WHERE onchain_tx_hash IS NULL
@@ -75,7 +82,7 @@ export async function reconcileOrphanedAnchors(
     });
 
     if (match !== null) {
-      await withTenantScope(deps.pool, row.tenant_id, (c) =>
+      await withTenantScope(deps.privilegedPool, row.tenant_id, (c) =>
         setAnchorTxHash(c, row.id, match.txHash, match.blockNumber),
       );
       recovered += 1;
@@ -117,12 +124,16 @@ export function startAnchorReconciler(
   return startManagedInterval(
     async () => {
       await reconcileOrphanedAnchors(deps, opts);
+      deps.metrics?.gauge("brain.audit.anchor_reconciler.last_success_at", Date.now() / 1000);
     },
     intervalMs,
     {
       name: "anchor-reconciler",
       runImmediately: true,
-      onError: (err) => console.error("[anchorReconciler] cycle failed:", err),
+      onError: (err) => {
+        deps.metrics?.increment("brain.audit.anchor_reconciler.cycle_failed.count");
+        console.error("[anchorReconciler] cycle failed:", err);
+      },
     },
   );
 }

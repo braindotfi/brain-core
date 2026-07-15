@@ -242,6 +242,15 @@ Done
 - `/v1/auth/service-token` remains sandbox and testnet only. It rejects
   `tenant.kind='production'`; it is not a competing production user-session
   exchange path and not a competing production agent path.
+- Agent halt is a fail-closed kill-switch. `/v1/agents/{id}/halt` quarantines
+  the agent before pausing approved intents in one tenant-scoped transaction.
+  The execution outbox worker rechecks the creator agent row with a locking read
+  immediately before rail dispatch and parks rows in `reconciling` if the agent
+  is missing or no longer active.
+- Audit anchor orphan recovery and audit consistency verification run on the
+  audit-verifier pool, not the request pool. Both workers emit cycle-failure
+  counters and last-success heartbeats. `/internal/audit/health` treats stale
+  verifier evidence as critical, so a dead verifier cannot report safe forever.
 - Tier 0 Group B closed the hard approval-floor decision for on-chain money
   movement. `onchain_transfer` and `escrow_release` require at least one
   recorded human approval before dispatch even when policy returns `allow`.

@@ -185,9 +185,11 @@ GRANT INSERT ON ledger_counterparty_payment_instructions TO brain_ledger_project
 -- money-path (ledger_*) grants at all.
 GRANT SELECT, INSERT, UPDATE ON execution_outbox TO brain_execution_worker;
 
--- brain_audit_verifier: read audit_events; advance the verifier cursor; append
--- findings (no UPDATE/DELETE on findings — a detected break is un-erasable).
+-- brain_audit_verifier: read audit_events; scan and heal audit_anchors;
+-- advance the verifier cursor; append findings. No UPDATE/DELETE on findings,
+-- so a detected break is un-erasable.
 GRANT SELECT ON audit_events TO brain_audit_verifier;
+GRANT SELECT, UPDATE ON audit_anchors TO brain_audit_verifier;
 GRANT SELECT, INSERT, UPDATE ON audit_verifier_checkpoint TO brain_audit_verifier;
 GRANT SELECT, INSERT ON audit_integrity_findings TO brain_audit_verifier;
 

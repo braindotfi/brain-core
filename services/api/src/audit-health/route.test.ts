@@ -116,6 +116,18 @@ describe("deriveAuditHealthStatus", () => {
     expect(deriveAuditHealthStatus({ ...base, legacyUnverifiable: 4 }, outbox)).toBe("degraded");
     expect(deriveAuditHealthStatus({ ...base, unsupportedVersion: 1 }, outbox)).toBe("degraded");
   });
+
+  it("is critical when the verifier's clean pass is stale", () => {
+    expect(deriveAuditHealthStatus({ ...base, secondsSinceCleanFullPass: 31 * 60 }, outbox)).toBe(
+      "critical",
+    );
+  });
+
+  it("is degraded when verifier staleness is unavailable", () => {
+    expect(deriveAuditHealthStatus({ ...base, secondsSinceCleanFullPass: null }, outbox)).toBe(
+      "degraded",
+    );
+  });
 });
 
 describe("GET /internal/audit/health", () => {
