@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, newTenantId } from "@brain/shared";
+import { InMemoryAuditEmitter, MockMetrics, newTenantId } from "@brain/shared";
 import {
   reconcileOrphanedAnchors,
   startAnchorReconciler,
@@ -55,7 +55,7 @@ describe("reconcileOrphanedAnchors", () => {
     const reader = readerReturning({ txHash: Buffer.alloc(32, 9), blockNumber: 123n });
     const audit = new InMemoryAuditEmitter();
 
-    const res = await reconcileOrphanedAnchors({ pool, reader, audit });
+    const res = await reconcileOrphanedAnchors({ privilegedPool: pool, reader, audit });
 
     expect(res.recovered).toBe(1);
     expect(res.flagged).toBe(0);
@@ -70,7 +70,11 @@ describe("reconcileOrphanedAnchors", () => {
     const { pool, txQueries } = fakePool([orphan({ created_at: old })]);
     const audit = new InMemoryAuditEmitter();
 
-    const res = await reconcileOrphanedAnchors({ pool, reader: readerReturning(null), audit });
+    const res = await reconcileOrphanedAnchors({
+      privilegedPool: pool,
+      reader: readerReturning(null),
+      audit,
+    });
 
     expect(res.recovered).toBe(0);
     expect(res.flagged).toBe(1);
@@ -84,7 +88,11 @@ describe("reconcileOrphanedAnchors", () => {
     const { pool } = fakePool([orphan({ created_at: new Date() })]);
     const audit = new InMemoryAuditEmitter();
 
-    const res = await reconcileOrphanedAnchors({ pool, reader: readerReturning(null), audit });
+    const res = await reconcileOrphanedAnchors({
+      privilegedPool: pool,
+      reader: readerReturning(null),
+      audit,
+    });
 
     expect(res.flagged).toBe(0);
     expect(audit.events).toHaveLength(0);
@@ -101,7 +109,7 @@ describe("reconcileOrphanedAnchors", () => {
     } as unknown as Pool;
 
     await reconcileOrphanedAnchors({
-      pool,
+      privilegedPool: pool,
       reader: readerReturning(null),
       audit: new InMemoryAuditEmitter(),
     });
@@ -117,7 +125,7 @@ describe("reconcileOrphanedAnchors", () => {
     const reader = readerReturning({ txHash: Buffer.alloc(32, 9), blockNumber: 1n });
     const audit = new InMemoryAuditEmitter();
 
-    const res = await reconcileOrphanedAnchors({ pool, reader, audit });
+    const res = await reconcileOrphanedAnchors({ privilegedPool: pool, reader, audit });
 
     expect(res).toEqual({ recovered: 0, flagged: 0 });
     expect(reader.findAnchorTx).not.toHaveBeenCalled();
@@ -133,7 +141,7 @@ describe("startAnchorReconciler", () => {
       const reader = readerReturning({ txHash: Buffer.alloc(32, 9), blockNumber: 1n });
       const findAnchorTx = reader.findAnchorTx as ReturnType<typeof vi.fn>;
       const rec = startAnchorReconciler(
-        { pool, reader, audit: new InMemoryAuditEmitter() },
+        { privilegedPool: pool, reader, audit: new InMemoryAuditEmitter() },
         { intervalMs: 1000 },
       );
 
@@ -160,15 +168,48 @@ describe("startAnchorReconciler", () => {
         }),
         connect: async () => ({ query: vi.fn(), release: vi.fn() }),
       } as unknown as Pool;
+      const metrics = new MockMetrics();
       const rec = startAnchorReconciler(
-        { pool, reader: readerReturning(null), audit: new InMemoryAuditEmitter() },
+        {
+          privilegedPool: pool,
+          reader: readerReturning(null),
+          audit: new InMemoryAuditEmitter(),
+          metrics,
+        },
         { intervalMs: 1000 },
       );
       await vi.advanceTimersByTimeAsync(1000);
       expect(errSpy).toHaveBeenCalled();
+      expect(
+        metrics.calls.some((c) => c.name === "brain.audit.anchor_reconciler.cycle_failed.count"),
+      ).toBe(true);
       rec.stop();
     } finally {
       errSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("emits a last-success heartbeat after a completed cycle", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pool } = fakePool([]);
+      const metrics = new MockMetrics();
+      const rec = startAnchorReconciler(
+        {
+          privilegedPool: pool,
+          reader: readerReturning(null),
+          audit: new InMemoryAuditEmitter(),
+          metrics,
+        },
+        { intervalMs: 1000 },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        metrics.calls.some((c) => c.name === "brain.audit.anchor_reconciler.last_success_at"),
+      ).toBe(true);
+      rec.stop();
+    } finally {
       vi.useRealTimers();
     }
   });

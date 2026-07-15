@@ -425,7 +425,9 @@ export class PaymentIntentService implements IPaymentIntentService {
       LedgerPaymentIntents.insert(c, {
         id: newPaymentIntentId(),
         ownerId: ctx.tenantId,
-        createdByAgentId: input.agent_id ?? ctx.actor,
+        createdByAgentId:
+          input.agent_id ??
+          (ctx.principalType === undefined || ctx.principalType === "agent" ? ctx.actor : null),
         actionType: input.action_type,
         sourceAccountId: input.source_account_id,
         destinationCounterpartyId: input.destination_counterparty_id,
@@ -889,27 +891,18 @@ export class PaymentIntentService implements IPaymentIntentService {
   }
 
   /**
-   * Pause every in-flight (approved) intent created by an agent (the PI side of
-   * /v1/agents/{id}/halt). Returns the paused intent ids. The caller flips the
-   * agent record to `quarantined` (agents repo) to complete the halt.
+   * Pause every approved intent created by an agent. /v1/agents/{id}/halt uses
+   * a composition-root transaction that quarantines the agent first, pauses
+   * these rows second, and relies on the outbox worker's pre-dispatch guard for
+   * rows that already left approved.
    */
   public async pauseByAgent(
     ctx: ServiceCallContext,
     agentId: string,
   ): Promise<{ paused: string[] }> {
-    const paused = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
-      const rows = await LedgerPaymentIntents.list(c, {
-        status: "approved",
-        created_by_agent_id: agentId,
-        limit: 1000,
-      });
-      const ids: string[] = [];
-      for (const row of rows) {
-        const updated = await LedgerPaymentIntents.transition(c, row.id, "approved", "paused");
-        if (updated !== null) ids.push(row.id);
-      }
-      return ids;
-    });
+    const paused = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+      LedgerPaymentIntents.pauseApprovedByAgent(c, agentId),
+    );
     await this.deps.audit.emit({
       tenantId: ctx.tenantId,
       layer: "agent",

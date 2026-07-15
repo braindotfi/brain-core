@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   checkAuditConsistency,
   reportVerifierHealth,
+  startAuditConsistencyVerifier,
   verifyContentHashCursor,
 } from "./audit-consistency.js";
 
@@ -338,5 +339,43 @@ describe("reportVerifierHealth", () => {
     expect(h.lastPassStatus).toBe("failed");
     expect(h.openFindings).toBe(2);
     expect(h.secondsSinceCleanFullPass).toBeNull();
+  });
+});
+
+describe("startAuditConsistencyVerifier", () => {
+  it("emits cycle failure and last-success metrics", async () => {
+    vi.useFakeTimers();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const metrics = { gauge: vi.fn(), increment: vi.fn(), histogram: vi.fn(), duration: vi.fn() };
+      const failingPool = {
+        query: vi.fn(async () => {
+          throw new Error("db down");
+        }),
+      } as unknown as Pool;
+      const failing = startAuditConsistencyVerifier(
+        { privilegedPool: failingPool, metrics: metrics as never },
+        { intervalMs: 1000 },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(metrics.increment).toHaveBeenCalledWith("brain.audit.consistency.cycle_failed.count");
+      failing.stop();
+
+      const { pool } = fakeCursorPool({ pageRows: [] });
+      const healthy = startAuditConsistencyVerifier(
+        { privilegedPool: pool, metrics: metrics as never },
+        { intervalMs: 1000 },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(metrics.gauge).toHaveBeenCalledWith(
+        "brain.audit.consistency.last_success_at",
+        expect.any(Number),
+      );
+      healthy.stop();
+      expect(errSpy).toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

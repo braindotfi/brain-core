@@ -242,6 +242,27 @@ Done
 - `/v1/auth/service-token` remains sandbox and testnet only. It rejects
   `tenant.kind='production'`; it is not a competing production user-session
   exchange path and not a competing production agent path.
+- Agent halt is a fail-closed kill-switch. `/v1/agents/{id}/halt` quarantines
+  the agent before pausing approved intents in one tenant-scoped transaction.
+  The execution outbox worker rechecks the creator agent row with a locking read
+  immediately before rail dispatch and parks rows in `reconciling` if the agent
+  is missing or no longer active.
+- HTTP propose surfaces pin agent-token `created_by_agent_id` attribution to
+  the authenticated agent principal. Human user sessions without an admin
+  override store `created_by_agent_id=null` rather than masquerading as agents.
+  A caller-supplied `agent_id` is honored only when the token carries
+  `execution:admin`, matching the MCP propose tool. API-key revocation uses the
+  canonical agent state machine rather than a raw state update.
+- Audit anchor orphan recovery and audit consistency verification run on the
+  audit-verifier pool, not the request pool. Both workers emit cycle-failure
+  counters and last-success heartbeats. `/internal/audit/health` treats stale
+  verifier evidence as critical, so a dead verifier cannot report safe forever.
+- The money-path gate fails closed on structural action mismatches:
+  `x402_settle` requires settlement context, `escrow_release` requires escrow
+  context, and non-canonical policy outcomes other than `allow` or `confirm`
+  are rejected. Gate metric sinks are observability only; telemetry failures
+  cannot change the deterministic gate decision. Production boot fails if
+  behavior-hash flag loading or escrow state loading is missing for live rails.
 - Tier 0 Group B closed the hard approval-floor decision for on-chain money
   movement. `onchain_transfer` and `escrow_release` require at least one
   recorded human approval before dispatch even when policy returns `allow`.

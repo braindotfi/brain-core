@@ -371,6 +371,7 @@ export function isX402AutonomousAllowed(
   decision: GatePolicyDecision,
 ): boolean {
   if (intent.action_type !== "x402_settle") return false;
+  if (intent.settlement === undefined) return false;
   if (decision.outcome !== "allow") return false;
   if (decision.onchain_settlement_permitted !== true) return false;
   const cap = decision.x402_autonomous_max_amount;
@@ -412,20 +413,25 @@ export async function runPreExecutionGate(
   const startedAt = Date.now();
   const emitMetrics = (allChecks: ReadonlyArray<GateCheck>, gateOutcome: "ok" | "fail"): void => {
     if (deps.metrics === undefined) return;
-    const tags = { outcome: gateOutcome, dry_run: dryRun };
-    deps.metrics.increment("brain.gate.outcome.count", tags);
-    deps.metrics.duration("brain.gate.duration_ms", Date.now() - startedAt, tags);
-    for (const c of allChecks) {
-      const checkOutcome: "pass" | "fail" | "not_applicable" = !c.passed
-        ? "fail"
-        : c.detail?.not_applicable === true
-          ? "not_applicable"
-          : "pass";
-      deps.metrics.increment("brain.gate.check.count", {
-        check: c.name,
-        outcome: checkOutcome,
-        dry_run: dryRun,
-      });
+    try {
+      const tags = { outcome: gateOutcome, dry_run: dryRun };
+      deps.metrics.increment("brain.gate.outcome.count", tags);
+      deps.metrics.duration("brain.gate.duration_ms", Date.now() - startedAt, tags);
+      for (const c of allChecks) {
+        const checkOutcome: "pass" | "fail" | "not_applicable" = !c.passed
+          ? "fail"
+          : c.detail?.not_applicable === true
+            ? "not_applicable"
+            : "pass";
+        deps.metrics.increment("brain.gate.check.count", {
+          check: c.name,
+          outcome: checkOutcome,
+          dry_run: dryRun,
+        });
+      }
+    } catch {
+      // Metrics are observability only; a telemetry sink must never decide
+      // whether the deterministic money-path gate passes or fails.
     }
   };
 
@@ -528,15 +534,23 @@ export async function runPreExecutionGate(
   outcome = decision.outcome;
   requiredApprovers = decision.required_approvers;
   trace = decision.trace;
+  const decisionOutcome = decision.outcome as string;
 
   // 3 — action allowed (policy matched a rule with applies_to including
   // this action_type, or `any`; any match is the precondition).
   if (decision.matched_rule_id === null) {
     return failGate(3, "action_allowed", { reason: "no rule matched" });
   }
-  if (decision.outcome === "reject") {
+  if (decisionOutcome === "reject") {
     return failGate(3, "action_allowed", {
       reason: "policy explicitly rejected",
+      matched_rule_id: decision.matched_rule_id,
+    });
+  }
+  if (decisionOutcome !== "allow" && decisionOutcome !== "confirm") {
+    return failGate(3, "action_allowed", {
+      reason: "non_canonical_policy_outcome",
+      outcome: decisionOutcome,
       matched_rule_id: decision.matched_rule_id,
     });
   }
@@ -548,7 +562,7 @@ export async function runPreExecutionGate(
   // VM has expressed the dimension, `false` is a HARD fail-closed (the payment
   // must route over an off-chain rail) and `true` passes. When the dimension is
   // unexpressed (undefined), record not_applicable — additive, never a back door.
-  if (input.intent.settlement !== undefined) {
+  if (input.intent.action_type === "x402_settle" || input.intent.settlement !== undefined) {
     const permitted = decision.onchain_settlement_permitted;
     if (permitted === false) {
       return failGate(3.5, "onchain_settlement_permitted", {
@@ -637,6 +651,11 @@ export async function runPreExecutionGate(
   // to the intent amount, the intent currency IS the settled asset, and the
   // recipient address matches the counterparty's on-chain address. Deterministic
   // field comparison — no discretion. Non-settlement actions add no row.
+  if (input.intent.action_type === "x402_settle" && input.intent.settlement === undefined) {
+    return failGate(6.5, "x402_payment_context_valid", {
+      failures: ["x402_settle requires settlement context"],
+    });
+  }
   if (input.intent.settlement !== undefined) {
     const s = input.intent.settlement;
     const failures: string[] = [];
@@ -676,6 +695,11 @@ export async function runPreExecutionGate(
   // the intent carries an `escrow` context AND the loader is wired; otherwise add
   // no row (canonical path preserved). Deterministic comparison — never a
   // judgment.
+  if (input.intent.action_type === "escrow_release" && input.intent.escrow === undefined) {
+    return failGate(6.6, "escrow_state_bound", {
+      failures: ["escrow_release requires escrow context"],
+    });
+  }
   if (input.intent.escrow !== undefined && deps.resolveEscrowState !== undefined) {
     const onchain = await deps.resolveEscrowState({
       tenantId: input.ctx.tenantId,

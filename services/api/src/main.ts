@@ -103,6 +103,7 @@ import {
 } from "@brain/raw";
 
 import {
+  LedgerPaymentIntents,
   LedgerService,
   registerLedgerPlugin,
   startNormalizeWorker,
@@ -245,7 +246,10 @@ import {
   readDeployedBytecodeExpectation,
 } from "./composition/escrow-audit-gate.js";
 import { makeBaseGetChainId, makeBaseGetCode } from "./composition/eth-getcode.js";
-import { assertAtLeastOneLiveRailInProduction } from "./composition/rails-prod-fence.js";
+import {
+  assertAtLeastOneLiveRailInProduction,
+  assertEscrowRailHasStateLoader,
+} from "./composition/rails-prod-fence.js";
 import { closeAllPools } from "./composition/close-pools.js";
 import { runShutdown } from "./composition/shutdown.js";
 import { resolveComposition, POOL_ENV } from "./composition/process-roles.js";
@@ -829,6 +833,7 @@ async function main(): Promise<void> {
   // wired in production. Same fail-closed posture as the rail/escrow fences.
   assertMoneyPathLoadersWiredInProduction({
     nodeEnv: process.env.NODE_ENV,
+    hasResolveTenantFlags: resolveTenantFlags !== undefined,
     hasResolveEvidence: resolveEvidence !== undefined,
     hasDetectDuplicates: detectDuplicates !== undefined,
     hasSumActiveReservations: sumActiveReservations !== undefined,
@@ -953,6 +958,10 @@ async function main(): Promise<void> {
       entries: liveNames.map((name) => ({ name, live: true })),
     };
   })();
+  assertEscrowRailHasStateLoader({
+    escrowRailLive: railsBuild.entries.some((entry) => entry.name === "escrow_base" && entry.live),
+    hasResolveEscrowState: resolveEscrowState !== undefined,
+  });
   const rails: RailRegistry = railsBuild.rails;
 
   const executionDeps: ExecutionDeps = {
@@ -1038,6 +1047,28 @@ async function main(): Promise<void> {
           executor: paymentIntentService,
           audit,
           withPrivileged,
+          beforeDispatch: (_ctx, row) =>
+            withTenantScope(pool, row.tenant_id, async (c) => {
+              const intent = await LedgerPaymentIntents.findById(c, row.payment_intent_id);
+              if (intent === null) {
+                return { ok: false, reason: "payment_intent_missing" };
+              }
+              if (intent.created_by_agent_id === null) {
+                return { ok: true };
+              }
+              const { rows } = await c.query<{ state: string }>(
+                `SELECT state FROM agents WHERE id = $1 FOR SHARE`,
+                [intent.created_by_agent_id],
+              );
+              const agent = rows[0];
+              if (agent === undefined) {
+                return { ok: false, reason: "agent_missing" };
+              }
+              if (agent.state !== "active") {
+                return { ok: false, reason: `agent_state=${agent.state}` };
+              }
+              return { ok: true };
+            }),
           workerId: `outbox-worker-${process.pid}`,
         },
         { intervalMs: 1_000 },
@@ -1099,14 +1130,18 @@ async function main(): Promise<void> {
   // Anchor orphan-recovery reconciler: heals anchors whose on-chain tx-hash
   // write was lost after a successful broadcast. Read-only — runs whenever the
   // anchor contract address and an RPC URL are configured (no publisher key).
+  // The orphan scan is cross-tenant and must use the audit-verifier BYPASSRLS
+  // pool. The request pool would match zero rows under FORCE RLS and report a
+  // false-clean cycle.
   const anchorRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
   const anchorReconciler =
     composition.workers.has("audit") &&
     cfg.AUDIT_ANCHOR_ADDRESS !== undefined &&
     anchorRpcUrl !== undefined
       ? startAnchorReconciler({
-          pool,
+          privilegedPool: auditVerifierPool,
           audit,
+          metrics,
           reader: createViemAnchorEventReader({
             contractAddress: cfg.AUDIT_ANCHOR_ADDRESS as `0x${string}`,
             rpcUrl: anchorRpcUrl,
@@ -1736,15 +1771,29 @@ async function main(): Promise<void> {
               return { jobId: jobCtx.requestId ?? brainId("req") };
             },
             haltAgent: async (haltCtx, agentId) => {
-              // Pause all in-flight intents from the agent, then quarantine it.
-              const { paused } = await paymentIntentService.pauseByAgent(haltCtx, agentId);
-              let quarantined = false;
-              await withTenantScope(pool, haltCtx.tenantId, async (c) => {
-                const agent = await findAgent(c, agentId);
-                if (agent !== null && agent.state === "active") {
-                  await transitionAgent(c, agentId, "active", "quarantined");
-                  quarantined = true;
-                }
+              const { paused, quarantined } = await withTenantScope(
+                pool,
+                haltCtx.tenantId,
+                async (c) => {
+                  let quarantined = false;
+                  // Quarantine first. This row update serializes with the
+                  // outbox worker's FOR SHARE pre-dispatch guard.
+                  const agent = await findAgent(c, agentId);
+                  if (agent !== null && agent.state === "active") {
+                    await transitionAgent(c, agentId, "active", "quarantined");
+                    quarantined = true;
+                  }
+                  const paused = await LedgerPaymentIntents.pauseApprovedByAgent(c, agentId);
+                  return { paused, quarantined };
+                },
+              );
+              await audit.emit({
+                tenantId: haltCtx.tenantId,
+                layer: "agent",
+                actor: haltCtx.actor,
+                action: "agent.halted",
+                inputs: { agent_id: agentId },
+                outputs: { paused_count: paused.length, paused_intent_ids: paused, quarantined },
               });
               return { paused, quarantined };
             },

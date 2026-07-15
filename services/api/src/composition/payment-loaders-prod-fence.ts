@@ -6,6 +6,7 @@
  * that only apply when that rail or action type is enabled. But several
  * loaders either apply to every payment or are built unconditionally in the
  * production composition root and must never be silently absent in production:
+ *   - resolveTenantFlags          (§6 check 1.5, behavior-hash pinning)
  *   - resolveEvidence              (§6 check 9.5, evidence-semantic validation)
  *   - detectDuplicates             (§6 check 11.5, duplicate-payment rejection)
  *   - sumActiveReservations        (§6 check 8, available_balance >= amount + reserved;
@@ -37,6 +38,7 @@
 
 export interface PaymentLoadersProdFenceInput {
   nodeEnv: string | undefined;
+  hasResolveTenantFlags: boolean;
   hasResolveEvidence: boolean;
   hasDetectDuplicates: boolean;
   hasSumActiveReservations: boolean;
@@ -53,6 +55,9 @@ export interface PaymentLoadersProdFenceInput {
 export function assertMoneyPathLoadersWiredInProduction(input: PaymentLoadersProdFenceInput): void {
   if (input.nodeEnv !== "production") return;
   const missing: string[] = [];
+  if (!input.hasResolveTenantFlags) {
+    missing.push("resolveTenantFlags (§6 check 1.5)");
+  }
   if (!input.hasResolveEvidence) missing.push("resolveEvidence (§6 check 9.5)");
   if (!input.hasDetectDuplicates) missing.push("detectDuplicates (§6 check 11.5)");
   if (!input.hasSumActiveReservations) {
@@ -74,11 +79,12 @@ export function assertMoneyPathLoadersWiredInProduction(input: PaymentLoadersPro
   throw new Error(
     "NODE_ENV=production requires the always-applicable money-path safety " +
       `loaders to be wired; missing: ${missing.join(", ")}. These gate every ` +
-      "payment (evidence-semantic validation, duplicate-payment rejection, " +
-      "concurrent-reservation accounting, M2M agent-payee attestation, " +
-      "micropayment window spending, the obligation confidence cap, and the " +
-      "outflow-receivable rejection); a missing loader would let the §6 " +
-      "gate record not_applicable and pass vacuously. Refusing to start so the " +
-      "orchestrator surfaces the misconfiguration as CrashLoopBackoff.",
+      "payment (behavior-hash pinning, evidence-semantic validation, " +
+      "duplicate-payment rejection, concurrent-reservation accounting, M2M " +
+      "agent-payee attestation, micropayment window spending, the obligation " +
+      "confidence cap, and the outflow-receivable rejection); a missing loader " +
+      "would let the §6 gate record not_applicable and pass vacuously. Refusing " +
+      "to start so the orchestrator surfaces the misconfiguration as " +
+      "CrashLoopBackoff.",
   );
 }

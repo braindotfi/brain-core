@@ -108,6 +108,8 @@ export async function assertRuntimeDbRoles(input: {
       forbidden: [
         { table: "audit_events", privilege: "UPDATE" },
         { table: "audit_events", privilege: "DELETE" },
+        { table: "audit_anchors", privilege: "INSERT" },
+        { table: "audit_anchors", privilege: "DELETE" },
         { table: "audit_integrity_findings", privilege: "UPDATE" },
         { table: "audit_integrity_findings", privilege: "DELETE" },
         { table: "ledger_payment_intents", privilege: "INSERT" },

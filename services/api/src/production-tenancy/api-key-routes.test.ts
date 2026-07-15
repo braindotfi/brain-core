@@ -117,11 +117,24 @@ function makeAppPool(store: FakeStore) {
         );
         return found ? { rows: [{ found: 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
       }
-      if (sql.includes("UPDATE agents SET state = 'revoked'")) {
-        const [, id] = values as [string, string];
+      if (sql.includes("SELECT * FROM agents WHERE id = $1")) {
+        const [id] = values as [string];
         const agent = store.agents.get(id);
-        if (agent !== undefined) agent.state = "revoked";
-        return { rows: [], rowCount: agent !== undefined ? 1 : 0 };
+        if (agent === undefined) return { rows: [], rowCount: 0 };
+        return {
+          rows: [{ id: agent.id, tenant_id: agent.tenantId, state: agent.state }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("UPDATE agents SET state = $1")) {
+        const [to, id, from] = values as [string, string, string];
+        const agent = store.agents.get(id);
+        if (agent === undefined || agent.state !== from) return { rows: [], rowCount: 0 };
+        agent.state = to;
+        return {
+          rows: [{ id: agent.id, tenant_id: agent.tenantId, state: agent.state }],
+          rowCount: 1,
+        };
       }
       throw new Error(`unhandled query in fake pool: ${sql}`);
     },

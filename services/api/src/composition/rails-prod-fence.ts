@@ -23,6 +23,11 @@ export interface RailsProdFenceInput {
   liveRailCount: number;
 }
 
+export interface EscrowRailLoaderFenceInput {
+  escrowRailLive: boolean;
+  hasResolveEscrowState: boolean;
+}
+
 /**
  * Throws when production booted with zero live rails. No-op otherwise — the
  * caller still emits its own info/warn log.
@@ -38,5 +43,20 @@ export function assertAtLeastOneLiveRailInProduction(input: RailsProdFenceInput)
       "(escrow_base) must be set. The dev-stub fallback fails closed at " +
       "dispatch but lets the api boot; refusing to start so the orchestrator " +
       "surfaces the misconfiguration as CrashLoopBackoff.",
+  );
+}
+
+/**
+ * Throws when the escrow rail can dispatch but the gate cannot bind releases
+ * to on-chain escrow state. This is an always-on invariant, not production-only:
+ * an escrow-capable boot without the state loader is miswired in every profile.
+ */
+export function assertEscrowRailHasStateLoader(input: EscrowRailLoaderFenceInput): void {
+  if (!input.escrowRailLive) return;
+  if (input.hasResolveEscrowState) return;
+  throw new Error(
+    "escrow_base rail is registered but resolveEscrowState is not wired. " +
+      "The §6 gate must bind escrow_release intents to on-chain escrow state " +
+      "before any escrow rail can dispatch.",
   );
 }

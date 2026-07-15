@@ -29,6 +29,7 @@ import {
 } from "../tenant-deletion/blob-purge-audit-outbox.js";
 
 const ADMIN: Scope = "audit:admin";
+export const AUDIT_VERIFIER_STALE_AFTER_SECONDS = 30 * 60;
 
 export interface AuditHealthRouteDeps {
   /** MUST be the BYPASSRLS privileged pool: the queries span every tenant. */
@@ -45,10 +46,12 @@ export interface AuditHealthResponse {
 
 /**
  * Roll the two snapshots into one operator-facing status:
- *   critical — an active integrity break or undelivered mandatory evidence:
- *              a failed last pass, any open finding, or any exhausted outbox row.
- *   degraded — no clean pass yet, or events this build cannot content-verify.
- *   safe     — last pass clean, no open findings, no exhausted evidence.
+ *   critical: an active integrity break or undelivered mandatory evidence:
+ *              a failed last pass, any open finding, exhausted outbox row, or
+ *              stale verifier heartbeat.
+ *   degraded: no clean pass yet, missing staleness data, or events this build
+ *              cannot content-verify.
+ *   safe: last pass clean, no open findings, no exhausted evidence.
  */
 export function deriveAuditHealthStatus(
   verifier: AuditVerifierHealth,
@@ -58,7 +61,15 @@ export function deriveAuditHealthStatus(
     return "critical";
   }
   if (
+    verifier.lastPassStatus === "clean" &&
+    verifier.secondsSinceCleanFullPass !== null &&
+    verifier.secondsSinceCleanFullPass > AUDIT_VERIFIER_STALE_AFTER_SECONDS
+  ) {
+    return "critical";
+  }
+  if (
     verifier.lastPassStatus === "never" ||
+    verifier.secondsSinceCleanFullPass === null ||
     verifier.unsupportedVersion > 0 ||
     verifier.legacyUnverifiable > 0
   ) {

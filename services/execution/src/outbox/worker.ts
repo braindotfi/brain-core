@@ -17,7 +17,7 @@
  *
  * Connection model. `claimNext` / `reclaimStale` / the outbox `mark*` calls are
  * cross-tenant (one global worker drains every tenant), so they run on a
- * `brain_privileged` (BYPASSRLS) connection — supplied by the injected
+ * `brain_execution_worker` connection supplied by the injected
  * `withPrivileged`. The per-row settle re-enters the tenant scope inside
  * PaymentIntentService.completeExecution. The injected shape keeps the control
  * flow unit-testable; the real FOR UPDATE SKIP LOCKED claim, the crash-injection
@@ -76,6 +76,14 @@ export interface OutboxWorkerDeps {
   audit: AuditEmitter;
   /** Runs `fn` on a privileged (cross-tenant) DB client. */
   withPrivileged: <T>(fn: (client: OutboxClient) => Promise<T>) => Promise<T>;
+  /**
+   * Final pre-dispatch safety hook. The API wiring re-resolves the creator
+   * agent under tenant scope and blocks dispatch after a kill-switch quarantine.
+   */
+  beforeDispatch?: (
+    ctx: ServiceCallContext,
+    row: OutboxRow,
+  ) => Promise<{ ok: true } | { ok: false; reason: string }>;
   /** Stable id for this worker process (recorded in locked_by). */
   workerId: string;
 }
@@ -167,6 +175,19 @@ export async function processClaimedRow(
     await emitStuck(deps, row, attempts, reason);
     await maybeEmitExhausted(deps, row, attempts, reason);
     return "reconciling";
+  }
+
+  if (deps.beforeDispatch !== undefined) {
+    const guard = await deps.beforeDispatch(ctx, row);
+    if (!guard.ok) {
+      const reason = `dispatch_guard_blocked: ${guard.reason}`;
+      const attempts = await deps.withPrivileged((c) =>
+        deps.outbox.markReconciling(c, row.id, reason),
+      );
+      await emitStuck(deps, row, attempts, reason);
+      await maybeEmitExhausted(deps, row, attempts, reason);
+      return "reconciling";
+    }
   }
 
   // 1 — dispatch the rail.

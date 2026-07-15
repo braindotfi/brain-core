@@ -31,6 +31,7 @@ import {
   type JwtSigner,
   type Scope,
 } from "@brain/shared";
+import { findAgent, transitionAgent } from "@brain/execution";
 import { assertPlatformCredential, hashToken, newSecretToken } from "./routes.js";
 
 const API_KEY_PREFIX = "brain_sk_";
@@ -214,10 +215,18 @@ export async function registerApiKeyRoutes(
         );
         const row = rows[0];
         if (row !== undefined) {
-          await client.query(
-            `UPDATE agents SET state = 'revoked' WHERE tenant_id = $1 AND id = $2`,
-            [tenantId, row.agent_id],
-          );
+          const agent = await findAgent(client, row.agent_id);
+          if (agent === null) {
+            throw brainError("agent_not_found", "api key agent does not exist");
+          }
+          if (agent.state === "active" || agent.state === "quarantined") {
+            await transitionAgent(client, row.agent_id, agent.state, "revoked");
+          } else if (agent.state !== "revoked") {
+            throw brainError(
+              "execution_agent_not_registered",
+              `cannot revoke api key agent from state ${agent.state}`,
+            );
+          }
           return { status: "revoked" as const, agentId: row.agent_id };
         }
         // No row updated -- either already revoked or never existed.

@@ -129,6 +129,69 @@ describe("§6 pre-execution gate — happy path", () => {
   });
 });
 
+describe("§6 — check 3: policy outcome must be canonical", () => {
+  it("fails closed when a policy decision returns a non-canonical outcome", async () => {
+    const { deps } = makeDeps({
+      evaluatePolicy: async () => makeDecision({ outcome: "review_later" as never }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(3);
+      expect(result.failedCheck.name).toBe("action_allowed");
+      expect(result.failedCheck.detail!.reason).toBe("non_canonical_policy_outcome");
+      expect(result.failedCheck.detail!.outcome).toBe("review_later");
+    }
+  });
+});
+
+describe("§6 gate metrics", () => {
+  const throwingMetrics = {
+    increment: () => {
+      throw new Error("metrics down");
+    },
+    duration: () => {
+      throw new Error("metrics down");
+    },
+    gauge: () => {
+      throw new Error("metrics down");
+    },
+    histogram: () => {
+      throw new Error("metrics down");
+    },
+  };
+
+  it("does not fail a passing gate when metrics throw", async () => {
+    const { deps } = makeDeps({ metrics: throwingMetrics as never });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("preserves the original gate failure when metrics throw", async () => {
+    const { deps } = makeDeps({
+      metrics: throwingMetrics as never,
+      resolveAccount: async () => null,
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.name).toBe("source_account_allowed");
+    }
+  });
+});
+
 describe("§6 — check 9.5: evidence semantic validation (H-21)", () => {
   function invoiceEv(amountDue: string) {
     return [

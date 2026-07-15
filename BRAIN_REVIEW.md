@@ -412,3 +412,54 @@ evidence rather than unresolved Tier 0 contract-path findings.
 - BrainAuditAnchor: two-step publisher rotation, idempotent (tenant, root)
   publication, and domain-separated Merkle inclusion (0x00 leaf / 0x01 internal)
   that resists second-preimage.
+
+---
+
+## Tier 1: Policy + Gating
+
+Repo: braindotfi/brain-core. Branch: review/tier-1-policy-gating.
+Model: Opus 4.8. Scope: pre-execution policy gate, propose-only enforcement,
+audit-anchor sweep, trust state machine, RLS posture, and DB role separation.
+
+### Fix status
+
+- [x] T1-20 fixed: anchor orphan recovery now uses the audit-verifier BYPASSRLS
+      pool, not the request pool, so the cross-tenant orphan scan cannot false-clean
+      under FORCE RLS.
+- [x] T1-21 fixed: anchor reconciler and audit consistency workers now emit
+      cycle-failure counters and last-success heartbeat gauges.
+- [x] T1-22 fixed: `/internal/audit/health` escalates stale verifier evidence
+      instead of reporting `safe` forever after one old clean pass.
+- [x] T1-4 fixed: `/v1/agents/{id}/halt` quarantines first, then pauses approved
+      intents in one tenant transaction; the execution outbox worker rechecks creator
+      agent state before rail dispatch and parks blocked rows in `reconciling`.
+- [x] T1-14 fixed: on-chain gate context now fails closed from
+      `action_type`; `x402_settle` requires settlement context and
+      `escrow_release` requires escrow context.
+- [x] T1-15 fixed: policy outcome check now whitelists canonical `allow` and
+      `confirm` outcomes and rejects anything else.
+- [x] T1-16 fixed: the production loader fence now requires
+      `resolveTenantFlags` so behavior-hash pinning cannot be silently
+      disabled.
+- [x] T1-17 fixed: boot now asserts a live `escrow_base` rail has
+      `resolveEscrowState` wired.
+- [x] T1-18 fixed: gate metric emission is exception-guarded and cannot change
+      a gate decision.
+- [x] T1-7 fixed: the gate-bypass guard now scans API rail signing sinks and
+      rail-client imports.
+- [ ] T1-9/T1-10/T1-11/T1-23 pending: DB role and FORCE RLS hardening remains
+      to be tightened after source-footprint verification.
+- [x] T1-6/T1-8/T1-13 fixed: API-key revoke uses the agent state machine,
+      HTTP propose routes pin agent-token attribution to the authenticated
+      agent principal while leaving human sessions non-agent-attributed, and
+      the dead actions `tenantId` body field is removed.
+
+### Tier 1 verdict update
+
+The mergeable core HIGH defects from the Tier 1 review are fixed on
+`fix/tier-1-policy-gating`: audit sweep observability no longer fails silently,
+and halted agents can no longer dispatch already-queued outbox rows after the
+worker observes quarantine. P3 fail-closed hardening and P5 route hygiene are
+also fixed on the branch. The remaining Tier 1 work is P4 DB least-privilege
+tightening and FORCE RLS follow-up, which needs a separate source-footprint
+verification pass before narrowing production grants.

@@ -16,12 +16,14 @@ import {
   findPaymentIntentById,
   insertPaymentIntent,
   listPaymentIntents,
+  pauseApprovedPaymentIntentsByAgent,
   transitionPaymentIntent,
 } from "./repository/payment_intents.js";
 
 export const LedgerPaymentIntents = {
   findById: findPaymentIntentById,
   list: listPaymentIntents,
+  pauseApprovedByAgent: pauseApprovedPaymentIntentsByAgent,
   insert: insertPaymentIntent,
   transition: transitionPaymentIntent,
   appendApprovalId,
