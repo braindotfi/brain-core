@@ -53,7 +53,8 @@ async function main(): Promise<void> {
     applicationName: "brain-surface-gateway",
   });
   const auditPool = createPool({
-    connectionString: cfg.DATABASE_URL,
+    connectionString:
+      cfg.BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL ?? cfg.BRAIN_SURFACE_GATEWAY_DB_URL ?? cfg.DATABASE_URL,
     max: cfg.DATABASE_POOL_MAX,
     statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
     applicationName: "brain-surface-gateway-audit",
