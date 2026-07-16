@@ -49,6 +49,7 @@ function makeSlackSignature(rawBody: string, timestamp: string): string {
 
 function slackBody(proposal: Proposal, responseUrl = "https://hooks.slack.test/response"): string {
   const payload = {
+    team: { id: "T_slack" },
     user: { id: "U_slack" },
     channel: { id: "C_ap" },
     message: { ts: "1700000000.000100" },
@@ -60,6 +61,10 @@ function slackBody(proposal: Proposal, responseUrl = "https://hooks.slack.test/r
 
 function fakeApprovals(handle: ApprovalService["handle"]): ApprovalService {
   return { handle } as unknown as ApprovalService;
+}
+
+async function acceptSlackInstallation(): Promise<boolean> {
+  return true;
 }
 
 function teamsVerifier(input: { tenantId: string }): TeamsActivityVerifier {
@@ -207,6 +212,7 @@ test("Slack interaction acks before approval handling settles", async () => {
       settled = true;
       return outcome;
     }),
+    installationVerifier: acceptSlackInstallation,
     async outcomePoster() {},
   });
 
@@ -233,6 +239,7 @@ test("Slack interaction catches and logs approval errors", async () => {
     approvals: fakeApprovals(async () => {
       throw new Error("boom");
     }),
+    installationVerifier: acceptSlackInstallation,
     logger: {
       error(_message, error) {
         logged.push(error);
@@ -275,6 +282,7 @@ test("Slack interaction posts mapped outcomes", async () => {
       },
       signingSecret: SIGNING_SECRET,
       approvals: fakeApprovals(async () => outcome),
+      installationVerifier: acceptSlackInstallation,
       async outcomePoster(input) {
         posted.push(input.message.text);
       },
