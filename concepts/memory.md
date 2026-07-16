@@ -70,11 +70,11 @@ There's no batch job you wait for. The memory is current.
 
 Each tenant has its own logical record. Cross-tenant access is impossible by construction:
 
-| Boundary          | How                                                                 |
-| ----------------- | ------------------------------------------------------------------- |
-| **Storage**       | Per-tenant database partitions and Azure Blob prefixes              |
-| **Encryption**    | Tenant-scoped DEKs wrapped by tenant-scoped KEKs in Azure Key Vault |
-| **Authorization** | Every API call carries a tenant; cross-tenant reads return 404      |
+| Boundary          | How                                                                                                                                           |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Storage**       | Per-tenant database partitions and Azure Blob prefixes                                                                                        |
+| **Encryption**    | Source credentials use a single AES-256-GCM key loaded from Azure Key Vault in production or `BRAIN_SOURCE_CREDENTIAL_KEY` outside production |
+| **Authorization** | Every API call carries a tenant; cross-tenant reads return 404                                                                                |
 
 You'll never accidentally surface one customer's data in another customer's response.
 

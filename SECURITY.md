@@ -8,13 +8,14 @@ independently. This is the 90-minute diligence summary; the full detail lives in
 
 No agent and no LLM can move money on its own. Every financial action passes
 through the **§6 deterministic pre-execution gate** (`shared/src/gate/gate.ts`).
-13 numbered checks plus 9 hardening additions (`1.5`, `3.5`, `5.5`, `6.5`,
-`6.6`, `7.5`, `8.5`, `9.5`, `11.5`): identity, behavior-hash pinning, scope,
-policy match, on-chain settlement permitted, source account, counterparty +
-sanctions, agent-counterparty attestation, x402 payment context, escrow-state
-binding, amount limit, ledger-state binding, balance, micropayment cap within
-window, evidence present + semantically supporting the action, approval
-quorum, duplicate-payment guard, policy-decision creation, and a mandatory
+13 numbered checks plus 10 hardening additions (`1.5`, `3.5`, `5.5`, `6.5`,
+`6.6`, `6.7`, `7.5`, `8.5`, `9.5`, `11.5`): identity, behavior-hash pinning,
+scope, policy match, on-chain settlement permitted, source account,
+counterparty and sanctions, agent-counterparty attestation, counterparty
+verification, x402 payment context, escrow-state binding, obligation direction,
+amount limit, ledger-state binding, balance, micropayment cap within window,
+evidence present and semantically supporting the action, approval quorum,
+duplicate-payment guard, policy-decision creation, and a mandatory
 audit-before/after pair. Each check is deterministic. No LLM judgment
 substitutes for any precondition. A failure is a hard stop; the gate never
 catches-and-continues. Execution is Brain-internal and only reachable through

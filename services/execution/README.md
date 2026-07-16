@@ -6,7 +6,7 @@ See `Brain_MVP_Architecture.md` for this layer's responsibilities and `Brain_API
 
 ## Payment rails
 
-All money movement runs through `runPreExecutionGate` (the §6 16-check gate) and
+All money movement runs through `runPreExecutionGate` (the §6 23-entry gate) and
 the durable outbox (H-04); a worker claims `pending` rows and dispatches the
 rail. Each rail implements the `Rail` interface (`src/rails/types.ts`).
 

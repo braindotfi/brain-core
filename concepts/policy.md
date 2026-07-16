@@ -8,13 +8,15 @@ Every action that touches a tenant's money runs through Policy. Policy is the ru
 
 ### Three Possible Outcomes
 
-| Outcome          | Meaning                                                    |
-| ---------------- | ---------------------------------------------------------- |
-| `auto`           | The action satisfies the policy and runs immediately       |
-| `needs_approval` | The action is allowed but requires a human signature first |
-| `rejected`       | The action is not allowed; structured reason returned      |
+| Outcome          | Meaning                                                                                         |
+| ---------------- | ----------------------------------------------------------------------------------------------- |
+| `auto`           | The action satisfies policy and may proceed only if the rail's hard floor also permits autonomy |
+| `needs_approval` | The action is allowed but requires a human signature first                                      |
+| `rejected`       | The action is not allowed; structured reason returned                                           |
 
 There is no fourth outcome. There is no override. There is no bypass.
+
+Policy `auto` is not the same as "money moves immediately" for every rail. A policy allow on `onchain_transfer`, `escrow_release`, or `wire` still requires a recorded human approval before dispatch. `x402_settle` can run autonomously only when the matched signed policy rule sets both `onchain_settlement_permitted: true` and a covering `x402_autonomous_max_amount`. ACH and card can run autonomously only when the matched signed policy rule carries a covering `ach_autonomous_max_amount` or `card_autonomous_max_amount`. Missing, malformed, wrong-currency, or over-cap values fail closed to human approval.
 
 ### Plain-English in, Deterministic Out
 
@@ -26,9 +28,9 @@ Brain compiles to:
 
 ```json
 [
-  { "if": "amount < 5000 && counterparty.known", "then": "auto" },
+  { "if": "amount < 5000 and counterparty.known", "then": "auto" },
   {
-    "if": "amount >= 5000 && counterparty.known",
+    "if": "amount >= 5000 and counterparty.known",
     "then": "needs_approval",
     "approvers": ["role:cfo"]
   },

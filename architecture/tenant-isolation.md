@@ -1,46 +1,43 @@
 # Tenant Isolation
 
-Each tenant has its own logical instance of every layer, with hard isolation at the database, KMS, and policy boundaries. **Cross-tenant access is impossible by construction**, not by application-level access control.
+Each tenant has its own logical instance of every layer, with hard isolation at the database, storage path, and policy boundaries. **Cross-tenant access is impossible by construction**, not by application-level access control.
 
 ### Isolation by Layer
 
-| Layer        | Isolation Mechanism                                                                           |
-| ------------ | --------------------------------------------------------------------------------------------- |
-| **Raw**      | Azure Blob paths namespaced by `tenantId`. Every artifact encrypted with a tenant-scoped DEK. |
-| **Ledger**   | Logical partitions in Postgres. All queries forced through tenant scope.                      |
-| **Wiki**     | Separate graph per tenant. Embeddings indexed within tenant scope only.                       |
-| **Policy**   | One active policy per tenant. Policy verdicts include `tenantId` in their signed payload.     |
-| **Agent**    | Scope grants are per-tenant. An agent active for tenant A has zero visibility into tenant B.  |
-| **Audit**    | Per-tenant hash chains. Per-tenant Merkle trees. Per-tenant anchored roots.                   |
-| **Surfaces** | Slack, Teams, and email identities link to Brain actors through tenant-scoped RLS tables.     |
+| Layer        | Isolation Mechanism                                                                                        |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| **Raw**      | Azure Blob paths namespaced by `tenantId`. Source credentials use AES-256-GCM at the application boundary. |
+| **Ledger**   | Logical partitions in Postgres. All queries forced through tenant scope.                                   |
+| **Wiki**     | Separate graph per tenant. Embeddings indexed within tenant scope only.                                    |
+| **Policy**   | One active policy per tenant. Policy verdicts include `tenantId` in their signed payload.                  |
+| **Agent**    | Scope grants are per-tenant. An agent active for tenant A has zero visibility into tenant B.               |
+| **Audit**    | Per-tenant hash chains. Per-tenant Merkle trees. Per-tenant anchored roots.                                |
+| **Surfaces** | Slack, Teams, and email identities link to Brain actors through tenant-scoped RLS tables.                  |
 
-### Encryption Hierarchy
+### Encryption Posture
 
 ```
-Azure Key Vault
-   └── Tenant KEK (Key Encryption Key)         ← per-tenant
-         └── Tenant DEK (Data Encryption Key)  ← per-tenant, rotates
-               └── Encrypted artifacts in Azure Blob
-               └── Encrypted ledger fields in Postgres
+Azure Key Vault secret or BRAIN_SOURCE_CREDENTIAL_KEY
+   └── Global AES-256-GCM source-credential key
+         └── Encrypted source credentials in Postgres
 ```
 
-| Property                    | Detail                                                                                           |
-| --------------------------- | ------------------------------------------------------------------------------------------------ |
-| **KEK location**            | Azure Key Vault, customer-managed for enterprise tenants                                         |
-| **DEK rotation**            | Periodic, transparent to applications                                                            |
-| **DEK wrapping**            | Each DEK wrapped by the tenant KEK. Compromise of one tenant cannot decrypt another              |
-| **Compromise blast radius** | A single compromised DEK exposes only the data encrypted with it, never the KEK or other tenants |
+| Property                    | Detail                                                                                                     |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Credential key location** | Azure Key Vault secret in production when configured, or `BRAIN_SOURCE_CREDENTIAL_KEY` outside prod.       |
+| **Algorithm**               | AES-256-GCM in `shared/src/crypto/credential-key-provider.ts`.                                             |
+| **Scope**                   | One global source-credential key today. Tenant-scoped envelope keys are not implemented.                   |
+| **Compromise blast radius** | Tenant isolation relies on RLS, tenant-prefixed storage paths, and policy boundaries, not per-tenant keys. |
 
 ### Customer-Managed KMS
 
-Enterprise tenants can bring their own KEK in their own KMS account.
+Customer-managed tenant keys are a planned enterprise hardening item, not a
+shipped capability.
 
-|                                  | Brain-managed KEK             | Customer-managed KEK                   |
-| -------------------------------- | ----------------------------- | -------------------------------------- |
-| **KEK location**                 | Brain's Azure Key Vault       | Customer's Azure Key Vault             |
-| **Brain has access to KEK**      | Yes (operationally necessary) | No                                     |
-| **Tenant can revoke decryption** | Via support                   | Instantly, by removing Brain's grant   |
-| **Compliance posture**           | SOC 2 + standard isolation    | "Brain cannot read our data" guarantee |
+| Status      | Detail                                                             |
+| ----------- | ------------------------------------------------------------------ |
+| **Current** | Brain-managed source-credential encryption key.                    |
+| **Planned** | Customer-managed key support for enterprise tenants before launch. |
 
 ### RBAC Across Humans and Agents
 
@@ -101,8 +98,8 @@ Brain ingests only what enabled capabilities require. Revoking a source triggers
 | **Source connected**         | Only the agreed scope of data flows from that source                                                 |
 | **Source disconnected**      | New data stops; existing data enters a retention window                                              |
 | **Retention window expires** | Raw artifacts deleted (Azure Blob lifecycle); Ledger records marked closed; Wiki references redacted |
-| **Tenant deletion request**  | Full tenant erasure, including off-chain DEKs (which renders any persisted ciphertext unreadable)    |
+| **Tenant deletion request**  | Full tenant erasure across tenant-scoped rows and storage prefixes                                   |
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛡️ Security and Compliance</strong></td><td>Non-negotiable principles, compliance posture.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr><tr><td><strong>⚠️ Risks and Mitigations</strong></td><td>Known risks and how Brain handles them.</td><td><a href="risks-and-mitigations.md">risks-and-mitigations.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Security and Compliance</strong></td><td>Non-negotiable principles, compliance posture.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr><tr><td><strong>Risks and Mitigations</strong></td><td>Known risks and how Brain handles them.</td><td><a href="risks-and-mitigations.md">risks-and-mitigations.md</a></td><td></td></tr></tbody></table>

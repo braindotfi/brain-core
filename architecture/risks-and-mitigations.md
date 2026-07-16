@@ -26,7 +26,7 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 | Policy bound at grant                    | The session key carries the `policyVersion` digest it was authorized under; a stored key can never have a missing binding         |
 | `BrainSmartAccount` enforcement on-chain | Scope + spend caps are enforced inside `executeViaSessionKey` (bound to the policyVersion at grant time), not just in the backend |
 | Account-level limits (per-tx, per-day)   | Hard cap on blast radius regardless of policy                                                                                     |
-| On-chain reputation (planned. RFC 0001)  | Misbehaving agents accumulate negative attestations and lose access; not stored on-chain in the MVP                               |
+| On-chain reputation pointer              | `BrainReputationRegistry` is deployed on Base Sepolia; scoring remains a neutral placeholder until reputation inputs are live     |
 
 ### Policy Ambiguity
 
@@ -60,13 +60,13 @@ A frank inventory of the technical risks Brain faces and how the architecture ad
 
 **Mitigation.**
 
-| Mechanism                     | How It Helps                                                        |
-| ----------------------------- | ------------------------------------------------------------------- |
-| Minimal on-chain surface      | Less code = smaller attack surface                                  |
-| External audit before mainnet | No money-moving contract ships to mainnet without an external audit |
-| Public bug bounty             | Continuous post-deployment coverage                                 |
-| Immutable contracts           | No upgrade path in MVP; changes ship as audited redeploys           |
-| Anchorer keys on HSMs         | Compromise of the operational machine does not yield the key        |
+| Mechanism                     | How It Helps                                                                        |
+| ----------------------------- | ----------------------------------------------------------------------------------- |
+| Minimal on-chain surface      | Less code = smaller attack surface                                                  |
+| External audit before mainnet | No money-moving contract ships to mainnet without an external audit                 |
+| Public bug bounty             | Continuous post-deployment coverage                                                 |
+| Immutable contracts           | No upgrade path in MVP; changes ship as audited redeploys                           |
+| Anchorer key hardening        | Current testnet publisher is a single EOA; HSM-backed signing is a pre-mainnet TODO |
 
 ### L2 Finality and Reorgs
 
@@ -125,4 +125,4 @@ This covers only the technical risks of the threat model. Operational, governanc
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛡️ Security and Compliance</strong></td><td>Non-negotiable principles.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr><tr><td><strong>🔒 Tenant Isolation</strong></td><td>How tenants are separated.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>📜 Smart Contracts</strong></td><td>The on-chain enforcement layer.</td><td><a href="../smart-contracts/overview.md">overview.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Security and Compliance</strong></td><td>Non-negotiable principles.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr><tr><td><strong>Tenant Isolation</strong></td><td>How tenants are separated.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>Smart Contracts</strong></td><td>The on-chain enforcement layer.</td><td><a href="../smart-contracts/overview.md">overview.md</a></td><td></td></tr></tbody></table>

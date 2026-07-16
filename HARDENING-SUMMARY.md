@@ -1,5 +1,11 @@
 # Hardening run. Summary
 
+Historical snapshot. This file records the May 2026 hardening run and is not the
+current deployment runbook. The current deployment model is Docker VM plus GHCR:
+green `main` builds and pushes `brain-core` and `brain-agents` images, applies
+production migrations before compose recreate, starts `api`, `worker`, and
+`agents`, then smokes `/health`.
+
 Autonomous hardening pass (P0/P1/P2). Three stacked branches:
 `brain/hardening-p0` → `brain/hardening-p1` → `brain/hardening-p2`.
 
@@ -18,7 +24,7 @@ Autonomous hardening pass (P0/P1/P2). Three stacked branches:
 | P1.3 property + fuzz Merkle inclusion    | done   | `2f17455`                     | 1 fast-check (+ Foundry fuzz, CI)    |
 | P1.4 CSP + security headers              | done   | `256e876`                     | 3 (headers)                          |
 | P1.6 align services/execution naming     | done   | `973b6c7`                     | docs (grep-zero verified)            |
-| P1.7 document 13+4 checks                | done   | `e308b17`+`19349af`+`a54d124` | docs                                 |
+| P1.7 document gate checks                | done   | `e308b17`+`19349af`+`a54d124` | docs                                 |
 | P1.8 SECURITY.md                         | done   | `232fe5b`+`15da7f2`           | docs                                 |
 | P1.9 RPO/RTO doc                         | done   | `ae9eb92`                     | docs                                 |
 | P1.5 per-service Dockerfiles             | done   | `b6ca8b1`                     | CI build matrix (no local Docker)    |
@@ -44,11 +50,11 @@ integration, P1.3 Foundry. They are type-/syntax-/build-graph-validated locally.
 
 ## Verification (full stack, p2 tip)
 
-- `pnpm run build`. ✅ all packages
-- `pnpm run typecheck`. ✅ all packages
-- `pnpm run lint`. ✅ (eslint + prettier + scope-vocab + gate-bypass +
+- `pnpm run build`. Passed, all packages.
+- `pnpm run typecheck`. Passed, all packages.
+- `pnpm run lint`. Passed, with eslint + prettier + scope-vocab + gate-bypass +
   wiki-no-ledger-write + policy-no-wiki-read + OpenAPI valid; 56 pre-existing
-  OpenAPI warnings, non-fatal)
+  OpenAPI warnings, non-fatal.
 - `pnpm run test:coverage`. Every suite **passes** and all hardening code meets
   the 80/80/75/80 gate (after `proof/view.ts` was raised to 95% lines / 100%
   funcs, `19c6bea`). **However**, the aggregate `test:coverage` is **RED** because
@@ -146,6 +152,7 @@ series of CI repairs that `main.yml` had hidden behind its lint failure:
 **CI status on `main`:** the **quality gates are green**. `pr.yml`
 (lint/build/typecheck/test:coverage/contracts/secret-scan) and `main.yml`'s
 `unit + integration` job (incl. P0.2 invariants + P1.1 adversarial DB-integration).
-The **only** remaining red is the Azure deploy chain (`build + push` →
-`deploy` → `E2E` → `promote`), which fails on missing Azure OIDC secrets. See
-`BLOCKERS.md` **B-2**. No fix PR reaches it; it needs repo secrets (or gating).
+At the time of this historical run, the remaining red was the old Azure deploy
+chain (`build + push` → `deploy` → `E2E` → `promote`) because Azure OIDC secrets
+were missing. That is no longer the current deployment source of truth. The live
+deployment model is the Docker VM plus GHCR workflow described below.

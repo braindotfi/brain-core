@@ -162,7 +162,7 @@ Ten tools across four capability groups. Each tool name is an
 | ---------------- | ----------------------------------------------------------------- | -------------------------------- |
 | `raw.contribute` | `IRawEvidenceService.ingest` with `source_type=agent_contributed` | Caps confidence at 0.5 per §3.2. |
 
-### `payment_intent:propose` And `agent:propose` Capabilities
+### `payment_intent:propose` and `execution:propose` Capabilities
 
 | Tool                     | Maps to                       | Notes                                                                                                            |
 | ------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -228,7 +228,7 @@ Prompts are templates the client can fill in and send back to
 
 Each prompt declares its argument list. The client interpolates and
 posts the result to the `wiki.question` tool. Prompts are convenience;
-the Q&A surface is the same.
+the question-answering surface is the same.
 
 ## Audit Semantics
 

@@ -37,11 +37,11 @@ Whether internal or external, the lifecycle is the same:
 1. Read context (memory, citations)
 2. Propose an action
 3. Brain runs Policy
-4. If allowed, the action executes (or routes to a human)
+4. If policy allows, the rail-specific hard floor decides whether it executes or routes to a human
 5. Audit anchors what happened
 ```
 
-An agent proposes; Brain decides. Agents do not bypass Policy.
+An agent proposes; Brain decides. Agents do not bypass Policy, and policy allow is still subject to the money-rail floor. `onchain_transfer`, `escrow_release`, and `wire` require recorded human approval before dispatch. `x402_settle`, ACH, and card can run autonomously only under signed policy caps that cover the action.
 
 ### What External Agents Can Do
 
@@ -53,12 +53,12 @@ Tenant-granted scopes determine what an external agent sees and can do.
 | `wiki:read`              | Ask natural-language questions; get cited answers                        |
 | `raw:write`              | Push artifacts (transcripts, contracts) into the tenant's evidence layer |
 | `payment_intent:propose` | Propose payments (cannot execute)                                        |
-| `execution:propose`      | Propose non-financial actions (the conceptual "agent:propose")           |
+| `execution:propose`      | Propose non-financial actions                                            |
 
 A tenant can grant any subset. Unused scopes don't appear in the agent's available tools.
 
 {% hint style="warning" %}
-External agents only ever **propose**; they never **execute**. Once an action is approved (Policy returned `allow`, or all required human approvals are in), Brain's internal settlement path runs the §6 gate and dispatches it. The proposing agent never moves the money itself, and a human approval supplies a signature, not a settlement call. That separation is the safety guarantee that makes external agents safe to authorize.
+External agents only ever **propose**; they never **execute**. Once an action is eligible (Policy returned `allow` and the rail permits autonomy, or all required human approvals are in), Brain's internal settlement path runs the §6 gate and dispatches it. The proposing agent never moves the money itself, and a human approval is a recorded member approval, not a settlement call. That separation is the safety guarantee that makes external agents safe to authorize.
 {% endhint %}
 
 ### How External Agents Stay Accountable
