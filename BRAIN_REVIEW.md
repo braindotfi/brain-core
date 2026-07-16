@@ -597,3 +597,262 @@ closed with database-backed dedup, connector natural keys, Stripe same-second
 watermark replay, and projection currency validation. Remaining Tier 2 work is
 product-level implementation depth for Collections, Cash, and fraud anomaly
 scoring.
+
+---
+
+## Tier 4: Docs + Listing + Access
+
+Repos: braindotfi/brain-core, braindotfi/brain-skills (MCP listing copy at
+/Users/damon/brain-skills), and braindotfi/BrainMVB (at /Users/damon/BrainMVB).
+Branch: review/tier-4-docs-access. Scope: compare README / architecture docs /
+CLAUDE.md in each repo against what the code actually does (flag stale/aspirational
+claims); review the MCP marketplace listing copy (official.md / community.md /
+agensi.md) against the confirmed propose-only skill behavior; spot-check any
+investor materials present locally; confirm copy rules; and flag org-member/access
+review as a manual item. Includes the final cross-tier rollup. Audit only.
+
+### Checklist
+
+- [x] brain-core docs vs code: T4-1..T4-9 (overstated maturity, gate count, contracts, broken quickstart)
+- [x] brain-skills MCP listing copy vs confirmed propose-only behavior: disciplined; T4-10, T4-11
+- [x] BrainMVB docs vs current (post-fix) state: T4-12..T4-17 (stale/dead-code claims)
+- [x] Investor / whitepaper materials spot-check: none found locally (manual item)
+- [x] Copy rules across all public docs: emojis/ampersands in brain-core (T4-9) and BrainMVB (T4-17)
+- [x] Org member / access review manual action item (recorded above)
+- [x] Final cross-tier rollup + overall readiness rating (below)
+
+### Manual action items (cannot be verified from code)
+
+- ORG ACCESS REVIEW: this review cannot verify GitHub org membership, repo
+  collaborator permissions, Slack workspace admins, or cloud-provider IAM from
+  inside the repos. Damon must review directly: braindotfi GitHub org members and
+  per-repo access (who can push to main / merge PRs / manage secrets), the deploy
+  VM SSH key holders (`VM_SSH_KEY_STAGING`, `VM_SSH_KEY`), GHCR/registry access,
+  and any shared secrets (Slack/Teams/ESP/OpenAI keys, `BRAIN_PLATFORM_SERVICE_SECRET`).
+- INVESTOR MATERIALS: no whitepaper / one-pager / pitch deck was found in any of the
+  three local repos, so the Tier 4 brief's investor-claim spot-check could not run.
+  If those materials exist elsewhere, re-run the ERC-4337 / contract-inventory /
+  gate-count checks against them; the ground truth to check against is in the rollup.
+
+### Findings
+
+The dominant Tier 4 theme: the docs and public copy describe a TARGET / future
+posture as if already SHIPPED. Tiers 0-3 established the real posture (testnet-only,
+not ERC-4337, single EOA signer, single global credential key, Docker-VM deploy).
+Several docs contradict that, and would mislead a customer, investor, or auditor.
+
+#### brain-core docs
+
+#### T4-1 (HIGH), Docs present the target security/deploy posture as shipped
+- ERC-4337 smart account: `Brain_MVP_Architecture.md:549,674` ("ERC-4337
+  BrainSmartAccount pattern", "ERC-4337 smart account owned by the tenant") and
+  `concepts/proof.md:93` ("BrainSmartAccount | Validates UserOps"). The contract has
+  NO EntryPoint / UserOperation / paymaster; the holder calls `executeViaSessionKey`
+  directly (Tier 0 ground truth). The doc's own interface block contradicts its prose.
+- Base mainnet as the current primary execution environment:
+  `architecture/system-overview.md:96` and `Brain_Engineering_Standards.md` §11.1-11.3
+  ("Base mainnet"). No contract has a mainnet address; all are Base Sepolia,
+  unaudited (`SECURITY.md`, `contracts/audit-status.json`). `readiness-summary.md`
+  correctly says testnet-only, so the doc set contradicts itself.
+- 2-of-3 multisig publisher (`Brain_MVP_Architecture.md:641`,
+  `Brain_Engineering_Standards.md:578`) and HSM anchor keys
+  (`architecture/security-and-compliance.md:65`, `risks-and-mitigations.md:65`)
+  stated as current fact. Actual signer is a single EOA (`SECURITY.md`); multisig
+  rotation is a pre-mainnet TODO.
+- Azure Container Apps / manual promote / "Azure OIDC secrets pending" deploy model
+  (`Brain_Engineering_Standards.md` §11, `architecture/enterprise-readiness.md:29,133`,
+  `HARDENING-SUMMARY.md:149`). The real deploy is Docker VM + GHCR, automated on green
+  main; the manual promote is retired. enterprise-readiness.md presents an
+  already-automated deploy chain as an unstarted external blocker (diligence-misleading).
+- Suggested fix: sweep these to describe the actual shipped posture, and clearly mark
+  mainnet / multisig / HSM / Azure items as PLANNED, not current.
+
+#### T4-2 (HIGH), Tenant-scoped DEK/KEK envelope encryption is claimed but not implemented
+- Location: `concepts/memory.md:76` and `architecture/security-and-compliance.md:7`
+  ("Tenant-scoped DEKs wrapped by tenant-scoped KEKs in Azure Key Vault").
+- VERIFIED: no DEK/KEK envelope scheme exists (zero repo hits). The actual mechanism
+  (`shared/src/crypto/credential-key-provider.ts`) is a SINGLE global AES-256-GCM key
+  (one Key Vault secret or a dev env var) used only to encrypt source credentials, not
+  a tenant-scoped, general memory-encryption layer. This overstates the tenant-isolation
+  architecture, which is exactly the kind of claim a security-evaluating customer or
+  auditor relies on. Fix: describe the actual single-key credential encryption and drop
+  the DEK/KEK envelope claim (or implement it before claiming it).
+
+#### T4-3 (HIGH), The public developer quickstart is broken
+- VERIFIED: `README.md:29,93,97` and `introduction/quickstart.md:15,45` install/import
+  `@brain/sdk`, but the real published package is `@brainfinance/sdk`
+  (`clients/sdk/package.json:2`); a developer copy-pasting gets an npm 404.
+  `introduction/quickstart.md:50` calls `brain.sources.connect(...)` which does not
+  exist in the SDK, and `:32` names `api.sandbox.brain.fi` which the SDK explicitly says
+  does not exist. The "five minutes to a working integration" flagship sample cannot
+  run. Fix: correct the package name, the resource, and the host to what the SDK ships.
+
+#### T4-4 (MEDIUM), The gate check-count is wrong and inconsistent across docs
+- Ground truth (`shared/src/gate/gate.ts`): 23 numbered checks. Correct in
+  `CLAUDE.md:59`, `concepts/policy.md:60`, `architecture/enterprise-readiness.md`.
+  Wrong in `SECURITY.md:11` and `architecture/readiness-summary.md:12` ("22", missing
+  6.7), `architecture/write-paths.md:63` and `Brain_Engineering_Standards.md` §6.2
+  ("17", omitting six real checks 3.5/5.5/6.5/6.6/6.7/8.5), and
+  `Brain_MVP_Architecture.md:378,380` ("16"). The 17-count doc
+  (Brain_Engineering_Standards) is the one §14 tells engineers to treat as
+  authoritative, so it is the most consequential. Fix: single-source the count from
+  gate.ts.
+
+#### T4-5 (MEDIUM), Contract inventory inconsistent (four vs six)
+- `architecture/system-overview.md:52-59`, `Brain_MVP_Architecture.md:604`, and
+  `Brain_Engineering_Standards.md:70` list four contracts, omitting BrainEscrow and
+  BrainReputationRegistry (both deployed to Base Sepolia and used at runtime).
+  `enterprise-readiness.md` and `readiness-summary.md` correctly list six. Fix: list all
+  six consistently.
+
+#### T4-6 (MEDIUM), Policy-outcome docs omit the hard human-approval floor
+- `concepts/policy.md:9-17` ("auto ... runs immediately ... There is no override. There
+  is no bypass.") and `concepts/agents.md:60-62` present a simple allow-or-approve
+  binary. This omits the Tier 0/1 hard floor: a policy allow on onchain_transfer /
+  escrow_release / wire does NOT run immediately; a human approval is still required.
+  Fix: document the rail-dependent hard floor and the signed-cap autonomous carve-out.
+
+#### T4-7 (MEDIUM), data-flow.md overstates cryptographic guarantees on the approval path
+- `architecture/data-flow.md:98,111` ("policy verdict, signed by Brain policy verifier
+  key", "Approves with EIP-712 signature"). No per-evaluation verifier-key signature
+  exists; the human approval is a database-recorded approval from an authenticated
+  member session, not a wallet EIP-712 signature. Fix: describe the actual approval
+  recording.
+
+#### T4-8 (LOW-MEDIUM), Assorted brain-core doc inaccuracies
+- `Brain_Engineering_Standards.md` §3.2 states the scope literal `agent:propose`; the
+  real scope string is `execution:propose` (`shared/src/auth/scopes.ts`). Surface
+  approval ordering is inverted in `architecture/surface-approval-adapters.md:43-51`
+  (claims terminal-claim before audit; actual is audit-before-claim).
+  `enterprise-readiness.md` undercounts production boot fences (five vs 7+). Reputation
+  is described as "not on-chain in the MVP" while `BrainReputationRegistry` is deployed
+  and read (though its scoring is a neutral placeholder). `concepts/proof.md:47` claims
+  severity-accelerated anchoring; the cadence is flat hourly.
+
+#### T4-9 (LOW, copy rules), Pervasive emojis and stray ampersands in brain-core docs
+- Emojis are systemic across the GitBook-style docs (README, SUMMARY, concepts/*,
+  architecture/*, HARDENING-SUMMARY), and `CLAUDE.md:5` itself ("## (warning-emoji)
+  Dev environment") violates the no-emoji rule stated in CLAUDE.md's own Copy section.
+  Non-brand ampersands ("Q and A", "decide and execute") appear in several docs. Fix:
+  strip emojis and non-brand ampersands to match the repo copy rule.
+
+#### brain-skills / MCP listing
+
+#### T4-10 (MEDIUM-HIGH), The on-chain scope-verification claim omits testnet-only / unaudited status
+- VERIFIED on merged `origin/main`: `README.md:64` ("verifies the agent's scope on
+  chain"), `_shared/brain-mcp.md:21,40-41`, and `docs/security-review.md:145` describe
+  the `scope_hash` verification against `BrainMCPAgentRegistry` with no disclosure that
+  the registry is Base Sepolia testnet-only and unaudited (`viemScopeChecker` hardcodes
+  baseSepolia). A marketplace reviewer would infer a mainnet-grade guarantee. The
+  mechanism is real and enforced; only the maturity disclosure is missing. Fix: append
+  a testnet/pending-audit qualifier at each location.
+
+#### T4-11 (MEDIUM), security-review.md undercounts the MCP write surface
+- VERIFIED: `docs/security-review.md:42` ("limits writes to Brain's two proposal
+  tools") is wrong; the real mutating surface is agent.action.propose,
+  payment_intent.propose, payment_intent.cancel, and raw.contribute. The tool TABLE was
+  already corrected (Tier 3 T3-5); this security CLAIM was not. Fix: reword to the real
+  write surface.
+- Note: the Tier 3 doc fixes for the tool table (T3-5) and STATUS.md em dashes (T3-6)
+  are already merged; the marketing/listing copy itself is disciplined (no autonomy
+  overstatement, per-skill claims accurate, three variants consistent).
+
+#### BrainMVB docs
+
+#### T4-12 (HIGH), HANDOFF.md / next-steps.md present the "propose" flow as committed and working; it is dead code
+- Location: `HANDOFF.md:57-106`, `next-steps.md:11-35`.
+- The "Let Brain pay -> policy gate decides" flagship is documented as built, verified
+  end-to-end, and committed. Reality: a later UI redesign removed the propose button;
+  the current BrainBillsInbox / BillDetailPopup have no propose entry point and no call
+  to `POST /api/brain/propose`, and `intentsStore.addProposed` has zero callers. The
+  server route survives but is unreachable from the UI. Fix: restore an entry point or
+  document that the feature regressed to non-functional pending re-wiring.
+
+#### T4-13 (HIGH), deliverables/*.docx describe a removed Crossmint + WireX architecture as current, with no staleness notice
+- The two migration .docx deliverables state "real cards, real bank accounts, real
+  stablecoin balances (Crossmint + Wirex)" as the current architecture. Both
+  integrations were fully removed from the codebase (zero repo hits). The docx files
+  carry no internal stale-dated banner (only referenced as stale elsewhere), so anyone
+  handed the deliverable (investor / new hire) is told BrainMVB provisions real FDIC
+  bank accounts and debit cards, which is false. Fix: add a stale banner inside the
+  docx or replace them.
+
+#### T4-14 (MEDIUM-HIGH), server/brain/README.md claims the BFF is "GET-only" but it has write routes
+- `server/brain/README.md:39,61-63` ("GET-only passthrough", "GET reads only"). The BFF
+  registers 16 routes including POST /propose, /reject, /tenants, /invites/consume,
+  member mutations, and /payment-intents/:id/approve. Stale on current origin/main (not
+  just the local checkout). Understating a money-adjacent BFF's write surface as
+  GET-only is exactly the drift that causes a reviewer to skip auditing the write paths.
+  Fix: list the actual write routes and their auth model.
+
+#### T4-15 (MEDIUM-HIGH), Cross-repo contradiction on production agent-token status
+- BrainMVB `CLAUDE.md:369` and `replit.md:69` state "Contract CONFIRMED LIVE on
+  api.brain.fi 2026-07-14" for the production `POST /v1/tenants` + agent-token flow.
+  brain-core's own CLAUDE.md deployment-status table lists the same feature (production
+  agent principals) as Pending / not on staging / not on prod. One is stale. An
+  integrator trusting BrainMVB's docs would believe production agent tokens work in prod
+  when brain-core says they do not yet. Fix: reconcile and update whichever is wrong
+  (this is also a post-deploy-probe discipline item).
+
+#### T4-16 (MEDIUM), BrainMVB status docs are stale
+- `replit.md` still lists Audit Log as MOCK-ONLY though the merged Tier 2 fix made it
+  live-only. HANDOFF.md / next-steps.md are ~3 weeks stale and describe long-merged,
+  pushed commits as "not pushed" / "not yet committed". Fix: refresh or retitle as dated
+  historical snapshots.
+
+#### T4-17 (LOW, copy), BrainMVB copy style differs from the org convention
+- BrainMVB docs use em dashes (65+ in CLAUDE.md), non-brand ampersands, and a few literal
+  emojis. BrainMVB states no internal no-em-dash rule, so these are stylistic, flagged
+  only for org-wide consistency with brain-core's enforced convention.
+
+_Process note: the brain-skills and BrainMVB local clones are a commit behind
+origin/main and show pre-fix state on disk. Run `git pull` on each before reading the
+local trees. Not doc bugs, but a real trap for a reviewer reading the checkout._
+
+---
+
+## Cross-tier rollup and overall readiness
+
+All fund-safety-critical findings surfaced by this review (Tiers 0-3) were fixed and
+independently re-verified. What remains is product depth, deferred hardening, one design
+decision already resolved, and a large documentation-accuracy gap.
+
+### Prioritized state across all tiers (post-fix)
+
+- CRITICAL open: none. Every HIGH fund-safety finding was fixed and verified: the
+  session-key cap-denomination bug (T0-1), the propose-only hard-approval floor (T0-11),
+  the silently-broken audit-anchor sweep (T1-20/21), the agent kill-switch hole (T1-4),
+  the reconciliation double-pay path (T2-1), the silent ingestion loss (T2-20), the
+  BrainMVB unauth bank-linking and fabricated activity (T2-27/28), and the surface
+  spoofed-approval-prompt and self-approval gaps (T3-7/T3-11).
+- Money path (off-chain gate + approval + RLS + surfaces): SOUND and fail-closed. Single
+  execution choke point, audit-before-execute ordering, no tenant-omission bypass, no
+  surface shortcut around approval, no inbound-content-steers-a-decision path.
+- On-chain rail: intact-by-fence. Contracts are unaudited and testnet-only; the mainnet
+  escrow fence is fail-closed and non-bypassable. NOT ready for value-bearing mainnet by
+  design, and the fence correctly holds the line.
+- Open items are non-fund-safety: Tier 2 workflows are demo-grade (Collections/Cash
+  scaffolding, T2-7; fraud scoring unimplemented), Tier 2 connector hardening deferred
+  (natural-key/UNIQUE at projection cutover), the two Tier 3 LOW advisories (shared
+  normalizer extraction, audit-role config dependency), and the Tier 4 doc-accuracy gap.
+
+### Overall readiness rating
+
+- Security architecture and gating layer: STRONG. This is the most trustworthy part of
+  the system; the fail-closed posture holds under adversarial review, and the team fixed
+  every real defect quickly and correctly.
+- Product workflows: DEMO-GRADE. Invoice is partially real; Collections, Cash, and fraud
+  scoring are scaffolding. Not launch-ready as shipped capabilities.
+- Documentation and public/marketplace/investor copy: NOT READY. It materially overstates
+  maturity (mainnet, ERC-4337, multisig, HSM, tenant-scoped encryption, Azure) and has
+  broken developer-facing content. This is now the single highest reputational and
+  diligence risk, and it should be corrected before any external, investor, or
+  marketplace exposure.
+
+Overall: a strong, genuinely fail-closed security foundation with a trustworthy money
+path, wrapped in workflows that are still demo-grade and documentation that oversells the
+current state. Gate the go-to-market on (1) the external contract audit before any
+mainnet value, (2) real Collections/Cash implementation before presenting all four
+workflows as shipped, and (3) a documentation-accuracy pass (T4-1 through T4-15) before
+any customer, investor, or marketplace sees the docs.
+
