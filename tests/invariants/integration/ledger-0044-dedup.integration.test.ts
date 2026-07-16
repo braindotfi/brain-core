@@ -60,9 +60,13 @@ suite("ledger 0044 dedup preflight migration (integration -- requires DATABASE_U
     const migration0044 = discovered.find(
       (m) => m.service === "ledger" && m.name === "0044_ledger_direct_write_dedup_constraints.sql",
     );
+    const invoiceMatchCleanup = discovered.find(
+      (m) => m.service === "ledger" && m.name === "0046_ledger_orphaned_invoice_match_cleanup.sql",
+    );
 
     expect(preflight).toBeDefined();
     expect(migration0044).toBeDefined();
+    expect(invoiceMatchCleanup).toBeDefined();
 
     const before0044 = discovered.filter(
       (m) => m.key < migration0044!.key && m.key !== preflight!.key,
@@ -75,6 +79,20 @@ suite("ledger 0044 dedup preflight migration (integration -- requires DATABASE_U
     await applyAll(client as never, [preflight!, migration0044!], {
       appliedBy: "ledger-0044-test",
     });
+
+    const { rows: orphanedInvoiceMatchesBeforeCleanup } = await client.query<{ count: string }>(
+      `SELECT count(*)::text
+         FROM ledger_reconciliation_matches r
+        WHERE r.owner_id = 'tenant_0044'
+          AND r.left_entity_type = 'invoice'
+          AND r.left_entity_id = 'inv_loser'`,
+    );
+    expect(orphanedInvoiceMatchesBeforeCleanup[0]?.count).toBe("1");
+
+    await applyAll(client as never, [invoiceMatchCleanup!], {
+      appliedBy: "ledger-0044-test",
+    });
+    await client.query(invoiceMatchCleanup!.sql);
 
     const { rows: counterparties } = await client.query<{
       id: string;
@@ -180,12 +198,26 @@ suite("ledger 0044 dedup preflight migration (integration -- requires DATABASE_U
         evidence_ids: ["prs_match_cp_loser", "prs_match_cp_survivor"],
       },
       {
+        id: "rcn_inv_survivor",
+        left_entity_type: "invoice",
+        left_entity_id: "inv_survivor",
+        evidence_ids: ["prs_match_inv_survivor"],
+      },
+      {
         id: "rcn_obl_survivor",
         left_entity_type: "obligation",
         left_entity_id: "obl_survivor",
         evidence_ids: ["prs_match_obl_loser", "prs_match_obl_survivor"],
       },
     ]);
+
+    const { rows: orphanedInvoiceMatchesAfterCleanup } = await client.query<{ count: string }>(
+      `SELECT count(*)::text
+         FROM ledger_reconciliation_matches r
+        WHERE r.owner_id = 'tenant_0044'
+          AND r.id = 'rcn_inv_loser'`,
+    );
+    expect(orphanedInvoiceMatchesAfterCleanup[0]?.count).toBe("0");
 
     const { rows: orphanCounts } = await client.query<{ count: string }>(
       `SELECT count(*)::text
@@ -378,6 +410,18 @@ async function seedHistoricalDuplicates(): Promise<void> {
          'rcn_obl_loser', 'tenant_0044', 'obligation_duplicate', 'obligation',
          'obl_loser', 'document', 'doc_0044', 0.92, 'matched',
          ARRAY['prs_match_obl_loser'], 'loser obligation match',
+         '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'
+       ),
+       (
+         'rcn_inv_survivor', 'tenant_0044', 'invoice_payment', 'invoice',
+         'inv_survivor', 'transaction', 'tx_ref', 0.82, 'matched',
+         ARRAY['prs_match_inv_survivor'], 'survivor invoice match',
+         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+       ),
+       (
+         'rcn_inv_loser', 'tenant_0044', 'invoice_payment', 'invoice',
+         'inv_loser', 'transaction', 'tx_ref', 0.93, 'matched',
+         ARRAY['prs_match_inv_loser'], 'loser invoice match',
          '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'
        )`,
   );
