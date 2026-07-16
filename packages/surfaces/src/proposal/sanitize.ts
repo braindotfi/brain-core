@@ -25,9 +25,7 @@ export function sanitizeProposalForSurface<TSurface extends SurfaceSanitizerTarg
       ...evidence,
       label: sanitizeForSurface(evidence.label, surface),
       value: sanitizeForSurface(evidence.value, surface),
-      ...(evidence.href !== undefined
-        ? { href: sanitizeForSurface(evidence.href, surface) }
-        : {}),
+      ...(evidence.href !== undefined ? { href: sanitizeForSurface(evidence.href, surface) } : {}),
     })),
     action: {
       ...proposal.action,

@@ -13,35 +13,35 @@ review/tier-3-surfaces.
 ### Fix status
 
 - [x] T3-7 fixed: Slack and Teams approval prompts now sanitize
-  proposal-derived title, claim, evidence label/value, and action summary before
-  rendering. Slack mrkdwn escapes ampersand and angle bracket characters; Teams
-  card text escapes markdown metacharacters.
+      proposal-derived title, claim, evidence label/value, and action summary before
+      rendering. Slack mrkdwn escapes ampersand and angle bracket characters; Teams
+      card text escapes markdown metacharacters.
 - [x] T3-8 fixed: `handleSlackInteraction` requires an installation verifier,
-  making omission of the Slack workspace to Brain tenant check a compile-time
-  error.
+      making omission of the Slack workspace to Brain tenant check a compile-time
+      error.
 - [x] T3-9 fixed: the public Teams submit helper requires a server-trusted Brain
-  tenant id and rejects unsigned Adaptive Card tenant mismatches before building
-  an incoming decision.
+      tenant id and rejects unsigned Adaptive Card tenant mismatches before building
+      an incoming decision.
 - [x] T3-10 fixed: smoke proposals fail closed when enabled without
-  `BRAIN_SURFACE_SMOKE_SECRET`, and request secret comparison uses
-  `timingSafeEqual`.
+      `BRAIN_SURFACE_SMOKE_SECRET`, and request secret comparison uses
+      `timingSafeEqual`.
 - [x] T3-12 fixed: the surface gateway audit pool can use
-  `BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL`, backed by `brain_surface_audit_writer`
-  with INSERT-only access to `audit_events`.
+      `BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL`, backed by `brain_surface_audit_writer`
+      with INSERT-only access to `audit_events`.
 - [x] T3-13 fixed: approval quorum matching treats the `signer` sentinel as any
-  distinct concrete approver role, so `["signer", "signer"]` can be satisfied
-  by two different concrete approver roles.
+      distinct concrete approver role, so `["signer", "signer"]` can be satisfied
+      by two different concrete approver roles.
 - [x] T3-14 covered: the gateway test suite pins the Teams AAD tenant to Brain
-  tenant mismatch as a 403 and the reusable helper now enforces the same
-  boundary.
+      tenant mismatch as a 403 and the reusable helper now enforces the same
+      boundary.
 
 ### Decision required
 
 - [ ] T3-11 remains intentionally unimplemented pending owner sign-off. Adding
-  actor-is-not-payee to the surface approval gate requires a `ProposalSchema`
-  payee or beneficiary identity and agent-factory threading. Until that decision
-  is made, surface approvals remain advisory handoff signals; core money-path
-  approvals retain the normative self-approval and per-item-limit enforcement.
+      actor-is-not-payee to the surface approval gate requires a `ProposalSchema`
+      payee or beneficiary identity and agent-factory threading. Until that decision
+      is made, surface approvals remain advisory handoff signals; core money-path
+      approvals retain the normative self-approval and per-item-limit enforcement.
 
 ---
 

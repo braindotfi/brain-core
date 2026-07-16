@@ -163,10 +163,7 @@ describe("ApprovalService quorum (P0.4)", () => {
     const { deps: d } = deps(fakePool({ validRows }));
     const svc = new ApprovalService(d);
     expect(
-      await svc.hasRequiredApprovals(ctx, { type: "proposal", id: "prop_1" }, [
-        "signer",
-        "signer",
-      ]),
+      await svc.hasRequiredApprovals(ctx, { type: "proposal", id: "prop_1" }, ["signer", "signer"]),
     ).toBe(true);
   });
 
@@ -174,10 +171,7 @@ describe("ApprovalService quorum (P0.4)", () => {
     const { deps: d } = deps(fakePool({ validRows: [row({ approver_role: "cfo" })] }));
     const svc = new ApprovalService(d);
     expect(
-      await svc.hasRequiredApprovals(ctx, { type: "proposal", id: "prop_1" }, [
-        "signer",
-        "signer",
-      ]),
+      await svc.hasRequiredApprovals(ctx, { type: "proposal", id: "prop_1" }, ["signer", "signer"]),
     ).toBe(false);
   });
 
