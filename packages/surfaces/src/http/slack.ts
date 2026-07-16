@@ -46,7 +46,7 @@ export interface SlackInteractionRequest {
   headers: Record<string, string | string[] | undefined>;
   signingSecret: string;
   approvals: ApprovalService;
-  installationVerifier?: SlackInstallationVerifier | undefined;
+  installationVerifier: SlackInstallationVerifier;
   outcomePoster?: SlackOutcomePoster | undefined;
   logger?: SlackInteractionLogger | undefined;
   nowMs?: number | undefined;
@@ -96,14 +96,12 @@ export async function handleSlackInteraction(
   const normalized = toIncomingDecision(payload);
   if (!normalized) return { status: 400, body: "unknown slack action" };
 
-  if (request.installationVerifier !== undefined) {
-    if (normalized.teamId === undefined) return { status: 403, body: "unknown slack team" };
-    const installed = await request.installationVerifier({
-      tenantId: normalized.decision.tenantId,
-      teamId: normalized.teamId,
-    });
-    if (!installed) return { status: 403, body: "slack workspace mismatch" };
-  }
+  if (normalized.teamId === undefined) return { status: 403, body: "unknown slack team" };
+  const installed = await request.installationVerifier({
+    tenantId: normalized.decision.tenantId,
+    teamId: normalized.teamId,
+  });
+  if (!installed) return { status: 403, body: "slack workspace mismatch" };
 
   const poster = request.outcomePoster ?? postSlackOutcome;
   const logger = request.logger ?? console;

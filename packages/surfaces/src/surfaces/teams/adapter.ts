@@ -83,16 +83,18 @@ export class TeamsAdapter implements SurfaceAdapter {
 export function toIncomingDecision(input: {
   submit: TeamsSubmitData;
   aadObjectId: string;
+  trustedTenantId: string;
   conversationRef: string;
   activityId?: string;
 }): { decision: IncomingDecision; deliveredRef?: string | undefined } | null {
   const decoded = decodeSubmit(input.submit);
   if (!decoded) return null;
+  if (decoded.tenantId !== input.trustedTenantId) return null;
   return {
     decision: {
       surface: "teams",
       proposalId: decoded.proposalId,
-      tenantId: decoded.tenantId,
+      tenantId: input.trustedTenantId,
       externalActorId: input.aadObjectId,
       decision: decoded.decision,
       context: { to: input.conversationRef },

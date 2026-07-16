@@ -667,6 +667,25 @@ describe("surface gateway server", () => {
     expect(dispatched).toHaveLength(1);
     expect(res.json()).toMatchObject({ proposal_id: proposal.id });
   });
+
+  it("refuses to boot smoke proposals when enabled without a secret", async () => {
+    await expect(makeApp({ smoke: { enabled: true } })).rejects.toThrow(
+      /BRAIN_SURFACE_SMOKE_SECRET/,
+    );
+  });
+
+  it("rejects smoke proposals with an invalid secret", async () => {
+    const app = await makeApp({ smoke: { enabled: true, secret: "smoke_secret" } });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/surfaces/smoke/proposals",
+      headers: { "content-type": "application/json", "x-brain-smoke-secret": "wrong_secret" },
+      payload: JSON.stringify({ proposal: sampleProposal() }),
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
 });
 
 async function makeApp(

@@ -8,6 +8,7 @@ import {
   buildInvoiceProposal,
   handleEmailApproval,
   handleSlackInteraction,
+  handleTeamsSubmit,
   HttpEmailClient,
   signToken,
   toActorId,
@@ -17,6 +18,7 @@ import {
   type ApprovalOutcome,
   type BrainCorePorts,
   type Proposal,
+  type TeamsActivityVerifier,
   type TerminalDecisionRecord,
 } from "../src/index.js";
 import { encodeAction } from "../src/surfaces/slack/blockkit.js";
@@ -47,6 +49,7 @@ function makeSlackSignature(rawBody: string, timestamp: string): string {
 
 function slackBody(proposal: Proposal, responseUrl = "https://hooks.slack.test/response"): string {
   const payload = {
+    team: { id: "T_slack" },
     user: { id: "U_slack" },
     channel: { id: "C_ap" },
     message: { ts: "1700000000.000100" },
@@ -58,6 +61,29 @@ function slackBody(proposal: Proposal, responseUrl = "https://hooks.slack.test/r
 
 function fakeApprovals(handle: ApprovalService["handle"]): ApprovalService {
   return { handle } as unknown as ApprovalService;
+}
+
+async function acceptSlackInstallation(): Promise<boolean> {
+  return true;
+}
+
+function teamsVerifier(input: { tenantId: string }): TeamsActivityVerifier {
+  return {
+    async verify() {
+      return {
+        submit: {
+          brainDecision: "approved",
+          tenantId: input.tenantId,
+          proposalId: "p_1",
+        },
+        aadObjectId: "aad_user_1",
+        aadTenantId: "aad_tenant_1",
+        conversationId: "conv_1",
+        conversationRef: "t_1:conv_1",
+        activityId: "activity_1",
+      };
+    },
+  };
 }
 
 async function flushBackground(): Promise<void> {
@@ -186,6 +212,7 @@ test("Slack interaction acks before approval handling settles", async () => {
       settled = true;
       return outcome;
     }),
+    installationVerifier: acceptSlackInstallation,
     async outcomePoster() {},
   });
 
@@ -212,6 +239,7 @@ test("Slack interaction catches and logs approval errors", async () => {
     approvals: fakeApprovals(async () => {
       throw new Error("boom");
     }),
+    installationVerifier: acceptSlackInstallation,
     logger: {
       error(_message, error) {
         logged.push(error);
@@ -254,6 +282,7 @@ test("Slack interaction posts mapped outcomes", async () => {
       },
       signingSecret: SIGNING_SECRET,
       approvals: fakeApprovals(async () => outcome),
+      installationVerifier: acceptSlackInstallation,
       async outcomePoster(input) {
         posted.push(input.message.text);
       },
@@ -264,6 +293,48 @@ test("Slack interaction posts mapped outcomes", async () => {
     assert.equal(posted.length, 1);
     assert.match(posted[0] ?? "", expected[index] ?? /$a/);
   }
+});
+
+test("Teams submit helper rejects card tenant mismatches against the trusted tenant", async () => {
+  const calls: unknown[] = [];
+  const response = await handleTeamsSubmit({
+    rawBody: "{}",
+    verifier: teamsVerifier({ tenantId: "t_other" }),
+    trustedBrainTenantId: "t_1",
+    approvals: fakeApprovals(async (decision) => {
+      calls.push(decision);
+      return { status: "applied", decision: "approved", actorLabel: "a_1" };
+    }),
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body, "teams tenant mismatch");
+  assert.equal(calls.length, 0);
+});
+
+test("Teams submit helper uses the server-trusted tenant for accepted decisions", async () => {
+  const calls: unknown[] = [];
+  const response = await handleTeamsSubmit({
+    rawBody: "{}",
+    verifier: teamsVerifier({ tenantId: "t_1" }),
+    trustedBrainTenantId: "t_1",
+    approvals: fakeApprovals(async (decision) => {
+      calls.push(decision);
+      return { status: "applied", decision: "approved", actorLabel: "a_1" };
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls, [
+    {
+      surface: "teams",
+      proposalId: "p_1",
+      tenantId: "t_1",
+      externalActorId: "aad_user_1",
+      decision: "approved",
+      context: { to: "t_1:conv_1" },
+    },
+  ]);
 });
 
 test("Email approval GET confirms without applying and POST applies", async () => {

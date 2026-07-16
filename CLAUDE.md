@@ -98,6 +98,14 @@ Done
   workspace to Brain tenant at click time. Teams resolves authenticated Azure AD
   tenant to Brain tenant before storing conversation references or accepting
   Adaptive Card actions.
+- Slack and Teams proposal prompts sanitize proposal-derived text before
+  rendering. Slack mrkdwn escapes ampersand and angle bracket characters; Teams
+  card text escapes markdown metacharacters in title, claim, evidence
+  label/value, and action summary.
+- Reusable inbound helpers fail closed on tenant binding. Slack interactions
+  require an installation verifier at the type level. Teams submit helpers
+  require a server-trusted Brain tenant and reject unsigned card tenant
+  mismatches.
 - Email onboarding verifies recipients before links are routed or clicks are
   honored. Agent email routes expand only to verified active recipients. Tenant
   custom-from domains require SPF, DKIM, and DMARC verification, and ESP bounce
@@ -105,8 +113,13 @@ Done
 - Gateway composition delegates to existing policy evaluation, shared audit
   emitter idempotency keys, and execution approvals. It never writes ledger
   money-path rows and never touches `execution_outbox`.
+- Surface smoke proposals fail closed: when enabled they require
+  `BRAIN_SURFACE_SMOKE_SECRET`, and request checks use constant-time comparison.
 - `brain_surface_gateway` DB role is NOBYPASSRLS and is granted only surface
-  state, users and active policy reads, plus approval writes.
+  state, users and active policy reads, plus approval writes. Surface audit
+  emission uses `brain_surface_audit_writer` through
+  `BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL`, with INSERT-only access to
+  `audit_events`.
 - Production and dev compose wire the gateway as a separate process so Slack,
   Teams, and ESP credentials are not loaded into the core API process.
 - Tests cover Slack signature valid, stale, tampered, ack timing, outcome
@@ -351,7 +364,7 @@ the GitHub workflow deploys to Docker VMs.
 confirm which image revision an environment is running. The main workflow passes
 the GitHub SHA into container image builds as `GIT_SHA`.
 
-#### Versioning & release tags
+#### Versioning and release tags
 
 The `version` in `GET /health` is derived automatically. Never hand-edited.
 `build_image` runs `git describe --tags --always --match 'v*'` and bakes the

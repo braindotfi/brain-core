@@ -68,6 +68,7 @@ const envSchema = z.object({
   BRAIN_RESOLVER_DB_URL: z.string().url().optional(),
   BRAIN_TENANT_DELETION_DB_URL: z.string().url().optional(),
   BRAIN_SURFACE_GATEWAY_DB_URL: z.string().url().optional(),
+  BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL: z.string().url().optional(),
 
   // ---- Redis ----
   REDIS_URL: z.string().url(),

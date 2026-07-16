@@ -141,6 +141,10 @@ export interface BuildSurfaceGatewayAppOptions {
 export async function buildSurfaceGatewayApp(
   opts: BuildSurfaceGatewayAppOptions,
 ): Promise<FastifyInstance> {
+  if (opts.smoke?.enabled === true && opts.smoke.secret === undefined) {
+    throw new Error("BRAIN_SURFACE_SMOKE_SECRET is required when smoke proposals are enabled");
+  }
+
   const app = Fastify({
     ...(opts.logger !== undefined
       ? { loggerInstance: opts.logger }
@@ -168,6 +172,10 @@ export async function buildSurfaceGatewayApp(
   app.get("/healthz", async () => ({ ok: true }));
 
   app.post("/surfaces/slack/interactions", async (request, reply) => {
+    if (opts.slackInstallations === undefined) {
+      reply.status(503);
+      return "slack installation store disabled";
+    }
     const rawBody = requireRawBody(request.body);
     const retryNum = header(request.headers, "x-slack-retry-num");
     if (retryNum !== undefined) {
@@ -184,17 +192,13 @@ export async function buildSurfaceGatewayApp(
       headers: request.headers,
       signingSecret: opts.surfaceConfig.slack.signingSecret,
       approvals: opts.runtime.approvals,
-      ...(opts.slackInstallations !== undefined
-        ? {
-            installationVerifier: async ({ tenantId, teamId }) => {
-              const installation = await opts.slackInstallations?.getInstallationForTenantTeam({
-                tenantId,
-                teamId,
-              });
-              return installation?.status === "active";
-            },
-          }
-        : {}),
+      installationVerifier: async ({ tenantId, teamId }) => {
+        const installation = await opts.slackInstallations?.getInstallationForTenantTeam({
+          tenantId,
+          teamId,
+        });
+        return installation?.status === "active";
+      },
       logger: app.log,
     });
     reply.status(response.status);
@@ -666,10 +670,12 @@ export async function buildSurfaceGatewayApp(
       reply.status(404);
       return { error: "not_found" };
     }
-    if (
-      opts.smoke.secret &&
-      header(request.headers, "x-brain-smoke-secret") !== opts.smoke.secret
-    ) {
+    const smokeSecret = opts.smoke.secret;
+    if (smokeSecret === undefined) {
+      reply.status(503);
+      return { error: "misconfigured" };
+    }
+    if (!safeSecretEqual(header(request.headers, "x-brain-smoke-secret"), smokeSecret)) {
       reply.status(401);
       return { error: "unauthorized" };
     }
@@ -716,6 +722,14 @@ function header(headers: FastifyRequest["headers"], name: string): string | unde
   const value = headers[name.toLowerCase()];
   if (Array.isArray(value)) return value[0];
   return value;
+}
+
+function safeSecretEqual(actual: string | undefined, expected: string): boolean {
+  if (actual === undefined) return false;
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length) return false;
+  return timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 function slackRetryKey(headers: FastifyRequest["headers"], rawBody: Buffer): string {

@@ -188,6 +188,7 @@ services:
           -v brain_resolver_password="${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}" \
           -v brain_tenant_deletion_password="${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}" \
           -v brain_surface_gateway_password="${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:-brain_surface_gateway}" \
+          -v brain_surface_audit_writer_password="${BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD:-brain_surface_audit_writer}" \
           -f /db-roles.sql
     depends_on:
       migrate:
@@ -371,6 +372,7 @@ services:
       <<: *brain-common-env
       SERVICE_NAME: brain-surface-gateway
       BRAIN_SURFACE_GATEWAY_DB_URL: postgres://brain_surface_gateway:${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:-brain_surface_gateway}@postgres:5432/brain
+      BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL: postgres://brain_surface_audit_writer:${BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD:-brain_surface_audit_writer}@postgres:5432/brain
       BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}@postgres:5432/brain
       SLACK_ENABLED: ${SLACK_ENABLED:-false}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}

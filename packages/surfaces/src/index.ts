@@ -11,6 +11,8 @@
 // Proposal
 export * from "./proposal/schema.js";
 export { hashProposal, withContentHash } from "./proposal/hash.js";
+export { sanitizeForSurface, sanitizeProposalForSurface } from "./proposal/sanitize.js";
+export type { SurfaceSanitizerTarget } from "./proposal/sanitize.js";
 
 // Core
 export * from "./core/ports.js";
