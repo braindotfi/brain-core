@@ -7,6 +7,8 @@ import { SurfaceRegistry } from "../src/core/registry.js";
 import { Dispatcher } from "../src/core/dispatcher.js";
 import { ApprovalService } from "../src/core/approval.js";
 import { SlackAdapter, type SlackClient } from "../src/surfaces/slack/adapter.js";
+import { buildApprovalCard } from "../src/surfaces/slack/blockkit.js";
+import { buildAdaptiveCard } from "../src/surfaces/teams/adaptivecard.js";
 import type { SurfaceAdapter } from "../src/surfaces/surface.js";
 import type { Proposal } from "../src/proposal/schema.js";
 import { toActorId } from "../src/proposal/schema.js";
@@ -113,6 +115,65 @@ test("Slack adapter passes tenant id to the injected Slack client", async () => 
   });
 
   assert.deepEqual(tenantIds, [proposal.tenantId, proposal.tenantId]);
+});
+
+test("Slack approval card escapes proposal-derived mrkdwn strings", () => {
+  const proposal = withContentHash({
+    ...sampleProposal(),
+    title: "Pay <https://evil.test|x>",
+    claim: "Claim <https://evil.test|claim> & approve",
+    evidence: [
+      {
+        label: "Invoice <https://evil.test|label>",
+        value: "Vendor <https://evil.test|value>",
+      },
+    ],
+    action: {
+      ...sampleProposal().action,
+      summary: "Release <https://evil.test|summary>",
+    },
+  });
+
+  const rendered = JSON.stringify(buildApprovalCard(proposal));
+
+  assert.doesNotMatch(rendered, /<https:\/\/evil\.test\|/);
+  assert.match(rendered, /&lt;https:\/\/evil\.test\|x&gt;/);
+  assert.match(rendered, /&lt;https:\/\/evil\.test\|claim&gt; &amp; approve/);
+  assert.match(rendered, /Invoice &lt;https:\/\/evil\.test\|label&gt;/);
+  assert.match(rendered, /Vendor &lt;https:\/\/evil\.test\|value&gt;/);
+  assert.match(rendered, /Release &lt;https:\/\/evil\.test\|summary&gt;/);
+});
+
+test("Teams approval card escapes proposal-derived markdown strings", () => {
+  const proposal = withContentHash({
+    ...sampleProposal(),
+    title: "Pay [x](https://evil.test)",
+    claim: "Claim [x](https://evil.test) *now*",
+    evidence: [
+      {
+        label: "Invoice [label](https://evil.test)",
+        value: "Vendor [value](https://evil.test)",
+      },
+    ],
+    action: {
+      ...sampleProposal().action,
+      summary: "Release [summary](https://evil.test)",
+    },
+  });
+
+  const card = buildAdaptiveCard(proposal) as {
+    body: Array<{ text?: string; facts?: Array<{ title: string; value: string }> }>;
+  };
+
+  assert.equal(card.body[0]?.text, "Pay \\[x\\]\\(https://evil.test\\)");
+  assert.equal(card.body[2]?.text, "Claim \\[x\\]\\(https://evil.test\\) \\*now\\*");
+  assert.deepEqual(card.body[3]?.facts, [
+    {
+      title: "Invoice \\[label\\]\\(https://evil.test\\)",
+      value: "Vendor \\[value\\]\\(https://evil.test\\)",
+    },
+  ]);
+  assert.equal(card.body[4]?.text, "**Recommended:** Release \\[summary\\]\\(https://evil.test\\)");
 });
 
 test("approval pipeline denies an actor the policy gate rejects", async () => {

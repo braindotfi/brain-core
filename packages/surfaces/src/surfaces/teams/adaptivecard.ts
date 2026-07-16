@@ -1,4 +1,5 @@
 import type { Proposal } from "../../proposal/schema.js";
+import { sanitizeProposalForSurface } from "../../proposal/sanitize.js";
 
 /**
  * Builds a Teams Adaptive Card (schema 1.5). Pure, like the Slack builder.
@@ -13,34 +14,35 @@ const AGENT_LABEL: Record<Proposal["agent"], string> = {
 };
 
 export function buildAdaptiveCard(p: Proposal): Record<string, unknown> {
+  const proposal = sanitizeProposalForSurface(p, "teams");
   const body: unknown[] = [
     {
       type: "TextBlock",
-      text: p.title,
+      text: proposal.title,
       weight: "Bolder",
       size: "Large",
       wrap: true,
     },
     {
       type: "TextBlock",
-      text: `${AGENT_LABEL[p.agent]} • expires ${p.expiresAt}`,
+      text: `${AGENT_LABEL[proposal.agent]} • expires ${proposal.expiresAt}`,
       isSubtle: true,
       spacing: "None",
       wrap: true,
     },
-    { type: "TextBlock", text: p.claim, wrap: true },
+    { type: "TextBlock", text: proposal.claim, wrap: true },
   ];
 
-  if (p.evidence.length > 0) {
+  if (proposal.evidence.length > 0) {
     body.push({
       type: "FactSet",
-      facts: p.evidence.slice(0, 10).map((e) => ({ title: e.label, value: e.value })),
+      facts: proposal.evidence.slice(0, 10).map((e) => ({ title: e.label, value: e.value })),
     });
   }
 
   body.push({
     type: "TextBlock",
-    text: `**Recommended:** ${p.action.summary}`,
+    text: `**Recommended:** ${proposal.action.summary}`,
     wrap: true,
     spacing: "Medium",
   });
@@ -55,12 +57,12 @@ export function buildAdaptiveCard(p: Proposal): Record<string, unknown> {
         type: "Action.Submit",
         title: "Approve",
         style: "positive",
-        data: { brainDecision: "approved", tenantId: p.tenantId, proposalId: p.id },
+        data: { brainDecision: "approved", tenantId: proposal.tenantId, proposalId: proposal.id },
       },
       {
         type: "Action.Submit",
         title: "Hold",
-        data: { brainDecision: "rejected", tenantId: p.tenantId, proposalId: p.id },
+        data: { brainDecision: "rejected", tenantId: proposal.tenantId, proposalId: proposal.id },
       },
     ],
   };

@@ -1,4 +1,5 @@
 import type { Proposal } from "../../proposal/schema.js";
+import { sanitizeProposalForSurface } from "../../proposal/sanitize.js";
 
 /**
  * Builds the Slack Block Kit approval card. Pure: takes a proposal, returns
@@ -21,25 +22,26 @@ const AGENT_LABEL: Record<Proposal["agent"], string> = {
 };
 
 export function buildApprovalCard(p: Proposal): unknown[] {
+  const proposal = sanitizeProposalForSurface(p, "slack");
   const blocks: unknown[] = [
     {
       type: "header",
-      text: { type: "plain_text", text: `${SEVERITY_ICON[p.severity]} ${p.title}` },
+      text: { type: "plain_text", text: `${SEVERITY_ICON[proposal.severity]} ${proposal.title}` },
     },
     {
       type: "context",
       elements: [
-        { type: "mrkdwn", text: `*${AGENT_LABEL[p.agent]}*` },
-        { type: "mrkdwn", text: `Expires <!date^${epoch(p.expiresAt)}^{time}|soon>` },
+        { type: "mrkdwn", text: `*${AGENT_LABEL[proposal.agent]}*` },
+        { type: "mrkdwn", text: `Expires <!date^${epoch(proposal.expiresAt)}^{time}|soon>` },
       ],
     },
-    { type: "section", text: { type: "mrkdwn", text: p.claim } },
+    { type: "section", text: { type: "mrkdwn", text: proposal.claim } },
   ];
 
-  if (p.evidence.length > 0) {
+  if (proposal.evidence.length > 0) {
     blocks.push({
       type: "section",
-      fields: p.evidence.slice(0, 10).map((e) => ({
+      fields: proposal.evidence.slice(0, 10).map((e) => ({
         type: "mrkdwn",
         text: e.href ? `*${e.label}*\n<${e.href}|${e.value}>` : `*${e.label}*\n${e.value}`,
       })),
@@ -48,7 +50,7 @@ export function buildApprovalCard(p: Proposal): unknown[] {
 
   blocks.push({
     type: "section",
-    text: { type: "mrkdwn", text: `*Recommended:* ${p.action.summary}` },
+    text: { type: "mrkdwn", text: `*Recommended:* ${proposal.action.summary}` },
   });
 
   blocks.push({
@@ -58,14 +60,14 @@ export function buildApprovalCard(p: Proposal): unknown[] {
         type: "button",
         style: "primary",
         text: { type: "plain_text", text: "Approve" },
-        action_id: encodeAction("approve", p),
-        value: p.id,
+        action_id: encodeAction("approve", proposal),
+        value: proposal.id,
       },
       {
         type: "button",
         text: { type: "plain_text", text: "Hold" },
-        action_id: encodeAction("reject", p),
-        value: p.id,
+        action_id: encodeAction("reject", proposal),
+        value: proposal.id,
       },
     ],
   });
