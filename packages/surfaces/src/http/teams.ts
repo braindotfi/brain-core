@@ -25,6 +25,7 @@ export interface TeamsSubmitRequest {
   authorization?: string | undefined;
   rawBody: string | Buffer;
   verifier: TeamsActivityVerifier;
+  trustedBrainTenantId: string;
   approvals: ApprovalService;
 }
 
@@ -47,10 +48,11 @@ export async function handleTeamsSubmit(request: TeamsSubmitRequest): Promise<Te
   const normalized = toIncomingDecision({
     submit: verified.submit,
     aadObjectId: verified.aadObjectId,
+    trustedTenantId: request.trustedBrainTenantId,
     conversationRef: verified.conversationRef,
     ...(verified.activityId !== undefined ? { activityId: verified.activityId } : {}),
   });
-  if (!normalized) return { status: 400, body: "unknown teams action" };
+  if (!normalized) return { status: 403, body: "teams tenant mismatch" };
 
   const outcome = await request.approvals.handle(normalized.decision, normalized.deliveredRef);
   return { status: 200, body: outcome.status };
