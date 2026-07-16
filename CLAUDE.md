@@ -411,6 +411,45 @@ Run the surface webhook deployable as its own least-privilege process. The Slack
 Teams, and ESP credentials must not live in the core protocol service. Same repo,
 separate deploy.
 
+## Surfaces and skills (Tier 3 review notes, 2026-07-16)
+
+State confirmed by the Tier 3 review (findings in BRAIN_REVIEW.md):
+
+- The distribution surfaces cannot move money and this is enforced at two layers:
+  the surface gateway's `execution.enqueue` port
+  (`services/surface-gateway/src/services.ts` `SurfaceExecutionQueue.enqueueIdempotent`)
+  is a literal no-op stub, and the `brain_surface_gateway` DB role has DML only on
+  `surface_*` + approvals with no grant on `ledger_*` or `execution_outbox`. Keep both
+  guards; never wire a real enqueue into the gateway.
+- All three surfaces (Slack, Teams, email) converge on one `ApprovalService.handle`
+  (`packages/surfaces/src/core/approval.ts`) with a fixed ordering: expiry -> tenant
+  identity -> policy re-check -> audit-before-sign -> signature -> quorum -> atomic
+  terminal-decision claim. The approval decision NEVER trusts inbound content: the
+  canonical Proposal is reloaded server-side by (tenantId, proposalId) under RLS, and
+  amount/recipient come from that stored object, not the Slack action / Teams submit /
+  email token. Do not add a path that reads amount/recipient/tenant from an inbound
+  payload.
+- Outbound rendering is the weak spot: `packages/surfaces/src/surfaces/email/template.ts`
+  escapes every interpolated field, but the Slack `blockkit.ts` mrkdwn and Teams
+  `adaptivecard.ts` TextBlock renderers do NOT, so vendor/counterparty-influenced
+  proposal fields (title/claim/evidence) can inject links/markdown into the human
+  approval prompt (T3-7). Sanitize proposal-derived strings per surface before render.
+- The surface approval gate (`SurfacePolicyEngine.evaluateDecision`) checks only
+  active-policy + outcome + approver-role. It does NOT enforce actor-is-not-payee or a
+  per-item limit like the core `authorizeApproval`, and `ProposalSchema` carries no
+  payee field. A surface "approved" is the handoff signal the customer's ERP acts on,
+  so this is a real segregation-of-duties gap (T3-11) to decide explicitly.
+- The reusable `@brain/surfaces` package exports an unused `handleTeamsSubmit` helper
+  that trusts the card's `submit.tenantId` with no AAD cross-check; the production
+  gateway route re-implements the flow inline and DOES enforce the check. Any new
+  integrator must not use the helper as-is (T3-9).
+- brain-skills (the public repo) is genuinely propose-only: the live MCP server exposes
+  no execute/settle/sign/approve tool (`payment_intent.execute` is deliberately not
+  exposed via MCP), OAuth against mcp.brain.fi is wired via RFC 9728 discovery, and no
+  credential is embedded client-side. Its docs have drifted from the real tool shapes
+  (`_shared/brain-mcp.md` vs `services/mcp/src/tools/*.ts`) with no drift check on
+  tool-call shape (T3-2/T3-3).
+
 ## Copy
 
 No em dashes, no ampersands outside brand names, no emojis in docs, comments, or

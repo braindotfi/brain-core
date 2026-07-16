@@ -558,3 +558,251 @@ closed with database-backed dedup, connector natural keys, Stripe same-second
 watermark replay, and projection currency validation. Remaining Tier 2 work is
 product-level implementation depth for Collections, Cash, and fraud anomaly
 scoring.
+
+---
+
+## Tier 3: Surfaces + Skills
+
+Repos: braindotfi/brain-skills (public skills, reviewed at /Users/damon/brain-skills)
+and braindotfi/brain-core (Slack/Teams/email surface adapters). Branch:
+review/tier-3-surfaces. Scope: every skill genuinely propose-only with no hidden
+execute path; the skills drift check vs private definitions; OAuth against
+mcp.brain.fi on every skill; SKILL.md accuracy; each surface adapter routing through
+the same gate/approval layer with no shortcut; per-surface auth and tenant isolation;
+and injection risks (inbound Slack/email/Teams content interpreted as an instruction
+rather than data). Audit only.
+
+### Checklist
+
+- [x] brain-skills: every skill propose-only, no hidden execute path: PASS (CI gate scope T3-1)
+- [x] brain-skills: drift check vs private definitions: PASS (shape gap T3-2/T3-3)
+- [x] brain-skills: OAuth against mcp.brain.fi enforced on every skill: PASS
+- [x] brain-skills: SKILL.md accuracy + copy rules: T3-3/T3-4/T3-5/T3-6
+- [x] Surface adapters: route through the same gate/approval, no shortcut: PASS (stub enqueue + DB grants)
+- [x] Surface adapters: approval authority server-side + idempotency: PASS, but weaker gate (T3-11)
+- [x] Surface adapters: per-surface auth + tenant isolation: PASS (helper caveat T3-8/T3-9)
+- [x] Surface adapters: token/signature verification: PASS (Slack/Teams/email all sound)
+- [x] Injection: inbound content never sets which proposal/amount/recipient/tenant: PASS (canonical reload)
+- [x] Injection: inbound free-text never reaches the agent/model/policy as an instruction: PASS
+- [x] Injection: inbound content escaped in outbound approval prompts: FAILS for Slack/Teams (T3-7)
+- [x] Final Tier 3 verdict (below)
+
+### Findings
+
+_Review in progress. Surface routing/auth findings still landing._
+
+#### brain-skills (public MCP skills)
+
+_Core safety invariant HOLDS, verified at the real implementation (not just docs):
+the live MCP server exposes only reads plus `payment_intent.propose/cancel/list`,
+`raw.contribute`, and `agent.action.propose`. There is NO execute/settle/sign/approve
+tool anywhere (`services/mcp/src/tools/payment-intent.ts:4` states
+`payment_intent.execute` is deliberately not exposed via MCP). brain-payment and
+brain-treasury use only propose. OAuth against mcp.brain.fi is genuinely wired
+server-side (RFC 9728 discovery, `services/api/src/well-known/oauth-protected-resource.ts`);
+no credential is embedded client-side and the packaging scripts scan for leaked
+key/bearer/PEM strings. The drift, invariant, and reference checks all pass._
+
+#### T3-1 (MEDIUM), No-hidden-execute-path CI gate covers only 2 of 11 skills
+- Location: `brain-skills/scripts/check-invariants.mjs:9,43-56`
+  (`MONEY_MOVERS = new Set(["brain-payment","brain-treasury"])`).
+- The forbidden-tool scan (`.execute`/`.settle`/`.sign`) only runs against the two
+  money-mover skills; the other 9 skills' SKILL.md / brain-meta.json are never
+  scanned for a hidden execute path. All 9 are clean today (manually verified), but
+  the CI gate enforcing the core invariant is scoped to 2 of 11. Fix: broaden the
+  forbidden-tool scan to all 11 skill directories.
+
+#### T3-2 (MEDIUM), Drift check does not validate MCP tool-call shape
+- Location: `brain-skills/scripts/check-drift.mjs` (compares only agent-definition
+  metadata from `spec/brain-agents.json`, not tool argument schemas).
+- No check compares the documented tool-argument shapes in `_shared/brain-mcp.md`
+  against the real `inputSchema` in `services/mcp/src/tools/*.ts`, which is how T3-3
+  went undetected. Fix: add a check that diffs the documented tool tables against the
+  live tool inputSchemas.
+
+#### T3-3 (MEDIUM), Documented agent.action.propose call shape does not match the real tool (9 of 11 skills)
+- Location: `brain-skills/_shared/brain-mcp.md:68-78` (and the propose example in the
+  9 non-money SKILL.md files) vs `services/mcp/src/tools/agent.ts:13-51`.
+- VERIFIED. The docs document
+  `{tenant_id, action_type, payload, linked_entities, idempotency_key}`, but the real
+  tool accepts `{action: {kind, ...arbitrary}}` (tenant is derived from the JWT). A
+  host calling exactly as documented gets `request_params_invalid`. Not a safety issue
+  (still propose-only, still scope-gated), but every one of the 9 skills' public worked
+  example fails against the live server. Fix: regenerate the tool tables from the real
+  inputSchema.
+
+#### T3-4 (MEDIUM), Documented idempotency_key replay-safety guarantee does not exist at the MCP boundary
+- Location: `brain-skills/_shared/brain-mcp.md:65-66,78,94` claims every mutating call
+  requires a caller-supplied `idempotency_key` cached 24h; grep of
+  `services/mcp/src/{dispatcher,server}.ts` and the two mutating tools finds no
+  idempotency handling. Either implement idempotency at the MCP mutating tools or
+  remove the documented guarantee.
+
+#### T3-5 / T3-6 (LOW), Doc-completeness and copy nits
+- `_shared/brain-mcp.md` omits `payment_intent.cancel`, `payment_intent.list`, and the
+  `raw.contribute` write tool from its tool table, while several SKILL.md files imply
+  the doc is a complete contract. Copy: `spec/brain-agents.json:309` has an ampersand
+  in a generated `display_name` ("Fraud & Anomaly", never surfaced in SKILL.md), and
+  `brain-skills/STATUS.md:29,35,41` uses em dashes in internal headers (public repo
+  root). No emojis, no other copy-rule violations in the skill copy.
+
+#### Surface adapters: injection / content-as-instruction
+
+_Core invariant HOLDS: the approval decision (which proposal, what amount/recipient,
+who approved) never trusts attacker-suppliable content. Every surface reloads the
+canonical Proposal server-side by (tenantId, proposalId) under RLS
+(`services/surface-gateway/src/storage.ts:170-184` via
+`packages/surfaces/src/core/approval.ts:47-56`); amount/recipient come from that
+stored object, never the inbound payload. No inbound free-text (Slack/Teams message
+text, email body/subject, display names) is forwarded to an LLM, agent-router, or
+policy input anywhere. Webhook authenticity is sound: Slack whole-body HMAC with
+timing-safe compare, Teams Bot Framework JWT + AAD-tenant->Brain-tenant resolution
+with a mismatch 403, email HMAC single-decision recipient-bound token._
+
+#### T3-7 (HIGH), Slack and Teams render agent-supplied content unescaped: spoofed approval prompt
+- Location: `packages/surfaces/src/surfaces/slack/blockkit.ts:36,51` (`p.claim`,
+  `p.action.summary` into unescaped `mrkdwn`) and
+  `packages/surfaces/src/surfaces/teams/adaptivecard.ts:19,31` (`p.title`, `p.claim`
+  into unescaped `TextBlock`s). Email escapes correctly
+  (`packages/surfaces/src/surfaces/email/template.ts:37-65` via `esc()`).
+- VERIFIED. The proposal `title`/`claim`/`evidence`/`action.summary` are built by the
+  agent factories from finding fields that are vendor/counterparty-influenced (invoice
+  vendorName, collections customerName, cash rationale, etc.). Slack mrkdwn renders
+  `<https://evil|Click to release payment>` as a live link and Teams TextBlock renders
+  `[label](url)` markdown, so an attacker who controls e.g. a vendor billing name can
+  inject a clickable link or formatting into the approval card a human sees next to the
+  real Approve/Hold buttons. It does NOT change what is approved (canonical reload is
+  intact), but it is a genuine social-engineering / spoofed-UI vector against the
+  approver. Fix: add a central `sanitizeForSurface` that escapes Slack mrkdwn
+  (`&`,`<`,`>`) and Teams markdown metacharacters for every proposal-derived string
+  before render, matching what email already does.
+
+#### T3-8 (MEDIUM), Slack installationVerifier is optional and fail-open in the reusable library
+- Location: `packages/surfaces/src/http/slack.ts:99-106`
+  (`if (request.installationVerifier !== undefined)`).
+- The cross-check that the decoded tenantId in the button's action_id corresponds to
+  an ACTIVE installation for the sending Slack team only runs when a verifier is
+  supplied; omit it and the handler trusts the tenantId embedded in the action_id. The
+  gateway wires it correctly today (`services/surface-gateway/src/main.ts:134`), so
+  production is not exposed, but this is a fail-open default in a package designed to
+  be reused, and a refactor dropping the option loses the cross-tenant / uninstall
+  revocation check with no type error. Fix: make `installationVerifier` required.
+
+#### T3-9 (MEDIUM), Unused handleTeamsSubmit helper trusts submit.tenantId (cross-tenant hole if wired)
+- Location: `packages/surfaces/src/http/teams.ts:47-56` (`toIncomingDecision` builds
+  from `verified.submit.tenantId` with no check against the AAD-resolved Brain tenant).
+- The production route (`services/surface-gateway/src/server.ts:565-603`) does NOT use
+  this helper; it re-implements the flow inline and correctly checks
+  `submit.tenantId !== installation.brainTenantId -> 403`. But `handleTeamsSubmit` is a
+  public export of the surfaces package, and the Adaptive Card `data.tenantId` is plain
+  unsigned JSON, so any consumer that uses the helper directly gets a cross-tenant
+  approval hole. Fix: delete the helper, or make it require and enforce a server-side
+  trusted Brain tenantId.
+
+#### T3-10 (MEDIUM, config-dependent), Smoke endpoint fails OPEN without a secret
+- Location: `services/surface-gateway/src/server.ts:664-676`
+  (`if (opts.smoke.secret && header(...) !== opts.smoke.secret)`).
+- VERIFIED. The auth check is guarded on `opts.smoke.secret` being truthy, so if smoke
+  is enabled with NO secret set the 401 is skipped entirely and any caller can POST an
+  arbitrary `Proposal` (any tenantId) and have it dispatched to a real tenant's Slack /
+  Teams / email via the tenant's own installed bot. Combined with T3-7 (unescaped
+  rendering), this is an unauthenticated fabricated-approval-card injection primitive
+  for phishing an approver, if smoke is ever enabled without a secret. It does not
+  bypass the approval gate itself. `BRAIN_SURFACE_SMOKE_ENABLED` defaults false and
+  there is no "secret required when enabled" validation. Fix: fail closed (refuse boot
+  or force disabled when enabled without a secret), and use `timingSafeEqual` for the
+  compare.
+
+#### Surface adapters: routing + approval authority + tenant isolation
+
+_Core invariant HOLDS at code AND DB-credential level: the surface gateway CANNOT reach
+a rail or execution_outbox. `SurfaceExecutionQueue.enqueueIdempotent`
+(`services/surface-gateway/src/services.ts:173-180`) is a literal no-op, and the
+`brain_surface_gateway` role (NOBYPASSRLS) has DML only on `surface_*` + approvals and
+SELECT on users/members/policies, with no grant on `ledger_*` or `execution_outbox`
+(`infra/db-roles.sql:222-232`). All three surfaces converge on the same
+`ApprovalService.handle` ordering (expiry -> tenant-scoped identity -> policy re-check
+-> audit-before-sign -> signature -> quorum -> atomic terminal-decision claim ->
+execution enqueue) with no surface-specific shortcut. Terminal idempotency
+(`ON CONFLICT (tenant_id, proposal_id) DO NOTHING` + crash-safe unapplied replay),
+Slack timing-safe HMAC + stale-timestamp rejection + retry dedupe, Teams Bot Framework
+JWT + AAD-tenant->Brain-tenant resolution, email HMAC single-decision recipient-bound
+token, and RLS-scoped identity resolution (no client-supplied tenant/workspace trusted)
+are all verified sound. (The Teams tenant cross-check T3-9 is the one place the shipped
+gateway had to add a check the reusable helper omits.)_
+
+#### T3-11 (MEDIUM, architecture), Surface approval gate has no self-approval / payee / per-item-limit check
+- Location: `services/surface-gateway/src/services.ts:58-98`
+  (`SurfacePolicyEngine.evaluateDecision`); `packages/surfaces/src/proposal/schema.ts`
+  (no payee/counterparty field).
+- VERIFIED. The surface approval gate checks only: active tenant policy exists, outcome
+  is not reject, and the actor holds an approver role. It never enforces "actor is not
+  the payee" or a per-item amount limit, unlike the core money-path
+  `PaymentIntentService.approve` / `authorizeApproval`. It cannot: `ProposalSchema` has
+  no payee identity (`action.payload` is opaque). Since a surface "approved" decision is
+  the authoritative signal the customer's own ERP/bank acts on (the ExecutionHandoff
+  contract), an approver who is the beneficiary can self-approve via Slack/Teams/email
+  with no built-in block. Surface approvals do not drive core execution (the enqueue is
+  a stub), so the risk is scoped to what the customer automates on the handoff signal,
+  but the surface approval authority is materially weaker than the core money path. This
+  should be an explicit, documented decision (v1 scope) rather than an implicit gap, and
+  it is the same class of residual the core review already flags for vendor payees.
+
+#### T3-12 (LOW), Surface gateway holds a broad brain_app DB credential alongside its least-privilege role
+- Location: `services/surface-gateway/src/main.ts:55-60` opens `auditPool` on
+  `DATABASE_URL` (the `brain_app` role, which has DML on all tables including
+  `ledger_*`/`execution_outbox`, RLS-scoped) purely to call the audit emitter.
+- No active exploit (audit emit is parameterized), but it undercuts the
+  "gateway can only touch surface state + approvals" story at the credential level.
+  Consider a dedicated `INSERT`-on-`audit_events`-only role for the gateway's audit pool.
+
+#### T3-13 (LOW), Quorum-never-met for a policy that uses the generic "signer" sentinel
+- Location: `services/surface-gateway/src/services.ts:211-220` (`firstMatchingRole`
+  records the actor's concrete role) vs
+  `services/execution/src/approvals/ApprovalService.ts:197-209` (quorum tests the
+  literal required-role strings against the set of signed concrete roles).
+- If a tenant policy expresses "any two distinct approvers" as
+  `required_approvers: ["signer","signer"]`, the signed set contains concrete roles
+  (`{"cfo","controller"}`) and never the literal `"signer"`, so quorum can never be
+  met. Fails CLOSED (stuck-pending), so a reliability bug, not a bypass. Confirm whether
+  surface policies use the `"signer"` sentinel; if so, dual-approval on those is blocked.
+
+#### T3-14 (INFO), Test-coverage and accepted-tradeoff notes
+- The Teams `submit.tenantId !== installation.brainTenantId -> 403` check
+  (`server.ts:600-603`) is the single line standing between the shipped behavior and a
+  cross-tenant approval forgery (see T3-9), yet has no regression test; add one. The
+  email approval token is a bearer credential (a forwarded link lets anyone act as the
+  verified recipient) - the standard, accepted magic-link tradeoff, noted as an inherent
+  residual.
+
+### Tier 3 verdict
+
+The distribution surfaces are the strongest tier reviewed. The load-bearing invariants
+all hold and are enforced at the real implementation, not just in docs:
+
+- brain-skills is genuinely propose-only: no execute/settle/sign/approve tool exists
+  anywhere in the MCP server, OAuth against mcp.brain.fi is properly wired, no
+  client-side credentials, and the drift/invariant/reference checks pass.
+- The surface gateway cannot move money: its execution port is a no-op stub and its DB
+  role has no grant on ledger or outbox tables. All three surfaces route through one
+  ApprovalService with correct ordering, terminal idempotency, and sound
+  signature/token verification, and the approval decision never trusts
+  attacker-suppliable inbound content (canonical proposal reloaded server-side; no
+  inbound free-text reaches the agent/model/policy).
+
+The findings are hardening, not fund-safety breaks. Priorities:
+1. T3-7 (HIGH): escape agent-supplied strings before Slack/Teams render (spoofed
+   approval prompt / link injection); email already does this.
+2. T3-11 (MEDIUM): decide and document whether the surface approval gate should enforce
+   self-approval/payee/limit like the core money path, or accept the weaker v1 posture.
+3. T3-9 (MEDIUM): delete or fix the unsafe unused `handleTeamsSubmit` public helper (and
+   T3-8 make the Slack installation verifier required), so a future integrator cannot
+   reintroduce a cross-tenant approval hole; add the T3-14 regression test.
+4. T3-10 (MEDIUM): make the smoke endpoint fail closed when enabled without a secret.
+5. brain-skills docs: T3-3 (call-shape drift on 9 skills), T3-4 (unimplemented
+   idempotency claim), T3-1/T3-2 (broaden the CI gates), and the copy nits.
+
+Overall Tier 3 readiness: SOUND. No surface can move money or bypass approval, no
+inbound content steers a decision. Fix T3-7 before relying on Slack/Teams approval
+prompts with untrusted vendor data, and make the T3-11 self-approval decision explicit.
+
