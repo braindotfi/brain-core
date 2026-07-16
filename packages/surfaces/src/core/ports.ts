@@ -27,6 +27,8 @@ export interface IdentityResolver {
 export interface ResolvedActor {
   actorId: ActorId;
   roles: string[];
+  /** Server-resolved email, used for actor-payee checks when available. */
+  email?: string | undefined;
 }
 
 /**

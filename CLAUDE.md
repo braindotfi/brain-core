@@ -170,6 +170,15 @@ Done
   email fail closed as `self_approval_blocked` with `payee_unresolved=true`.
   Vendor payees with unresolved email still pass in v1 as an accepted residual
   gap until canonical vendor identity links are first-class in Ledger.
+- Surface proposals may carry canonical server-side payee identity, included in
+  the proposal hash. The surface decision gate blocks self-approval with
+  `self_approval_blocked` by comparing the server-resolved approver email to the
+  proposal payee email using the same normalization. Employee, payroll, and
+  other payees with unresolved identity fail closed; vendor payees with
+  unresolved email retain the v1 residual. Inbound Slack, Teams, and email
+  payloads cannot supply or override proposal payee identity. Per-item limits
+  and distinct second approver enforcement remain core/customer responsibility
+  for surfaces in v1.
 - Member mutations emit `member.changed` audit events with before and after
   envelopes and return `audit_id`. Awaiting-second-approval emits the contract
   event `proposal.awaiting_second_approval`; the older payment-intent alias

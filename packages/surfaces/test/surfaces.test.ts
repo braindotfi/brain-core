@@ -64,6 +64,43 @@ test("hash is deterministic and ignores field order", () => {
   assert.equal(a, hashProposal(reordered));
 });
 
+test("proposal hash covers payee identity", () => {
+  const base = sampleProposal();
+  const withPayee = {
+    ...base,
+    payee: { kind: "vendor", email: "ap@example.com", counterpartyId: "cp_1" },
+  } as Proposal;
+  const changedPayee = {
+    ...base,
+    payee: { kind: "vendor", email: "other@example.com", counterpartyId: "cp_1" },
+  } as Proposal;
+
+  assert.notEqual(hashProposal(withPayee), hashProposal(base));
+  assert.notEqual(hashProposal(changedPayee), hashProposal(withPayee));
+});
+
+test("invoice proposals carry canonical vendor payee identity when available", () => {
+  const proposal = buildInvoiceProposal({
+    tenantId: "t_1",
+    vendorName: "Acme Supplies",
+    vendorEmail: "billing@acme.example",
+    vendorCounterpartyId: "cp_acme",
+    invoiceNumber: "INV-4821",
+    amountMinorUnits: 1250000,
+    currency: "USD",
+    reason: "duplicate",
+    handoffPayload: { billId: "b_99" },
+    approverRoles: ["ap_lead", "controller"],
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+  });
+
+  assert.deepEqual(proposal.payee, {
+    kind: "vendor",
+    email: "billing@acme.example",
+    counterpartyId: "cp_acme",
+  });
+});
+
 test("dispatcher validates, hashes, and delivers to a surface", async () => {
   const delivered: Proposal[] = [];
   const persisted: string[] = [];

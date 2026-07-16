@@ -7,6 +7,7 @@ import {
   type Decision,
   type Proposal,
   type AgentKind,
+  type ResolvedActor,
   type SlackTokenProvider,
   type SurfaceName,
 } from "@brain/surfaces";
@@ -31,7 +32,7 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
     tenantId: string;
     surface: SurfaceName;
     externalId: string;
-  }): Promise<{ actorId: ActorId; roles: string[] } | null> {
+  }): Promise<ResolvedActor | null> {
     const member = await this.lookupMemberActor(input);
     if (member !== null) return member;
     if (input.surface === "email") {
@@ -53,31 +54,36 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
     if (link === null) return null;
 
     const role = await withTenantScope(this.userPool, input.tenantId, async (c) => {
-      const { rows } = await c.query<{ role: string }>(
-        `SELECT role FROM users WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
+      const { rows } = await c.query<{ role: string; email: string | null }>(
+        `SELECT role, email FROM users WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
         [input.tenantId, link.actor_id],
       );
-      return rows[0]?.role ?? null;
+      return rows[0] ?? null;
     });
 
     const roles = new Set(link.roles);
-    if (role !== null) roles.add(role);
-    return { actorId: link.actor_id as ActorId, roles: [...roles] };
+    if (role !== null) roles.add(role.role);
+    return {
+      actorId: link.actor_id as ActorId,
+      roles: [...roles],
+      ...(role?.email !== null && role?.email !== undefined ? { email: role.email } : {}),
+    };
   }
 
   private async lookupMemberActor(input: {
     tenantId: string;
     surface: SurfaceName;
     externalId: string;
-  }): Promise<{ actorId: ActorId; roles: string[] } | null> {
+  }): Promise<ResolvedActor | null> {
     const externalRef =
       input.surface === "email" ? normalizeEmail(input.externalId) : input.externalId;
     const linked = await withTenantScope(this.pool, input.tenantId, async (c) => {
       const { rows } = await c.query<{
         id: string;
         role: string;
+        email: string;
       }>(
-        `SELECT m.id, m.role
+        `SELECT m.id, m.role, m.email
            FROM member_identity_links l
            JOIN members m
              ON m.tenant_id = l.tenant_id
@@ -91,15 +97,18 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
       );
       return rows[0] ?? null;
     });
-    if (linked !== null) return { actorId: linked.id as ActorId, roles: [linked.role] };
+    if (linked !== null) {
+      return { actorId: linked.id as ActorId, roles: [linked.role], email: linked.email };
+    }
     if (input.surface !== "email") return null;
 
     const byEmail = await withTenantScope(this.pool, input.tenantId, async (c) => {
       const { rows } = await c.query<{
         id: string;
         role: string;
+        email: string;
       }>(
-        `SELECT id, role
+        `SELECT id, role, email
            FROM members
           WHERE tenant_id = $1
             AND lower(email) = lower($2)
@@ -109,13 +118,15 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
       );
       return rows[0] ?? null;
     });
-    return byEmail === null ? null : { actorId: byEmail.id as ActorId, roles: [byEmail.role] };
+    return byEmail === null
+      ? null
+      : { actorId: byEmail.id as ActorId, roles: [byEmail.role], email: byEmail.email };
   }
 
   private async lookupEmailActor(input: {
     tenantId: string;
     externalId: string;
-  }): Promise<{ actorId: ActorId; roles: string[] } | null> {
+  }): Promise<ResolvedActor | null> {
     const email = normalizeEmail(input.externalId);
     const recipient = await withTenantScope(this.pool, input.tenantId, async (c) => {
       const { rows } = await c.query<{
@@ -145,7 +156,7 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
 
     const roles = new Set(recipient.roles);
     if (role !== null) roles.add(role);
-    return { actorId: recipient.actor_id as ActorId, roles: [...roles] };
+    return { actorId: recipient.actor_id as ActorId, roles: [...roles], email };
   }
 }
 

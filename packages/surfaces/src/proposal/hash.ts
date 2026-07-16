@@ -18,6 +18,7 @@ export function hashProposal(p: Proposal): string {
     claim: p.claim,
     evidence: p.evidence,
     action: p.action,
+    payee: p.payee,
     policy: p.policy,
     expiresAt: p.expiresAt,
   });

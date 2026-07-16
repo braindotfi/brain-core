@@ -9,6 +9,7 @@ import {
   withContentHash,
   type ActorId,
   type BrainCorePorts,
+  type Payee,
   type Proposal,
   type TerminalDecisionRecord,
 } from "@brain/surfaces";
@@ -74,6 +75,123 @@ describe("surface gateway approval ordering", () => {
     });
 
     expect(verdict).toMatchObject({ allowed: true, approverRole: "finance" });
+    expect(approvals.signCalls).toHaveLength(0);
+  });
+
+  it("blocks a surface approver who matches the proposal payee email", async () => {
+    const approvals = new ApprovalSpy([]);
+    const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("finance_approval")));
+
+    const verdict = await engine.evaluateDecision({
+      proposal: sampleProposal({
+        approverRoles: ["finance"],
+        payee: { kind: "employee", email: "finance+payroll@example.com" },
+      }),
+      actor: { actorId: FINANCE_ACTOR, roles: ["finance"], email: " Finance@Example.com " },
+      decision: "approved",
+    });
+
+    expect(verdict).toMatchObject({
+      allowed: false,
+      reason: "self_approval_blocked",
+    });
+    expect(approvals.signCalls).toHaveLength(0);
+  });
+
+  it("allows a distinct authorized surface approver for a payee proposal", async () => {
+    const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("finance_approval")));
+
+    const verdict = await engine.evaluateDecision({
+      proposal: sampleProposal({
+        approverRoles: ["finance"],
+        payee: { kind: "employee", email: "payee@example.com" },
+      }),
+      actor: { actorId: FINANCE_ACTOR, roles: ["finance"], email: "finance@example.com" },
+      decision: "approved",
+    });
+
+    expect(verdict).toMatchObject({ allowed: true, approverRole: "finance" });
+  });
+
+  it("fails closed for employee payees with unresolved identity", async () => {
+    const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("finance_approval")));
+
+    const verdict = await engine.evaluateDecision({
+      proposal: sampleProposal({
+        approverRoles: ["finance"],
+        payee: { kind: "employee" },
+      }),
+      actor: { actorId: FINANCE_ACTOR, roles: ["finance"], email: "finance@example.com" },
+      decision: "approved",
+    });
+
+    expect(verdict).toMatchObject({
+      allowed: false,
+      reason: "self_approval_blocked",
+    });
+  });
+
+  it("allows vendor payees with unresolved identity as the v1 residual", async () => {
+    const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("finance_approval")));
+
+    const verdict = await engine.evaluateDecision({
+      proposal: sampleProposal({
+        approverRoles: ["finance"],
+        payee: { kind: "vendor", counterpartyId: "cp_vendor" },
+      }),
+      actor: { actorId: FINANCE_ACTOR, roles: ["finance"], email: "finance@example.com" },
+      decision: "approved",
+    });
+
+    expect(verdict).toMatchObject({ allowed: true, approverRole: "finance" });
+  });
+
+  it("uses the stored proposal payee instead of inbound surface context", async () => {
+    const proposal = sampleProposal({
+      approverRoles: ["finance"],
+      payee: { kind: "employee", email: "finance@example.com" },
+    });
+    const approvals = new ApprovalSpy([]);
+    const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("finance_approval")));
+    const service = new ApprovalService(
+      {
+        identity: {
+          async resolve() {
+            return { actorId: FINANCE_ACTOR, roles: ["finance"], email: "finance@example.com" };
+          },
+        },
+        policy: {
+          async canDecide(input) {
+            return engine.evaluateDecision(input);
+          },
+        },
+        audit: {
+          async record() {
+            throw new Error("self approval must not audit");
+          },
+        },
+        approvals: new SurfaceApprovalRecorder(approvals.asExecutionApprovals()),
+        execution: {
+          async enqueue() {
+            throw new Error("self approval must not execute");
+          },
+        },
+        decisions: memoryDecisions(),
+      },
+      new SurfaceRegistry(),
+      async () => proposal,
+    );
+
+    const outcome = await service.handle({
+      surface: "slack",
+      tenantId: TENANT_ID,
+      proposalId: PROPOSAL_ID,
+      externalActorId: "U_finance",
+      decision: "approved",
+      context: { payeeEmail: "other@example.com" },
+    });
+
+    expect(outcome).toEqual({ status: "denied", reason: "self_approval_blocked" });
     expect(approvals.signCalls).toHaveLength(0);
   });
 
@@ -272,6 +390,7 @@ class ApprovalSpy {
 function sampleProposal(input: {
   approverRoles: string[];
   requiresDualApproval?: boolean;
+  payee?: Payee | undefined;
 }): Proposal {
   return withContentHash({
     id: PROPOSAL_ID,
@@ -282,6 +401,7 @@ function sampleProposal(input: {
     claim: "Vendor invoice appears to be a duplicate.",
     evidence: [{ label: "Invoice", value: "INV-1" }],
     action: { summary: "Hold payment", handoff: "erp", payload: {} },
+    ...(input.payee !== undefined ? { payee: input.payee } : {}),
     policy: {
       gates: ["ROLE"],
       approverRoles: input.approverRoles,

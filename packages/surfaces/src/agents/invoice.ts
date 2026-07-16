@@ -13,6 +13,8 @@ import { ProposalSchema } from "../proposal/schema.js";
 export interface InvoiceFinding {
   tenantId: string;
   vendorName: string;
+  vendorEmail?: string;
+  vendorCounterpartyId?: string;
   invoiceNumber: string;
   amountMinorUnits: number;
   currency: string;
@@ -40,6 +42,11 @@ export function buildInvoiceProposal(f: InvoiceFinding): Proposal {
       { label: "Amount", value: money(f.amountMinorUnits, f.currency) },
       { label: "Flag", value: reasonLabel(f.reason) },
     ],
+    payee: {
+      kind: "vendor",
+      ...(f.vendorEmail !== undefined ? { email: f.vendorEmail } : {}),
+      ...(f.vendorCounterpartyId !== undefined ? { counterpartyId: f.vendorCounterpartyId } : {}),
+    },
     action: {
       summary: "Hold payment and route for review before release.",
       handoff: "erp",

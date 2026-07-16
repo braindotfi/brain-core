@@ -56,6 +56,13 @@ Payee identity rule:
 - Vendor payees without a resolved email pass in v1 only because canonical vendor identity links are not yet first-class in Ledger. This is an accepted residual gap until vendor identity links are added.
 - A self-payee approval that would also require a second approver must reject with `self_approval_blocked`, never `second_approval_required`.
 
+Surface approval rule:
+
+- Canonical surface proposals may carry a server-side `payee` identity: `kind`, optional `email`, and optional `counterpartyId`. The field is part of the stored proposal and content hash when present. Slack, Teams, and email inbound payloads cannot supply or override it.
+- The surface decision gate enforces the actor-is-not-payee rule before accepting an approved decision. It compares the server-resolved approver email to the canonical proposal payee email using the same normalization as the core money path: trim, lowercase, and strip plus-address aliases.
+- Employee, payroll, and other payees whose email identity is unresolved fail closed with `self_approval_blocked`. Vendor payees with unresolved email retain the same v1 residual as the core money path until canonical vendor identity links are first-class in Ledger.
+- Surface v1 does not enforce per-item limits or distinct second approver rules. Those remain core money-path and customer execution responsibilities.
+
 ## Tenant Bootstrap
 
 Every tenant is created with one initial active admin member in the same
