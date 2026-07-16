@@ -1,5 +1,12 @@
 import type { Pool } from "pg";
-import type { ActorId, Decision, Proposal, ResolvedActor, SurfaceName } from "@brain/surfaces";
+import type {
+  ActorId,
+  Decision,
+  Payee,
+  Proposal,
+  ResolvedActor,
+  SurfaceName,
+} from "@brain/surfaces";
 import type { AuditLog, CoreServices, ExecutionQueue, PolicyEngine } from "@brain/core";
 import { ApprovalService as ExecutionApprovalService, findAgent, findUser } from "@brain/execution";
 import { evaluate, getActive } from "@brain/policy";
@@ -89,12 +96,51 @@ export class SurfacePolicyEngine implements PolicyEngine {
       return { allowed: false, reason: "Actor lacks an approver role for this proposal" };
     }
 
+    if (input.decision === "approved") {
+      const selfApproval = evaluateSelfApproval(input.proposal.payee, input.actor);
+      if (!selfApproval.allowed) {
+        return { allowed: false, reason: "self_approval_blocked" };
+      }
+    }
+
     if (input.decision === "rejected") {
       return { allowed: true, approverRole: actorRole };
     }
 
     return { allowed: true, approverRole: actorRole };
   }
+}
+
+function evaluateSelfApproval(
+  payee: Payee | undefined,
+  actor: ResolvedActor,
+): { allowed: true } | { allowed: false } {
+  if (payee === undefined) return { allowed: true };
+
+  const normalizedPayeeEmail = normalizeApprovalEmail(payee.email ?? null);
+  const normalizedActorEmail = normalizeApprovalEmail(actor.email ?? null);
+  const mustResolve =
+    payee.kind === "employee" || payee.kind === "payroll" || payee.kind === "other";
+
+  // Vendor payees without canonical identity links remain an accepted v1
+  // residual, matching the core money path. Employee, payroll, and other payee
+  // kinds fail closed when either side of the email comparison is unresolved.
+  if (normalizedPayeeEmail === null || normalizedActorEmail === null) {
+    return mustResolve ? { allowed: false } : { allowed: true };
+  }
+
+  return normalizedPayeeEmail === normalizedActorEmail ? { allowed: false } : { allowed: true };
+}
+
+function normalizeApprovalEmail(email: string | null): string | null {
+  if (email === null) return null;
+  const trimmed = email.trim().toLowerCase();
+  const at = trimmed.indexOf("@");
+  if (at <= 0 || at === trimmed.length - 1) return null;
+  const local = trimmed.slice(0, at);
+  const domain = trimmed.slice(at + 1);
+  const plus = local.indexOf("+");
+  return `${plus >= 0 ? local.slice(0, plus) : local}@${domain}`;
 }
 
 export class SurfaceAuditLog implements AuditLog {

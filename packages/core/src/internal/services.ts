@@ -1,4 +1,4 @@
-import type { Proposal, ActorId, Decision, SurfaceName } from "@brain/surfaces";
+import type { Proposal, ActorId, Decision, ResolvedActor, SurfaceName } from "@brain/surfaces";
 
 /**
  * Interfaces for the brain-core capabilities the surface bindings call into.
@@ -20,14 +20,14 @@ export interface TenantIdentityStore {
     tenantId: string;
     surface: SurfaceName;
     externalId: string;
-  }): Promise<{ actorId: ActorId; roles: string[] } | null>;
+  }): Promise<ResolvedActor | null>;
 }
 
 /** The existing policy engine. Owns the gates and dual-approval bookkeeping. */
 export interface PolicyEngine {
   evaluateDecision(input: {
     proposal: Proposal;
-    actor: { actorId: ActorId; roles: string[] };
+    actor: ResolvedActor;
     decision: "approved" | "rejected";
   }): Promise<{
     allowed: boolean;

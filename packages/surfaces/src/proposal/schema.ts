@@ -63,6 +63,16 @@ export const RecommendedActionSchema = z.object({
 });
 export type RecommendedAction = z.infer<typeof RecommendedActionSchema>;
 
+export const PAYEE_KINDS = ["vendor", "employee", "payroll", "other"] as const;
+export type PayeeKind = (typeof PAYEE_KINDS)[number];
+
+export const PayeeSchema = z.object({
+  kind: z.enum(PAYEE_KINDS),
+  email: z.string().email().optional(),
+  counterpartyId: z.string().min(1).optional(),
+});
+export type Payee = z.infer<typeof PayeeSchema>;
+
 /**
  * The result of running the proposal through the brain-core Policy layer.
  * Captured on the proposal so the surface can show who is allowed to approve
@@ -89,6 +99,7 @@ export const ProposalSchema = z.object({
   claim: z.string().min(1),
   evidence: z.array(EvidenceItemSchema).default([]),
   action: RecommendedActionSchema,
+  payee: PayeeSchema.optional(),
   policy: PolicyResultSchema,
   /** ISO timestamp. After this the proposal auto expires and cannot be approved. */
   expiresAt: z.string().datetime(),

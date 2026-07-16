@@ -25,6 +25,13 @@ review/tier-3-surfaces.
 - [x] T3-10 fixed: smoke proposals fail closed when enabled without
       `BRAIN_SURFACE_SMOKE_SECRET`, and request secret comparison uses
       `timingSafeEqual`.
+- [x] T3-11 fixed: surface proposals can carry canonical payee identity and the
+      surface decision gate rejects self-approval with `self_approval_blocked`.
+      Employee, payroll, and other payees fail closed when email identity is
+      unresolved. Vendor payees with unresolved email retain the documented v1
+      residual until canonical vendor identity links are first-class. Per-item
+      limits and distinct second approver enforcement remain core/customer
+      responsibility for surfaces in v1.
 - [x] T3-12 fixed: the surface gateway audit pool can use
       `BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL`, backed by `brain_surface_audit_writer`
       with INSERT-only access to `audit_events`.
@@ -34,14 +41,6 @@ review/tier-3-surfaces.
 - [x] T3-14 covered: the gateway test suite pins the Teams AAD tenant to Brain
       tenant mismatch as a 403 and the reusable helper now enforces the same
       boundary.
-
-### Decision required
-
-- [ ] T3-11 remains intentionally unimplemented pending owner sign-off. Adding
-      actor-is-not-payee to the surface approval gate requires a `ProposalSchema`
-      payee or beneficiary identity and agent-factory threading. Until that decision
-      is made, surface approvals remain advisory handoff signals; core money-path
-      approvals retain the normative self-approval and per-item-limit enforcement.
 
 ---
 
