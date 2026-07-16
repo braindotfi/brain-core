@@ -10,7 +10,7 @@ Read alongside: Brain_API_Specification.yaml (the OpenAPI contract) and Brain_MV
 
 v0.4.0 records the hardening wave on top of the v0.3 six-layer architecture. The model is unchanged; the safety surfaces are sharpened:
 
-- §6 pre-execution gate is now **13 numbered checks + 4 hardening additions** (17 entries). The four sub-checks `1.5` (agent behavior pinned), `7.5` (ledger-state binding, H-08), `9.5` (evidence semantics, H-21), and `11.5` (duplicate-payment hard reject, H-22) join the original 13. The audit-before event persists the full check trace (H-07). See §6.2.1.
+- §6 pre-execution gate is now **13 numbered checks + 10 hardening additions** (23 entries). The hardening sub-checks `1.5`, `3.5`, `5.5`, `6.5`, `6.6`, `6.7`, `7.5`, `8.5`, `9.5`, and `11.5` join the original 13. The audit-before event persists the full check trace (H-07). See §6.2.1.
 - §6.5 documents **shadow-by-default + the promotion-readiness gate** (H-24): an agent cannot go live without `scripts/check-promotion-readiness.mjs` all-green, enforced in CI on `promotion-config.ts` diffs.
 - Execution is now a **durable outbox** (H-04): `execute` enqueues + transitions `approved → dispatching`; an outbox worker dispatches the rail and settles. New `dispatching` PaymentIntent status.
 - New trust surfaces: the **Proof API** (`GET /v1/proof/{action_id}`, H-07) and **Agent Run History** (`/v1/agents/runs/{run_id}/*`, H-25).
@@ -26,7 +26,7 @@ v0.2.0 of this document realigns to the v0.3 architecture (six layers). Specific
 
 - §1 adds a fifth principle: deterministic pre-execution gate.
 - §2 repo layout adds `services/ledger/`; a planned `services/execution/` directory rename to the Agent-layer name was **not** carried out. The workspace stays `services/execution/` (the Agent layer, layer 5).
-- §3.2 scope list updated: `ledger:*`, `payment_intent:*`, `agent:*`.
+- §3.2 scope list updated: `ledger:*`, `payment_intent:*`, `execution:*`.
 - §4.3 error code registry adds ledger and payment*intent codes; `execution*\_`codes alias to`agent\_\_` for back-compat.
 - §6 Pre-execution gate is a NEW SECTION (renumbers Observability → §7, Testing → §8, etc.).
 - §9.5 PaymentIntent state machine is new.
@@ -58,7 +58,7 @@ brain/
 │   ├── api/              # TypeScript. Public HTTP API gateway (auth/webhook/MCP wiring + boot).
 │   ├── raw/              # TypeScript. Ingestion workers (Layer 1).
 │   ├── ledger/           # TypeScript. Normalized financial truth (Layer 2). [v0.3]
-│   ├── wiki/             # TypeScript. Memory/Q&A. Pages derived from Ledger (Layer 3).
+│   ├── wiki/             # TypeScript. Memory questions and answers. Pages derived from Ledger (Layer 3).
 │   ├── policy/           # TypeScript. Rule VM and evaluator (Layer 4).
 │   ├── execution/        # TypeScript. Proposal/PaymentIntent orchestration (Layer 5).
 │   ├── mcp/              # TypeScript. JSON-RPC MCP server (Layer 5′).
@@ -67,7 +67,7 @@ brain/
 │   ├── internal-agents/  # TypeScript. First-party agent catalog (definitions + handlers).
 │   └── agents/           # Python. Extractors, reasoners, the three MVP agents.
 ├── shared/               # TypeScript. @brain/shared. All cross-cutting primitives.
-├── contracts/            # Solidity + Foundry. The four smart contracts.
+├── contracts/            # Solidity + Foundry. The six smart contracts.
 ├── infra/                # Terraform. Azure resource definitions.
 ├── schemas/              # JSON Schemas per Ledger entity, per Wiki page type.
 ├── clients/              # Generated typed clients for each service.
@@ -110,12 +110,12 @@ Scopes are `{layer}:{verb}` strings. The verb is one of `read`, `write`, `admin`
 
 Verb extensions for the Agent layer:
 
-- `agent:propose`, create non-financial proposals
+- `execution:propose`, create non-financial proposals
 - `payment_intent:propose`, create PaymentIntent rows
 - `payment_intent:approve`, sign approvals on `confirm`-mode PaymentIntents
 - `payment_intent:execute`, trigger execution of an approved intent
 
-External agents (`principal_type=agent`, registered in BrainMCPAgentRegistry) are granted scopes explicitly by the tenant at registration time via EIP-712 signature. The five scopes an external agent can hold are `ledger:read`, `wiki:read`, `raw:write` (for agent contributions), `payment_intent:propose`, and `agent:propose`. An agent granted `raw:write` can push artifacts into the Raw layer using `source_type=agent_contributed`. These artifacts flow through the extraction pipeline, but any derived **Ledger** rows carry `provenance=agent_contributed` and start at a confidence ceiling of 0.5 regardless of extractor certainty. Promotion above 0.5 requires independent corroboration or explicit tenant approval via `/wiki/annotate` (which writes through to the Ledger via a controlled service method). This governance boundary is enforced in the Ledger write path, not just documented here, and is non-negotiable.
+External agents (`principal_type=agent`, registered in BrainMCPAgentRegistry) are granted scopes explicitly by the tenant at registration time via EIP-712 signature. The five scopes an external agent can hold are `ledger:read`, `wiki:read`, `raw:write` (for agent contributions), `payment_intent:propose`, and `execution:propose`. An agent granted `raw:write` can push artifacts into the Raw layer using `source_type=agent_contributed`. These artifacts flow through the extraction pipeline, but any derived **Ledger** rows carry `provenance=agent_contributed` and start at a confidence ceiling of 0.5 regardless of extractor certainty. Promotion above 0.5 requires independent corroboration or explicit tenant approval via `/wiki/annotate` (which writes through to the Ledger via a controlled service method). This governance boundary is enforced in the Ledger write path, not just documented here, and is non-negotiable.
 
 Scope to endpoint mapping is enforced in the API gateway, not in individual services. Services trust the scopes in the JWT but re-verify tenant_id equality on every query.
 
@@ -252,27 +252,33 @@ Any of the following must pass through the gate:
 - Any write to the tenant's BrainSmartAccount
 - Any agent action with a money-movement side effect
 
-### 6.2 The 13 Deterministic Checks + 4 Hardening Additions
+### 6.2 The 13 Deterministic Checks + 10 Hardening Additions
 
-The gate runs **13 numbered checks** in order, interleaved with **4 hardening
-sub-checks** (`1.5`, `7.5`, `9.5`, `11.5`) added across the v0.4 hardening wave.
-17 entries total. The canonical happy path is the 13 numbered checks; the four
-additions are additive and several record `not_applicable` when their loader is
-not wired (see §6.2.1), so a minimal caller still sees the canonical 13. Failure
-short-circuits and produces a `payment_intent_gate_failed` error with the failing
-check identified. The full check index recorded on a fully-wired passing run is
-`1, 1.5, 2, 3, 4, 5, 6, 7, 7.5, 8, 9, 9.5, 10, 11, 11.5, 12, 13`.
+The gate runs **13 numbered checks** in order, interleaved with **10 hardening
+sub-checks** (`1.5`, `3.5`, `5.5`, `6.5`, `6.6`, `6.7`, `7.5`, `8.5`,
+`9.5`, `11.5`). 23 entries total. The canonical numbered path remains the 13
+integer checks; the additions are additive and several record `not_applicable`
+when their loader is not wired (see §6.2.1). Failure short-circuits and produces
+a `payment_intent_gate_failed` error with the failing check identified. The full
+check index recorded on a fully wired passing run is
+`1, 1.5, 2, 3, 3.5, 4, 5, 5.5, 6, 6.5, 6.6, 6.7, 7, 7.5, 8, 8.5, 9, 9.5, 10, 11, 11.5, 12, 13`.
 
 1. **Agent identity verified.** JWT principal_type=agent, agent_id matches an active row in `agents`.
    1.5. **Agent behavior pinned.** The agent's runtime `behaviorHash` matches the registered hash; a mismatch rejects regardless of all other checks.
 2. **Agent authorization.** Scope set includes the verb required for this action (`payment_intent:propose`, etc.).
 3. **Action allowed.** Policy DSL `applies_to` matches the action kind.
+   3.5. **On-chain settlement permitted.** For settlement actions, the matched policy rule must explicitly allow on-chain settlement.
 4. **Source account allowed.** `account_id` belongs to the tenant and is in `active` status.
 5. **Counterparty allowed.** `counterparty_id` exists in `ledger_counterparties`, not on a sanctions list.
+   5.5. **Agent counterparty attested.** If the counterparty is an agent, its on-chain or DB attestation must be active and unpaused.
 6. **Counterparty verified.** `verified_status` ≠ `unverified` for amounts above the policy-defined threshold.
+   6.5. **x402 payment context valid.** x402 settlement context must be USDC on Base and match the resolved counterparty payee.
+   6.6. **Escrow state bound.** Escrow release context must match the on-chain BrainEscrow lock and remaining amount.
+   6.7. **Obligation direction matches flow.** Outbound money movement cannot target an obligation owed to the tenant.
 7. **Amount within policy limit.** `amount.lte` rule from active policy holds.
    7.5. **Ledger state bound (H-08).** A `ledger_snapshot_hash` of the source account + counterparty state is computed and pinned onto the decision + audit-before event. A tamper-evident record of what the action moved against.
 8. **Available balance sufficient.** `ledger_accounts.available_balance` ≥ amount + reserved.
+   8.5. **Micropayment cap within window.** Agent spend in the rolling policy window plus this action must remain within the signed cap.
 9. **Required evidence present.** Policy clause `evidence_required` (e.g. invoice attached for B2B AP) holds. The referenced evidence rows exist and are of the right kind.
    9.5. **Evidence supports the action (H-21).** Semantic validation: the evidence's amount, counterparty, currency, and freshness actually match the PaymentIntent. Not just that _some_ evidence is attached. (A $500 invoice on a $50k payment fails here.)
 10. **Approval requirement determined.** Policy decision is one of `allow` (no approval), `confirm` (approval needed), `reject` (refuse).
@@ -283,19 +289,24 @@ check identified. The full check index recorded on a fully-wired passing run is
 
 Steps 12 and 13 are non-skippable even if every other check passes. The audit-before/audit-after pair is what makes execution forensically reconstructible. And is what the Proof API (`GET /v1/proof/{action_id}`) assembles into a verifiable artifact.
 
-#### 6.2.1 The four hardening additions
+#### 6.2.1 The ten hardening additions
 
 Each maps 1:1 to a check in `shared/src/gate/gate.ts`. When the addition's loader
 is not wired by the caller, it records `not_applicable` (a passing row) rather
-than failing. So the happy path stays the canonical 13. The exception is `7.5`,
-which has no loader and always runs.
+than failing, except where the code defines a hard fail on a loaded bad value.
 
-| Index  | Name (in `gate.ts`)        | Guards against                                                                   | When its loader is not wired                                                                                                                                                           |
-| ------ | -------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `1.5`  | `agent_behavior_pinned`    | A swapped model/prompt/tools behind a registered agent identity.                 | No `resolveTenantFlags` ⇒ no check row (legacy). With it + tenant opted out ⇒ `not_applicable`. With `require_behavior_hash=true` (P0.1) a missing/mismatched hash is a **hard fail**. |
-| `7.5`  | `ledger_state_bound`       | A silent change to source-account / counterparty state between decide & execute. | Always runs (no loader); pins a `ledger_snapshot_hash` onto the decision + audit-before.                                                                                               |
-| `9.5`  | `evidence_supports_action` | Evidence that exists but doesn't support the action (wrong amount/CP/currency).  | No `resolveEvidence` ⇒ `not_applicable`.                                                                                                                                               |
-| `11.5` | `no_duplicate_payment`     | Paying an invoice/obligation twice, reused evidence, changed destination.        | No `detectDuplicates` ⇒ `not_applicable`. A collision is a **hard reject even with approval**.                                                                                         |
+| Index  | Name (in `gate.ts`)                 | Guards against                                                                  | When its loader is not wired                                                                   |
+| ------ | ----------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `1.5`  | `agent_behavior_pinned`             | A swapped model, prompt, or tool manifest behind a registered agent identity.   | No `resolveTenantFlags` means no row. With tenant opted out, it records `not_applicable`.      |
+| `3.5`  | `onchain_settlement_permitted`      | On-chain settlement without a signed policy permission.                         | No on-chain settlement context means `not_applicable`. Missing permission is a hard fail.      |
+| `5.5`  | `agent_counterparty_attested`       | Paying an agent counterparty whose registry attestation is missing or paused.   | Non-agent counterparties record `not_applicable`.                                              |
+| `6.5`  | `x402_payment_context_valid`        | x402 settlement with the wrong chain, asset, payee, or settlement context.      | Non-x402 actions record `not_applicable`.                                                      |
+| `6.6`  | `escrow_state_bound`                | Escrow release that does not match the on-chain BrainEscrow lock state.         | Non-escrow actions record `not_applicable`.                                                    |
+| `6.7`  | `obligation_direction_matches_flow` | Outbound money movement against an obligation owed to the tenant.               | Missing obligation context records `not_applicable`.                                           |
+| `7.5`  | `ledger_state_bound`                | A silent change to source-account or counterparty state between decide and run. | Always runs when a ledger snapshot hash can be computed.                                       |
+| `8.5`  | `micropayment_cap_within_window`    | x402 agent spend exceeding the signed rolling-window cap.                       | Non-micropayment actions record `not_applicable`.                                              |
+| `9.5`  | `evidence_supports_action`          | Evidence that exists but does not support the action.                           | No `resolveEvidence` means `not_applicable`.                                                   |
+| `11.5` | `no_duplicate_payment`              | Paying an invoice or obligation twice, reused evidence, or changed destination. | No `detectDuplicates` means `not_applicable`. A collision is a hard reject even with approval. |
 
 ### 6.3 Where the Gate Lives
 
@@ -411,7 +422,7 @@ Ticket conditions are everything else worth noticing. Ticket thresholds tuned mo
 
 - **Unit tests**: 80% line coverage on every service. Enforced in CI.
 - **Integration tests**: Every endpoint in the OpenAPI spec has at least one happy-path integration test and one error-path test.
-- **Property tests**: The policy evaluator, the Merkle anchor builder, the Ledger reconciliation matcher, the pre-execution gate, and the four smart contracts have property-based tests. The TypeScript ones use fast-check; the contracts use Foundry invariants.
+- **Property tests**: The policy evaluator, the Merkle anchor builder, the Ledger reconciliation matcher, the pre-execution gate, and the six smart contracts have property-based tests. The TypeScript ones use fast-check; the contracts use Foundry invariants.
 - **E2E tests**: The three Series A proof-points (six-layer end-to-end, Ledger compounding, external agent via MCP) each have a dedicated E2E test suite running against staging.
 
 ### 8.2 Deterministic Tests for Non-Deterministic Components
@@ -575,27 +586,45 @@ Each external dependency has a one-page contract. Summaries of the six MVP depen
 
 - Submitted transactions only, not RPC reads
 - Gas policy: priority fee at 20% above Base median, capped at $0.50/tx equivalent
-- Signing: publisher account is a Safe multi-sig, 2-of-3
+- Signing: the current Base Sepolia publisher is a single EOA. A Safe multisig
+  publisher is a pre-mainnet TODO.
 
 ## 11. Deployment
 
 ### 11.1 Environments
 
 - **Local**: Docker Compose, real Postgres + Redis + LocalStack for Azure Blob equivalent
-- **Staging**: Full Azure stack, hits Plaid sandbox, Alchemy sandbox, Base Sepolia
-- **Production**: Azure East US primary, Azure West US 3 backup, Base mainnet
+- **Staging**: Docker VM deployment, sandbox rails where configured, Base Sepolia
+- **Production**: Docker VM deployment served from `api.brain.fi`. On-chain
+  contracts remain Base Sepolia today; Base mainnet is blocked on external audit,
+  bytecode verification, and operator attestation.
 
 ### 11.2 Pipeline
 
-GitHub Actions. On PR: lint, unit, contract compile, property tests. On merge to main: integration tests, build images, push to Azure Container Registry, deploy to staging, E2E tests, manual promote to production.
+GitHub Actions. On PR: lint, unit, typecheck, contract compile, property tests,
+and invariant checks. On green `main`, the workflow builds the Node runtime
+image `ghcr.io/braindotfi/brain-core:<sha>` and the Python agents image
+`ghcr.io/braindotfi/brain-agents:<sha>`, pushes both to GHCR, deploys staging,
+then deploys production with the same SHA-tagged images.
+
+Both staging and production run `tools/migrate up`, rerun `infra/db-roles.sql`,
+recreate `api`, `worker`, and `agents` through Docker Compose, then smoke the
+health endpoint. Production migrations run before the compose recreate so a
+schema failure fails the workflow before traffic reaches the new app revision.
 
 ### 11.3 Rollback
 
-Every service runs N and N-1 in parallel during a rolling deploy. Traffic is shifted via Azure Container Apps revision weights. Rollback is one command: `az containerapp revision set-active --revision N-1`. Database migrations are always forward-compatible. Never ship a migration that requires a code version to be running.
+Rollback uses the VM Docker Compose deployment model: pull or retag the prior
+known-good image, recreate the affected service, and verify `/health` reports the
+expected commit. Database migrations are always forward-compatible. Never ship a
+migration that requires only one code version to be running.
 
 ### 11.4 Secrets
 
-Azure Key Vault. Managed identities for service-to-vault access. No secrets in environment variables, config files, or application code. CI reads secrets from Key Vault at deploy time. Rotation schedule documented in `infra/secrets.md`.
+Production deploys consume GitHub environment secrets and host env files on the
+Docker VMs. Source-credential encryption can load its AES-256-GCM key from Azure
+Key Vault when configured, or from `BRAIN_SOURCE_CREDENTIAL_KEY` outside
+production. No secret values belong in application code or committed config.
 
 ### 11.5 Data Migrations
 

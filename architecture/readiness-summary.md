@@ -3,18 +3,18 @@
 One page. What's production-ready, what's pilot-ready, what's testnet-only, and what's blocked on external work. The deeper diligence index is at [Enterprise Readiness](enterprise-readiness.md); this page distils it for fast reads.
 
 {% hint style="info" %}
-**Current positioning.** Brain Core is a credible **staging / controlled-pilot** autonomous finance core. It is **not** yet "unrestricted production mainnet" until the external smart-contract audit and Azure deploy chain close.
+**Current positioning.** Brain Core is a credible **staging / controlled-pilot** autonomous finance core. It is **not** yet "unrestricted production mainnet" until the external smart-contract audit clears and mainnet bytecode is verified.
 {% endhint %}
 
 ## What's production-ready today
 
 - **Six-layer protocol** (Raw, Ledger, Wiki, Policy, Agent, Audit) with strict layer boundaries enforced by lint guards.
-- **§6 deterministic pre-execution gate**. 22 checks (13 numbered + 9 hardening), no LLM judgement, no Wiki reads, no skip paths.
+- **§6 deterministic pre-execution gate**. 23 entries (13 numbered + 10 hardening), no LLM judgement, no Wiki reads, no skip paths.
 - **Append-only audit chain** with Merkle anchoring to Base. `/v1/audit/verify` is unauthenticated. Verifiable without trusting Brain.
 - **External-agent MCP surface** (JSON-RPC 2.0) with HMAC handshake and per-tenant rate limits.
 - **Postgres RLS + least-privilege role separation** at the storage layer: the request path runs as `brain_app` (`FORCE ROW LEVEL SECURITY`) and every cross-tenant job/resolver runs under one of eight scoped `BYPASSRLS` roles (each limited to its layer's tables), so cross-tenant access is impossible by construction once `infra/db-roles.sql` is applied.
 - **AES-256-GCM credential encryption** at rest (Azure Key Vault in production).
-- **5 fail-closed boot fences**. Misconfigured deploys CrashLoopBackoff rather than running degraded.
+- **7+ fail-closed boot fences**. Misconfigured deploys fail to start rather than running degraded.
 - **Tenant deletion** (GDPR Article 17 database scope).
 
 ## What's pilot-ready
@@ -33,17 +33,20 @@ Suitable for controlled-pilot use under SLA, not yet for unrestricted production
 - **`BrainEscrow`** (USDC custodial escrow, RFC 0001 §7.6). Deployed on Base Sepolia; mainnet deploy is boot-fenced pending external audit.
 - **`onchain_base` and `x402_base`** rails are wired against Base Sepolia by default. Mainnet promotion is per-tenant config, gated by the same boot fences.
 
+## What is automated today
+
+- **Docker VM production deploy**. GitHub Actions builds GHCR images, deploys to the Docker VM on green `main`, runs migrations before recreate, and smokes `https://api.brain.fi/health`.
+
 ## What requires external work (not yet done)
 
 - **External smart-contract audit** of the six contracts (`BrainAuditAnchor`, `BrainPolicyRegistry`, `BrainSmartAccount`, `BrainMCPAgentRegistry`, `BrainEscrow`, `BrainReputationRegistry`). `contracts/AUDIT-SCOPE.md` is ready; engagement is pending.
-- **Azure production deploy chain**. GitHub Actions workflows ship; the OIDC secrets are not provisioned and the chain has not been exercised against a live Azure environment.
 
 ## What requires customer deployment work
 
 - Applying `infra/db-roles.sql` to the production Postgres instance (creates `brain_app`, `brain_wiki_reader`, and the eight least-privilege cross-tenant roles) and provisioning each role's `BRAIN_*_DB_URL` (all required at boot in production).
-- Configuring Azure Key Vault credentials for `BRAIN_SOURCE_CREDENTIAL_KEY` and the session key.
+- Configuring Azure Key Vault credentials for the source-credential AES key, or using the documented non-production env-var key path outside production.
 - Setting `BRAIN_ESCROW_AUDIT_RECEIPT` to the audit report URL/hash (or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"`) once the audit completes and bytecode is verified.
-- Running the existing `pnpm run production-readiness` check against the customer env before promotion. It reports readiness **per deploy stage** (`demo` / `staging` / `mainnet`), so the staged story is explicit rather than one aggregate: demo is ready today, staging needs testnet rails + the deploy chain, mainnet needs the external contract audit. Scope a gate with `--profile <stage>`.
+- Running the existing `pnpm run production-readiness` check against the customer env before promotion. It reports readiness **per deploy stage** (`demo` / `staging` / `mainnet`), so the staged story is explicit rather than one aggregate: demo is ready today, staging needs exercised testnet rail evidence, and mainnet needs the external contract audit. Scope a gate with `--profile <stage>`.
 - Running `pnpm run readiness:evidence -- --profile staging` for every release candidate. The report lists row status, evidence state, promotion blockers, audit status, rail posture, connector guard status, and known limitations. Staging fails if core safety rows remain scaffolded rather than exercised.
 
 ## How to verify any claim on this page

@@ -10,7 +10,7 @@ the repo root.
 ## What's Exposed
 
 - **10 tools** across 4 capability groups: `ledger:read`, `wiki:read`,
-  `raw:write`, `payment_intent:propose` / `agent:propose`.
+  `raw:write`, `payment_intent:propose` / `execution:propose`.
 - **6 resources** with stable `brain://...` URIs.
 - **5 prompts** that templatize canonical financial questions.
 

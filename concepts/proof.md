@@ -44,7 +44,7 @@ To rewrite history, you'd have to regenerate every subsequent hash. And you'd st
 
 ### On-Chain Anchors
 
-Brain batches audit events into a Merkle tree per tenant and anchors the root on Base hourly (or sooner for high-severity events). Once anchored, the root is immutable.
+Brain batches audit events into a Merkle tree per tenant and anchors the root on Base hourly. There is no severity-accelerated anchoring path today. Once anchored, the root is immutable.
 
 ```typescript
 const proof = await brain.proof(actionId);
@@ -84,13 +84,16 @@ An on-chain anchor is the difference between **trust** and **verify**. Even if B
 
 ### Where This Lives in the Protocol
 
-The proof story is the Audit layer (Layer 6) plus three smart contracts:
+The proof story is the Audit layer (Layer 6) plus the six deployed protocol contracts:
 
-| Contract              | Job                                                   |
-| --------------------- | ----------------------------------------------------- |
-| `BrainAuditAnchor`    | Anchors Merkle roots per tenant                       |
-| `BrainPolicyRegistry` | Anchors policy version hashes per tenant              |
-| `BrainSmartAccount`   | Validates UserOps against the active policy and scope |
+| Contract                  | Job                                                                  |
+| ------------------------- | -------------------------------------------------------------------- |
+| `BrainAuditAnchor`        | Anchors Merkle roots per tenant                                      |
+| `BrainPolicyRegistry`     | Anchors policy version hashes per tenant                             |
+| `BrainSmartAccount`       | Directly called session-key account enforcing scope, caps, and nonce |
+| `BrainMCPAgentRegistry`   | Anchors external-agent scope and behavior hashes                     |
+| `BrainEscrow`             | Testnet conditional escrow locks                                     |
+| `BrainReputationRegistry` | Publishes reputation roots; scoring remains placeholder              |
 
 [**→ Smart contracts overview**](../smart-contracts/overview.md)
 

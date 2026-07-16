@@ -3,30 +3,30 @@
 Single diligence-facing index for fintech, bank, and platform buyers. For each enterprise concern, this page names the runtime guarantee, the code/test that enforces it, and the doc that explains it. So buyers don't have to read the source to answer "is this safe?".
 
 {% hint style="info" %}
-**Status as of `main`.** Anything marked **deferred** is on the engineering roadmap. Anything marked **external** depends on a third party (audit, Azure provisioning). The two **blockers** for unrestricted mainnet production are at the bottom of this page.
+**Status as of `main`.** Anything marked **deferred** is on the engineering roadmap. Anything marked **external** depends on a third party. The blocker for unrestricted mainnet production is at the bottom of this page.
 {% endhint %}
 
 ## At a glance
 
-| Concern                              | Status       | Runtime / code anchor                                                                     |
-| ------------------------------------ | ------------ | ----------------------------------------------------------------------------------------- |
-| Tenant isolation (DB)                | shipped      | Postgres RLS + `infra/db-roles.sql` + `composition/db-isolation.ts`                       |
-| Tenant isolation (blob)              | shipped      | Per-tenant path prefix `<tenantId>/yyyy/mm/dd/sha256` (`blobPath`)                        |
-| Wiki / Policy boundary               | shipped      | `check-policy-no-wiki-read` + `check-wiki-no-ledger-write`                                |
-| Credential encryption at rest        | shipped      | AES-256-GCM + KMS provider (`shared/src/crypto/aes-gcm.ts`)                               |
-| §6 deterministic payment gate        | shipped      | `shared/src/gate/gate.ts` (23 entries) + `check-gate-bypass`                              |
-| External-agent HMAC handshake        | shipped      | `services/api/src/agents/sign-agent-request.ts` (signs and verifies)                      |
-| MCP scope grants + per-tenant limits | shipped      | `BrainMCPAgentRegistry` + `services/mcp/src/server.ts`                                    |
-| Audit log immutability               | shipped      | Append-only DB + Merkle anchoring on Base                                                 |
-| Audit log retention                  | shipped      | Preserved through tenant deletion (GDPR Art 17(3)(b))                                     |
-| Tenant deletion                      | shipped      | `DELETE /v1/tenants/{id}` + 11 unit tests                                                 |
-| Tenant blob purge                    | deferred     | URIs surfaced; durable purge worker in RFC                                                |
-| Production boot fences (5)           | shipped      | `composition/{db-isolation,escrow-audit-gate,rails-prod-fence}.ts` + AES + INBOUND_SECRET |
-| Webhook delivery DLQ + retries       | shipped      | `services/audit/src/webhook-dispatch-worker.ts`                                           |
-| On-chain PII guard                   | shipped      | `check-no-onchain-pii` + RFC 0001 §3                                                      |
-| Per-tenant MCP rate limits           | shipped      | `services/mcp/src/server.ts` (Redis-backed)                                               |
-| External smart-contract audit        | **external** | `contracts/AUDIT-SCOPE.md` ready, engagement pending                                      |
-| Azure production deploy              | **external** | OIDC secrets + GitHub Actions chain pending                                               |
+| Concern                              | Status       | Runtime / code anchor                                                                   |
+| ------------------------------------ | ------------ | --------------------------------------------------------------------------------------- |
+| Tenant isolation (DB)                | shipped      | Postgres RLS + `infra/db-roles.sql` + `composition/db-isolation.ts`                     |
+| Tenant isolation (blob)              | shipped      | Per-tenant path prefix `<tenantId>/yyyy/mm/dd/sha256` (`blobPath`)                      |
+| Wiki / Policy boundary               | shipped      | `check-policy-no-wiki-read` + `check-wiki-no-ledger-write`                              |
+| Credential encryption at rest        | shipped      | AES-256-GCM + KMS provider (`shared/src/crypto/aes-gcm.ts`)                             |
+| §6 deterministic payment gate        | shipped      | `shared/src/gate/gate.ts` (23 entries) + `check-gate-bypass`                            |
+| External-agent HMAC handshake        | shipped      | `services/api/src/agents/sign-agent-request.ts` (signs and verifies)                    |
+| MCP scope grants + per-tenant limits | shipped      | `BrainMCPAgentRegistry` + `services/mcp/src/server.ts`                                  |
+| Audit log immutability               | shipped      | Append-only DB + Merkle anchoring on Base                                               |
+| Audit log retention                  | shipped      | Preserved through tenant deletion (GDPR Art 17(3)(b))                                   |
+| Tenant deletion                      | shipped      | `DELETE /v1/tenants/{id}` + 11 unit tests                                               |
+| Tenant blob purge                    | deferred     | URIs surfaced; durable purge worker in RFC                                              |
+| Production boot fences (7+)          | shipped      | DB isolation, escrow audit, rails, AES key, inbound secret, loader, and outbox fences   |
+| Webhook delivery DLQ + retries       | shipped      | `services/audit/src/webhook-dispatch-worker.ts`                                         |
+| On-chain PII guard                   | shipped      | `check-no-onchain-pii` + RFC 0001 §3                                                    |
+| Per-tenant MCP rate limits           | shipped      | `services/mcp/src/server.ts` (Redis-backed)                                             |
+| External smart-contract audit        | **external** | `contracts/AUDIT-SCOPE.md` ready, engagement pending                                    |
+| Docker VM production deploy          | shipped      | `.github/workflows/main.yml` builds GHCR images, migrates, recreates, and smokes health |
 
 ## Detail
 
@@ -93,17 +93,21 @@ Layer-1 immutability ("Raw is the source of truth, never mutated", per `Brain_MV
 
 Until phase B lands, operators run a separate cleanup pass against the URI list returned by the deletion endpoint.
 
-### Production boot fences (5)
+### Production boot fences (7+)
 
-Five fail-closed boot fences. A misconfigured production deploy fails to start (CrashLoopBackoff in k8s) rather than running degraded:
+At least seven fail-closed boot fences protect production. A misconfigured production deploy fails to start rather than running degraded:
 
 1. **DB isolation** (`composition/db-isolation.ts`). Wiki + eight least-privilege role DB URLs required.
 2. **Escrow audit** (`composition/escrow-audit-gate.ts`). Mainnet escrow requires `BRAIN_ESCROW_AUDIT_RECEIPT` (preferred. URL/filepath/hash pointing at the audit report) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` boolean.
 3. **Live rails** (`composition/rails-prod-fence.ts`). At least one production rail must register.
 4. **AES-256-GCM**. Source-credential KMS provider must be configured.
 5. **Inbound agent secret**. `BRAIN_AGENTS_INBOUND_SECRET` required when `RECONCILIATION_AGENT_URL` is set.
+6. **Money-path loaders** (`composition/payment-loaders-prod-fence.ts`). Production requires always-applicable gate loaders.
+7. **Outbox dispatch guard** (`composition/outbox-dispatch-guard-fence.ts`). The execution worker must re-check dispatch safety before rail dispatch.
 
-All five emit the failure on stdout/stderr so log aggregators surface the exact missing env var.
+Feature fences also protect demo provision-run and sandbox service-token routes when those routes are enabled.
+
+Each fence emits the failure on stdout/stderr so log aggregators surface the exact missing env var or wiring error.
 
 ### Per-tenant MCP rate limits
 
@@ -133,11 +137,12 @@ This is how the readiness story stays falsifiable: every claim has a code anchor
 ## Blockers for unrestricted mainnet production
 
 {% hint style="danger" %}
-**Two items must close before "production-ready" is an honest claim.** Until then, Brain is staging / controlled-pilot ready.
+**External contract audit must close before "unrestricted mainnet production-ready" is an honest claim.** Until then, Brain is staging / controlled-pilot ready.
 {% endhint %}
 
 1. **External smart-contract audit.** `contracts/AUDIT-SCOPE.md` is ready. Engagement is pending. Until the audit clears and the deployed bytecode is verified, the boot fence (#2 above) refuses mainnet escrow.
-2. **Azure production deploy.** The codebase ships with GitHub Actions, the OIDC secrets are not yet provisioned, and the deploy chain has not been exercised against a live Azure environment. The ordered, turnkey path to light up staging (provision, secrets/vars, the infra gaps to close, verification) is documented in `docs/r03-staging-deploy-runbook.md`.
+
+The deploy chain itself is no longer an unstarted blocker: `.github/workflows/main.yml` builds the Node and Python agent images, pushes them to GHCR, applies production migrations before compose recreate, starts `api`, `worker`, and `agents`, and smokes `https://api.brain.fi/health`.
 
 The on-chain executor has a **testnet E2E** that drives the real rail against a deployed `BrainSmartAccount` on Base Sepolia (`tests/e2e/onchain-executor.testnet.e2e.test.ts`, CI job `testnet_onchain_executor_e2e`); it is gated behind a repo variable + RPC/key secrets and runs once those testnet fixtures are provisioned. `production-readiness --profile staging` treats this as required exercised evidence, so the scaffolded job no longer passes a release-candidate gate by itself. This overlaps blocker #2 (the same deploy/provisioning substrate).
 

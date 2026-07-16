@@ -45,10 +45,11 @@ All surfaces share the same approval pipeline:
 1. Reject expired proposals.
 2. Resolve the surface identity to a tenant-scoped Brain actor.
 3. Re-check authority at click time through policy.
-4. Claim the terminal decision so duplicate clicks cannot enqueue twice.
-5. Write audit before anything leaves Brain.
-6. Enqueue execution only for approved proposals.
-7. Update the original surface message on a best-effort basis.
+4. Write audit before any quorum-changing approval signature.
+5. Record the approval signature and read post-write quorum.
+6. Claim the terminal decision only after approval quorum is met, or for rejection.
+7. Enqueue execution only for approved proposals after audit, signature, quorum, and claim.
+8. Update the original surface message on a best-effort basis.
 
 Slack, Teams, and email are therefore input channels to the same policy and audit path. A surface button cannot become a direct money movement path.
 

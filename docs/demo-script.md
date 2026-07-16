@@ -21,9 +21,9 @@ Show the architecture diagram or just say:
 Open a terminal. The SDK is five lines:
 
 ```typescript
-import { Brain } from "@brain/sdk";
+import { Brain } from "@brainfinance/sdk";
 
-const brain = new Brain({ token: process.env.BRAIN_TOKEN });
+const brain = new Brain({ apiKey: process.env.BRAIN_TOKEN!, environment: "sandbox" });
 const accounts = await brain.accounts.list();
 console.log(accounts);
 ```
@@ -37,11 +37,11 @@ BRAIN_TOKEN=$(pnpm -C tools/dev-token exec tsx src/index.ts --tenant tnt_01GOLDE
 
 **Expected output:** Two bank accounts (First National, Silicon Valley Bank), one card (Brex), one counterparty (Stripe). Tenant is "Brain Inc." The data is live from Postgres. Not mocked.
 
-**Talking point:** This is the SDK investors use. When we ship `@brain/sdk` to npm, this code works without changing a line.
+**Talking point:** This is the SDK investors use. The published package is `@brainfinance/sdk`.
 
 ---
 
-## Beat 3. Wiki Q&A (2 min)
+## Beat 3. Wiki Questions and Answers (2 min)
 
 ```typescript
 const answer = await brain.ask("What is our largest unpaid invoice?");
@@ -143,7 +143,7 @@ Open the `basescan_url` in a browser. The transaction confirms within ~5 seconds
 Run these before each investor session:
 
 - [ ] **Seed fresh:** `DATABASE_URL=… BRAIN_TENANT_ID=tnt_01GOLDEN00000000000000000 BRAIN_ACTOR=usr_01GOLDEN00000000000000000 pnpm run demo:reset`. Completes in <30s
-- [ ] **Services up:** `pnpm run dev:up && BRAIN_DEMO_MODE=true pnpm -C services/api dev`. Wait for "listening on 3000"
+- [ ] **Services up:** run `pnpm run dev:up`, then `BRAIN_DEMO_MODE=true pnpm -C services/api dev`. Wait for "listening on 3000"
 - [ ] **Dev token works:** `pnpm -C tools/dev-token exec tsx src/index.ts --tenant tnt_01GOLDEN00000000000000000` returns a JWT
 - [ ] **Anchor publisher healthy:** env `ANCHOR_PUBLISHER_PRIVATE_KEY` and `BASE_SEPOLIA_RPC_URL` set; `ENABLE_ANCHOR_PUBLISHER=true`
 - [ ] **BaseScan reachable:** `curl -s https://sepolia.basescan.org` returns 200

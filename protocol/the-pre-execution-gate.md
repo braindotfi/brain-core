@@ -42,31 +42,24 @@ If **any** step fails, the PaymentIntent transitions to `failed` with a structur
 
 ### Hardening Additions
 
-Five further deterministic checks were added as hardening, each inserted at its correct position in the sequence (checks 1.5, 6.7, 7.5, 9.5, 11.5), bringing the non-M2M total to **18 entries**:
+Ten further deterministic checks are inserted at their source-defined positions,
+bringing the complete trace to **23 entries**:
 
-| Check                                       | What It Enforces                                                                                                                                                                    | Reads From                          |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| **Agent behavior pinned** (1.5)             | The runtime agent `behaviorHash` equals the value registered on-chain; a silent model/prompt/tool swap is a hard reject                                                             | `BrainMCPAgentRegistry`             |
-| **Obligation direction matches flow** (6.7) | When the intent cites an `obligation_id`, the linked obligation is NOT a receivable. An outflow targeting an obligation owed TO us (e.g. a prompt-injected refund) is a hard reject | `ledger_obligations.direction`      |
-| **Ledger-state snapshot binding** (7.5)     | The Ledger snapshot Policy decided against is captured and re-validated immediately before dispatch; drift is a hard reject                                                         | `computeLedgerSnapshot` over Ledger |
-| **Evidence semantic validation** (9.5)      | The supporting evidence actually substantiates _this_ action (amount, counterparty, obligation), not just that it exists                                                            | `raw_parsed`, `evidence_ids`        |
-| **Duplicate-payment protection** (11.5)     | No prior execution with the same counterparty + amount inside the configured window                                                                                                 | `executions`                        |
+| Check                                       | What It Enforces                                                                                                                                         | Reads From                          |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| **Agent behavior pinned** (1.5)             | The runtime agent `behaviorHash` equals the registered behavior hash; a silent model, prompt, or tool swap is a hard reject when required.               | `BrainMCPAgentRegistry`             |
+| **On-chain settlement permitted** (3.5)     | The matched policy rule explicitly permits on-chain settlement for this tenant and payment class.                                                        | policy dimension                    |
+| **Agent counterparty attested** (5.5)       | When the payee is an agent, it is registered and active in `BrainMCPAgentRegistry`.                                                                      | `BrainMCPAgentRegistry`             |
+| **x402 payment context valid** (6.5)        | The x402 settlement context is USDC on Base and matches the resolved counterparty payee.                                                                 | intent settlement context           |
+| **Escrow state bound** (6.6)                | For an escrow release, the on-chain `BrainEscrow` lock matches: still `Locked`, enough remaining to cover this release, same payee, same `jobTermsHash`. | `BrainEscrow.getEscrow` (testnet)   |
+| **Obligation direction matches flow** (6.7) | When the intent cites an `obligation_id`, the linked obligation is not a receivable. An outflow targeting an obligation owed to us is a hard reject.     | `ledger_obligations.direction`      |
+| **Ledger-state snapshot binding** (7.5)     | The Ledger snapshot Policy decided against is captured and re-validated immediately before dispatch; drift is a hard reject.                             | `computeLedgerSnapshot` over Ledger |
+| **Micropayment cap within window** (8.5)    | Per-agent rolling-window spend stays within the signed policy cap.                                                                                       | `executions`                        |
+| **Evidence semantic validation** (9.5)      | The supporting evidence actually substantiates this action (amount, counterparty, obligation), not just that it exists.                                  | `raw_parsed`, `evidence_ids`        |
+| **Duplicate-payment protection** (11.5)     | No prior execution with the same counterparty and amount inside the configured duplicate window, and no reused paid evidence or settled obligation.      | `executions`, Ledger evidence       |
 
-These persist into the `gate_checks` snapshot on the audit-before event, so the full 18-entry trace is part of the verifiable Proof artifact.
-
-### M2M / x402 settlement checks (dormant until wired)
-
-For agent-to-agent settlement (x402 USDC-on-Base and `BrainEscrow` releases), RFC 0001 adds five further deterministic checks at positions 3.5, 5.5, 6.5, 6.6, 8.5. Each is **dormant-until-wired**: it adds a row only when the PaymentIntent carries the relevant settlement/escrow context **and** its (deferred) on-chain loader is configured. Otherwise it records nothing and the canonical 13 + 5 path is unchanged. None is a money path of its own; each only tightens an already-gated settlement.
-
-| Check                                    | What It Enforces                                                                                                                                            | Reads From                        |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| **On-chain-settlement permitted** (3.5)  | The payment class is allowed to settle on-chain for this tenant (else it must route off-chain)                                                              | policy dimension                  |
-| **Agent-counterparty attested** (5.5)    | When the payee is an agent, it is registered + active in `BrainMCPAgentRegistry`                                                                            | `BrainMCPAgentRegistry`           |
-| **x402 payment-context valid** (6.5)     | The x402 `paymentRequirements` (amount, asset = USDC, network = Base, recipient) match the intent                                                           | intent settlement context         |
-| **Escrow-state bound** (6.6)             | For an escrow release, the on-chain `BrainEscrow` lock matches: still `Locked`, enough **remaining** to cover this release, same payee, same `jobTermsHash` | `BrainEscrow.getEscrow` (testnet) |
-| **Micropayment cap within window** (8.5) | Per-agent rolling-window spend stays within the policy envelope (mirrors the on-chain session-key window cap)                                               | `executions`                      |
-
-The on-chain readers for 3.5 / 5.5 / 6.6 / 8.5 are deferred live-wiring; until they are configured those checks stay dormant, so the gate is unchanged for non-settlement payments.
+These persist into the `gate_checks` snapshot on the audit-before event, so the
+full 23-entry trace is part of the verifiable Proof artifact.
 
 Check 11 also enforces the hard human-approval floor for on-chain money
 movement. `onchain_transfer` and `escrow_release` require at least one recorded
@@ -162,4 +155,4 @@ wallet or escrow state, not by an off-chain ledger-account hold.
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>💸 Payment Intents</strong></td><td>The Ledger entity the gate evaluates.</td><td><a href="payment-intents.md">payment-intents.md</a></td><td></td></tr><tr><td><strong>📋 Policy and Permissioning</strong></td><td>The standing rule that runs alongside the flight check.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr><tr><td><strong>🛡️ Audit and Proof</strong></td><td>Where the per-step audit events land.</td><td><a href="audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Payment Intents</strong></td><td>The Ledger entity the gate evaluates.</td><td><a href="payment-intents.md">payment-intents.md</a></td><td></td></tr><tr><td><strong>Policy and Permissioning</strong></td><td>The standing rule that runs alongside the flight check.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr><tr><td><strong>Audit and Proof</strong></td><td>Where the per-step audit events land.</td><td><a href="audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr></tbody></table>

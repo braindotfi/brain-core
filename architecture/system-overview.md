@@ -1,6 +1,6 @@
 # System Overview
 
-Brain is a layered protocol where information flows up and control flows down. Each tenant has its own logical instance of every layer, with hard isolation at the database, KMS, and policy boundaries.
+Brain is a layered protocol where information flows up and control flows down. Each tenant has its own logical instance of every layer, with hard isolation at the database, credential-encryption, and policy boundaries.
 
 ### At a Glance
 
@@ -37,7 +37,7 @@ Brain is a layered protocol where information flows up and control flows down. E
 
 | Component                     | Location                                 | Notes                                                                                          |
 | ----------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **Raw Artifacts**             | Azure Blob                               | Content-addressed, encrypted, tenant-scoped DEKs                                               |
+| **Raw Artifacts**             | Azure Blob                               | Content-addressed, tenant-prefixed object storage                                              |
 | **Ledger Records**            | Postgres                                 | Immutable, append-only with supersedence                                                       |
 | **Wiki Graph and Embeddings** | Postgres + pgvector                      | Updated incrementally                                                                          |
 | **Policy Compiled Form**      | Postgres                                 | Hash-anchored on-chain                                                                         |
@@ -49,16 +49,18 @@ Brain is a layered protocol where information flows up and control flows down. E
 
 ### On-Chain Surface Is Intentionally Small
 
-Brain's on-chain surface is intentionally minimal. **Most logic lives off-chain.** On-chain contracts exist for four narrow purposes:
+Brain's on-chain surface is intentionally minimal. **Most logic lives off-chain.** On-chain contracts exist for six narrow purposes:
 
-| On-Chain Purpose                                         | Contract                |
-| -------------------------------------------------------- | ----------------------- |
-| **Anchor State**                                         | `BrainAuditAnchor`      |
-| **Register Policy Hashes**                               | `BrainPolicyRegistry`   |
-| **Register Agent Identity**                              | `BrainMCPAgentRegistry` |
-| **Enforce Session-Key Scope/Limits and Route Execution** | `BrainSmartAccount`     |
+| On-Chain Purpose                                         | Contract                  |
+| -------------------------------------------------------- | ------------------------- |
+| **Anchor State**                                         | `BrainAuditAnchor`        |
+| **Register Policy Hashes**                               | `BrainPolicyRegistry`     |
+| **Register Agent Identity**                              | `BrainMCPAgentRegistry`   |
+| **Enforce Session-Key Scope/Limits and Route Execution** | `BrainSmartAccount`       |
+| **Custody Conditional Escrow Locks**                     | `BrainEscrow`             |
+| **Publish Reputation Roots**                             | `BrainReputationRegistry` |
 
-All contracts are deployed on Base L2 and written in Solidity 0.8.x, built and tested with Foundry. The contracts are immutable: there is no upgrade path in the MVP, and any change ships as a separately audited redeploy.
+All six contracts are deployed on Base Sepolia today and written in Solidity 0.8.x, built and tested with Foundry. Mainnet deployment is blocked on external audit, bytecode verification, and operator attestation. The contracts are immutable: there is no upgrade path in the MVP, and any change ships as a separately audited redeploy.
 
 [**→ Smart contract overview**](../smart-contracts/overview.md)
 
@@ -91,12 +93,12 @@ does not receive Ledger or execution outbox privileges.
 
 ### Networks
 
-| Network            | Role                                                 |
-| ------------------ | ---------------------------------------------------- |
-| **Base Mainnet**   | Primary execution environment for production tenants |
-| **Base Sepolia**   | Sandbox for development                              |
-| **External Rails** | Bank APIs, processors, custodians (off-chain)        |
+| Network            | Role                                                                               |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| **Base Sepolia**   | Current on-chain execution and proof environment for staging and controlled pilots |
+| **Base Mainnet**   | Planned only after external audit, bytecode verification, and operator attestation |
+| **External Rails** | Bank APIs, processors, custodians (off-chain)                                      |
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📥 Data Flow</strong></td><td>End-to-end walkthrough of an action.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🔒 Tenant Isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>🛡️ Security and Compliance</strong></td><td>Non-negotiable principles.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Data Flow</strong></td><td>End-to-end walkthrough of an action.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>Tenant Isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>Security and Compliance</strong></td><td>Non-negotiable principles.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr></tbody></table>

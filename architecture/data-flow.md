@@ -30,8 +30,8 @@ External event:
 
 Brain action:
   - Verify webhook signature.
-  - Hash payload (SHA-256), encrypt with tenant DEK.
-  - Store in Azure Blob at content-addressed path.
+  - Hash payload (SHA-256).
+  - Store in Azure Blob at a tenant-prefixed, content-addressed path.
   - Emit audit event: source.received
 ```
 
@@ -95,7 +95,7 @@ Policy evaluation:
   - Outcome: ESCALATE_FOR_APPROVAL, approvers=[role:cfo]
 
 Brain action:
-  - Emit policy verdict, signed by Brain policy verifier key.
+  - Persist the policy decision and trace.
   - Notify required approvers.
   - Emit audit event: policy.evaluated
 ```
@@ -108,10 +108,10 @@ Approver input:
   vendor history, prior payments).
 
 Approver action:
-  Approves with EIP-712 signature.
+  Approves through an authenticated member session or linked approval surface.
 
 Brain action:
-  - Record signed approval.
+  - Record the member approval in the database.
   - Move action to executable.
   - Emit audit event: action.approved
 ```
@@ -155,7 +155,7 @@ Audit Layer:
   - Continue building Merkle tree for the current batch.
 
 Anchorer:
-  - Hourly (or immediately for high-severity events):
+  - Hourly:
       Compute Merkle root.
       EIP-712 sign with anchorer key.
       Submit to BrainAuditAnchor on Base L2.
@@ -168,8 +168,8 @@ Every step links back to every previous step.
 
 ```
 Settlement receipt
-   └── Action executed
-         └── Approval signature
+         └── Action executed
+         └── Recorded member approval
                └── Policy verdict (v3)
                      └── Wiki citations
                            └── Ledger records
@@ -184,4 +184,4 @@ There is no point in this flow where Brain holds funds. Money moves directly bet
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔒 Tenant Isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>🛡️ Security and Compliance</strong></td><td>Non-negotiable principles and compliance posture.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr><tr><td><strong>📜 BrainSmartAccount</strong></td><td>The on-chain validator.</td><td><a href="../smart-contracts/brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Tenant Isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr><tr><td><strong>Security and Compliance</strong></td><td>Non-negotiable principles and compliance posture.</td><td><a href="security-and-compliance.md">security-and-compliance.md</a></td><td></td></tr><tr><td><strong>BrainSmartAccount</strong></td><td>The on-chain validator.</td><td><a href="../smart-contracts/brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr></tbody></table>

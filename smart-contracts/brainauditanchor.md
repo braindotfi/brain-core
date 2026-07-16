@@ -4,10 +4,10 @@
 
 | Property          | Value                                                                |
 | ----------------- | -------------------------------------------------------------------- |
-| **Network**       | Base L2                                                              |
+| **Network**       | Base Sepolia today                                                   |
 | **Solidity**      | 0.8.x                                                                |
 | **Pattern**       | Immutable. No upgrade path in MVP; changes ship as audited redeploys |
-| **Anchorer keys** | HSM-protected, rotated on a fixed schedule                           |
+| **Anchorer keys** | Current testnet publisher is a single EOA; HSM is pre-mainnet TODO   |
 
 ### Interface
 
@@ -56,7 +56,7 @@ Off-chain audit log
 | Step | Detail                                                                |
 | ---- | --------------------------------------------------------------------- |
 | 1    | Audit events batch into a Merkle tree per tenant                      |
-| 2    | Anchorer service signs the root with its HSM-backed key               |
+| 2    | Anchorer service signs the root with the current publisher key        |
 | 3    | The signed root is submitted via `anchorRoot()`                       |
 | 4    | Contract emits `RootAnchored`; the root becomes immutably retrievable |
 
@@ -114,7 +114,7 @@ event AnchorerRemoved(address indexed signer);
 
 ### Privacy
 
-Only Merkle roots and hashed `tenantId` values are on-chain. Everything underneath stays off-chain and encrypted in Azure Blob with tenant-scoped DEKs.
+Only Merkle roots and hashed `tenantId` values are on-chain. Everything underneath stays off-chain in tenant-prefixed storage and tenant-scoped database rows. Source credentials use the global AES-256-GCM credential key described in `shared/src/crypto/credential-key-provider.ts`.
 
 | On-chain                  | Off-chain                           |
 | ------------------------- | ----------------------------------- |
@@ -124,4 +124,4 @@ Only Merkle roots and hashed `tenantId` values are on-chain. Everything undernea
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛡️ Audit and Proof</strong></td><td>The conceptual model.</td><td><a href="../protocol/audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>🌐 Audit API</strong></td><td>Retrieve events and proofs over HTTP.</td><td><a href="../api-reference/audit-api.md">audit-api.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Audit and Proof</strong></td><td>The conceptual model.</td><td><a href="../protocol/audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>Audit API</strong></td><td>Retrieve events and proofs over HTTP.</td><td><a href="../api-reference/audit-api.md">audit-api.md</a></td><td></td></tr></tbody></table>

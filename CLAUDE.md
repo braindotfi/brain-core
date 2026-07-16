@@ -2,7 +2,7 @@
 
 Monorepo working notes. Keep current as work lands.
 
-## ⛔ Dev environment. WSL is the single source of truth
+## Dev environment. WSL is the single source of truth
 
 **All work happens in the WSL ext4 clone: `~/work/brain.fi/brain-core`.** Edit, build, run, git, and package-manager commands run there (native Linux, fast, LF endings). The Windows checkout at `C:\Users\sanke\Work\brain.fi\brain-core` is a **READ-ONLY mirror**. It exists only so Claude Desktop (a Windows GUI app that cannot open WSL paths) can read the source.
 

@@ -4,10 +4,10 @@ Brain exposes a **REST + JSON-RPC HTTP surface** and an **MCP server surface**. 
 
 ### Base URLs
 
-| Environment    | URL                            |
-| -------------- | ------------------------------ |
-| **Production** | `https://api.brain.fi`         |
-| **Sandbox**    | `https://api.sandbox.brain.fi` |
+| Environment    | URL                               |
+| -------------- | --------------------------------- |
+| **Production** | `https://api.brain.fi/v1`         |
+| **Sandbox**    | `https://staging-api.brain.fi/v1` |
 
 ### Authentication
 
@@ -16,7 +16,7 @@ Brain exposes a **REST + JSON-RPC HTTP surface** and an **MCP server surface**. 
 | **Humans** | Self-serve email + password, or a linked wallet (SIWX) |
 | **Agents** | SIWX (EIP-4361 over Base) + EIP-712 ScopeAttestations  |
 
-[**→ Authentication reference**](authentication.md)
+[**Authentication reference**](authentication.md)
 
 ### Representative Endpoints
 
@@ -41,7 +41,7 @@ DELETE /v1/tenants/{id}                     // GDPR right-to-erasure (self-tenan
 | Section                   | What's Covered                                                            |
 | ------------------------- | ------------------------------------------------------------------------- |
 | Authentication            | Email + password, SIWX, sessions, scopes                                  |
-| Sources & Raw Ingestion   | Ingest artifacts directly, provider webhooks, inspect & tombstone         |
+| Sources and Raw Ingestion | Ingest artifacts directly, provider webhooks, inspect and tombstone       |
 | Ledger                    | Query transactions, balances, counterparties, invoices, reconcile         |
 | Wiki                      | NL questions, entity browsing, evidence chains, memory pages              |
 | Policy                    | Compose, sign, evaluate, lint, simulate, diff (tenant-scoped)             |
@@ -58,7 +58,7 @@ Every response from Wiki, Policy, and Agent endpoints carries provenance.
 | -------------------- | ---------------------------------------------------------------------------- |
 | `source_ids`         | Raw artifact ids that produced a Ledger row                                  |
 | `evidence_ids`       | Raw-parsed row ids the extractor consulted                                   |
-| `evidence_path`      | Returned by Wiki Q&A: the chain of Raw / Ledger refs the answer rests on     |
+| `evidence_path`      | Returned by Wiki answers: the chain of Raw / Ledger refs the answer rests on |
 | `provenance`         | `extracted`, `inferred`, `ambiguous`, `human_confirmed`, `agent_contributed` |
 | `confidence`         | Calibrated 0–1 score on every derived row                                    |
 | `policy_decision_id` | Policy decision row joined to a PaymentIntent                                |
@@ -130,4 +130,4 @@ All errors share a common shape.
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🪪 Authentication</strong></td><td>Email, wallet, and SIWX in detail.</td><td><a href="authentication.md">authentication.md</a></td><td></td></tr><tr><td><strong>🌐 MCP Surface</strong></td><td>Same primitives, MCP shape.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Authentication</strong></td><td>Email, wallet, and SIWX in detail.</td><td><a href="authentication.md">authentication.md</a></td><td></td></tr><tr><td><strong>MCP Surface</strong></td><td>Same primitives, MCP shape.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr></tbody></table>

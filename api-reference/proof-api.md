@@ -67,7 +67,7 @@ Three independent paths to the same conclusion:
 
 | Method                       | Description                                                                                   |
 | ---------------------------- | --------------------------------------------------------------------------------------------- |
-| **SDK helper**               | `verifyMerkleProof(...)` from `@brain/sdk`. No Brain account required                         |
+| **SDK helper**               | `verifyMerkleProof(...)` from `@brainfinance/sdk`. No Brain account required                  |
 | **On-chain call**            | `BrainAuditAnchor.verify(tenantId, batchIndex, leaf, merkleProof)` from any Solidity contract |
 | **Public verifier endpoint** | `POST /v1/audit/verify`. Supply event hash, Merkle proof, and claimed root                    |
 
@@ -84,4 +84,4 @@ Returns `text/html` with the same data laid out for human reading. Same tenant-i
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📜 Audit API</strong></td><td>Underlying events, anchors, exports.</td><td><a href="audit-api.md">audit-api.md</a></td><td></td></tr><tr><td><strong>🚪 The Pre-Execution Gate</strong></td><td>What the gate-check rows mean.</td><td><a href="../protocol/the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>📜 Audit and Proof</strong></td><td>The conceptual model.</td><td><a href="../protocol/audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Audit API</strong></td><td>Underlying events, anchors, exports.</td><td><a href="audit-api.md">audit-api.md</a></td><td></td></tr><tr><td><strong>The Pre-Execution Gate</strong></td><td>What the gate-check rows mean.</td><td><a href="../protocol/the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>Audit and Proof</strong></td><td>The conceptual model.</td><td><a href="../protocol/audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr></tbody></table>

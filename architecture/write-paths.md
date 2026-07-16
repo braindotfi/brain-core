@@ -53,13 +53,13 @@ External agents with `raw:write` scope can push artifacts into the Raw layer. St
 
 Agents create PaymentIntent rows in the Ledger as proposals for financial actions. PaymentIntents are the only Ledger-write path that does not originate from a Raw extraction.
 
-| Property            | Value                                                     |
-| ------------------- | --------------------------------------------------------- |
-| **Originates from** | Internal or external agents                               |
-| **Writes to**       | Ledger (`ledger_payment_intents`)                         |
-| **Required scope**  | `payment_intent:propose` (for external agents)            |
-| **Service method**  | `PaymentIntentService.create()` (shared by HTTP and MCP)  |
-| **Lifecycle gates** | Policy → Approval → pre-execution gate (13 + 4 hardening) |
+| Property            | Value                                                                            |
+| ------------------- | -------------------------------------------------------------------------------- |
+| **Originates from** | Internal or external agents                                                      |
+| **Writes to**       | Ledger (`ledger_payment_intents`)                                                |
+| **Required scope**  | `payment_intent:propose` (for external agents)                                   |
+| **Service method**  | `PaymentIntentService.create()` (shared by HTTP and MCP)                         |
+| **Lifecycle gates** | Policy → Approval → pre-execution gate (13 numbered + 10 hardening = 23 entries) |
 
 [**→ Payment Intents**](../protocol/payment-intents.md)
 
@@ -136,4 +136,4 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🏗️ System Overview</strong></td><td>The full architecture top-down.</td><td><a href="system-overview.md">system-overview.md</a></td><td></td></tr><tr><td><strong>🌊 Data Flow</strong></td><td>How a single source-of-truth event ripples up.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>🛡️ Tenant Isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>System Overview</strong></td><td>The full architecture top-down.</td><td><a href="system-overview.md">system-overview.md</a></td><td></td></tr><tr><td><strong>Data Flow</strong></td><td>How a single source-of-truth event ripples up.</td><td><a href="data-flow.md">data-flow.md</a></td><td></td></tr><tr><td><strong>Tenant Isolation</strong></td><td>How tenants are separated at every layer.</td><td><a href="tenant-isolation.md">tenant-isolation.md</a></td><td></td></tr></tbody></table>

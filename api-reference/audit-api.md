@@ -89,7 +89,7 @@ Authorization: Bearer <token>
 ### Query Events
 
 ```http
-GET /v1/audit/events?layer=agent&actor=ag_payment_v1&since=2026-05-01&until=2026-05-28&limit=100
+GET /v1/audit/events?layer=agent
 Authorization: Bearer <token>
 ```
 
@@ -114,7 +114,9 @@ Content-Type: application/json
 { "verified": true, "onchain_block": 8829110 }
 ```
 
-Brain also publishes a `verifyMerkleProof(...)` helper in `@brain/sdk` and an on-chain `BrainAuditAnchor.verify(...)` view function. Three independent paths to the same conclusion.
+Brain also publishes a `verifyMerkleProof(...)` helper in `@brainfinance/sdk`
+and an on-chain `BrainAuditAnchor.verify(...)` view function. Three independent
+paths to the same conclusion.
 
 ### Export
 
@@ -143,8 +145,8 @@ Poll `status_url` until the job is ready (the URL is returned by the API; the sp
 
 For investor / compliance / counterparty use cases, the flagship artifact is the per-action **Proof**. Assembled from the §6 gate trace, evidence chain, policy decision, and anchored audit Merkle chain. It has its own page so this one can stay focused on raw events and anchors.
 
-[**→ Proof API**](proof-api.md)
+[**Proof API**](proof-api.md)
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📜 Proof API</strong></td><td>The per-action trust artifact.</td><td><a href="proof-api.md">proof-api.md</a></td><td></td></tr><tr><td><strong>📜 Audit Concepts</strong></td><td>How the hash chain and Merkle anchoring work.</td><td><a href="../protocol/audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>📜 BrainAuditAnchor</strong></td><td>The on-chain anchor contract.</td><td><a href="../smart-contracts/brainauditanchor.md">brainauditanchor.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Proof API</strong></td><td>The per-action trust artifact.</td><td><a href="proof-api.md">proof-api.md</a></td><td></td></tr><tr><td><strong>Audit Concepts</strong></td><td>How the hash chain and Merkle anchoring work.</td><td><a href="../protocol/audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>BrainAuditAnchor</strong></td><td>The on-chain anchor contract.</td><td><a href="../smart-contracts/brainauditanchor.md">brainauditanchor.md</a></td><td></td></tr></tbody></table>

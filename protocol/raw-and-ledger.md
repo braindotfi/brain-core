@@ -20,14 +20,17 @@ The Raw Layer ingests financial evidence verbatim from authorized sources.
 
 #### Storage Rules
 
-Artifacts are content-addressed by SHA-256, encrypted with tenant-scoped DEKs, and stored in Azure Blob.
+Artifacts are content-addressed by SHA-256 and stored under tenant-prefixed Azure
+Blob paths. Source credentials, not every raw artifact, are encrypted at the
+application boundary with the global AES-256-GCM source-credential key from
+`shared/src/crypto/credential-key-provider.ts`.
 
-| Property       | Value                                             |
-| -------------- | ------------------------------------------------- |
-| **Identifier** | `sha256:<hex>` over canonical bytes               |
-| **Encryption** | AES-256-GCM with tenant-scoped DEK                |
-| **Storage**    | Azure Blob with versioning and lifecycle policies |
-| **Retention**  | Per-tenant, configurable per source               |
+| Property       | Value                                                               |
+| -------------- | ------------------------------------------------------------------- |
+| **Identifier** | `sha256:<hex>` over canonical bytes                                 |
+| **Encryption** | Source credentials use AES-256-GCM with a global key today          |
+| **Storage**    | Azure Blob with versioning, tenant prefixes, and lifecycle policies |
+| **Retention**  | Per-tenant, configurable per source                                 |
 
 {% hint style="info" %}
 **Nothing is interpreted at this layer.** The Raw Layer's only job is to be a lossless, replayable record. If the extraction logic changes, every higher layer can be rebuilt deterministically from Raw.
@@ -91,4 +94,4 @@ This is the same separation that exists in any serious system between the databa
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🧠 The Wiki</strong></td><td>The memory graph that reasons over the Ledger.</td><td><a href="the-wiki.md">the-wiki.md</a></td><td></td></tr><tr><td><strong>🛡️ Audit and Proof</strong></td><td>How every Ledger change gets a verifiable history.</td><td><a href="audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>🌐 Sources API</strong></td><td>Connect a source through the API.</td><td><a href="../api-reference/sources-api.md">sources-api.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>The Wiki</strong></td><td>The memory graph that reasons over the Ledger.</td><td><a href="the-wiki.md">the-wiki.md</a></td><td></td></tr><tr><td><strong>Audit and Proof</strong></td><td>How every Ledger change gets a verifiable history.</td><td><a href="audit-and-proof.md">audit-and-proof.md</a></td><td></td></tr><tr><td><strong>Sources API</strong></td><td>Connect a source through the API.</td><td><a href="../api-reference/sources-api.md">sources-api.md</a></td><td></td></tr></tbody></table>

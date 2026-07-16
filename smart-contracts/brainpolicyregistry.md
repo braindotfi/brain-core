@@ -112,16 +112,18 @@ Revoking a version disables it immediately. The tenant must register a new activ
 (uint64 version, bytes32 hash) = registry.activePolicy(tenantId);
 ```
 
-`BrainSmartAccount` uses this lookup during UserOp validation: the policy verdict attached to the UserOp must reference the active version's hash, or the UserOp is rejected.
+`BrainSmartAccount` uses this lookup during `executeViaSessionKey`: the policy
+version bound to the session key must reference the active version's hash, or
+the call is rejected.
 
 ### Versioning Rules
 
-| Rule                                                                            | Detail                            |
-| ------------------------------------------------------------------------------- | --------------------------------- |
-| `version` must increase                                                         | Replays of older versions revert  |
-| `notBefore` must be in the future                                               | At submission time                |
-| `notAfter` must be after `notBefore`                                            | Validity window must be non-empty |
-| Active policy is the highest non-revoked version with a current validity window | Resolved on every UserOp          |
+| Rule                                                                            | Detail                             |
+| ------------------------------------------------------------------------------- | ---------------------------------- |
+| `version` must increase                                                         | Replays of older versions revert   |
+| `notBefore` must be in the future                                               | At submission time                 |
+| `notAfter` must be after `notBefore`                                            | Validity window must be non-empty  |
+| Active policy is the highest non-revoked version with a current validity window | Resolved on every session-key call |
 
 ### Privacy
 
@@ -135,4 +137,4 @@ The on-chain footprint is intentionally minimal. The hash commits to the policy 
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>📋 Policy and Permissioning</strong></td><td>The conceptual model.</td><td><a href="../protocol/policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr><tr><td><strong>🌐 Policy API</strong></td><td>HTTP reference for policy operations.</td><td><a href="../api-reference/policy-api.md">policy-api.md</a></td><td></td></tr><tr><td><strong>🔐 BrainSmartAccount</strong></td><td>How policy verdicts are validated on UserOps.</td><td><a href="brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Policy and Permissioning</strong></td><td>The conceptual model.</td><td><a href="../protocol/policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr><tr><td><strong>Policy API</strong></td><td>HTTP reference for policy operations.</td><td><a href="../api-reference/policy-api.md">policy-api.md</a></td><td></td></tr><tr><td><strong>BrainSmartAccount</strong></td><td>How policy versions are validated on session-key calls.</td><td><a href="brainsmartaccount.md">brainsmartaccount.md</a></td><td></td></tr></tbody></table>

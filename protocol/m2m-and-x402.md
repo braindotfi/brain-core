@@ -30,9 +30,9 @@ x402 is the right primitive when the payee is verifiable in real time (a service
 
 The payee in an M2M payment is _another agent_, not a vendor. Brain models this as an **agent counterparty**. A counterparty whose `type` is `agent` (or `wallet` with an attestation linking it to a registered agent in [`BrainMCPAgentRegistry`](../smart-contracts/brainmcpagentregistry.md)). The §6 gate's check 5.5 verifies that an agent payee is registered + active before any M2M settlement runs.
 
-### The 5 Dormant §6 Checks for M2M
+### The 5 M2M §6 Checks
 
-Five gate checks were added at non-canonical positions specifically for M2M. They are **dormant-until-wired**: each adds a row only when the `PaymentIntent` carries the relevant settlement/escrow context **and** its on-chain loader is configured. For non-settlement payments (every ACH, wire, card_payment) the canonical 13-numbered + 4-hardening path is unchanged.
+Five gate checks were added at non-canonical positions specifically for M2M. They are active when the `PaymentIntent` carries the relevant settlement or escrow context and the needed loader is configured. For non-settlement payments, they record `not_applicable` or do not add a row as defined by the shared gate. The full gate is the canonical 13 numbered checks plus 10 hardening additions.
 
 | Check                                    | What It Enforces                                                                                                                                            |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -42,7 +42,7 @@ Five gate checks were added at non-canonical positions specifically for M2M. The
 | **Escrow-state bound** (6.6)             | For an escrow release, the on-chain `BrainEscrow` lock matches: still `Locked`, enough **remaining** to cover this release, same payee, same `jobTermsHash` |
 | **Micropayment cap within window** (8.5) | Per-agent rolling-window spend stays within the policy envelope (mirrors the on-chain session-key window cap)                                               |
 
-See [The Pre-Execution Gate](the-pre-execution-gate.md) for the canonical 13 + 4 plus how the M2M extensions snap in.
+See [The Pre-Execution Gate](the-pre-execution-gate.md) for the full 23-entry gate trace.
 
 ### Reputation as a Tightener, Never a Gate
 
@@ -69,4 +69,4 @@ This is what makes M2M commerce on Brain _auditable_ in the same shape as everyt
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>💸 Payment Intents</strong></td><td>The Ledger entity x402_settle and escrow_release flow through.</td><td><a href="payment-intents.md">payment-intents.md</a></td><td></td></tr><tr><td><strong>🚪 The Pre-Execution Gate</strong></td><td>The canonical 13 + 4, plus the M2M extensions.</td><td><a href="the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>📜 Escrow and x402</strong></td><td>The on-chain contracts.</td><td><a href="../smart-contracts/escrow-and-x402.md">escrow-and-x402.md</a></td><td></td></tr><tr><td><strong>📜 BrainReputationRegistry</strong></td><td>The reputation pointer contract.</td><td><a href="../smart-contracts/brainreputationregistry.md">brainreputationregistry.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Payment Intents</strong></td><td>The Ledger entity x402_settle and escrow_release flow through.</td><td><a href="payment-intents.md">payment-intents.md</a></td><td></td></tr><tr><td><strong>The Pre-Execution Gate</strong></td><td>The 23-entry gate trace, including the M2M checks.</td><td><a href="the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>Escrow and x402</strong></td><td>The on-chain contracts.</td><td><a href="../smart-contracts/escrow-and-x402.md">escrow-and-x402.md</a></td><td></td></tr><tr><td><strong>BrainReputationRegistry</strong></td><td>The reputation pointer contract.</td><td><a href="../smart-contracts/brainreputationregistry.md">brainreputationregistry.md</a></td><td></td></tr></tbody></table>
