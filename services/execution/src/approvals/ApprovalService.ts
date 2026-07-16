@@ -205,7 +205,7 @@ export class ApprovalService implements IApprovalService {
       );
       return {
         row: approvalRow,
-        quorumMet: requiredRoles.every((requiredRole) => signed.has(requiredRole)),
+        quorumMet: hasRequiredRoleQuorum(requiredRoles, signed),
       };
     });
 
@@ -246,8 +246,7 @@ export class ApprovalService implements IApprovalService {
     if (requiredRoles.length === 0) return true;
     // P0.4: only currently-valid (not stale / not revoked) signatures count.
     const roles = await this.signedValidRoles(ctx, subject, null);
-    const signed = new Set(roles);
-    return requiredRoles.every((r) => signed.has(r));
+    return hasRequiredRoleQuorum(requiredRoles, new Set(roles));
   }
 
   /**
@@ -286,6 +285,22 @@ export class ApprovalService implements IApprovalService {
   ): Promise<string[]> {
     return this.signedValidRoles(ctx, subject, null);
   }
+}
+
+function hasRequiredRoleQuorum(
+  requiredRoles: readonly string[],
+  signedRoles: ReadonlySet<string>,
+): boolean {
+  const available = new Set(signedRoles);
+  let signerSlots = 0;
+  for (const requiredRole of requiredRoles) {
+    if (requiredRole === "signer") {
+      signerSlots += 1;
+      continue;
+    }
+    if (!available.delete(requiredRole)) return false;
+  }
+  return available.size >= signerSlots;
 }
 
 function toRecord(row: {

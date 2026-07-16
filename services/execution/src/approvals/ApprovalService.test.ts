@@ -155,6 +155,32 @@ describe("ApprovalService quorum (P0.4)", () => {
     ).toBe(false);
   });
 
+  it("treats signer sentinel as any distinct concrete approver role", async () => {
+    const validRows = [
+      row({ approver_role: "cfo" }),
+      row({ id: "appr_2", approver_role: "controller" }),
+    ];
+    const { deps: d } = deps(fakePool({ validRows }));
+    const svc = new ApprovalService(d);
+    expect(
+      await svc.hasRequiredApprovals(ctx, { type: "proposal", id: "prop_1" }, [
+        "signer",
+        "signer",
+      ]),
+    ).toBe(true);
+  });
+
+  it("does not let one concrete role satisfy two signer slots", async () => {
+    const { deps: d } = deps(fakePool({ validRows: [row({ approver_role: "cfo" })] }));
+    const svc = new ApprovalService(d);
+    expect(
+      await svc.hasRequiredApprovals(ctx, { type: "proposal", id: "prop_1" }, [
+        "signer",
+        "signer",
+      ]),
+    ).toBe(false);
+  });
+
   it("(7) signatures against a superseded policy version do not count (stale)", async () => {
     // The DB-side markStale + version filter is exercised in CI; here the fake
     // returns only the version-matching valid rows, so a stale-only subject
@@ -193,6 +219,24 @@ describe("ApprovalService.signAndCheckRequiredApprovals", () => {
       ctx,
       { type: "payment_intent", id: "pi_1" },
       ["cfo", "ceo"],
+      "cfo",
+    );
+
+    expect(result.quorumMet).toBe(true);
+  });
+
+  it("returns true when signer sentinel quorum has distinct concrete roles", async () => {
+    const validRows = [
+      row({ approver_role: "cfo" }),
+      row({ id: "appr_2", approver_role: "controller" }),
+    ];
+    const { deps: d } = deps(fakePool({ existing: null, validRows }));
+    const svc = new ApprovalService(d);
+
+    const result = await svc.signAndCheckRequiredApprovals(
+      ctx,
+      { type: "proposal", id: "prop_1" },
+      ["signer", "signer"],
       "cfo",
     );
 
