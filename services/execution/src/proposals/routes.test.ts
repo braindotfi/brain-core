@@ -16,6 +16,7 @@ import { registerPaymentIntentRoutes } from "../payment-intents/routes.js";
 import type { PaymentIntentService } from "../payment-intents/PaymentIntentService.js";
 import { getPaymentIntentAgent } from "./read-model.js";
 import { registerProposalReadRoutes } from "./routes.js";
+import { ProposalDecisionService } from "./decision-service.js";
 
 const TENANT_A = newTenantId();
 const TENANT_B = newTenantId();
@@ -291,6 +292,32 @@ describe("GET /payment-intents/:id?expand=agent", () => {
       kind: "internal",
       display_name: "Payment Agent",
     });
+    await app.close();
+  });
+});
+
+describe("POST /proposals/:id/decide", () => {
+  it("requires a relevant scope before invoking the decision service", async () => {
+    const pool = fakePool({ [TENANT_A]: [] });
+    const app = Fastify();
+    await app.register(requestIdPlugin);
+    await app.register(errorHandlerPlugin);
+    app.addHook("preHandler", async (request) => {
+      request.principal = principal(TENANT_A, []);
+    });
+    const decisions = Object.create(ProposalDecisionService.prototype) as ProposalDecisionService;
+    decisions.decide = vi.fn();
+    await registerProposalReadRoutes(app, { pool, decisions });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/proposals/${PROP_1}/decide`,
+      payload: { decision: "acknowledge" },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe("auth_scope_insufficient");
+    expect(decisions.decide).not.toHaveBeenCalled();
     await app.close();
   });
 });

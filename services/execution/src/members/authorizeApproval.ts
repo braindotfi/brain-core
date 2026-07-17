@@ -1,4 +1,4 @@
-import type { ActorContext, ApprovalDomain, MemberAuthority } from "./types.js";
+import type { ActorContext, ApprovalDomain, MemberAuthority, MemberRole } from "./types.js";
 
 export type ApprovalRejectionReason =
   | "actor_unresolved"
@@ -45,7 +45,7 @@ export function authorizeApproval(input: AuthorizeApprovalInput): ApprovalAuthor
   if (!member.active) {
     return reject("actor_inactive", { member_id: member.id });
   }
-  if (member.role !== "admin" && member.role !== "approver") {
+  if (!isApprovalCapableRole(member.role)) {
     return reject("domain_not_authorized", { member_id: member.id, role: member.role });
   }
   if (!member.approvalDomains.includes(proposal.domain)) {
@@ -103,6 +103,10 @@ export function authorizeApproval(input: AuthorizeApprovalInput): ApprovalAuthor
     requiredDistinctApprovals > 1 && existing.size + 1 < requiredDistinctApprovals;
 
   return { allowed: true, requiresAdditionalApproval, approverRole: member.role };
+}
+
+export function isApprovalCapableRole(role: MemberRole): role is "admin" | "approver" {
+  return role === "admin" || role === "approver";
 }
 
 export function paymentIntentApprovalDomain(
