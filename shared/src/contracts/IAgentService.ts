@@ -58,7 +58,16 @@ export interface ProposalRecord {
   proposing_agent_id: string;
   action: Record<string, unknown>;
   policy_decision_id: string;
-  status: "pending" | "approved" | "rejected" | "executed" | "failed";
+  status:
+    | "pending"
+    | "approved"
+    | "acknowledged"
+    | "reconciling"
+    | "rejected"
+    | "executed"
+    | "failed"
+    | "undone"
+    | "unknown";
   approvers_signed: string[];
   created_at: string;
 }

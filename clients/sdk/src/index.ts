@@ -81,6 +81,14 @@ export {
 } from "./resources/payments.js";
 
 export {
+  ProposalsResource,
+  type AgentOutputProposal,
+  type ListProposalsParams,
+  type ProposalDecision,
+  type ProposalDecisionResult,
+} from "./resources/proposals.js";
+
+export {
   ActionsResource,
   type ApproveProposalParams,
   type EscalateProposalParams,

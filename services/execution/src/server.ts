@@ -102,6 +102,7 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     audit: opts.deps.audit,
     outbox,
     approvals,
+    ...(opts.deps.actorResolver !== undefined ? { actorResolver: opts.deps.actorResolver } : {}),
     resolveAgent: opts.deps.resolveAgent,
     resolveAccount: opts.deps.resolveAccount,
     resolveCounterparty: opts.deps.resolveCounterparty,
@@ -151,7 +152,19 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     opts.deps.resolveInvoiceShortcut,
     (ctx, id) => getPaymentIntentAgent(opts.deps.pool, ctx, id),
   );
-  await registerProposalReadRoutes(app, { pool: opts.deps.pool });
+  await registerProposalReadRoutes(app, {
+    pool: opts.deps.pool,
+    ...(opts.deps.actorResolver !== undefined
+      ? {
+          decisions: {
+            pool: opts.deps.pool,
+            audit: opts.deps.audit,
+            actorResolver: opts.deps.actorResolver,
+            paymentIntents,
+          },
+        }
+      : {}),
+  });
 
   // v0.3 canonical /actions/* routes — share the same PaymentIntentService.
   await registerActionRoutes(app, paymentIntents);

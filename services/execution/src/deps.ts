@@ -20,6 +20,7 @@ import type {
 import type { Pool } from "pg";
 import type { RailRegistry } from "./rails/stubs.js";
 import type { ResolvedInvoiceShortcut } from "./payment-intents/invoice-shortcut.js";
+import type { ActorResolver } from "./members/ActorResolver.js";
 
 export interface ExecutionDeps {
   pool: Pool;
@@ -74,6 +75,9 @@ export interface ExecutionDeps {
 
   /** Maps a principal id to a role name (for ApprovalService). Caller-supplied. */
   resolveRole: (ctx: ServiceCallContext, principalId: string) => Promise<string | null>;
+
+  /** Resolves authenticated principals to active members for approval and proposal decisions. */
+  actorResolver?: ActorResolver;
 
   // -- P0.4 approver/quorum hardening hooks (optional; wired in main.ts) -----
 

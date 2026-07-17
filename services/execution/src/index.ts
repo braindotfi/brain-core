@@ -138,6 +138,13 @@ export type {
   PaymentIntentAgentResolver,
 } from "./payment-intents/routes.js";
 export { registerProposalReadRoutes } from "./proposals/routes.js";
+export {
+  ProposalDecisionService,
+  PROPOSAL_DECISIONS,
+  type ProposalDecision,
+  type ProposalDecisionResult,
+  type ProposalDecisionServiceDeps,
+} from "./proposals/decision-service.js";
 export type {
   ListProposalsInput,
   ListProposalsResult,
