@@ -85,7 +85,9 @@ describe("vendorRiskHandler branches", () => {
       expect(proposed.action.type).toBe("block_payment");
       expect(proposed.action.counterparty_id).toBe("cp_1");
       expect(proposed.action.payment_destination).toBe("dest_1");
-      expect(proposed.action.evidence_refs).toEqual(["hist_1"]);
+      expect(proposed.action.evidence_refs).toEqual([
+        { kind: "counterparty_history", ref: "hist_1" },
+      ]);
     }
   });
 

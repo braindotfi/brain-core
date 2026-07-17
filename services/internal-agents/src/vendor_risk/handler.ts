@@ -1,4 +1,5 @@
 import {
+  evidenceRefsForAction,
   readString,
   type HandlerInput,
   type InternalAgentHandler,
@@ -33,7 +34,7 @@ export const vendorRiskHandler: InternalAgentHandler = {
         type: action,
         counterparty_id: readString(input.context.counterparty_id) || null,
         payment_destination: readString(input.context.payment_destination) || null,
-        evidence_refs: input.evidence.items.map((i) => i.ref),
+        evidence_refs: evidenceRefsForAction(input.evidence.items),
       },
     };
   },

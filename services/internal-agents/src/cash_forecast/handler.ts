@@ -1,5 +1,6 @@
 import {
   agentProposal,
+  evidenceRefsForAction,
   type HandlerInput,
   type InternalAgentHandler,
   type ProposedAction,
@@ -24,7 +25,7 @@ export const cashForecastHandler: InternalAgentHandler = {
           report: {
             kind: "cash_forecast",
             basis: "ledger_balances",
-            evidence_refs: input.evidence.items.map((i) => i.ref),
+            evidence_refs: evidenceRefsForAction(input.evidence.items),
           },
         },
       };

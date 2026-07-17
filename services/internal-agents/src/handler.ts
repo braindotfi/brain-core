@@ -17,7 +17,7 @@ import type {
   ServiceCallContext,
 } from "@brain/shared";
 import { brainError } from "@brain/shared";
-import type { EvidenceBundle } from "./evidence.js";
+import type { EvidenceBundle, EvidenceRef } from "./evidence.js";
 
 export type ProposedAction =
   | { readonly channel: "agent"; readonly action: Record<string, unknown> }
@@ -97,9 +97,15 @@ export function agentProposal(input: HandlerInput): ProposedAction {
       type: input.action,
       invoice_id: str(input.context.invoice_id) || null,
       counterparty_id: str(input.context.counterparty_id) || null,
-      evidence_refs: input.evidence.items.map((i) => i.ref),
+      evidence_refs: evidenceRefsForAction(input.evidence.items),
     },
   };
+}
+
+export function evidenceRefsForAction(
+  items: readonly EvidenceRef[],
+): Array<{ kind: string; ref: string }> {
+  return items.map((item) => ({ kind: item.kind, ref: item.ref }));
 }
 
 export { str as readString };

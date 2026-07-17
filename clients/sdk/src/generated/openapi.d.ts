@@ -3649,10 +3649,12 @@ export interface components {
             display_name: string;
         };
         ProposalEvidenceRef: {
-            /** @description Wiki entity id resolvable through `GET /v1/wiki/entity/{id}`. */
-            id: string;
-            /** @enum {string} */
-            type: "wiki_entity";
+            /** @description Stored evidence kind, for example `invoice`, `counterparty`, `transaction`, `document`, `policy`, `agent`, or `unknown`. */
+            kind: string;
+            /** @description Stored evidence reference. Never a `brain://` placeholder. */
+            ref: string;
+            /** @description True only when the ref has a read path today. Currently, valid `ent_...` Wiki policy or agent refs resolve through `GET /v1/wiki/entity/{id}`. Ledger domain refs and document refs are returned with `resolvable=false` until their read endpoints are wired into this surface. */
+            resolvable: boolean;
         };
         AgentOutputProposal: {
             id: string;
@@ -3665,7 +3667,7 @@ export interface components {
             mode: components["schemas"]["ProposalMode"];
             /** @description Grounded human-readable summary when the stored output has one. */
             narrative: string | null;
-            /** @description Empty when the stored output has no resolvable Wiki entity evidence. */
+            /** @description Stored evidence refs. Unresolvable refs are returned with `resolvable=false` rather than dropped or fabricated. */
             evidence: components["schemas"]["ProposalEvidenceRef"][];
             agent: components["schemas"]["ProposalAgent"] | null;
             payment_intent_id: string | null;
