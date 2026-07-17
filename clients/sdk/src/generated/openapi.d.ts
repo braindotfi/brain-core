@@ -1850,9 +1850,10 @@ export interface paths {
          * List typed agent-output proposals
          * @description Requires `execution:read`. Cursor-paginated, tenant-scoped read model
          *     over agent-created PaymentIntents and non-financial agent proposals.
-         *     Evidence refs are only returned when they resolve through
-         *     `GET /v1/wiki/entity/{id}`. Unknown, placeholder, or non-Wiki evidence
-         *     ids are omitted rather than fabricated.
+         *     Evidence refs are returned as typed domain refs. Valid `ent_...` Wiki
+         *     policy or agent refs resolve through `GET /v1/wiki/entity/{id}`.
+         *     Domain refs without a read path are still returned with
+         *     `resolvable=false`. `brain://` placeholders are never emitted.
          */
         get: operations["listProposals"];
         put?: never;
@@ -1879,6 +1880,37 @@ export interface paths {
         get: operations["getProposal"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proposals/{id}/decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide a proposal
+         * @description Lets a member-resolvable human decide a money or non-money proposal.
+         *     Body actor fields are ignored. Session identity is resolved only from
+         *     authenticated server context. Agent principals are propose-only and
+         *     receive `403 actor_unresolved`.
+         *
+         *     For money-path proposals, `approve` and `reject` delegate to the
+         *     PaymentIntent approval lifecycle so the full member authority chain and
+         *     human-approval floors run. For non-money proposals, `acknowledge`
+         *     terminally records a human saw a `notify_only` proposal, while `undo`
+         *     reverses a reversible not-yet-executed agent decision. Every new
+         *     decision emits an immutable `proposal.decided` audit event. A repeated
+         *     already-terminal decision is idempotent and does not re-audit.
+         */
+        post: operations["decideProposal"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3355,8 +3387,23 @@ export interface components {
             }[];
             policy_version?: number;
         };
+        /**
+         * @description Complete proposal read status enum. Clients that see `unknown` must
+         *     refetch and never assume success.
+         * @enum {string}
+         */
+        ProposalStatus: "proposed" | "pending" | "pending_approval" | "awaiting_second_approval" | "approved" | "acknowledged" | "reconciling" | "paused" | "dispatching" | "rejected" | "executed" | "failed" | "cancelled" | "undone" | "unknown";
         /** @enum {string} */
-        ProposalStatus: "pending" | "approved" | "rejected" | "executed" | "failed" | "expired";
+        ProposalDecision: "approve" | "reject" | "acknowledge" | "undo";
+        ProposalDecisionResult: {
+            id: string;
+            decision: components["schemas"]["ProposalDecision"];
+            status: components["schemas"]["ProposalStatus"];
+            /** @description Existing or newly written `proposal.decided` audit event id. */
+            audit_id: string | null;
+            /** @description Present when the decision was delegated to the PaymentIntent lifecycle. */
+            payment_intent_id: string | null;
+        };
         Proposal: {
             id?: string;
             tenant_id?: string;
@@ -3661,7 +3708,7 @@ export interface components {
             type: components["schemas"]["ProposalType"];
             /** Format: date-time */
             created_at: string;
-            status: string;
+            status: components["schemas"]["ProposalStatus"];
             risk_band: components["schemas"]["ProposalRiskBand"] | null;
             confidence: number | null;
             mode: components["schemas"]["ProposalMode"];
@@ -3687,8 +3734,12 @@ export interface components {
             currency: string;
             obligation_id?: string | null;
             invoice_id?: string | null;
-            /** @enum {string} */
-            status: "proposed" | "pending_approval" | "approved" | "rejected" | "executed" | "failed" | "cancelled";
+            /**
+             * @description Complete PaymentIntent status enum. Clients that see `unknown`
+             *     must refetch and never assume success.
+             * @enum {string}
+             */
+            status: "proposed" | "pending_approval" | "awaiting_second_approval" | "approved" | "paused" | "dispatching" | "rejected" | "executed" | "failed" | "cancelled" | "reconciling" | "unknown";
             policy_decision_id?: string | null;
             approval_ids?: string[];
             execution_receipt_ids?: string[];
@@ -7410,7 +7461,46 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             403: components["responses"]["Forbidden"];
-            /** @description No proposal exists for this tenant. Error code `proposal_not_found`. */
+            /** @description No proposal exists for this tenant. Error code `execution_proposal_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    decideProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    decision: components["schemas"]["ProposalDecision"];
+                };
+            };
+        };
+        responses: {
+            /** @description Decision recorded or idempotently returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalDecisionResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description No proposal exists for this tenant. Error code `execution_proposal_not_found`. */
             404: {
                 headers: {
                     [name: string]: unknown;

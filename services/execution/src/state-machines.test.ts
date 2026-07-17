@@ -12,7 +12,17 @@ import {
   type ProposalState,
 } from "./state-machines.js";
 
-const PROP: ProposalState[] = ["pending", "approved", "rejected", "executed", "failed"];
+const PROP: ProposalState[] = [
+  "pending",
+  "approved",
+  "acknowledged",
+  "reconciling",
+  "rejected",
+  "executed",
+  "failed",
+  "undone",
+  "unknown",
+];
 const EXEC: ExecutionState[] = ["dispatched", "in_flight", "completed", "failed"];
 const AGENT: AgentState[] = ["pending_onchain", "active", "revoked", "failed", "quarantined"];
 

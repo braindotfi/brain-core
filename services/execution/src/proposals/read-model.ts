@@ -35,12 +35,16 @@ const STATUSES = [
   "pending_approval",
   "awaiting_second_approval",
   "approved",
+  "acknowledged",
+  "reconciling",
   "paused",
   "dispatching",
   "rejected",
   "executed",
   "failed",
   "cancelled",
+  "undone",
+  "unknown",
 ] as const;
 const STATUS_SET: ReadonlySet<string> = new Set(STATUSES);
 
@@ -286,6 +290,7 @@ async function queryProposalRows(
        FROM ledger_payment_intents pi
        LEFT JOIN agents a ON a.id = pi.created_by_agent_id AND a.tenant_id = pi.owner_id
        WHERE pi.created_by_agent_id IS NOT NULL
+         AND pi.owner_id = current_setting('app.tenant_id', true)
        UNION ALL
        SELECT
          p.id,
@@ -318,6 +323,7 @@ async function queryProposalRows(
          NULL::text AS action_type
        FROM proposals p
        LEFT JOIN agents a ON a.id = p.proposing_agent AND a.tenant_id = p.tenant_id
+       WHERE p.tenant_id = current_setting('app.tenant_id', true)
      )
      SELECT * FROM unified
      ${where}

@@ -3303,9 +3303,10 @@ paths:
       description: |
         Requires `execution:read`. Cursor-paginated, tenant-scoped read model
         over agent-created PaymentIntents and non-financial agent proposals.
-        Evidence refs are only returned when they resolve through
-        `GET /v1/wiki/entity/{id}`. Unknown, placeholder, or non-Wiki evidence
-        ids are omitted rather than fabricated.
+        Evidence refs are returned as typed domain refs. Valid `ent_...` Wiki
+        policy or agent refs resolve through `GET /v1/wiki/entity/{id}`.
+        Domain refs without a read path are still returned with
+        `resolvable=false`. `brain://` placeholders are never emitted.
       operationId: listProposals
       parameters:
         - name: type
@@ -3365,7 +3366,53 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
-          description: No proposal exists for this tenant. Error code `proposal_not_found`.
+          description: No proposal exists for this tenant. Error code `execution_proposal_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /proposals/{id}/decide:
+    post:
+      tags: [Proposals]
+      summary: Decide a proposal
+      description: |
+        Lets a member-resolvable human decide a money or non-money proposal.
+        Body actor fields are ignored. Session identity is resolved only from
+        authenticated server context. Agent principals are propose-only and
+        receive `403 actor_unresolved`.
+
+        For money-path proposals, `approve` and `reject` delegate to the
+        PaymentIntent approval lifecycle so the full member authority chain and
+        human-approval floors run. For non-money proposals, `acknowledge`
+        terminally records a human saw a `notify_only` proposal, while `undo`
+        reverses a reversible not-yet-executed agent decision. Every new
+        decision emits an immutable `proposal.decided` audit event. A repeated
+        already-terminal decision is idempotent and does not re-audit.
+      operationId: decideProposal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { $ref: '#/components/schemas/ProposalDecision' }
+      responses:
+        '200':
+          description: Decision recorded or idempotently returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProposalDecisionResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No proposal exists for this tenant. Error code `execution_proposal_not_found`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -5771,7 +5818,43 @@ components:
 
     ProposalStatus:
       type: string
-      enum: [pending, approved, rejected, executed, failed, expired]
+      description: |
+        Complete proposal read status enum. Clients that see `unknown` must
+        refetch and never assume success.
+      enum:
+        - proposed
+        - pending
+        - pending_approval
+        - awaiting_second_approval
+        - approved
+        - acknowledged
+        - reconciling
+        - paused
+        - dispatching
+        - rejected
+        - executed
+        - failed
+        - cancelled
+        - undone
+        - unknown
+
+    ProposalDecision:
+      type: string
+      enum: [approve, reject, acknowledge, undo]
+
+    ProposalDecisionResult:
+      type: object
+      required: [id, decision, status, audit_id, payment_intent_id]
+      properties:
+        id: { type: string }
+        decision: { $ref: '#/components/schemas/ProposalDecision' }
+        status: { $ref: '#/components/schemas/ProposalStatus' }
+        audit_id:
+          type: [string, "null"]
+          description: Existing or newly written `proposal.decided` audit event id.
+        payment_intent_id:
+          type: [string, "null"]
+          description: Present when the decision was delegated to the PaymentIntent lifecycle.
 
     Proposal:
       type: object
@@ -6243,7 +6326,7 @@ components:
         id: { type: string }
         type: { $ref: '#/components/schemas/ProposalType' }
         created_at: { type: string, format: date-time }
-        status: { type: string }
+        status: { $ref: '#/components/schemas/ProposalStatus' }
         risk_band:
           oneOf:
             - $ref: '#/components/schemas/ProposalRiskBand'
@@ -6289,7 +6372,22 @@ components:
             invoice_id: { type: [string, "null"] }
             status:
               type: string
-              enum: [proposed, pending_approval, approved, rejected, executed, failed, cancelled]
+              description: |
+                Complete PaymentIntent status enum. Clients that see `unknown`
+                must refetch and never assume success.
+              enum:
+                - proposed
+                - pending_approval
+                - awaiting_second_approval
+                - approved
+                - paused
+                - dispatching
+                - rejected
+                - executed
+                - failed
+                - cancelled
+                - reconciling
+                - unknown
             policy_decision_id: { type: [string, "null"] }
             approval_ids:
               type: array

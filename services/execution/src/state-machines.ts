@@ -10,18 +10,32 @@ import { brainError } from "@brain/shared";
 // §8.1 Proposal
 // ---------------------------------------------------------------------------
 
-export type ProposalState = "pending" | "approved" | "rejected" | "executed" | "failed";
+export type ProposalState =
+  | "pending"
+  | "approved"
+  | "acknowledged"
+  | "reconciling"
+  | "rejected"
+  | "executed"
+  | "failed"
+  | "undone"
+  | "unknown";
 
 export function isValidProposalTransition(from: ProposalState, to: ProposalState): boolean {
   switch (from) {
     case "pending":
-      return to === "approved" || to === "rejected";
+      return to === "approved" || to === "rejected" || to === "acknowledged";
     case "approved":
-      return to === "executed" || to === "rejected";
+      return to === "executed" || to === "rejected" || to === "undone" || to === "reconciling";
+    case "reconciling":
+      return to === "executed" || to === "failed";
     case "executed":
       return to === "failed"; // allows reversion path to new proposal
+    case "acknowledged":
     case "rejected":
     case "failed":
+    case "undone":
+    case "unknown":
       return false;
   }
 }

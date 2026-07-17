@@ -31,6 +31,7 @@ import {
   type SnapshotOptions,
 } from "./resources/compounds.js";
 import { PolicyResource } from "./resources/policy.js";
+import { ProposalsResource } from "./resources/proposals.js";
 import { RawResource } from "./resources/raw.js";
 import { WikiResource, type AskParams } from "./resources/wiki.js";
 import type { components } from "./generated/openapi.js";
@@ -87,6 +88,7 @@ export class Brain {
   readonly proofs: ProofResource;
   readonly agentRuns: AgentRunsResource;
   readonly payments: PaymentsResource;
+  readonly proposals: ProposalsResource;
   readonly actions: ActionsResource;
   readonly agents: AgentsResource;
   readonly raw: RawResource;
@@ -128,6 +130,7 @@ export class Brain {
     this.proofs = new ProofResource(this.http);
     this.agentRuns = new AgentRunsResource(this.http);
     this.payments = new PaymentsResource(this.http);
+    this.proposals = new ProposalsResource(this.http);
     this.actions = new ActionsResource(this.http);
     this.agents = new AgentsResource(this.http);
     this.raw = new RawResource(this.http);

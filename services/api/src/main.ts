@@ -981,6 +981,7 @@ async function main(): Promise<void> {
     resolveCounterparty,
     resolvePrincipal,
     resolveRole,
+    actorResolver,
     isApproverActive,
     resolveSubjectOwnerTenant,
     resolveActivePolicyVersion,
@@ -1670,51 +1671,57 @@ async function main(): Promise<void> {
         await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
         await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
         await v1.register(async (child) => registerMemberRoutes(child, { pool, audit }));
+        // PaymentIntentService has its own approval sub-service; the proposal
+        // decision route reuses this same money-path service so it cannot bypass
+        // member authority, quorum, or hard approval floors.
+        const piApprovals = new ApprovalService({
+          pool,
+          audit,
+          resolveRole,
+          isApproverActive,
+          resolveSubjectOwnerTenant,
+          resolveActivePolicyVersion,
+        });
+        const piService = buildPaymentIntentService({
+          pool,
+          audit,
+          approvals: piApprovals,
+          actorResolver,
+          members: memberLookup,
+          resolveAgent,
+          resolveTenantFlags,
+          resolveAccount,
+          resolveCounterparty,
+          resolveApprovalPayeeEmail,
+          evaluatePolicy: evaluatePaymentIntent,
+          resolvePrincipal,
+          attestCounterpartyAgent,
+          sumAgentWindowSpend,
+          sumActiveReservations,
+          fiatHumanApprovalFloorEnabled: cfg.BRAIN_FIAT_HUMAN_APPROVAL_FLOOR_ENABLED,
+          resolveEvidence,
+          detectDuplicates,
+          resolveObligationConfidence,
+          resolveObligationDirection,
+          resolveObligationProvenance,
+          ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
+          ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
+          sourceCredentialResolver,
+          metrics,
+          enqueue: routingEnqueue,
+          recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
+        });
         await v1.register(async (child) => {
-          // PaymentIntentService has its own approval sub-service; create a fresh
-          // instance scoped to this plugin so it doesn't share mutable state.
-          const piApprovals = new ApprovalService({
-            pool,
-            audit,
-            resolveRole,
-            isApproverActive,
-            resolveSubjectOwnerTenant,
-            resolveActivePolicyVersion,
-          });
-          const piService = buildPaymentIntentService({
-            pool,
-            audit,
-            approvals: piApprovals,
-            actorResolver,
-            members: memberLookup,
-            resolveAgent,
-            resolveTenantFlags,
-            resolveAccount,
-            resolveCounterparty,
-            resolveApprovalPayeeEmail,
-            evaluatePolicy: evaluatePaymentIntent,
-            resolvePrincipal,
-            attestCounterpartyAgent,
-            sumAgentWindowSpend,
-            sumActiveReservations,
-            fiatHumanApprovalFloorEnabled: cfg.BRAIN_FIAT_HUMAN_APPROVAL_FLOOR_ENABLED,
-            resolveEvidence,
-            detectDuplicates,
-            resolveObligationConfidence,
-            resolveObligationDirection,
-            resolveObligationProvenance,
-            ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
-            ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
-            sourceCredentialResolver,
-            metrics,
-            enqueue: routingEnqueue,
-            recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
-          });
           await registerPaymentIntentRoutes(child, piService, invoiceShortcut, (ctx, id) =>
             getPaymentIntentAgent(pool, ctx, id),
           );
         });
-        await v1.register(async (child) => registerProposalReadRoutes(child, { pool }));
+        await v1.register(async (child) =>
+          registerProposalReadRoutes(child, {
+            pool,
+            decisions: { pool, audit, actorResolver, paymentIntents: piService },
+          }),
+        );
         await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
         // H-20 webhook dead-letter + replay: /v1/webhooks/{endpoint_id}/{dead-letters,replay}.
         await v1.register(async (child) => registerWebhookRoutes(child, { pool }));
