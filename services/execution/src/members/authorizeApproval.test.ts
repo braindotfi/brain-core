@@ -9,6 +9,8 @@ import {
 const actor: ActorContext = {
   memberId: "usr_1",
   email: "approver@example.com",
+  role: "approver",
+  active: true,
   verification: "session",
 };
 

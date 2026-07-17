@@ -163,6 +163,8 @@ function serviceFor(
         options.actor ?? {
           memberId: MEMBER,
           email: "member@example.com",
+          role: "approver",
+          active: true,
           verification: "session",
         }
       );

@@ -27,6 +27,8 @@ export interface MemberAuthority {
 export interface ActorContext {
   memberId: string;
   email: string;
+  role: MemberRole;
+  active: boolean;
   verification: ActorVerification;
   assertedBy?: string;
 }

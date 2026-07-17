@@ -81,6 +81,8 @@ function toActorOrThrow(
   return {
     memberId: member.id,
     email: member.email,
+    role: member.role,
+    active: member.active,
     verification,
     ...(assertedBy !== undefined ? { assertedBy } : {}),
   };

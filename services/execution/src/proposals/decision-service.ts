@@ -12,6 +12,7 @@ import type { Pool } from "pg";
 import type { PaymentIntentService } from "../payment-intents/PaymentIntentService.js";
 import type { ActorResolver } from "../members/ActorResolver.js";
 import type { ActorContext } from "../members/types.js";
+import { isApprovalCapableRole } from "../members/authorizeApproval.js";
 import { assertProposalTransition, type ProposalState } from "../state-machines.js";
 import type { ProposalRow } from "../repository.js";
 import { getProposal } from "./read-model.js";
@@ -122,6 +123,7 @@ export class ProposalDecisionService {
       if (before === null) {
         throw brainError("execution_proposal_not_found", "no such proposal");
       }
+      assertAgentDecisionAuthority(actor, decision);
       const target = targetStatusForDecision(before, decision);
       if (target.idempotent) {
         return {
@@ -223,6 +225,8 @@ function targetStatusForDecision(row: ProposalRow, decision: ProposalDecision): 
       if (row.status === "acknowledged") {
         return { status: "acknowledged", idempotent: true };
       }
+      // BC-3 owns whether an agent may self-assert notify_only mode. This
+      // decision endpoint only enforces the stored canonical proposal mode.
       if (row.status !== "pending" || row.action["mode"] !== "notify_only") {
         throw invalidDecision(row, decision);
       }
@@ -243,6 +247,22 @@ function invalidDecision(row: ProposalRow, decision: ProposalDecision): Error {
     "execution_proposal_invalid_state",
     `cannot ${decision} proposal in status ${row.status}`,
   );
+}
+
+function assertAgentDecisionAuthority(actor: ActorContext, decision: ProposalDecision): void {
+  if (!actor.active) {
+    throw approvalDenied("actor_inactive", { member_id: actor.memberId });
+  }
+  if (decision !== "acknowledge" && !isApprovalCapableRole(actor.role)) {
+    throw approvalDenied("domain_not_authorized", { member_id: actor.memberId, role: actor.role });
+  }
+}
+
+function approvalDenied(reason: string, detail: Record<string, unknown>): Error {
+  return brainError("payment_intent_approval_invalid", reason, {
+    statusOverride: 403,
+    details: { reason, ...detail },
+  });
 }
 
 async function findProposalForUpdate(

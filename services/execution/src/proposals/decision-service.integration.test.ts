@@ -37,6 +37,9 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
   const tenantB = newTenantId();
   const memberA = newUserId();
   const memberB = newUserId();
+  const viewerMember = newUserId();
+  const deactivatedMember = newUserId();
+  const approverMember = newUserId();
   const missingMember = newUserId();
   const agentA = newAgentId();
   const agentB = newAgentId();
@@ -69,6 +72,24 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
     actor: agentA,
     principalType: "agent",
   };
+  const viewerCtx: ServiceCallContext = {
+    tenantId: tenantA,
+    actor: viewerMember,
+    principalType: "user",
+    scopes: ["execution:read"],
+  };
+  const deactivatedCtx: ServiceCallContext = {
+    tenantId: tenantA,
+    actor: deactivatedMember,
+    principalType: "user",
+    scopes: ["payment_intent:approve"],
+  };
+  const approverCtx: ServiceCallContext = {
+    tenantId: tenantA,
+    actor: approverMember,
+    principalType: "user",
+    scopes: ["payment_intent:approve"],
+  };
 
   beforeAll(async () => {
     schema = `proposal_decide_${createHash("sha1")
@@ -99,6 +120,9 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
 
     await seedTenant(tenantA, memberA, agentA);
     await seedTenant(tenantB, memberB, agentB);
+    await seedMember(tenantA, viewerMember, "viewer", true);
+    await seedMember(tenantA, deactivatedMember, "admin", false);
+    await seedMember(tenantA, approverMember, "approver", true);
     await seedProposal(tenantA, agentA, notifyProposal, "pending", {
       type: "vendor_risk",
       mode: "notify_only",
@@ -227,23 +251,119 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
     });
   });
 
+  it("denies active viewers for approve, reject, and undo but allows notify-only acknowledgement", async () => {
+    const approveProposal = newProposalId();
+    const rejectProposal = newProposalId();
+    const undoProposal = newProposalId();
+    const acknowledgeProposal = newProposalId();
+    await seedProposal(tenantA, agentA, approveProposal, "pending", {
+      type: "vendor_risk",
+      mode: "propose",
+    });
+    await seedProposal(tenantA, agentA, rejectProposal, "pending", {
+      type: "vendor_risk",
+      mode: "propose",
+    });
+    await seedProposal(tenantA, agentA, undoProposal, "approved", {
+      type: "vendor_risk",
+      mode: "propose",
+    });
+    await seedProposal(tenantA, agentA, acknowledgeProposal, "pending", {
+      type: "vendor_risk",
+      mode: "notify_only",
+    });
+
+    await expectDeniedWithoutAudit(viewerCtx, approveProposal, "approve", "domain_not_authorized");
+    await expectDeniedWithoutAudit(viewerCtx, rejectProposal, "reject", "domain_not_authorized");
+    await expectDeniedWithoutAudit(viewerCtx, undoProposal, "undo", "domain_not_authorized");
+
+    const acknowledged = await service.decide(viewerCtx, acknowledgeProposal, "acknowledge");
+    expect(acknowledged.status).toBe("acknowledged");
+    expect(await decisionAuditCount(tenantA, acknowledgeProposal, "acknowledge")).toBe(1);
+  });
+
+  it("denies deactivated members for every agent-proposal decision without auditing", async () => {
+    const approveProposal = newProposalId();
+    const rejectProposal = newProposalId();
+    const undoProposal = newProposalId();
+    const acknowledgeProposal = newProposalId();
+    await seedProposal(tenantA, agentA, approveProposal, "pending", {
+      type: "vendor_risk",
+      mode: "propose",
+    });
+    await seedProposal(tenantA, agentA, rejectProposal, "pending", {
+      type: "vendor_risk",
+      mode: "propose",
+    });
+    await seedProposal(tenantA, agentA, undoProposal, "approved", {
+      type: "vendor_risk",
+      mode: "propose",
+    });
+    await seedProposal(tenantA, agentA, acknowledgeProposal, "pending", {
+      type: "vendor_risk",
+      mode: "notify_only",
+    });
+
+    await expectDeniedWithoutAudit(deactivatedCtx, approveProposal, "approve", "actor_inactive");
+    await expectDeniedWithoutAudit(deactivatedCtx, rejectProposal, "reject", "actor_inactive");
+    await expectDeniedWithoutAudit(deactivatedCtx, undoProposal, "undo", "actor_inactive");
+    await expectDeniedWithoutAudit(
+      deactivatedCtx,
+      acknowledgeProposal,
+      "acknowledge",
+      "actor_inactive",
+    );
+  });
+
+  it("allows active approvers to approve agent proposals", async () => {
+    const proposal = newProposalId();
+    await seedProposal(tenantA, agentA, proposal, "pending", {
+      type: "vendor_risk",
+      mode: "propose",
+    });
+
+    const result = await service.decide(approverCtx, proposal, "approve");
+
+    expect(result.status).toBe("approved");
+    expect(await decisionAuditCount(tenantA, proposal, "approve")).toBe(1);
+  });
+
   async function seedTenant(tenant: string, member: string, agent: string): Promise<void> {
     await withTenantScope(pool, tenant, async (client) => {
       await client.query(`INSERT INTO tenants (id, kind) VALUES ($1, 'demo')`, [tenant]);
+      await client.query(
+        `INSERT INTO agents (id, tenant_id, kind, role, display_name, state, registered_at)
+         VALUES ($1, $2, 'internal', 'vendor_risk', 'Vendor Risk Agent', 'active', now())`,
+        [agent, tenant],
+      );
+    });
+    await seedMember(tenant, member, "admin", true);
+  }
+
+  async function seedMember(
+    tenant: string,
+    member: string,
+    role: "admin" | "approver" | "viewer",
+    active: boolean,
+  ): Promise<void> {
+    await withTenantScope(pool, tenant, async (client) => {
       await client.query(
         `INSERT INTO members (
            tenant_id, id, email, display_name, role, status, active, approval_domains,
            per_item_limit_cents, requires_second_approver_above_cents
          )
-         VALUES ($1, $2, $3, 'Admin', 'admin', 'active', true,
+         VALUES ($1, $2, $3, $4, $5, $6, $7,
            ARRAY['ap', 'ar', 'treasury', 'payroll', 'reconciliation']::text[],
            9223372036854775807, NULL)`,
-        [tenant, member, `${member}@example.com`],
-      );
-      await client.query(
-        `INSERT INTO agents (id, tenant_id, kind, role, display_name, state, registered_at)
-         VALUES ($1, $2, 'internal', 'vendor_risk', 'Vendor Risk Agent', 'active', now())`,
-        [agent, tenant],
+        [
+          tenant,
+          member,
+          `${member}@example.com`,
+          role === "viewer" ? "Viewer" : "Approver",
+          role,
+          active ? "active" : "deactivated",
+          active,
+        ],
       );
     });
   }
@@ -353,6 +473,19 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
       );
       return Number(rows[0]?.count ?? "0");
     });
+  }
+
+  async function expectDeniedWithoutAudit(
+    ctx: ServiceCallContext,
+    proposal: string,
+    decision: "approve" | "reject" | "acknowledge" | "undo",
+    reason: string,
+  ): Promise<void> {
+    await expect(service.decide(ctx, proposal, decision)).rejects.toMatchObject({
+      code: "payment_intent_approval_invalid",
+      details: { reason },
+    });
+    expect(await decisionAuditCount(ctx.tenantId, proposal, decision)).toBe(0);
   }
 });
 

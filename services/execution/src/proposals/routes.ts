@@ -10,6 +10,7 @@ import {
 } from "./decision-service.js";
 
 const SCOPE_READ: Scope = "execution:read";
+const SCOPE_APPROVE: Scope = "payment_intent:approve";
 
 export interface ProposalReadRoutesDeps {
   pool: Pool;
@@ -87,12 +88,18 @@ export async function registerProposalReadRoutes(
         throw brainError("dependency_unavailable", "proposal decision service is not configured");
       }
       const ctx = assertCtx(request);
+      requireDecisionScope(request.principal!.scopes);
       const decision = parseDecision(request.body?.decision);
       const result = await decisions.decide(ctx, request.params.id, decision);
       reply.status(200);
       return result;
     },
   );
+}
+
+function requireDecisionScope(scopes: readonly string[]): void {
+  if (scopes.includes(SCOPE_APPROVE) || scopes.includes(SCOPE_READ)) return;
+  requireScope(scopes, SCOPE_APPROVE);
 }
 
 function parseDecision(value: string | undefined): ProposalDecision {

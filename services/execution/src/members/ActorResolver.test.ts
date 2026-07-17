@@ -49,6 +49,8 @@ describe("ActorResolver", () => {
     expect(actor).toEqual({
       memberId: "usr_actual",
       email: actual.email,
+      role: "approver",
+      active: true,
       verification: "session",
     });
   });
@@ -111,6 +113,8 @@ describe("ActorResolver", () => {
     ).resolves.toEqual({
       memberId: "usr_approver",
       email: actual.email,
+      role: "approver",
+      active: true,
       verification: "tenant_asserted",
       assertedBy: "api_partner_1",
     });
@@ -144,6 +148,8 @@ describe("ActorResolver", () => {
     ).resolves.toEqual({
       memberId: "usr_slack",
       email: actual.email,
+      role: "approver",
+      active: true,
       verification: "surface_linked",
     });
   });
@@ -164,6 +170,8 @@ describe("ActorResolver", () => {
     ).resolves.toEqual({
       memberId: "usr_email",
       email: actual.email,
+      role: "approver",
+      active: true,
       verification: "signed_token",
     });
 
