@@ -25,6 +25,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # check-migrations-append-only (run via `pnpm run lint` below) needs
+          # origin/main reachable for `git merge-base`, same reason the
+          # secrets job below fetches full history.
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
 
