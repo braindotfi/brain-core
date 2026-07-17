@@ -54,8 +54,9 @@ export interface ProposalAgentRef {
 }
 
 export interface ProposalEvidenceRef {
-  id: string;
-  type: "wiki_entity";
+  kind: string;
+  ref: string;
+  resolvable: boolean;
 }
 
 export interface ProposalReadItem {
@@ -109,6 +110,11 @@ interface RawProposalRow {
   agent_display_name: string | null;
   payment_intent_id: string | null;
   action_type: string | null;
+}
+
+interface StoredEvidenceRef {
+  kind: string;
+  ref: string;
 }
 
 export function parseListProposalsQuery(query: {
@@ -329,11 +335,11 @@ async function serializeProposalRow(
   if (row.type === null || !PROPOSAL_TYPE_SET.has(row.type)) {
     throw new Error(`proposal ${row.id} did not resolve to a customer-facing type`);
   }
-  const candidateEvidenceIds =
+  const candidateEvidenceRefs =
     row.source_kind === "payment_intent"
-      ? (row.evidence_ids ?? [])
-      : evidenceIdsFromAction(row.action ?? {});
-  const evidence = await resolvableWikiEntityRefs(client, candidateEvidenceIds);
+      ? evidenceRefsFromPaymentIntentIds(row.evidence_ids ?? [])
+      : evidenceRefsFromAction(row.action ?? {});
+  const evidence = await resolvableEvidenceRefs(client, candidateEvidenceRefs);
   return {
     id: row.id,
     type: row.type,
@@ -353,46 +359,118 @@ async function serializeProposalRow(
   };
 }
 
-function evidenceIdsFromAction(action: Record<string, unknown>): string[] {
-  const ids = new Set<string>();
-  addEvidenceValue(ids, action["evidence_ids"]);
-  addEvidenceValue(ids, action["evidence"]);
-  addEvidenceValue(ids, action["evidence_refs"]);
-  addEvidenceValue(ids, action["wiki_entity_ids"]);
-  return [...ids];
+function evidenceRefsFromAction(action: Record<string, unknown>): StoredEvidenceRef[] {
+  const refs: StoredEvidenceRef[] = [];
+  addEvidenceValue(refs, action["evidence_ids"]);
+  addEvidenceValue(refs, action["evidence"]);
+  addEvidenceValue(refs, action["evidence_refs"]);
+  addEvidenceValue(refs, action["wiki_entity_ids"]);
+  return refs;
 }
 
-function addEvidenceValue(ids: Set<string>, value: unknown): void {
+function evidenceRefsFromPaymentIntentIds(ids: string[]): StoredEvidenceRef[] {
+  return ids.map((ref) => ({ kind: kindFromPaymentIntentEvidenceRef(ref), ref }));
+}
+
+function addEvidenceValue(refs: StoredEvidenceRef[], value: unknown): void {
   if (typeof value === "string") {
-    ids.add(value);
+    refs.push({ kind: "unknown", ref: value });
     return;
   }
   if (!Array.isArray(value)) return;
   for (const item of value) {
     if (typeof item === "string") {
-      ids.add(item);
+      refs.push({ kind: "unknown", ref: item });
     } else if (item !== null && typeof item === "object") {
       const record = item as Record<string, unknown>;
-      for (const key of ["id", "entity_id", "wiki_entity_id"]) {
-        const id = record[key];
-        if (typeof id === "string") ids.add(id);
-      }
+      const ref = firstString(record, ["ref", "id", "entity_id", "wiki_entity_id"]);
+      if (ref === null) continue;
+      refs.push({
+        kind: evidenceKindFromRecord(record, ref),
+        ref,
+      });
     }
   }
 }
 
-async function resolvableWikiEntityRefs(
+async function resolvableEvidenceRefs(
   client: TenantScopedClient,
-  candidates: string[],
+  candidates: StoredEvidenceRef[],
 ): Promise<ProposalEvidenceRef[]> {
-  const entityIds = [...new Set(candidates.filter((id) => isBrainId(id, "ent")))];
-  if (entityIds.length === 0) return [];
-  const { rows } = await client.query<{ id: string }>(
-    `SELECT id FROM wiki_entities WHERE id = ANY($1::text[]) AND valid_to IS NULL`,
-    [entityIds],
-  );
-  const found = new Set(rows.map((row) => row.id));
-  return entityIds.filter((id) => found.has(id)).map((id) => ({ id, type: "wiki_entity" }));
+  const entityIds = [...new Set(candidates.map((item) => item.ref).filter(isWikiEntityRef))];
+  const resolvableWikiIds = new Set<string>();
+  if (entityIds.length > 0) {
+    const { rows } = await client.query<{ id: string }>(
+      `SELECT id FROM wiki_entities WHERE id = ANY($1::text[]) AND valid_to IS NULL`,
+      [entityIds],
+    );
+    for (const row of rows) resolvableWikiIds.add(row.id);
+  }
+  return candidates
+    .filter((item) => item.ref.length > 0)
+    .map((item) => ({
+      kind: item.kind,
+      ref: item.ref,
+      resolvable: isWikiEntityRef(item.ref) && resolvableWikiIds.has(item.ref),
+    }));
+}
+
+function firstString(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string") return value;
+  }
+  return null;
+}
+
+function evidenceKindFromRecord(record: Record<string, unknown>, ref: string): string {
+  const kind = record["kind"];
+  if (typeof kind === "string" && kind.trim().length > 0) return kind.trim();
+  if (typeof record["wiki_entity_id"] === "string") return "wiki_entity";
+  return bestEffortKindByRef(ref);
+}
+
+function kindFromPaymentIntentEvidenceRef(ref: string): string {
+  if (ref.startsWith("doc_")) return "document";
+  return bestEffortKindByRef(ref);
+}
+
+function bestEffortKindByRef(ref: string): string {
+  const prefix = ref.split("_", 1)[0];
+  switch (prefix) {
+    case "acct":
+      return "account";
+    case "agent":
+      return "agent";
+    case "cp":
+      return "counterparty";
+    case "doc":
+      return "document";
+    case "ent":
+      return "wiki_entity";
+    case "inv":
+      return "invoice";
+    case "obl":
+      return "obligation";
+    case "pd":
+      return "policy_decision";
+    case "pi":
+      return "payment_intent";
+    case "pol":
+      return "policy";
+    case "prs":
+      return "raw_parsed";
+    case "raw":
+      return "raw_artifact";
+    case "tx":
+      return "transaction";
+    default:
+      return "unknown";
+  }
+}
+
+function isWikiEntityRef(ref: string): boolean {
+  return isBrainId(ref, "ent");
 }
 
 function normalizeConfidence(value: number | string | null): number | null {

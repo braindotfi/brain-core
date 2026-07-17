@@ -82,7 +82,12 @@ function proposalRow(input: Partial<RawProposalFixture> & { id: string }): RawPr
     narrative: input.narrative ?? "Vendor risk increased after invoice anomaly.",
     action: input.action ?? {
       type: input.type ?? "vendor_risk",
-      evidence: [{ wiki_entity_id: ENT_RESOLVES }, { wiki_entity_id: ENT_MISSING }, "raw_fake"],
+      evidence_refs: [
+        { kind: "invoice", ref: "inv_1" },
+        { kind: "wiki_entity", ref: ENT_RESOLVES },
+        { kind: "wiki_entity", ref: ENT_MISSING },
+        "legacy_ref",
+      ],
     },
     evidence_ids: input.evidence_ids ?? [],
     agent_id: input.agent_id ?? AGENT_VENDOR,
@@ -245,14 +250,19 @@ describe("GET /proposals", () => {
     await tenantBApp.close();
   });
 
-  it("returns only resolvable Wiki entity evidence refs", async () => {
+  it("returns typed evidence refs and marks only live Wiki entities resolvable", async () => {
     const pool = fakePool({ [TENANT_A]: [proposalRow({ id: PROP_1 })] });
     const app = await buildApp(pool, principal(TENANT_A));
 
     const res = await app.inject({ method: "GET", url: `/proposals/${PROP_1}` });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json().evidence).toEqual([{ id: ENT_RESOLVES, type: "wiki_entity" }]);
+    expect(res.json().evidence).toEqual([
+      { kind: "invoice", ref: "inv_1", resolvable: false },
+      { kind: "wiki_entity", ref: ENT_RESOLVES, resolvable: true },
+      { kind: "wiki_entity", ref: ENT_MISSING, resolvable: false },
+      { kind: "unknown", ref: "legacy_ref", resolvable: false },
+    ]);
     await app.close();
   });
 });
