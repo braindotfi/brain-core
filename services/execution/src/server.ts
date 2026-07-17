@@ -12,6 +12,8 @@ import { registerActionRoutes } from "./actions/routes.js";
 import { ApprovalService } from "./approvals/ApprovalService.js";
 import { PaymentIntentService } from "./payment-intents/PaymentIntentService.js";
 import { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
+import { getPaymentIntentAgent } from "./proposals/read-model.js";
+import { registerProposalReadRoutes } from "./proposals/routes.js";
 import { OutboxService } from "./outbox/OutboxService.js";
 import type { ExecutionDeps } from "./deps.js";
 
@@ -143,7 +145,13 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
       reply.header("Link", `<${successor}>; rel="successor-version"`);
     }
   });
-  await registerPaymentIntentRoutes(app, paymentIntents, opts.deps.resolveInvoiceShortcut);
+  await registerPaymentIntentRoutes(
+    app,
+    paymentIntents,
+    opts.deps.resolveInvoiceShortcut,
+    (ctx, id) => getPaymentIntentAgent(opts.deps.pool, ctx, id),
+  );
+  await registerProposalReadRoutes(app, { pool: opts.deps.pool });
 
   // v0.3 canonical /actions/* routes — share the same PaymentIntentService.
   await registerActionRoutes(app, paymentIntents);

@@ -133,6 +133,7 @@ import {
   registerExecutionRoutes,
   registerMemberRoutes,
   registerPaymentIntentRoutes,
+  registerProposalReadRoutes,
   ApprovalService,
   ActorResolver,
   OutboxService,
@@ -153,6 +154,7 @@ import {
   findRoutingDecision,
   transitionAgent,
   releaseContributionHold,
+  getPaymentIntentAgent,
 } from "@brain/execution";
 import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
 import { parseEther } from "viem";
@@ -1708,8 +1710,11 @@ async function main(): Promise<void> {
             enqueue: routingEnqueue,
             recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
           });
-          await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
+          await registerPaymentIntentRoutes(child, piService, invoiceShortcut, (ctx, id) =>
+            getPaymentIntentAgent(pool, ctx, id),
+          );
         });
+        await v1.register(async (child) => registerProposalReadRoutes(child, { pool }));
         await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
         // H-20 webhook dead-letter + replay: /v1/webhooks/{endpoint_id}/{dead-letters,replay}.
         await v1.register(async (child) => registerWebhookRoutes(child, { pool }));

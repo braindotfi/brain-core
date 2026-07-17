@@ -51,6 +51,8 @@ tags:
     description: Rule composition, signing, evaluation against Ledger state (Layer 4)
   - name: Agent
     description: Agent registration and action orchestration (Layer 5). Replaces the v0.1 Execution group; legacy /execution/* paths still resolve.
+  - name: Proposals
+    description: Typed, customer-facing read surface for agent outputs across money and non-money proposals.
   - name: PaymentIntent
     description: PaymentIntent lifecycle — propose, approve, execute. Always passes the deterministic pre-execution gate (§6 of Engineering Standards).
   - name: Members
@@ -3188,6 +3190,12 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: expand
+          in: query
+          description: Comma-separated expansions. `agent` includes the stored agent provenance block.
+          schema:
+            type: string
+            enum: [agent]
       responses:
         '200':
           description: Routing decision record
@@ -3287,6 +3295,80 @@ paths:
                         paused: { type: array, items: { type: string } }
                         quarantined: { type: boolean }
         '400': { $ref: '#/components/responses/BadRequest' }
+
+  /proposals:
+    get:
+      tags: [Proposals]
+      summary: List typed agent-output proposals
+      description: |
+        Requires `execution:read`. Cursor-paginated, tenant-scoped read model
+        over agent-created PaymentIntents and non-financial agent proposals.
+        Evidence refs are only returned when they resolve through
+        `GET /v1/wiki/entity/{id}`. Unknown, placeholder, or non-Wiki evidence
+        ids are omitted rather than fabricated.
+      operationId: listProposals
+      parameters:
+        - name: type
+          in: query
+          schema: { $ref: '#/components/schemas/ProposalType' }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: risk_band
+          in: query
+          schema: { $ref: '#/components/schemas/ProposalRiskBand' }
+        - name: min_confidence
+          in: query
+          schema: { type: number, minimum: 0, maximum: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cursor page of typed agent-output proposals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proposals, next_cursor]
+                properties:
+                  proposals:
+                    type: array
+                    items: { $ref: '#/components/schemas/AgentOutputProposal' }
+                  next_cursor: { type: [string, "null"] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /proposals/{id}:
+    get:
+      tags: [Proposals]
+      summary: Read a typed agent-output proposal
+      description: |
+        Requires `execution:read`. Reads either a money-path PaymentIntent
+        proposal (`pi_...`) or a non-financial agent proposal (`prop_...`) from
+        the caller's tenant only.
+      operationId: getProposal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Typed proposal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentOutputProposal' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No proposal exists for this tenant. Error code `proposal_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /payment-intents:
     post:
@@ -6095,6 +6177,90 @@ components:
               type: array
               items: { type: string }
 
+    ProposalType:
+      type: string
+      enum:
+        - vendor_risk
+        - payment
+        - collections
+        - treasury
+        - cash_forecast
+        - dispute
+        - compliance
+        - revenue_intel
+        - reconciliation
+        - subscription
+        - fraud_anomaly
+
+    ProposalRiskBand:
+      type: string
+      enum: [low, standard, elevated, high]
+
+    ProposalMode:
+      type: string
+      enum: [propose, notify_only]
+
+    ProposalAgent:
+      type: object
+      required: [id, kind, display_name]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          description: Stored agent provenance, for example `internal` or `external`.
+        display_name: { type: string }
+
+    ProposalEvidenceRef:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+          description: Wiki entity id resolvable through `GET /v1/wiki/entity/{id}`.
+        type: { type: string, enum: [wiki_entity] }
+
+    AgentOutputProposal:
+      type: object
+      required:
+        - id
+        - type
+        - created_at
+        - status
+        - risk_band
+        - confidence
+        - mode
+        - narrative
+        - evidence
+        - agent
+        - payment_intent_id
+        - action_type
+      properties:
+        id: { type: string }
+        type: { $ref: '#/components/schemas/ProposalType' }
+        created_at: { type: string, format: date-time }
+        status: { type: string }
+        risk_band:
+          oneOf:
+            - $ref: '#/components/schemas/ProposalRiskBand'
+            - type: "null"
+        confidence: { type: [number, "null"], minimum: 0, maximum: 1 }
+        mode: { $ref: '#/components/schemas/ProposalMode' }
+        narrative:
+          type: [string, "null"]
+          description: Grounded human-readable summary when the stored output has one.
+        evidence:
+          type: array
+          description: Empty when the stored output has no resolvable Wiki entity evidence.
+          items: { $ref: '#/components/schemas/ProposalEvidenceRef' }
+        agent:
+          oneOf:
+            - $ref: '#/components/schemas/ProposalAgent'
+            - type: "null"
+        payment_intent_id: { type: [string, "null"] }
+        action_type:
+          type: [string, "null"]
+          description: Present for money-path proposals backed by PaymentIntent.
+
     PaymentIntent:
       allOf:
         - $ref: '#/components/schemas/LedgerCommonFields'
@@ -6126,6 +6292,11 @@ components:
             execution_receipt_ids:
               type: array
               items: { type: string }
+            agent:
+              oneOf:
+                - $ref: '#/components/schemas/ProposalAgent'
+                - type: "null"
+              description: Present only when requested with `?expand=agent`.
 
     ReconciliationMatch:
       type: object
