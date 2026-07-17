@@ -3,6 +3,17 @@
  * decide round-trip persistence, and a concurrent-decide race.
  *
  * Requires a migrated Postgres via DATABASE_URL; skipped otherwise.
+ *
+ * RLS assertion note: CI's DATABASE_URL connects as the Postgres superuser
+ * (the migration owner), and superusers bypass row security unconditionally
+ * -- FORCE ROW LEVEL SECURITY notwithstanding (Postgres docs: "superusers
+ * ... bypass the row security system"). So the isolation check below runs
+ * through a transient, non-superuser role instead, mirroring
+ * tests/invariants/integration/cross-tenant-rls.integration.test.ts (mint a
+ * NOLOGIN role with SELECT only, `SET LOCAL ROLE` inside a rolled-back
+ * transaction, assert row visibility per tenant). The decide round-trip and
+ * concurrent-race tests don't depend on RLS, so they stay on the default
+ * (superuser) pool connection.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -17,6 +28,8 @@ import {
 
 const DESCRIBE = process.env.DATABASE_URL !== undefined ? describe : describe.skip;
 
+const NON_BYPASS_ROLE = "agent_proposals_rls_probe";
+
 function proposalInput(tenantId: string): InsertAgentProposalInput {
   return {
     tenantId,
@@ -29,13 +42,38 @@ function proposalInput(tenantId: string): InsertAgentProposalInput {
   };
 }
 
+/**
+ * DROP ROLE fails with "cannot be dropped because some objects depend on it"
+ * while the role still holds a GRANT -- REVOKE first (a no-op, wrapped in a
+ * DO block, when the role doesn't exist yet).
+ */
+async function dropProbeRole(admin: { query: (sql: string) => Promise<unknown> }): Promise<void> {
+  await admin.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${NON_BYPASS_ROLE}') THEN
+        EXECUTE 'REVOKE ALL ON agent_proposals FROM ${NON_BYPASS_ROLE}';
+        EXECUTE 'DROP ROLE ${NON_BYPASS_ROLE}';
+      END IF;
+    END $$;
+  `);
+}
+
 DESCRIBE("agent_proposals (requires DATABASE_URL)", () => {
   let pool: Pool;
   const tenantA = newTenantId();
   const tenantB = newTenantId();
 
-  beforeAll(() => {
+  beforeAll(async () => {
     pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const admin = await pool.connect();
+    try {
+      await dropProbeRole(admin);
+      await admin.query(`CREATE ROLE ${NON_BYPASS_ROLE} NOLOGIN`);
+      await admin.query(`GRANT SELECT ON agent_proposals TO ${NON_BYPASS_ROLE}`);
+    } finally {
+      admin.release();
+    }
   });
 
   afterAll(async () => {
@@ -45,19 +83,43 @@ DESCRIBE("agent_proposals (requires DATABASE_URL)", () => {
         await c.query(`DELETE FROM agent_proposals WHERE tenant_id = $1`, [tenantId]);
       });
     }
+    const admin = await pool.connect();
+    try {
+      await dropProbeRole(admin);
+    } finally {
+      admin.release();
+    }
     await pool.end();
   });
+
+  /**
+   * Read a row by id as the transient non-bypass role, tenant-scoped, inside
+   * a transaction that always rolls back (so the role switch and tenant
+   * scope never leak past this one probe).
+   */
+  async function readAsNonBypassRole(id: string, tenant: string): Promise<{ id: string } | null> {
+    const c = await pool.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query(`SET LOCAL ROLE ${NON_BYPASS_ROLE}`);
+      await c.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+      const res = await c.query<{ id: string }>(`SELECT id FROM agent_proposals WHERE id = $1`, [
+        id,
+      ]);
+      return res.rows[0] ?? null;
+    } finally {
+      await c.query("ROLLBACK");
+      c.release();
+    }
+  }
 
   it("RLS: tenant B cannot read tenant A's row", async () => {
     const row = await withTenantScope(pool, tenantA, (c) =>
       insertAgentProposal(c, proposalInput(tenantA)),
     );
 
-    const seenFromB = await withTenantScope(pool, tenantB, (c) => getAgentProposal(c, row.id));
-    expect(seenFromB).toBeNull();
-
-    const seenFromA = await withTenantScope(pool, tenantA, (c) => getAgentProposal(c, row.id));
-    expect(seenFromA?.id).toBe(row.id);
+    expect(await readAsNonBypassRole(row.id, tenantB)).toBeNull();
+    expect(await readAsNonBypassRole(row.id, tenantA)).toMatchObject({ id: row.id });
   });
 
   it("decide round-trip persists status, decision, decided_by, decided_at", async () => {

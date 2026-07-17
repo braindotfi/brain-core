@@ -47,6 +47,9 @@ vi.mock("@brain/shared", async () => {
             if (sql.includes("COALESCE(MAX(version)")) {
               return { rows: [{ next: 1 }] };
             }
+            if (sql.includes("INSERT INTO agent_proposals")) {
+              return { rows: [{ id: "agpr_seed_stub" }] };
+            }
             return { rows: [] };
           },
         };
@@ -290,5 +293,15 @@ describe("seedBrainSaasDemo", () => {
 
     const docInserts = scopedCalls.filter((c) => c.sql.includes("INSERT INTO ledger_documents"));
     expect(docInserts).toHaveLength(3);
+  });
+
+  it("seeds one agent proposal per type (11 total)", async () => {
+    const { pool, audit } = deps();
+    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const proposalInserts = scopedCalls.filter((c) =>
+      c.sql.includes("INSERT INTO agent_proposals"),
+    );
+    expect(proposalInserts).toHaveLength(11);
   });
 });

@@ -130,6 +130,9 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "agent_runs", column: "tenant_id" },
   { table: "agent_routing_decisions", column: "tenant_id" },
   { table: "agent_idempotency_keys", column: "tenant_id" },
+  // Non-financial agent proposals (BRAIN-CORE-ORCHESTRATION-GAP.md §3); distinct
+  // from the financial `proposals` table below. No FK dependents.
+  { table: "agent_proposals", column: "tenant_id" },
   { table: "execution_outbox", column: "tenant_id" },
   { table: "executions", column: "tenant_id" },
   { table: "approvals", column: "tenant_id" },
