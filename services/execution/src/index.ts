@@ -133,7 +133,22 @@ export {
 // Boot-binary route registration hooks.
 export { registerExecutionRoutes } from "./routes.js";
 export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
-export type { InvoiceShortcutResolver } from "./payment-intents/routes.js";
+export type {
+  InvoiceShortcutResolver,
+  PaymentIntentAgentResolver,
+} from "./payment-intents/routes.js";
+export { registerProposalReadRoutes } from "./proposals/routes.js";
+export type {
+  ListProposalsInput,
+  ListProposalsResult,
+  ProposalAgentRef,
+  ProposalEvidenceRef,
+  ProposalMode,
+  ProposalReadItem,
+  ProposalRiskBand,
+  ProposalType,
+} from "./proposals/read-model.js";
+export { getPaymentIntentAgent, PROPOSAL_TYPES } from "./proposals/read-model.js";
 export { registerMemberRoutes } from "./members/routes.js";
 export type { MemberRoutesDeps } from "./members/routes.js";
 

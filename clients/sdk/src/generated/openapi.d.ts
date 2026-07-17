@@ -1839,6 +1839,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List typed agent-output proposals
+         * @description Requires `execution:read`. Cursor-paginated, tenant-scoped read model
+         *     over agent-created PaymentIntents and non-financial agent proposals.
+         *     Evidence refs are only returned when they resolve through
+         *     `GET /v1/wiki/entity/{id}`. Unknown, placeholder, or non-Wiki evidence
+         *     ids are omitted rather than fabricated.
+         */
+        get: operations["listProposals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proposals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a typed agent-output proposal
+         * @description Requires `execution:read`. Reads either a money-path PaymentIntent
+         *     proposal (`pi_...`) or a non-financial agent proposal (`prop_...`) from
+         *     the caller's tenant only.
+         */
+        get: operations["getProposal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payment-intents": {
         parameters: {
             query?: never;
@@ -3590,6 +3636,42 @@ export interface components {
             linked_document_ids?: string[];
             linked_transaction_ids?: string[];
         };
+        /** @enum {string} */
+        ProposalType: "vendor_risk" | "payment" | "collections" | "treasury" | "cash_forecast" | "dispute" | "compliance" | "revenue_intel" | "reconciliation" | "subscription" | "fraud_anomaly";
+        /** @enum {string} */
+        ProposalRiskBand: "low" | "standard" | "elevated" | "high";
+        /** @enum {string} */
+        ProposalMode: "propose" | "notify_only";
+        ProposalAgent: {
+            id: string;
+            /** @description Stored agent provenance, for example `internal` or `external`. */
+            kind: string;
+            display_name: string;
+        };
+        ProposalEvidenceRef: {
+            /** @description Wiki entity id resolvable through `GET /v1/wiki/entity/{id}`. */
+            id: string;
+            /** @enum {string} */
+            type: "wiki_entity";
+        };
+        AgentOutputProposal: {
+            id: string;
+            type: components["schemas"]["ProposalType"];
+            /** Format: date-time */
+            created_at: string;
+            status: string;
+            risk_band: components["schemas"]["ProposalRiskBand"] | null;
+            confidence: number | null;
+            mode: components["schemas"]["ProposalMode"];
+            /** @description Grounded human-readable summary when the stored output has one. */
+            narrative: string | null;
+            /** @description Empty when the stored output has no resolvable Wiki entity evidence. */
+            evidence: components["schemas"]["ProposalEvidenceRef"][];
+            agent: components["schemas"]["ProposalAgent"] | null;
+            payment_intent_id: string | null;
+            /** @description Present for money-path proposals backed by PaymentIntent. */
+            action_type: string | null;
+        };
         PaymentIntent: components["schemas"]["LedgerCommonFields"] & {
             created_by_agent_id?: string;
             /**
@@ -3608,6 +3690,8 @@ export interface components {
             policy_decision_id?: string | null;
             approval_ids?: string[];
             execution_receipt_ids?: string[];
+            /** @description Present only when requested with `?expand=agent`. */
+            agent?: components["schemas"]["ProposalAgent"] | null;
         };
         ReconciliationMatch: {
             id: string;
@@ -7149,7 +7233,10 @@ export interface operations {
     };
     getRoutingDecision: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Comma-separated expansions. `agent` includes the stored agent provenance block. */
+                expand?: "agent";
+            };
             header?: never;
             path: {
                 id: string;
@@ -7265,6 +7352,71 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+        };
+    };
+    listProposals: {
+        parameters: {
+            query?: {
+                type?: components["schemas"]["ProposalType"];
+                status?: string;
+                risk_band?: components["schemas"]["ProposalRiskBand"];
+                min_confidence?: number;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cursor page of typed agent-output proposals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        proposals: components["schemas"]["AgentOutputProposal"][];
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Typed proposal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentOutputProposal"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description No proposal exists for this tenant. Error code `proposal_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     createPaymentIntent: {

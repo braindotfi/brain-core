@@ -21,12 +21,18 @@ import {
 import type { PaymentIntentService } from "./PaymentIntentService.js";
 import { isExecutablePaymentIntentActionType } from "./action-types.js";
 import type { ResolvedInvoiceShortcut } from "./invoice-shortcut.js";
+import type { ProposalAgentRef } from "../proposals/read-model.js";
 
 /** P0.5: resolves the `pay_invoice` shortcut into a full create payload. */
 export type InvoiceShortcutResolver = (
   ctx: ServiceCallContext,
   invoiceId: string,
 ) => Promise<ResolvedInvoiceShortcut>;
+
+export type PaymentIntentAgentResolver = (
+  ctx: ServiceCallContext,
+  paymentIntentId: string,
+) => Promise<ProposalAgentRef | null>;
 
 const SCOPE_PROPOSE: Scope = "payment_intent:propose";
 const SCOPE_APPROVE: Scope = "payment_intent:approve";
@@ -105,6 +111,7 @@ export async function registerPaymentIntentRoutes(
   app: FastifyInstance,
   service: PaymentIntentService,
   resolveShortcut?: InvoiceShortcutResolver,
+  resolvePaymentIntentAgent?: PaymentIntentAgentResolver,
 ): Promise<void> {
   app.post(
     "/payment-intents",
@@ -202,7 +209,10 @@ export async function registerPaymentIntentRoutes(
 
   app.get(
     "/payment-intents/:id",
-    async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    async (
+      request: FastifyRequest<{ Params: { id: string }; Querystring: { expand?: string } }>,
+      reply,
+    ) => {
       const ctx = assertCtx(request);
       requireScope(request.principal!.scopes, SCOPE_READ);
       if (!isBrainId(request.params.id, "pi")) {
@@ -213,6 +223,16 @@ export async function registerPaymentIntentRoutes(
         throw brainError("payment_intent_not_found", "no such PaymentIntent");
       }
       reply.status(200);
+      const expand = new Set((request.query.expand ?? "").split(",").filter(Boolean));
+      if (expand.has("agent")) {
+        return {
+          ...intent,
+          agent:
+            resolvePaymentIntentAgent !== undefined
+              ? await resolvePaymentIntentAgent(ctx, request.params.id)
+              : null,
+        };
+      }
       return intent;
     },
   );
