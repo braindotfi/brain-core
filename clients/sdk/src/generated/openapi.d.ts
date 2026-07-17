@@ -1839,6 +1839,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List agent proposals
+         * @description Requires `execution:read`.
+         */
+        get: operations["listProposals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proposals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agent proposal detail
+         * @description Requires `execution:read`.
+         */
+        get: operations["getProposal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proposals/{id}/decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record a human decision on an agent proposal
+         * @description Requires `execution:admin`. The actor resolves through `ActorResolver`
+         *     to a tenant member (session actors require `principal_type=user`).
+         *     Legal transitions: `needs_review` + `approved`/`rejected` (propose mode
+         *     only), `needs_review` + `acknowledged` (notify_only mode only),
+         *     `approved` + `undone_to_review` (reversible proposals only), and
+         *     `undone_to_review` + `approved`/`rejected`. Any other combination is
+         *     refused.
+         */
+        post: operations["decideProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payment-intents": {
         parameters: {
             query?: never;
@@ -3608,6 +3674,43 @@ export interface components {
             policy_decision_id?: string | null;
             approval_ids?: string[];
             execution_receipt_ids?: string[];
+        };
+        /** @enum {string} */
+        AgentProposalType: "vendor_risk" | "payment_batch" | "collections" | "treasury" | "cash_forecast" | "dispute" | "compliance" | "revenue_intel" | "reconciliation" | "subscription" | "fraud_anomaly";
+        AgentProposalSummary: {
+            id: string;
+            type: components["schemas"]["AgentProposalType"];
+            agent_principal: string;
+            /** @enum {string} */
+            risk_band: "low" | "standard" | "elevated" | "high";
+            /** @enum {string} */
+            status: "needs_review" | "acknowledged" | "approved" | "rejected" | "undone_to_review";
+            title?: string;
+            amount?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        AgentProposal: components["schemas"]["AgentProposalSummary"] & {
+            /** @enum {string} */
+            execution_mode?: "propose" | "notify_only";
+            narrative?: string;
+            evidence?: {
+                text?: string;
+                wiki_entity_id?: string;
+            }[];
+            links?: {
+                payment_intent_id?: string | null;
+                counterparty_id?: string | null;
+                raw_id?: string | null;
+            };
+            policy_decision_id?: string | null;
+            confidence?: number | null;
+            reversible?: boolean;
+            /** @enum {string|null} */
+            decision?: "approved" | "rejected" | "acknowledged" | "undone_to_review" | null;
+            decided_by?: string | null;
+            /** Format: date-time */
+            decided_at?: string | null;
         };
         ReconciliationMatch: {
             id: string;
@@ -7267,6 +7370,134 @@ export interface operations {
             400: components["responses"]["BadRequest"];
         };
     };
+    listProposals: {
+        parameters: {
+            query?: {
+                status?: "needs_review" | "acknowledged" | "approved" | "rejected" | "undone_to_review";
+                type?: components["schemas"]["AgentProposalType"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent proposal summaries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        proposals?: components["schemas"]["AgentProposalSummary"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent proposal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProposal"];
+                };
+            };
+            /** @description Malformed id. Error code `request_params_invalid`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such agent proposal. Error code `agent_proposal_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    decideProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    decision: "approved" | "rejected" | "acknowledged" | "undone_to_review";
+                    edit?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Updated agent proposal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProposal"];
+                };
+            };
+            /** @description Malformed id (`request_params_invalid`), or a missing/unrecognized `decision` or a non-decimal-string `edit.amount` (`request_body_invalid`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description No such agent proposal. Error code `agent_proposal_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Illegal transition for the proposal's current state, execution mode, or reversibility. Error code `agent_proposal_invalid_state`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     createPaymentIntent: {
         parameters: {
             query?: never;
@@ -7339,7 +7570,10 @@ export interface operations {
     };
     getPaymentIntent: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Comma-separated list of related entities to attach. `agent` attaches the creating agent (null if `created_by_agent_id` is null or the agent lookup misses); the response is unchanged when this param is absent. */
+                expand?: "agent";
+            };
             header?: never;
             path: {
                 id: string;
@@ -7354,7 +7588,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PaymentIntent"];
+                    "application/json": components["schemas"]["PaymentIntent"] & {
+                        agent?: {
+                            id?: string;
+                            display_name?: string;
+                            /** @enum {string} */
+                            kind?: "internal" | "external";
+                            /** @enum {string} */
+                            role?: "reconciliation" | "payment" | "anomaly" | "partner";
+                            /** @enum {string} */
+                            state?: "pending_onchain" | "active" | "revoked" | "failed" | "quarantined";
+                        } | null;
+                    };
                 };
             };
             /** @description No such PaymentIntent. Error code `payment_intent_not_found`. */

@@ -54,6 +54,7 @@ import {
   type AuditEmitter,
   type ServiceCallContext,
 } from "@brain/shared";
+import { insertAgentProposal, type InsertAgentProposalInput } from "@brain/execution";
 import type { Pool } from "pg";
 import { insertBootstrapAdminMember } from "../onboarding/bootstrap-member.js";
 
@@ -535,6 +536,9 @@ export async function seedBrainSaasDemo(
   const approvedVendorCpIds = VENDORS.filter((v) => v.approved).map((v) => vendors[v.key]!.id);
   const policyId = await seedPolicy(pool, tenantId, actor, approvedVendorCpIds);
 
+  // ---------- Non-financial agent proposals (BRAIN-CORE-ORCHESTRATION-GAP.md §3) ----------
+  await seedAgentProposals(pool, tenantId, agentId, { vendors, customers });
+
   return {
     tenantId,
     actor,
@@ -680,4 +684,231 @@ async function seedAgent(pool: Pool, tenantId: string): Promise<string> {
     );
   });
   return agentId;
+}
+
+// ---------------------------------------------------------------------------
+// Non-financial agent proposals (BRAIN-CORE-ORCHESTRATION-GAP.md §3). One row
+// per proposal type, grounded in the vendors/customers/invoices seeded above
+// (real amounts and names, no invented figures). The three notify_only types
+// (compliance, revenue_intel, fraud_anomaly) always land in needs_review since
+// notify_only never reaches acknowledged automatically. Four propose-mode
+// rows are pre-decided (auto-approved) to show the reviewed/approved end
+// state; the rest sit in needs_review awaiting a human decision.
+// ---------------------------------------------------------------------------
+
+async function seedAgentProposals(
+  pool: Pool,
+  tenantId: string,
+  agentId: string,
+  entities: {
+    vendors: Record<string, CounterpartyRow>;
+    customers: Record<string, CounterpartyRow>;
+  },
+): Promise<void> {
+  const { vendors, customers } = entities;
+  const cloudops = vendors["cloudops"]!;
+  const quickpay = vendors["quickpay"]!;
+  const datacenter = vendors["datacenter"]!;
+  const stripelike = vendors["stripelike"]!;
+  const bigco = customers["bigco"]!;
+  const startupx = customers["startupx"]!;
+  const midmarket = customers["midmarket"]!;
+
+  type ProposalSpec = Omit<InsertAgentProposalInput, "tenantId" | "agentPrincipal"> & {
+    approved?: boolean;
+  };
+  const rows: ProposalSpec[] = [
+    {
+      type: "vendor_risk",
+      riskBand: "elevated",
+      executionMode: "propose",
+      title: "Elevated exposure: Datacenter Hosting Ltd invoice nears monthly ceiling",
+      narrative:
+        "INV-DATACENTER-002 ($187,000.00) is more than 3x Datacenter Hosting Ltd's " +
+        "$60,000.00 monthly ceiling. Recommend a one-time ceiling exception review " +
+        "before this AP invoice is funded.",
+      amount: "187000.00",
+      confidence: 0.88,
+      evidence: [{ text: "INV-DATACENTER-002: $187,000.00 due in 4 days, PO-9912" }],
+      links: { counterparty_id: datacenter.id },
+    },
+    {
+      type: "collections",
+      riskBand: "standard",
+      executionMode: "propose",
+      title: "Payment plan proposal: StartupX invoice 32 days overdue",
+      narrative:
+        "AR-STARTUPX-001 ($8,000.00) is 32 days overdue. StartupX has negotiated two " +
+        "prior payment plans; propose a third structured plan rather than escalating " +
+        "to collections given the declining usage trend.",
+      amount: "8000.00",
+      confidence: 0.82,
+      evidence: [{ text: "AR-STARTUPX-001: $8,000.00 outstanding, 32 days overdue" }],
+      links: { counterparty_id: startupx.id },
+    },
+    {
+      type: "dispute",
+      riskBand: "standard",
+      executionMode: "propose",
+      title: "Disputed duplicate line item: Midmarket Solutions invoice",
+      narrative:
+        "Midmarket Solutions flagged a $1,800.00 duplicate line item on AR-MIDMARKET-001 " +
+        "($42,000.00 outstanding, 18 days overdue). Propose crediting the duplicate line " +
+        "and re-issuing the remainder.",
+      amount: "1800.00",
+      confidence: 0.7,
+      evidence: [{ text: "AR-MIDMARKET-001: $42,000.00 outstanding, 18 days overdue" }],
+      links: { counterparty_id: midmarket.id },
+    },
+    {
+      type: "cash_forecast",
+      riskBand: "standard",
+      executionMode: "propose",
+      title: "30-day cash forecast: AR/AP mix dips toward the operating buffer",
+      narrative:
+        `Operating balance is $${OPERATING_BALANCE} against a $${OPERATING_BUFFER_MIN} ` +
+        "buffer minimum. Pending AP (CloudOps + Datacenter, $206,400.00) outpaces the AR " +
+        "expected to clear in the same window; recommend holding the Treasury sweep " +
+        "until the AP batch settles.",
+      confidence: 0.75,
+      evidence: [
+        {
+          text: `Operating balance $${OPERATING_BALANCE}, buffer minimum $${OPERATING_BUFFER_MIN}`,
+        },
+      ],
+      links: {},
+    },
+    {
+      type: "compliance",
+      riskBand: "high",
+      executionMode: "notify_only",
+      title: "Compliance flag: Quick Pay Solutions remains unverified",
+      narrative:
+        "Quick Pay Solutions is still unverified and unapproved. INV-QUICKPAY-003 also " +
+        "carries urgency_language and new_wire_instructions flags. No payment has been " +
+        "authorized; this is a standing compliance notice pending vendor verification.",
+      confidence: 0.9,
+      evidence: [{ text: "Quick Pay Solutions: verified_status=unverified, risk_level=high" }],
+      links: { counterparty_id: quickpay.id },
+    },
+    {
+      type: "revenue_intel",
+      riskBand: "low",
+      executionMode: "notify_only",
+      title: "Expansion signal: BigCo Industries usage trending up",
+      narrative:
+        "BigCo Industries (38-month tenure, $48,000.00 MRR) shows a growing usage trend " +
+        "with a low late-payment history. Flagging for the account team as an upsell " +
+        "candidate.",
+      amount: "48000.00",
+      confidence: 0.8,
+      evidence: [
+        { text: "BigCo Industries: 38-month tenure, $48,000.00 MRR, usage_trend=growing" },
+      ],
+      links: { counterparty_id: bigco.id },
+    },
+    {
+      type: "fraud_anomaly",
+      riskBand: "high",
+      executionMode: "notify_only",
+      title: "Fraud signal: Quick Pay Solutions invoice flags urgency + new wire instructions",
+      narrative:
+        "INV-QUICKPAY-003 ($4,800.00) combines urgency_language, new_wire_instructions, " +
+        "and no_po flags on an unapproved vendor: a classic business-email-compromise " +
+        "pattern. No payment has been authorized.",
+      amount: "4800.00",
+      confidence: 0.93,
+      evidence: [
+        { text: "INV-QUICKPAY-003: urgency_language, new_wire_instructions, no_po flags" },
+      ],
+      links: { counterparty_id: quickpay.id },
+    },
+    {
+      type: "payment_batch",
+      riskBand: "low",
+      executionMode: "propose",
+      title: "Batch payment: CloudOps Inc invoice",
+      narrative:
+        "CloudOps Inc is approved and within its $25,000.00 monthly ceiling. " +
+        "Datacenter Hosting Ltd's invoice is excluded from this batch pending the " +
+        "ceiling exception review flagged separately. Proposing settlement for " +
+        "INV-CLOUDOPS-001 ($19,400.00).",
+      amount: "19400.00",
+      confidence: 0.97,
+      evidence: [{ text: "INV-CLOUDOPS-001: $19,400.00 due in 7 days, PO-2387" }],
+      links: { counterparty_id: cloudops.id },
+      reversible: true,
+      approved: true,
+    },
+    {
+      type: "treasury",
+      riskBand: "low",
+      executionMode: "propose",
+      title: "Sweep $200,000.00 of idle operating cash into Reserve",
+      narrative:
+        `Operating balance $${OPERATING_BALANCE} sits well above the $${OPERATING_BUFFER_MIN} ` +
+        "buffer minimum. Swept $200,000.00 of the surplus into the Reserve account.",
+      amount: "200000.00",
+      confidence: 0.9,
+      evidence: [
+        {
+          text: `Operating balance $${OPERATING_BALANCE}, buffer minimum $${OPERATING_BUFFER_MIN}`,
+        },
+      ],
+      links: {},
+      reversible: true,
+      approved: true,
+    },
+    {
+      type: "reconciliation",
+      riskBand: "low",
+      executionMode: "propose",
+      title: "Reconciled: BigCo Industries payment matches invoice AR-BIGCO-001",
+      narrative:
+        "BigCo Industries' latest $48,000.00 monthly inflow matches AR-BIGCO-001 within " +
+        "tolerance. Marked reconciled.",
+      amount: "48000.00",
+      confidence: 0.96,
+      evidence: [{ text: "BigCo Industries: $48,000.00 inflow matched to AR-BIGCO-001" }],
+      links: { counterparty_id: bigco.id },
+      reversible: false,
+      approved: true,
+    },
+    {
+      type: "subscription",
+      riskBand: "low",
+      executionMode: "propose",
+      title: "Right-sized Stripe-Like Co subscription tier, saving $2,000.00/month",
+      narrative:
+        "Stripe-Like Co's usage has run well under its $8,000.00 monthly ceiling for " +
+        "three consecutive cycles. Downgraded to the next tier down, saving $2,000.00/month.",
+      amount: "2000.00",
+      confidence: 0.83,
+      evidence: [
+        { text: "Stripe-Like Co: monthly ceiling $8,000.00, usage under tier for 3 cycles" },
+      ],
+      links: { counterparty_id: stripelike.id },
+      reversible: false,
+      approved: true,
+    },
+  ];
+
+  await withTenantScope(pool, tenantId, async (c) => {
+    for (const { approved, ...spec } of rows) {
+      await insertAgentProposal(c, {
+        ...spec,
+        tenantId,
+        agentPrincipal: agentId,
+        ...(approved === true
+          ? {
+              status: "approved" as const,
+              decision: "approved" as const,
+              decidedBy: agentId,
+              decidedAt: NOW,
+              createdAt: NOW,
+            }
+          : {}),
+      });
+    }
+  });
 }

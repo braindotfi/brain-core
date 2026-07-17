@@ -23,7 +23,7 @@ Register external agents, list the first-party agent catalog, route events to ag
 | MCP JSON-RPC entry                                | `POST /v1/agents/mcp` (see MCP Server API Reference) |
 
 {% hint style="warning" %}
-`POST /v1/agents/register` and `POST /v1/agents/{agent_id}/propose` are marked **deprecated** in the spec and **return 404** today. Register external agents via `POST /v1/execution/agents/register` (below), and propose actions through `POST /v1/agents/run` (which routes → resolves → dry-runs the §6 gate → proposes through the gated path).
+`POST /v1/agents/register` and `POST /v1/agents/{agent_id}/propose` are marked **deprecated** in the spec and **return 404** today. Register external agents via `POST /v1/execution/agents/register` (below), and propose actions through `POST /v1/agents/run` (which routes → resolves → dry-runs the §6 gate → proposes through the gated path). For a non-payment agent output (vendor risk, collections, treasury, etc.), see the [Proposals API](proposals-api.md) instead.
 {% endhint %}
 
 ### Register an External Agent

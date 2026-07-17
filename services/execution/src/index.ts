@@ -133,7 +133,10 @@ export {
 // Boot-binary route registration hooks.
 export { registerExecutionRoutes } from "./routes.js";
 export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
-export type { InvoiceShortcutResolver } from "./payment-intents/routes.js";
+export type {
+  InvoiceShortcutResolver,
+  PaymentIntentAgentResolver,
+} from "./payment-intents/routes.js";
 export { registerMemberRoutes } from "./members/routes.js";
 export type { MemberRoutesDeps } from "./members/routes.js";
 
@@ -161,6 +164,35 @@ export {
 export * from "./agent-runs.js";
 // High-risk findings + overrides (Agent Autonomy v3, 2.6).
 export * from "./findings.js";
+// Non-financial agent proposals (BRAIN-CORE-ORCHESTRATION-GAP.md §3).
+export { nextStatus } from "./proposals/state-machine.js";
+export type {
+  AgentProposalDecision,
+  AgentProposalExecutionMode,
+  AgentProposalStatus,
+} from "./proposals/state-machine.js";
+export {
+  decideAgentProposal,
+  getAgentProposal,
+  insertAgentProposal,
+  listAgentProposals,
+  serializeAgentProposal,
+  serializeAgentProposalSummary,
+} from "./proposals/repository.js";
+export type {
+  AgentProposalEvidenceItem,
+  AgentProposalLinks,
+  AgentProposalRiskBand,
+  AgentProposalRow,
+  AgentProposalSummary,
+  AgentProposalType,
+  AgentProposalView,
+  DecideAgentProposalInput,
+  InsertAgentProposalInput,
+  ListAgentProposalsFilters,
+} from "./proposals/repository.js";
+export { registerProposalRoutes } from "./proposals/routes.js";
+export type { ProposalRoutesDeps } from "./proposals/routes.js";
 // Agent-to-agent sagas (Agent Autonomy v3, 3.2).
 export { runSaga, type SagaStep, type SagaResult, type SagaDeps } from "./sagas.js";
 // Durable execution outbox + saga (H-04).

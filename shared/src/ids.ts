@@ -94,6 +94,10 @@ export const ID_PREFIX = {
   // Per-customer API-key auth (token-exchange model). Public id for a row in
   // api_keys; distinct from the token/agent ids minted alongside it.
   apiKey: "akey",
+  // Non-financial agent proposals (BRAIN-CORE-ORCHESTRATION-GAP.md §3). Distinct
+  // from the financial `proposals` table's `prop` prefix: an agent_proposal is
+  // a non-payment agent output (vendor risk, collections, treasury, etc.).
+  agentProposal: "agpr",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];
@@ -150,6 +154,7 @@ export const newExecutionOutboxId = (): string => brainId(ID_PREFIX.executionOut
 export const newLedgerReservationId = (): string => brainId(ID_PREFIX.ledgerReservation);
 export const newWebhookDeadLetterId = (): string => brainId(ID_PREFIX.webhookDeadLetter);
 export const newApiKeyId = (): string => brainId(ID_PREFIX.apiKey);
+export const newAgentProposalId = (): string => brainId(ID_PREFIX.agentProposal);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.

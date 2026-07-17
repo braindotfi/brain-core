@@ -1,6 +1,6 @@
 # Payment Intents API
 
-The canonical Brain HTTP surface for proposing, approving, and executing financial actions is the **PaymentIntent** family. The `agent_id`-keyed proposal route from earlier drafts (`POST /v1/agents/{agent_id}/propose`) and the `/v1/actions/*` paths are **not implemented**. Both are documented as deprecated stubs in the spec and return 404. Use the routes below.
+The canonical Brain HTTP surface for proposing, approving, and executing financial actions is the **PaymentIntent** family. The `agent_id`-keyed proposal route from earlier drafts (`POST /v1/agents/{agent_id}/propose`) and the `/v1/actions/*` paths are **not implemented**. Both are documented as deprecated stubs in the spec and return 404. Use the routes below. For a non-payment agent output (vendor risk, collections, treasury, etc.), see the [Proposals API](proposals-api.md) instead.
 
 | Operation              | Endpoint                                             |
 | ---------------------- | ---------------------------------------------------- |

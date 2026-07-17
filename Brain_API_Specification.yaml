@@ -51,6 +51,8 @@ tags:
     description: Rule composition, signing, evaluation against Ledger state (Layer 4)
   - name: Agent
     description: Agent registration and action orchestration (Layer 5). Replaces the v0.1 Execution group; legacy /execution/* paths still resolve.
+  - name: Proposals
+    description: Non-financial agent proposals (vendor risk, collections, treasury, cash forecast, dispute, compliance, revenue intel, reconciliation, subscription, fraud anomaly) that a human reviews and decides on. Distinct from PaymentIntent, which is the gated money-movement path.
   - name: PaymentIntent
     description: PaymentIntent lifecycle — propose, approve, execute. Always passes the deterministic pre-execution gate (§6 of Engineering Standards).
   - name: Members
@@ -3288,6 +3290,122 @@ paths:
                         quarantined: { type: boolean }
         '400': { $ref: '#/components/responses/BadRequest' }
 
+  /proposals:
+    get:
+      tags: [Proposals]
+      summary: List agent proposals
+      description: Requires `execution:read`.
+      operationId: listProposals
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [needs_review, acknowledged, approved, rejected, undone_to_review]
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/AgentProposalType'
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        '200':
+          description: Agent proposal summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  proposals:
+                    type: array
+                    items: { $ref: '#/components/schemas/AgentProposalSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /proposals/{id}:
+    get:
+      tags: [Proposals]
+      summary: Agent proposal detail
+      description: Requires `execution:read`.
+      operationId: getProposal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Agent proposal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentProposal' }
+        '400':
+          description: Malformed id. Error code `request_params_invalid`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No such agent proposal. Error code `agent_proposal_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /proposals/{id}/decide:
+    post:
+      tags: [Proposals]
+      summary: Record a human decision on an agent proposal
+      description: |
+        Requires `execution:admin`. The actor resolves through `ActorResolver`
+        to a tenant member (session actors require `principal_type=user`).
+        Legal transitions: `needs_review` + `approved`/`rejected` (propose mode
+        only), `needs_review` + `acknowledged` (notify_only mode only),
+        `approved` + `undone_to_review` (reversible proposals only), and
+        `undone_to_review` + `approved`/`rejected`. Any other combination is
+        refused.
+      operationId: decideProposal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, rejected, acknowledged, undone_to_review]
+                edit:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Updated agent proposal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentProposal' }
+        '400':
+          description: Malformed id (`request_params_invalid`), or a missing/unrecognized `decision` or a non-decimal-string `edit.amount` (`request_body_invalid`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No such agent proposal. Error code `agent_proposal_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Illegal transition for the proposal's current state, execution mode, or reversibility. Error code `agent_proposal_invalid_state`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /payment-intents:
     post:
       tags: [PaymentIntent]
@@ -3383,12 +3501,36 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: expand
+          in: query
+          description: >-
+            Comma-separated list of related entities to attach. `agent`
+            attaches the creating agent (null if `created_by_agent_id` is
+            null or the agent lookup misses); the response is unchanged when
+            this param is absent.
+          schema:
+            type: string
+            enum: [agent]
       responses:
         '200':
           description: PaymentIntent
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/PaymentIntent' }
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaymentIntent'
+                  - type: object
+                    properties:
+                      agent:
+                        type: [object, "null"]
+                        properties:
+                          id: { type: string }
+                          display_name: { type: string }
+                          kind: { type: string, enum: [internal, external] }
+                          role: { type: string, enum: [reconciliation, payment, anomaly, partner] }
+                          state:
+                            type: string
+                            enum: [pending_onchain, active, revoked, failed, quarantined]
         '404':
           description: No such PaymentIntent. Error code `payment_intent_not_found`.
           content:
@@ -6126,6 +6268,74 @@ components:
             execution_receipt_ids:
               type: array
               items: { type: string }
+
+    #
+    # Agent proposals (BRAIN-CORE-ORCHESTRATION-GAP.md §3): non-financial
+    # agent outputs, distinct from PaymentIntent above.
+    #
+
+    AgentProposalType:
+      type: string
+      enum:
+        - vendor_risk
+        - payment_batch
+        - collections
+        - treasury
+        - cash_forecast
+        - dispute
+        - compliance
+        - revenue_intel
+        - reconciliation
+        - subscription
+        - fraud_anomaly
+
+    AgentProposalSummary:
+      type: object
+      required: [id, type, agent_principal, risk_band, status, created_at]
+      properties:
+        id: { type: string }
+        type: { $ref: '#/components/schemas/AgentProposalType' }
+        agent_principal: { type: string }
+        risk_band:
+          type: string
+          enum: [low, standard, elevated, high]
+        status:
+          type: string
+          enum: [needs_review, acknowledged, approved, rejected, undone_to_review]
+        title: { type: string }
+        amount: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+
+    AgentProposal:
+      allOf:
+        - $ref: '#/components/schemas/AgentProposalSummary'
+        - type: object
+          properties:
+            execution_mode:
+              type: string
+              enum: [propose, notify_only]
+            narrative: { type: string }
+            evidence:
+              type: array
+              items:
+                type: object
+                properties:
+                  text: { type: string }
+                  wiki_entity_id: { type: string }
+            links:
+              type: object
+              properties:
+                payment_intent_id: { type: [string, "null"] }
+                counterparty_id: { type: [string, "null"] }
+                raw_id: { type: [string, "null"] }
+            policy_decision_id: { type: [string, "null"] }
+            confidence: { type: [number, "null"], minimum: 0, maximum: 1 }
+            reversible: { type: boolean }
+            decision:
+              type: [string, "null"]
+              enum: [approved, rejected, acknowledged, undone_to_review, null]
+            decided_by: { type: [string, "null"] }
+            decided_at: { type: [string, "null"], format: date-time }
 
     ReconciliationMatch:
       type: object

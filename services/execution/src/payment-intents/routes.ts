@@ -21,12 +21,19 @@ import {
 import type { PaymentIntentService } from "./PaymentIntentService.js";
 import { isExecutablePaymentIntentActionType } from "./action-types.js";
 import type { ResolvedInvoiceShortcut } from "./invoice-shortcut.js";
+import type { AgentRow } from "../repository.js";
 
 /** P0.5: resolves the `pay_invoice` shortcut into a full create payload. */
 export type InvoiceShortcutResolver = (
   ctx: ServiceCallContext,
   invoiceId: string,
 ) => Promise<ResolvedInvoiceShortcut>;
+
+/** `?expand=agent` on GET /payment-intents/{id}: resolves the creating agent. */
+export type PaymentIntentAgentResolver = (
+  ctx: ServiceCallContext,
+  agentId: string,
+) => Promise<AgentRow | null>;
 
 const SCOPE_PROPOSE: Scope = "payment_intent:propose";
 const SCOPE_APPROVE: Scope = "payment_intent:approve";
@@ -105,6 +112,7 @@ export async function registerPaymentIntentRoutes(
   app: FastifyInstance,
   service: PaymentIntentService,
   resolveShortcut?: InvoiceShortcutResolver,
+  resolveAgent?: PaymentIntentAgentResolver,
 ): Promise<void> {
   app.post(
     "/payment-intents",
@@ -202,7 +210,10 @@ export async function registerPaymentIntentRoutes(
 
   app.get(
     "/payment-intents/:id",
-    async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    async (
+      request: FastifyRequest<{ Params: { id: string }; Querystring: { expand?: string } }>,
+      reply,
+    ) => {
       const ctx = assertCtx(request);
       requireScope(request.principal!.scopes, SCOPE_READ);
       if (!isBrainId(request.params.id, "pi")) {
@@ -213,6 +224,26 @@ export async function registerPaymentIntentRoutes(
         throw brainError("payment_intent_not_found", "no such PaymentIntent");
       }
       reply.status(200);
+      const expand = request.query.expand?.split(",") ?? [];
+      if (expand.includes("agent")) {
+        const agent =
+          intent.created_by_agent_id !== null && resolveAgent !== undefined
+            ? await resolveAgent(ctx, intent.created_by_agent_id)
+            : null;
+        return {
+          ...intent,
+          agent:
+            agent === null
+              ? null
+              : {
+                  id: agent.id,
+                  display_name: agent.display_name,
+                  kind: agent.kind,
+                  role: agent.role,
+                  state: agent.state,
+                },
+        };
+      }
       return intent;
     },
   );

@@ -133,6 +133,7 @@ import {
   registerExecutionRoutes,
   registerMemberRoutes,
   registerPaymentIntentRoutes,
+  registerProposalRoutes,
   ApprovalService,
   ActorResolver,
   OutboxService,
@@ -154,7 +155,12 @@ import {
   transitionAgent,
   releaseContributionHold,
 } from "@brain/execution";
-import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
+import type {
+  ExecutionDeps,
+  OnchainDispatchParams,
+  PaymentIntentAgentResolver,
+  Rail,
+} from "@brain/execution";
 import { parseEther } from "viem";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
@@ -1708,8 +1714,16 @@ async function main(): Promise<void> {
             enqueue: routingEnqueue,
             recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
           });
-          await registerPaymentIntentRoutes(child, piService, invoiceShortcut);
+          // `?expand=agent` on GET /payment-intents/{id}: resolves the creating
+          // agent row via the same findAgent repository primitive used elsewhere,
+          // tenant-scoped like every other agent lookup in this file.
+          const resolveAgentRow: PaymentIntentAgentResolver = (agentCtx, agentId) =>
+            withTenantScope(pool, agentCtx.tenantId, (c) => findAgent(c, agentId));
+          await registerPaymentIntentRoutes(child, piService, invoiceShortcut, resolveAgentRow);
         });
+        await v1.register(async (child) =>
+          registerProposalRoutes(child, { pool, audit, actorResolver }),
+        );
         await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
         // H-20 webhook dead-letter + replay: /v1/webhooks/{endpoint_id}/{dead-letters,replay}.
         await v1.register(async (child) => registerWebhookRoutes(child, { pool }));
