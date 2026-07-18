@@ -251,7 +251,7 @@ describe("GET /proposals", () => {
     await tenantBApp.close();
   });
 
-  it("returns typed evidence refs and marks only live Wiki entities resolvable", async () => {
+  it("returns typed evidence refs and marks supported resolver kinds resolvable", async () => {
     const pool = fakePool({ [TENANT_A]: [proposalRow({ id: PROP_1 })] });
     const app = await buildApp(pool, principal(TENANT_A));
 
@@ -259,9 +259,9 @@ describe("GET /proposals", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json().evidence).toEqual([
-      { kind: "invoice", ref: "inv_1", resolvable: false },
+      { kind: "invoice", ref: "inv_1", resolvable: true },
       { kind: "wiki_entity", ref: ENT_RESOLVES, resolvable: true },
-      { kind: "wiki_entity", ref: ENT_MISSING, resolvable: false },
+      { kind: "wiki_entity", ref: ENT_MISSING, resolvable: true },
       { kind: "unknown", ref: "legacy_ref", resolvable: false },
     ]);
     await app.close();

@@ -1821,6 +1821,24 @@ paths:
                     items: { $ref: '#/components/schemas/Invoice' }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+  /ledger/invoices/{invoice_id}:
+    get:
+      tags: [Ledger]
+      summary: Invoice detail
+      description: Requires `ledger:read`.
+      operationId: getInvoice
+      parameters:
+        - name: invoice_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Invoice
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ledger/normalize:
     post:
       tags: [Ledger]
@@ -3303,10 +3321,11 @@ paths:
       description: |
         Requires `execution:read`. Cursor-paginated, tenant-scoped read model
         over agent-created PaymentIntents and non-financial agent proposals.
-        Evidence refs are returned as typed domain refs. Valid `ent_...` Wiki
-        policy or agent refs resolve through `GET /v1/wiki/entity/{id}`.
-        Domain refs without a read path are still returned with
-        `resolvable=false`. `brain://` placeholders are never emitted.
+        Evidence refs are returned as typed domain refs. `resolvable=true`
+        means the kind has a resolver in `POST /v1/evidence/resolve`.
+        Existence is checked only by the resolver endpoint, which returns
+        `not_found=true` for absent or cross-tenant records. `brain://`
+        placeholders are never emitted.
       operationId: listProposals
       parameters:
         - name: type
@@ -3340,6 +3359,33 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/AgentOutputProposal' }
                   next_cursor: { type: [string, "null"] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /evidence/resolve:
+    post:
+      tags: [Evidence]
+      summary: Resolve proposal evidence refs
+      description: |
+        Requires `execution:read`. Batch-resolves proposal evidence refs into
+        tenant-scoped display summaries and canonical deep links. Supported in
+        this release: counterparty, transaction, obligation, account, invoice,
+        and wiki_entity. Unsupported kinds return `resolvable=false` with
+        `reason=unsupported_kind`. A supported kind whose record is absent for
+        this tenant returns `resolvable=true`, `not_found=true`, `summary=null`,
+        and `deep_link=null`.
+      operationId: resolveEvidenceRefs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvidenceResolveRequest' }
+      responses:
+        '200':
+          description: Evidence resolution results, one per input ref
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceResolveResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
@@ -6305,7 +6351,57 @@ components:
           description: Stored evidence reference. Never a `brain://` placeholder.
         resolvable:
           type: boolean
-          description: True only when the ref has a read path today. Currently, valid `ent_...` Wiki policy or agent refs resolve through `GET /v1/wiki/entity/{id}`. Ledger domain refs and document refs are returned with `resolvable=false` until their read endpoints are wired into this surface.
+          description: True when this ref kind is supported by `POST /v1/evidence/resolve`. Existence is checked by the resolver endpoint via `not_found`.
+
+    EvidenceResolveRef:
+      type: object
+      required: [kind, ref]
+      properties:
+        kind:
+          type: string
+          description: Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, and wiki_entity.
+        ref:
+          type: string
+          description: Stored evidence reference. Never a `brain://` placeholder.
+
+    EvidenceResolveRequest:
+      type: object
+      required: [refs]
+      properties:
+        refs:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EvidenceResolveRef' }
+
+    EvidenceResolveResult:
+      type: object
+      required: [kind, ref, resolvable, not_found, summary, deep_link]
+      properties:
+        kind: { type: string }
+        ref: { type: string }
+        resolvable:
+          type: boolean
+          description: False for unsupported kinds or malformed refs.
+        not_found:
+          type: boolean
+          description: True when the kind is supported but no row exists for the caller tenant.
+        summary:
+          type: [string, "null"]
+          description: Short display summary for a resolved row. Null when unsupported or not found.
+        deep_link:
+          type: [string, "null"]
+          description: Canonical API path for the resolved row. Null when unsupported or not found.
+        reason:
+          type: string
+          enum: [unsupported_kind, malformed_ref]
+
+    EvidenceResolveResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/EvidenceResolveResult' }
 
     AgentOutputProposal:
       type: object

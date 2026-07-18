@@ -138,6 +138,16 @@ export type {
   PaymentIntentAgentResolver,
 } from "./payment-intents/routes.js";
 export { registerProposalReadRoutes } from "./proposals/routes.js";
+export { registerEvidenceResolveRoutes } from "./evidence/routes.js";
+export type { EvidenceResolveRoutesDeps } from "./evidence/routes.js";
+export {
+  isEvidenceKindResolvable,
+  parseEvidenceResolveBody,
+  resolveEvidenceRefs,
+  unsupportedEvidenceKinds,
+  type EvidenceResolveRef,
+  type EvidenceResolveResult,
+} from "./evidence/resolve.js";
 export {
   ProposalDecisionService,
   PROPOSAL_DECISIONS,

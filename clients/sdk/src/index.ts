@@ -87,6 +87,11 @@ export {
   type ProposalDecision,
   type ProposalDecisionResult,
 } from "./resources/proposals.js";
+export {
+  EvidenceResource,
+  type EvidenceResolveRef,
+  type EvidenceResolveResult,
+} from "./resources/evidence.js";
 
 export {
   ActionsResource,

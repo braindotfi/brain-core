@@ -133,6 +133,13 @@ export class InvoicesResource {
     const body = unwrap(data, error, response.status);
     return body.invoices ?? [];
   }
+
+  async get(invoiceId: string): Promise<Invoice> {
+    const { data, error, response } = await this.http.GET("/ledger/invoices/{invoice_id}", {
+      params: { path: { invoice_id: invoiceId } },
+    });
+    return unwrap(data, error, response.status);
+  }
 }
 
 export class BalancesResource {

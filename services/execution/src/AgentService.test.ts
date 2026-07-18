@@ -84,6 +84,7 @@ function makeDeps(
     pool: makeFakePool(poolQueryFn ?? defaultQuery),
     audit: new InMemoryAuditEmitter(),
     evaluatePolicy: makeEvaluatePolicy(outcome),
+    resolveAgentAuthority: async () => "propose" as const,
     ...overrides,
   };
 }
@@ -162,6 +163,33 @@ describe("AgentService.propose", () => {
       }),
       {
         resolveAgentAuthority: async () => "notify_only" as const,
+      },
+    );
+    const svc = new AgentService(deps);
+    const result = await svc.propose(ctx, AGENT_ID, {
+      action: { kind: "flag_anomaly", mode: "propose" },
+    });
+    expect(deps.evaluatePolicy).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ mode: "notify_only" }),
+    );
+    expect(result.status).toBe("pending");
+  });
+
+  it("defaults unresolved agent authority to notify_only and keeps allow outcomes pending", async () => {
+    const deps = makeDeps(
+      "allow",
+      () => ({
+        rows: [
+          makeProposalRow({
+            status: "pending",
+            action: { kind: "flag_anomaly", mode: "notify_only" },
+          }),
+        ],
+        rowCount: 1,
+      }),
+      {
+        resolveAgentAuthority: async () => null,
       },
     );
     const svc = new AgentService(deps);

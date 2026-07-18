@@ -131,6 +131,7 @@ import type { PolicyDeps, PolicyDocument, PolicyRow } from "@brain/policy";
 
 import {
   registerExecutionRoutes,
+  registerEvidenceResolveRoutes,
   registerMemberRoutes,
   registerPaymentIntentRoutes,
   registerProposalReadRoutes,
@@ -1724,6 +1725,7 @@ async function main(): Promise<void> {
             decisions: { pool, audit, actorResolver, paymentIntents: piService },
           }),
         );
+        await v1.register(async (child) => registerEvidenceResolveRoutes(child, { pool }));
         await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
         // H-20 webhook dead-letter + replay: /v1/webhooks/{endpoint_id}/{dead-letters,replay}.
         await v1.register(async (child) => registerWebhookRoutes(child, { pool }));
