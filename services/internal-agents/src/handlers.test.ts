@@ -60,7 +60,14 @@ describe("Collections handler", () => {
   it("produces a non-financial proposal that passes its policy", () => {
     const proposed = collectionsHandler.build({
       action: "draft_followup",
-      context: { invoice_id: "inv_1", counterparty_id: "cp_1" },
+      context: {
+        invoice_id: "inv_1",
+        counterparty_id: "cp_1",
+        amount: "100",
+        currency: "USD",
+        due_date: "2026-07-01T00:00:00.000Z",
+        days_overdue: 8,
+      },
       evidence: EVIDENCE,
     });
     expect(proposed.channel).toBe("agent");
@@ -74,7 +81,14 @@ describe("Collections handler", () => {
   it("stamps policy gate signals from trusted definition and evidence", () => {
     const proposed = collectionsHandler.build({
       action: "draft_followup",
-      context: { invoice_id: "inv_1", counterparty_id: "cp_1" },
+      context: {
+        invoice_id: "inv_1",
+        counterparty_id: "cp_1",
+        amount: "100",
+        currency: "USD",
+        due_date: "2026-07-01T00:00:00.000Z",
+        days_overdue: 8,
+      },
       evidence: {
         ...EVIDENCE,
         evidence_score: 0.9,
@@ -100,7 +114,14 @@ describe("Collections handler", () => {
   it("marks notify-only definitions as notify_only regardless of action content", () => {
     const proposed = collectionsHandler.build({
       action: "draft_followup",
-      context: { mode: "propose" },
+      context: {
+        invoice_id: "inv_1",
+        counterparty_id: "cp_1",
+        amount: "100",
+        currency: "USD",
+        due_date: "2026-07-01T00:00:00.000Z",
+        days_overdue: 8,
+      },
       evidence: EVIDENCE,
       definition: revenueIntelDefinition,
       confidence: 0.9,

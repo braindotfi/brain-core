@@ -164,6 +164,7 @@ describe("makeLedgerEvidenceProvider", () => {
     });
     expect(items.map((i) => i.kind)).toEqual(["transaction"]);
     expect(items[0]?.object_id).toBe("txn_1");
+    expect(items[0]?.ref).toBe("txn_1");
   });
 
   it("emits a transaction for a referenced counterparty when no transaction_id", async () => {
@@ -184,6 +185,7 @@ describe("makeLedgerEvidenceProvider", () => {
       requiredEvidence: ["counterparty", "invoice"],
     });
     expect(items.map((i) => i.kind).sort()).toEqual(["counterparty", "invoice"]);
+    expect(items.map((i) => i.ref).sort()).toEqual(["cp_1", "inv_1"]);
   });
 
   it("resolves an obligation only when obligation_id is referenced", async () => {
@@ -194,6 +196,7 @@ describe("makeLedgerEvidenceProvider", () => {
       requiredEvidence: ["obligation"],
     });
     expect(items.map((i) => i.kind)).toEqual(["obligation"]);
+    expect(items[0]?.ref).toBe("ob_1");
   });
 
   it("propagates the obligation's persisted confidence, not a hardcoded 1 (Codex P2)", async () => {

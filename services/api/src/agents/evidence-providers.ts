@@ -69,7 +69,7 @@ function evidenceConfidence(c: number): number {
 function balanceEvidence(b: Balance): Evidence {
   return {
     kind: "balance",
-    ref: `balance:${b.id}`,
+    ref: b.id,
     source_system: "ledger",
     object_type: "balance",
     object_id: b.id,
@@ -82,7 +82,7 @@ function balanceEvidence(b: Balance): Evidence {
 function transactionEvidence(t: Transaction): Evidence {
   return {
     kind: "transaction",
-    ref: `transaction:${t.id}`,
+    ref: t.id,
     source_system: "ledger",
     object_type: "transaction",
     object_id: t.id,
@@ -95,7 +95,7 @@ function transactionEvidence(t: Transaction): Evidence {
 function counterpartyEvidence(c: Counterparty): Evidence {
   return {
     kind: "counterparty",
-    ref: `counterparty:${c.id}`,
+    ref: c.id,
     source_system: "ledger",
     object_type: "counterparty",
     object_id: c.id,
@@ -107,7 +107,7 @@ function counterpartyEvidence(c: Counterparty): Evidence {
 function invoiceEvidence(i: Invoice): Evidence {
   return {
     kind: "invoice",
-    ref: `invoice:${i.id}`,
+    ref: i.id,
     source_system: "ledger",
     object_type: "invoice",
     object_id: i.id,
@@ -120,7 +120,7 @@ function invoiceEvidence(i: Invoice): Evidence {
 function obligationEvidence(o: Obligation): Evidence {
   return {
     kind: "obligation",
-    ref: `obligation:${o.id}`,
+    ref: o.id,
     source_system: "ledger",
     object_type: "obligation",
     object_id: o.id,

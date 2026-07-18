@@ -127,6 +127,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "agent_run_steps", column: "tenant_id" },
   { table: "agent_reasoning_traces", column: "tenant_id" },
   { table: "agent_evidence_refs", column: "tenant_id" },
+  { table: "agent_trigger_cooldowns", column: "tenant_id" },
   { table: "agent_runs", column: "tenant_id" },
   { table: "agent_routing_decisions", column: "tenant_id" },
   { table: "agent_idempotency_keys", column: "tenant_id" },
