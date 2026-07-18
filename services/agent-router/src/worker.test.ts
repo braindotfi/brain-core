@@ -224,7 +224,7 @@ describe("routeAndPropose", () => {
     expect(result.selected_agent_id).toBe("collections");
     expect(result.status).toBe("failed");
     expect(result.reason).toContain("payload_invalid:");
-    expect(result.reason).toContain("amount_due");
+    expect(result.reason).toContain("invoice_id is required");
     expect(result.proposed).toBeUndefined();
     expect(proposeCalls).toBe(0);
   });
