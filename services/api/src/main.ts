@@ -2611,6 +2611,7 @@ async function main(): Promise<void> {
         {
           intervalMs: cfg.BRAIN_COLLECTIONS_SCAN_INTERVAL_MS,
           batchSize: cfg.BRAIN_COLLECTIONS_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_COLLECTIONS_SCAN_PER_TENANT_BATCH_SIZE,
           cooldownMs: cfg.BRAIN_COLLECTIONS_SCAN_COOLDOWN_MS,
         },
       )

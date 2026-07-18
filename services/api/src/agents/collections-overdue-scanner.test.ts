@@ -86,6 +86,57 @@ describe("runCollectionsOverdueScanCycle", () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(run.mock.calls.map(([ctx]) => ctx.tenantId)).toEqual([tenantA, tenantB]);
   });
+
+  it("reports the true eligible backlog when the global cap is hit", async () => {
+    const rows = [
+      receivable({ tenant_id: tenantA, id: "inv_1", counterparty_id: "cp_1" }),
+      receivable({ tenant_id: tenantA, id: "inv_2", counterparty_id: "cp_1" }),
+      receivable({ tenant_id: tenantB, id: "inv_3", counterparty_id: "cp_2" }),
+    ];
+    const scanPool = scanPoolWith(rows, { eligibleCount: 5, fairCount: 3 });
+    const metrics = new MockMetrics();
+    const log = { warn: vi.fn(), error: vi.fn() };
+    const run = vi.fn(
+      async (): Promise<AgentRunResult> => ({
+        status: "proposal_created",
+        routing_decision_id: "agrd_1",
+        run_id: "agnr_1",
+        selected_agent_id: "collections",
+        action: "draft_followup",
+        shadow_mode: false,
+        proposed: { id: "prop_1", status: "pending", policy_decision_id: "pd_1" },
+        reason: {},
+      }),
+    );
+
+    await runCollectionsOverdueScanCycle(
+      { scanPool, appPool: cooldownPool(), runService: { run }, metrics, log },
+      {
+        now: new Date("2026-07-19T00:00:00.000Z"),
+        batchSize: 2,
+        perTenantBatchSize: 2,
+        cooldownMs: 86_400_000,
+      },
+    );
+
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchSize: 2,
+        perTenantBatchSize: 2,
+        total_eligible: 5,
+        total_fair: 3,
+        omitted_count: 3,
+      }),
+      "collections overdue scanner hit batch cap",
+    );
+    expect(metrics.calls).toContainEqual({
+      kind: "increment",
+      name: "brain.collections.scan.dropped.count",
+      value: 3,
+      tags: { reason: "batch_cap" },
+    });
+  });
 });
 
 function receivable(
@@ -106,9 +157,17 @@ function receivable(
   };
 }
 
-function scanPoolWith(rows: CollectionsOverdueReceivableRow[]): Pool {
+function scanPoolWith(
+  rows: CollectionsOverdueReceivableRow[],
+  counts: { eligibleCount?: number; fairCount?: number } = {},
+): Pool {
+  const enriched = rows.map((row) => ({
+    ...row,
+    eligible_count: counts.eligibleCount ?? rows.length,
+    fair_count: counts.fairCount ?? rows.length,
+  }));
   return {
-    query: vi.fn(async () => ({ rows, rowCount: rows.length })),
+    query: vi.fn(async () => ({ rows: enriched, rowCount: enriched.length })),
   } as unknown as Pool;
 }
 
