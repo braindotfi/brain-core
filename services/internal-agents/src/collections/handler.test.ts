@@ -32,6 +32,7 @@ describe("collectionsHandler", () => {
       evidence: EVIDENCE,
       definition: collectionsDefinition,
       confidence: 0.95,
+      now: new Date("2026-07-18T00:00:00.000Z"),
     });
 
     expect(proposed.channel).toBe("agent");
@@ -46,6 +47,7 @@ describe("collectionsHandler", () => {
         days_overdue: 18,
         aging_tier: "15_29",
         recommended_tone: "firm",
+        next_escalation_date: "2026-07-23",
         confidence: 0.8,
         evidence_score: 0.8,
         evidence_refs: [

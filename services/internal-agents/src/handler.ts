@@ -30,6 +30,7 @@ export interface HandlerInput {
   readonly evidence: EvidenceBundle;
   readonly definition?: InternalAgentDefinition;
   readonly confidence?: number;
+  readonly now?: Date;
 }
 
 export interface InternalAgentHandler {

@@ -12,5 +12,5 @@
       "@brain/policy": ["../../services/policy/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "eval/**/*.ts"]
 }
