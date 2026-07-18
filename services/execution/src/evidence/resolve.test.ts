@@ -12,7 +12,9 @@ import {
 } from "@brain/shared";
 import type { Pool } from "pg";
 import {
+  canonicalEvidenceKind,
   isEvidenceKindResolvable,
+  isEvidenceRefResolvable,
   parseEvidenceResolveBody,
   resolveEvidenceRefs,
   unsupportedEvidenceKinds,
@@ -95,7 +97,7 @@ describe("resolveEvidenceRefs", () => {
     await expect(
       resolveEvidenceRefs(fakePool(), ctx, [
         { kind: "document", ref: "doc_01H00000000000000000000000" },
-        { kind: "account", ref: "cp_01H00000000000000000000000" },
+        { kind: "account", ref: "acct_not_valid" },
         { kind: "invoice", ref: newInvoiceId() },
       ]),
     ).resolves.toEqual([
@@ -110,7 +112,7 @@ describe("resolveEvidenceRefs", () => {
       },
       {
         kind: "account",
-        ref: "cp_01H00000000000000000000000",
+        ref: "acct_not_valid",
         resolvable: false,
         not_found: false,
         summary: null,
@@ -128,6 +130,21 @@ describe("resolveEvidenceRefs", () => {
     ]);
   });
 
+  it("prefers the ref prefix when a supported ref is mislabeled", async () => {
+    await expect(
+      resolveEvidenceRefs(fakePool(), ctx, [{ kind: "policy", ref: wikiEntityId }]),
+    ).resolves.toEqual([
+      {
+        kind: "wiki_entity",
+        ref: wikiEntityId,
+        resolvable: true,
+        not_found: false,
+        summary: "Wiki policy: Evidence Policy",
+        deep_link: `/wiki/entity/${wikiEntityId}`,
+      },
+    ]);
+  });
+
   it("parses request bodies and reports resolver capabilities", () => {
     expect(
       parseEvidenceResolveBody({
@@ -136,12 +153,15 @@ describe("resolveEvidenceRefs", () => {
     ).toEqual([{ kind: "counterparty", ref: counterpartyId }]);
     expect(isEvidenceKindResolvable("counterparty")).toBe(true);
     expect(isEvidenceKindResolvable("document")).toBe(false);
+    expect(canonicalEvidenceKind("policy", wikiEntityId)).toBe("wiki_entity");
+    expect(isEvidenceRefResolvable("policy", wikiEntityId)).toBe(true);
     expect(
       unsupportedEvidenceKinds([
         { kind: "document", ref: "doc_1" },
         { kind: "raw_parsed", ref: "prs_1" },
         { kind: "document", ref: "doc_2" },
         { kind: "account", ref: accountId },
+        { kind: "policy", ref: wikiEntityId },
       ]),
     ).toEqual(["document", "raw_parsed"]);
     expect(() => parseEvidenceResolveBody({ refs: "bad" })).toThrow(/refs must be an array/);

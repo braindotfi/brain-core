@@ -32,6 +32,7 @@ function obs(over: Record<string, unknown> = {}): Record<string, unknown> {
     available_balance: "84000.00",
     provenance: "extracted",
     confidence: 0.95,
+    source_ids: ["raw_plaid"],
     ...over,
   };
 }
@@ -71,6 +72,7 @@ describe("resolveAccountView", () => {
       "83500.00",
       "84000.00",
     ]);
+    expect(view!.observations[0]!.source_ids).toEqual(["raw_plaid"]);
   });
 
   it("keeps candidates out of the member set, surfaced for review", async () => {

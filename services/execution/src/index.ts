@@ -141,7 +141,10 @@ export { registerProposalReadRoutes } from "./proposals/routes.js";
 export { registerEvidenceResolveRoutes } from "./evidence/routes.js";
 export type { EvidenceResolveRoutesDeps } from "./evidence/routes.js";
 export {
+  canonicalEvidenceKind,
+  evidenceKindFromRefPrefix,
   isEvidenceKindResolvable,
+  isEvidenceRefResolvable,
   parseEvidenceResolveBody,
   resolveEvidenceRefs,
   unsupportedEvidenceKinds,

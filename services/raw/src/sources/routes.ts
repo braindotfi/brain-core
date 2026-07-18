@@ -85,7 +85,7 @@ export async function registerSourceRoutes(
         ...(q.limit !== undefined ? { limit: Number.parseInt(q.limit, 10) } : {}),
       });
       reply.status(200);
-      return { data: list.map(recordToWire), next_cursor: null };
+      return { data: list.map((source) => recordToWire(source)), next_cursor: null };
     },
   );
 

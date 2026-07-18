@@ -7,7 +7,11 @@ import {
   type TenantScopedClient,
 } from "@brain/shared";
 import type { Pool } from "pg";
-import { isEvidenceKindResolvable } from "../evidence/resolve.js";
+import {
+  canonicalEvidenceKind,
+  evidenceKindFromRefPrefix,
+  isEvidenceKindResolvable,
+} from "../evidence/resolve.js";
 
 export const PROPOSAL_TYPES = [
   "vendor_risk",
@@ -376,13 +380,13 @@ function evidenceRefsFromPaymentIntentIds(ids: string[]): StoredEvidenceRef[] {
 
 function addEvidenceValue(refs: StoredEvidenceRef[], value: unknown): void {
   if (typeof value === "string") {
-    refs.push({ kind: "unknown", ref: value });
+    refs.push({ kind: evidenceKindFromRefPrefix(value) ?? "unknown", ref: value });
     return;
   }
   if (!Array.isArray(value)) return;
   for (const item of value) {
     if (typeof item === "string") {
-      refs.push({ kind: "unknown", ref: item });
+      refs.push({ kind: evidenceKindFromRefPrefix(item) ?? "unknown", ref: item });
     } else if (item !== null && typeof item === "object") {
       const record = item as Record<string, unknown>;
       const ref = firstString(record, ["ref", "id", "entity_id", "wiki_entity_id"]);
@@ -398,11 +402,14 @@ function addEvidenceValue(refs: StoredEvidenceRef[], value: unknown): void {
 function resolvableEvidenceRefs(candidates: StoredEvidenceRef[]): ProposalEvidenceRef[] {
   return candidates
     .filter((item) => item.ref.length > 0)
-    .map((item) => ({
-      kind: item.kind,
-      ref: item.ref,
-      resolvable: isEvidenceKindResolvable(item.kind),
-    }));
+    .map((item) => {
+      const kind = canonicalEvidenceKind(item.kind, item.ref);
+      return {
+        kind,
+        ref: item.ref,
+        resolvable: isEvidenceKindResolvable(kind),
+      };
+    });
 }
 
 function firstString(record: Record<string, unknown>, keys: string[]): string | null {
@@ -414,6 +421,8 @@ function firstString(record: Record<string, unknown>, keys: string[]): string | 
 }
 
 function evidenceKindFromRecord(record: Record<string, unknown>, ref: string): string {
+  const byPrefix = evidenceKindFromRefPrefix(ref);
+  if (byPrefix !== null) return byPrefix;
   const kind = record["kind"];
   if (typeof kind === "string" && kind.trim().length > 0) return kind.trim();
   if (typeof record["wiki_entity_id"] === "string") return "wiki_entity";
@@ -422,7 +431,7 @@ function evidenceKindFromRecord(record: Record<string, unknown>, ref: string): s
 
 function kindFromPaymentIntentEvidenceRef(ref: string): string {
   if (ref.startsWith("doc_")) return "document";
-  return bestEffortKindByRef(ref);
+  return evidenceKindFromRefPrefix(ref) ?? bestEffortKindByRef(ref);
 }
 
 function bestEffortKindByRef(ref: string): string {

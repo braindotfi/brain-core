@@ -27,6 +27,7 @@ function obs(over: Record<string, unknown> = {}): Record<string, unknown> {
     type: "vendor",
     provenance: "extracted",
     confidence: 0.8,
+    source_ids: ["raw_vendor"],
     metadata: {},
     ...over,
   };
@@ -63,6 +64,7 @@ describe("resolveCounterpartyView", () => {
     // Highest-confidence independent observation names the org.
     expect(view!.resolved.name.value).toBe("Acme Industrial Supply");
     expect(view!.resolved.name.authority_counterparty_id).toBe("cp_vendor");
+    expect(view!.observations[0]!.source_ids).toEqual(["raw_vendor"]);
     // Display variants listed, never collapsed.
     expect(view!.name_variants).toHaveLength(2);
   });
