@@ -7,6 +7,7 @@ import {
   type TenantScopedClient,
 } from "@brain/shared";
 import type { Pool } from "pg";
+import { isEvidenceKindResolvable } from "../evidence/resolve.js";
 
 export const PROPOSAL_TYPES = [
   "vendor_risk",
@@ -180,9 +181,7 @@ export async function listProposals(
     queryProposalRows(client, input, limit + 1, cursor),
   );
   const visibleRows = rows.slice(0, limit);
-  const proposals = await withTenantScope(pool, ctx.tenantId, async (client) =>
-    Promise.all(visibleRows.map((row) => serializeProposalRow(client, row))),
-  );
+  const proposals = visibleRows.map((row) => serializeProposalRow(row));
   const last = visibleRows.at(-1);
   return {
     proposals,
@@ -205,7 +204,7 @@ export async function getProposal(
     const rows = await queryProposalRows(client, {}, 1, null, id);
     const row = rows[0];
     if (row === undefined) return null;
-    return serializeProposalRow(client, row);
+    return serializeProposalRow(row);
   });
 }
 
@@ -334,10 +333,7 @@ async function queryProposalRows(
   return rows;
 }
 
-async function serializeProposalRow(
-  client: TenantScopedClient,
-  row: RawProposalRow,
-): Promise<ProposalReadItem> {
+function serializeProposalRow(row: RawProposalRow): ProposalReadItem {
   if (row.type === null || !PROPOSAL_TYPE_SET.has(row.type)) {
     throw new Error(`proposal ${row.id} did not resolve to a customer-facing type`);
   }
@@ -345,7 +341,7 @@ async function serializeProposalRow(
     row.source_kind === "payment_intent"
       ? evidenceRefsFromPaymentIntentIds(row.evidence_ids ?? [])
       : evidenceRefsFromAction(row.action ?? {});
-  const evidence = await resolvableEvidenceRefs(client, candidateEvidenceRefs);
+  const evidence = resolvableEvidenceRefs(candidateEvidenceRefs);
   return {
     id: row.id,
     type: row.type,
@@ -399,25 +395,13 @@ function addEvidenceValue(refs: StoredEvidenceRef[], value: unknown): void {
   }
 }
 
-async function resolvableEvidenceRefs(
-  client: TenantScopedClient,
-  candidates: StoredEvidenceRef[],
-): Promise<ProposalEvidenceRef[]> {
-  const entityIds = [...new Set(candidates.map((item) => item.ref).filter(isWikiEntityRef))];
-  const resolvableWikiIds = new Set<string>();
-  if (entityIds.length > 0) {
-    const { rows } = await client.query<{ id: string }>(
-      `SELECT id FROM wiki_entities WHERE id = ANY($1::text[]) AND valid_to IS NULL`,
-      [entityIds],
-    );
-    for (const row of rows) resolvableWikiIds.add(row.id);
-  }
+function resolvableEvidenceRefs(candidates: StoredEvidenceRef[]): ProposalEvidenceRef[] {
   return candidates
     .filter((item) => item.ref.length > 0)
     .map((item) => ({
       kind: item.kind,
       ref: item.ref,
-      resolvable: isWikiEntityRef(item.ref) && resolvableWikiIds.has(item.ref),
+      resolvable: isEvidenceKindResolvable(item.kind),
     }));
 }
 
@@ -473,10 +457,6 @@ function bestEffortKindByRef(ref: string): string {
     default:
       return "unknown";
   }
-}
-
-function isWikiEntityRef(ref: string): boolean {
-  return isBrainId(ref, "ent");
 }
 
 function normalizeConfidence(value: number | string | null): number | null {

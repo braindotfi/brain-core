@@ -17,6 +17,7 @@ import {
   withTenantScope,
   type ServiceCallContext,
 } from "@brain/shared";
+import { resolveEvidenceRefs } from "../src/evidence/resolve.js";
 import { listProposals, getProposal, type ProposalReadItem } from "../src/proposals/read-model.js";
 import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
 
@@ -43,6 +44,7 @@ suite("proposals read model integration (requires DATABASE_URL)", () => {
   const proposalB1 = newProposalId();
   const paymentIntentA = newPaymentIntentId();
   const wikiEntity = newWikiEntityId();
+  const counterpartyRef = newCounterpartyId();
   const invoiceRef = newInvoiceId();
   const documentRef = newDocumentId();
   const parsedRef = newRawParsedId();
@@ -113,8 +115,9 @@ suite("proposals read model integration (requires DATABASE_URL)", () => {
     expect(combined.map((proposal) => proposal.id)).not.toContain(proposalB1);
 
     expectProposalEvidence(firstPage.proposals[0]!, [
-      { kind: "invoice", ref: invoiceRef, resolvable: false },
-      { kind: "policy", ref: wikiEntity, resolvable: true },
+      { kind: "counterparty", ref: counterpartyRef, resolvable: true },
+      { kind: "invoice", ref: invoiceRef, resolvable: true },
+      { kind: "wiki_entity", ref: wikiEntity, resolvable: true },
     ]);
     expectProposalEvidence(firstPage.proposals[1]!, [
       { kind: "document", ref: documentRef, resolvable: false },
@@ -125,6 +128,54 @@ suite("proposals read model integration (requires DATABASE_URL)", () => {
     expect(await getProposal(pool, ctxB, proposalA1)).toBeNull();
     expect((await listProposals(pool, ctxB, {})).proposals.map((proposal) => proposal.id)).toEqual([
       proposalB1,
+    ]);
+  });
+
+  it("resolves supported evidence refs without cross-tenant leaks", async () => {
+    const owningTenant = await resolveEvidenceRefs(pool, ctxA, [
+      { kind: "counterparty", ref: counterpartyRef },
+      { kind: "wiki_entity", ref: wikiEntity },
+      { kind: "document", ref: documentRef },
+    ]);
+    expect(owningTenant).toEqual([
+      {
+        kind: "counterparty",
+        ref: counterpartyRef,
+        resolvable: true,
+        not_found: false,
+        summary: "Evidence Vendor (vendor)",
+        deep_link: `/ledger/counterparties/${counterpartyRef}`,
+      },
+      {
+        kind: "wiki_entity",
+        ref: wikiEntity,
+        resolvable: true,
+        not_found: false,
+        summary: "Wiki policy: Policy",
+        deep_link: `/wiki/entity/${wikiEntity}`,
+      },
+      {
+        kind: "document",
+        ref: documentRef,
+        resolvable: false,
+        not_found: false,
+        summary: null,
+        deep_link: null,
+        reason: "unsupported_kind",
+      },
+    ]);
+
+    await expect(
+      resolveEvidenceRefs(pool, ctxB, [{ kind: "counterparty", ref: counterpartyRef }]),
+    ).resolves.toEqual([
+      {
+        kind: "counterparty",
+        ref: counterpartyRef,
+        resolvable: true,
+        not_found: true,
+        summary: null,
+        deep_link: null,
+      },
     ]);
   });
 
@@ -151,6 +202,31 @@ suite("proposals read model integration (requires DATABASE_URL)", () => {
         );
       }
 
+      if (tenant === tenantA) {
+        await client.query(
+          `INSERT INTO ledger_counterparties (
+             id, owner_id, name, normalized_name, type, aliases, linked_accounts,
+             source_ids, evidence_ids, provenance, confidence
+           )
+           VALUES ($1, $2, 'Evidence Vendor', 'evidence vendor', 'vendor',
+             ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[],
+             'human_confirmed', 1)`,
+          [counterpartyRef, tenant],
+        );
+        await client.query(
+          `INSERT INTO ledger_invoices (
+             id, owner_id, invoice_number, counterparty_id, amount_due, amount_paid,
+             currency, issue_date, due_date, status, linked_document_ids,
+             linked_transaction_ids, source_ids, evidence_ids, provenance, confidence
+           )
+           VALUES ($1, $2, 'INV-100', $3, 42, 0, 'USD',
+             '2026-01-01T00:00:00.000Z', '2026-01-31T00:00:00.000Z', 'sent',
+             ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[],
+             'human_confirmed', 1)`,
+          [invoiceRef, tenant, counterpartyRef],
+        );
+      }
+
       await client.query(
         `INSERT INTO proposals (
            id, tenant_id, proposing_agent, action, policy_version, policy_decision,
@@ -169,8 +245,9 @@ suite("proposals read model integration (requires DATABASE_URL)", () => {
             evidence_refs:
               tenant === tenantA
                 ? [
+                    { kind: "counterparty", ref: counterpartyRef },
                     { kind: "invoice", ref: invoiceRef },
-                    { kind: "policy", ref: wikiEntity },
+                    { kind: "wiki_entity", ref: wikiEntity },
                   ]
                 : [{ kind: "invoice", ref: newInvoiceId() }],
           }),

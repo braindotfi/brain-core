@@ -322,6 +322,21 @@ export async function registerLedgerRoutes(
     },
   );
 
+  app.get(
+    "/ledger/invoices/:invoice_id",
+    async (request: FastifyRequest<{ Params: { invoice_id: string } }>, reply) => {
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, READ);
+      if (!isBrainId(request.params.invoice_id, "inv")) {
+        throw brainError("request_params_invalid", "malformed invoice_id");
+      }
+      const result = await service.findInvoiceById(ctx, request.params.invoice_id);
+      if (result === null) throw brainError("ledger_row_not_found", "no such invoice");
+      reply.status(200);
+      return result;
+    },
+  );
+
   // POST /ledger/normalize — refactor-3 implements this via LedgerService.
   app.post(
     "/ledger/normalize",

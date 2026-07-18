@@ -108,7 +108,7 @@ export class AgentService implements IAgentService {
     agentId: string,
     input: ProposalInput,
   ): Promise<ProposalRecord> {
-    const authority = (await this.deps.resolveAgentAuthority?.(ctx, agentId)) ?? "propose";
+    const authority = (await this.deps.resolveAgentAuthority?.(ctx, agentId)) ?? "notify_only";
     const action = {
       ...input.action,
       kind: input.action["kind"] ?? "agent_action",

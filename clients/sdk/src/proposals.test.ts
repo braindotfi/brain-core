@@ -97,3 +97,40 @@ describe("Brain.proposals", () => {
     await expect(brain.proposals.decide("prop_1", "approve")).rejects.toBeInstanceOf(BrainAPIError);
   });
 });
+
+describe("Brain.invoices", () => {
+  it("gets an invoice by id", async () => {
+    const { fetch, calls } = mockSequence([
+      {
+        status: 200,
+        body: {
+          id: "inv_1",
+          owner_id: "ten_1",
+          invoice_number: "INV-1",
+          counterparty_id: "cp_1",
+          amount_due: "10",
+          amount_paid: "0",
+          currency: "USD",
+          issue_date: "2026-01-01T00:00:00.000Z",
+          due_date: null,
+          status: "sent",
+          linked_document_ids: [],
+          linked_transaction_ids: [],
+          source_ids: [],
+          evidence_ids: [],
+          provenance: "human_confirmed",
+          confidence: 1,
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          metadata: {},
+        },
+      },
+    ]);
+    const brain = new Brain({ token: "k", fetch });
+
+    const invoice = await brain.invoices.get("inv_1");
+
+    expect(invoice.id).toBe("inv_1");
+    expect(calls[0]?.url).toContain("/ledger/invoices/inv_1");
+  });
+});

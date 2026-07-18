@@ -892,6 +892,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ledger/invoices/{invoice_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Invoice detail
+         * @description Requires `ledger:read`.
+         */
+        get: operations["getInvoice"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ledger/normalize": {
         parameters: {
             query?: never;
@@ -1850,14 +1870,41 @@ export interface paths {
          * List typed agent-output proposals
          * @description Requires `execution:read`. Cursor-paginated, tenant-scoped read model
          *     over agent-created PaymentIntents and non-financial agent proposals.
-         *     Evidence refs are returned as typed domain refs. Valid `ent_...` Wiki
-         *     policy or agent refs resolve through `GET /v1/wiki/entity/{id}`.
-         *     Domain refs without a read path are still returned with
-         *     `resolvable=false`. `brain://` placeholders are never emitted.
+         *     Evidence refs are returned as typed domain refs. `resolvable=true`
+         *     means the kind has a resolver in `POST /v1/evidence/resolve`.
+         *     Existence is checked only by the resolver endpoint, which returns
+         *     `not_found=true` for absent or cross-tenant records. `brain://`
+         *     placeholders are never emitted.
          */
         get: operations["listProposals"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/evidence/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve proposal evidence refs
+         * @description Requires `execution:read`. Batch-resolves proposal evidence refs into
+         *     tenant-scoped display summaries and canonical deep links. Supported in
+         *     this release: counterparty, transaction, obligation, account, invoice,
+         *     and wiki_entity. Unsupported kinds return `resolvable=false` with
+         *     `reason=unsupported_kind`. A supported kind whose record is absent for
+         *     this tenant returns `resolvable=true`, `not_found=true`, `summary=null`,
+         *     and `deep_link=null`.
+         */
+        post: operations["resolveEvidenceRefs"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3700,8 +3747,34 @@ export interface components {
             kind: string;
             /** @description Stored evidence reference. Never a `brain://` placeholder. */
             ref: string;
-            /** @description True only when the ref has a read path today. Currently, valid `ent_...` Wiki policy or agent refs resolve through `GET /v1/wiki/entity/{id}`. Ledger domain refs and document refs are returned with `resolvable=false` until their read endpoints are wired into this surface. */
+            /** @description True when this ref kind is supported by `POST /v1/evidence/resolve`. Existence is checked by the resolver endpoint via `not_found`. */
             resolvable: boolean;
+        };
+        EvidenceResolveRef: {
+            /** @description Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, and wiki_entity. */
+            kind: string;
+            /** @description Stored evidence reference. Never a `brain://` placeholder. */
+            ref: string;
+        };
+        EvidenceResolveRequest: {
+            refs: components["schemas"]["EvidenceResolveRef"][];
+        };
+        EvidenceResolveResult: {
+            kind: string;
+            ref: string;
+            /** @description False for unsupported kinds or malformed refs. */
+            resolvable: boolean;
+            /** @description True when the kind is supported but no row exists for the caller tenant. */
+            not_found: boolean;
+            /** @description Short display summary for a resolved row. Null when unsupported or not found. */
+            summary: string | null;
+            /** @description Canonical API path for the resolved row. Null when unsupported or not found. */
+            deep_link: string | null;
+            /** @enum {string} */
+            reason?: "unsupported_kind" | "malformed_ref";
+        };
+        EvidenceResolveResponse: {
+            results: components["schemas"]["EvidenceResolveResult"][];
         };
         AgentOutputProposal: {
             id: string;
@@ -5852,6 +5925,29 @@ export interface operations {
             400: components["responses"]["BadRequest"];
         };
     };
+    getInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invoice_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invoice */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Invoice"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
     normalizeRaw: {
         parameters: {
             query?: never;
@@ -7433,6 +7529,32 @@ export interface operations {
                         proposals: components["schemas"]["AgentOutputProposal"][];
                         next_cursor: string | null;
                     };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    resolveEvidenceRefs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvidenceResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Evidence resolution results, one per input ref */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceResolveResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
