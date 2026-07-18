@@ -149,6 +149,8 @@ export async function routeAndPropose(
     action,
     context: input.context ?? {},
     evidence: bundle,
+    definition,
+    confidence: decision.confidence,
   });
   if (proposed.channel === "agent") {
     const validation = validateAgentPayload(decision.selected_agent_id, proposed.action);

@@ -1,5 +1,6 @@
 import {
   agentProposal,
+  policyConfidenceForEvidence,
   requireCurrency,
   requireDecimalAmount,
   requireStringField,
@@ -24,6 +25,7 @@ export const treasuryHandler: InternalAgentHandler = {
   build(input: HandlerInput): ProposedAction {
     if (input.action === "propose_transfer") {
       const c = input.context;
+      const confidence = policyConfidenceForEvidence(input.evidence, input.confidence);
       return {
         channel: "payment_intent",
         intent: {
@@ -32,7 +34,11 @@ export const treasuryHandler: InternalAgentHandler = {
           destination_counterparty_id: requireStringField(c, "destination_counterparty_id"),
           amount: requireDecimalAmount(c, "amount"),
           currency: requireCurrency(c, "currency"),
-          confidence: input.evidence.evidence_score,
+          ...(confidence !== null ? { confidence } : {}),
+          evidence_score: input.evidence.evidence_score,
+          ...(input.definition?.risk_level !== undefined
+            ? { risk_level: input.definition.risk_level }
+            : {}),
           evidence_ids: input.evidence.items.map((i) => i.ref),
         },
       };

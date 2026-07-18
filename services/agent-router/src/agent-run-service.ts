@@ -266,6 +266,8 @@ export class AgentRunService {
       action: resolution.action,
       context: input.context ?? {},
       evidence: bundle,
+      definition,
+      confidence: decision.confidence,
     });
     if (proposed.channel === "agent") {
       const validation = validateAgentPayload(agentId, proposed.action);

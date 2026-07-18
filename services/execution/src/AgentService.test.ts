@@ -49,7 +49,7 @@ function makeProposalRow(overrides: Record<string, unknown> = {}) {
     id: newProposalId(),
     tenant_id: TENANT,
     proposing_agent: AGENT_ID,
-    action: { kind: "flag_anomaly" },
+    action: { kind: "flag_anomaly", mode: "propose" },
     policy_version: 1,
     policy_decision: "allow",
     policy_trace: [],
@@ -74,6 +74,7 @@ function makeEvaluatePolicy(outcome: "allow" | "confirm" | "reject" = "allow") {
 function makeDeps(
   outcome: "allow" | "confirm" | "reject" = "allow",
   poolQueryFn?: (sql: string, values: unknown[]) => { rows: unknown[]; rowCount: number },
+  overrides: Partial<AgentServiceDeps> = {},
 ): AgentServiceDeps {
   const row = makeProposalRow({
     status: outcome === "allow" ? "approved" : outcome === "confirm" ? "pending" : "rejected",
@@ -83,6 +84,7 @@ function makeDeps(
     pool: makeFakePool(poolQueryFn ?? defaultQuery),
     audit: new InMemoryAuditEmitter(),
     evaluatePolicy: makeEvaluatePolicy(outcome),
+    ...overrides,
   };
 }
 
@@ -130,6 +132,47 @@ describe("AgentService.propose", () => {
       TENANT,
       expect.objectContaining({ kind: "reconciliation_match" }),
     );
+  });
+
+  it("does not let a propose-authority agent self-assert notify_only mode", async () => {
+    const deps = makeDeps("allow", undefined, {
+      resolveAgentAuthority: async () => "propose" as const,
+    });
+    const svc = new AgentService(deps);
+    await svc.propose(ctx, AGENT_ID, {
+      action: { kind: "flag_anomaly", mode: "notify_only" },
+    });
+    expect(deps.evaluatePolicy).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ mode: "propose" }),
+    );
+  });
+
+  it("stamps notify_only from trusted agent authority and keeps the proposal pending", async () => {
+    const deps = makeDeps(
+      "allow",
+      () => ({
+        rows: [
+          makeProposalRow({
+            status: "pending",
+            action: { kind: "flag_anomaly", mode: "notify_only" },
+          }),
+        ],
+        rowCount: 1,
+      }),
+      {
+        resolveAgentAuthority: async () => "notify_only" as const,
+      },
+    );
+    const svc = new AgentService(deps);
+    const result = await svc.propose(ctx, AGENT_ID, {
+      action: { kind: "flag_anomaly", mode: "propose" },
+    });
+    expect(deps.evaluatePolicy).toHaveBeenCalledWith(
+      TENANT,
+      expect.objectContaining({ mode: "notify_only" }),
+    );
+    expect(result.status).toBe("pending");
   });
 
   it("emits agent.action.proposed audit event", async () => {

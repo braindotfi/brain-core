@@ -61,6 +61,10 @@ export interface GatePaymentIntent {
    * <= 0.5) intents. The gate itself reads no confidence; policy does.
    */
   confidence?: number | null;
+  /** Evidence strength passed into policy as `agent.evidence_score.gte`. */
+  evidence_score?: number | null;
+  /** Agent-output risk passed into policy as `agent.risk_level.lte`. */
+  risk_level?: "low" | "medium" | "high" | "critical" | null;
   /** Optional linkage used by evidence semantic validation (H-21, check 9.5). */
   invoice_id?: string | null;
   obligation_id?: string | null;

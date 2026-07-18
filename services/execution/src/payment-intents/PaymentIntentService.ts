@@ -446,6 +446,8 @@ export class PaymentIntentService implements IPaymentIntentService {
         policyDecisionId: decision.id,
         evidenceIds: input.evidence_ids ?? [],
         ...(effectiveConfidence !== undefined ? { confidence: effectiveConfidence } : {}),
+        ...(input.evidence_score !== undefined ? { evidenceScore: input.evidence_score } : {}),
+        ...(input.risk_level !== undefined ? { riskLevel: input.risk_level } : {}),
         // x402 recipient — persisted only for x402_settle (DB CHECK enforces null
         // otherwise). The §6 gate re-validates it against the counterparty (6.5).
         ...(input.action_type === "x402_settle" && input.pay_to !== undefined
@@ -1456,6 +1458,8 @@ function intentToGate(row: PaymentIntentRow): GatePaymentIntent {
     policy_decision_id: row.policy_decision_id,
     evidence_ids: row.evidence_ids,
     confidence: row.confidence,
+    evidence_score: row.evidence_score,
+    risk_level: row.risk_level,
     ...gateSettlement(row.action_type, row.currency, row.amount, row.settlement_pay_to),
     ...gateEscrow(row.action_type, row.escrow_id, row.job_terms_hash),
   };
@@ -1479,6 +1483,10 @@ function stubGateIntent(args: {
     policy_decision_id: null,
     evidence_ids: args.input.evidence_ids ?? [],
     ...(args.input.confidence !== undefined ? { confidence: args.input.confidence } : {}),
+    ...(args.input.evidence_score !== undefined
+      ? { evidence_score: args.input.evidence_score }
+      : {}),
+    ...(args.input.risk_level !== undefined ? { risk_level: args.input.risk_level } : {}),
     ...gateSettlement(
       args.input.action_type,
       args.input.currency,
@@ -1497,6 +1505,8 @@ function toRecord(row: PaymentIntentRow): PaymentIntent {
     evidence_ids: row.evidence_ids,
     provenance: row.provenance as PaymentIntent["provenance"],
     confidence: row.confidence,
+    evidence_score: row.evidence_score,
+    risk_level: row.risk_level,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
     created_by_agent_id: row.created_by_agent_id,

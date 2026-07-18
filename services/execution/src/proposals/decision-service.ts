@@ -225,8 +225,8 @@ function targetStatusForDecision(row: ProposalRow, decision: ProposalDecision): 
       if (row.status === "acknowledged") {
         return { status: "acknowledged", idempotent: true };
       }
-      // BC-3 owns whether an agent may self-assert notify_only mode. This
-      // decision endpoint only enforces the stored canonical proposal mode.
+      // BC-3: AgentService stamps this mode from the trusted agent definition.
+      // Inbound handler payloads cannot self-assert notify_only here.
       if (row.status !== "pending" || row.action["mode"] !== "notify_only") {
         throw invalidDecision(row, decision);
       }

@@ -1,5 +1,6 @@
 import {
   agentProposal,
+  policyConfidenceForEvidence,
   readString,
   requireCurrency,
   requireDecimalAmount,
@@ -25,6 +26,7 @@ export const paymentHandler: InternalAgentHandler = {
     if (FINANCIAL_ACTIONS.has(input.action)) {
       const c = input.context;
       const isOnchain = readString(c.rail) === "onchain";
+      const confidence = policyConfidenceForEvidence(input.evidence, input.confidence);
       return {
         channel: "payment_intent",
         intent: {
@@ -33,7 +35,11 @@ export const paymentHandler: InternalAgentHandler = {
           destination_counterparty_id: requireStringField(c, "destination_counterparty_id"),
           amount: requireDecimalAmount(c, "amount"),
           currency: requireCurrency(c, "currency"),
-          confidence: input.evidence.evidence_score,
+          ...(confidence !== null ? { confidence } : {}),
+          evidence_score: input.evidence.evidence_score,
+          ...(input.definition?.risk_level !== undefined
+            ? { risk_level: input.definition.risk_level }
+            : {}),
           evidence_ids: input.evidence.items.map((i) => i.ref),
           ...(typeof c.invoice_id === "string" ? { invoice_id: c.invoice_id } : {}),
         },

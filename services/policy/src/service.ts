@@ -182,6 +182,8 @@ export class PolicyService {
       // fails closed when this is null, so an unset confidence never satisfies a
       // threshold rule.
       confidence: intent.confidence ?? null,
+      evidence_score: intent.evidence_score ?? null,
+      risk_level: isRiskLevel(intent.risk_level) ? intent.risk_level : null,
       ...(spendInWindow !== undefined ? { spend_in_window: spendInWindow } : {}),
       ...(txCountInWindow !== undefined ? { tx_count_in_window: txCountInWindow } : {}),
     };
@@ -201,7 +203,7 @@ export class PolicyService {
       required_approvers: decision.required_approvers,
       ledger_snapshot_hash: snapshotHash,
       trace: decision.trace as unknown as Array<Record<string, unknown>>,
-      required_evidence_kinds: [],
+      required_evidence_kinds: [...(matchedRule?.required_evidence_kinds ?? [])],
       counterparty_verification_threshold: null,
       amount_upper_bound: matchedRule?.when["amount.lte"] ?? null,
       ...(matchedRule?.onchain_settlement_permitted !== undefined
@@ -359,6 +361,9 @@ function sha256Intent(intent: GatePaymentIntent): string {
     source_account_id: intent.source_account_id,
     destination_counterparty_id: intent.destination_counterparty_id,
     evidence_ids: [...intent.evidence_ids].sort(),
+    confidence: intent.confidence ?? null,
+    evidence_score: intent.evidence_score ?? null,
+    risk_level: intent.risk_level ?? null,
   });
   return createHash("sha256").update(payload).digest("hex");
 }
