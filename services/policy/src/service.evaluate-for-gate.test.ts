@@ -100,6 +100,51 @@ describe("PolicyService.evaluateForGate — confidence gating (RFC 0004 §5.2)",
     expect(decision.outcome).toBe("allow");
   });
 
+  it("threads evidence score and risk level into the gate policy action", async () => {
+    const policy: PolicyDocument = {
+      version: 1,
+      rules: [
+        {
+          id: "agent-output-gates",
+          applies_to: ["any"],
+          when: {
+            "agent.confidence.gte": 0.8,
+            "agent.evidence_score.gte": 0.7,
+            "agent.risk_level.lte": "medium",
+          },
+          execute: "auto",
+          required_evidence_kinds: ["invoice", "counterparty"],
+        },
+      ],
+    };
+    const svc = new PolicyService({
+      pool: poolWithActivePolicy(policy),
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    const allowed = await svc.evaluateForGate(ctx, {
+      ...intent(0.9),
+      evidence_score: 0.8,
+      risk_level: "medium",
+    });
+    expect(allowed.outcome).toBe("allow");
+    expect(allowed.required_evidence_kinds).toEqual(["invoice", "counterparty"]);
+
+    const lowEvidence = await svc.evaluateForGate(ctx, {
+      ...intent(0.9),
+      evidence_score: 0.6,
+      risk_level: "medium",
+    });
+    expect(lowEvidence.outcome).toBe("reject");
+
+    const highRisk = await svc.evaluateForGate(ctx, {
+      ...intent(0.9),
+      evidence_score: 0.8,
+      risk_level: "high",
+    });
+    expect(highRisk.outcome).toBe("reject");
+  });
+
   it("fails closed when the intent carries no confidence", async () => {
     const decision = await service().evaluateForGate(ctx, intent(undefined));
     expect(decision.outcome).toBe("reject");

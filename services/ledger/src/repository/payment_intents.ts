@@ -19,6 +19,8 @@ export interface PaymentIntentRow {
   evidence_ids: string[];
   provenance: string;
   confidence: number;
+  evidence_score: number | null;
+  risk_level: "low" | "medium" | "high" | "critical" | null;
   proposal_dedup_key: string | null;
   /** x402 settlement recipient (RFC 0001 §6.1); null unless action_type=x402_settle. */
   settlement_pay_to: string | null;
@@ -110,6 +112,8 @@ export interface InsertPaymentIntentInput {
    * confidence, which simply reflects the evidence it rests on.
    */
   confidence?: number;
+  evidenceScore?: number | null;
+  riskLevel?: "low" | "medium" | "high" | "critical" | null;
   /** Proposal-layer idempotency key (1a.5); null means no dedup is enforced. */
   proposalDedupKey?: string | null;
   /** x402 settlement recipient (RFC 0001 §6.1); set only for action_type=x402_settle. */
@@ -130,10 +134,10 @@ export async function insertPaymentIntent(
        source_account_id, destination_counterparty_id,
        amount, currency, obligation_id, invoice_id,
        status, policy_decision_id, evidence_ids,
-       provenance, confidence, proposal_dedup_key, settlement_pay_to,
-       escrow_id, job_terms_hash
+       provenance, confidence, evidence_score, risk_level, proposal_dedup_key,
+       settlement_pay_to, escrow_id, job_terms_hash
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',$14,$15,$16,$17,$18)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',$14,$15,$16,$17,$18,$19,$20)
      RETURNING *`,
     [
       input.id,
@@ -150,6 +154,8 @@ export async function insertPaymentIntent(
       input.policyDecisionId,
       input.evidenceIds,
       input.confidence ?? 1.0,
+      input.evidenceScore ?? null,
+      input.riskLevel ?? null,
       input.proposalDedupKey ?? null,
       input.settlementPayTo ?? null,
       input.escrowId ?? null,

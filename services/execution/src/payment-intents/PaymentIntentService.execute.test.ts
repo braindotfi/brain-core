@@ -73,6 +73,8 @@ const APPROVED_INTENT_ROW: PaymentIntentRow = {
   evidence_ids: [],
   provenance: "test",
   confidence: 1,
+  evidence_score: null,
+  risk_level: null,
   created_at: new Date("2026-01-01T00:00:00Z"),
   updated_at: new Date("2026-01-01T00:00:00Z"),
 };

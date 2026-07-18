@@ -76,6 +76,8 @@ function insertedRow(): PaymentIntentRow {
     evidence_ids: [],
     provenance: "inferred",
     confidence: 0.4,
+    evidence_score: null,
+    risk_level: null,
     proposal_dedup_key: null,
     settlement_pay_to: null,
     escrow_id: null,

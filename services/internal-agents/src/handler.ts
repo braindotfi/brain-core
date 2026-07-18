@@ -17,6 +17,7 @@ import type {
   ServiceCallContext,
 } from "@brain/shared";
 import { brainError } from "@brain/shared";
+import type { InternalAgentDefinition } from "@brain/schemas";
 import type { EvidenceBundle, EvidenceRef } from "./evidence.js";
 
 export type ProposedAction =
@@ -27,6 +28,8 @@ export interface HandlerInput {
   readonly action: string;
   readonly context: Record<string, unknown>;
   readonly evidence: EvidenceBundle;
+  readonly definition?: InternalAgentDefinition;
+  readonly confidence?: number;
 }
 
 export interface InternalAgentHandler {
@@ -91,13 +94,25 @@ export function requireCurrency(context: Record<string, unknown>, field: string)
 
 /** Shared helper: shape a non-financial agent proposal from context + evidence. */
 export function agentProposal(input: HandlerInput): ProposedAction {
+  const definition = input.definition;
   return {
     channel: "agent",
     action: {
       type: input.action,
+      kind: "agent_action",
       invoice_id: str(input.context.invoice_id) || null,
       counterparty_id: str(input.context.counterparty_id) || null,
       evidence_refs: evidenceRefsForAction(input.evidence.items),
+      confidence: policyConfidenceForEvidence(input.evidence, input.confidence),
+      evidence_score: validUnit(input.evidence.evidence_score)
+        ? input.evidence.evidence_score
+        : null,
+      risk_level: definition?.risk_level ?? null,
+      agent_id: definition?.agent_key ?? null,
+      agent_role: definition?.agent_key ?? null,
+      missing_required_evidence: [...input.evidence.missing_required_evidence],
+      critical_missing: input.evidence.critical_missing,
+      mode: definition?.default_authority === "notify_only" ? "notify_only" : "propose",
     },
   };
 }
@@ -106,6 +121,25 @@ export function evidenceRefsForAction(
   items: readonly EvidenceRef[],
 ): Array<{ kind: string; ref: string }> {
   return items.map((item) => ({ kind: item.kind, ref: item.ref }));
+}
+
+export function policyConfidenceForEvidence(
+  evidence: EvidenceBundle,
+  routedConfidence?: number,
+): number | null {
+  const candidates = [
+    ...(validUnit(routedConfidence) ? [routedConfidence] : []),
+    ...(validUnit(evidence.evidence_score) ? [evidence.evidence_score] : []),
+    ...evidence.items
+      .map((item) => item.confidence)
+      .filter((confidence): confidence is number => validUnit(confidence)),
+  ];
+  if (candidates.length === 0) return null;
+  return Math.min(...candidates);
+}
+
+function validUnit(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
 export { str as readString };

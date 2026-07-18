@@ -5,8 +5,13 @@ import type { IAgentService, IPaymentIntentService, ServiceCallContext } from "@
 import type { EvidenceBundle } from "./evidence.js";
 import { proposeAction, type ProposedAction } from "./handler.js";
 import { collectionsHandler } from "./collections/handler.js";
+import { collectionsDefinition } from "./collections/definition.js";
+import { revenueIntelDefinition } from "./revenue_intel/definition.js";
 import { treasuryHandler } from "./treasury/handler.js";
+import { treasuryDefinition } from "./treasury/definition.js";
 import { reconciliationHandler } from "./reconciliation/handler.js";
+import { paymentHandler } from "./payment/handler.js";
+import { paymentDefinition } from "./payment/definition.js";
 
 const CTX: ServiceCallContext = { tenantId: "tnt_acme", actor: "agent_1" };
 const EVIDENCE: EvidenceBundle = {
@@ -64,6 +69,47 @@ describe("Collections handler", () => {
       toPolicyAction(proposed, "collections"),
     );
     expect(decision.outcome).not.toBe("reject");
+  });
+
+  it("stamps policy gate signals from trusted definition and evidence", () => {
+    const proposed = collectionsHandler.build({
+      action: "draft_followup",
+      context: { invoice_id: "inv_1", counterparty_id: "cp_1" },
+      evidence: {
+        ...EVIDENCE,
+        evidence_score: 0.9,
+        items: [{ kind: "invoice", ref: "inv_1", confidence: 0.42 }],
+      },
+      definition: collectionsDefinition,
+      confidence: 0.88,
+    });
+
+    expect(proposed.channel).toBe("agent");
+    if (proposed.channel === "agent") {
+      expect(proposed.action).toMatchObject({
+        confidence: 0.42,
+        evidence_score: 0.9,
+        risk_level: "medium",
+        agent_id: "collections",
+        agent_role: "collections",
+        mode: "propose",
+      });
+    }
+  });
+
+  it("marks notify-only definitions as notify_only regardless of action content", () => {
+    const proposed = collectionsHandler.build({
+      action: "draft_followup",
+      context: { mode: "propose" },
+      evidence: EVIDENCE,
+      definition: revenueIntelDefinition,
+      confidence: 0.9,
+    });
+
+    expect(proposed.channel).toBe("agent");
+    if (proposed.channel === "agent") {
+      expect(proposed.action.mode).toBe("notify_only");
+    }
   });
 });
 
@@ -135,6 +181,56 @@ describe("Treasury handler", () => {
       toPolicyAction(proposed, "treasury"),
     );
     expect(decision.outcome).not.toBe("reject");
+  });
+
+  it("caps payment-intent confidence at low-confidence evidence", () => {
+    const proposed = treasuryHandler.build({
+      action: "propose_transfer",
+      context: {
+        source_account_id: "acct_1",
+        destination_counterparty_id: "cp_2",
+        amount: "5000",
+        currency: "USD",
+      },
+      evidence: {
+        ...EVIDENCE,
+        evidence_score: 1,
+        items: [{ kind: "balance", ref: "bal_1", confidence: 0.5 }],
+      },
+      definition: treasuryDefinition,
+      confidence: 0.95,
+    });
+
+    expect(proposed.channel).toBe("payment_intent");
+    if (proposed.channel === "payment_intent") {
+      expect(proposed.intent.confidence).toBe(0.5);
+      expect(proposed.intent.evidence_score).toBe(1);
+      expect(proposed.intent.risk_level).toBe("medium");
+    }
+  });
+});
+
+describe("Payment handler", () => {
+  it("threads evidence score and risk into payment intents", () => {
+    const proposed = paymentHandler.build({
+      action: "propose_payment",
+      context: {
+        source_account_id: "acct_1",
+        destination_counterparty_id: "cp_2",
+        amount: "100",
+        currency: "USD",
+      },
+      evidence: { ...EVIDENCE, evidence_score: 0.74 },
+      definition: paymentDefinition,
+      confidence: 0.8,
+    });
+
+    expect(proposed.channel).toBe("payment_intent");
+    if (proposed.channel === "payment_intent") {
+      expect(proposed.intent.confidence).toBe(0.74);
+      expect(proposed.intent.evidence_score).toBe(0.74);
+      expect(proposed.intent.risk_level).toBe("medium");
+    }
   });
 });
 

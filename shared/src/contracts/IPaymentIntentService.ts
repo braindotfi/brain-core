@@ -55,6 +55,8 @@ export interface PaymentIntent extends LedgerCommonFields {
   policy_decision_id: string | null;
   approval_ids: string[];
   execution_receipt_ids: string[];
+  evidence_score?: number | null;
+  risk_level?: "low" | "medium" | "high" | "critical" | null;
 }
 
 export interface CreatePaymentIntentInput {
@@ -75,6 +77,18 @@ export interface CreatePaymentIntentInput {
    * value (<= 0.5).
    */
   confidence?: number;
+  /**
+   * Evidence strength for the agent output that produced this intent. Threaded
+   * to the policy VM as `agent.evidence_score.gte`; omitted means unknown and
+   * fails closed for policies that require it.
+   */
+  evidence_score?: number;
+  /**
+   * Risk level for the agent output that produced this intent. Threaded to the
+   * policy VM as `agent.risk_level.lte`; omitted means unknown and fails closed
+   * for policies that require it.
+   */
+  risk_level?: "low" | "medium" | "high" | "critical";
   /**
    * x402 settlement recipient on-chain address (RFC 0001 §6.1). Required by the
    * route for action_type=x402_settle; ignored for other action types. The §6

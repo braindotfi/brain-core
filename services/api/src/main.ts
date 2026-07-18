@@ -1239,6 +1239,8 @@ async function main(): Promise<void> {
     pool,
     audit,
     evaluatePolicy: evaluateLegacyPolicy,
+    resolveAgentAuthority: (_ctx, agentId) =>
+      internalAgentDefinitions[agentId]?.default_authority ?? null,
   });
 
   // H-07 Proof builder (shared with the HTTP /v1/proof/{action_id} route).

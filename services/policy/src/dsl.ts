@@ -100,6 +100,11 @@ export interface PolicyRule {
    * field do not authorize approval-free card execution.
    */
   card_autonomous_max_amount?: AmountLiteral;
+  /**
+   * Evidence kinds the §6 gate must resolve semantically before money movement.
+   * Missing or unsupported evidence fails closed in the gate layer.
+   */
+  required_evidence_kinds?: ReadonlyArray<string>;
 }
 
 /**

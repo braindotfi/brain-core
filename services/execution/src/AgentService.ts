@@ -29,6 +29,7 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import type { Pool } from "pg";
+import type { AgentAuthority } from "@brain/schemas";
 import {
   findProposal,
   insertProposal,
@@ -55,6 +56,10 @@ export interface AgentServiceDeps {
     trace: unknown[];
     policy_version: number;
   }>;
+  resolveAgentAuthority?: (
+    ctx: ServiceCallContext,
+    agentId: string,
+  ) => Promise<AgentAuthority | null> | AgentAuthority | null;
   /**
    * On-chain registration relayer (RFC 0002 Phase C). Optional: when absent or
    * unconfigured, {@link AgentService.confirmRegistration} fails closed and the
@@ -78,7 +83,13 @@ function rowToRecord(row: AgentRow): AgentRecord {
   };
 }
 
-function outcomeToStatus(outcome: "allow" | "confirm" | "reject"): ProposalRecord["status"] {
+function outcomeToStatus(
+  outcome: "allow" | "confirm" | "reject",
+  authority: AgentAuthority,
+): ProposalRecord["status"] {
+  if (authority === "notify_only" && outcome !== "reject") {
+    return "pending";
+  }
   switch (outcome) {
     case "allow":
       return "approved";
@@ -97,10 +108,15 @@ export class AgentService implements IAgentService {
     agentId: string,
     input: ProposalInput,
   ): Promise<ProposalRecord> {
-    const action = { ...input.action, kind: input.action["kind"] ?? "agent_action" };
+    const authority = (await this.deps.resolveAgentAuthority?.(ctx, agentId)) ?? "propose";
+    const action = {
+      ...input.action,
+      kind: input.action["kind"] ?? "agent_action",
+      mode: authority === "notify_only" ? "notify_only" : "propose",
+    };
 
     const policyResult = await this.deps.evaluatePolicy(ctx.tenantId, action);
-    const status = outcomeToStatus(policyResult.outcome);
+    const status = outcomeToStatus(policyResult.outcome, authority);
     const id = newProposalId();
 
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
