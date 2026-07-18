@@ -40,7 +40,7 @@ function buildCollectionsProposal(input: HandlerInput): ProposedAction {
   const counterpartyName = readString(input.context.counterparty_name, counterpartyId);
   const invoiceNumber = readString(input.context.invoice_number, displayInvoiceId(invoiceId));
   const recommendation = recommendationFor(daysOverdue, input.action);
-  const nextEscalationDate = addDaysIso(new Date(), recommendation.nextEscalationDays);
+  const nextEscalationDate = addDaysIso(input.now ?? new Date(), recommendation.nextEscalationDays);
   const confidence = policyConfidenceForEvidence(input.evidence, input.confidence);
 
   return {
