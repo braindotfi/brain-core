@@ -33,6 +33,21 @@ export const RESOLVABLE_EVIDENCE_KINDS = [
 type ResolvableEvidenceKind = (typeof RESOLVABLE_EVIDENCE_KINDS)[number];
 
 const RESOLVABLE_KIND_SET: ReadonlySet<string> = new Set(RESOLVABLE_EVIDENCE_KINDS);
+const KIND_BY_REF_PREFIX: Readonly<Record<string, string>> = {
+  acct: "account",
+  agent: "agent",
+  cp: "counterparty",
+  doc: "document",
+  ent: "wiki_entity",
+  inv: "invoice",
+  obl: "obligation",
+  pd: "policy_decision",
+  pi: "payment_intent",
+  pol: "policy",
+  prs: "raw_parsed",
+  raw: "raw_artifact",
+  tx: "transaction",
+};
 
 export interface EvidenceResolveRef {
   kind: string;
@@ -59,9 +74,26 @@ export function isEvidenceKindResolvable(kind: string): boolean {
   return RESOLVABLE_KIND_SET.has(kind);
 }
 
+export function evidenceKindFromRefPrefix(ref: string): string | null {
+  const prefix = ref.split("_", 1)[0] ?? "";
+  return KIND_BY_REF_PREFIX[prefix] ?? null;
+}
+
+export function canonicalEvidenceKind(kind: string, ref: string): string {
+  return evidenceKindFromRefPrefix(ref) ?? kind.trim();
+}
+
+export function isEvidenceRefResolvable(kind: string, ref: string): boolean {
+  return isEvidenceKindResolvable(canonicalEvidenceKind(kind, ref));
+}
+
 export function unsupportedEvidenceKinds(refs: readonly EvidenceResolveRef[]): string[] {
   return [
-    ...new Set(refs.map((item) => item.kind).filter((kind) => !isEvidenceKindResolvable(kind))),
+    ...new Set(
+      refs
+        .map((item) => canonicalEvidenceKind(item.kind, item.ref))
+        .filter((kind) => !isEvidenceKindResolvable(kind)),
+    ),
   ].sort();
 }
 
@@ -116,9 +148,10 @@ async function resolveOne(
   client: TenantScopedClient,
   item: EvidenceResolveRef,
 ): Promise<EvidenceResolveResult> {
-  if (!isEvidenceKindResolvable(item.kind)) {
+  const canonical = { ...item, kind: canonicalEvidenceKind(item.kind, item.ref) };
+  if (!isEvidenceKindResolvable(canonical.kind)) {
     return {
-      kind: item.kind,
+      kind: canonical.kind,
       ref: item.ref,
       resolvable: false,
       not_found: false,
@@ -127,9 +160,9 @@ async function resolveOne(
       reason: "unsupported_kind",
     };
   }
-  if (!hasExpectedPrefix(item.kind as ResolvableEvidenceKind, item.ref)) {
+  if (!hasExpectedPrefix(canonical.kind as ResolvableEvidenceKind, item.ref)) {
     return {
-      kind: item.kind,
+      kind: canonical.kind,
       ref: item.ref,
       resolvable: false,
       not_found: false,
@@ -139,42 +172,42 @@ async function resolveOne(
     };
   }
 
-  switch (item.kind as ResolvableEvidenceKind) {
+  switch (canonical.kind as ResolvableEvidenceKind) {
     case "account": {
       const row = await findAccountById(client, item.ref);
       return row === null
-        ? notFound(item)
-        : found(item, accountSummary(row), `/ledger/accounts/${item.ref}`);
+        ? notFound(canonical)
+        : found(canonical, accountSummary(row), `/ledger/accounts/${item.ref}`);
     }
     case "counterparty": {
       const row = await findCounterpartyById(client, item.ref);
       return row === null
-        ? notFound(item)
-        : found(item, counterpartySummary(row), `/ledger/counterparties/${item.ref}`);
+        ? notFound(canonical)
+        : found(canonical, counterpartySummary(row), `/ledger/counterparties/${item.ref}`);
     }
     case "invoice": {
       const row = await findInvoiceById(client, item.ref);
       return row === null
-        ? notFound(item)
-        : found(item, invoiceSummary(row), `/ledger/invoices/${item.ref}`);
+        ? notFound(canonical)
+        : found(canonical, invoiceSummary(row), `/ledger/invoices/${item.ref}`);
     }
     case "obligation": {
       const row = await findObligationById(client, item.ref);
       return row === null
-        ? notFound(item)
-        : found(item, obligationSummary(row), `/ledger/obligations/${item.ref}/resolved`);
+        ? notFound(canonical)
+        : found(canonical, obligationSummary(row), `/ledger/obligations/${item.ref}/resolved`);
     }
     case "transaction": {
       const row = await findTransactionById(client, item.ref);
       return row === null
-        ? notFound(item)
-        : found(item, transactionSummary(row), `/ledger/transactions/${item.ref}`);
+        ? notFound(canonical)
+        : found(canonical, transactionSummary(row), `/ledger/transactions/${item.ref}`);
     }
     case "wiki_entity": {
       const row = await findWikiEntity(client, item.ref);
       return row === null
-        ? notFound(item)
-        : found(item, wikiSummary(row), `/wiki/entity/${item.ref}`);
+        ? notFound(canonical)
+        : found(canonical, wikiSummary(row), `/wiki/entity/${item.ref}`);
     }
   }
 }

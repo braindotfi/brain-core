@@ -28,6 +28,7 @@ export interface AccountObservationView {
   available_balance: string | null;
   provenance: string;
   confidence: number;
+  source_ids: string[];
 }
 
 export interface ResolvedAccountView {
@@ -85,7 +86,8 @@ export async function resolveAccountView(
 
     const { rows: observations } = await c.query<AccountObservationView>(
       `SELECT id AS account_id, external_account_id, name, institution, account_type,
-              currency, current_balance::TEXT, available_balance::TEXT, provenance, confidence
+              currency, current_balance::TEXT, available_balance::TEXT, provenance, confidence,
+              source_ids
          FROM ledger_accounts
         WHERE id = ANY($1::text[])`,
       [[...members]],

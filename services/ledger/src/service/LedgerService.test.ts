@@ -67,6 +67,34 @@ describe("LedgerService — limit clamping and reads", () => {
     expect(result).toBeNull();
   });
 
+  it("serializes account provenance, confidence, source ids, and external account id", async () => {
+    const { pool } = fakePool({
+      "SELECT * FROM ledger_accounts": [
+        {
+          ...rowCommon(),
+          id: "acct_provenance",
+          institution: "Mercury",
+          external_account_id: "plaid_account_123",
+          account_type: "bank_checking",
+          name: "Operating",
+          currency: "USD",
+          current_balance: "123.45",
+          available_balance: "120.00",
+          status: "active",
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    const result = await service.getAccount(ctx, "acct_provenance");
+    expect(result?.account).toMatchObject({
+      id: "acct_provenance",
+      provenance: "extracted",
+      confidence: 0.9,
+      source_ids: ["raw_abc"],
+      external_account_id: "plaid_account_123",
+    });
+  });
+
   it("passes verified_status to the counterparty repository filter", async () => {
     const { pool, calls } = fakePool();
     const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });

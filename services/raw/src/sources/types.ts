@@ -62,6 +62,10 @@ export const STUB_SOURCE_TYPES: ReadonlySet<SourceType> = new Set([
 ]);
 
 export type SourceStatus = "active" | "paused" | "error" | "disconnected";
+export type SourceFreshness = "fresh" | "stale" | "error" | "never_synced";
+
+export const SOURCE_STALENESS_THRESHOLD_HOURS = 24;
+export const SOURCE_STALENESS_THRESHOLD_MS = SOURCE_STALENESS_THRESHOLD_HOURS * 60 * 60 * 1000;
 
 export interface SourceRecord {
   readonly id: string;
@@ -103,6 +107,7 @@ export interface SourceWire {
   readonly type: SourceType;
   readonly status: SourceStatus;
   readonly last_synced_at: string | null;
+  readonly freshness: SourceFreshness;
   readonly metadata: Readonly<Record<string, unknown>>;
   readonly error_message: string | null;
   readonly is_stub: boolean;
@@ -110,17 +115,26 @@ export interface SourceWire {
   readonly updated_at: string;
 }
 
-export function recordToWire(r: SourceRecord): SourceWire {
+export function recordToWire(r: SourceRecord, now: Date = new Date()): SourceWire {
   return {
     id: r.id,
     tenantId: r.tenant_id,
     type: r.type,
     status: r.status,
     last_synced_at: r.last_synced_at,
+    freshness: sourceFreshness(r, now),
     metadata: r.metadata,
     error_message: r.error_message,
     is_stub: r.is_stub,
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
+}
+
+export function sourceFreshness(r: SourceRecord, now: Date = new Date()): SourceFreshness {
+  if (r.status === "error") return "error";
+  if (r.last_synced_at === null) return "never_synced";
+  const syncedAt = Date.parse(r.last_synced_at);
+  if (!Number.isFinite(syncedAt)) return "never_synced";
+  return now.getTime() - syncedAt > SOURCE_STALENESS_THRESHOLD_MS ? "stale" : "fresh";
 }

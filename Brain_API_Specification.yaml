@@ -5549,9 +5549,18 @@ components:
         - merge_accounting
         - finch
 
+    SourceFreshness:
+      type: string
+      description: |
+        Derived source freshness. `fresh` means the source synced within the
+        last 24 hours. `stale` means the last sync is older than 24 hours.
+        `never_synced` means there is no successful sync timestamp. `error`
+        mirrors an error source status.
+      enum: [fresh, stale, error, never_synced]
+
     Source:
       type: object
-      required: [id, tenantId, type, status, last_synced_at, metadata, error_message, is_stub, created_at, updated_at]
+      required: [id, tenantId, type, status, last_synced_at, freshness, metadata, error_message, is_stub, created_at, updated_at]
       properties:
         id: { type: string }
         tenantId: { type: string }
@@ -5560,6 +5569,7 @@ components:
           type: string
           enum: [active, paused, error, disconnected]
         last_synced_at: { type: [string, "null"], format: date-time }
+        freshness: { $ref: '#/components/schemas/SourceFreshness' }
         metadata:
           type: object
           additionalProperties: true
@@ -5994,7 +6004,11 @@ components:
 
     LedgerCommonFields:
       type: object
-      description: Fields common to every Ledger entity. Composed via allOf.
+      description: |
+        Fields common to every Ledger entity. Composed via allOf. Clients
+        correlate `source_ids` and, where present, `external_account_id` to
+        `/sources` to display connector freshness and source health. Ledger
+        reads do not join the raw service.
       properties:
         id: { type: string }
         owner_id:
@@ -6345,7 +6359,7 @@ components:
       properties:
         kind:
           type: string
-          description: Stored evidence kind, for example `invoice`, `counterparty`, `transaction`, `document`, `policy`, `agent`, or `unknown`.
+          description: Canonical evidence kind after reconciling the stored label with the ref prefix, for example `invoice`, `counterparty`, `transaction`, `wiki_entity`, `document`, `policy`, `agent`, or `unknown`.
         ref:
           type: string
           description: Stored evidence reference. Never a `brain://` placeholder.
@@ -6359,7 +6373,7 @@ components:
       properties:
         kind:
           type: string
-          description: Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, and wiki_entity.
+          description: Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, and wiki_entity. If the ref has a recognized Brain id prefix, the resolver uses the prefix-inferred kind for dispatch.
         ref:
           type: string
           description: Stored evidence reference. Never a `brain://` placeholder.
@@ -6377,7 +6391,9 @@ components:
       type: object
       required: [kind, ref, resolvable, not_found, summary, deep_link]
       properties:
-        kind: { type: string }
+        kind:
+          type: string
+          description: Canonical evidence kind used for dispatch after ref-prefix reconciliation.
         ref: { type: string }
         resolvable:
           type: boolean

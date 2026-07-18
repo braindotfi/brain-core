@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { isBrainError, type ServiceCallContext } from "@brain/shared";
 import { InMemorySourceRepository, SourceService } from "./SourceService.js";
-import { SOURCE_TYPES, STUB_SOURCE_TYPES, CONCRETE_SOURCE_TYPES } from "./types.js";
+import { CONCRETE_SOURCE_TYPES, recordToWire, SOURCE_TYPES, STUB_SOURCE_TYPES } from "./types.js";
 
 const CTX: ServiceCallContext = {
   tenantId: "tnt_acme",
@@ -127,6 +127,27 @@ describe("SourceService.get / list", () => {
     const stripeOnly = await service.list(CTX, { type: "stripe" });
     expect(stripeOnly).toHaveLength(1);
     expect(stripeOnly[0]?.type).toBe("stripe");
+  });
+});
+
+describe("recordToWire source freshness", () => {
+  it("derives freshness from status and last_synced_at", async () => {
+    const src = await service.connect(CTX, {
+      type: "plaid",
+      credentials: { access_token: "x" },
+    });
+    const now = new Date("2026-07-18T12:00:00.000Z");
+
+    expect(recordToWire(src, now).freshness).toBe("never_synced");
+    expect(
+      recordToWire({ ...src, last_synced_at: "2026-07-18T11:30:00.000Z" }, now).freshness,
+    ).toBe("fresh");
+    expect(
+      recordToWire({ ...src, last_synced_at: "2026-07-16T11:30:00.000Z" }, now).freshness,
+    ).toBe("stale");
+    expect(recordToWire({ ...src, status: "error", error_message: "timeout" }, now).freshness).toBe(
+      "error",
+    );
   });
 });
 

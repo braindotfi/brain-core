@@ -134,7 +134,7 @@ suite("proposals read model integration (requires DATABASE_URL)", () => {
   it("resolves supported evidence refs without cross-tenant leaks", async () => {
     const owningTenant = await resolveEvidenceRefs(pool, ctxA, [
       { kind: "counterparty", ref: counterpartyRef },
-      { kind: "wiki_entity", ref: wikiEntity },
+      { kind: "policy", ref: wikiEntity },
       { kind: "document", ref: documentRef },
     ]);
     expect(owningTenant).toEqual([
@@ -247,7 +247,7 @@ suite("proposals read model integration (requires DATABASE_URL)", () => {
                 ? [
                     { kind: "counterparty", ref: counterpartyRef },
                     { kind: "invoice", ref: invoiceRef },
-                    { kind: "wiki_entity", ref: wikiEntity },
+                    { kind: "policy", ref: wikiEntity },
                   ]
                 : [{ kind: "invoice", ref: newInvoiceId() }],
           }),

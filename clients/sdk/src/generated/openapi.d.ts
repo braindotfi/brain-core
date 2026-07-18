@@ -3220,6 +3220,14 @@ export interface components {
          * @enum {string}
          */
         SourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "finch";
+        /**
+         * @description Derived source freshness. `fresh` means the source synced within the
+         *     last 24 hours. `stale` means the last sync is older than 24 hours.
+         *     `never_synced` means there is no successful sync timestamp. `error`
+         *     mirrors an error source status.
+         * @enum {string}
+         */
+        SourceFreshness: "fresh" | "stale" | "error" | "never_synced";
         Source: {
             id: string;
             tenantId: string;
@@ -3228,6 +3236,7 @@ export interface components {
             status: "active" | "paused" | "error" | "disconnected";
             /** Format: date-time */
             last_synced_at: string | null;
+            freshness: components["schemas"]["SourceFreshness"];
             metadata: {
                 [key: string]: unknown;
             };
@@ -3518,7 +3527,12 @@ export interface components {
          * @enum {string}
          */
         LedgerProvenance: "extracted" | "inferred" | "ambiguous" | "human_confirmed" | "agent_contributed" | "customer_asserted";
-        /** @description Fields common to every Ledger entity. Composed via allOf. */
+        /**
+         * @description Fields common to every Ledger entity. Composed via allOf. Clients
+         *     correlate `source_ids` and, where present, `external_account_id` to
+         *     `/sources` to display connector freshness and source health. Ledger
+         *     reads do not join the raw service.
+         */
         LedgerCommonFields: {
             id?: string;
             /** @description Tenant id (tnt_<ulid>) */
@@ -3743,7 +3757,7 @@ export interface components {
             display_name: string;
         };
         ProposalEvidenceRef: {
-            /** @description Stored evidence kind, for example `invoice`, `counterparty`, `transaction`, `document`, `policy`, `agent`, or `unknown`. */
+            /** @description Canonical evidence kind after reconciling the stored label with the ref prefix, for example `invoice`, `counterparty`, `transaction`, `wiki_entity`, `document`, `policy`, `agent`, or `unknown`. */
             kind: string;
             /** @description Stored evidence reference. Never a `brain://` placeholder. */
             ref: string;
@@ -3751,7 +3765,7 @@ export interface components {
             resolvable: boolean;
         };
         EvidenceResolveRef: {
-            /** @description Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, and wiki_entity. */
+            /** @description Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, and wiki_entity. If the ref has a recognized Brain id prefix, the resolver uses the prefix-inferred kind for dispatch. */
             kind: string;
             /** @description Stored evidence reference. Never a `brain://` placeholder. */
             ref: string;
@@ -3760,6 +3774,7 @@ export interface components {
             refs: components["schemas"]["EvidenceResolveRef"][];
         };
         EvidenceResolveResult: {
+            /** @description Canonical evidence kind used for dispatch after ref-prefix reconciliation. */
             kind: string;
             ref: string;
             /** @description False for unsupported kinds or malformed refs. */
