@@ -27,6 +27,7 @@ import {
   validateAgentPayload,
   type InternalAgentHandler,
   type ProposeDeps,
+  type ProposedAction,
 } from "@brain/internal-agents";
 import type { AgentRouter } from "./router.js";
 import type { ActionResolver } from "./action-resolver.js";
@@ -262,13 +263,38 @@ export class AgentRunService {
       });
     }
 
-    const proposed = handler.build({
-      action: resolution.action,
-      context: input.context ?? {},
-      evidence: bundle,
-      definition,
-      confidence: decision.confidence,
-    });
+    let proposed: ProposedAction;
+    try {
+      proposed = handler.build({
+        action: resolution.action,
+        context: input.context ?? {},
+        evidence: bundle,
+        definition,
+        confidence: decision.confidence,
+      });
+    } catch (err) {
+      const missing = [handlerBuildErrorReason(err)];
+      return this.terminalRun(ctx, {
+        agentId,
+        category,
+        executionMode,
+        status: "failed",
+        reason: {
+          ...reasonWithAction,
+          payload_validation: {
+            status: "invalid",
+            missing_fields: missing,
+          },
+        },
+        routingDecisionId: routing.id,
+        input,
+        confidence: decision.confidence,
+        evidenceScore: bundle.evidence_score,
+        action: resolution.action,
+        failureReason: "payload_invalid",
+        shadowMode: false,
+      });
+    }
     if (proposed.channel === "agent") {
       const validation = validateAgentPayload(agentId, proposed.action);
       if (!validation.ok) {
@@ -423,4 +449,11 @@ export class AgentRunService {
 
 function toPolicyStatus(policyDecisionId: string | null): AgentPolicyStatus {
   return policyDecisionId === null ? "unknown" : "allow";
+}
+
+function handlerBuildErrorReason(err: unknown): string {
+  if (err instanceof Error && err.message.trim().length > 0) {
+    return err.message.trim();
+  }
+  return "handler_build_failed";
 }

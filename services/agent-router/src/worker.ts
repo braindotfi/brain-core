@@ -26,6 +26,7 @@ import {
   validateAgentPayload,
   type InternalAgentHandler,
   type ProposeDeps,
+  type ProposedAction,
 } from "@brain/internal-agents";
 import type { RoutingInput } from "./types.js";
 
@@ -145,13 +146,23 @@ export async function routeAndPropose(
       reason: `critical_missing_evidence:${bundle.missing_required_evidence.join(",")}`,
     };
   }
-  const proposed = handler.build({
-    action,
-    context: input.context ?? {},
-    evidence: bundle,
-    definition,
-    confidence: decision.confidence,
-  });
+  let proposed: ProposedAction;
+  try {
+    proposed = handler.build({
+      action,
+      context: input.context ?? {},
+      evidence: bundle,
+      definition,
+      confidence: decision.confidence,
+    });
+  } catch (err) {
+    return {
+      selected_agent_id: decision.selected_agent_id,
+      action,
+      status: "failed",
+      reason: `payload_invalid:${handlerBuildErrorReason(err)}`,
+    };
+  }
   if (proposed.channel === "agent") {
     const validation = validateAgentPayload(decision.selected_agent_id, proposed.action);
     if (!validation.ok) {
@@ -202,6 +213,13 @@ export async function routeAndPropose(
     proposed: result,
     reason: decision.reason,
   };
+}
+
+function handlerBuildErrorReason(err: unknown): string {
+  if (err instanceof Error && err.message.trim().length > 0) {
+    return err.message.trim();
+  }
+  return "handler_build_failed";
 }
 
 export interface AgentRouteWorkerDeps extends RouteAndProposeDeps {

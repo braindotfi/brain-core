@@ -286,7 +286,7 @@ describe("AgentRunService (shadow mode)", () => {
     expect(runs.at(-1)?.reason).toMatchObject({
       payload_validation: {
         status: "invalid",
-        missing_fields: expect.arrayContaining(["amount_due", "draft_message"]),
+        missing_fields: expect.arrayContaining(["invoice_id is required"]),
       },
     });
   });
