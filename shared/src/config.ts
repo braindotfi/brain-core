@@ -390,6 +390,7 @@ const envSchema = z.object({
     .positive()
     .default(15 * 60 * 1000),
   BRAIN_COLLECTIONS_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  BRAIN_COLLECTIONS_SCAN_PER_TENANT_BATCH_SIZE: z.coerce.number().int().positive().default(25),
   BRAIN_COLLECTIONS_SCAN_COOLDOWN_MS: z.coerce
     .number()
     .int()

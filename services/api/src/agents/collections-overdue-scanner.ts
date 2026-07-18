@@ -11,6 +11,7 @@ import type { DomainEvent } from "@brain/shared";
 
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_BATCH_SIZE = 100;
+const DEFAULT_PER_TENANT_BATCH_SIZE = 25;
 const DEFAULT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const SCANNER_ACTOR = "collections_overdue_scanner";
 
@@ -42,8 +43,15 @@ export interface CollectionsOverdueScannerDeps {
 export interface CollectionsOverdueScannerOptions {
   readonly intervalMs?: number;
   readonly batchSize?: number;
+  readonly perTenantBatchSize?: number;
   readonly cooldownMs?: number;
   readonly now?: Date;
+}
+
+interface CollectionsOverdueSelection {
+  readonly rows: CollectionsOverdueReceivableRow[];
+  readonly totalEligible: number;
+  readonly totalFair: number;
 }
 
 export function startCollectionsOverdueScanner(
@@ -67,19 +75,34 @@ export async function runCollectionsOverdueScanCycle(
 ): Promise<void> {
   const now = opts.now ?? new Date();
   const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
+  const perTenantBatchSize = opts.perTenantBatchSize ?? DEFAULT_PER_TENANT_BATCH_SIZE;
   const cooldownMs = opts.cooldownMs ?? DEFAULT_COOLDOWN_MS;
-  const rows = await listOverdueReceivables(deps.scanPool, now, batchSize + 1);
-  const capped = rows.length > batchSize;
-  const receivables = rows.slice(0, batchSize);
+  const selection = await listOverdueReceivables(
+    deps.scanPool,
+    now,
+    batchSize + 1,
+    perTenantBatchSize,
+    cooldownMs,
+  );
+  const capped = selection.totalFair > batchSize;
+  const receivables = selection.rows.slice(0, batchSize);
   if (capped) {
+    const omittedCount = Math.max(selection.totalEligible - batchSize, 0);
     deps.log?.warn(
       {
         batchSize,
-        omitted_lower_bound: rows.length - batchSize,
+        perTenantBatchSize,
+        total_eligible: selection.totalEligible,
+        total_fair: selection.totalFair,
+        omitted_count: omittedCount,
       },
       "collections overdue scanner hit batch cap",
     );
-    deps.metrics?.increment("brain.collections.scan.dropped.count", { reason: "batch_cap" }, 1);
+    deps.metrics?.increment(
+      "brain.collections.scan.dropped.count",
+      { reason: "batch_cap" },
+      omittedCount,
+    );
   }
 
   const perTenant = new Map<string, number>();
@@ -143,36 +166,86 @@ async function listOverdueReceivables(
   pool: Pool,
   now: Date,
   limit: number,
-): Promise<CollectionsOverdueReceivableRow[]> {
-  const { rows } = await pool.query<CollectionsOverdueReceivableRow>(
-    `SELECT i.owner_id AS tenant_id,
-            i.id,
-            i.invoice_number,
-            i.counterparty_id,
-            cp.name AS counterparty_name,
-            (i.amount_due - i.amount_paid)::text AS amount,
-            i.currency,
-            i.due_date::text AS due_date,
-            GREATEST(FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - i.due_date)) / 86400), 1)::int
-              AS days_overdue,
-            CASE
-              WHEN GREATEST(FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - i.due_date)) / 86400), 1) >= 90 THEN '90_plus'
-              WHEN GREATEST(FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - i.due_date)) / 86400), 1) >= 60 THEN '60_89'
-              WHEN GREATEST(FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - i.due_date)) / 86400), 1) >= 30 THEN '30_59'
-              WHEN GREATEST(FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - i.due_date)) / 86400), 1) >= 15 THEN '15_29'
-              ELSE '1_14'
-            END AS aging_tier
-       FROM ledger_invoices i
-       JOIN ledger_counterparties cp ON cp.id = i.counterparty_id AND cp.owner_id = i.owner_id
-      WHERE i.due_date IS NOT NULL
-        AND i.due_date < $1::timestamptz
-        AND i.amount_paid < i.amount_due
-        AND i.status NOT IN ('paid', 'cancelled', 'disputed')
-      ORDER BY i.due_date ASC, i.id ASC
-      LIMIT $2`,
-    [now.toISOString(), limit],
+  perTenantLimit: number,
+  cooldownMs: number,
+): Promise<CollectionsOverdueSelection> {
+  const cutoff = new Date(now.getTime() - cooldownMs);
+  const { rows } = await pool.query<
+    CollectionsOverdueReceivableRow & {
+      eligible_count?: number | string;
+      fair_count?: number | string;
+    }
+  >(
+    `WITH overdue AS (
+       SELECT i.owner_id AS tenant_id,
+              i.id,
+              i.invoice_number,
+              i.counterparty_id,
+              cp.name AS counterparty_name,
+              (i.amount_due - i.amount_paid)::text AS amount,
+              i.currency,
+              i.due_date,
+              GREATEST(FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - i.due_date)) / 86400), 1)::int
+                AS days_overdue
+         FROM ledger_invoices i
+         JOIN ledger_counterparties cp ON cp.id = i.counterparty_id AND cp.owner_id = i.owner_id
+        WHERE i.due_date IS NOT NULL
+          AND i.due_date < $1::timestamptz
+          AND i.amount_paid < i.amount_due
+          AND i.status NOT IN ('paid', 'cancelled', 'disputed')
+     ),
+     tiered AS (
+       SELECT o.*,
+              CASE
+                WHEN o.days_overdue >= 90 THEN '90_plus'
+                WHEN o.days_overdue >= 60 THEN '60_89'
+                WHEN o.days_overdue >= 30 THEN '30_59'
+                WHEN o.days_overdue >= 15 THEN '15_29'
+                ELSE '1_14'
+              END AS aging_tier
+         FROM overdue o
+     ),
+     eligible AS (
+       SELECT t.*,
+              row_number() OVER (
+                PARTITION BY t.tenant_id
+                ORDER BY t.due_date ASC, t.id ASC
+              ) AS tenant_rank,
+              COUNT(*) OVER() AS eligible_count
+         FROM tiered t
+         LEFT JOIN agent_trigger_cooldowns c
+           ON c.tenant_id = t.tenant_id
+          AND c.agent_key = 'collections'
+          AND c.receivable_kind = 'invoice'
+          AND c.receivable_id = t.id
+          AND c.aging_tier = t.aging_tier
+        WHERE c.id IS NULL OR c.last_enqueued_at < $2::timestamptz
+     ),
+     fair AS (
+       SELECT *
+         FROM eligible
+        WHERE tenant_rank <= $3
+     )
+     SELECT tenant_id,
+            id,
+            invoice_number,
+            counterparty_id,
+            counterparty_name,
+            amount,
+            currency,
+            due_date::text AS due_date,
+            days_overdue,
+            aging_tier,
+            eligible_count,
+            COUNT(*) OVER() AS fair_count
+       FROM fair
+      ORDER BY due_date ASC, id ASC
+      LIMIT $4`,
+    [now.toISOString(), cutoff.toISOString(), perTenantLimit, limit],
   );
-  return rows;
+  const totalEligible = normalizeCount(rows[0]?.eligible_count, rows.length);
+  const totalFair = normalizeCount(rows[0]?.fair_count, rows.length);
+  return { rows, totalEligible, totalFair };
 }
 
 async function claimCooldown(
@@ -242,4 +315,13 @@ function eventFor(agingTier: string): DomainEvent {
 
 function triggerKeyFor(row: CollectionsOverdueReceivableRow, event: DomainEvent): string {
   return `collections:${event}:invoice:${row.id}:aging:${row.aging_tier}`;
+}
+
+function normalizeCount(value: number | string | undefined, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
 }

@@ -197,9 +197,10 @@ END $$;
 GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties
   TO brain_ledger_projector;
 -- The Collections overdue scanner shares the ledger worker pool for
--- cross-tenant enumeration only. It needs invoice reads, then re-enters
--- tenant-scoped brain_app for cooldown writes and AgentRunService proposals.
+-- cross-tenant enumeration only. It needs invoice and cooldown reads, then
+-- re-enters tenant-scoped brain_app for cooldown writes and AgentRunService proposals.
 GRANT SELECT ON ledger_invoices TO brain_ledger_projector;
+GRANT SELECT ON agent_trigger_cooldowns TO brain_ledger_projector;
 -- The ledger_counterparties writer trigger (ledger/0027) is plain plpgsql and
 -- runs as the invoking role, INSERTing into ledger_counterparty_payment_instructions.
 -- The AP/AR canonical projector (Phase 5) writes counterparties as

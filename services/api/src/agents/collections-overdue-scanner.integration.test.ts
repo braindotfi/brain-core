@@ -187,6 +187,95 @@ suite("collections overdue scanner integration (requires DATABASE_URL)", () => {
       { kind: "counterparty", ref: counterpartyB, resolvable: true },
     ]);
   });
+
+  it("rotates through an overdue backlog instead of starving rows inside cooldown", async () => {
+    const tenant = newTenantId();
+    const counterparty = newCounterpartyId();
+    const invoices = Array.from({ length: 5 }, () => newInvoiceId());
+    await seedCollectionsTenant(pool, tenant, counterparty, "Gamma");
+    for (let i = 0; i < invoices.length; i += 1) {
+      await seedInvoice(pool, tenant, counterparty, invoices[i]!, `INV-R-${i}`, i);
+    }
+
+    const now = new Date("2026-07-19T00:00:00.000Z");
+    await runCollectionsOverdueScanCycle(
+      { scanPool: pool, appPool: pool, runService },
+      { now, batchSize: 2, perTenantBatchSize: 5, cooldownMs: 86_400_000 },
+    );
+    await runCollectionsOverdueScanCycle(
+      { scanPool: pool, appPool: pool, runService },
+      {
+        now: new Date("2026-07-19T01:00:00.000Z"),
+        batchSize: 2,
+        perTenantBatchSize: 5,
+        cooldownMs: 86_400_000,
+      },
+    );
+    await runCollectionsOverdueScanCycle(
+      { scanPool: pool, appPool: pool, runService },
+      {
+        now: new Date("2026-07-19T02:00:00.000Z"),
+        batchSize: 2,
+        perTenantBatchSize: 5,
+        cooldownMs: 86_400_000,
+      },
+    );
+
+    const ctx: ServiceCallContext = { tenantId: tenant, actor: "test" };
+    expect((await listProposals(pool, ctx, { type: "collections" })).proposals).toHaveLength(5);
+
+    await runCollectionsOverdueScanCycle(
+      { scanPool: pool, appPool: pool, runService },
+      {
+        now: new Date("2026-07-19T03:00:00.000Z"),
+        batchSize: 2,
+        perTenantBatchSize: 5,
+        cooldownMs: 86_400_000,
+      },
+    );
+    expect((await listProposals(pool, ctx, { type: "collections" })).proposals).toHaveLength(5);
+
+    await runCollectionsOverdueScanCycle(
+      { scanPool: pool, appPool: pool, runService },
+      {
+        now: new Date("2026-07-20T02:01:00.000Z"),
+        batchSize: 2,
+        perTenantBatchSize: 5,
+        cooldownMs: 86_400_000,
+      },
+    );
+    expect((await listProposals(pool, ctx, { type: "collections" })).proposals).toHaveLength(7);
+  });
+
+  it("applies a per-tenant cap so one tenant cannot monopolize a cycle", async () => {
+    const tenantC = newTenantId();
+    const tenantD = newTenantId();
+    const counterpartyC = newCounterpartyId();
+    const counterpartyD = newCounterpartyId();
+    const invoicesC = Array.from({ length: 3 }, () => newInvoiceId());
+    const invoicesD = Array.from({ length: 3 }, () => newInvoiceId());
+    await seedCollectionsTenant(pool, tenantC, counterpartyC, "Charlie");
+    await seedCollectionsTenant(pool, tenantD, counterpartyD, "Delta");
+    for (let i = 0; i < 3; i += 1) {
+      await seedInvoice(pool, tenantC, counterpartyC, invoicesC[i]!, `INV-C-${i}`, i);
+      await seedInvoice(pool, tenantD, counterpartyD, invoicesD[i]!, `INV-D-${i}`, i + 10);
+    }
+
+    await runCollectionsOverdueScanCycle(
+      { scanPool: pool, appPool: pool, runService },
+      {
+        now: new Date("2026-07-19T00:00:00.000Z"),
+        batchSize: 4,
+        perTenantBatchSize: 2,
+        cooldownMs: 86_400_000,
+      },
+    );
+
+    const ctxC: ServiceCallContext = { tenantId: tenantC, actor: "test" };
+    const ctxD: ServiceCallContext = { tenantId: tenantD, actor: "test" };
+    expect((await listProposals(pool, ctxC, { type: "collections" })).proposals).toHaveLength(2);
+    expect((await listProposals(pool, ctxD, { type: "collections" })).proposals).toHaveLength(2);
+  });
 });
 
 function emptyWikiService(): IWikiMemoryService {
@@ -257,6 +346,16 @@ async function seedTenant(
   invoiceId: string,
   counterpartyName: string,
 ): Promise<void> {
+  await seedCollectionsTenant(pool, tenantId, counterpartyId, counterpartyName);
+  await seedInvoice(pool, tenantId, counterpartyId, invoiceId, "INV-100", 0);
+}
+
+async function seedCollectionsTenant(
+  pool: Pool,
+  tenantId: string,
+  counterpartyId: string,
+  counterpartyName: string,
+): Promise<void> {
   await withTenantScope(pool, tenantId, async (client) => {
     await client.query(`INSERT INTO tenants (id, kind) VALUES ($1, 'demo')`, [tenantId]);
     await client.query(
@@ -274,17 +373,30 @@ async function seedTenant(
          'human_confirmed', 1)`,
       [counterpartyId, tenantId, counterpartyName],
     );
+  });
+}
+
+async function seedInvoice(
+  pool: Pool,
+  tenantId: string,
+  counterpartyId: string,
+  invoiceId: string,
+  invoiceNumber: string,
+  dayOffset: number,
+): Promise<void> {
+  const dueDate = new Date(Date.parse("2026-07-01T00:00:00.000Z") + dayOffset * 86_400_000);
+  await withTenantScope(pool, tenantId, async (client) => {
     await client.query(
       `INSERT INTO ledger_invoices (
          id, owner_id, invoice_number, counterparty_id, amount_due, amount_paid,
          currency, issue_date, due_date, status, linked_document_ids,
          linked_transaction_ids, source_ids, evidence_ids, provenance, confidence
        )
-       VALUES ($1, $2, 'INV-100', $3, 900, 0, 'USD',
-         '2026-06-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', 'sent',
+       VALUES ($1, $2, $4, $3, 900, 0, 'USD',
+         '2026-06-01T00:00:00.000Z', $5::timestamptz, 'sent',
          ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[],
          'human_confirmed', 1)`,
-      [invoiceId, tenantId, counterpartyId],
+      [invoiceId, tenantId, counterpartyId, invoiceNumber, dueDate.toISOString()],
     );
   });
 }
