@@ -383,6 +383,19 @@ const envSchema = z.object({
     .positive()
     .default(60 * 60 * 1000),
 
+  // ---- Collections overdue scanner ----
+  BRAIN_COLLECTIONS_SCAN_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(15 * 60 * 1000),
+  BRAIN_COLLECTIONS_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  BRAIN_COLLECTIONS_SCAN_COOLDOWN_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(24 * 60 * 60 * 1000),
+
   // ---- Blob storage ----
   /**
    * Storage backend. Use "azure" or "s3" in staging/production, "memory" in

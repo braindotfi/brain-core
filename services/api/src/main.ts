@@ -91,6 +91,7 @@ import {
 import { registerDocsRoutes } from "./docs/routes.js";
 import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
+import { startCollectionsOverdueScanner } from "./agents/collections-overdue-scanner.js";
 
 import {
   registerRawPlugin,
@@ -2596,6 +2597,25 @@ async function main(): Promise<void> {
       })
     : undefined;
 
+  // Collections overdue scanner (BC-1/BC-2): cross-tenant invoice enumeration
+  // on the ledger worker pool, then tenant-scoped AgentRunService proposals.
+  const collectionsOverdueScanner = composition.workers.has("ledger")
+    ? startCollectionsOverdueScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_COLLECTIONS_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_COLLECTIONS_SCAN_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_COLLECTIONS_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence the raw-worker role; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2787,6 +2807,7 @@ async function main(): Promise<void> {
           canonicalProjectionWorker,
           ledgerProjectionWorker,
           ledgerAparProjectionWorker,
+          collectionsOverdueScanner,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,
