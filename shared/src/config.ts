@@ -2,7 +2,7 @@
  * Brain runtime config.
  *
  * Every service consumes its config through this module. All values come from
- * the process environment — not from files, not from hardcoded defaults at the
+ * the process environment: not from files, not from hardcoded defaults at the
  * call site. Azure Key Vault supplies production values at container start
  * (§10.4). Local dev reads from `.env` or shell exports.
  *
@@ -29,7 +29,7 @@ function optionalNonEmptyString() {
 }
 
 const envSchema = z.object({
-  // ---- Identity & environment ----
+  // ---- Identity and environment ----
   NODE_ENV: z.enum(["development", "test", "staging", "production"]).default("development"),
   SERVICE_NAME: z.string().min(1).default("brain-unknown"),
   SERVICE_VERSION: z.string().default("0.0.0-dev"),
@@ -58,7 +58,7 @@ const envSchema = z.object({
   // DATABASE_PRIVILEGED_URL). Each connects as its own BYPASSRLS role scoped to
   // one layer's tables (infra/db-roles.sql §4). In production all eight are
   // required (db-isolation.ts fence); when unset each falls back to DATABASE_URL
-  // with a boot warning — safe in dev/testnet where the role model is not applied.
+  // with a boot warning, safe in dev/testnet where the role model is not applied.
   BRAIN_RAW_WORKER_DB_URL: z.string().url().optional(),
   BRAIN_CANONICAL_PROJECTOR_DB_URL: z.string().url().optional(),
   BRAIN_LEDGER_PROJECTOR_DB_URL: z.string().url().optional(),
@@ -144,7 +144,7 @@ const envSchema = z.object({
   BRAIN_SURFACE_SMOKE_SECRET: optionalNonEmptyString(),
 
   // ---- CORS ----
-  /** Comma-separated list of allowed origins. Use "*" only in local dev — never in staging/prod. */
+  /** Comma-separated list of allowed origins. Use "*" only in local dev, never in staging/prod. */
   CORS_ALLOWED_ORIGINS: z.string().default("http://localhost:5173,http://localhost:3000"),
 
   // ---- LLM (OpenAI) ----
@@ -154,7 +154,7 @@ const envSchema = z.object({
   // P0.3: per-(tenant, principal) wiki annotation rate limit, events/hour.
   WIKI_ANNOTATION_RATE_PER_HOUR: z.coerce.number().int().positive().default(60),
 
-  // ---- LLM (Anthropic — legacy / tests only) ----
+  // ---- LLM (Anthropic, legacy / tests only) ----
   ANTHROPIC_API_KEY: optionalNonEmptyString(),
 
   // ---- Sandbox / demo mode ----
@@ -165,7 +165,7 @@ const envSchema = z.object({
     .default("false"),
 
   /**
-   * Set to "true" to expose POST /v1/demo/provision-run — the BrainSaaS
+   * Set to "true" to expose POST /v1/demo/provision-run, the BrainSaaS
    * "Brain Playground" fresh-tenant-per-run provisioner. Default OFF.
    *
    * The route mints a scoped JWT for a fresh demo tenant. The minted token
@@ -207,14 +207,14 @@ const envSchema = z.object({
    *
    * POST /v1/auth/service-token lets a TRUSTED backend-for-frontend (e.g. the
    * Brain Finance / BrainMVB BFF) mint a scoped JWT for a STABLE per-user
-   * tenant — the production counterpart to the demo-provision fence. Unlike
+   * tenant, the production counterpart to the demo-provision fence. Unlike
    * provision-run it does NOT seed demo business data: it materialises an empty
    * tenant + an active payment agent (idempotent on the caller-supplied
    * tenant_id, which the BFF persists per app-user) and mints a token.
    *
    * Scope ceiling (mirrors the demo fence): READ + PROPOSE + APPROVE only. The
    * minted token never carries payment_intent:execute, audit:admin, or
-   * policy:write — real money movement / signing stays off this path.
+   * policy:write. Real money movement / signing stays off this path.
    *
    * Auth: when enabled, callers MUST send X-Service-Token-Auth equal to
    * BRAIN_SERVICE_TOKEN_SECRET (constant-time compared). The box signing key
@@ -251,7 +251,7 @@ const envSchema = z.object({
    * gated issue/revoke routes under /v1/tenants/:tenantId/api-keys. Unlike
    * BRAIN_SERVICE_TOKEN_ENABLED, keys are never self-minted: only an operator
    * holding BRAIN_PLATFORM_SERVICE_SECRET can issue or revoke one. Default
-   * OFF — the routes are not registered unless this is enabled.
+   * OFF. The routes are not registered unless this is enabled.
    */
   BRAIN_API_KEY_AUTH_ENABLED: z
     .enum(["true", "false"])
@@ -261,7 +261,7 @@ const envSchema = z.object({
   // ---- Self-serve onboarding (RFC 0002) ----
   /**
    * Set to "true" to expose the public self-serve signup surface
-   * (POST /v1/signup, /v1/auth/verify-email). Default OFF — the routes are not
+   * (POST /v1/signup, /v1/auth/verify-email). Default OFF. The routes are not
    * registered unless this is enabled. New tenants are sandbox-only regardless.
    */
   BRAIN_SELF_SERVE_SIGNUP: z
@@ -322,7 +322,7 @@ const envSchema = z.object({
   /**
    * URL of the brain-agents service hosting the four Python reasoners. When
    * unset, the api uses the in-process default agent service. When set, every
-   * call is HMAC-signed via the X-Brain-Auth header — boot fails closed in
+   * call is HMAC-signed via the X-Brain-Auth header. Boot fails closed in
    * production if BRAIN_AGENTS_INBOUND_SECRET is also unset.
    */
   RECONCILIATION_AGENT_URL: optionalNonEmptyString(),
@@ -362,7 +362,7 @@ const envSchema = z.object({
   BRAIN_BASE_CHAIN_ID: z.coerce.number().int().positive().default(84_532),
   /**
    * H-06: Azure Key Vault URL holding the on-chain rail's signing key. The
-   * viem Account proxies signing to Key Vault via managed identity — the raw
+   * viem Account proxies signing to Key Vault via managed identity. The raw
    * private key is never read into process memory. Unset disables the live
    * on-chain rail (dev/test fall back to the fail-closed stub).
    */
@@ -467,6 +467,48 @@ const envSchema = z.object({
     .positive()
     .default(6 * 60 * 60 * 1000),
 
+  // ---- Dispute scanner ----
+  BRAIN_DISPUTE_SCAN_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(10 * 60 * 1000),
+  BRAIN_DISPUTE_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  BRAIN_DISPUTE_SCAN_PER_TENANT_BATCH_SIZE: z.coerce.number().int().positive().default(25),
+  BRAIN_DISPUTE_SCAN_COOLDOWN_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(6 * 60 * 60 * 1000),
+
+  // ---- Revenue intel scanner ----
+  BRAIN_REVENUE_INTEL_SCAN_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(15 * 60 * 1000),
+  BRAIN_REVENUE_INTEL_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  BRAIN_REVENUE_INTEL_SCAN_PER_TENANT_BATCH_SIZE: z.coerce.number().int().positive().default(25),
+  BRAIN_REVENUE_INTEL_SCAN_COOLDOWN_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(12 * 60 * 60 * 1000),
+
+  // ---- Subscription scanner ----
+  BRAIN_SUBSCRIPTION_SCAN_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(15 * 60 * 1000),
+  BRAIN_SUBSCRIPTION_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  BRAIN_SUBSCRIPTION_SCAN_PER_TENANT_BATCH_SIZE: z.coerce.number().int().positive().default(25),
+  BRAIN_SUBSCRIPTION_SCAN_COOLDOWN_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(24 * 60 * 60 * 1000),
+
   // ---- Blob storage ----
   /**
    * Storage backend. Use "azure" or "s3" in staging/production, "memory" in
@@ -511,7 +553,7 @@ const envSchema = z.object({
     .string()
     .regex(/^[A-Za-z0-9+/]{43}=$/)
     .optional(),
-  /** Label for the current credential key — used for key-rotation tracking. */
+  /** Label for the current credential key, used for key-rotation tracking. */
   BRAIN_SOURCE_CREDENTIAL_KEY_ID: z.string().min(1).default("local-dev-v1"),
   /**
    * Production KMS path: name of the Azure Key Vault secret that holds the

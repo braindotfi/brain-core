@@ -1,8 +1,11 @@
 import { collectionsHandler } from "../src/collections/handler.js";
 import { cashForecastHandler } from "../src/cash_forecast/handler.js";
 import { complianceHandler } from "../src/compliance/handler.js";
+import { disputeHandler } from "../src/dispute/handler.js";
 import { fraudAnomalyHandler } from "../src/fraud_anomaly/handler.js";
 import { reconciliationHandler } from "../src/reconciliation/handler.js";
+import { revenueIntelHandler } from "../src/revenue_intel/handler.js";
+import { subscriptionHandler } from "../src/subscription/handler.js";
 import { vendorRiskHandler } from "../src/vendor_risk/handler.js";
 import type { InternalAgentHandler } from "../src/handler.js";
 
@@ -12,16 +15,22 @@ export const evalHandlers: Readonly<Record<string, InternalAgentHandler>> = {
   cash_forecast: cashForecastHandler,
   collections: collectionsHandler,
   compliance: complianceHandler,
+  dispute: disputeHandler,
   fraud_anomaly: fraudAnomalyHandler,
   reconciliation: reconciliationHandler,
+  revenue_intel: revenueIntelHandler,
+  subscription: subscriptionHandler,
   vendor_risk: vendorRiskHandler,
 };
 
 export { cashForecastScenarios } from "./cash_forecast.scenarios.js";
 export { collectionsScenarios } from "./collections.scenarios.js";
 export { complianceScenarios } from "./compliance.scenarios.js";
+export { disputeScenarios } from "./dispute.scenarios.js";
 export { fraudAnomalyScenarios } from "./fraud_anomaly.scenarios.js";
 export { reconciliationScenarios } from "./reconciliation.scenarios.js";
+export { revenueIntelScenarios } from "./revenue_intel.scenarios.js";
+export { subscriptionScenarios } from "./subscription.scenarios.js";
 export { vendorRiskScenarios } from "./vendor_risk.scenarios.js";
 export { metricRegistry } from "./metrics.js";
 export { compareToBaseline, runGoldenEval, summarizeReport } from "./runner.js";

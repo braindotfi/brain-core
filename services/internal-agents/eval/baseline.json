@@ -25,6 +25,18 @@
     "compliance": {
       "minimum_score": 1,
       "scenario_count": 4
+    },
+    "dispute": {
+      "minimum_score": 1,
+      "scenario_count": 5
+    },
+    "revenue_intel": {
+      "minimum_score": 1,
+      "scenario_count": 6
+    },
+    "subscription": {
+      "minimum_score": 1,
+      "scenario_count": 5
     }
   }
 }
