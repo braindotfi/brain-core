@@ -17,6 +17,10 @@
     "vendor_risk": {
       "minimum_score": 1,
       "scenario_count": 4
+    },
+    "fraud_anomaly": {
+      "minimum_score": 1,
+      "scenario_count": 5
     }
   }
 }

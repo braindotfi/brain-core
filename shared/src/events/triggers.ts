@@ -48,6 +48,9 @@ export const DOMAIN_EVENTS = [
   "revenue.changed", // revenue_intel
   "customer.payment_behavior_changed", // revenue_intel
   "contract.renewal_upcoming", // revenue_intel
+  "transaction.unusual", // fraud_anomaly
+  "merchant.risk_detected", // fraud_anomaly
+  "duplicate_charge.detected", // fraud_anomaly
 ] as const;
 
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number];

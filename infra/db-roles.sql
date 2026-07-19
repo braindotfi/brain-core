@@ -196,8 +196,9 @@ BEGIN
 END $$;
 GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties
   TO brain_ledger_projector;
--- The Collections, Reconciliation, Cash Forecast, and Vendor Risk scanners
--- share the ledger worker pool for cross-tenant enumeration only. They need ledger and cooldown reads, then
+-- The Collections, Reconciliation, Cash Forecast, Vendor Risk, and Fraud
+-- Anomaly scanners share the ledger worker pool for cross-tenant enumeration only.
+-- They need ledger and cooldown reads, then
 -- re-enter tenant-scoped brain_app for cooldown writes and AgentRunService proposals.
 GRANT SELECT ON ledger_accounts, ledger_balances, ledger_invoices, ledger_transactions
   TO brain_ledger_projector;

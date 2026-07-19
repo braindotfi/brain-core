@@ -126,9 +126,58 @@ export const vendorRiskMetric: AgentMetric = {
   },
 };
 
+export const fraudAnomalyMetric: AgentMetric = {
+  agent_key: "fraud_anomaly",
+  score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
+    const actualAnomaly = readActualFraudFlag(output);
+    const expectedAnomaly = expected.expected_anomaly === true;
+    const truePositive = actualAnomaly && expectedAnomaly ? 1 : 0;
+    const falsePositive = actualAnomaly && !expectedAnomaly ? 1 : 0;
+    const falseNegative = !actualAnomaly && expectedAnomaly ? 1 : 0;
+    const precision = truePositive + falsePositive === 0 ? (expectedAnomaly ? 0 : 1) : truePositive;
+    const recall = truePositive + falseNegative === 0 ? 1 : truePositive;
+    const f1 = precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall);
+    const falsePositiveRate = falsePositive;
+    const expectedType = expected.anomaly_type;
+    const actualType = output.anomaly_type;
+    return [
+      {
+        field: "classifier.precision",
+        expected: 1,
+        actual: precision,
+        score: precision,
+        passed: precision === 1,
+      },
+      {
+        field: "classifier.recall",
+        expected: 1,
+        actual: recall,
+        score: recall,
+        passed: recall === 1,
+      },
+      {
+        field: "classifier.f1",
+        expected: 1,
+        actual: f1,
+        score: f1,
+        passed: f1 === 1,
+      },
+      {
+        field: "classifier.false_positive_rate",
+        expected: 0,
+        actual: falsePositiveRate,
+        score: falsePositiveRate === 0 ? 1 : 0,
+        passed: falsePositiveRate === 0,
+      },
+      exactMatch("anomaly_type", actualType, expectedType),
+    ];
+  },
+};
+
 export const metricRegistry: Readonly<Record<string, AgentMetric>> = {
   cash_forecast: cashForecastMetric,
   collections: collectionsMetric,
+  fraud_anomaly: fraudAnomalyMetric,
   reconciliation: reconciliationMetric,
   vendor_risk: vendorRiskMetric,
 };
@@ -262,4 +311,11 @@ function riskRank(raw: unknown): number | null {
   if (raw === "elevated") return 2;
   if (raw === "standard") return 1;
   return null;
+}
+
+function readActualFraudFlag(output: Record<string, unknown>): boolean {
+  const score = numberValue(output.anomaly_score) ?? 0;
+  return (
+    score >= 0.5 || output.recommended_action === "review" || output.recommended_action === "hold"
+  );
 }
