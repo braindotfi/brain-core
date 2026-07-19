@@ -16,6 +16,12 @@ import {
 } from "@brain/shared";
 import type { Pool } from "pg";
 import { insertOrReuseArtifact } from "../repository/artifacts.js";
+import {
+  enqueueExtractionJob,
+  extractionJobToWire,
+  isAutoExtractDocumentsEnabled,
+  type ExtractionJobWire,
+} from "../repository/extractionJobs.js";
 import type { IngestEnvelopeFields } from "../envelope.js";
 
 export interface IngestInput {
@@ -41,12 +47,16 @@ export interface IngestResult {
   sourceSchema: string | null;
   ingestedAt: string;
   deduplicated: boolean;
+  extractionJob?: ExtractionJobWire | null;
 }
 
 export interface IngestDeps {
   pool: Pool;
   blob: BlobAdapter;
   audit: AuditEmitter;
+  extractionJobs?: {
+    documentExtractorConfigured: boolean;
+  };
 }
 
 export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<IngestResult> {
@@ -66,19 +76,38 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
   });
 
   // Insert-or-reuse inside a tenant-scoped TX.
-  const { row, deduplicated } = await withTenantScope(deps.pool, input.tenantId, async (client) =>
-    insertOrReuseArtifact(client, {
-      id,
-      tenantId: input.tenantId,
-      sha256Hex: sha,
-      sourceType: input.sourceType,
-      sourceRef: input.sourceRef,
-      blobUri: path,
-      mimeType: input.mimeType,
-      bytes: input.body.length,
-      ingestedBy: input.actor,
-      ...(input.envelope !== undefined ? { envelope: input.envelope } : {}),
-    }),
+  const { row, deduplicated, extractionJob } = await withTenantScope(
+    deps.pool,
+    input.tenantId,
+    async (client) => {
+      const artifact = await insertOrReuseArtifact(client, {
+        id,
+        tenantId: input.tenantId,
+        sha256Hex: sha,
+        sourceType: input.sourceType,
+        sourceRef: input.sourceRef,
+        blobUri: path,
+        mimeType: input.mimeType,
+        bytes: input.body.length,
+        ingestedBy: input.actor,
+        ...(input.envelope !== undefined ? { envelope: input.envelope } : {}),
+      });
+      let job: ExtractionJobWire | null = null;
+      if (
+        deps.extractionJobs?.documentExtractorConfigured === true &&
+        shouldAutoExtractDocument(input) &&
+        (await isAutoExtractDocumentsEnabled(client))
+      ) {
+        const enqueued = await enqueueExtractionJob(client, {
+          tenantId: input.tenantId,
+          rawId: artifact.row.id,
+          contentSha256: artifact.row.sha256,
+          requestedBy: input.actor,
+        });
+        job = extractionJobToWire(enqueued.row);
+      }
+      return { ...artifact, extractionJob: job };
+    },
   );
 
   // Audit emit — §1 principle 4. Inputs/outputs are hashes and identifiers
@@ -113,6 +142,7 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
     sourceSchema: row.source_schema ?? null,
     ingestedAt: toIso(row.ingested_at),
     deduplicated,
+    extractionJob,
   };
 }
 
@@ -128,4 +158,12 @@ export async function ingestMany(
 
 function toIso(d: Date | string): string {
   return typeof d === "string" ? d : d.toISOString();
+}
+
+function shouldAutoExtractDocument(input: IngestInput): boolean {
+  if (!["pdf_upload", "csv_upload", "other"].includes(input.sourceType)) return false;
+  const mime = input.mimeType?.toLowerCase() ?? "";
+  if (mime.startsWith("image/")) return true;
+  if (mime.startsWith("text/")) return true;
+  return ["application/pdf", "text/csv", "application/csv", "application/json"].includes(mime);
 }

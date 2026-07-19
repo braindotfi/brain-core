@@ -75,10 +75,12 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "raw_parsed", column: "tenant_id" },
   { table: "raw_interpretation_log", column: "tenant_id" },
   { table: "raw_plaid_items", column: "tenant_id" },
+  { table: "extraction_jobs", column: "tenant_id" },
   { table: "raw_artifacts", column: "tenant_id" },
   // Sync checkpoints before their connection rows (soft source_id reference).
   { table: "raw_sync_partitions", column: "tenant_id" },
   { table: "raw_sources", column: "tenant_id" },
+  { table: "raw_tenant_settings", column: "tenant_id" },
 
   // ---- Layer 1.5: Canonical domain (ingestion architecture §12, Phase 5) ----
   // Children before parents (journal_line FK -> journal_entry).

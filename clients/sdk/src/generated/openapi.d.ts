@@ -511,12 +511,33 @@ export interface paths {
         put?: never;
         /**
          * Trigger document extraction for a raw artifact
-         * @description Requires `raw:write`. Explicitly sends the referenced artifact
-         *     bytes to the configured document extraction agent. This route is
-         *     manual by design and is not called automatically after raw
-         *     ingestion.
+         * @description Requires `raw:write`. Enqueues or re-enqueues an async document
+         *     extraction job for the referenced artifact. The request never calls the
+         *     document extraction agent inline. A terminal succeeded job for the same
+         *     raw artifact and content hash is reused.
          */
         post: operations["extractRawDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/raw/{raw_id}/extraction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get latest document extraction job status
+         * @description Requires `raw:read`. Returns the latest async extraction job for the
+         *     artifact. If no job exists, returns `extraction_job_not_found`.
+         */
+        get: operations["getRawDocumentExtraction"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3202,6 +3223,22 @@ export interface components {
             ingested_at?: string;
             /** @description True if this artifact was already in storage */
             deduplicated?: boolean;
+            extraction_job?: components["schemas"]["RawExtractionJob"];
+        };
+        RawExtractionJob: {
+            job_id: string;
+            raw_id: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "succeeded" | "failed";
+            parsed_id: string | null;
+            confidence: number | null;
+            error: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
         };
         RawParsed: {
             id?: string;
@@ -5197,16 +5234,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Document extraction completed */
+            /** @description Document extraction job accepted or reused */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        parsed_id: string;
-                        confidence: number;
-                    };
+                    "application/json": components["schemas"]["RawExtractionJob"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -5231,15 +5265,32 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Document extraction agent is not configured */
-            501: {
+        };
+    };
+    getRawDocumentExtraction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                raw_id: components["parameters"]["RawId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest document extraction job */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Error"];
+                    "application/json": components["schemas"]["RawExtractionJob"];
                 };
             };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     getRawParsed: {

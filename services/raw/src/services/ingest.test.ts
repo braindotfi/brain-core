@@ -1,15 +1,24 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, MemoryBlobAdapter, newTenantId, newUserId } from "@brain/shared";
+import {
+  InMemoryAuditEmitter,
+  MemoryBlobAdapter,
+  newRawExtractionJobId,
+  newTenantId,
+  newUserId,
+} from "@brain/shared";
 import { ingestOne } from "./ingest.js";
 
-function makeFakePool(options: { existing?: boolean; idempotencyHit?: boolean } = {}): {
+function makeFakePool(
+  options: { existing?: boolean; idempotencyHit?: boolean; autoExtract?: boolean } = {},
+): {
   pool: { connect: () => Promise<unknown> };
-  client: { released: boolean; inserts: unknown[][] };
+  client: { released: boolean; inserts: unknown[][]; jobs: unknown[][] };
 } {
   const client = {
     released: false,
     inserts: [] as unknown[][],
+    jobs: [] as unknown[][],
     query: vi.fn(async (text: string, values?: unknown[]) => {
       if (text.startsWith("BEGIN") || text === "COMMIT" || text === "ROLLBACK") {
         return { rows: [], rowCount: 0 };
@@ -31,6 +40,12 @@ function makeFakePool(options: { existing?: boolean; idempotencyHit?: boolean } 
           };
         }
         return { rows: [], rowCount: 0 };
+      }
+      if (text.includes("FROM raw_tenant_settings")) {
+        return {
+          rows: options.autoExtract === true ? [{ auto_extract_documents: true }] : [],
+          rowCount: options.autoExtract === true ? 1 : 0,
+        };
       }
       if (text.startsWith("INSERT INTO raw_artifacts")) {
         client.inserts.push(values ?? []);
@@ -61,6 +76,33 @@ function makeFakePool(options: { existing?: boolean; idempotencyHit?: boolean } 
               source_id: (values?.[17] as string | null) ?? null,
               source_version: (values?.[18] as string | null) ?? null,
               idempotency_key: (values?.[19] as string | null) ?? null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (text.startsWith("INSERT INTO extraction_jobs")) {
+        client.jobs.push(values ?? []);
+        const now = new Date("2026-07-06T00:00:00Z");
+        return {
+          rows: [
+            {
+              id: values?.[0] ?? newRawExtractionJobId(),
+              tenant_id: values?.[1],
+              raw_id: values?.[2],
+              content_sha256: values?.[3],
+              status: "queued",
+              parsed_id: null,
+              confidence: null,
+              error: null,
+              attempt_count: 0,
+              requested_by: values?.[4],
+              locked_at: null,
+              locked_by: null,
+              started_at: null,
+              finished_at: null,
+              created_at: now,
+              updated_at: now,
             },
           ],
           rowCount: 1,
@@ -105,6 +147,7 @@ describe("ingestOne", () => {
     expect(result.bytes).toBe(body.length);
     expect(result.sourceType).toBe("other");
     expect(result.rawId.startsWith("raw_")).toBe(true);
+    expect(result.extractionJob).toBeNull();
 
     // Blob contains the bytes under the tenant-prefixed path.
     const keys = Array.from(blob.objects.keys());
@@ -239,5 +282,63 @@ describe("ingestOne", () => {
     expect(only.contentType).toBe("application/json");
     expect(only.metadata.source_type).toBe("plaid");
     expect(only.metadata.tenant_id).toBe(tenantId);
+  });
+
+  it("auto-enqueues one document extraction job when tenant setting and agent config are on", async () => {
+    const { pool, client } = makeFakePool({ autoExtract: true });
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+    const tenantId = newTenantId();
+
+    const result = await ingestOne(
+      {
+        pool: pool as unknown as Pool,
+        blob,
+        audit,
+        extractionJobs: { documentExtractorConfigured: true },
+      },
+      {
+        tenantId,
+        actor: newUserId(),
+        sourceType: "pdf_upload",
+        sourceRef: { filename: "invoice.pdf" },
+        body: Buffer.from("pdf"),
+        mimeType: "application/pdf",
+      },
+    );
+
+    expect(client.jobs).toHaveLength(1);
+    expect(client.jobs[0]![1]).toBe(tenantId);
+    expect(client.jobs[0]![2]).toBe(result.rawId);
+    expect(result.extractionJob).toMatchObject({
+      raw_id: result.rawId,
+      status: "queued",
+    });
+  });
+
+  it("does not auto-enqueue when the setting is on but the extractor is not configured", async () => {
+    const { pool, client } = makeFakePool({ autoExtract: true });
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await ingestOne(
+      {
+        pool: pool as unknown as Pool,
+        blob,
+        audit,
+        extractionJobs: { documentExtractorConfigured: false },
+      },
+      {
+        tenantId: newTenantId(),
+        actor: newUserId(),
+        sourceType: "pdf_upload",
+        sourceRef: { filename: "invoice.pdf" },
+        body: Buffer.from("pdf"),
+        mimeType: "application/pdf",
+      },
+    );
+
+    expect(client.jobs).toHaveLength(0);
+    expect(result.extractionJob).toBeNull();
   });
 });

@@ -110,8 +110,9 @@ curl -s "$BRAIN/v1/ledger/accounts" -H "authorization: Bearer $ACCESS_TOKEN"
 
 The token is tenant-scoped (RLS) and 15-minute-lived. It can upload artifacts
 through `POST /v1/raw/ingest`, trigger extraction through
-`POST /v1/raw/{raw_id}/extract`, and read the resulting advisory ledger state.
-Refresh by logging in again.
+`POST /v1/raw/{raw_id}/extract`, poll job status through
+`GET /v1/raw/{raw_id}/extraction`, and read the resulting advisory ledger
+state. Refresh by logging in again.
 
 ## Agents (machine principals)
 

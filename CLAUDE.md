@@ -210,14 +210,15 @@ Done
   name as an alias on rename, keep aliases append-only, reject rename
   collisions with `name_conflict`, and emit `ledger.counterparty.updated`.
   New manual vendor creates emit `vendor.created` for vendor risk routing.
-- Raw exposes `POST /v1/raw/:raw_id/extract` as an explicit trigger for the
-  Python document extraction agent. The route requires `raw:write`, reads the
-  artifact through tenant-scoped RLS, base64-encodes the blob, signs the
-  outbound call with `BRAIN_AGENTS_INBOUND_SECRET` when
-  `DOCUMENT_EXTRACT_AGENT_URL` is configured, and returns the parsed id and
-  confidence. This is intentionally not an automatic post-ingest trigger.
-  If `DOCUMENT_EXTRACT_AGENT_URL` is unset, the route returns 501 using
-  `dependency_unavailable`.
+- Raw exposes async document extraction jobs. `POST /v1/raw/:raw_id/extract`
+  requires `raw:write` and enqueues or re-enqueues an `extraction_jobs` row
+  instead of calling the Python agent on the request thread. `GET
+/v1/raw/:raw_id/extraction` requires `raw:read` and returns the latest job
+  status, parsed id, confidence, and error. Tenants can opt in to automatic
+  extraction for uploaded document artifacts through `raw_tenant_settings`.
+  Connector-sourced artifacts are not auto-extracted. If
+  `DOCUMENT_EXTRACT_AGENT_URL` is unset, ingest does not enqueue automatic jobs;
+  any queued job the worker sees is marked failed with `dependency_unavailable`.
 - Owner password-login tokens now include `raw:read` and `raw:write` so a
   verified self-serve tenant owner can upload documents, trigger extraction, and
   read advisory ledger state. Owner tokens still exclude

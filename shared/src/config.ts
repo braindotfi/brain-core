@@ -331,6 +331,8 @@ const envSchema = z.object({
    * runs. When unset, /v1/raw/{raw_id}/extract returns 501.
    */
   DOCUMENT_EXTRACT_AGENT_URL: optionalNonEmptyString(),
+  BRAIN_DOCUMENT_EXTRACT_WORKER_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
+  BRAIN_DOCUMENT_EXTRACT_WORKER_BATCH_SIZE: z.coerce.number().int().positive().default(10),
   /**
    * Shared secret for the X-Brain-Auth HMAC sent to the brain-agents service.
    * The Python side verifies with the same secret (BRAIN_AGENTS_INBOUND_SECRET

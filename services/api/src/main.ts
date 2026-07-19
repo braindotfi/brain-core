@@ -222,6 +222,7 @@ import { createViemPolicySignerChecker } from "./policy/viemPolicySignerChecker.
 import { DocumentExtractClient } from "./agents/documentExtractClient.js";
 import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { registerRawExtractRoute } from "./raw-extract/route.js";
+import { startDocumentExtractionWorker } from "./raw-extract/worker.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
 import {
@@ -522,7 +523,14 @@ async function main(): Promise<void> {
   const routingEnqueue = createRoutingEnqueue({ redisUrl: cfg.REDIS_URL });
 
   // -- layer deps objects ---------------------------------------------
-  const rawDeps: RawDeps = { pool, blob, audit };
+  const rawDeps: RawDeps = {
+    pool,
+    blob,
+    audit,
+    extractionJobs: {
+      documentExtractorConfigured: cfg.DOCUMENT_EXTRACT_AGENT_URL !== undefined,
+    },
+  };
   const ledgerDeps: LedgerDeps = { pool, audit, enqueue: routingEnqueue };
   const ledgerService = new LedgerService(ledgerDeps);
 
@@ -1670,9 +1678,6 @@ async function main(): Promise<void> {
         await v1.register(async (child) =>
           registerRawExtractRoute(child, {
             pool,
-            blob,
-            agentId: "document_extractor",
-            ...(documentExtractClient !== undefined ? { client: documentExtractClient } : {}),
           }),
         );
         await v1.register(async (child) =>
@@ -2576,6 +2581,23 @@ async function main(): Promise<void> {
     ? startInterpretWorker({ pool: rawWorkerPool, blob, audit })
     : undefined;
 
+  const documentExtractionWorker = composition.workers.has("raw")
+    ? startDocumentExtractionWorker(
+        {
+          scanPool: rawWorkerPool,
+          appPool: pool,
+          blob,
+          ...(documentExtractClient !== undefined ? { client: documentExtractClient } : {}),
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_DOCUMENT_EXTRACT_WORKER_INTERVAL_MS,
+          batchSize: cfg.BRAIN_DOCUMENT_EXTRACT_WORKER_BATCH_SIZE,
+        },
+      )
+    : undefined;
+
   // Canonical projection (ingestion architecture §12, Phase 5): promotes the
   // rich Merge accounting pages (gl_account / journal_entry) that the compact
   // Ledger drops into the canonical domain store. Cross-tenant poll over
@@ -2985,6 +3007,7 @@ async function main(): Promise<void> {
           disputeScanner,
           revenueIntelScanner,
           subscriptionScanner,
+          documentExtractionWorker,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,

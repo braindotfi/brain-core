@@ -6,8 +6,10 @@
  * As of the cutover (PR-G) this is the PRIMARY path for Merge-sourced
  * obligations/counterparties: the merge_accounting extractor no longer writes
  * them to the Ledger directly; they flow Raw -> canonical projector -> canonical
- * -> this projection. (Stripe / Finch / Plaid / doc_obligation paths are
- * unchanged and still write the Ledger directly.)
+ * -> this projection. Document obligations flow through raw_parsed
+ * doc_obligation_v1 -> canonical_obligation -> this projection; the legacy
+ * ledger doc_obligation extractor now validates only and returns no rows.
+ * Stripe / Finch / Plaid paths are unchanged and still write Ledger directly.
  *
  * Identity is canonical-source-keyed, NOT name-deduped: a Merge vendor and a
  * document vendor with the same name are DISTINCT observations here, linked by

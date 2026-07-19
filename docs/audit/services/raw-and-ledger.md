@@ -150,20 +150,16 @@ The normalize pipeline status:
 [5] Ledger entities (account/tx/cp)   ← populated after parser output is written ✓
 ```
 
-**Pipeline bridge status**: the stage-3 schema, parsed-row write route, explicit
-document extraction trigger, normalize worker, and Ledger normalizer are wired.
-`POST /raw/{raw_id}/extract` reads the tenant-scoped artifact, base64-encodes the
-blob, and delegates to the configured Python document extraction agent, which
-returns the `raw_parsed` id and confidence. This route is explicit by design and
-does not run automatically after ingestion.
+**Pipeline bridge status**: the stage-3 schema, parsed-row write route, async
+document extraction job queue, extraction worker, normalize worker, and Ledger
+normalizer are wired. `POST /raw/{raw_id}/extract` enqueues or re-enqueues a job
+and returns the job status. `GET /raw/{raw_id}/extraction` returns the latest
+job status, parsed id, confidence, and error.
 
 `POST /ledger/normalize` (`services/ledger/src/routes/index.ts:215`) is wired
 and calls `LedgerService.normalizeFromRaw`. It works when given a valid
-`raw_parsed_id`; automatic normalization depends on the extractor writing
-`raw_parsed` rows.
-
-The remaining gap is operational, not structural: extraction is manual via the
-API trigger until an in-API poller or automatic post-ingest scheduler is added.
+`raw_parsed_id`; automatic normalization depends on the extraction worker or
+first-party agent writing `raw_parsed` rows.
 
 ### 3.6 ReconciliationService
 
@@ -217,25 +213,25 @@ The migration runner uses the full filename as a unique key (established in the 
 
 ---
 
-### R-19 (Medium, mitigated). Normalize pipeline requires explicit extraction trigger
+### R-19 (Closed). Normalize pipeline extraction trigger
 
-The raw-to-ledger normalize pipeline is implemented, but ingestion does not
-automatically start extraction:
+The raw-to-ledger normalize pipeline is implemented, and document extraction now
+runs through an async job queue:
 
 - `raw_artifacts` is populated by every successful `ingestOne` call.
 - `raw_parsed` has migration schema (`0002_raw_parsed.sql`), RLS, FORCE RLS, and correct indexes.
 - `POST /raw/{raw_id}/parsed` writes parser output rows idempotently.
-- `POST /raw/{raw_id}/extract` explicitly delegates a raw artifact to the Python document extraction agent.
+- `POST /raw/{raw_id}/extract` enqueues or re-enqueues a document extraction job.
+- `GET /raw/{raw_id}/extraction` returns the latest job status.
+- The extraction worker reads queued jobs and delegates to the Python document extraction agent.
+- Tenants can opt in to post-ingest extraction for uploaded document artifacts. Connector-sourced artifacts are not auto-extracted.
 - The `normalizeWorker` polls every 15 seconds (`services/ledger/src/workers/normalizeWorker.ts:85`) and processes rows after extraction creates them.
 - `LedgerService.normalizeFromRaw` plus `normalizePlaidArtifact` are complete and tested.
 
-**Impact**: Ingestion alone still stops at blob and artifact storage. Ledger
-entities are populated only after a caller or operator triggers extraction, or
-after a future scheduler does so.
-
-**Next step**: Add an optional in-API poller or scheduler that selects eligible
-raw artifacts and calls the same extraction path after ingestion. Keep the
-manual route as the deterministic operator and integration trigger.
+**Impact**: Auto-extraction is default off by tenant setting. With the setting
+off, ingestion behavior is unchanged and callers use the explicit async trigger.
+With the setting on and `DOCUMENT_EXTRACT_AGENT_URL` configured, uploaded
+document artifacts enqueue extraction jobs automatically.
 
 ---
 
@@ -298,7 +294,8 @@ const result = await deps.pool.query<{ id: string; tenant_id: string }>(
 | Ledger writes (account/tx/cp)      | Functional ✓ | Idempotent upserts                                                           |
 | `POST /ledger/normalize`           | Functional ✓ | Requires a valid `raw_parsed_id`                                             |
 | normalizeWorker                    | Functional ✓ | Processes parsed rows after extraction creates them                          |
-| `POST /raw/{raw_id}/extract`       | Functional ✓ | Explicit trigger; returns parsed id and confidence                           |
+| `POST /raw/{raw_id}/extract`       | Functional ✓ | Async trigger; returns extraction job status                                 |
+| `GET /raw/{raw_id}/extraction`     | Functional ✓ | Latest extraction job status                                                 |
 | ReconciliationService (7 matchers) | Functional ✓ | Advisory lock, all tests pass                                                |
 | `POST /ledger/reconcile`           | Stub 501 ✗   | Docs: "Phase 5"; ReconciliationService.run exists but isn't exposed via POST |
 
@@ -319,7 +316,6 @@ const result = await deps.pool.query<{ id: string; tenant_id: string }>(
 
 **Blockers for "Plaid data flows to Ledger":**
 
-- R-19 (stage-3 parser not implemented) is the single missing piece. The rest of the pipeline is ready.
 - R-20 (BYPASSRLS for normalizeWorker) must be confirmed before activating the pipeline.
 
 **Acceptable debt:**
@@ -332,13 +328,12 @@ const result = await deps.pool.query<{ id: string; tenant_id: string }>(
 
 ## 9. Refactor Priorities
 
-| Priority | Action                                                                                         | Location                                 |
-| -------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| P1       | Add optional post-ingest extraction scheduler that calls the existing document extraction path | `services/api/src/raw-extract/`          |
-| P2       | Verify/document production DB role has BYPASSRLS for normalizeWorker                           | `database/` audit turn, DB role config   |
-| P3       | Remove `"plaid": "^27.0.0"` from `services/raw/package.json`                                   | `services/raw/package.json:34`           |
-| P4       | Renumber `0004_raw_plaid_items_rls.sql` to avoid duplicate prefix                              | `services/raw/migrations/`               |
-| P5       | Add live Plaid API probe in `plaidConnector.validateCredentials`                               | `services/raw/src/sources/connectors.ts` |
+| Priority | Action                                                               | Location                                 |
+| -------- | -------------------------------------------------------------------- | ---------------------------------------- |
+| P1       | Verify/document production DB role has BYPASSRLS for normalizeWorker | `database/` audit turn, DB role config   |
+| P2       | Remove `"plaid": "^27.0.0"` from `services/raw/package.json`         | `services/raw/package.json:34`           |
+| P3       | Renumber `0004_raw_plaid_items_rls.sql` to avoid duplicate prefix    | `services/raw/migrations/`               |
+| P5       | Add live Plaid API probe in `plaidConnector.validateCredentials`     | `services/raw/src/sources/connectors.ts` |
 
 ---
 

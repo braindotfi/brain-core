@@ -62,6 +62,19 @@ export {
   type RawParsedRow,
   type ListParsedFilters,
 } from "./repository/parsed.js";
+export {
+  enqueueExtractionJob,
+  findLatestExtractionJob,
+  isAutoExtractDocumentsEnabled,
+  extractionJobToWire,
+  claimExtractionJob,
+  markExtractionJobSucceeded,
+  markExtractionJobFailed,
+  type EnqueueExtractionJobInput,
+  type ExtractionJobRow,
+  type ExtractionJobStatus,
+  type ExtractionJobWire,
+} from "./repository/extractionJobs.js";
 
 // Connector SDK — conformance/certification harness (Phase 6).
 export {
