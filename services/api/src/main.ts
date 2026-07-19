@@ -94,6 +94,7 @@ import { makeRunLoaders } from "./agents/run-loaders.js";
 import { startCollectionsOverdueScanner } from "./agents/collections-overdue-scanner.js";
 import { startCashForecastScanner } from "./agents/cash-forecast-scanner.js";
 import { startReconciliationUnreconciledScanner } from "./agents/reconciliation-unreconciled-scanner.js";
+import { startVendorRiskScanner } from "./agents/vendor-risk-scanner.js";
 
 import {
   registerRawPlugin,
@@ -2659,6 +2660,26 @@ async function main(): Promise<void> {
       )
     : undefined;
 
+  // Vendor risk scanner (BC-1/BC-2): cross-tenant vendor and payment-instruction
+  // enumeration on the ledger worker pool, then tenant-scoped AgentRunService proposals.
+  const vendorRiskScanner = composition.workers.has("ledger")
+    ? startVendorRiskScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_VENDOR_RISK_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_VENDOR_RISK_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_VENDOR_RISK_SCAN_PER_TENANT_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_VENDOR_RISK_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence the raw-worker role; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2853,6 +2874,7 @@ async function main(): Promise<void> {
           collectionsOverdueScanner,
           reconciliationUnreconciledScanner,
           cashForecastScanner,
+          vendorRiskScanner,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,

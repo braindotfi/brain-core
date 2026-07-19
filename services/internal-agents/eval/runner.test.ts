@@ -11,6 +11,7 @@ import {
   metricRegistry,
   reconciliationScenarios,
   runGoldenEval,
+  vendorRiskScenarios,
 } from "./index.js";
 import type { GoldenEvalBaseline, GoldenScenario } from "./types.js";
 
@@ -64,7 +65,12 @@ describe("golden eval runner", () => {
     const report = runGoldenEval({
       handlers: evalHandlers,
       metrics: metricRegistry,
-      scenarios: [...collectionsScenarios, ...reconciliationScenarios, ...cashForecastScenarios],
+      scenarios: [
+        ...collectionsScenarios,
+        ...reconciliationScenarios,
+        ...cashForecastScenarios,
+        ...vendorRiskScenarios,
+      ],
       fixedClock: EVAL_FIXED_CLOCK,
     });
     const baseline = readBaseline();
@@ -84,6 +90,11 @@ describe("golden eval runner", () => {
       scenario_count: baseline.agents.cash_forecast?.scenario_count,
       passed_count: baseline.agents.cash_forecast?.scenario_count,
       score: baseline.agents.cash_forecast?.minimum_score,
+    });
+    expect(report.aggregate.vendor_risk).toMatchObject({
+      scenario_count: baseline.agents.vendor_risk?.scenario_count,
+      passed_count: baseline.agents.vendor_risk?.scenario_count,
+      score: baseline.agents.vendor_risk?.minimum_score,
     });
   });
 

@@ -103,7 +103,7 @@ describe("vendorRiskHandler branches", () => {
     }
   });
 
-  it("nulls out missing counterparty_id and payment_destination", () => {
+  it("holds when counterparty identity is unresolved", () => {
     const proposed = vendorRiskHandler.build({
       action: "require_approval",
       context: {},
@@ -111,9 +111,10 @@ describe("vendorRiskHandler branches", () => {
     });
     expect(proposed.channel).toBe("agent");
     if (proposed.channel === "agent") {
-      expect(proposed.action.type).toBe("require_approval");
+      expect(proposed.action.type).toBe("block_payment");
       expect(proposed.action.counterparty_id).toBeNull();
       expect(proposed.action.payment_destination).toBeNull();
+      expect(proposed.action.recommended_action).toBe("hold");
       expect(proposed.action.evidence_refs).toEqual([]);
     }
   });

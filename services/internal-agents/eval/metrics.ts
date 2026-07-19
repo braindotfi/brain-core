@@ -99,10 +99,38 @@ export const cashForecastMetric: AgentMetric = {
   },
 };
 
+export const vendorRiskMetric: AgentMetric = {
+  agent_key: "vendor_risk",
+  score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
+    const actualHighRisk = output.risk_band === "high" || output.recommended_action === "hold";
+    const expectedHighRisk = expected.expected_high_risk === true;
+    const precisionScore = actualHighRisk ? (expectedHighRisk ? 1 : 0) : expectedHighRisk ? 0 : 1;
+    const expectedRank = numberValue(expected.risk_rank);
+    const actualRank = riskRank(output.risk_band);
+    return [
+      {
+        field: "classifier.high_risk_precision",
+        expected: expectedHighRisk,
+        actual: actualHighRisk,
+        score: precisionScore,
+        passed: precisionScore === 1,
+      },
+      {
+        field: "risk_order.rank",
+        expected: expectedRank,
+        actual: actualRank,
+        score: expectedRank !== null && actualRank === expectedRank ? 1 : 0,
+        passed: expectedRank !== null && actualRank === expectedRank,
+      },
+    ];
+  },
+};
+
 export const metricRegistry: Readonly<Record<string, AgentMetric>> = {
   cash_forecast: cashForecastMetric,
   collections: collectionsMetric,
   reconciliation: reconciliationMetric,
+  vendor_risk: vendorRiskMetric,
 };
 
 function exactMatch(field: string, actual: unknown, expected: unknown): EvalFieldScore {
@@ -227,4 +255,11 @@ function numericWithinTolerance(
 function meanAbsoluteError(rows: readonly { expected: number; actual: number }[]): number {
   if (rows.length === 0) return Number.POSITIVE_INFINITY;
   return rows.reduce((sum, row) => sum + Math.abs(row.actual - row.expected), 0) / rows.length;
+}
+
+function riskRank(raw: unknown): number | null {
+  if (raw === "high") return 3;
+  if (raw === "elevated") return 2;
+  if (raw === "standard") return 1;
+  return null;
 }
