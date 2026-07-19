@@ -174,9 +174,40 @@ export const fraudAnomalyMetric: AgentMetric = {
   },
 };
 
+export const complianceMetric: AgentMetric = {
+  agent_key: "compliance",
+  score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
+    const actualViolation = readActualComplianceViolation(output);
+    const expectedViolation = expected.expected_violation === true;
+    const truePositive = actualViolation && expectedViolation ? 1 : 0;
+    const falsePositive = actualViolation && !expectedViolation ? 1 : 0;
+    const falseNegative = !actualViolation && expectedViolation ? 1 : 0;
+    const precision =
+      truePositive + falsePositive === 0 ? (expectedViolation ? 0 : 1) : truePositive;
+    const recall = truePositive + falseNegative === 0 ? 1 : truePositive;
+    return [
+      {
+        field: "classifier.precision",
+        expected: 1,
+        actual: precision,
+        score: precision,
+        passed: precision === 1,
+      },
+      {
+        field: "classifier.recall",
+        expected: 1,
+        actual: recall,
+        score: recall,
+        passed: recall === 1,
+      },
+    ];
+  },
+};
+
 export const metricRegistry: Readonly<Record<string, AgentMetric>> = {
   cash_forecast: cashForecastMetric,
   collections: collectionsMetric,
+  compliance: complianceMetric,
   fraud_anomaly: fraudAnomalyMetric,
   reconciliation: reconciliationMetric,
   vendor_risk: vendorRiskMetric,
@@ -317,5 +348,14 @@ function readActualFraudFlag(output: Record<string, unknown>): boolean {
   const score = numberValue(output.anomaly_score) ?? 0;
   return (
     score >= 0.5 || output.recommended_action === "review" || output.recommended_action === "hold"
+  );
+}
+
+function readActualComplianceViolation(output: Record<string, unknown>): boolean {
+  const finding = output.finding_type ?? output.finding_kind;
+  return (
+    finding === "approval_missing" ||
+    finding === "policy_violation" ||
+    finding === "audit_gap_detected"
   );
 }

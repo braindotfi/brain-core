@@ -196,6 +196,28 @@ function obligationEvidence(o: Obligation): Evidence {
   };
 }
 
+function contextEvidence(
+  context: Record<string, unknown> | undefined,
+  kind: "policy_decision" | "audit_event",
+  key: string,
+): Evidence | null {
+  const id = strContext(context, key);
+  if (id === undefined) return null;
+  const excerpt =
+    kind === "policy_decision"
+      ? strContext(context, "policy_summary")
+      : strContext(context, "audit_summary");
+  return {
+    kind,
+    ref: id,
+    source_system: kind === "policy_decision" ? "policy" : "audit",
+    object_type: kind,
+    object_id: id,
+    confidence: evidenceConfidence(numberContext(context, `${kind}_confidence`) ?? 1),
+    ...(excerpt !== undefined ? { excerpt } : {}),
+  };
+}
+
 function wikiEvidence(page: WikiPage, score: number): Evidence {
   return {
     kind: "wiki",
@@ -343,6 +365,20 @@ export function makeLedgerEvidenceProvider(
         }
       } catch {
         // best-effort.
+      }
+    }
+
+    if (want.has("policy_decision")) {
+      const item = contextEvidence(context, "policy_decision", "policy_decision_id");
+      if (item !== null) {
+        out.push(item);
+      }
+    }
+
+    if (want.has("audit_event")) {
+      const item = contextEvidence(context, "audit_event", "audit_event_id");
+      if (item !== null) {
+        out.push(item);
       }
     }
 

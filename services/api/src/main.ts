@@ -93,6 +93,7 @@ import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
 import { startCollectionsOverdueScanner } from "./agents/collections-overdue-scanner.js";
 import { startCashForecastScanner } from "./agents/cash-forecast-scanner.js";
+import { startComplianceScanner } from "./agents/compliance-scanner.js";
 import { startFraudAnomalyScanner } from "./agents/fraud-anomaly-scanner.js";
 import { startReconciliationUnreconciledScanner } from "./agents/reconciliation-unreconciled-scanner.js";
 import { startVendorRiskScanner } from "./agents/vendor-risk-scanner.js";
@@ -2701,6 +2702,26 @@ async function main(): Promise<void> {
       )
     : undefined;
 
+  // Compliance scanner (BC-1/BC-2): cross-tenant governance-gap enumeration
+  // on the ledger worker pool, then tenant-scoped AgentRunService proposals.
+  const complianceScanner = composition.workers.has("ledger")
+    ? startComplianceScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_COMPLIANCE_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_COMPLIANCE_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_COMPLIANCE_SCAN_PER_TENANT_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_COMPLIANCE_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence the raw-worker role; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2897,6 +2918,7 @@ async function main(): Promise<void> {
           cashForecastScanner,
           vendorRiskScanner,
           fraudAnomalyScanner,
+          complianceScanner,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,
