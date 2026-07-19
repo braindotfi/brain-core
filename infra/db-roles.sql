@@ -171,6 +171,7 @@ BEGIN
            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'raw\_%'
   LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE ON %s TO brain_raw_worker', t); END LOOP;
 END $$;
+GRANT SELECT ON extraction_jobs TO brain_raw_worker;
 
 -- brain_canonical_projector: canonical writes, SELECT on raw_parsed (input).
 -- Only canonical_journal_line is deleted by the projector, as a line-replace

@@ -195,6 +195,7 @@ async function handleMultipart(request: FastifyRequest, reply: FastifyReply, dep
     bytes: result.bytes,
     ingested_at: result.ingestedAt,
     deduplicated: result.deduplicated,
+    ...(result.extractionJob !== null ? { extraction_job: result.extractionJob } : {}),
   };
 }
 
@@ -233,5 +234,6 @@ async function handleJson(request: FastifyRequest, reply: FastifyReply, deps: Ra
     bytes: result.bytes,
     ingested_at: result.ingestedAt,
     deduplicated: result.deduplicated,
+    ...(result.extractionJob !== null ? { extraction_job: result.extractionJob } : {}),
   };
 }

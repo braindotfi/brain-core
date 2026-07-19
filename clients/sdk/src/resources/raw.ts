@@ -5,6 +5,7 @@ import type { components, paths } from "../generated/openapi.js";
 type RawIngestResponse = components["schemas"]["RawIngestResponse"];
 type RawSourceType = components["schemas"]["RawSourceType"];
 type RawParsed = components["schemas"]["RawParsed"];
+type RawExtractionJob = components["schemas"]["RawExtractionJob"];
 
 export interface IngestFromUrlParams {
   sourceType: RawSourceType;
@@ -28,8 +29,14 @@ export interface ParsedRaw {
 }
 
 export interface RawExtractResult {
-  parsedId: string;
-  confidence: number;
+  jobId: string;
+  rawId: string;
+  status: RawExtractionJob["status"];
+  parsedId: string | null;
+  confidence: number | null;
+  error: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type GetParsedParams = NonNullable<
@@ -101,9 +108,26 @@ export class RawResource {
       params: { path: { raw_id: rawId } },
     });
     const body = unwrap(data, error, response.status);
-    return {
-      parsedId: body.parsed_id,
-      confidence: body.confidence,
-    };
+    return mapExtractionJob(body);
   }
+
+  async getExtraction(rawId: string): Promise<RawExtractResult> {
+    const { data, error, response } = await this.http.GET("/raw/{raw_id}/extraction", {
+      params: { path: { raw_id: rawId } },
+    });
+    return mapExtractionJob(unwrap(data, error, response.status));
+  }
+}
+
+function mapExtractionJob(body: RawExtractionJob): RawExtractResult {
+  return {
+    jobId: body.job_id,
+    rawId: body.raw_id,
+    status: body.status,
+    parsedId: body.parsed_id,
+    confidence: body.confidence,
+    error: body.error,
+    createdAt: body.created_at,
+    updatedAt: body.updated_at,
+  };
 }

@@ -26,6 +26,7 @@ export const ID_PREFIX = {
   policy: "pol",
   rawArtifact: "raw",
   rawParsed: "prs",
+  rawExtractionJob: "rexj",
   wikiEntity: "ent",
   wikiRelation: "rel",
   wikiPage: "wpg",
@@ -119,6 +120,7 @@ export const newExecutionId = (): string => brainId(ID_PREFIX.execution);
 export const newPolicyId = (): string => brainId(ID_PREFIX.policy);
 export const newRawArtifactId = (): string => brainId(ID_PREFIX.rawArtifact);
 export const newRawParsedId = (): string => brainId(ID_PREFIX.rawParsed);
+export const newRawExtractionJobId = (): string => brainId(ID_PREFIX.rawExtractionJob);
 export const newWikiAnnotationId = (): string => brainId(ID_PREFIX.wikiAnnotation);
 export const newWikiEntityId = (): string => brainId(ID_PREFIX.wikiEntity);
 export const newWikiRelationId = (): string => brainId(ID_PREFIX.wikiRelation);

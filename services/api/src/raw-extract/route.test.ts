@@ -1,17 +1,15 @@
-import { Readable } from "node:stream";
 import Fastify, { type FastifyRequest } from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import {
   errorHandlerPlugin,
+  newRawExtractionJobId,
   newRawArtifactId,
   newTenantId,
   type Principal,
   type Scope,
 } from "@brain/shared";
-import type { BlobAdapter } from "@brain/shared";
 import type { Pool } from "pg";
-import { DocumentExtractClient } from "../agents/documentExtractClient.js";
-import { registerRawExtractRoute, type DocumentExtractPort } from "./route.js";
+import { registerRawExtractRoute } from "./route.js";
 
 const TENANT = newTenantId();
 const RAW_ID = newRawArtifactId();
@@ -54,7 +52,49 @@ function artifactRow(id = RAW_ID) {
   };
 }
 
-function fakePool(row: ReturnType<typeof artifactRow> | null): Pool {
+function jobRow(
+  rawId = RAW_ID,
+  status: "queued" | "running" | "succeeded" | "failed" = "queued",
+): {
+  id: string;
+  tenant_id: string;
+  raw_id: string;
+  content_sha256: Buffer;
+  status: "queued" | "running" | "succeeded" | "failed";
+  parsed_id: string | null;
+  confidence: number | null;
+  error: Record<string, unknown> | null;
+  attempt_count: number;
+  requested_by: string | null;
+  locked_at: Date | null;
+  locked_by: string | null;
+  started_at: Date | null;
+  finished_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+} {
+  const now = new Date("2026-07-06T00:00:00Z");
+  return {
+    id: newRawExtractionJobId(),
+    tenant_id: TENANT,
+    raw_id: rawId,
+    content_sha256: Buffer.from("00".repeat(32), "hex"),
+    status,
+    parsed_id: null,
+    confidence: null,
+    error: null,
+    attempt_count: 0,
+    requested_by: "user_01TEST0000000000000000000",
+    locked_at: null,
+    locked_by: null,
+    started_at: null,
+    finished_at: null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function fakePool(row: ReturnType<typeof artifactRow> | null, latestJob = jobRow()): Pool {
   const client = {
     query: vi.fn((sql: string) => {
       if (
@@ -69,6 +109,12 @@ function fakePool(row: ReturnType<typeof artifactRow> | null): Pool {
         const rows = row === null ? [] : [row];
         return Promise.resolve({ rows, rowCount: rows.length });
       }
+      if (sql.includes("INSERT INTO extraction_jobs")) {
+        return Promise.resolve({ rows: [latestJob], rowCount: 1 });
+      }
+      if (sql.includes("FROM extraction_jobs")) {
+        return Promise.resolve({ rows: [latestJob], rowCount: 1 });
+      }
       return Promise.resolve({ rows: [], rowCount: 0 });
     }),
     release: vi.fn(),
@@ -76,21 +122,10 @@ function fakePool(row: ReturnType<typeof artifactRow> | null): Pool {
   return { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool;
 }
 
-function fakeBlob(bytes = Buffer.from("invoice")): BlobAdapter {
-  return {
-    put: vi.fn(),
-    get: vi.fn(async () => Readable.from([bytes])),
-    signedUrl: vi.fn(),
-    tombstone: vi.fn(),
-    purgeTenant: vi.fn(),
-    healthcheck: vi.fn(),
-  } as unknown as BlobAdapter;
-}
-
 async function buildApp(opts: {
   principal: Principal | undefined;
   row?: ReturnType<typeof artifactRow> | null;
-  client?: DocumentExtractPort;
+  latestJob?: ReturnType<typeof jobRow>;
 }) {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
@@ -99,131 +134,92 @@ async function buildApp(opts: {
       request.principal = opts.principal;
     }
   });
-  const extractClient =
-    opts.client ??
-    ({
-      extract: vi.fn(async () => ({
-        parsed_id: "prs_01TEST000000000000000000000",
-        confidence: 0.8,
-      })),
-    } satisfies DocumentExtractPort);
-  const pool = fakePool(opts.row === undefined ? artifactRow() : opts.row);
-  const blob = fakeBlob();
+  const pool = fakePool(opts.row === undefined ? artifactRow() : opts.row, opts.latestJob);
   await registerRawExtractRoute(app, {
     pool,
-    blob,
-    client: extractClient,
-    agentId: "document_extractor",
   });
-  return { app, extractClient };
+  return { app, pool };
 }
 
 describe("POST /raw/:raw_id/extract", () => {
   it("requires raw:write scope", async () => {
-    const { app, extractClient } = await buildApp({ principal: principal([]) });
+    const { app, pool } = await buildApp({ principal: principal([]) });
     try {
       const res = await app.inject({ method: "POST", url: `/raw/${RAW_ID}/extract` });
       expect(res.statusCode).toBe(403);
       expect(res.json()).toMatchObject({ error: { code: "auth_scope_insufficient" } });
-      expect(extractClient.extract).not.toHaveBeenCalled();
+      const connect = pool.connect as unknown as ReturnType<typeof vi.fn>;
+      expect(connect).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }
   });
 
   it("returns 404 when the artifact is not visible in the tenant scope", async () => {
-    const { app, extractClient } = await buildApp({ principal: principal(), row: null });
+    const { app } = await buildApp({ principal: principal(), row: null });
     try {
       const res = await app.inject({ method: "POST", url: `/raw/${RAW_ID}/extract` });
       expect(res.statusCode).toBe(404);
       expect(res.json()).toMatchObject({ error: { code: "raw_artifact_not_found" } });
-      expect(extractClient.extract).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }
   });
 
-  it("returns 501 when no document extraction client is configured", async () => {
-    const app = Fastify({ logger: false });
-    await app.register(errorHandlerPlugin);
-    app.addHook("preHandler", async (request: FastifyRequest) => {
-      request.principal = principal();
-    });
-    await registerRawExtractRoute(app, {
-      pool: fakePool(artifactRow()),
-      blob: fakeBlob(),
-      agentId: "document_extractor",
-    });
-    try {
-      const res = await app.inject({ method: "POST", url: `/raw/${RAW_ID}/extract` });
-      expect(res.statusCode).toBe(501);
-      expect(res.json()).toMatchObject({ error: { code: "dependency_unavailable" } });
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("base64 encodes the artifact and returns the extractor result", async () => {
-    const client: DocumentExtractPort = {
-      extract: vi.fn(async () => ({
-        parsed_id: "prs_01TEST000000000000000000000",
-        confidence: 0.97,
-      })),
-    };
-    const { app } = await buildApp({ principal: principal(), client });
+  it("enqueues an async extraction job without calling the extractor on the request path", async () => {
+    const latestJob = jobRow();
+    const { app } = await buildApp({ principal: principal(), latestJob });
     try {
       const res = await app.inject({ method: "POST", url: `/raw/${RAW_ID}/extract` });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({
-        parsed_id: "prs_01TEST000000000000000000000",
-        confidence: 0.97,
+        job_id: latestJob.id,
+        raw_id: RAW_ID,
+        status: "queued",
+        parsed_id: null,
+        confidence: null,
+        error: null,
+        created_at: "2026-07-06T00:00:00.000Z",
+        updated_at: "2026-07-06T00:00:00.000Z",
       });
-      expect(client.extract).toHaveBeenCalledWith(
-        {
-          tenantId: TENANT,
-          actor: "user_01TEST0000000000000000000",
-          principalType: "user",
-          scopes: ["raw:write"],
-        },
-        {
-          rawId: RAW_ID,
-          mimeType: "application/pdf",
-          documentB64: Buffer.from("invoice").toString("base64"),
-          agentId: "document_extractor",
-        },
-      );
     } finally {
       await app.close();
     }
   });
 
-  it("does not expose upstream agent 422 bodies in the caller error envelope", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 422,
-        text: async () => "python stack with extracted customer text",
-      }),
-    );
-    const { app } = await buildApp({
-      principal: principal(),
-      client: new DocumentExtractClient("http://agents.internal"),
-    });
+  it("returns the latest extraction status", async () => {
+    const latestJob = {
+      ...jobRow(),
+      status: "succeeded" as const,
+      parsed_id: "prs_01TEST000000000000000000000",
+      confidence: 0.5,
+    };
+    const { app } = await buildApp({ principal: principal(["raw:read"]), latestJob });
     try {
-      const res = await app.inject({ method: "POST", url: `/raw/${RAW_ID}/extract` });
-      expect(res.statusCode).toBe(422);
-      const body = res.json();
-      expect(body).toMatchObject({
-        error: {
-          code: "raw_source_unsupported",
-          details: { upstream_status: 422 },
-        },
+      const res = await app.inject({ method: "GET", url: `/raw/${RAW_ID}/extraction` });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        job_id: latestJob.id,
+        raw_id: RAW_ID,
+        status: "succeeded",
+        parsed_id: "prs_01TEST000000000000000000000",
+        confidence: 0.5,
+        error: null,
+        created_at: "2026-07-06T00:00:00.000Z",
+        updated_at: "2026-07-06T00:00:00.000Z",
       });
-      expect(JSON.stringify(body)).not.toContain("upstream_body");
-      expect(JSON.stringify(body)).not.toContain("python stack with extracted customer text");
     } finally {
-      vi.unstubAllGlobals();
+      await app.close();
+    }
+  });
+
+  it("requires raw:read scope for extraction status", async () => {
+    const { app } = await buildApp({ principal: principal(["raw:write"]) });
+    try {
+      const res = await app.inject({ method: "GET", url: `/raw/${RAW_ID}/extraction` });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toMatchObject({ error: { code: "auth_scope_insufficient" } });
+    } finally {
       await app.close();
     }
   });

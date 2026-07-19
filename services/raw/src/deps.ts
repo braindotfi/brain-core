@@ -12,4 +12,7 @@ export interface RawDeps {
   pool: Pool;
   blob: BlobAdapter;
   audit: AuditEmitter;
+  extractionJobs?: {
+    documentExtractorConfigured: boolean;
+  };
 }

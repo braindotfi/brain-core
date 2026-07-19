@@ -47,6 +47,7 @@ export const BRAIN_ERROR_CODES = [
   // Raw
   "raw_artifact_not_found",
   "raw_artifact_tombstoned",
+  "extraction_job_not_found",
   "raw_source_unsupported",
   // Codex 2026-06-06 P1: a high-trust provider source_type (plaid/stripe) was
   // asserted via the generic caller-supplied /raw/ingest route; it may only be
@@ -290,6 +291,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   // 404 — not found / tombstoned
   raw_artifact_not_found: 404,
   raw_artifact_tombstoned: 404,
+  extraction_job_not_found: 404,
   ledger_row_not_found: 404,
   agent_proposal_not_found: 404, // alias of execution_proposal_not_found (404)
   route_not_found: 404,
