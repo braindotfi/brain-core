@@ -39,6 +39,24 @@ const CONTEXT: Record<string, unknown> = {
   transaction_date: "2026-07-18T00:00:00.000Z",
   direction: "inflow",
   account_id: "acct_1",
+  balance_id: "bal_1",
+  current_balance: "1000.00",
+  receivables: [
+    {
+      invoice_id: "inv_1",
+      amount: "250.00",
+      currency: "USD",
+      due_date: "2026-08-01T00:00:00.000Z",
+    },
+  ],
+  payables: [
+    {
+      obligation_id: "obl_1",
+      amount: "100.00",
+      currency: "USD",
+      due_date: "2026-08-15T00:00:00.000Z",
+    },
+  ],
   card_id: "card_1",
   candidates: [
     {

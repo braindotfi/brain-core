@@ -92,6 +92,7 @@ import { registerDocsRoutes } from "./docs/routes.js";
 import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
 import { startCollectionsOverdueScanner } from "./agents/collections-overdue-scanner.js";
+import { startCashForecastScanner } from "./agents/cash-forecast-scanner.js";
 import { startReconciliationUnreconciledScanner } from "./agents/reconciliation-unreconciled-scanner.js";
 
 import {
@@ -2638,6 +2639,26 @@ async function main(): Promise<void> {
       )
     : undefined;
 
+  // Cash forecast scanner (BC-1/BC-2): cross-tenant balance and scheduled-flow
+  // enumeration on the ledger worker pool, then tenant-scoped AgentRunService proposals.
+  const cashForecastScanner = composition.workers.has("ledger")
+    ? startCashForecastScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_CASH_FORECAST_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_CASH_FORECAST_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_CASH_FORECAST_SCAN_PER_TENANT_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_CASH_FORECAST_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence the raw-worker role; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2831,6 +2852,7 @@ async function main(): Promise<void> {
           ledgerAparProjectionWorker,
           collectionsOverdueScanner,
           reconciliationUnreconciledScanner,
+          cashForecastScanner,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,

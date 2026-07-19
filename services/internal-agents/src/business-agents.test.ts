@@ -47,6 +47,28 @@ const PAYMENT_CONTEXT = {
   invoice_id: "inv_1",
 };
 
+const CASH_FORECAST_CONTEXT = {
+  balance_id: "bal_1",
+  current_balance: "1000.00",
+  currency: "USD",
+  receivables: [
+    {
+      invoice_id: "inv_1",
+      amount: "250.00",
+      currency: "USD",
+      due_date: "2026-08-01T00:00:00.000Z",
+    },
+  ],
+  payables: [
+    {
+      obligation_id: "obl_1",
+      amount: "100.00",
+      currency: "USD",
+      due_date: "2026-08-15T00:00:00.000Z",
+    },
+  ],
+};
+
 function loadPolicy(rel: string): PolicyDocument {
   return JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8")) as PolicyDocument;
 }
@@ -120,7 +142,7 @@ const CASES: readonly Case[] = [
     handler: cashForecastHandler,
     policy: "./cash_forecast/policy.template.json",
     sampleAction: "generate_forecast",
-    context: {},
+    context: CASH_FORECAST_CONTEXT,
     expectedOutcome: "allow",
   },
   {
@@ -261,13 +283,20 @@ describe("integration", () => {
   it("Cash Forecasting produces a forecast report proposal", () => {
     const proposed = cashForecastHandler.build({
       action: "generate_forecast",
-      context: {},
+      context: CASH_FORECAST_CONTEXT,
       evidence: FULL,
     });
     expect(proposed.channel).toBe("agent");
     if (proposed.channel === "agent") {
-      expect(proposed.action.type).toBe("generate_forecast");
-      expect(proposed.action.report).toMatchObject({ kind: "cash_forecast" });
+      expect(proposed.action).toMatchObject({
+        type: "cash_forecast",
+        recommended_action: "hold",
+        projected_net_position: {
+          day_30: "1150.00",
+          day_60: "1150.00",
+          day_90: "1150.00",
+        },
+      });
     }
   });
 });

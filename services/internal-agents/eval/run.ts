@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
   EVAL_FIXED_CLOCK,
+  cashForecastScenarios,
   collectionsScenarios,
   compareToBaseline,
   evalHandlers,
@@ -22,7 +23,7 @@ async function main(): Promise<void> {
   const report = runGoldenEval({
     handlers: evalHandlers,
     metrics: metricRegistry,
-    scenarios: [...collectionsScenarios, ...reconciliationScenarios],
+    scenarios: [...collectionsScenarios, ...reconciliationScenarios, ...cashForecastScenarios],
     fixedClock: EVAL_FIXED_CLOCK,
   });
 

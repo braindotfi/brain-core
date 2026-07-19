@@ -1,6 +1,7 @@
 import type { AgentMetric, EvalExpectedFields, EvalFieldScore } from "./types.js";
 
 const EXACT_FIELDS = ["recommended_action", "escalation_tier", "aging_tier"] as const;
+const CASH_FORECAST_NUMERIC_TOLERANCE = 0.01;
 
 export const collectionsMetric: AgentMetric = {
   agent_key: "collections",
@@ -48,7 +49,58 @@ export const reconciliationMetric: AgentMetric = {
   },
 };
 
+export const cashForecastMetric: AgentMetric = {
+  agent_key: "cash_forecast",
+  score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
+    const numericScores = readExpectedNumbers(expected.projected_net_position).map(
+      ([field, expectedValue]) =>
+        numericWithinTolerance(
+          `projected_net_position.${field}`,
+          readNestedNumber(output.projected_net_position, field),
+          expectedValue,
+          CASH_FORECAST_NUMERIC_TOLERANCE,
+        ),
+    );
+    const minBalanceScore =
+      "min_projected_balance" in expected
+        ? [
+            numericWithinTolerance(
+              "min_projected_balance",
+              numberValue(output.min_projected_balance),
+              numberValue(expected.min_projected_balance),
+              CASH_FORECAST_NUMERIC_TOLERANCE,
+            ),
+          ]
+        : [];
+    const mae = meanAbsoluteError(
+      numericScores
+        .map((score) => ({
+          expected: numberValue(score.expected),
+          actual: numberValue(score.actual),
+        }))
+        .filter(
+          (row): row is { expected: number; actual: number } =>
+            row.expected !== null && row.actual !== null,
+        ),
+    );
+    return [
+      ...numericScores,
+      ...minBalanceScore,
+      {
+        field: "projected_net_position.mae",
+        expected: 0,
+        actual: mae,
+        score: mae <= CASH_FORECAST_NUMERIC_TOLERANCE ? 1 : 0,
+        passed: mae <= CASH_FORECAST_NUMERIC_TOLERANCE,
+      },
+      exactMatch("recommended_action", output.recommended_action, expected.recommended_action),
+      exactMatch("shortfall_date", output.shortfall_date, expected.shortfall_date),
+    ];
+  },
+};
+
 export const metricRegistry: Readonly<Record<string, AgentMetric>> = {
+  cash_forecast: cashForecastMetric,
   collections: collectionsMetric,
   reconciliation: reconciliationMetric,
 };
@@ -128,4 +180,51 @@ function recallScore(
 
 function matchKey(match: ExpectedMatch): string {
   return `${match.left_entity_id}->${match.right_entity_id}`;
+}
+
+function readExpectedNumbers(raw: unknown): Array<[string, number]> {
+  if (typeof raw !== "object" || raw === null) return [];
+  return Object.entries(raw as Record<string, unknown>)
+    .map(([key, value]): [string, number] | null => {
+      const parsed = numberValue(value);
+      return parsed === null ? null : [key, parsed];
+    })
+    .filter((row): row is [string, number] => row !== null);
+}
+
+function readNestedNumber(raw: unknown, key: string): number | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  return numberValue((raw as Record<string, unknown>)[key]);
+}
+
+function numberValue(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string") {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function numericWithinTolerance(
+  field: string,
+  actual: number | null,
+  expected: number | null,
+  tolerance: number,
+): EvalFieldScore {
+  const delta =
+    actual !== null && expected !== null ? Math.abs(actual - expected) : Number.POSITIVE_INFINITY;
+  const passed = delta <= tolerance;
+  return {
+    field,
+    expected,
+    actual,
+    score: passed ? 1 : 0,
+    passed,
+  };
+}
+
+function meanAbsoluteError(rows: readonly { expected: number; actual: number }[]): number {
+  if (rows.length === 0) return Number.POSITIVE_INFINITY;
+  return rows.reduce((sum, row) => sum + Math.abs(row.actual - row.expected), 0) / rows.length;
 }
