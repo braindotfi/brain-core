@@ -69,6 +69,39 @@ const CASH_FORECAST_CONTEXT = {
   ],
 };
 
+const DISPUTE_CONTEXT = {
+  dispute_id: "dsp_1",
+  transaction_id: "tx_1",
+  amount: "750.00",
+  currency: "USD",
+  deadline: "2026-08-01T00:00:00.000Z",
+  dispute_age_days: 8,
+  evidence_completeness: 1,
+};
+
+const REVENUE_INTEL_CONTEXT = {
+  invoice_id: "inv_1",
+  transaction_id: "tx_1",
+  currency: "USD",
+  current_period_revenue: "1000.00",
+  prior_period_revenue: "900.00",
+  current_dso: 20,
+  prior_dso: 18,
+};
+
+const SUBSCRIPTION_CONTEXT = {
+  transaction_id: "tx_1",
+  counterparty_id: "cp_1",
+  amount: "100.00",
+  currency: "USD",
+  transaction_date: "2026-07-18",
+  history: [
+    { transaction_id: "tx_hist_1", amount: "100.00", transaction_date: "2026-05-18" },
+    { transaction_id: "tx_hist_2", amount: "100.00", transaction_date: "2026-06-18" },
+    { transaction_id: "tx_1", amount: "100.00", transaction_date: "2026-07-18" },
+  ],
+};
+
 function loadPolicy(rel: string): PolicyDocument {
   return JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8")) as PolicyDocument;
 }
@@ -126,7 +159,7 @@ const CASES: readonly Case[] = [
     handler: subscriptionHandler,
     policy: "./subscription/policy.template.json",
     sampleAction: "flag_subscription",
-    context: {},
+    context: SUBSCRIPTION_CONTEXT,
     expectedOutcome: "allow",
   },
   {
@@ -150,7 +183,7 @@ const CASES: readonly Case[] = [
     handler: disputeHandler,
     policy: "./dispute/policy.template.json",
     sampleAction: "gather_evidence",
-    context: {},
+    context: DISPUTE_CONTEXT,
     expectedOutcome: "allow",
   },
   {
@@ -166,7 +199,7 @@ const CASES: readonly Case[] = [
     handler: revenueIntelHandler,
     policy: "./revenue_intel/policy.template.json",
     sampleAction: "recommend_follow_up",
-    context: {},
+    context: REVENUE_INTEL_CONTEXT,
     expectedOutcome: "allow",
   },
 ];

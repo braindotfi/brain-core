@@ -283,6 +283,29 @@ describe("makeLedgerEvidenceProvider", () => {
     ]);
   });
 
+  it("emits dispute evidence from scanner context", async () => {
+    const provider = makeLedgerEvidenceProvider(fakeLedger());
+    const items = await provider({
+      tenantId: TENANT,
+      context: {
+        dispute_id: "dsp_1",
+        dispute_summary: "Chargeback on transaction txn_1",
+        dispute_confidence: "0.8",
+      },
+      requiredEvidence: ["dispute"],
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: "dispute",
+        ref: "dsp_1",
+        source_system: "ledger",
+        excerpt: "Chargeback on transaction txn_1",
+        confidence: 0.8,
+      }),
+    ]);
+  });
+
   it("produces no evidence when context lacks the needed reference", async () => {
     const provider = makeLedgerEvidenceProvider(fakeLedger());
     const items = await provider({

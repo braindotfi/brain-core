@@ -7,12 +7,15 @@ import {
   collectionsScenarios,
   complianceScenarios,
   compareToBaseline,
+  disputeScenarios,
   evalHandlers,
   fraudAnomalyScenarios,
   metricRegistry,
   reconciliationScenarios,
+  revenueIntelScenarios,
   runGoldenEval,
   summarizeReport,
+  subscriptionScenarios,
   vendorRiskScenarios,
 } from "./index.js";
 import type { GoldenEvalBaseline } from "./types.js";
@@ -33,6 +36,9 @@ async function main(): Promise<void> {
       ...vendorRiskScenarios,
       ...fraudAnomalyScenarios,
       ...complianceScenarios,
+      ...disputeScenarios,
+      ...revenueIntelScenarios,
+      ...subscriptionScenarios,
     ],
     fixedClock: EVAL_FIXED_CLOCK,
   });

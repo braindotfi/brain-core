@@ -8,11 +8,14 @@ import {
   collectionsScenarios,
   complianceScenarios,
   compareToBaseline,
+  disputeScenarios,
   evalHandlers,
   fraudAnomalyScenarios,
   metricRegistry,
   reconciliationScenarios,
+  revenueIntelScenarios,
   runGoldenEval,
+  subscriptionScenarios,
   vendorRiskScenarios,
 } from "./index.js";
 import type { GoldenEvalBaseline, GoldenScenario } from "./types.js";
@@ -74,42 +77,22 @@ describe("golden eval runner", () => {
         ...vendorRiskScenarios,
         ...fraudAnomalyScenarios,
         ...complianceScenarios,
+        ...disputeScenarios,
+        ...revenueIntelScenarios,
+        ...subscriptionScenarios,
       ],
       fixedClock: EVAL_FIXED_CLOCK,
     });
     const baseline = readBaseline();
 
     expect(compareToBaseline(report, baseline)).toEqual({ passed: true, failures: [] });
-    expect(report.aggregate.collections).toMatchObject({
-      scenario_count: baseline.agents.collections?.scenario_count,
-      passed_count: baseline.agents.collections?.scenario_count,
-      score: baseline.agents.collections?.minimum_score,
-    });
-    expect(report.aggregate.reconciliation).toMatchObject({
-      scenario_count: baseline.agents.reconciliation?.scenario_count,
-      passed_count: baseline.agents.reconciliation?.scenario_count,
-      score: baseline.agents.reconciliation?.minimum_score,
-    });
-    expect(report.aggregate.cash_forecast).toMatchObject({
-      scenario_count: baseline.agents.cash_forecast?.scenario_count,
-      passed_count: baseline.agents.cash_forecast?.scenario_count,
-      score: baseline.agents.cash_forecast?.minimum_score,
-    });
-    expect(report.aggregate.vendor_risk).toMatchObject({
-      scenario_count: baseline.agents.vendor_risk?.scenario_count,
-      passed_count: baseline.agents.vendor_risk?.scenario_count,
-      score: baseline.agents.vendor_risk?.minimum_score,
-    });
-    expect(report.aggregate.fraud_anomaly).toMatchObject({
-      scenario_count: baseline.agents.fraud_anomaly?.scenario_count,
-      passed_count: baseline.agents.fraud_anomaly?.scenario_count,
-      score: baseline.agents.fraud_anomaly?.minimum_score,
-    });
-    expect(report.aggregate.compliance).toMatchObject({
-      scenario_count: baseline.agents.compliance?.scenario_count,
-      passed_count: baseline.agents.compliance?.scenario_count,
-      score: baseline.agents.compliance?.minimum_score,
-    });
+    for (const [agentKey, expected] of Object.entries(baseline.agents)) {
+      expect(report.aggregate[agentKey]).toMatchObject({
+        scenario_count: expected.scenario_count,
+        passed_count: expected.scenario_count,
+        score: expected.minimum_score,
+      });
+    }
   });
 
   it("fails the regression gate when aggregate score drops below baseline", () => {

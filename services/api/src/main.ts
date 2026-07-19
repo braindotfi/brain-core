@@ -94,8 +94,11 @@ import { makeRunLoaders } from "./agents/run-loaders.js";
 import { startCollectionsOverdueScanner } from "./agents/collections-overdue-scanner.js";
 import { startCashForecastScanner } from "./agents/cash-forecast-scanner.js";
 import { startComplianceScanner } from "./agents/compliance-scanner.js";
+import { startDisputeScanner } from "./agents/dispute-scanner.js";
 import { startFraudAnomalyScanner } from "./agents/fraud-anomaly-scanner.js";
 import { startReconciliationUnreconciledScanner } from "./agents/reconciliation-unreconciled-scanner.js";
+import { startRevenueIntelScanner } from "./agents/revenue-intel-scanner.js";
+import { startSubscriptionScanner } from "./agents/subscription-scanner.js";
 import { startVendorRiskScanner } from "./agents/vendor-risk-scanner.js";
 
 import {
@@ -2722,6 +2725,66 @@ async function main(): Promise<void> {
       )
     : undefined;
 
+  // Dispute scanner (BC-1/BC-2): cross-tenant disputed obligation enumeration
+  // on the ledger worker pool, then tenant-scoped AgentRunService proposals.
+  const disputeScanner = composition.workers.has("ledger")
+    ? startDisputeScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_DISPUTE_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_DISPUTE_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_DISPUTE_SCAN_PER_TENANT_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_DISPUTE_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
+  // Revenue intel scanner (BC-1/BC-2): cross-tenant revenue movement
+  // enumeration on the ledger worker pool, then tenant-scoped AgentRunService proposals.
+  const revenueIntelScanner = composition.workers.has("ledger")
+    ? startRevenueIntelScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_REVENUE_INTEL_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_REVENUE_INTEL_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_REVENUE_INTEL_SCAN_PER_TENANT_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_REVENUE_INTEL_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
+  // Subscription scanner (BC-1/BC-2): cross-tenant recurring-charge
+  // enumeration on the ledger worker pool, then tenant-scoped AgentRunService proposals.
+  const subscriptionScanner = composition.workers.has("ledger")
+    ? startSubscriptionScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_SUBSCRIPTION_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_SUBSCRIPTION_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_SUBSCRIPTION_SCAN_PER_TENANT_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_SUBSCRIPTION_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence the raw-worker role; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2919,6 +2982,9 @@ async function main(): Promise<void> {
           vendorRiskScanner,
           fraudAnomalyScanner,
           complianceScanner,
+          disputeScanner,
+          revenueIntelScanner,
+          subscriptionScanner,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,

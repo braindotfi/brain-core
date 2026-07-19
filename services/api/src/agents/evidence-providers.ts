@@ -198,19 +198,21 @@ function obligationEvidence(o: Obligation): Evidence {
 
 function contextEvidence(
   context: Record<string, unknown> | undefined,
-  kind: "policy_decision" | "audit_event",
+  kind: "dispute" | "policy_decision" | "audit_event",
   key: string,
 ): Evidence | null {
   const id = strContext(context, key);
   if (id === undefined) return null;
   const excerpt =
-    kind === "policy_decision"
-      ? strContext(context, "policy_summary")
-      : strContext(context, "audit_summary");
+    kind === "dispute"
+      ? strContext(context, "dispute_summary")
+      : kind === "policy_decision"
+        ? strContext(context, "policy_summary")
+        : strContext(context, "audit_summary");
   return {
     kind,
     ref: id,
-    source_system: kind === "policy_decision" ? "policy" : "audit",
+    source_system: kind === "dispute" ? "ledger" : kind === "policy_decision" ? "policy" : "audit",
     object_type: kind,
     object_id: id,
     confidence: evidenceConfidence(numberContext(context, `${kind}_confidence`) ?? 1),
@@ -365,6 +367,13 @@ export function makeLedgerEvidenceProvider(
         }
       } catch {
         // best-effort.
+      }
+    }
+
+    if (want.has("dispute")) {
+      const item = contextEvidence(context, "dispute", "dispute_id");
+      if (item !== null) {
+        out.push(item);
       }
     }
 

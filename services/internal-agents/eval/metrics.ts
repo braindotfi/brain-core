@@ -2,6 +2,7 @@ import type { AgentMetric, EvalExpectedFields, EvalFieldScore } from "./types.js
 
 const EXACT_FIELDS = ["recommended_action", "escalation_tier", "aging_tier"] as const;
 const CASH_FORECAST_NUMERIC_TOLERANCE = 0.01;
+const REVENUE_NUMERIC_TOLERANCE = 0.01;
 
 export const collectionsMetric: AgentMetric = {
   agent_key: "collections",
@@ -204,12 +205,121 @@ export const complianceMetric: AgentMetric = {
   },
 };
 
+export const disputeMetric: AgentMetric = {
+  agent_key: "dispute",
+  score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
+    return [
+      exactMatch("recommended_action", output.recommended_action, expected.recommended_action),
+      numericWithinTolerance(
+        "evidence_completeness",
+        numberValue(output.evidence_completeness),
+        numberValue(expected.evidence_completeness),
+        REVENUE_NUMERIC_TOLERANCE,
+      ),
+    ];
+  },
+};
+
+export const revenueIntelMetric: AgentMetric = {
+  agent_key: "revenue_intel",
+  score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
+    const numericScores = [
+      numericWithinTolerance(
+        "revenue_delta",
+        numberValue(output.revenue_delta),
+        numberValue(expected.revenue_delta),
+        REVENUE_NUMERIC_TOLERANCE,
+      ),
+      numericWithinTolerance(
+        "revenue_delta_percent",
+        numberValue(output.revenue_delta_percent),
+        numberValue(expected.revenue_delta_percent),
+        REVENUE_NUMERIC_TOLERANCE,
+      ),
+      numericWithinTolerance(
+        "dso_delta",
+        numberValue(output.dso_delta),
+        numberValue(expected.dso_delta),
+        REVENUE_NUMERIC_TOLERANCE,
+      ),
+    ];
+    const mae = meanAbsoluteError(
+      numericScores
+        .map((score) => ({
+          expected: numberValue(score.expected),
+          actual: numberValue(score.actual),
+        }))
+        .filter(
+          (row): row is { expected: number; actual: number } =>
+            row.expected !== null && row.actual !== null,
+        ),
+    );
+    return [
+      ...numericScores,
+      {
+        field: "revenue.mae",
+        expected: 0,
+        actual: mae,
+        score: mae <= REVENUE_NUMERIC_TOLERANCE ? 1 : 0,
+        passed: mae <= REVENUE_NUMERIC_TOLERANCE,
+      },
+      exactMatch("revenue_trend", output.revenue_trend, expected.revenue_trend),
+      exactMatch(
+        "at_risk_customer_count",
+        output.at_risk_customer_count,
+        expected.at_risk_customer_count,
+      ),
+      exactMatch(
+        "upcoming_renewal_count",
+        output.upcoming_renewal_count,
+        expected.upcoming_renewal_count,
+      ),
+    ];
+  },
+};
+
+export const subscriptionMetric: AgentMetric = {
+  agent_key: "subscription",
+  score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
+    const actualSubscription = output.is_subscription === true;
+    const expectedSubscription = expected.expected_subscription === true;
+    const truePositive = actualSubscription && expectedSubscription ? 1 : 0;
+    const falsePositive = actualSubscription && !expectedSubscription ? 1 : 0;
+    const falseNegative = !actualSubscription && expectedSubscription ? 1 : 0;
+    const precision =
+      truePositive + falsePositive === 0 ? (expectedSubscription ? 0 : 1) : truePositive;
+    const recall = truePositive + falseNegative === 0 ? 1 : truePositive;
+    return [
+      {
+        field: "classifier.precision",
+        expected: 1,
+        actual: precision,
+        score: precision,
+        passed: precision === 1,
+      },
+      {
+        field: "classifier.recall",
+        expected: 1,
+        actual: recall,
+        score: recall,
+        passed: recall === 1,
+      },
+      exactMatch("is_subscription", output.is_subscription, expected.expected_subscription),
+      exactMatch("recommended_action", output.recommended_action, expected.recommended_action),
+      exactMatch("cadence", output.cadence, expected.cadence),
+    ];
+  },
+};
+
 export const metricRegistry: Readonly<Record<string, AgentMetric>> = {
   cash_forecast: cashForecastMetric,
   collections: collectionsMetric,
   compliance: complianceMetric,
+  dispute: disputeMetric,
   fraud_anomaly: fraudAnomalyMetric,
   reconciliation: reconciliationMetric,
+  revenue_intel: revenueIntelMetric,
+  subscription: subscriptionMetric,
   vendor_risk: vendorRiskMetric,
 };
 
