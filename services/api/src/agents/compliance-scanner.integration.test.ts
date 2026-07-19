@@ -23,6 +23,7 @@ import {
   newTenantId,
   withTenantScope,
   type IWikiMemoryService,
+  type ServiceCallContext,
 } from "@brain/shared";
 import {
   internalAgentCatalog,
@@ -287,6 +288,153 @@ suite("compliance scanner integration (requires DATABASE_URL)", () => {
       failure_reason: "critical_missing_evidence",
     });
   });
+
+  it("detects approval-state permutations and surfaces no-audit-trail movements", async () => {
+    const cases: Array<{
+      name: string;
+      outcome: "allow" | "confirm" | "reject";
+      status: "pending" | "approved" | "executed";
+      requiredApprovers: readonly string[];
+      validApprovals: number;
+      staleApprovals: number;
+      createAudit: boolean;
+      expectedFinding: string | null;
+    }> = [
+      {
+        name: "allow pending no approvals",
+        outcome: "allow",
+        status: "pending",
+        requiredApprovers: [],
+        validApprovals: 0,
+        staleApprovals: 0,
+        createAudit: true,
+        expectedFinding: null,
+      },
+      {
+        name: "allow approved no required approvals",
+        outcome: "allow",
+        status: "approved",
+        requiredApprovers: [],
+        validApprovals: 0,
+        staleApprovals: 0,
+        createAudit: true,
+        expectedFinding: null,
+      },
+      {
+        name: "allow approved required approval missing",
+        outcome: "allow",
+        status: "approved",
+        requiredApprovers: ["admin"],
+        validApprovals: 0,
+        staleApprovals: 0,
+        createAudit: true,
+        expectedFinding: "approval_missing",
+      },
+      {
+        name: "confirm approved partial approvals",
+        outcome: "confirm",
+        status: "approved",
+        requiredApprovers: ["admin", "approver"],
+        validApprovals: 1,
+        staleApprovals: 0,
+        createAudit: true,
+        expectedFinding: "approval_missing",
+      },
+      {
+        name: "confirm executed stale approval only",
+        outcome: "confirm",
+        status: "executed",
+        requiredApprovers: ["admin"],
+        validApprovals: 0,
+        staleApprovals: 1,
+        createAudit: true,
+        expectedFinding: "approval_missing",
+      },
+      {
+        name: "confirm executed full approvals",
+        outcome: "confirm",
+        status: "executed",
+        requiredApprovers: ["admin"],
+        validApprovals: 1,
+        staleApprovals: 0,
+        createAudit: true,
+        expectedFinding: null,
+      },
+      {
+        name: "reject pending policy violation",
+        outcome: "reject",
+        status: "pending",
+        requiredApprovers: [],
+        validApprovals: 0,
+        staleApprovals: 0,
+        createAudit: true,
+        expectedFinding: "policy_violation",
+      },
+      {
+        name: "confirm executed missing approval and no audit trail",
+        outcome: "confirm",
+        status: "executed",
+        requiredApprovers: ["admin"],
+        validApprovals: 0,
+        staleApprovals: 0,
+        createAudit: false,
+        expectedFinding: "audit_gap_detected",
+      },
+    ];
+
+    const captured: Array<{ name: string; findingType: unknown; auditEventId: unknown }> = [];
+    for (const testCase of cases) {
+      const tenant = newTenantId();
+      const account = newAccountId();
+      const counterparty = newCounterpartyId();
+      await seedTenantAndLedgerOnly(pool, tenant, account, counterparty);
+      await seedPaymentIntentCase(pool, tenant, account, counterparty, {
+        status: testCase.status,
+        outcome: testCase.outcome,
+        requiredApprovers: testCase.requiredApprovers,
+        validApprovals: testCase.validApprovals,
+        staleApprovals: testCase.staleApprovals,
+        createAudit: testCase.createAudit,
+      });
+      const runServiceForCase = {
+        run: async (_ctx: ServiceCallContext, input: Parameters<AgentRunService["run"]>[1]) => {
+          const context = input.context ?? {};
+          captured.push({
+            name: testCase.name,
+            findingType: context.finding_type,
+            auditEventId: context.audit_event_id,
+          });
+          return {
+            status: "notify_only" as const,
+            routing_decision_id: `route_${captured.length}`,
+            run_id: `run_${captured.length}`,
+            selected_agent_id: "compliance",
+            action: "notify",
+            shadow_mode: false,
+            reason: {},
+          };
+        },
+      };
+
+      await runComplianceScanCycle(
+        { scanPool: pool, appPool: pool, runService: runServiceForCase },
+        { now: NOW, batchSize: 10, perTenantBatchSize: 10, cooldownMs: 86_400_000 },
+      );
+    }
+
+    for (const testCase of cases) {
+      const hit = captured.find((row) => row.name === testCase.name);
+      if (testCase.expectedFinding === null) {
+        expect(hit, testCase.name).toBeUndefined();
+      } else {
+        expect(hit, testCase.name).toMatchObject({ findingType: testCase.expectedFinding });
+      }
+    }
+    const noAudit = captured.find(
+      (row) => row.name === "confirm executed missing approval and no audit trail",
+    );
+    expect(noAudit?.auditEventId).toMatch(/^audit_missing:/);
+  });
 });
 
 function emptyWikiService(): IWikiMemoryService {
@@ -412,24 +560,27 @@ async function seedPaymentIntentCase(
   accountId: string,
   counterpartyId: string,
   options: {
-    readonly status: "approved" | "dispatching" | "executed";
+    readonly status: "pending" | "approved" | "dispatching" | "executed";
+    readonly outcome?: "allow" | "confirm" | "reject";
     readonly requiredApprovers: readonly string[];
     readonly validApprovals: number;
     readonly staleApprovals: number;
+    readonly createAudit?: boolean;
   },
 ): Promise<{ paymentIntentId: string; policyDecisionId: string; auditEventId: string }> {
   const paymentIntentId = newPaymentIntentId();
   const policyDecisionId = newPolicyDecisionId();
   const auditEventId = newAuditEventId();
+  const outcome = options.outcome ?? "confirm";
   await withTenantScope(pool, tenantId, async (client) => {
     await client.query(
       `INSERT INTO policy_decisions (
          id, tenant_id, policy_id, policy_version, subject_type, subject_id, outcome,
          matched_rule_id, required_approvers, ledger_snapshot_hash, trace, decided_at
        )
-       VALUES ($1, $2, 'pol_test', 1, 'payment_intent', $3, 'confirm',
-         'approval_required', $4::text[], 'snapshot', '[]'::jsonb, '2026-07-18T00:00:00.000Z')`,
-      [policyDecisionId, tenantId, paymentIntentId, [...options.requiredApprovers]],
+       VALUES ($1, $2, 'pol_test', 1, 'payment_intent', $3, $4,
+         'approval_required', $5::text[], 'snapshot', '[]'::jsonb, '2026-07-18T00:00:00.000Z')`,
+      [policyDecisionId, tenantId, paymentIntentId, outcome, [...options.requiredApprovers]],
     );
     await client.query(
       `INSERT INTO ledger_payment_intents (
@@ -449,23 +600,25 @@ async function seedPaymentIntentCase(
     for (let i = 0; i < options.staleApprovals; i += 1) {
       await seedApproval(client, tenantId, paymentIntentId, "stale");
     }
-    await client.query(
-      `INSERT INTO audit_events (
-         id, tenant_id, layer, actor, action, inputs, outputs, policy_version,
-         event_hash, prev_event_hash, created_at
-       )
-       VALUES ($1, $2, 'execution', 'agent_payment', 'payment_intent.execute.before',
-         $3::jsonb, '{}'::jsonb, 1, $4, NULL, '2026-07-18T00:00:01.000Z')`,
-      [
-        auditEventId,
-        tenantId,
-        JSON.stringify({
-          payment_intent_id: paymentIntentId,
-          policy_decision_id: policyDecisionId,
-        }),
-        createHash("sha256").update(auditEventId).digest(),
-      ],
-    );
+    if (options.createAudit !== false) {
+      await client.query(
+        `INSERT INTO audit_events (
+           id, tenant_id, layer, actor, action, inputs, outputs, policy_version,
+           event_hash, prev_event_hash, created_at
+         )
+         VALUES ($1, $2, 'execution', 'agent_payment', 'payment_intent.execute.before',
+           $3::jsonb, '{}'::jsonb, 1, $4, NULL, '2026-07-18T00:00:01.000Z')`,
+        [
+          auditEventId,
+          tenantId,
+          JSON.stringify({
+            payment_intent_id: paymentIntentId,
+            policy_decision_id: policyDecisionId,
+          }),
+          createHash("sha256").update(auditEventId).digest(),
+        ],
+      );
+    }
   });
   return { paymentIntentId, policyDecisionId, auditEventId };
 }

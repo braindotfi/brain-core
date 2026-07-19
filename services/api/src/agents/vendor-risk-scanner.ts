@@ -133,6 +133,9 @@ export async function runVendorRiskScanCycle(
           counterparty_id: row.counterparty_id,
           vendor_id: row.counterparty_id,
           vendor_name: row.vendor_name,
+          // Defensive-only handler branch: the scanner is reading existing
+          // counterparties, so identity is present. Production unverified
+          // vendors are scored via verified_status in v1.
           identity_resolved: true,
           verified_status: row.verified_status ?? "unverified",
           risk_level: row.risk_level,

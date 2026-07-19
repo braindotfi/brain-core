@@ -81,7 +81,7 @@ function buildFraudAnomalyProposal(input: HandlerInput): ProposedAction {
       evidence_refs: evidenceRefsForAction(input.evidence.items),
       missing_required_evidence: [...input.evidence.missing_required_evidence],
       critical_missing: input.evidence.critical_missing,
-      mode: "notify_only",
+      mode: input.definition?.default_authority === "notify_only" ? "notify_only" : "propose",
     },
   };
 }

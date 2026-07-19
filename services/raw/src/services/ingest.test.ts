@@ -342,4 +342,30 @@ describe("ingestOne", () => {
     expect(client.jobs).toHaveLength(0);
     expect(result.extractionJob).toBeNull();
   });
+
+  it("does not auto-enqueue generic other JSON artifacts", async () => {
+    const { pool, client } = makeFakePool({ autoExtract: true });
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await ingestOne(
+      {
+        pool: pool as unknown as Pool,
+        blob,
+        audit,
+        extractionJobs: { documentExtractorConfigured: true },
+      },
+      {
+        tenantId: newTenantId(),
+        actor: newUserId(),
+        sourceType: "other",
+        sourceRef: { webhook_id: "wh_1" },
+        body: Buffer.from('{"event":"connector"}'),
+        mimeType: "application/json",
+      },
+    );
+
+    expect(client.jobs).toHaveLength(0);
+    expect(result.extractionJob).toBeNull();
+  });
 });

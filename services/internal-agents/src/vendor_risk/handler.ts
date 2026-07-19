@@ -94,6 +94,9 @@ function scoreVendorRisk(
 ): VendorRiskScore {
   const signals: RiskSignal[] = [];
   if (!identity.identityResolved || identity.vendorId.length === 0) {
+    // Defensive path: the production scanner passes identity_resolved=true for
+    // existing counterparties. Unverified vendors are scored through
+    // verified_status in v1 until canonical vendor identity links are first class.
     signals.push({
       id: "identity_unresolved",
       label: "identity unresolved",

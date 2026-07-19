@@ -57,6 +57,10 @@ export interface WebhookDispatchWorkerDeps {
   maxAttempts?: number;
   /** Maximum committed audit events to reconcile per cycle. Defaults to limit. */
   reconcileLimit?: number;
+  /** Skip events newer than this so the inline fast path can finish first. */
+  reconcileGraceMs?: number;
+  /** Only scan this much audit history per cycle to bound anti-join cost. */
+  reconcileLookbackMs?: number;
 }
 
 export interface CycleResult {
@@ -159,10 +163,15 @@ export async function runWebhookDispatchCycle(
   }
 
   const reconcileLimit = deps.reconcileLimit ?? limit;
+  const reconcileGraceMs = deps.reconcileGraceMs ?? 60_000;
+  const reconcileLookbackMs = deps.reconcileLookbackMs ?? 7 * 24 * 60 * 60 * 1000;
   let missed;
   const scan = await deps.pool.connect();
   try {
-    missed = await getUndeliveredWebhookEvents(scan, [...FORWARDED_EVENTS], reconcileLimit);
+    missed = await getUndeliveredWebhookEvents(scan, [...FORWARDED_EVENTS], reconcileLimit, {
+      graceMs: reconcileGraceMs,
+      lookbackMs: reconcileLookbackMs,
+    });
   } finally {
     scan.release();
   }
