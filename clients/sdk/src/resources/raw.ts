@@ -35,6 +35,7 @@ export interface RawExtractResult {
   parsedId: string | null;
   confidence: number | null;
   error: Record<string, unknown> | null;
+  nextAttemptAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -127,6 +128,7 @@ function mapExtractionJob(body: RawExtractionJob): RawExtractResult {
     parsedId: body.parsed_id,
     confidence: body.confidence,
     error: body.error,
+    nextAttemptAt: body.next_attempt_at,
     createdAt: body.created_at,
     updatedAt: body.updated_at,
   };

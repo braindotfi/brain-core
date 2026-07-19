@@ -26,7 +26,7 @@ export type AccountClassification =
 export type LineDirection = "debit" | "credit";
 
 /** The domains this layer instantiates now (§12: only what Brain monetizes). */
-export const CANONICAL_DOMAINS = ["accounting"] as const;
+export const CANONICAL_DOMAINS = ["accounting", "ledger"] as const;
 export type CanonicalDomain = (typeof CANONICAL_DOMAINS)[number];
 
 export interface CanonicalGlAccount {

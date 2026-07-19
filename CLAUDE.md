@@ -219,6 +219,16 @@ Done
   Connector-sourced artifacts are not auto-extracted. If
   `DOCUMENT_EXTRACT_AGENT_URL` is unset, ingest does not enqueue automatic jobs;
   any queued job the worker sees is marked failed with `dependency_unavailable`.
+  Transient extractor failures are retried with bounded exponential backoff via
+  `next_attempt_at`; permanent failures and exhausted retries are terminal
+  `failed` jobs.
+- Plaid, Stripe, and Finch parser rows no longer write Ledger entities directly
+  from `LedgerService.normalizeFromRaw`. Their `plaid_tx_v1`, `stripe_v1`, and
+  `finch_payroll_v1` extractors validate shape and return no direct rows.
+  Canonical projection writes connector accounts, transactions, counterparties,
+  and obligations to `canonical_account`, `canonical_transaction`,
+  `canonical_counterparty`, and `canonical_obligation`; Ledger then projects
+  those records through the canonical projection workers.
 - Owner password-login tokens now include `raw:read` and `raw:write` so a
   verified self-serve tenant owner can upload documents, trigger extraction, and
   read advisory ledger state. Owner tokens still exclude

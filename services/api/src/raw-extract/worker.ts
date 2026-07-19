@@ -13,6 +13,7 @@ import {
   findArtifactById,
   markExtractionJobFailed,
   markExtractionJobSucceeded,
+  requeueExtractionJob,
 } from "@brain/raw";
 import type {
   DocumentExtractInput,
@@ -21,6 +22,9 @@ import type {
 
 const DEFAULT_INTERVAL_MS = 15_000;
 const DEFAULT_BATCH_SIZE = 10;
+const DEFAULT_MAX_ATTEMPTS = 3;
+const DEFAULT_RETRY_BASE_MS = 30_000;
+const MAX_RETRY_DELAY_MS = 15 * 60_000;
 const DEFAULT_MIME_TYPE = "application/octet-stream";
 const WORKER_ACTOR = "document_extraction_worker";
 
@@ -41,6 +45,9 @@ export interface DocumentExtractionWorkerOptions {
   batchSize?: number;
   workerId?: string;
   agentId?: string;
+  maxAttempts?: number;
+  retryBaseMs?: number;
+  now?: () => Date;
 }
 
 interface PendingExtractionJobRow {
@@ -68,10 +75,14 @@ export async function runDocumentExtractionCycle(
   const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
   const workerId = opts.workerId ?? WORKER_ACTOR;
   const agentId = opts.agentId ?? "document_extractor";
+  const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const retryBaseMs = opts.retryBaseMs ?? DEFAULT_RETRY_BASE_MS;
+  const now = opts.now ?? (() => new Date());
   const pending = await deps.scanPool.query<PendingExtractionJobRow>(
     `SELECT id, tenant_id, raw_id
        FROM extraction_jobs
       WHERE status = 'queued'
+        AND (next_attempt_at IS NULL OR next_attempt_at <= now())
       ORDER BY created_at ASC
       LIMIT $1`,
     [batchSize],
@@ -132,12 +143,23 @@ export async function runDocumentExtractionCycle(
         { err, job_id: row.id, raw_id: row.raw_id },
         "document extraction job failed",
       );
-      await withTenantScope(deps.appPool, row.tenant_id, (c) =>
-        markExtractionJobFailed(c, row.id, errorToDetails(err)),
-      );
-      deps.metrics?.increment("brain.raw.extraction_job.failed.count", {
-        reason: isBrainError(err) ? err.code : "internal_server_error",
-      });
+      const details = errorToDetails(err);
+      const reason = String(details["code"] ?? "internal_server_error");
+      if (isTransientExtractionError(err) && claimed.attempt_count < maxAttempts) {
+        const nextAttemptAt = nextRetryAt(now(), retryBaseMs, claimed.attempt_count);
+        await withTenantScope(deps.appPool, row.tenant_id, (c) =>
+          requeueExtractionJob(c, row.id, details, nextAttemptAt),
+        );
+        deps.metrics?.increment("brain.raw.extraction_job.retry.count", { reason });
+      } else {
+        await withTenantScope(deps.appPool, row.tenant_id, (c) =>
+          markExtractionJobFailed(c, row.id, {
+            ...details,
+            ...(isTransientExtractionError(err) ? { retry_exhausted: true } : {}),
+          }),
+        );
+        deps.metrics?.increment("brain.raw.extraction_job.failed.count", { reason });
+      }
     }
   }
 }
@@ -178,4 +200,15 @@ function errorToDetails(err: unknown): Record<string, unknown> {
     code: "internal_server_error",
     message: err instanceof Error ? err.message : String(err),
   };
+}
+
+function nextRetryAt(now: Date, retryBaseMs: number, attemptCount: number): Date {
+  const delay = Math.min(retryBaseMs * 2 ** Math.max(0, attemptCount - 1), MAX_RETRY_DELAY_MS);
+  return new Date(now.getTime() + delay);
+}
+
+function isTransientExtractionError(err: unknown): boolean {
+  if (!isBrainError(err)) return true;
+  if (err.statusCode >= 500) return true;
+  return false;
 }

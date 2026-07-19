@@ -88,6 +88,9 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "canonical_journal_entry", column: "tenant_id" },
   { table: "canonical_gl_account", column: "tenant_id" },
   { table: "canonical_projection_log", column: "tenant_id" },
+  // Ledger connector domain: transactions reference accounts.
+  { table: "canonical_transaction", column: "tenant_id" },
+  { table: "canonical_account", column: "tenant_id" },
   // AP/AR: obligation references counterparty, so delete obligation first.
   { table: "canonical_obligation", column: "tenant_id" },
   { table: "canonical_counterparty", column: "tenant_id" },

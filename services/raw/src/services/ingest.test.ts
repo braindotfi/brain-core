@@ -96,6 +96,7 @@ function makeFakePool(
               confidence: null,
               error: null,
               attempt_count: 0,
+              next_attempt_at: null,
               requested_by: values?.[4],
               locked_at: null,
               locked_by: null,

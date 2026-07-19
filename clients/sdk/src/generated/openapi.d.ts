@@ -3235,6 +3235,11 @@ export interface components {
             error: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Format: date-time
+             * @description Nullable retry due time for transient extraction failures.
+             */
+            next_attempt_at: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

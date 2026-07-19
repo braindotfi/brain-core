@@ -795,9 +795,9 @@ describe("LedgerService.normalizeFromRaw", () => {
     });
     const service = new LedgerService({ pool, audit });
     const result = await service.normalizeFromRaw(ctx, "prs_def");
-    expect(result.created.map((r) => r.entity)).toEqual(["account", "counterparty", "transaction"]);
-    expect(audit.events.some((e) => e.action === "ledger.account.created")).toBe(true);
-    expect(audit.events.some((e) => e.action === "ledger.transaction.posted")).toBe(true);
+    expect(result.created).toEqual([]);
+    expect(audit.events.some((e) => e.action === "ledger.account.created")).toBe(false);
+    expect(audit.events.some((e) => e.action === "ledger.transaction.posted")).toBe(false);
   });
 
   it("returns 404 when raw_parsed id is missing", async () => {

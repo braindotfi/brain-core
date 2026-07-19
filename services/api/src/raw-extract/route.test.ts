@@ -65,6 +65,7 @@ function jobRow(
   confidence: number | null;
   error: Record<string, unknown> | null;
   attempt_count: number;
+  next_attempt_at: Date | null;
   requested_by: string | null;
   locked_at: Date | null;
   locked_by: string | null;
@@ -84,6 +85,7 @@ function jobRow(
     confidence: null,
     error: null,
     attempt_count: 0,
+    next_attempt_at: null,
     requested_by: "user_01TEST0000000000000000000",
     locked_at: null,
     locked_by: null,
@@ -179,6 +181,7 @@ describe("POST /raw/:raw_id/extract", () => {
         parsed_id: null,
         confidence: null,
         error: null,
+        next_attempt_at: null,
         created_at: "2026-07-06T00:00:00.000Z",
         updated_at: "2026-07-06T00:00:00.000Z",
       });
@@ -205,6 +208,7 @@ describe("POST /raw/:raw_id/extract", () => {
         parsed_id: "prs_01TEST000000000000000000000",
         confidence: 0.5,
         error: null,
+        next_attempt_at: null,
         created_at: "2026-07-06T00:00:00.000Z",
         updated_at: "2026-07-06T00:00:00.000Z",
       });

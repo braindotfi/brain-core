@@ -17,20 +17,23 @@ defined in `Brain_MVP_Architecture.md` §3 Layer 2:
 
 ## Status
 
-This workspace is the Phase-2 scaffolding of the v0.3 six-layer refactor.
-At Phase 2, the workspace ships:
+This workspace is the production Ledger package for the six-layer refactor. It
+ships:
 
 - All 11 migrations with RLS, FKs, indexes, and provenance/confidence/source_ids/evidence_ids columns
 - Service-boundary contracts (`IRawEvidenceService`, `ILedgerService`, `IWikiMemoryService`, `IPolicyService`, `IAgentService`, `IAuditService`, `IReconciliationService`, `IPaymentIntentService`, `IApprovalService`)
 - Repositories (DB access, tenant-scoped via `withTenantScope`, no business logic)
 - A read-only HTTP API exposing every Ledger entity for external consumption
 - A Fastify app factory (`buildLedgerApp`)
+- Canonical projection workers for GL accounts, AP/AR, and connector-sourced
+  accounts and transactions
+- PaymentIntent and reconciliation read/write paths used by execution workers
 
-What it does NOT yet do (lands in subsequent refactor phases):
-
-- Phase 3: rewrites the Plaid extractor to write Ledger rows. Until then the tables are empty under tenant scope.
-- Phase 4: implements the §6 pre-execution gate and the PaymentIntent execution flow.
-- Phase 5: implements the reconciliation engine.
+Plaid, Stripe, and Finch parser rows do not write Ledger rows directly. The
+registered extractors validate parser shape and return no direct rows. Connector
+data flows through `raw_parsed` to `canonical_account`,
+`canonical_transaction`, `canonical_counterparty`, and `canonical_obligation`;
+Ledger projection workers materialize the tenant-scoped Ledger rows.
 
 ## Local Development
 

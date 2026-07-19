@@ -118,6 +118,7 @@ import {
   startNormalizeWorker,
   startLedgerProjectionWorker,
   startLedgerAparProjectionWorker,
+  startLedgerAccountTransactionProjectionWorker,
 } from "@brain/ledger";
 
 import { registerCanonicalRoutes, startCanonicalProjectionWorker } from "@brain/canonical";
@@ -2594,6 +2595,8 @@ async function main(): Promise<void> {
         {
           intervalMs: cfg.BRAIN_DOCUMENT_EXTRACT_WORKER_INTERVAL_MS,
           batchSize: cfg.BRAIN_DOCUMENT_EXTRACT_WORKER_BATCH_SIZE,
+          maxAttempts: cfg.BRAIN_DOCUMENT_EXTRACT_WORKER_MAX_ATTEMPTS,
+          retryBaseMs: cfg.BRAIN_DOCUMENT_EXTRACT_WORKER_RETRY_BASE_MS,
         },
       )
     : undefined;
@@ -2622,6 +2625,13 @@ async function main(): Promise<void> {
   // writes them directly). Cross-tenant poll, hence the ledger-projector role.
   const ledgerAparProjectionWorker = composition.workers.has("ledger")
     ? startLedgerAparProjectionWorker({
+        pool: ledgerProjectorPool,
+        metrics,
+      })
+    : undefined;
+
+  const ledgerAccountTransactionProjectionWorker = composition.workers.has("ledger")
+    ? startLedgerAccountTransactionProjectionWorker({
         pool: ledgerProjectorPool,
         metrics,
       })
@@ -2998,6 +3008,7 @@ async function main(): Promise<void> {
           canonicalProjectionWorker,
           ledgerProjectionWorker,
           ledgerAparProjectionWorker,
+          ledgerAccountTransactionProjectionWorker,
           collectionsOverdueScanner,
           reconciliationUnreconciledScanner,
           cashForecastScanner,
