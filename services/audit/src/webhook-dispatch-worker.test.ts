@@ -177,6 +177,44 @@ describe("runWebhookDispatchCycle", () => {
     expect(r).toMatchObject({ attempted: 0, delivered: 0, failing: 0, exhausted: 0 });
     expect(deliver).not.toHaveBeenCalled();
   });
+
+  it("reconciles a forwarded audit event missed by the first-hop dispatcher", async () => {
+    const createdAt = new Date("2026-07-19T21:00:00Z");
+    const { pool, calls } = makeFakePool((sql) => {
+      if (sql.includes("FROM webhook_dead_letters") && sql.includes("attempt_count < $1")) {
+        return [];
+      }
+      if (sql.includes("FROM audit_events e")) {
+        return [
+          {
+            tenant_id: TENANT,
+            endpoint_id: "whe_1",
+            endpoint_url: "https://example.com/hook",
+            endpoint_secret: "s",
+            event_id: "evt_missed",
+            event_type: "proposal.decided",
+            created_at: createdAt,
+            inputs: { proposal_id: "prs_1" },
+            outputs: { decision: "approve" },
+          },
+        ];
+      }
+      return [];
+    });
+    const deliver = vi.fn().mockResolvedValue({ ok: true });
+
+    const r = await runWebhookDispatchCycle({
+      pool,
+      audit: new InMemoryAuditEmitter(),
+      deliver,
+    });
+
+    expect(r.reconciled).toBe(1);
+    expect(r.delivered).toBe(1);
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(deliver.mock.calls[0]?.[1]).toContain('"type":"proposal.decided"');
+    expect(calls.some((s) => s.includes("INSERT INTO webhook_delivery_receipts"))).toBe(true);
+  });
 });
 
 describe("nextAttemptDelaySeconds", () => {

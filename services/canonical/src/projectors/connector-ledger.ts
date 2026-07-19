@@ -49,6 +49,15 @@ export type ConnectorLedgerProjection =
   | { kind: "counterparty"; input: CounterpartyUpsert }
   | { kind: "obligation"; input: ObligationUpsert };
 
+export interface ConnectorProjectionDiagnostics {
+  skippedRows: Record<string, number>;
+}
+
+function skipped(diag: ConnectorProjectionDiagnostics | undefined, reason: string): void {
+  if (diag === undefined) return;
+  diag.skippedRows[reason] = (diag.skippedRows[reason] ?? 0) + 1;
+}
+
 function asRecord(v: unknown): Record<string, unknown> | null {
   return typeof v === "object" && v !== null && !Array.isArray(v)
     ? (v as Record<string, unknown>)
@@ -116,6 +125,7 @@ function commonWithConfidence(common: ProjectionCommon, confidence: number): Pro
 export function projectPlaidLedger(
   extracted: unknown,
   common: ProjectionCommon,
+  diag?: ConnectorProjectionDiagnostics,
 ): ConnectorLedgerProjection[] {
   const payload = asRecord(extracted);
   if (payload === null) throw new Error("plaid payload must be an object");
@@ -126,7 +136,10 @@ export function projectPlaidLedger(
   for (const raw of accounts) {
     const acct = asRecord(raw);
     const key = str(acct?.["account_id"]);
-    if (acct === null || key === null) continue;
+    if (acct === null || key === null) {
+      skipped(diag, "plaid_account_missing_id");
+      continue;
+    }
     out.push({
       kind: "account",
       input: {
@@ -153,6 +166,7 @@ export function projectPlaidLedger(
     const amount = num(tx?.["amount"]);
     const date = str(tx?.["date"]);
     if (tx === null || key === null || accountKey === null || amount === null || date === null) {
+      skipped(diag, "plaid_transaction_missing_required_field");
       continue;
     }
     const merchantName = str(tx["merchant_name"]) ?? str(tx["name"]);
@@ -201,6 +215,7 @@ export function projectPlaidLedger(
 export function projectStripeLedger(
   extracted: unknown,
   common: ProjectionCommon,
+  diag?: ConnectorProjectionDiagnostics,
 ): ConnectorLedgerProjection[] {
   const payload = asRecord(extracted);
   if (payload === null) throw new Error("stripe payload must be an object");
@@ -235,7 +250,10 @@ export function projectStripeLedger(
   for (const raw of objects) {
     const obj = asRecord(raw);
     const id = str(obj?.["id"]);
-    if (obj === null || id === null) continue;
+    if (obj === null || id === null) {
+      skipped(diag, "stripe_object_missing_id");
+      continue;
+    }
     if (objectType === "customer") {
       const email = str(obj["email"]);
       const name = str(obj["name"]) ?? email ?? id;
@@ -254,7 +272,10 @@ export function projectStripeLedger(
       });
     } else if (objectType === "charge" || objectType === "payout" || objectType === "refund") {
       const amount = positiveDecimalFromCents(obj["amount"]);
-      if (amount === null) continue;
+      if (amount === null) {
+        skipped(diag, `stripe_${objectType}_missing_amount`);
+        continue;
+      }
       out.push({
         kind: "transaction",
         input: {
@@ -278,9 +299,15 @@ export function projectStripeLedger(
       });
     } else if (objectType === "balance_transaction") {
       const type = str(obj["type"]);
-      if (type !== "stripe_fee" && type !== "fee") continue;
+      if (type !== "stripe_fee" && type !== "fee") {
+        skipped(diag, "stripe_balance_transaction_not_fee");
+        continue;
+      }
       const amount = positiveDecimalFromCents(obj["fee"] ?? obj["amount"]);
-      if (amount === null) continue;
+      if (amount === null) {
+        skipped(diag, "stripe_balance_transaction_missing_amount");
+        continue;
+      }
       out.push({
         kind: "transaction",
         input: {
@@ -303,7 +330,10 @@ export function projectStripeLedger(
       });
     } else if (objectType === "dispute") {
       const amount = positiveDecimalFromCents(obj["amount"]);
-      if (amount === null) continue;
+      if (amount === null) {
+        skipped(diag, "stripe_dispute_missing_amount");
+        continue;
+      }
       out.push({
         kind: "counterparty",
         input: {
@@ -343,6 +373,7 @@ export function projectStripeLedger(
 export function projectFinchLedger(
   extracted: unknown,
   common: ProjectionCommon,
+  diag?: ConnectorProjectionDiagnostics,
 ): ConnectorLedgerProjection[] {
   const payload = asRecord(extracted);
   if (payload === null) throw new Error("finch payload must be an object");
@@ -355,7 +386,10 @@ export function projectFinchLedger(
     for (const raw of objects) {
       const obj = asRecord(raw);
       const id = str(obj?.["id"]);
-      if (obj === null || id === null) continue;
+      if (obj === null || id === null) {
+        skipped(diag, "finch_individual_missing_id");
+        continue;
+      }
       const first = str(obj["first_name"]);
       const last = str(obj["last_name"]);
       const name = [first, last].filter(Boolean).join(" ") || id;
@@ -376,7 +410,10 @@ export function projectFinchLedger(
     return out;
   }
 
-  if (objectType !== "pay_run") return out;
+  if (objectType !== "pay_run") {
+    skipped(diag, "finch_unsupported_object_type");
+    return out;
+  }
 
   out.push({
     kind: "account",
@@ -403,7 +440,10 @@ export function projectFinchLedger(
     const amount = positiveDecimalFromCents(
       asRecord(obj?.["company_debit"])?.["amount"] ?? asRecord(obj?.["net_pay"])?.["amount"],
     );
-    if (obj === null || id === null || payDate === null || amount === null) continue;
+    if (obj === null || id === null || payDate === null || amount === null) {
+      skipped(diag, "finch_pay_run_missing_required_field");
+      continue;
+    }
     if (new Date(payDate).getTime() <= Date.now()) {
       out.push({
         kind: "transaction",

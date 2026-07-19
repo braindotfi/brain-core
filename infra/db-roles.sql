@@ -229,6 +229,8 @@ GRANT SELECT, INSERT ON audit_integrity_findings TO brain_audit_verifier;
 -- brain_audit_publisher: cross-tenant audit_events enumeration only (the
 -- per-tenant publish runs on brain_app under RLS).
 GRANT SELECT ON audit_events TO brain_audit_publisher;
+GRANT SELECT ON webhook_endpoints, webhook_dead_letters, webhook_delivery_receipts
+  TO brain_audit_publisher;
 
 -- brain_resolver: cross-tenant SELECT only, for the webhook/SIWX/login/session resolvers.
 GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links,

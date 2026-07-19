@@ -1179,6 +1179,7 @@ export class PaymentIntentService implements IPaymentIntentService {
       reservationId?: string | null;
     },
   ): Promise<void> {
+    let emitted = false;
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
       const current = await LedgerPaymentIntents.findById(c, args.paymentIntentId);
       if (current === null) {
@@ -1251,7 +1252,18 @@ export class PaymentIntentService implements IPaymentIntentService {
           currency: current.currency,
         });
       }
+      emitted = true;
     });
+    if (emitted) {
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "execution",
+        actor: ctx.actor,
+        action: "payment_intent.executed",
+        inputs: { payment_intent_id: args.paymentIntentId, execution_id: args.executionId },
+        outputs: { status: "executed", rail: args.rail },
+      });
+    }
   }
 
   /**
@@ -1265,6 +1277,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     ctx: ServiceCallContext,
     args: { paymentIntentId: string; reservationId?: string | null },
   ): Promise<void> {
+    let emitted = false;
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
       assertPaymentIntentTransition("dispatching", "failed");
       const failed = await LedgerPaymentIntents.transition(
@@ -1282,7 +1295,18 @@ export class PaymentIntentService implements IPaymentIntentService {
       if (args.reservationId !== undefined && args.reservationId !== null) {
         await LedgerReservations.release(c, args.reservationId);
       }
+      emitted = true;
     });
+    if (emitted) {
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "execution",
+        actor: ctx.actor,
+        action: "payment_intent.failed",
+        inputs: { payment_intent_id: args.paymentIntentId },
+        outputs: { status: "failed" },
+      });
+    }
   }
 
   // ---- replay-investigation (2.4) --------------------------------------

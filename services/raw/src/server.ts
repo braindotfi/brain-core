@@ -26,6 +26,7 @@ import {
   SourceService,
   type SourceRepository,
   type SourceCredentialStore,
+  type SourceSyncJobRepository,
 } from "./sources/SourceService.js";
 import { registerSourceRoutes } from "./sources/routes.js";
 import type { RawDeps } from "./deps.js";
@@ -122,8 +123,14 @@ export async function buildRawApp(opts: BuildRawAppOptions): Promise<FastifyInst
       : {}),
   });
 
-  // PLAN-FIRST #12: /v1/sources/* — source-connector lifecycle.
-  const sourceService = new SourceService(opts.sourceRepository ?? new InMemorySourceRepository());
+  // PLAN-FIRST #12: /v1/sources/* - source-connector lifecycle.
+  const sourceRepository = opts.sourceRepository ?? new InMemorySourceRepository();
+  const sourceService = new SourceService(
+    sourceRepository,
+    undefined,
+    opts.deps.audit,
+    asSyncJobRepository(sourceRepository),
+  );
   await registerSourceRoutes(app, sourceService);
 
   return app;
@@ -198,10 +205,21 @@ export async function registerRawPlugin(
       : {}),
   });
 
-  // PLAN-FIRST #12: /v1/sources/* — source-connector lifecycle.
+  // PLAN-FIRST #12: /v1/sources/* - source-connector lifecycle.
+  const sourceRepository = opts.sourceRepository ?? new InMemorySourceRepository();
   const sourceService = new SourceService(
-    opts.sourceRepository ?? new InMemorySourceRepository(),
+    sourceRepository,
     opts.sourceCredentialStore,
+    deps.audit,
+    asSyncJobRepository(sourceRepository),
   );
   await registerSourceRoutes(app, sourceService);
+}
+
+function asSyncJobRepository(repo: SourceRepository): SourceSyncJobRepository | undefined {
+  const candidate = repo as Partial<SourceSyncJobRepository>;
+  return typeof candidate.insertSyncJob === "function" &&
+    typeof candidate.findSyncJob === "function"
+    ? (candidate as SourceSyncJobRepository)
+    : undefined;
 }

@@ -4,6 +4,7 @@ import {
   startManagedInterval,
   withTenantScope,
   type BlobAdapter,
+  type AuditEmitter,
   type ManagedWorker,
   type MetricsEmitter,
   type ServiceCallContext,
@@ -32,6 +33,7 @@ export interface DocumentExtractionWorkerDeps {
   scanPool: Pool;
   appPool: Pool;
   blob: BlobAdapter;
+  audit?: AuditEmitter;
   client?: DocumentExtractPort;
   metrics?: MetricsEmitter;
   log?: {
@@ -93,6 +95,12 @@ export async function runDocumentExtractionCycle(
       claimExtractionJob(c, row.id, workerId),
     );
     if (claimed === null) continue;
+    await emitExtractionStatusChanged(deps, row.tenant_id, workerId, {
+      jobId: row.id,
+      rawId: row.raw_id,
+      before: "queued",
+      after: "running",
+    });
 
     if (deps.client === undefined) {
       await withTenantScope(deps.appPool, row.tenant_id, (c) =>
@@ -103,6 +111,13 @@ export async function runDocumentExtractionCycle(
       );
       deps.metrics?.increment("brain.raw.extraction_job.failed.count", {
         reason: "dependency_unavailable",
+      });
+      await emitExtractionStatusChanged(deps, row.tenant_id, workerId, {
+        jobId: row.id,
+        rawId: row.raw_id,
+        before: "running",
+        after: "failed",
+        errorCode: "dependency_unavailable",
       });
       continue;
     }
@@ -121,6 +136,13 @@ export async function runDocumentExtractionCycle(
         deps.metrics?.increment("brain.raw.extraction_job.failed.count", {
           reason: artifact === null ? "raw_artifact_not_found" : "raw_artifact_tombstoned",
         });
+        await emitExtractionStatusChanged(deps, row.tenant_id, workerId, {
+          jobId: row.id,
+          rawId: row.raw_id,
+          before: "running",
+          after: "failed",
+          errorCode: artifact === null ? "raw_artifact_not_found" : "raw_artifact_tombstoned",
+        });
         continue;
       }
 
@@ -138,6 +160,14 @@ export async function runDocumentExtractionCycle(
         }),
       );
       deps.metrics?.increment("brain.raw.extraction_job.succeeded.count");
+      await emitExtractionStatusChanged(deps, row.tenant_id, workerId, {
+        jobId: row.id,
+        rawId: row.raw_id,
+        before: "running",
+        after: "succeeded",
+        parsedId: result.parsed_id,
+        confidence: Math.min(result.confidence, 0.5),
+      });
     } catch (err) {
       deps.log?.error(
         { err, job_id: row.id, raw_id: row.raw_id },
@@ -151,6 +181,13 @@ export async function runDocumentExtractionCycle(
           requeueExtractionJob(c, row.id, details, nextAttemptAt),
         );
         deps.metrics?.increment("brain.raw.extraction_job.retry.count", { reason });
+        await emitExtractionStatusChanged(deps, row.tenant_id, workerId, {
+          jobId: row.id,
+          rawId: row.raw_id,
+          before: "running",
+          after: "queued",
+          errorCode: reason,
+        });
       } else {
         await withTenantScope(deps.appPool, row.tenant_id, (c) =>
           markExtractionJobFailed(c, row.id, {
@@ -159,6 +196,13 @@ export async function runDocumentExtractionCycle(
           }),
         );
         deps.metrics?.increment("brain.raw.extraction_job.failed.count", { reason });
+        await emitExtractionStatusChanged(deps, row.tenant_id, workerId, {
+          jobId: row.id,
+          rawId: row.raw_id,
+          before: "running",
+          after: "failed",
+          errorCode: reason,
+        });
       }
     }
   }
@@ -211,4 +255,37 @@ function isTransientExtractionError(err: unknown): boolean {
   if (!isBrainError(err)) return true;
   if (err.statusCode >= 500) return true;
   return false;
+}
+
+async function emitExtractionStatusChanged(
+  deps: DocumentExtractionWorkerDeps,
+  tenantId: string,
+  actor: string,
+  input: {
+    jobId: string;
+    rawId: string;
+    before: string;
+    after: string;
+    parsedId?: string;
+    confidence?: number;
+    errorCode?: string;
+  },
+): Promise<void> {
+  if (deps.audit === undefined) return;
+  await deps.audit.emit({
+    tenantId,
+    layer: "raw",
+    actor,
+    action: "raw.extraction.status_changed",
+    inputs: { job_id: input.jobId, raw_id: input.rawId },
+    outputs: {
+      before: { status: input.before },
+      after: {
+        status: input.after,
+        ...(input.parsedId !== undefined ? { parsed_id: input.parsedId } : {}),
+        ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
+        ...(input.errorCode !== undefined ? { error_code: input.errorCode } : {}),
+      },
+    },
+  });
 }

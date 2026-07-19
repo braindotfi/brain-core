@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { isBrainError, type ServiceCallContext } from "@brain/shared";
+import { InMemoryAuditEmitter, isBrainError, type ServiceCallContext } from "@brain/shared";
 import { InMemorySourceRepository, SourceService } from "./SourceService.js";
 import { CONCRETE_SOURCE_TYPES, recordToWire, SOURCE_TYPES, STUB_SOURCE_TYPES } from "./types.js";
 
@@ -164,9 +164,52 @@ describe("SourceService.disconnect", () => {
   it("returns null when source is missing", async () => {
     expect(await service.disconnect(CTX, "src_missing")).toBeNull();
   });
+
+  it("emits source status changes when audit is configured", async () => {
+    const repo = new InMemorySourceRepository();
+    const audit = new InMemoryAuditEmitter();
+    const svc = new SourceService(repo, undefined, audit);
+    const src = await svc.connect(CTX, {
+      type: "plaid",
+      credentials: { access_token: "x" },
+    });
+
+    await svc.disconnect(CTX, src.id);
+
+    expect(audit.events).toHaveLength(1);
+    expect(audit.events[0]).toMatchObject({
+      tenantId: CTX.tenantId,
+      actor: CTX.actor,
+      layer: "raw",
+      action: "raw.source.status_changed",
+      inputs: { source_id: src.id, source_type: "plaid" },
+      outputs: {
+        before: { status: "active" },
+        after: { status: "disconnected" },
+      },
+    });
+  });
 });
 
 describe("SourceService.sync", () => {
+  it("persists a sync job that can be polled by id", async () => {
+    const repo = new InMemorySourceRepository();
+    const svc = new SourceService(repo, undefined, undefined, repo);
+    const src = await svc.connect(CTX, {
+      type: "plaid",
+      credentials: { access_token: "x" },
+    });
+
+    const job = await svc.sync(CTX, src.id);
+    expect(job).not.toBeNull();
+    const stored = await svc.getSyncJob(CTX, job!.job_id);
+    expect(stored).toMatchObject({
+      job_id: job!.job_id,
+      source_id: src.id,
+      status: "enqueued",
+    });
+  });
+
   it("returns a job descriptor for concrete sources without `notes`", async () => {
     const src = await service.connect(CTX, {
       type: "plaid",
@@ -211,5 +254,42 @@ describe("SourceService.sync", () => {
     await service.sync(CTX, src.id);
     const after = await service.get(CTX, src.id);
     expect(after?.last_synced_at).not.toBeNull();
+  });
+
+  it("returns null when a source is missing", async () => {
+    await expect(service.sync(CTX, "src_missing")).resolves.toBeNull();
+  });
+
+  it("emits source freshness changes on sync", async () => {
+    const repo = new InMemorySourceRepository();
+    const audit = new InMemoryAuditEmitter();
+    const svc = new SourceService(repo, undefined, audit, repo);
+    const src = await svc.connect(CTX, {
+      type: "plaid",
+      credentials: { access_token: "x" },
+    });
+
+    await svc.sync(CTX, src.id);
+
+    expect(audit.events).toHaveLength(1);
+    expect(audit.events[0]).toMatchObject({
+      tenantId: CTX.tenantId,
+      actor: CTX.actor,
+      layer: "raw",
+      action: "raw.source.status_changed",
+      inputs: { source_id: src.id, source_type: "plaid" },
+      outputs: {
+        before: { status: "active", last_synced_at: null },
+        after: { status: "active" },
+      },
+    });
+    expect(
+      (audit.events[0]?.outputs as { after?: { last_synced_at?: string | null } }).after
+        ?.last_synced_at,
+    ).not.toBeNull();
+  });
+
+  it("returns null for sync jobs when no sync-job repository is configured", async () => {
+    await expect(service.getSyncJob(CTX, "sjob_missing")).resolves.toBeNull();
   });
 });

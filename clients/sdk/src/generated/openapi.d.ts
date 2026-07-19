@@ -631,8 +631,30 @@ export interface paths {
          * @description Requires `raw:write`. Stub connectors (netsuite, email_inbound,
          *     csv_upload, pdf_upload, alchemy_wallet, eth_address) return
          *     immediately with `notes: "stub"` rather than performing a real sync.
+         *     The returned `job_id` can be polled with
+         *     `GET /sources/{source_id}/sync/{job_id}`.
          */
         post: operations["syncSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sources/{source_id}/sync/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get source sync job status
+         * @description Requires `raw:read`. Returns the tenant-scoped status for a source sync job.
+         */
+        get: operations["getSourceSyncJob"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3290,6 +3312,19 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        SourceSyncJob: {
+            job_id: string;
+            source_id: string;
+            /** @enum {string} */
+            status: "enqueued" | "running" | "succeeded" | "failed";
+            error_message?: string | null;
+            /** @enum {string} */
+            notes?: "stub";
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
         /** @enum {string} */
         EntityKind: "account" | "counterparty" | "transaction" | "obligation" | "policy" | "agent";
         /** @enum {string} */
@@ -5531,17 +5566,42 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        job_id: string;
-                        source_id: string;
-                        /** @enum {string} */
-                        status: "enqueued" | "running";
-                        /** @enum {string} */
-                        notes?: "stub";
-                    };
+                    "application/json": components["schemas"]["SourceSyncJob"];
                 };
             };
             /** @description No such source. Error code `source_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSourceSyncJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sync job status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceSyncJob"];
+                };
+            };
+            /** @description No such source or sync job. Error code `source_not_found`. */
             404: {
                 headers: {
                     [name: string]: unknown;

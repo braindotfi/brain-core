@@ -556,7 +556,12 @@ async function main(): Promise<void> {
         }
       : {}),
   });
-  const sourceService = new SourceService(postgresSourceRepo, postgresSourceRepo);
+  const sourceService = new SourceService(
+    postgresSourceRepo,
+    postgresSourceRepo,
+    audit,
+    postgresSourceRepo,
+  );
 
   const schemaRegistry = await loadRegistry();
   const metrics = new MockMetrics();
@@ -2588,6 +2593,7 @@ async function main(): Promise<void> {
           scanPool: rawWorkerPool,
           appPool: pool,
           blob,
+          audit,
           ...(documentExtractClient !== undefined ? { client: documentExtractClient } : {}),
           metrics,
           log,
@@ -2605,12 +2611,14 @@ async function main(): Promise<void> {
   // rich Merge accounting pages (gl_account / journal_entry) that the compact
   // Ledger drops into the canonical domain store. Cross-tenant poll over
   // raw_parsed, hence the canonical-projector role; per-row writes stay scoped.
+  const canonicalProjectionWorkerDeps = {
+    pool: canonicalProjectorPool,
+    audit,
+    metrics,
+    log,
+  };
   const canonicalProjectionWorker = composition.workers.has("canonical")
-    ? startCanonicalProjectionWorker({
-        pool: canonicalProjectorPool,
-        audit,
-        metrics,
-      })
+    ? startCanonicalProjectionWorker(canonicalProjectionWorkerDeps)
     : undefined;
 
   // Ledger chart-of-accounts projection (ingestion architecture §12, Phase 5):

@@ -56,6 +56,7 @@ import {
   projectPlaidLedger,
   projectStripeLedger,
   type ConnectorLedgerProjection,
+  type ConnectorProjectionDiagnostics,
 } from "./connector-ledger.js";
 import { upsertCanonicalAccount, upsertCanonicalTransaction } from "../repository/ledger.js";
 
@@ -114,6 +115,9 @@ export interface ProjectionWorkerDeps {
    *  money-path projector (records flatlining while raw_parsed grows) is
    *  observable. No-op when absent. */
   metrics?: MetricsEmitter;
+  log?: {
+    debug(obj: unknown, msg?: string): void;
+  };
 }
 
 export interface ProjectionWorkerOptions {
@@ -475,7 +479,8 @@ async function runConnectorLedgerPasses(
       };
       try {
         const written = await withTenantScope(deps.pool, row.tenant_id, async (c) => {
-          const projections = pass.project(row.extracted, common);
+          const diagnostics: ConnectorProjectionDiagnostics = { skippedRows: {} };
+          const projections = pass.project(row.extracted, common, diagnostics);
           let count = 0;
           for (const projection of projections) {
             await persistConnectorProjection(c, row.tenant_id, projection);
@@ -494,7 +499,7 @@ async function runConnectorLedgerPasses(
                projected_at = now()`,
             [row.id, row.tenant_id, pass.projector, count],
           );
-          return count;
+          return { count, skippedRows: diagnostics.skippedRows };
         });
 
         await deps.audit.emit({
@@ -510,13 +515,25 @@ async function runConnectorLedgerPasses(
             source_system: pass.objectType,
             extracted_sha256: sha256Hex(Buffer.from(JSON.stringify(row.extracted))),
           },
-          outputs: { records_written: written },
+          outputs: { records_written: written.count },
         });
         deps.metrics?.increment(
           "brain.canonical.projector.records.count",
           { projector: pass.projector, object_type: pass.objectType },
-          written,
+          written.count,
         );
+        for (const [reason, count] of Object.entries(written.skippedRows)) {
+          if (count <= 0) continue;
+          deps.metrics?.increment(
+            "brain.canonical.connector.skipped_row.count",
+            { projector: pass.projector, object_type: pass.objectType, reason },
+            count,
+          );
+          deps.log?.debug(
+            { parser: pass.parser, projector: pass.projector, reason, count },
+            "canonical connector projection skipped rows",
+          );
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(

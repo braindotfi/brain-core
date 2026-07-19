@@ -369,6 +369,14 @@ async function emitStuck(
 ): Promise<void> {
   await deps.audit.emit({
     tenantId: row.tenant_id,
+    layer: "execution",
+    actor: deps.workerId,
+    action: "payment_intent.reconciling",
+    inputs: { payment_intent_id: row.payment_intent_id, outbox_id: row.id },
+    outputs: { attempt_count: attempts, last_error: error, status: "reconciling" },
+  });
+  await deps.audit.emit({
+    tenantId: row.tenant_id,
     layer: "agent",
     actor: deps.workerId,
     action: "execution.outbox.stuck",

@@ -93,8 +93,21 @@ export interface ConnectInput {
 export interface SyncJobDescriptor {
   readonly job_id: string;
   readonly source_id: string;
-  readonly status: "enqueued" | "running";
+  readonly status: SourceSyncJobStatus;
   readonly notes?: "stub";
+}
+
+export type SourceSyncJobStatus = "enqueued" | "running" | "succeeded" | "failed";
+
+export interface SourceSyncJobRecord {
+  readonly job_id: string;
+  readonly tenant_id: string;
+  readonly source_id: string;
+  readonly status: SourceSyncJobStatus;
+  readonly error_message: string | null;
+  readonly notes?: "stub";
+  readonly created_at: string;
+  readonly updated_at: string;
 }
 
 /**
