@@ -48,6 +48,21 @@ function strContext(context: Record<string, unknown> | undefined, key: string): 
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function numberContext(context: Record<string, unknown> | undefined, key: string): number | null {
+  const value = context?.[key];
+  const parsed =
+    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function booleanContext(
+  context: Record<string, unknown> | undefined,
+  key: string,
+): boolean | undefined {
+  const value = context?.[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function ctxFor(tenantId: string): ServiceCallContext {
   return { tenantId, actor: SYSTEM_ACTOR };
 }
@@ -101,6 +116,57 @@ function counterpartyEvidence(c: Counterparty): Evidence {
     object_id: c.id,
     confidence: evidenceConfidence(c.confidence),
     excerpt: `${c.name} (${c.type})${c.risk_level !== null ? ` risk=${c.risk_level}` : ""}`,
+  };
+}
+
+function vendorEvidence(c: Counterparty): Evidence {
+  return {
+    kind: "vendor",
+    ref: c.id,
+    source_system: "ledger",
+    object_type: "counterparty",
+    object_id: c.id,
+    confidence: evidenceConfidence(c.confidence),
+    excerpt: `${c.name} (${c.verified_status ?? "unverified"})`,
+  };
+}
+
+function paymentDestinationEvidence(context: Record<string, unknown> | undefined): Evidence | null {
+  const id =
+    strContext(context, "payment_destination_id") ??
+    strContext(context, "payment_instruction_id") ??
+    strContext(context, "payment_destination");
+  if (id === undefined) return null;
+  const timestamp = strContext(context, "payment_destination_changed_at");
+  return {
+    kind: "payment_destination",
+    ref: id,
+    source_system: "ledger",
+    object_type: "counterparty_payment_instruction",
+    object_id: id,
+    confidence: evidenceConfidence(numberContext(context, "payment_destination_confidence") ?? 1),
+    ...(timestamp !== undefined ? { timestamp } : {}),
+  };
+}
+
+function counterpartyHistoryEvidence(
+  context: Record<string, unknown> | undefined,
+): Evidence | null {
+  const id = strContext(context, "counterparty_history_id");
+  if (id === undefined) return null;
+  const timestamp = strContext(context, "counterparty_history_changed_at");
+  const riskFlag = booleanContext(context, "history_risk_flag");
+  const riskScore = numberContext(context, "history_risk_score");
+  return {
+    kind: "counterparty_history",
+    ref: id,
+    source_system: "ledger",
+    object_type: "counterparty_payment_instruction_history",
+    object_id: id,
+    confidence: evidenceConfidence(numberContext(context, "counterparty_history_confidence") ?? 1),
+    ...(timestamp !== undefined ? { timestamp } : {}),
+    ...(riskFlag !== undefined ? { risk_flag: riskFlag } : {}),
+    ...(riskScore !== null ? { risk_score: riskScore } : {}),
   };
 }
 
@@ -220,6 +286,32 @@ export function makeLedgerEvidenceProvider(
         }
       } catch {
         // best-effort.
+      }
+    }
+
+    if (want.has("vendor") && counterpartyId !== undefined) {
+      try {
+        const { items } = await ledger.listCounterparties(ctx, { type: "vendor", limit: 200 });
+        const vendor = items.find((c) => c.id === counterpartyId);
+        if (vendor !== undefined) {
+          out.push(vendorEvidence(vendor));
+        }
+      } catch {
+        // best-effort.
+      }
+    }
+
+    if (want.has("payment_destination")) {
+      const item = paymentDestinationEvidence(context);
+      if (item !== null) {
+        out.push(item);
+      }
+    }
+
+    if (want.has("counterparty_history")) {
+      const item = counterpartyHistoryEvidence(context);
+      if (item !== null) {
+        out.push(item);
       }
     }
 

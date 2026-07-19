@@ -11,6 +11,7 @@ import {
   reconciliationScenarios,
   runGoldenEval,
   summarizeReport,
+  vendorRiskScenarios,
 } from "./index.js";
 import type { GoldenEvalBaseline } from "./types.js";
 
@@ -23,7 +24,12 @@ async function main(): Promise<void> {
   const report = runGoldenEval({
     handlers: evalHandlers,
     metrics: metricRegistry,
-    scenarios: [...collectionsScenarios, ...reconciliationScenarios, ...cashForecastScenarios],
+    scenarios: [
+      ...collectionsScenarios,
+      ...reconciliationScenarios,
+      ...cashForecastScenarios,
+      ...vendorRiskScenarios,
+    ],
     fixedClock: EVAL_FIXED_CLOCK,
   });
 

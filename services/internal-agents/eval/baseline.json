@@ -13,6 +13,10 @@
     "cash_forecast": {
       "minimum_score": 1,
       "scenario_count": 6
+    },
+    "vendor_risk": {
+      "minimum_score": 1,
+      "scenario_count": 4
     }
   }
 }

@@ -196,11 +196,12 @@ BEGIN
 END $$;
 GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties
   TO brain_ledger_projector;
--- The Collections, Reconciliation, and Cash Forecast scanners share the ledger
--- worker pool for cross-tenant enumeration only. They need ledger and cooldown reads, then
+-- The Collections, Reconciliation, Cash Forecast, and Vendor Risk scanners
+-- share the ledger worker pool for cross-tenant enumeration only. They need ledger and cooldown reads, then
 -- re-enter tenant-scoped brain_app for cooldown writes and AgentRunService proposals.
 GRANT SELECT ON ledger_accounts, ledger_balances, ledger_invoices, ledger_transactions
   TO brain_ledger_projector;
+GRANT SELECT ON ledger_counterparty_payment_instructions TO brain_ledger_projector;
 GRANT SELECT ON agent_trigger_cooldowns TO brain_ledger_projector;
 -- The ledger_counterparties writer trigger (ledger/0027) is plain plpgsql and
 -- runs as the invoking role, INSERTing into ledger_counterparty_payment_instructions.
