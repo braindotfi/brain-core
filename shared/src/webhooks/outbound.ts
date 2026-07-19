@@ -1,13 +1,13 @@
 /**
- * Outbound webhook dispatcher — Brain → customer HTTP endpoints.
+ * Outbound webhook dispatcher - Brain to customer HTTP endpoints.
  *
  * The dispatcher is called fire-and-forget after each `AuditEmitter.emit()`
  * for the forwarded event types. It queries the tenant's registered
  * `webhook_endpoints`, signs the payload with HMAC-SHA256, and POSTs.
  *
- * Delivery is best-effort for MVP (no retry queue). Failures are logged at
- * warn level and do not propagate to the caller — the audit event is always
- * written regardless of webhook delivery.
+ * The inline path is latency optimized. Durable delivery is backed by
+ * webhook_delivery_receipts plus webhook_dead_letters, and the audit worker
+ * reconciles missed first-hop dispatches from committed audit_events.
  *
  * Payload shape (same for all events):
  *   {
@@ -27,15 +27,20 @@ import type { Pool } from "pg";
 import type { AuditEmitter } from "../audit/emitter.js";
 import type { AuditEvent, AuditEventInput } from "../audit/types.js";
 import { isPublicUrl } from "../net/ssrf.js";
-import { clearDeadLetter, recordDeliveryFailure } from "./dead-letters.js";
+import { clearDeadLetter, recordDeliveryFailure, recordDeliverySuccess } from "./dead-letters.js";
 
 /** Audit action types forwarded to registered endpoints. */
 export const FORWARDED_EVENTS = new Set<string>([
+  "agent.action.proposed",
   "payment_intent.created",
   "payment_intent.approved",
   "payment_intent.awaiting_second_approval",
   "proposal.awaiting_second_approval",
+  "proposal.decided",
   "payment_intent.rejected",
+  "payment_intent.executed",
+  "payment_intent.failed",
+  "payment_intent.reconciling",
   "member.changed",
   "payment_intent.execute.after",
   "ledger.counterparty.created",
@@ -43,7 +48,10 @@ export const FORWARDED_EVENTS = new Set<string>([
   "ledger.transaction.created",
   "ledger.obligation.created",
   "policy.evaluate",
-  "raw.ingest.completed",
+  "raw.ingest.new",
+  "raw.ingest.deduplicated",
+  "raw.extraction.status_changed",
+  "raw.source.status_changed",
 ]);
 
 interface EndpointRow {
@@ -141,6 +149,12 @@ export class WebhookDispatcher {
           for (const { ep, result } of outcomes) {
             if (result.ok) {
               await clearDeadLetter(scoped, ep.id, event.id);
+              await recordDeliverySuccess(scoped, {
+                tenantId: event.tenantId,
+                endpointId: ep.id,
+                eventId: event.id,
+                eventType: event.action,
+              });
             } else {
               console.warn(`[webhooks] delivery failed to endpoint ${ep.id}: ${result.error}`);
               await recordDeliveryFailure(scoped, {

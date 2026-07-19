@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import {
+  InMemoryAuditEmitter,
   newRawArtifactId,
   newRawExtractionJobId,
   newTenantId,
@@ -137,6 +138,7 @@ describe("runDocumentExtractionCycle", () => {
 
   it("calls the extractor from the worker and caps recorded confidence at 0.5", async () => {
     const app = appPool();
+    const audit = new InMemoryAuditEmitter();
     const client: DocumentExtractPort = {
       extract: vi.fn(async () => ({
         parsed_id: "prs_01TEST000000000000000000000",
@@ -145,7 +147,7 @@ describe("runDocumentExtractionCycle", () => {
     };
 
     await runDocumentExtractionCycle(
-      { scanPool: scanPool(), appPool: app.pool, blob: blob(), client },
+      { scanPool: scanPool(), appPool: app.pool, blob: blob(), client, audit },
       { batchSize: 1, agentId: "document_extractor" },
     );
 
@@ -165,6 +167,18 @@ describe("runDocumentExtractionCycle", () => {
     );
     const succeeded = app.updates.find((u) => u.kind === "succeeded");
     expect(succeeded?.values).toEqual([JOB_ID, "prs_01TEST000000000000000000000", 0.5]);
+    expect(audit.events.map((e) => e.action)).toEqual([
+      "raw.extraction.status_changed",
+      "raw.extraction.status_changed",
+    ]);
+    expect(audit.events[0]?.outputs).toMatchObject({
+      before: { status: "queued" },
+      after: { status: "running" },
+    });
+    expect(audit.events[1]?.outputs).toMatchObject({
+      before: { status: "running" },
+      after: { status: "succeeded", confidence: 0.5 },
+    });
   });
 
   it("requeues transient extractor failures with bounded backoff", async () => {

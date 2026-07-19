@@ -6,6 +6,7 @@ type RawIngestResponse = components["schemas"]["RawIngestResponse"];
 type RawSourceType = components["schemas"]["RawSourceType"];
 type RawParsed = components["schemas"]["RawParsed"];
 type RawExtractionJob = components["schemas"]["RawExtractionJob"];
+type SourceSyncJob = components["schemas"]["SourceSyncJob"];
 
 export interface IngestFromUrlParams {
   sourceType: RawSourceType;
@@ -38,6 +39,16 @@ export interface RawExtractResult {
   nextAttemptAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SourceSyncJobResult {
+  jobId: string;
+  sourceId: string;
+  status: SourceSyncJob["status"];
+  errorMessage: string | null;
+  notes: SourceSyncJob["notes"];
+  createdAt: string | undefined;
+  updatedAt: string | undefined;
 }
 
 export type GetParsedParams = NonNullable<
@@ -118,6 +129,20 @@ export class RawResource {
     });
     return mapExtractionJob(unwrap(data, error, response.status));
   }
+
+  async syncSource(sourceId: string): Promise<SourceSyncJobResult> {
+    const { data, error, response } = await this.http.POST("/sources/{source_id}/sync", {
+      params: { path: { source_id: sourceId } },
+    });
+    return mapSourceSyncJob(unwrap(data, error, response.status));
+  }
+
+  async getSourceSyncJob(sourceId: string, jobId: string): Promise<SourceSyncJobResult> {
+    const { data, error, response } = await this.http.GET("/sources/{source_id}/sync/{job_id}", {
+      params: { path: { source_id: sourceId, job_id: jobId } },
+    });
+    return mapSourceSyncJob(unwrap(data, error, response.status));
+  }
 }
 
 function mapExtractionJob(body: RawExtractionJob): RawExtractResult {
@@ -129,6 +154,18 @@ function mapExtractionJob(body: RawExtractionJob): RawExtractResult {
     confidence: body.confidence,
     error: body.error,
     nextAttemptAt: body.next_attempt_at,
+    createdAt: body.created_at,
+    updatedAt: body.updated_at,
+  };
+}
+
+function mapSourceSyncJob(body: SourceSyncJob): SourceSyncJobResult {
+  return {
+    jobId: body.job_id,
+    sourceId: body.source_id,
+    status: body.status,
+    errorMessage: body.error_message ?? null,
+    notes: body.notes,
     createdAt: body.created_at,
     updatedAt: body.updated_at,
   };

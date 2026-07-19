@@ -202,15 +202,48 @@ describe("Brain.raw", () => {
 
   it("extract triggers document extraction and camelCases the result", async () => {
     const { fetch, calls } = mockFetch(200, {
+      job_id: "rxj_1",
+      raw_id: "raw_1",
+      status: "queued",
       parsed_id: "prs_1",
       confidence: 0.93,
+      error: null,
+      next_attempt_at: null,
+      created_at: "2026-07-20T00:00:00Z",
+      updated_at: "2026-07-20T00:00:01Z",
     });
     const brain = new Brain({ token: "k", fetch });
 
     const result = await brain.raw.extract("raw_1");
 
-    expect(result).toEqual({ parsedId: "prs_1", confidence: 0.93 });
+    expect(result).toMatchObject({ jobId: "rxj_1", parsedId: "prs_1", confidence: 0.93 });
     expect(calls[0]?.url).toContain("/raw/raw_1/extract");
     expect(calls[0]?.method).toBe("POST");
+  });
+
+  it("polls source sync job status and camelCases the result", async () => {
+    const { fetch, calls } = mockFetch(200, {
+      job_id: "sjob_1",
+      source_id: "src_1",
+      status: "enqueued",
+      error_message: null,
+      created_at: "2026-07-20T00:00:00Z",
+      updated_at: "2026-07-20T00:00:01Z",
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const result = await brain.raw.getSourceSyncJob("src_1", "sjob_1");
+
+    expect(result).toEqual({
+      jobId: "sjob_1",
+      sourceId: "src_1",
+      status: "enqueued",
+      errorMessage: null,
+      notes: undefined,
+      createdAt: "2026-07-20T00:00:00Z",
+      updatedAt: "2026-07-20T00:00:01Z",
+    });
+    expect(calls[0]?.url).toContain("/sources/src_1/sync/sjob_1");
+    expect(calls[0]?.method).toBe("GET");
   });
 });

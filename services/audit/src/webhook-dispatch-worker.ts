@@ -2,11 +2,13 @@
  * Outbound webhook retry worker (recommendations item 13).
  *
  * The inline first dispatch still happens in `WebhookDispatcher.dispatch`
- * (setImmediate fire-and-forget); any failure lands in `webhook_dead_letters`
- * at attempt_count=1 with a 30s cooldown. This worker drains the DLQ by
- * exponential-backoff schedule (see {@link nextAttemptDelaySeconds}), retries
- * via the same `deliverWebhook` function the /replay route uses, and on the
- * transition to MAX_WEBHOOK_DELIVERY_ATTEMPTS emits BOTH:
+ * (setImmediate fire-and-forget); any attempted failure lands in
+ * `webhook_dead_letters` at attempt_count=1 with a 30s cooldown. Successful
+ * deliveries record `webhook_delivery_receipts`. This worker drains the DLQ by
+ * exponential-backoff schedule (see {@link nextAttemptDelaySeconds}), then runs
+ * a durable reconcile scan over committed audit_events to recover first-hop
+ * dispatches lost before any attempt was recorded. On transition to
+ * MAX_WEBHOOK_DELIVERY_ATTEMPTS it emits both:
  *
  *   - metric `brain.audit.webhook.dlq.count` (tags: tenant_id, endpoint_id,
  *     event_type) — so Grafana shows hard giveups.
@@ -22,9 +24,13 @@
 import {
   deleteDeadLetterById,
   deliverWebhook,
+  FORWARDED_EVENTS,
   getDueDeadLetters,
+  getUndeliveredWebhookEvents,
   incrementDeadLetterAttempt,
   MAX_WEBHOOK_DELIVERY_ATTEMPTS,
+  recordDeliveryFailure,
+  recordDeliverySuccess,
   startManagedInterval,
   leasedCycle,
   withTenantScope,
@@ -49,6 +55,8 @@ export interface WebhookDispatchWorkerDeps {
   workerId?: string;
   /** Override the cap (defaults to MAX_WEBHOOK_DELIVERY_ATTEMPTS). */
   maxAttempts?: number;
+  /** Maximum committed audit events to reconcile per cycle. Defaults to limit. */
+  reconcileLimit?: number;
 }
 
 export interface CycleResult {
@@ -60,6 +68,8 @@ export interface CycleResult {
   failing: number;
   /** Rows whose retry pushed attempt_count to the cap. */
   exhausted: number;
+  /** Missed first-hop endpoint/event pairs found by the reconcile scan. */
+  reconciled: number;
 }
 
 /**
@@ -85,7 +95,13 @@ export async function runWebhookDispatchCycle(
     c.release();
   }
 
-  const tally: CycleResult = { attempted: 0, delivered: 0, failing: 0, exhausted: 0 };
+  const tally: CycleResult = {
+    attempted: 0,
+    delivered: 0,
+    failing: 0,
+    exhausted: 0,
+    reconciled: 0,
+  };
   for (const row of due) {
     tally.attempted += 1;
     const outcome = await withTenantScope(deps.pool, row.tenant_id, async (scoped) => {
@@ -140,6 +156,51 @@ export async function runWebhookDispatchCycle(
       // Re-emit failure must not crash the cycle.
       console.warn("[webhook-worker] failed to emit exhausted audit event", err);
     }
+  }
+
+  const reconcileLimit = deps.reconcileLimit ?? limit;
+  let missed;
+  const scan = await deps.pool.connect();
+  try {
+    missed = await getUndeliveredWebhookEvents(scan, [...FORWARDED_EVENTS], reconcileLimit);
+  } finally {
+    scan.release();
+  }
+
+  for (const row of missed) {
+    tally.reconciled += 1;
+    const payload = {
+      id: row.event_id,
+      type: row.event_type,
+      tenant_id: row.tenant_id,
+      created_at: row.created_at.toISOString(),
+      data: { inputs: row.inputs, outputs: row.outputs },
+    };
+    const result = await deliver(
+      { url: row.endpoint_url, secret: row.endpoint_secret },
+      JSON.stringify(payload),
+    );
+    await withTenantScope(deps.pool, row.tenant_id, async (scoped) => {
+      if (result.ok) {
+        await recordDeliverySuccess(scoped, {
+          tenantId: row.tenant_id,
+          endpointId: row.endpoint_id,
+          eventId: row.event_id,
+          eventType: row.event_type,
+        });
+        return;
+      }
+      await recordDeliveryFailure(scoped, {
+        tenantId: row.tenant_id,
+        endpointId: row.endpoint_id,
+        eventId: row.event_id,
+        eventType: row.event_type,
+        payload,
+        error: result.error ?? "delivery failed",
+      });
+    });
+    if (result.ok) tally.delivered += 1;
+    else tally.failing += 1;
   }
   return tally;
 }

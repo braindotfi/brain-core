@@ -1350,6 +1350,8 @@ paths:
         Requires `raw:write`. Stub connectors (netsuite, email_inbound,
         csv_upload, pdf_upload, alchemy_wallet, eth_address) return
         immediately with `notes: "stub"` rather than performing a real sync.
+        The returned `job_id` can be polled with
+        `GET /sources/{source_id}/sync/{job_id}`.
       operationId: syncSource
       parameters:
         - name: source_id
@@ -1361,16 +1363,36 @@ paths:
           description: Sync enqueued or running
           content:
             application/json:
-              schema:
-                type: object
-                required: [job_id, source_id, status]
-                properties:
-                  job_id: { type: string }
-                  source_id: { type: string }
-                  status: { type: string, enum: [enqueued, running] }
-                  notes: { type: string, enum: [stub] }
+              schema: { $ref: '#/components/schemas/SourceSyncJob' }
         '404':
           description: No such source. Error code `source_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sources/{source_id}/sync/{job_id}:
+    get:
+      tags: [Raw]
+      summary: Get source sync job status
+      description: Requires `raw:read`. Returns the tenant-scoped status for a source sync job.
+      operationId: getSourceSyncJob
+      parameters:
+        - name: source_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Sync job status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceSyncJob' }
+        '404':
+          description: No such source or sync job. Error code `source_not_found`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -5618,6 +5640,20 @@ components:
         is_stub:
           type: boolean
           description: True for connector types without a concrete adapter (netsuite, email_inbound, csv_upload, pdf_upload, alchemy_wallet, eth_address). Sync on a stub source returns immediately with notes:"stub".
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SourceSyncJob:
+      type: object
+      required: [job_id, source_id, status]
+      properties:
+        job_id: { type: string }
+        source_id: { type: string }
+        status:
+          type: string
+          enum: [enqueued, running, succeeded, failed]
+        error_message: { type: [string, "null"] }
+        notes: { type: string, enum: [stub] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 

@@ -153,7 +153,8 @@ describe("runSyncCycle", () => {
     expect(manifests[1]!.inputs.has_more).toBe(false);
 
     // Source freshness stamped after a successful partition run.
-    expect(calls.some((c) => c.text.includes("UPDATE raw_sources SET last_synced_at"))).toBe(true);
+    expect(calls.some((c) => c.text.includes("UPDATE raw_sources"))).toBe(true);
+    expect(audit.events.some((e) => e.action === "raw.source.status_changed")).toBe(true);
   });
 
   it("never advances the checkpoint when the provider fetch fails", async () => {

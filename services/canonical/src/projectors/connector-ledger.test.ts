@@ -75,6 +75,7 @@ describe("connector ledger canonical projectors", () => {
   });
 
   it("covers Plaid fallback and skip branches", () => {
+    const diag = { skippedRows: {} };
     const out = projectPlaidLedger(
       {
         accounts: [
@@ -97,6 +98,7 @@ describe("connector ledger canonical projectors", () => {
         ],
       },
       common,
+      diag,
     );
 
     expect(out.filter((p) => p.kind === "account").map((p) => p.input.accountType)).toEqual([
@@ -113,6 +115,10 @@ describe("connector ledger canonical projectors", () => {
         status: "pending",
         descriptionRaw: "Deposit",
       },
+    });
+    expect(diag.skippedRows).toMatchObject({
+      plaid_account_missing_id: 1,
+      plaid_transaction_missing_required_field: 1,
     });
   });
 

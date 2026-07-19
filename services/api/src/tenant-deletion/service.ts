@@ -79,6 +79,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "raw_artifacts", column: "tenant_id" },
   // Sync checkpoints before their connection rows (soft source_id reference).
   { table: "raw_sync_partitions", column: "tenant_id" },
+  { table: "raw_source_sync_jobs", column: "tenant_id" },
   { table: "raw_sources", column: "tenant_id" },
   { table: "raw_tenant_settings", column: "tenant_id" },
 
@@ -144,6 +145,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "agents", column: "tenant_id" },
 
   // ---- Layer 6: Audit (metadata only; events + anchors preserved) ----
+  { table: "webhook_delivery_receipts", column: "tenant_id" },
   { table: "webhook_dead_letters", column: "tenant_id" },
   { table: "webhook_endpoints", column: "tenant_id" },
   { table: "domain_events", column: "tenant_id" },

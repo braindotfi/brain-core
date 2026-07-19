@@ -183,6 +183,17 @@ Done
   envelopes and return `audit_id`. Awaiting-second-approval emits the contract
   event `proposal.awaiting_second_approval`; the older payment-intent alias
   remains accepted by the outbound webhook allowlist for compatibility.
+- Outbound webhooks are at-least-once over committed audit events. The fast path
+  dispatches after `AuditEmitter.emit`; `webhook_delivery_receipts` records
+  successful endpoint-event delivery, `webhook_dead_letters` records failed
+  attempts, and the webhook dispatch worker reconciles forwarded audit events
+  that have neither record. Customers must dedupe on webhook `id`.
+- Forwarded webhook events include proposal decisions, agent proposals, raw
+  ingest new/deduplicated, raw extraction status changes, raw source status
+  changes, payment terminal outcomes (`payment_intent.executed`,
+  `payment_intent.failed`, `payment_intent.reconciling`), payment lifecycle
+  events, member changes, ledger create/update events, and policy evaluation.
+  `raw.ingest.completed` is stale and must not be used.
 - The platform repo must conform to `docs/contracts/members-attribution.md`.
   Platform-side member UI is mock-only until it is wired against the core
   `/v1/members` API and core approval responses.
@@ -221,14 +232,18 @@ Done
   any queued job the worker sees is marked failed with `dependency_unavailable`.
   Transient extractor failures are retried with bounded exponential backoff via
   `next_attempt_at`; permanent failures and exhausted retries are terminal
-  `failed` jobs.
+  `failed` jobs. Source connector sync requests persist a tenant-scoped
+  `raw_source_sync_jobs` row; clients poll
+  `GET /v1/sources/:source_id/sync/:job_id` for status.
 - Plaid, Stripe, and Finch parser rows no longer write Ledger entities directly
   from `LedgerService.normalizeFromRaw`. Their `plaid_tx_v1`, `stripe_v1`, and
   `finch_payroll_v1` extractors validate shape and return no direct rows.
   Canonical projection writes connector accounts, transactions, counterparties,
   and obligations to `canonical_account`, `canonical_transaction`,
   `canonical_counterparty`, and `canonical_obligation`; Ledger then projects
-  those records through the canonical projection workers.
+  those records through the canonical projection workers. Per-row validation
+  skips inside an otherwise successful connector projection emit
+  `brain.canonical.connector.skipped_row.count` with the skip reason.
 - Owner password-login tokens now include `raw:read` and `raw:write` so a
   verified self-serve tenant owner can upload documents, trigger extraction, and
   read advisory ledger state. Owner tokens still exclude

@@ -10,12 +10,13 @@
  * @packageDocumentation
  */
 
-import { brainError, newSourceId, type ServiceCallContext } from "@brain/shared";
+import { brainError, newSourceId, type AuditEmitter, type ServiceCallContext } from "@brain/shared";
 import { getConnector, isStub } from "./connectors.js";
 import {
   SOURCE_TYPES,
   type ConnectInput,
   type SourceRecord,
+  type SourceSyncJobRecord,
   type SourceStatus,
   type SourceType,
   type SyncJobDescriptor,
@@ -33,6 +34,15 @@ export interface SourceRepository {
     status: SourceStatus,
     fields?: Partial<Pick<SourceRecord, "error_message" | "last_synced_at">>,
   ): Promise<SourceRecord | null>;
+}
+
+export interface SourceSyncJobRepository {
+  insertSyncJob(
+    tenantId: string,
+    job: SyncJobDescriptor,
+    errorMessage?: string | null,
+  ): Promise<SourceSyncJobRecord>;
+  findSyncJob(tenantId: string, jobId: string): Promise<SourceSyncJobRecord | null>;
 }
 
 /**
@@ -72,6 +82,7 @@ export interface ListFilter {
  */
 export class InMemorySourceRepository implements SourceRepository {
   private readonly byId: Map<string, SourceRecord> = new Map();
+  private readonly syncJobs: Map<string, SourceSyncJobRecord> = new Map();
 
   public async insert(record: SourceRecord): Promise<SourceRecord> {
     this.byId.set(this.key(record.tenant_id, record.id), record);
@@ -118,6 +129,30 @@ export class InMemorySourceRepository implements SourceRepository {
   private key(tenantId: string, id: string): string {
     return `${tenantId}:${id}`;
   }
+
+  public async insertSyncJob(
+    tenantId: string,
+    job: SyncJobDescriptor,
+    errorMessage: string | null = null,
+  ): Promise<SourceSyncJobRecord> {
+    const now = new Date().toISOString();
+    const row: SourceSyncJobRecord = {
+      job_id: job.job_id,
+      tenant_id: tenantId,
+      source_id: job.source_id,
+      status: job.status,
+      error_message: errorMessage,
+      ...(job.notes !== undefined ? { notes: job.notes } : {}),
+      created_at: now,
+      updated_at: now,
+    };
+    this.syncJobs.set(this.key(tenantId, job.job_id), row);
+    return row;
+  }
+
+  public async findSyncJob(tenantId: string, jobId: string): Promise<SourceSyncJobRecord | null> {
+    return this.syncJobs.get(this.key(tenantId, jobId)) ?? null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +163,8 @@ export class SourceService {
   public constructor(
     private readonly repo: SourceRepository,
     private readonly credentialStore?: SourceCredentialStore,
+    private readonly audit?: AuditEmitter,
+    private readonly syncJobs?: SourceSyncJobRepository,
   ) {}
 
   public async connect(
@@ -203,7 +240,11 @@ export class SourceService {
   public async disconnect(ctx: ServiceCallContext, id: string): Promise<SourceRecord | null> {
     const existing = await this.repo.findById(ctx.tenantId, id);
     if (existing === null) return null;
-    return this.repo.updateStatus(ctx.tenantId, id, "disconnected");
+    const updated = await this.repo.updateStatus(ctx.tenantId, id, "disconnected");
+    if (updated !== null) {
+      await this.emitSourceStatusChanged(ctx, existing, updated);
+    }
+    return updated;
   }
 
   public async sync(ctx: ServiceCallContext, id: string): Promise<SyncJobDescriptor | null> {
@@ -214,9 +255,56 @@ export class SourceService {
     }
     const connector = getConnector(existing.type);
     const job = await connector.sync(id);
-    await this.repo.updateStatus(ctx.tenantId, id, "active", {
+    if (this.syncJobs !== undefined) {
+      await this.syncJobs.insertSyncJob(ctx.tenantId, job);
+    }
+    const updated = await this.repo.updateStatus(ctx.tenantId, id, "active", {
       last_synced_at: new Date().toISOString(),
     });
+    if (updated !== null) {
+      await this.emitSourceStatusChanged(ctx, existing, updated);
+    }
     return job;
+  }
+
+  public async getSyncJob(
+    ctx: ServiceCallContext,
+    jobId: string,
+  ): Promise<SourceSyncJobRecord | null> {
+    return (await this.syncJobs?.findSyncJob(ctx.tenantId, jobId)) ?? null;
+  }
+
+  private async emitSourceStatusChanged(
+    ctx: ServiceCallContext,
+    before: SourceRecord,
+    after: SourceRecord,
+  ): Promise<void> {
+    if (this.audit === undefined) return;
+    if (
+      before.status === after.status &&
+      before.last_synced_at === after.last_synced_at &&
+      before.error_message === after.error_message
+    ) {
+      return;
+    }
+    await this.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "raw",
+      actor: ctx.actor,
+      action: "raw.source.status_changed",
+      inputs: { source_id: after.id, source_type: after.type },
+      outputs: {
+        before: {
+          status: before.status,
+          last_synced_at: before.last_synced_at,
+          error_message: before.error_message,
+        },
+        after: {
+          status: after.status,
+          last_synced_at: after.last_synced_at,
+          error_message: after.error_message,
+        },
+      },
+    });
   }
 }

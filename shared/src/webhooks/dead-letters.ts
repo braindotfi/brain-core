@@ -55,6 +55,13 @@ export interface RecordDeliveryFailureInput {
   error: string;
 }
 
+export interface RecordDeliverySuccessInput {
+  tenantId: string;
+  endpointId: string;
+  eventId: string;
+  eventType: string;
+}
+
 /**
  * Upsert a delivery failure: insert a new dead-letter or bump attempt_count +
  * last_error on the existing (tenant, endpoint, event) row.
@@ -93,6 +100,22 @@ export async function clearDeadLetter(
     endpointId,
     eventId,
   ]);
+}
+
+/** A delivery succeeded. Persist a receipt so reconcile scans do not resend forever. */
+export async function recordDeliverySuccess(
+  c: TenantScopedClient,
+  input: RecordDeliverySuccessInput,
+): Promise<void> {
+  await c.query(
+    `INSERT INTO webhook_delivery_receipts
+       (tenant_id, endpoint_id, event_id, event_type)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (tenant_id, endpoint_id, event_id) DO UPDATE
+       SET event_type = EXCLUDED.event_type,
+           delivered_at = now()`,
+    [input.tenantId, input.endpointId, input.eventId, input.eventType],
+  );
 }
 
 /** List dead-letters for an endpoint (newest first). */
@@ -151,6 +174,18 @@ export interface DueDeadLetter {
   last_attempt_at: Date;
 }
 
+export interface UndeliveredWebhookEvent {
+  tenant_id: string;
+  endpoint_id: string;
+  endpoint_url: string;
+  endpoint_secret: string;
+  event_id: string;
+  event_type: string;
+  created_at: Date;
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+}
+
 /** Minimal query surface the cross-tenant scan needs (a raw pg client). */
 export interface RawQueryClient {
   query<T = Record<string, unknown>>(
@@ -181,6 +216,49 @@ export async function getDueDeadLetters(
       ORDER BY last_attempt_at ASC
       LIMIT $2`,
     [maxAttempts, limit],
+  );
+  return rows;
+}
+
+/**
+ * Cross-tenant durability backstop. Finds forwarded audit events for active
+ * endpoints that have neither a success receipt nor a dead-letter row.
+ */
+export async function getUndeliveredWebhookEvents(
+  c: RawQueryClient,
+  eventTypes: readonly string[],
+  limit: number,
+): Promise<UndeliveredWebhookEvent[]> {
+  if (eventTypes.length === 0) return [];
+  const { rows } = await c.query<UndeliveredWebhookEvent>(
+    `SELECT e.tenant_id,
+            ep.id AS endpoint_id,
+            ep.url AS endpoint_url,
+            ep.secret AS endpoint_secret,
+            e.id AS event_id,
+            e.action AS event_type,
+            e.created_at,
+            e.inputs,
+            e.outputs
+       FROM audit_events e
+       JOIN webhook_endpoints ep
+         ON ep.tenant_id = e.tenant_id
+        AND ep.enabled = true
+        AND (ep.enabled_events IS NULL OR e.action = ANY(ep.enabled_events))
+       LEFT JOIN webhook_delivery_receipts r
+         ON r.tenant_id = e.tenant_id
+        AND r.endpoint_id = ep.id
+        AND r.event_id = e.id
+       LEFT JOIN webhook_dead_letters dl
+         ON dl.tenant_id = e.tenant_id
+        AND dl.endpoint_id = ep.id
+        AND dl.event_id = e.id
+      WHERE e.action = ANY($1::text[])
+        AND r.event_id IS NULL
+        AND dl.event_id IS NULL
+      ORDER BY e.created_at ASC, e.id ASC, ep.id ASC
+      LIMIT $2`,
+    [eventTypes, limit],
   );
   return rows;
 }

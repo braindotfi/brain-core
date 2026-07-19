@@ -7,6 +7,7 @@
  *   GET    /sources/{source_id}         get
  *   DELETE /sources/{source_id}         disconnect
  *   POST   /sources/{source_id}/sync    sync
+ *   GET    /sources/{source_id}/sync/{job_id} sync job status
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -128,6 +129,32 @@ export async function registerSourceRoutes(
       }
       reply.status(202);
       return job;
+    },
+  );
+
+  app.get(
+    "/sources/:source_id/sync/:job_id",
+    async (request: FastifyRequest<{ Params: { source_id: string; job_id: string } }>, reply) => {
+      const ctx = assertCtx(request);
+      requireScope(request.principal!.scopes, SCOPE_READ);
+      const source = await service.get(ctx, request.params.source_id);
+      if (source === null) {
+        throw brainError("source_not_found", "no such source");
+      }
+      const job = await service.getSyncJob(ctx, request.params.job_id);
+      if (job === null || job.source_id !== request.params.source_id) {
+        throw brainError("source_not_found", "no such sync job", { statusOverride: 404 });
+      }
+      reply.status(200);
+      return {
+        job_id: job.job_id,
+        source_id: job.source_id,
+        status: job.status,
+        error_message: job.error_message,
+        ...(job.notes !== undefined ? { notes: job.notes } : {}),
+        created_at: job.created_at,
+        updated_at: job.updated_at,
+      };
     },
   );
 }

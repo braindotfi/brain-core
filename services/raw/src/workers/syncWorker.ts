@@ -167,11 +167,34 @@ export async function runSyncCycle(deps: SyncWorkerDeps, opts?: SyncWorkerOption
         if (!result.hasMore) break;
       }
 
-      await withTenantScope(deps.pool, source.tenant_id, async (c) => {
-        await c.query(
-          `UPDATE raw_sources SET last_synced_at = now(), updated_at = now() WHERE id = $1`,
+      const stamped = await withTenantScope(deps.pool, source.tenant_id, async (c) => {
+        const { rows } = await c.query<{ last_synced_at: Date | string }>(
+          `UPDATE raw_sources
+              SET last_synced_at = now(), updated_at = now()
+            WHERE id = $1
+            RETURNING last_synced_at`,
           [source.id],
         );
+        return rows[0]?.last_synced_at ?? null;
+      });
+      await deps.audit.emit({
+        tenantId: source.tenant_id,
+        layer: "raw",
+        actor,
+        action: "raw.source.status_changed",
+        inputs: { source_id: source.id, source_type: adapter.sourceType },
+        outputs: {
+          before: { status: "active" },
+          after: {
+            status: "active",
+            last_synced_at:
+              stamped === null
+                ? null
+                : typeof stamped === "string"
+                  ? stamped
+                  : stamped.toISOString(),
+          },
+        },
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

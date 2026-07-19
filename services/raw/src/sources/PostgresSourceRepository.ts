@@ -10,8 +10,13 @@
 
 import type { Pool } from "pg";
 import { decryptCredentials, encryptCredentials, withTenantScope } from "@brain/shared";
-import type { SourceRecord, SourceStatus, SourceType } from "./types.js";
-import type { ListFilter, SourceCredentialStore, SourceRepository } from "./SourceService.js";
+import type { SourceRecord, SourceStatus, SourceSyncJobRecord, SourceType } from "./types.js";
+import type {
+  ListFilter,
+  SourceCredentialStore,
+  SourceRepository,
+  SourceSyncJobRepository,
+} from "./SourceService.js";
 
 export interface PostgresSourceRepositoryDeps {
   readonly pool: Pool;
@@ -47,7 +52,9 @@ function rowToRecord(row: Record<string, unknown>): SourceRecord {
   };
 }
 
-export class PostgresSourceRepository implements SourceRepository, SourceCredentialStore {
+export class PostgresSourceRepository
+  implements SourceRepository, SourceCredentialStore, SourceSyncJobRepository
+{
   public constructor(private readonly deps: PostgresSourceRepositoryDeps) {}
 
   public async insert(record: SourceRecord): Promise<SourceRecord> {
@@ -240,4 +247,58 @@ export class PostgresSourceRepository implements SourceRepository, SourceCredent
     );
     return (rowCount ?? 0) > 0;
   }
+
+  public async insertSyncJob(
+    tenantId: string,
+    job: {
+      job_id: string;
+      source_id: string;
+      status: SourceSyncJobRecord["status"];
+      notes?: "stub";
+    },
+    errorMessage: string | null = null,
+  ): Promise<SourceSyncJobRecord> {
+    const { rows } = await withTenantScope(this.deps.pool, tenantId, (c) =>
+      c.query<Record<string, unknown>>(
+        `INSERT INTO raw_source_sync_jobs
+           (job_id, tenant_id, source_id, status, error_message, notes)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (tenant_id, job_id) DO UPDATE SET
+           status = EXCLUDED.status,
+           error_message = EXCLUDED.error_message,
+           notes = EXCLUDED.notes,
+           updated_at = now()
+         RETURNING *`,
+        [job.job_id, tenantId, job.source_id, job.status, errorMessage, job.notes ?? null],
+      ),
+    );
+    return syncJobRowToRecord(rows[0]!);
+  }
+
+  public async findSyncJob(tenantId: string, jobId: string): Promise<SourceSyncJobRecord | null> {
+    const { rows } = await withTenantScope(this.deps.pool, tenantId, (c) =>
+      c.query<Record<string, unknown>>(
+        `SELECT * FROM raw_source_sync_jobs WHERE job_id = $1 LIMIT 1`,
+        [jobId],
+      ),
+    );
+    return rows[0] === undefined ? null : syncJobRowToRecord(rows[0]);
+  }
+}
+
+function syncJobRowToRecord(row: Record<string, unknown>): SourceSyncJobRecord {
+  return {
+    job_id: row["job_id"] as string,
+    tenant_id: row["tenant_id"] as string,
+    source_id: row["source_id"] as string,
+    status: row["status"] as SourceSyncJobRecord["status"],
+    error_message: (row["error_message"] as string | null) ?? null,
+    ...((row["notes"] as "stub" | null) !== null ? { notes: row["notes"] as "stub" } : {}),
+    created_at: toIso(row["created_at"] as Date | string),
+    updated_at: toIso(row["updated_at"] as Date | string),
+  };
+}
+
+function toIso(d: Date | string): string {
+  return typeof d === "string" ? d : d.toISOString();
 }

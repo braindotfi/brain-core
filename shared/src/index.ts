@@ -112,6 +112,7 @@ export {
 export {
   MAX_WEBHOOK_DELIVERY_ATTEMPTS,
   recordDeliveryFailure,
+  recordDeliverySuccess,
   clearDeadLetter,
   listDeadLetters,
   getReplayableDeadLetters,
@@ -119,9 +120,12 @@ export {
   incrementDeadLetterAttempt,
   nextAttemptDelaySeconds,
   getDueDeadLetters,
+  getUndeliveredWebhookEvents,
   type WebhookDeadLetterRow,
   type RecordDeliveryFailureInput,
+  type RecordDeliverySuccessInput,
   type DueDeadLetter,
+  type UndeliveredWebhookEvent,
   type RawQueryClient,
 } from "./webhooks/dead-letters.js";
 
