@@ -9,6 +9,10 @@
     "reconciliation": {
       "minimum_score": 1,
       "scenario_count": 5
+    },
+    "cash_forecast": {
+      "minimum_score": 1,
+      "scenario_count": 6
     }
   }
 }

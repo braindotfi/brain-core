@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   EVAL_FIXED_CLOCK,
+  cashForecastScenarios,
   collectionsScenarios,
   compareToBaseline,
   evalHandlers,
@@ -63,7 +64,7 @@ describe("golden eval runner", () => {
     const report = runGoldenEval({
       handlers: evalHandlers,
       metrics: metricRegistry,
-      scenarios: [...collectionsScenarios, ...reconciliationScenarios],
+      scenarios: [...collectionsScenarios, ...reconciliationScenarios, ...cashForecastScenarios],
       fixedClock: EVAL_FIXED_CLOCK,
     });
     const baseline = readBaseline();
@@ -78,6 +79,11 @@ describe("golden eval runner", () => {
       scenario_count: baseline.agents.reconciliation?.scenario_count,
       passed_count: baseline.agents.reconciliation?.scenario_count,
       score: baseline.agents.reconciliation?.minimum_score,
+    });
+    expect(report.aggregate.cash_forecast).toMatchObject({
+      scenario_count: baseline.agents.cash_forecast?.scenario_count,
+      passed_count: baseline.agents.cash_forecast?.scenario_count,
+      score: baseline.agents.cash_forecast?.minimum_score,
     });
   });
 
