@@ -7,6 +7,7 @@ import {
   collectionsScenarios,
   compareToBaseline,
   evalHandlers,
+  fraudAnomalyScenarios,
   metricRegistry,
   reconciliationScenarios,
   runGoldenEval,
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
       ...reconciliationScenarios,
       ...cashForecastScenarios,
       ...vendorRiskScenarios,
+      ...fraudAnomalyScenarios,
     ],
     fixedClock: EVAL_FIXED_CLOCK,
   });

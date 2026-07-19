@@ -93,6 +93,7 @@ import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
 import { startCollectionsOverdueScanner } from "./agents/collections-overdue-scanner.js";
 import { startCashForecastScanner } from "./agents/cash-forecast-scanner.js";
+import { startFraudAnomalyScanner } from "./agents/fraud-anomaly-scanner.js";
 import { startReconciliationUnreconciledScanner } from "./agents/reconciliation-unreconciled-scanner.js";
 import { startVendorRiskScanner } from "./agents/vendor-risk-scanner.js";
 
@@ -2680,6 +2681,26 @@ async function main(): Promise<void> {
       )
     : undefined;
 
+  // Fraud anomaly scanner (BC-1/BC-2): cross-tenant transaction enumeration
+  // on the ledger worker pool, then tenant-scoped AgentRunService proposals.
+  const fraudAnomalyScanner = composition.workers.has("ledger")
+    ? startFraudAnomalyScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_FRAUD_ANOMALY_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_FRAUD_ANOMALY_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_FRAUD_ANOMALY_SCAN_PER_TENANT_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_FRAUD_ANOMALY_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence the raw-worker role; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -2875,6 +2896,7 @@ async function main(): Promise<void> {
           reconciliationUnreconciledScanner,
           cashForecastScanner,
           vendorRiskScanner,
+          fraudAnomalyScanner,
           syncWorker,
           outboxWorker,
           webhookDispatchWorker,
