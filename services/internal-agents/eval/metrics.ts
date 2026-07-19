@@ -22,8 +22,35 @@ export const collectionsMetric: AgentMetric = {
   },
 };
 
+export const reconciliationMetric: AgentMetric = {
+  agent_key: "reconciliation",
+  score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
+    const expectedMatches = readExpectedMatches(expected.expected_matches);
+    const actualMatches = readActualMatches(output);
+    const precision = precisionScore(actualMatches, expectedMatches);
+    const recall = recallScore(actualMatches, expectedMatches);
+    return [
+      {
+        field: "matching.precision",
+        expected: expectedMatches,
+        actual: actualMatches,
+        score: precision,
+        passed: precision === 1,
+      },
+      {
+        field: "matching.recall",
+        expected: expectedMatches,
+        actual: actualMatches,
+        score: recall,
+        passed: recall === 1,
+      },
+    ];
+  },
+};
+
 export const metricRegistry: Readonly<Record<string, AgentMetric>> = {
   collections: collectionsMetric,
+  reconciliation: reconciliationMetric,
 };
 
 function exactMatch(field: string, actual: unknown, expected: unknown): EvalFieldScore {
@@ -48,4 +75,57 @@ function topOneMatch(field: string, actual: unknown, expected: unknown): EvalFie
     score: passed ? 1 : 0,
     passed,
   };
+}
+
+interface ExpectedMatch {
+  readonly left_entity_id: string;
+  readonly right_entity_id: string;
+}
+
+function readExpectedMatches(raw: unknown): readonly ExpectedMatch[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      if (typeof item !== "object" || item === null) return null;
+      const row = item as Record<string, unknown>;
+      return typeof row.left_entity_id === "string" && typeof row.right_entity_id === "string"
+        ? { left_entity_id: row.left_entity_id, right_entity_id: row.right_entity_id }
+        : null;
+    })
+    .filter((item): item is ExpectedMatch => item !== null);
+}
+
+function readActualMatches(output: Record<string, unknown>): readonly ExpectedMatch[] {
+  if (
+    output.match_type !== "propose_match" ||
+    typeof output.left_entity_id !== "string" ||
+    typeof output.right_entity_id !== "string"
+  ) {
+    return [];
+  }
+  return [{ left_entity_id: output.left_entity_id, right_entity_id: output.right_entity_id }];
+}
+
+function precisionScore(
+  actualMatches: readonly ExpectedMatch[],
+  expectedMatches: readonly ExpectedMatch[],
+): number {
+  if (actualMatches.length === 0) return expectedMatches.length === 0 ? 1 : 0;
+  const expected = new Set(expectedMatches.map(matchKey));
+  const truePositive = actualMatches.filter((match) => expected.has(matchKey(match))).length;
+  return truePositive / actualMatches.length;
+}
+
+function recallScore(
+  actualMatches: readonly ExpectedMatch[],
+  expectedMatches: readonly ExpectedMatch[],
+): number {
+  if (expectedMatches.length === 0) return actualMatches.length === 0 ? 1 : 0;
+  const actual = new Set(actualMatches.map(matchKey));
+  const truePositive = expectedMatches.filter((match) => actual.has(matchKey(match))).length;
+  return truePositive / expectedMatches.length;
+}
+
+function matchKey(match: ExpectedMatch): string {
+  return `${match.left_entity_id}->${match.right_entity_id}`;
 }

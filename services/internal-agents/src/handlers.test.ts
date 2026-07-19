@@ -10,6 +10,7 @@ import { revenueIntelDefinition } from "./revenue_intel/definition.js";
 import { treasuryHandler } from "./treasury/handler.js";
 import { treasuryDefinition } from "./treasury/definition.js";
 import { reconciliationHandler } from "./reconciliation/handler.js";
+import { reconciliationDefinition } from "./reconciliation/definition.js";
 import { paymentHandler } from "./payment/handler.js";
 import { paymentDefinition } from "./payment/definition.js";
 
@@ -259,8 +260,26 @@ describe("Reconciliation handler", () => {
   it("produces a proposal that passes its policy", () => {
     const proposed = reconciliationHandler.build({
       action: "propose_match",
-      context: {},
+      context: {
+        transaction_id: "tx_1",
+        amount: "900.00",
+        currency: "USD",
+        direction: "inflow",
+        transaction_date: "2026-07-18T00:00:00.000Z",
+        counterparty_id: "cp_1",
+        candidates: [
+          {
+            kind: "invoice",
+            id: "inv_1",
+            amount: "900.00",
+            currency: "USD",
+            date: "2026-07-18T00:00:00.000Z",
+            counterparty_id: "cp_1",
+          },
+        ],
+      },
       evidence: EVIDENCE,
+      definition: reconciliationDefinition,
     });
     const decision = evaluate(
       loadPolicy("./reconciliation/policy.template.json"),

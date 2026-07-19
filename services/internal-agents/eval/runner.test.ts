@@ -8,6 +8,7 @@ import {
   compareToBaseline,
   evalHandlers,
   metricRegistry,
+  reconciliationScenarios,
   runGoldenEval,
 } from "./index.js";
 import type { GoldenEvalBaseline, GoldenScenario } from "./types.js";
@@ -58,11 +59,11 @@ describe("golden eval runner", () => {
     expect(report.scenarios[0]?.score).toBeLessThan(1);
   });
 
-  it("passes the committed Collections baseline", () => {
+  it("passes the committed baseline", () => {
     const report = runGoldenEval({
       handlers: evalHandlers,
       metrics: metricRegistry,
-      scenarios: collectionsScenarios,
+      scenarios: [...collectionsScenarios, ...reconciliationScenarios],
       fixedClock: EVAL_FIXED_CLOCK,
     });
     const baseline = readBaseline();
@@ -72,6 +73,11 @@ describe("golden eval runner", () => {
       scenario_count: baseline.agents.collections?.scenario_count,
       passed_count: baseline.agents.collections?.scenario_count,
       score: baseline.agents.collections?.minimum_score,
+    });
+    expect(report.aggregate.reconciliation).toMatchObject({
+      scenario_count: baseline.agents.reconciliation?.scenario_count,
+      passed_count: baseline.agents.reconciliation?.scenario_count,
+      score: baseline.agents.reconciliation?.minimum_score,
     });
   });
 

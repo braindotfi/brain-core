@@ -7,6 +7,7 @@ import {
   compareToBaseline,
   evalHandlers,
   metricRegistry,
+  reconciliationScenarios,
   runGoldenEval,
   summarizeReport,
 } from "./index.js";
@@ -21,7 +22,7 @@ async function main(): Promise<void> {
   const report = runGoldenEval({
     handlers: evalHandlers,
     metrics: metricRegistry,
-    scenarios: collectionsScenarios,
+    scenarios: [...collectionsScenarios, ...reconciliationScenarios],
     fixedClock: EVAL_FIXED_CLOCK,
   });
 

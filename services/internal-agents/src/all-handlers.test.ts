@@ -36,8 +36,20 @@ const CONTEXT: Record<string, unknown> = {
   obligation_id: "obl_1",
   subscription_id: "sub_1",
   transaction_id: "tx_1",
+  transaction_date: "2026-07-18T00:00:00.000Z",
+  direction: "inflow",
   account_id: "acct_1",
   card_id: "card_1",
+  candidates: [
+    {
+      kind: "invoice",
+      id: "inv_1",
+      amount: "100",
+      currency: "USD",
+      date: "2026-07-18T00:00:00.000Z",
+      counterparty_id: "cp_1",
+    },
+  ],
 };
 
 describe("internal-agent handlers — build every action", () => {
