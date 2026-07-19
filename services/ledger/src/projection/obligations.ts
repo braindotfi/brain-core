@@ -9,7 +9,9 @@
  * -> this projection. Document obligations flow through raw_parsed
  * doc_obligation_v1 -> canonical_obligation -> this projection; the legacy
  * ledger doc_obligation extractor now validates only and returns no rows.
- * Stripe / Finch / Plaid paths are unchanged and still write Ledger directly.
+ * Plaid, Stripe, and Finch account or transaction records follow the same
+ * pattern through canonical_account / canonical_transaction and the Ledger
+ * account-transaction projector.
  *
  * Identity is canonical-source-keyed, NOT name-deduped: a Merge vendor and a
  * document vendor with the same name are DISTINCT observations here, linked by

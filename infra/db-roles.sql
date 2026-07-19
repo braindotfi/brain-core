@@ -195,7 +195,8 @@ BEGIN
            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'canonical\_%'
   LOOP EXECUTE format('GRANT SELECT ON %s TO brain_ledger_projector', t); END LOOP;
 END $$;
-GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties
+GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties,
+  ledger_accounts, ledger_transactions
   TO brain_ledger_projector;
 -- The Collections, Reconciliation, Cash Forecast, Vendor Risk, Fraud Anomaly,
 -- and Compliance scanners share the ledger worker pool for cross-tenant enumeration only.

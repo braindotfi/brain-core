@@ -70,6 +70,7 @@ export {
   claimExtractionJob,
   markExtractionJobSucceeded,
   markExtractionJobFailed,
+  requeueExtractionJob,
   type EnqueueExtractionJobInput,
   type ExtractionJobRow,
   type ExtractionJobStatus,

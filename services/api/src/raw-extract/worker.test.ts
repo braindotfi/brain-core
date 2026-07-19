@@ -40,7 +40,7 @@ function artifactRow() {
   };
 }
 
-function jobRow(status = "queued") {
+function jobRow(status = "queued", attemptCount = 0) {
   const now = new Date("2026-07-06T00:00:00Z");
   return {
     id: JOB_ID,
@@ -51,7 +51,8 @@ function jobRow(status = "queued") {
     parsed_id: null,
     confidence: null,
     error: null,
-    attempt_count: 0,
+    attempt_count: attemptCount,
+    next_attempt_at: null,
     requested_by: "user_01TEST0000000000000000000",
     locked_at: null,
     locked_by: null,
@@ -68,7 +69,7 @@ function scanPool(): Pool {
   } as unknown as Pool;
 }
 
-function appPool() {
+function appPool(options: { claimedAttemptCount?: number } = {}) {
   const updates: Array<{ kind: string; values: unknown[] | undefined }> = [];
   const client = {
     query: vi.fn(async (sql: string, values?: unknown[]) => {
@@ -82,13 +83,17 @@ function appPool() {
       }
       if (sql.startsWith("UPDATE extraction_jobs") && sql.includes("status = 'running'")) {
         updates.push({ kind: "claim", values });
-        return { rows: [jobRow("running")], rowCount: 1 };
+        return { rows: [jobRow("running", options.claimedAttemptCount ?? 1)], rowCount: 1 };
       }
       if (sql.includes("FROM raw_artifacts")) {
         return { rows: [artifactRow()], rowCount: 1 };
       }
       if (sql.startsWith("UPDATE extraction_jobs") && sql.includes("status = 'succeeded'")) {
         updates.push({ kind: "succeeded", values });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.startsWith("UPDATE extraction_jobs") && sql.includes("status = 'queued'")) {
+        updates.push({ kind: "retry", values });
         return { rows: [], rowCount: 1 };
       }
       if (sql.startsWith("UPDATE extraction_jobs") && sql.includes("status = 'failed'")) {
@@ -160,5 +165,44 @@ describe("runDocumentExtractionCycle", () => {
     );
     const succeeded = app.updates.find((u) => u.kind === "succeeded");
     expect(succeeded?.values).toEqual([JOB_ID, "prs_01TEST000000000000000000000", 0.5]);
+  });
+
+  it("requeues transient extractor failures with bounded backoff", async () => {
+    const app = appPool({ claimedAttemptCount: 1 });
+    const client: DocumentExtractPort = {
+      extract: vi.fn(async () => {
+        throw new Error("timeout");
+      }),
+    };
+    const now = new Date("2026-07-06T00:00:00Z");
+
+    await runDocumentExtractionCycle(
+      { scanPool: scanPool(), appPool: app.pool, blob: blob(), client },
+      { batchSize: 1, maxAttempts: 3, retryBaseMs: 1_000, now: () => now },
+    );
+
+    const retry = app.updates.find((u) => u.kind === "retry");
+    expect(retry?.values?.[0]).toBe(JOB_ID);
+    expect(retry?.values?.[1]).toContain("internal_server_error");
+    expect(retry?.values?.[2]).toEqual(new Date("2026-07-06T00:00:01Z"));
+    expect(app.updates.some((u) => u.kind === "failed")).toBe(false);
+  });
+
+  it("marks transient failures terminal after the retry budget is exhausted", async () => {
+    const app = appPool({ claimedAttemptCount: 3 });
+    const client: DocumentExtractPort = {
+      extract: vi.fn(async () => {
+        throw new Error("timeout");
+      }),
+    };
+
+    await runDocumentExtractionCycle(
+      { scanPool: scanPool(), appPool: app.pool, blob: blob(), client },
+      { batchSize: 1, maxAttempts: 3, retryBaseMs: 1_000 },
+    );
+
+    const failed = app.updates.find((u) => u.kind === "failed");
+    expect(failed?.values?.[1]).toContain("retry_exhausted");
+    expect(app.updates.some((u) => u.kind === "retry")).toBe(false);
   });
 });

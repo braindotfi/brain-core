@@ -31,6 +31,7 @@ import {
   type AuditEmitter,
   type ManagedWorker,
   type MetricsEmitter,
+  type TenantScopedClient,
 } from "@brain/shared";
 import { upsertGlAccount, upsertJournalEntry } from "../repository/accounting.js";
 import {
@@ -44,6 +45,19 @@ import {
 import { projectMergeContact, projectMergeInvoice } from "./merge-apar.js";
 import { projectDocObligation } from "./doc-obligation.js";
 import { upsertCanonicalCounterparty, upsertCanonicalObligation } from "../repository/apar.js";
+import {
+  FINCH_LEDGER_PARSER,
+  FINCH_LEDGER_PROJECTOR,
+  PLAID_LEDGER_PARSER,
+  PLAID_LEDGER_PROJECTOR,
+  STRIPE_LEDGER_PARSER,
+  STRIPE_LEDGER_PROJECTOR,
+  projectFinchLedger,
+  projectPlaidLedger,
+  projectStripeLedger,
+  type ConnectorLedgerProjection,
+} from "./connector-ledger.js";
+import { upsertCanonicalAccount, upsertCanonicalTransaction } from "../repository/ledger.js";
 
 /** RFC 0004 document-extracted obligations (low-trust, agent_contributed). */
 const DOC_OBLIGATION_PARSER = "doc_obligation_v1" as const;
@@ -53,6 +67,27 @@ const MERGE_OBLIGATION_CONFIDENCE = 0.85;
 const MERGE_COUNTERPARTY_CONFIDENCE = 0.8;
 /** Fallback when a document's raw_parsed row carries no confidence (capped agent ceiling). */
 const DOC_DEFAULT_CONFIDENCE = 0.5;
+
+const CONNECTOR_LEDGER_PASSES = [
+  {
+    parser: PLAID_LEDGER_PARSER,
+    projector: PLAID_LEDGER_PROJECTOR,
+    objectType: "plaid",
+    project: projectPlaidLedger,
+  },
+  {
+    parser: STRIPE_LEDGER_PARSER,
+    projector: STRIPE_LEDGER_PROJECTOR,
+    objectType: "stripe",
+    project: projectStripeLedger,
+  },
+  {
+    parser: FINCH_LEDGER_PARSER,
+    projector: FINCH_LEDGER_PROJECTOR,
+    objectType: "finch",
+    project: projectFinchLedger,
+  },
+] as const;
 
 /**
  * Failed projections are retried up to this many times before they are
@@ -300,6 +335,7 @@ export async function runProjectionCycle(
   }
 
   await runDocObligationPass(deps, batchSize, actor, maxAttempts);
+  await runConnectorLedgerPasses(deps, batchSize, actor, maxAttempts);
   await emitProjectorLag(deps);
 }
 
@@ -352,14 +388,21 @@ async function emitProjectorLag(deps: ProjectionWorkerDeps): Promise<void> {
   if (deps.metrics === undefined) return;
   try {
     // Lag counts rows still pending (not yet terminal). Quarantined rows are
-    // terminal, so a poison record no longer inflates lag forever — its backlog
+    // terminal, so a poison record no longer inflates lag forever. Its backlog
     // moves to the quarantine-depth gauge below instead.
     const { rows } = await deps.pool.query<{ lag: number }>(
       `SELECT COALESCE(EXTRACT(EPOCH FROM now() - MIN(rp.extracted_at)), 0)::float8 AS lag
          FROM raw_parsed rp
-        WHERE ((rp.parser = $1 AND rp.extracted->>'object_type' = ANY($2::text[])) OR rp.parser = $3)
+        WHERE ((rp.parser = $1 AND rp.extracted->>'object_type' = ANY($2::text[]))
+               OR rp.parser = $3
+               OR rp.parser = ANY($4::text[]))
           AND ${PENDING_EXCLUSION}`,
-      [MERGE_ACCOUNTING_PARSER, [...ALL_PROJECTABLE_OBJECT_TYPES], DOC_OBLIGATION_PARSER],
+      [
+        MERGE_ACCOUNTING_PARSER,
+        [...ALL_PROJECTABLE_OBJECT_TYPES],
+        DOC_OBLIGATION_PARSER,
+        CONNECTOR_LEDGER_PASSES.map((p) => p.parser),
+      ],
     );
     deps.metrics.gauge("brain.canonical.projector.lag_seconds", rows[0]?.lag ?? 0);
   } catch (err) {
@@ -372,6 +415,126 @@ async function emitProjectorLag(deps: ProjectionWorkerDeps): Promise<void> {
     deps.metrics.gauge("brain.canonical.projector.quarantine.depth", rows[0]?.depth ?? 0);
   } catch (err) {
     console.error("[canonicalProjector] quarantine depth gauge query failed:", err);
+  }
+}
+
+interface PendingConnectorRow {
+  id: string;
+  raw_artifact_id: string;
+  tenant_id: string;
+  extracted: Record<string, unknown>;
+  confidence: number | null;
+}
+
+async function persistConnectorProjection(
+  c: TenantScopedClient,
+  tenantId: string,
+  projection: ConnectorLedgerProjection,
+): Promise<void> {
+  if (projection.kind === "account") {
+    await upsertCanonicalAccount(c, tenantId, projection.input);
+  } else if (projection.kind === "transaction") {
+    await upsertCanonicalTransaction(c, tenantId, projection.input);
+  } else if (projection.kind === "counterparty") {
+    await upsertCanonicalCounterparty(c, tenantId, projection.input);
+  } else {
+    await upsertCanonicalObligation(c, tenantId, projection.input);
+  }
+}
+
+async function runConnectorLedgerPasses(
+  deps: ProjectionWorkerDeps,
+  batchSize: number,
+  actor: string,
+  maxAttempts: number,
+): Promise<void> {
+  for (const pass of CONNECTOR_LEDGER_PASSES) {
+    let rows: PendingConnectorRow[];
+    try {
+      const result = await deps.pool.query<PendingConnectorRow>(
+        `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted, rp.confidence
+           FROM raw_parsed rp
+          WHERE rp.parser = $1
+            AND ${PENDING_EXCLUSION}
+          ORDER BY rp.extracted_at ASC
+          LIMIT $2`,
+        [pass.parser, batchSize],
+      );
+      rows = result.rows;
+    } catch (err) {
+      console.error(`[canonicalProjector] ${pass.parser} poll failed:`, err);
+      continue;
+    }
+
+    for (const row of rows) {
+      const common: ProjectionCommon = {
+        provenance: "extracted",
+        confidence: row.confidence,
+        sourceIds: [row.raw_artifact_id],
+        evidenceIds: [row.id],
+      };
+      try {
+        const written = await withTenantScope(deps.pool, row.tenant_id, async (c) => {
+          const projections = pass.project(row.extracted, common);
+          let count = 0;
+          for (const projection of projections) {
+            await persistConnectorProjection(c, row.tenant_id, projection);
+            count += 1;
+          }
+          await c.query(
+            `INSERT INTO canonical_projection_log
+               (raw_parsed_id, tenant_id, projector, domain, records_written, error, quarantined)
+             VALUES ($1,$2,$3,'ledger',$4,NULL,false)
+             ON CONFLICT (raw_parsed_id) DO UPDATE SET
+               projector = EXCLUDED.projector,
+               domain = EXCLUDED.domain,
+               records_written = EXCLUDED.records_written,
+               error = NULL,
+               quarantined = false,
+               projected_at = now()`,
+            [row.id, row.tenant_id, pass.projector, count],
+          );
+          return count;
+        });
+
+        await deps.audit.emit({
+          tenantId: row.tenant_id,
+          layer: "canonical",
+          actor,
+          action: "canonical.projected",
+          inputs: {
+            raw_parsed_id: row.id,
+            projector: pass.projector,
+            domain: "ledger",
+            object_type: pass.objectType,
+            source_system: pass.objectType,
+            extracted_sha256: sha256Hex(Buffer.from(JSON.stringify(row.extracted))),
+          },
+          outputs: { records_written: written },
+        });
+        deps.metrics?.increment(
+          "brain.canonical.projector.records.count",
+          { projector: pass.projector, object_type: pass.objectType },
+          written,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(
+          `[canonicalProjector] ${pass.parser} projection failed for ${row.id}:`,
+          message,
+        );
+        await handleProjectionFailure(
+          deps,
+          row.tenant_id,
+          row.id,
+          pass.projector,
+          "ledger",
+          pass.objectType,
+          message,
+          maxAttempts,
+        );
+      }
+    }
   }
 }
 

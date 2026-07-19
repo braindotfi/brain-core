@@ -5537,7 +5537,8 @@ components:
 
     RawExtractionJob:
       type: object
-      required: [job_id, raw_id, status, parsed_id, confidence, error, created_at, updated_at]
+      required:
+        [job_id, raw_id, status, parsed_id, confidence, error, next_attempt_at, created_at, updated_at]
       properties:
         job_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
         raw_id: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
@@ -5554,6 +5555,10 @@ components:
         error:
           type: [object, "null"]
           additionalProperties: true
+        next_attempt_at:
+          type: [string, "null"]
+          format: date-time
+          description: Nullable retry due time for transient extraction failures.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 

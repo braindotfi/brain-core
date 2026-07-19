@@ -48,6 +48,7 @@ import {
 import {
   LedgerService,
   persistMatch,
+  rebuildAccountTransactionProjectionFromCanonical,
   ReconciliationService,
   rebuildAparProjectionFromCanonical,
   resolveCounterpartyView,
@@ -309,6 +310,9 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
       confidence: null,
     });
     await ledger.normalizeFromRaw(ctx, bank.prsId);
+    await runProjectionCycle({ pool, audit }, { batchSize: 50 });
+    await rebuildAparProjectionFromCanonical(pool, audit, ctx);
+    await rebuildAccountTransactionProjectionFromCanonical(pool, ctx.tenantId);
 
     const { account, tx } = await withTenantScope(pool, TENANT, async (c) => {
       const a = await c.query(

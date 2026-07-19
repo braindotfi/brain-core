@@ -59,6 +59,8 @@ export const ID_PREFIX = {
   // counterparties become projections of these.
   canonicalObligation: "cob",
   canonicalCounterparty: "ccp",
+  canonicalAccount: "cacct",
+  canonicalTransaction: "ctxn",
   // Cross-layer
   policyDecision: "pd",
   approval: "appr",
@@ -145,6 +147,8 @@ export const newCanonicalJournalEntryId = (): string => brainId(ID_PREFIX.canoni
 export const newCanonicalJournalLineId = (): string => brainId(ID_PREFIX.canonicalJournalLine);
 export const newCanonicalObligationId = (): string => brainId(ID_PREFIX.canonicalObligation);
 export const newCanonicalCounterpartyId = (): string => brainId(ID_PREFIX.canonicalCounterparty);
+export const newCanonicalAccountId = (): string => brainId(ID_PREFIX.canonicalAccount);
+export const newCanonicalTransactionId = (): string => brainId(ID_PREFIX.canonicalTransaction);
 export const newPolicyDecisionId = (): string => brainId(ID_PREFIX.policyDecision);
 export const newApprovalId = (): string => brainId(ID_PREFIX.approval);
 export const newWebhookEndpointId = (): string => brainId(ID_PREFIX.webhookEndpoint);

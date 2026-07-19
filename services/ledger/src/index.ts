@@ -94,3 +94,12 @@ export {
   type LedgerAparProjectionWorkerDeps,
   type LedgerAparProjectionWorkerOptions,
 } from "./projection/obligations.js";
+export {
+  rebuildAccountTransactionProjectionFromCanonical,
+  runLedgerAccountTransactionProjectionCycle,
+  startLedgerAccountTransactionProjectionWorker,
+  type AccountTransactionRebuildResult,
+  type LedgerAccountTransactionProjectionWorker,
+  type LedgerAccountTransactionProjectionWorkerDeps,
+  type LedgerAccountTransactionProjectionWorkerOptions,
+} from "./projection/accounts-transactions.js";

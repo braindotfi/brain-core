@@ -12,6 +12,7 @@ export interface ExtractionJobRow {
   confidence: number | null;
   error: Record<string, unknown> | null;
   attempt_count: number;
+  next_attempt_at: Date | null;
   requested_by: string | null;
   locked_at: Date | null;
   locked_by: string | null;
@@ -28,6 +29,7 @@ export interface ExtractionJobWire {
   parsed_id: string | null;
   confidence: number | null;
   error: Record<string, unknown> | null;
+  next_attempt_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -67,6 +69,30 @@ export async function enqueueExtractionJob(
        error = CASE
          WHEN extraction_jobs.status = 'succeeded' THEN extraction_jobs.error
          WHEN extraction_jobs.status = 'running' THEN extraction_jobs.error
+         ELSE NULL
+       END,
+       attempt_count = CASE
+         WHEN extraction_jobs.status IN ('succeeded', 'running') THEN extraction_jobs.attempt_count
+         ELSE 0
+       END,
+       next_attempt_at = CASE
+         WHEN extraction_jobs.status IN ('succeeded', 'running') THEN extraction_jobs.next_attempt_at
+         ELSE NULL
+       END,
+       finished_at = CASE
+         WHEN extraction_jobs.status IN ('succeeded', 'running') THEN extraction_jobs.finished_at
+         ELSE NULL
+       END,
+       started_at = CASE
+         WHEN extraction_jobs.status IN ('succeeded', 'running') THEN extraction_jobs.started_at
+         ELSE NULL
+       END,
+       locked_at = CASE
+         WHEN extraction_jobs.status = 'running' THEN extraction_jobs.locked_at
+         ELSE NULL
+       END,
+       locked_by = CASE
+         WHEN extraction_jobs.status = 'running' THEN extraction_jobs.locked_by
          ELSE NULL
        END,
        requested_by = EXCLUDED.requested_by,
@@ -109,6 +135,7 @@ export async function claimExtractionJob(
             updated_at = now()
       WHERE id = $1
         AND status = 'queued'
+        AND (next_attempt_at IS NULL OR next_attempt_at <= now())
       RETURNING *`,
     [jobId, workerId],
   );
@@ -126,10 +153,30 @@ export async function markExtractionJobSucceeded(
             parsed_id = $2,
             confidence = $3,
             error = NULL,
+            next_attempt_at = NULL,
             finished_at = now(),
             updated_at = now()
       WHERE id = $1`,
     [jobId, result.parsedId, result.confidence],
+  );
+}
+
+export async function requeueExtractionJob(
+  client: TenantScopedClient,
+  jobId: string,
+  error: Record<string, unknown>,
+  nextAttemptAt: Date,
+): Promise<void> {
+  await client.query(
+    `UPDATE extraction_jobs
+        SET status = 'queued',
+            error = $2,
+            next_attempt_at = $3,
+            locked_at = NULL,
+            locked_by = NULL,
+            updated_at = now()
+      WHERE id = $1`,
+    [jobId, JSON.stringify(error), nextAttemptAt],
   );
 }
 
@@ -142,6 +189,9 @@ export async function markExtractionJobFailed(
     `UPDATE extraction_jobs
         SET status = 'failed',
             error = $2,
+            next_attempt_at = NULL,
+            locked_at = NULL,
+            locked_by = NULL,
             finished_at = now(),
             updated_at = now()
       WHERE id = $1`,
@@ -157,6 +207,7 @@ export function extractionJobToWire(row: ExtractionJobRow): ExtractionJobWire {
     parsed_id: row.parsed_id,
     confidence: row.confidence,
     error: row.error,
+    next_attempt_at: toIsoOptional(row.next_attempt_at),
     created_at: toIso(row.created_at),
     updated_at: toIso(row.updated_at),
   };
@@ -164,4 +215,9 @@ export function extractionJobToWire(row: ExtractionJobRow): ExtractionJobWire {
 
 function toIso(d: Date | string): string {
   return typeof d === "string" ? d : d.toISOString();
+}
+
+function toIsoOptional(d: Date | string | null | undefined): string | null {
+  if (d === null || d === undefined) return null;
+  return toIso(d);
 }
