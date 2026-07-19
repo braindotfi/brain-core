@@ -5,6 +5,10 @@
     "collections": {
       "minimum_score": 1,
       "scenario_count": 14
+    },
+    "reconciliation": {
+      "minimum_score": 1,
+      "scenario_count": 5
     }
   }
 }
