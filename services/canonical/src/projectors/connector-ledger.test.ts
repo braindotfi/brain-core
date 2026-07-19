@@ -74,6 +74,138 @@ describe("connector ledger canonical projectors", () => {
     ).toThrow(/currency/);
   });
 
+  it("covers Plaid fallback and skip branches", () => {
+    const out = projectPlaidLedger(
+      {
+        accounts: [
+          { account_id: "save_1", name: "Savings", type: "depository", subtype: "savings" },
+          { account_id: "card_1", name: "Card", type: "credit" },
+          { account_id: "loc_1", name: "LOC", type: "credit", subtype: "line of credit" },
+          { account_id: "loan_1", name: "Loan", type: "loan" },
+          { account_id: 42, name: "Bad", type: "depository" },
+        ],
+        transactions: [
+          {
+            transaction_id: "tx_in",
+            account_id: "save_1",
+            amount: -20,
+            date: "2026-07-02",
+            name: "Deposit",
+            pending: true,
+          },
+          { transaction_id: "bad", account_id: "save_1", amount: "no", date: "2026-07-02" },
+        ],
+      },
+      common,
+    );
+
+    expect(out.filter((p) => p.kind === "account").map((p) => p.input.accountType)).toEqual([
+      "bank_savings",
+      "card",
+      "line_of_credit",
+      "loan",
+    ]);
+    expect(out.at(-1)).toMatchObject({
+      kind: "transaction",
+      input: {
+        sourceNaturalKey: "tx_in",
+        direction: "inflow",
+        status: "pending",
+        descriptionRaw: "Deposit",
+      },
+    });
+  });
+
+  it("rejects non-object connector payloads", () => {
+    expect(() => projectPlaidLedger(null, common)).toThrow(/plaid payload/);
+    expect(() => projectStripeLedger(null, common)).toThrow(/stripe payload/);
+    expect(() => projectFinchLedger(null, common)).toThrow(/finch payload/);
+  });
+
+  it("rejects connector payloads missing object_type where required", () => {
+    expect(() => projectStripeLedger({ objects: [] }, common)).toThrow(/object_type/);
+    expect(() => projectFinchLedger({ objects: [] }, common)).toThrow(/object_type/);
+  });
+
+  it("projects Stripe customers and transaction object variants", () => {
+    const charge = projectStripeLedger(
+      {
+        object_type: "charge",
+        stripe_account_id: "acct_S1",
+        objects: [
+          {
+            id: "ch_1",
+            amount: 2500,
+            currency: "usd",
+            created: 1,
+            paid: false,
+            customer: "cus_1",
+            description: "Invoice charge",
+          },
+        ],
+      },
+      common,
+    );
+    const payout = projectStripeLedger(
+      {
+        object_type: "payout",
+        stripe_account_id: "acct_S1",
+        objects: [{ id: "po_1", amount: 7000, currency: "usd", created: 2 }],
+      },
+      common,
+    );
+    const refund = projectStripeLedger(
+      {
+        object_type: "refund",
+        stripe_account_id: "acct_S1",
+        objects: [{ id: "re_1", amount: 300, currency: "usd", created: 3 }],
+      },
+      common,
+    );
+    const fee = projectStripeLedger(
+      {
+        object_type: "balance_transaction",
+        stripe_account_id: "acct_S1",
+        objects: [
+          { id: "txn_charge", type: "charge", amount: 7000, currency: "usd", created: 4 },
+          { id: "txn_fee", type: "stripe_fee", fee: 123, currency: "usd", created: 5 },
+        ],
+      },
+      common,
+    );
+    const customer = projectStripeLedger(
+      {
+        object_type: "customer",
+        objects: [{ id: "cus_1", email: "billing@example.com" }],
+      },
+      common,
+    );
+
+    expect(charge[1]).toMatchObject({
+      kind: "transaction",
+      input: {
+        sourceNaturalKey: "ch_1",
+        direction: "inflow",
+        status: "pending",
+        counterpartySourceKey: "customer:cus_1",
+      },
+    });
+    expect(payout[1]).toMatchObject({ kind: "transaction", input: { direction: "outflow" } });
+    expect(refund[1]).toMatchObject({ kind: "transaction", input: { direction: "outflow" } });
+    expect(fee.map((p) => p.kind)).toEqual(["account", "transaction"]);
+    expect(fee[1]).toMatchObject({ kind: "transaction", input: { sourceNaturalKey: "txn_fee" } });
+    expect(customer).toEqual([
+      expect.objectContaining({
+        kind: "counterparty",
+        input: expect.objectContaining({
+          sourceNaturalKey: "customer:cus_1",
+          name: "billing@example.com",
+          email: "billing@example.com",
+        }),
+      }),
+    ]);
+  });
+
   it("projects Stripe disputes into canonical counterparty and obligation records", () => {
     const out = projectStripeLedger(
       {
@@ -121,5 +253,60 @@ describe("connector ledger canonical projectors", () => {
         type: "payroll",
       },
     });
+  });
+
+  it("projects Finch individuals and completed pay runs", () => {
+    const individual = projectFinchLedger(
+      {
+        object_type: "individual",
+        objects: [
+          {
+            id: "ind_1",
+            first_name: "Dana",
+            last_name: "Reyes",
+            email: "dana@example.com",
+          },
+          { id: 42 },
+        ],
+      },
+      common,
+    );
+    const completed = projectFinchLedger(
+      {
+        object_type: "pay_run",
+        objects: [
+          {
+            id: "pay_done",
+            payment_date: "2020-07-20",
+            net_pay: { amount: 420000 },
+            description: "July payroll",
+          },
+          { id: "pay_bad", pay_date: "2020-07-20", net_pay: { amount: 1.2 } },
+        ],
+      },
+      common,
+    );
+    const ignored = projectFinchLedger({ object_type: "pay_statement", objects: [] }, common);
+
+    expect(individual).toEqual([
+      expect.objectContaining({
+        kind: "counterparty",
+        input: expect.objectContaining({
+          sourceNaturalKey: "individual:ind_1",
+          name: "Dana Reyes",
+          type: "employee",
+        }),
+      }),
+    ]);
+    expect(completed.map((p) => p.kind)).toEqual(["account", "transaction"]);
+    expect(completed[1]).toMatchObject({
+      kind: "transaction",
+      input: {
+        sourceNaturalKey: "pay_run:pay_done",
+        amount: "4200.00",
+        descriptionRaw: "July payroll",
+      },
+    });
+    expect(ignored).toEqual([]);
   });
 });
