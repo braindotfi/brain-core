@@ -6,6 +6,7 @@ import {
   EVAL_FIXED_CLOCK,
   cashForecastScenarios,
   collectionsScenarios,
+  complianceScenarios,
   compareToBaseline,
   evalHandlers,
   fraudAnomalyScenarios,
@@ -72,6 +73,7 @@ describe("golden eval runner", () => {
         ...cashForecastScenarios,
         ...vendorRiskScenarios,
         ...fraudAnomalyScenarios,
+        ...complianceScenarios,
       ],
       fixedClock: EVAL_FIXED_CLOCK,
     });
@@ -102,6 +104,11 @@ describe("golden eval runner", () => {
       scenario_count: baseline.agents.fraud_anomaly?.scenario_count,
       passed_count: baseline.agents.fraud_anomaly?.scenario_count,
       score: baseline.agents.fraud_anomaly?.minimum_score,
+    });
+    expect(report.aggregate.compliance).toMatchObject({
+      scenario_count: baseline.agents.compliance?.scenario_count,
+      passed_count: baseline.agents.compliance?.scenario_count,
+      score: baseline.agents.compliance?.minimum_score,
     });
   });
 

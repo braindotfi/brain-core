@@ -188,6 +188,45 @@ describe("makeLedgerEvidenceProvider", () => {
     expect(items.map((i) => i.ref).sort()).toEqual(["cp_1", "inv_1"]);
   });
 
+  it("resolves vendor, payment destination, and counterparty history from context", async () => {
+    const provider = makeLedgerEvidenceProvider(fakeLedger());
+    const items = await provider({
+      tenantId: TENANT,
+      context: {
+        counterparty_id: "cp_1",
+        payment_instruction_id: "cpi_1",
+        payment_destination_changed_at: "2026-07-18T00:00:00.000Z",
+        payment_destination_confidence: "0.8",
+        counterparty_history_id: "hist_1",
+        counterparty_history_changed_at: "2026-07-18T00:00:01.000Z",
+        counterparty_history_confidence: "0.7",
+        history_risk_flag: false,
+        history_risk_score: "0.2",
+      },
+      requiredEvidence: ["vendor", "payment_destination", "counterparty_history"],
+    });
+
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "vendor", ref: "cp_1" }),
+        expect.objectContaining({
+          kind: "payment_destination",
+          ref: "cpi_1",
+          confidence: 0.8,
+          timestamp: "2026-07-18T00:00:00.000Z",
+        }),
+        expect.objectContaining({
+          kind: "counterparty_history",
+          ref: "hist_1",
+          confidence: 0.7,
+          timestamp: "2026-07-18T00:00:01.000Z",
+          risk_flag: false,
+          risk_score: 0.2,
+        }),
+      ]),
+    );
+  });
+
   it("resolves an obligation only when obligation_id is referenced", async () => {
     const provider = makeLedgerEvidenceProvider(fakeLedger());
     const items = await provider({
@@ -209,6 +248,39 @@ describe("makeLedgerEvidenceProvider", () => {
       requiredEvidence: ["obligation"],
     });
     expect(items[0]?.confidence).toBe(0.4);
+  });
+
+  it("emits compliance policy decision and audit event evidence from context", async () => {
+    const provider = makeLedgerEvidenceProvider(fakeLedger());
+    const items = await provider({
+      tenantId: TENANT,
+      context: {
+        policy_decision_id: "pd_1",
+        audit_event_id: "evt_1",
+        policy_summary: "confirm decision pd_1",
+        audit_summary: "execution audit evt_1",
+        policy_decision_confidence: "0.9",
+        audit_event_confidence: "0.85",
+      },
+      requiredEvidence: ["policy_decision", "audit_event"],
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: "policy_decision",
+        ref: "pd_1",
+        source_system: "policy",
+        excerpt: "confirm decision pd_1",
+        confidence: 0.9,
+      }),
+      expect.objectContaining({
+        kind: "audit_event",
+        ref: "evt_1",
+        source_system: "audit",
+        excerpt: "execution audit evt_1",
+        confidence: 0.85,
+      }),
+    ]);
   });
 
   it("produces no evidence when context lacks the needed reference", async () => {
@@ -271,6 +343,22 @@ describe("makeWikiEvidenceProvider", () => {
     const items = await provider({ tenantId: TENANT, context: {}, requiredEvidence: [] });
     expect(items).toEqual([]);
     expect(wiki.search).not.toHaveBeenCalled();
+  });
+
+  it("is best-effort when wiki search fails", async () => {
+    const provider = makeWikiEvidenceProvider(
+      fakeWiki({
+        search: vi.fn(async () => {
+          throw new Error("wiki down");
+        }),
+      }),
+    );
+    const items = await provider({
+      tenantId: TENANT,
+      context: { query: "compliance policy" },
+      requiredEvidence: [],
+    });
+    expect(items).toEqual([]);
   });
 });
 

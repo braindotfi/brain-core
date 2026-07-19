@@ -453,6 +453,20 @@ const envSchema = z.object({
     .positive()
     .default(6 * 60 * 60 * 1000),
 
+  // ---- Compliance scanner ----
+  BRAIN_COMPLIANCE_SCAN_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(10 * 60 * 1000),
+  BRAIN_COMPLIANCE_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  BRAIN_COMPLIANCE_SCAN_PER_TENANT_BATCH_SIZE: z.coerce.number().int().positive().default(25),
+  BRAIN_COMPLIANCE_SCAN_COOLDOWN_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(6 * 60 * 60 * 1000),
+
   // ---- Blob storage ----
   /**
    * Storage backend. Use "azure" or "s3" in staging/production, "memory" in

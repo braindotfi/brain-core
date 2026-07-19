@@ -5,6 +5,7 @@ import {
   EVAL_FIXED_CLOCK,
   cashForecastScenarios,
   collectionsScenarios,
+  complianceScenarios,
   compareToBaseline,
   evalHandlers,
   fraudAnomalyScenarios,
@@ -31,6 +32,7 @@ async function main(): Promise<void> {
       ...cashForecastScenarios,
       ...vendorRiskScenarios,
       ...fraudAnomalyScenarios,
+      ...complianceScenarios,
     ],
     fixedClock: EVAL_FIXED_CLOCK,
   });

@@ -21,6 +21,10 @@
     "fraud_anomaly": {
       "minimum_score": 1,
       "scenario_count": 5
+    },
+    "compliance": {
+      "minimum_score": 1,
+      "scenario_count": 4
     }
   }
 }
