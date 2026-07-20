@@ -249,6 +249,7 @@ export function makeLedgerEvidenceProvider(
     const out: Evidence[] = [];
 
     const accountId = strContext(context, "account_id");
+    const balanceId = strContext(context, "balance_id");
     const transactionId = strContext(context, "transaction_id");
     const counterpartyId = strContext(context, "counterparty_id");
     const invoiceId = strContext(context, "invoice_id");
@@ -258,12 +259,25 @@ export function makeLedgerEvidenceProvider(
     // most-recent balance row (a legitimate aggregate for cash/treasury agents).
     if (want.has("balance")) {
       try {
-        if (accountId !== undefined) {
+        let balanceResolved = false;
+        if (balanceId !== undefined) {
+          const balances = await ledger.listBalances(ctx, {
+            ...(accountId !== undefined ? { account_id: accountId } : {}),
+          });
+          const referenced = balances.find((b) => b.id === balanceId);
+          if (referenced !== undefined) {
+            out.push(balanceEvidence(referenced));
+            balanceResolved = true;
+          }
+        }
+        if (!balanceResolved && accountId !== undefined) {
           const res = await ledger.getAccount(ctx, accountId);
           if (res !== null && res.latest_balance !== null) {
             out.push(balanceEvidence(res.latest_balance));
+            balanceResolved = true;
           }
-        } else {
+        }
+        if (!balanceResolved) {
           const balances = await ledger.listBalances(ctx, {});
           const latest = balances[0];
           if (latest !== undefined) {

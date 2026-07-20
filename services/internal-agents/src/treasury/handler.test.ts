@@ -89,6 +89,7 @@ describe("treasuryHandler", () => {
     if (proposed.channel !== "agent") return;
     expect(proposed.action.recommended_action).toBe("recommend_cash_sweep");
     expect(proposed.action.sweep_amount).toBe("70000.00");
+    expect(proposed.action.target_account_id).toBeNull();
     expect(proposed.action.mode).toBe("propose");
   });
 

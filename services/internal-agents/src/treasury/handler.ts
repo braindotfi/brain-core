@@ -77,7 +77,7 @@ function buildTreasuryAdvisory(input: HandlerInput): ProposedAction {
       kind: "agent_action",
       balance_id: balanceId,
       source_account_id: accountId,
-      target_account_id: optionalString(input.context.target_account_id),
+      target_account_id: optionalString(input.context.target_account_id) ?? null,
       available_cash: formatMoney(availableCash),
       minimum_operating_cash: formatMoney(thresholds.operatingMinimum),
       recommended_transfer: recommendedTransfer,

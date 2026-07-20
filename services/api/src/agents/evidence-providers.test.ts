@@ -147,6 +147,31 @@ describe("makeLedgerEvidenceProvider", () => {
     expect(items[0]).toMatchObject({ object_id: "bal_1", source_system: "ledger" });
   });
 
+  it("emits the referenced balance from balance_id", async () => {
+    const newerBalance = {
+      ...balance,
+      id: "bal_2",
+      as_of: "2026-06-02T00:00:00.000Z",
+    } as unknown as Balance;
+    const ledger = fakeLedger({
+      listBalances: vi.fn(async () => [newerBalance, balance]),
+    });
+    const provider = makeLedgerEvidenceProvider(ledger);
+
+    const items = await provider({
+      tenantId: TENANT,
+      context: { account_id: "acct_1", balance_id: "bal_1" },
+      requiredEvidence: ["balance"],
+    });
+
+    expect(items.map((i) => i.kind)).toEqual(["balance"]);
+    expect(items[0]).toMatchObject({ object_id: "bal_1", source_system: "ledger" });
+    expect(ledger.listBalances).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: TENANT }),
+      { account_id: "acct_1" },
+    );
+  });
+
   it("falls back to tenant balances when no account_id is referenced", async () => {
     const ledger = fakeLedger();
     const provider = makeLedgerEvidenceProvider(ledger);
@@ -312,6 +337,20 @@ describe("makeLedgerEvidenceProvider", () => {
       tenantId: TENANT,
       context: {},
       requiredEvidence: ["transaction", "counterparty", "invoice", "obligation"],
+    });
+    expect(items).toEqual([]);
+  });
+
+  it("does not emit requested context evidence when referenced rows or ids are absent", async () => {
+    const provider = makeLedgerEvidenceProvider(
+      fakeLedger({
+        listObligations: vi.fn(async () => ({ items: [], next_cursor: null })),
+      }),
+    );
+    const items = await provider({
+      tenantId: TENANT,
+      context: { obligation_id: "ob_missing" },
+      requiredEvidence: ["obligation", "dispute", "policy_decision", "audit_event"],
     });
     expect(items).toEqual([]);
   });

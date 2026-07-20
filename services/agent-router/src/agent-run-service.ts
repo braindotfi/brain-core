@@ -226,23 +226,72 @@ export class AgentRunService {
       // promoted and the run path calls gate.evaluate({ dryRun: true }).
       policy_dryrun_outcome: null,
     };
-    if (executionMode === "reject" || executionMode === "notify_only") {
-      return this.terminalRun(ctx, {
-        agentId,
-        category,
-        executionMode,
-        status: executionMode === "reject" ? "rejected" : "notify_only",
-        reason: reasonWithAction,
-        routingDecisionId: routing.id,
-        input,
-        confidence: decision.confidence,
-        evidenceScore: bundle.evidence_score,
-        action: resolution.action,
-        failureReason: `execution_mode_${executionMode}`,
-        shadowMode: false,
-      });
+    const shadowed = this.deps.isShadowed(agentId);
+    let proposed: ProposedAction | undefined;
+    if (shadowed) {
+      try {
+        proposed = handler.build({
+          action: resolution.action,
+          context: input.context ?? {},
+          evidence: bundle,
+          definition,
+          confidence: decision.confidence,
+        });
+      } catch (err) {
+        const missing = [handlerBuildErrorReason(err)];
+        return this.terminalRun(ctx, {
+          agentId,
+          category,
+          executionMode,
+          status: "failed",
+          reason: {
+            ...reasonWithAction,
+            payload_validation: {
+              status: "invalid",
+              missing_fields: missing,
+            },
+          },
+          routingDecisionId: routing.id,
+          input,
+          confidence: decision.confidence,
+          evidenceScore: bundle.evidence_score,
+          action: resolution.action,
+          failureReason: "payload_invalid",
+          shadowMode: false,
+        });
+      }
+      if (proposed.channel === "payment_intent") {
+        const shadowReason = {
+          ...reasonWithAction,
+          shadow: "agent_shadowed",
+        };
+        const run = await this.deps.store.recordRun(ctx, {
+          tenantCategory: category,
+          agentId,
+          agentKind: definition.provenance,
+          executionMode,
+          status: "shadow_completed",
+          reason: shadowReason,
+          shadowMode: true,
+          routingDecisionId: routing.id,
+          eventType: input.event ?? null,
+          intent: input.intent ?? null,
+          action: resolution.action,
+          confidence: decision.confidence,
+          evidenceScore: bundle.evidence_score,
+        });
+        return {
+          status: "shadow_completed",
+          routing_decision_id: routing.id,
+          run_id: run.id,
+          selected_agent_id: agentId,
+          action: resolution.action,
+          shadow_mode: true,
+          reason: shadowReason,
+        };
+      }
     }
-    if (bundle.critical_missing) {
+    if (bundle.critical_missing && decision.evidence_score >= 1) {
       return this.terminalRun(ctx, {
         agentId,
         category,
@@ -263,37 +312,54 @@ export class AgentRunService {
       });
     }
 
-    let proposed: ProposedAction;
-    try {
-      proposed = handler.build({
-        action: resolution.action,
-        context: input.context ?? {},
-        evidence: bundle,
-        definition,
-        confidence: decision.confidence,
-      });
-    } catch (err) {
-      const missing = [handlerBuildErrorReason(err)];
+    if (executionMode === "reject" || executionMode === "notify_only") {
       return this.terminalRun(ctx, {
         agentId,
         category,
         executionMode,
-        status: "failed",
-        reason: {
-          ...reasonWithAction,
-          payload_validation: {
-            status: "invalid",
-            missing_fields: missing,
-          },
-        },
+        status: executionMode === "reject" ? "rejected" : "notify_only",
+        reason: reasonWithAction,
         routingDecisionId: routing.id,
         input,
         confidence: decision.confidence,
         evidenceScore: bundle.evidence_score,
         action: resolution.action,
-        failureReason: "payload_invalid",
+        failureReason: `execution_mode_${executionMode}`,
         shadowMode: false,
       });
+    }
+    if (proposed === undefined) {
+      try {
+        proposed = handler.build({
+          action: resolution.action,
+          context: input.context ?? {},
+          evidence: bundle,
+          definition,
+          confidence: decision.confidence,
+        });
+      } catch (err) {
+        const missing = [handlerBuildErrorReason(err)];
+        return this.terminalRun(ctx, {
+          agentId,
+          category,
+          executionMode,
+          status: "failed",
+          reason: {
+            ...reasonWithAction,
+            payload_validation: {
+              status: "invalid",
+              missing_fields: missing,
+            },
+          },
+          routingDecisionId: routing.id,
+          input,
+          confidence: decision.confidence,
+          evidenceScore: bundle.evidence_score,
+          action: resolution.action,
+          failureReason: "payload_invalid",
+          shadowMode: false,
+        });
+      }
     }
     if (proposed.channel === "agent") {
       const validation = validateAgentPayload(agentId, proposed.action);
@@ -320,7 +386,6 @@ export class AgentRunService {
         });
       }
     }
-    const shadowed = this.deps.isShadowed(agentId);
 
     // SHADOW MODE: a financial proposal moves no money when the agent is
     // shadowed, OR (graduated rollout, 1b) when it's live but the action's rail
