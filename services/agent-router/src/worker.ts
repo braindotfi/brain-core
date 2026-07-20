@@ -160,11 +160,7 @@ export async function routeAndPropose(
     }
   }
 
-  if (
-    bundle.critical_missing &&
-    decision.execution_mode !== "reject" &&
-    decision.execution_mode !== "notify_only"
-  ) {
+  if (bundle.critical_missing && decision.evidence_score >= 1) {
     return {
       selected_agent_id: decision.selected_agent_id,
       action,

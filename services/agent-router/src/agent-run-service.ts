@@ -291,7 +291,7 @@ export class AgentRunService {
         };
       }
     }
-    if (bundle.critical_missing && executionMode !== "reject" && executionMode !== "notify_only") {
+    if (bundle.critical_missing && decision.evidence_score >= 1) {
       return this.terminalRun(ctx, {
         agentId,
         category,
