@@ -1,4 +1,4 @@
-import type { TenantScopedClient } from "@brain/shared";
+import type { KeysetCursor, TenantScopedClient } from "@brain/shared";
 import type { LedgerRowCommon } from "./types.js";
 
 export interface TransactionRow extends LedgerRowCommon {
@@ -27,7 +27,7 @@ export interface TransactionListFilters {
   since?: Date;
   until?: Date;
   limit: number;
-  cursor?: string;
+  cursor?: KeysetCursor;
 }
 
 export async function findTransactionById(
@@ -57,6 +57,14 @@ export async function listTransactions(
   if (filters.status !== undefined) push("status = $?", filters.status);
   if (filters.since !== undefined) push("transaction_date >= $?", filters.since);
   if (filters.until !== undefined) push("transaction_date <= $?", filters.until);
+  if (filters.cursor !== undefined) {
+    values.push(filters.cursor.sort, filters.cursor.id);
+    const sortIdx = values.length - 1;
+    const idIdx = values.length;
+    where.push(
+      `(transaction_date < $${sortIdx}::timestamptz OR (transaction_date = $${sortIdx}::timestamptz AND id < $${idIdx}))`,
+    );
+  }
 
   values.push(filters.limit);
   const limitIdx = values.length;

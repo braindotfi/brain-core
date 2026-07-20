@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { InMemoryAuditEmitter, isBrainError, type ServiceCallContext } from "@brain/shared";
+import {
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+  InMemoryAuditEmitter,
+  isBrainError,
+  type ServiceCallContext,
+} from "@brain/shared";
 import { InMemorySourceRepository, SourceService } from "./SourceService.js";
 import { CONCRETE_SOURCE_TYPES, recordToWire, SOURCE_TYPES, STUB_SOURCE_TYPES } from "./types.js";
 
@@ -128,7 +134,36 @@ describe("SourceService.get / list", () => {
     expect(stripeOnly).toHaveLength(1);
     expect(stripeOnly[0]?.type).toBe("stripe");
   });
+
+  it("list honors an opaque keyset cursor", async () => {
+    const repo = new InMemorySourceRepository();
+    const svc = new SourceService(repo);
+    const first = sourceRecord("src_1", "2026-07-01T00:00:00.000Z");
+    const second = sourceRecord("src_2", "2026-07-02T00:00:00.000Z");
+    await repo.insert(first);
+    await repo.insert(second);
+    const cursor = encodeKeysetCursor({ sort: second.created_at, id: second.id });
+    const page = await svc.list(CTX, { limit: 10, cursor: decodeKeysetCursor(cursor) });
+    expect(page.map((source) => source.id)).toEqual([first.id]);
+    expect(decodeKeysetCursor(cursor)).toEqual({ sort: second.created_at, id: second.id });
+  });
 });
+
+function sourceRecord(id: string, createdAt: string) {
+  return {
+    id,
+    tenant_id: CTX.tenantId,
+    type: "plaid" as const,
+    status: "active" as const,
+    metadata: {},
+    external_account_ids: [],
+    last_synced_at: null,
+    error_message: null,
+    is_stub: false,
+    created_at: createdAt,
+    updated_at: createdAt,
+  };
+}
 
 describe("recordToWire source freshness", () => {
   it("derives freshness from status and last_synced_at", async () => {

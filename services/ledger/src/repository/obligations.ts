@@ -1,4 +1,4 @@
-import type { TenantScopedClient } from "@brain/shared";
+import type { KeysetCursor, TenantScopedClient } from "@brain/shared";
 import type { LedgerRowCommon } from "./types.js";
 
 export interface ObligationRow extends LedgerRowCommon {
@@ -26,6 +26,7 @@ export interface ObligationListFilters {
   type?: string;
   due_before?: Date;
   limit: number;
+  cursor?: KeysetCursor;
 }
 
 export async function findObligationById(
@@ -56,6 +57,14 @@ export async function listObligations(
   if (filters.due_before !== undefined) {
     values.push(filters.due_before);
     where.push(`due_date <= $${values.length}`);
+  }
+  if (filters.cursor !== undefined) {
+    values.push(filters.cursor.sort, filters.cursor.id);
+    const sortIdx = values.length - 1;
+    const idIdx = values.length;
+    where.push(
+      `(due_date > $${sortIdx}::timestamptz OR (due_date = $${sortIdx}::timestamptz AND id > $${idIdx}))`,
+    );
   }
   values.push(filters.limit);
   const limitIdx = values.length;

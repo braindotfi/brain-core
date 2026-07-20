@@ -116,6 +116,8 @@ export {
   type IngestFromUrlParams,
   type ParsedRaw,
   type RawArtifact,
+  type ListSourcesParams,
+  type SourceListPage,
   type SourceSyncJobResult,
 } from "./resources/raw.js";
 

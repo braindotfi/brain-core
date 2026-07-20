@@ -147,12 +147,22 @@ export class PostgresSourceRepository
       vals.push(filter.status);
       conds.push(`status = $${vals.length}`);
     }
+    if (filter.cursor !== undefined) {
+      vals.push(filter.cursor.sort, filter.cursor.id);
+      const sortIdx = vals.length - 1;
+      const idIdx = vals.length;
+      conds.push(
+        `(created_at < $${sortIdx}::timestamptz OR (created_at = $${sortIdx}::timestamptz AND id < $${idIdx}))`,
+      );
+    }
     vals.push(limit);
     const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
 
     const { rows } = await withTenantScope(this.deps.pool, tenantId, (c) =>
       c.query<Record<string, unknown>>(
-        `SELECT * FROM raw_sources ${where} LIMIT $${vals.length}`,
+        `SELECT * FROM raw_sources ${where}
+         ORDER BY created_at DESC, id DESC
+         LIMIT $${vals.length}`,
         vals,
       ),
     );

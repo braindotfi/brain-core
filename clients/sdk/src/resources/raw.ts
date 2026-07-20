@@ -6,6 +6,7 @@ type RawIngestResponse = components["schemas"]["RawIngestResponse"];
 type RawSourceType = components["schemas"]["RawSourceType"];
 type RawParsed = components["schemas"]["RawParsed"];
 type RawExtractionJob = components["schemas"]["RawExtractionJob"];
+type Source = components["schemas"]["Source"];
 type SourceSyncJob = components["schemas"]["SourceSyncJob"];
 
 export interface IngestFromUrlParams {
@@ -51,9 +52,15 @@ export interface SourceSyncJobResult {
   updatedAt: string | undefined;
 }
 
+export interface SourceListPage {
+  sources: Source[];
+  nextCursor: string | null;
+}
+
 export type GetParsedParams = NonNullable<
   paths["/raw/{raw_id}/parsed"]["get"]["parameters"]["query"]
 >;
+export type ListSourcesParams = NonNullable<paths["/sources"]["get"]["parameters"]["query"]>;
 
 function unwrap<T>(data: T | undefined, error: BrainErrorBody | undefined, status: number): T {
   if (error !== undefined || data === undefined) {
@@ -128,6 +135,17 @@ export class RawResource {
       params: { path: { raw_id: rawId } },
     });
     return mapExtractionJob(unwrap(data, error, response.status));
+  }
+
+  async listSources(params: ListSourcesParams = {}): Promise<SourceListPage> {
+    const { data, error, response } = await this.http.GET("/sources", {
+      params: { query: params },
+    });
+    const body = unwrap(data, error, response.status);
+    return {
+      sources: body.data ?? [],
+      nextCursor: body.next_cursor ?? null,
+    };
   }
 
   async syncSource(sourceId: string): Promise<SourceSyncJobResult> {

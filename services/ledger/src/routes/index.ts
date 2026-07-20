@@ -49,7 +49,7 @@ export async function registerLedgerRoutes(
     "/ledger/accounts",
     async (
       request: FastifyRequest<{
-        Querystring: { status?: string; account_type?: string; limit?: string };
+        Querystring: { status?: string; account_type?: string; limit?: string; cursor?: string };
       }>,
       reply,
     ) => {
@@ -62,6 +62,7 @@ export async function registerLedgerRoutes(
           ? { account_type: request.query.account_type as never }
           : {}),
         ...(limit !== undefined ? { limit } : {}),
+        ...(request.query.cursor !== undefined ? { cursor: request.query.cursor } : {}),
       });
       reply.status(200);
       return { accounts: result.items, next_cursor: result.next_cursor };
@@ -112,6 +113,7 @@ export async function registerLedgerRoutes(
           since?: string;
           until?: string;
           limit?: string;
+          cursor?: string;
         };
       }>,
       reply,
@@ -131,6 +133,7 @@ export async function registerLedgerRoutes(
         ...(request.query.since !== undefined ? { since: request.query.since } : {}),
         ...(request.query.until !== undefined ? { until: request.query.until } : {}),
         ...(limit !== undefined ? { limit } : {}),
+        ...(request.query.cursor !== undefined ? { cursor: request.query.cursor } : {}),
       });
       reply.status(200);
       return { transactions: result.items, next_cursor: result.next_cursor };
@@ -156,7 +159,13 @@ export async function registerLedgerRoutes(
     "/ledger/counterparties",
     async (
       request: FastifyRequest<{
-        Querystring: { q?: string; type?: string; verified_status?: string; limit?: string };
+        Querystring: {
+          q?: string;
+          type?: string;
+          verified_status?: string;
+          limit?: string;
+          cursor?: string;
+        };
       }>,
       reply,
     ) => {
@@ -170,9 +179,10 @@ export async function registerLedgerRoutes(
           ? { verified_status: parseVerifiedStatus(request.query.verified_status) }
           : {}),
         ...(limit !== undefined ? { limit } : {}),
+        ...(request.query.cursor !== undefined ? { cursor: request.query.cursor } : {}),
       });
       reply.status(200);
-      return { counterparties: result.items };
+      return { counterparties: result.items, next_cursor: result.next_cursor };
     },
   );
 
@@ -281,7 +291,13 @@ export async function registerLedgerRoutes(
     "/ledger/obligations",
     async (
       request: FastifyRequest<{
-        Querystring: { status?: string; type?: string; due_before?: string; limit?: string };
+        Querystring: {
+          status?: string;
+          type?: string;
+          due_before?: string;
+          limit?: string;
+          cursor?: string;
+        };
       }>,
       reply,
     ) => {
@@ -293,9 +309,10 @@ export async function registerLedgerRoutes(
         ...(request.query.type !== undefined ? { type: request.query.type as never } : {}),
         ...(request.query.due_before !== undefined ? { due_before: request.query.due_before } : {}),
         ...(limit !== undefined ? { limit } : {}),
+        ...(request.query.cursor !== undefined ? { cursor: request.query.cursor } : {}),
       });
       reply.status(200);
-      return { obligations: result.items };
+      return { obligations: result.items, next_cursor: result.next_cursor };
     },
   );
 
@@ -303,7 +320,12 @@ export async function registerLedgerRoutes(
     "/ledger/invoices",
     async (
       request: FastifyRequest<{
-        Querystring: { status?: string; counterparty_id?: string; limit?: string };
+        Querystring: {
+          status?: string;
+          counterparty_id?: string;
+          limit?: string;
+          cursor?: string;
+        };
       }>,
       reply,
     ) => {
@@ -316,9 +338,10 @@ export async function registerLedgerRoutes(
           ? { counterparty_id: request.query.counterparty_id }
           : {}),
         ...(limit !== undefined ? { limit } : {}),
+        ...(request.query.cursor !== undefined ? { cursor: request.query.cursor } : {}),
       });
       reply.status(200);
-      return { invoices: result.items };
+      return { invoices: result.items, next_cursor: result.next_cursor };
     },
   );
 
