@@ -204,8 +204,10 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
         let activatedRow: PolicyRow = r;
         let activationWarnings: ReturnType<typeof lintPolicy> = [];
         if (body.signatures!.length >= r.quorum_required) {
+          const tenantKind = await findTenantKind(c, tenant);
           const findings = lintPolicy(r.content, {
-            confidenceFloorReject: deps.confidenceFloorReject === true,
+            confidenceFloorReject:
+              deps.confidenceFloorReject === true || tenantKind === "production",
           });
           const confidenceFindings = findings.filter(
             (f) => f.code === "confidence_floor_missing" || f.code === "confidence_floor_too_low",
@@ -428,6 +430,19 @@ function railKindForActionType(actionType: string): Action["kind"] {
   if (actionType === "erp_writeback") return "ledger_write";
   return "outbound_payment"; // ach_outbound | wire | card_payment | other
 }
+
+async function findTenantKind(
+  client: { query: TenantQuery },
+  tenantId: string,
+): Promise<"production" | "demo" | null> {
+  const { rows } = await client.query<{ kind: "production" | "demo" }>(
+    `SELECT kind FROM tenants WHERE id = $1 LIMIT 1`,
+    [tenantId],
+  );
+  return rows[0]?.kind ?? null;
+}
+
+type TenantQuery = <T>(sql: string, values?: unknown[]) => Promise<{ rows: T[] }>;
 
 /** Validate a candidate policy document from a request body. */
 function parsePolicyContent(raw: unknown): PolicyDocument {

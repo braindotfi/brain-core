@@ -7,6 +7,7 @@ import {
   JwtSigner,
   JwtVerifier,
   newTenantId,
+  newUserId,
   type Principal,
 } from "@brain/shared";
 import { ActorResolver } from "@brain/execution";
@@ -189,7 +190,9 @@ async function build(opts: { appRows?: unknown[]; resolverRows?: unknown[] } = {
   return { app, appDb, resolver, audit, signer };
 }
 
-async function buildWithJwt(opts: { member?: ReturnType<typeof memberRow> } = {}) {
+async function buildWithJwt(
+  opts: { member?: ReturnType<typeof memberRow>; resolverRows?: unknown[] } = {},
+) {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
   const revocation = new InMemoryRevocationStore();
@@ -204,7 +207,7 @@ async function buildWithJwt(opts: { member?: ReturnType<typeof memberRow> } = {}
     }),
   });
   const appDb = appPool(opts.member ?? memberRow());
-  const resolver = resolverPool([]);
+  const resolver = resolverPool(opts.resolverRows ?? []);
   const audit = { emit: vi.fn(async () => ({ id: "audit_1" })) };
   const signer = new JwtSigner({
     issuer: ISSUER,
@@ -459,6 +462,132 @@ describe("production tenancy routes", () => {
       expect(appDb.calls.some((c) => c.sql.includes("INSERT INTO session_refresh_tokens"))).toBe(
         false,
       );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("mints a requested reduced-scope member session and refresh token", async () => {
+    const member = memberRow({ tenant_id: newTenantId(), id: newUserId() });
+    const { app, signer } = await build({ resolverRows: [member] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/sessions",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: { external_ref: "platform-user-1", scopes: ["ledger:read", "execution:read"] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().scopes).toEqual(["ledger:read", "execution:read"]);
+      expect(signer.sign).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "user",
+          scopes: ["ledger:read", "execution:read"],
+        }),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects a scoped session request for a scope the member session does not hold", async () => {
+    const member = memberRow({ tenant_id: newTenantId(), id: newUserId() });
+    const { app } = await build({ resolverRows: [member] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/sessions",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: { external_ref: "platform-user-1", scopes: ["payment_intent:execute"] },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe("auth_scope_insufficient");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("prevents a reduced-scope token from using an out-of-scope member action", async () => {
+    const tenantId = newTenantId();
+    const member = memberRow({ tenant_id: tenantId, id: newUserId() });
+    const { app } = await buildWithJwt({ member, resolverRows: [member] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/sessions",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: { external_ref: "platform-user-1", scopes: ["ledger:read"] },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const members = await app.inject({
+        method: "GET",
+        url: "/members",
+        headers: { authorization: `Bearer ${res.json().token}` },
+      });
+      expect(members.statusCode).toBe(403);
+      expect(members.json().error).toMatchObject({
+        code: "auth_scope_insufficient",
+        details: { required: "execution:read" },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("refresh preserves and can further narrow a reduced scope set", async () => {
+    const tenantId = newTenantId();
+    const refresh = {
+      tenant_id: tenantId,
+      member_id: "user_1",
+      token_hash: "unused",
+      family_id: "token_family",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      rotated_at: null,
+      revoked_at: null,
+      scopes: ["ledger:read", "execution:read"],
+    };
+    const { app, signer } = await build({ resolverRows: [refresh] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/sessions/refresh",
+        payload: { refresh_token: "any-token", scopes: ["ledger:read"] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().scopes).toEqual(["ledger:read"]);
+      expect(signer.sign).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "user",
+          scopes: ["ledger:read"],
+        }),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects refresh scope widening beyond the stored reduced scope set", async () => {
+    const tenantId = newTenantId();
+    const refresh = {
+      tenant_id: tenantId,
+      member_id: "user_1",
+      token_hash: "unused",
+      family_id: "token_family",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      rotated_at: null,
+      revoked_at: null,
+      scopes: ["ledger:read"],
+    };
+    const { app } = await build({ resolverRows: [refresh] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/sessions/refresh",
+        payload: { refresh_token: "any-token", scopes: ["execution:read"] },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe("auth_scope_insufficient");
     } finally {
       await app.close();
     }

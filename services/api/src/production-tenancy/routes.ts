@@ -3,6 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Pool } from "pg";
 import {
   brainError,
+  isValidScope,
   newTenantId,
   newTokenId,
   newUserId,
@@ -68,6 +69,7 @@ interface RefreshRow {
   expires_at: Date | string;
   rotated_at: Date | string | null;
   revoked_at: Date | string | null;
+  scopes?: Scope[];
 }
 
 interface InviteRow {
@@ -279,14 +281,15 @@ export async function registerProductionTenancyRoutes(
     { config: { skipAuth: true, rateLimit: { max: 60, timeWindow: "1 minute" } } },
     async (request, reply) => {
       assertPlatformCredential(request, deps.platformSecret, "session:exchange");
-      const body = request.body as { external_ref?: unknown } | undefined;
+      const body = request.body as { external_ref?: unknown; scopes?: unknown } | undefined;
       const externalRef = requireString(body?.external_ref, "external_ref");
       const member = await findMemberByPlatformExternalRef(deps.resolverPool, externalRef);
       if (member === null || member.status !== "active") {
         reply.status(403);
         return { reason: "session_identity_unlinked" };
       }
-      const sessionSeed = newSessionSeed(member.tenant_id, member.id);
+      const scopes = resolveRequestedScopes(body?.scopes, MEMBER_SESSION_SCOPES);
+      const sessionSeed = newSessionSeed(member.tenant_id, member.id, undefined, scopes);
       await withTenantScope(deps.pool, member.tenant_id, (client) =>
         insertRefreshToken(client, sessionSeed),
       );
@@ -295,6 +298,7 @@ export async function registerProductionTenancyRoutes(
         token,
         refresh_token: sessionSeed.refreshToken,
         expires_in: ACCESS_TOKEN_TTL_SECONDS,
+        scopes: sessionSeed.scopes,
         member: serializeMember(member),
       };
     },
@@ -304,7 +308,7 @@ export async function registerProductionTenancyRoutes(
     "/sessions/refresh",
     { config: { skipAuth: true, rateLimit: { max: 60, timeWindow: "1 minute" } } },
     async (request) => {
-      const body = request.body as { refresh_token?: unknown } | undefined;
+      const body = request.body as { refresh_token?: unknown; scopes?: unknown } | undefined;
       const refreshToken = requireString(body?.refresh_token, "refresh_token");
       const refresh = await findRefreshToken(deps.resolverPool, hashToken(refreshToken));
       if (refresh === null || refresh.revoked_at !== null || isPast(refresh.expires_at)) {
@@ -317,7 +321,13 @@ export async function registerProductionTenancyRoutes(
         throw brainError("auth_token_invalid", "refresh token reuse detected");
       }
 
-      const sessionSeed = newSessionSeed(refresh.tenant_id, refresh.member_id, refresh.family_id);
+      const scopes = resolveRequestedScopes(body?.scopes, normalizeStoredScopes(refresh.scopes));
+      const sessionSeed = newSessionSeed(
+        refresh.tenant_id,
+        refresh.member_id,
+        refresh.family_id,
+        scopes,
+      );
       await withTenantScope(deps.pool, refresh.tenant_id, async (client) => {
         await client.query(
           `UPDATE session_refresh_tokens
@@ -332,6 +342,7 @@ export async function registerProductionTenancyRoutes(
         token,
         refresh_token: sessionSeed.refreshToken,
         expires_in: ACCESS_TOKEN_TTL_SECONDS,
+        scopes: sessionSeed.scopes,
       };
     },
   );
@@ -450,9 +461,15 @@ interface SessionSeed {
   refreshToken: string;
   refreshTokenHash: string;
   expiresAt: number;
+  scopes: readonly Scope[];
 }
 
-function newSessionSeed(tenantId: string, memberId: string, familyId = newTokenId()): SessionSeed {
+function newSessionSeed(
+  tenantId: string,
+  memberId: string,
+  familyId = newTokenId(),
+  scopes: readonly Scope[] = MEMBER_SESSION_SCOPES,
+): SessionSeed {
   const refreshToken = newSecretToken();
   return {
     tenantId,
@@ -462,6 +479,7 @@ function newSessionSeed(tenantId: string, memberId: string, familyId = newTokenI
     refreshToken,
     refreshTokenHash: hashToken(refreshToken),
     expiresAt: Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SECONDS,
+    scopes,
   };
 }
 
@@ -472,7 +490,7 @@ async function signMemberToken(signer: JwtSigner, seed: SessionSeed): Promise<st
     tenantId: seed.tenantId,
     tokenId: seed.tokenId,
     expiresAt: seed.expiresAt,
-    scopes: MEMBER_SESSION_SCOPES,
+    scopes: [...seed.scopes],
   });
 }
 
@@ -490,8 +508,8 @@ async function signAgentToken(signer: JwtSigner, seed: AgentTokenSeed): Promise<
 async function insertRefreshToken(client: TenantScopedClient, seed: SessionSeed): Promise<void> {
   await client.query(
     `INSERT INTO session_refresh_tokens
-       (tenant_id, member_id, token_hash, family_id, token_id, expires_at)
-     VALUES ($1, $2, $3, $4, $5, now() + ($6::text || ' days')::interval)`,
+       (tenant_id, member_id, token_hash, family_id, token_id, expires_at, scopes)
+     VALUES ($1, $2, $3, $4, $5, now() + ($6::text || ' days')::interval, $7::text[])`,
     [
       seed.tenantId,
       seed.memberId,
@@ -499,6 +517,7 @@ async function insertRefreshToken(client: TenantScopedClient, seed: SessionSeed)
       seed.familyId,
       seed.tokenId,
       REFRESH_TOKEN_TTL_DAYS,
+      [...seed.scopes],
     ],
   );
 }
@@ -566,7 +585,7 @@ async function findMemberByPlatformExternalRef(pool: Pool, externalRef: string) 
 
 async function findRefreshToken(pool: Pool, tokenHash: string): Promise<RefreshRow | null> {
   const { rows } = await pool.query<RefreshRow>(
-    `SELECT tenant_id, member_id, token_hash, family_id, expires_at, rotated_at, revoked_at
+    `SELECT tenant_id, member_id, token_hash, family_id, expires_at, rotated_at, revoked_at, scopes
        FROM session_refresh_tokens
       WHERE token_hash = $1
       LIMIT 1`,
@@ -704,6 +723,38 @@ function requireString(value: unknown, name: string): string {
     throw brainError("request_body_invalid", `${name} required`);
   }
   return value.trim();
+}
+
+function resolveRequestedScopes(raw: unknown, entitlements: readonly Scope[]): readonly Scope[] {
+  if (raw === undefined) return [...entitlements];
+  if (!Array.isArray(raw)) {
+    throw brainError("request_body_invalid", "scopes must be an array of scope strings");
+  }
+
+  const requested: Scope[] = [];
+  for (const value of raw) {
+    if (typeof value !== "string" || !isValidScope(value)) {
+      throw brainError("request_body_invalid", "scopes contains an unknown scope", {
+        details: { scope: value },
+      });
+    }
+    if (!requested.includes(value)) requested.push(value);
+  }
+
+  const held = new Set(entitlements);
+  const unheld = requested.filter((scope) => !held.has(scope));
+  if (unheld.length > 0) {
+    throw brainError("auth_scope_insufficient", "requested scope is not held by principal", {
+      statusOverride: 403,
+      details: { requested: unheld, held: entitlements },
+    });
+  }
+  return requested;
+}
+
+function normalizeStoredScopes(scopes: readonly Scope[] | undefined): readonly Scope[] {
+  if (scopes === undefined) return MEMBER_SESSION_SCOPES;
+  return scopes.filter((scope): scope is Scope => isValidScope(scope));
 }
 
 export function newSecretToken(): string {

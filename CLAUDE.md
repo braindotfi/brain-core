@@ -155,6 +155,10 @@ Done
   deletion are user-principal and own-tenant only. Exports expire after the
   configured retention horizon, default 7 days, and expired archive blobs are
   purged by object path.
+- Tenant isolation is governed by `docs/contracts/tenant-isolation.md`.
+  Tenant-scoped request-path reads must run through RLS with
+  `withTenantScope`; id-in-path routes must return not-found or denied for
+  cross-tenant ids and must never return another tenant's data.
 - Idempotency and request correlation are governed by
   `docs/contracts/idempotency-correlation.md`. Consequential POST retries with
   the same tenant, `Idempotency-Key`, and body return the original stored
