@@ -105,17 +105,10 @@ export const vendorRiskMetric: AgentMetric = {
   score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
     const actualHighRisk = output.risk_band === "high" || output.recommended_action === "hold";
     const expectedHighRisk = expected.expected_high_risk === true;
-    const precisionScore = actualHighRisk ? (expectedHighRisk ? 1 : 0) : expectedHighRisk ? 0 : 1;
     const expectedRank = numberValue(expected.risk_rank);
     const actualRank = riskRank(output.risk_band);
     return [
-      {
-        field: "classifier.high_risk_precision",
-        expected: expectedHighRisk,
-        actual: actualHighRisk,
-        score: precisionScore,
-        passed: precisionScore === 1,
-      },
+      ...classifierScores(actualHighRisk, expectedHighRisk),
       {
         field: "risk_order.rank",
         expected: expectedRank,
@@ -132,30 +125,15 @@ export const fraudAnomalyMetric: AgentMetric = {
   score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
     const actualAnomaly = readActualFraudFlag(output);
     const expectedAnomaly = expected.expected_anomaly === true;
-    const truePositive = actualAnomaly && expectedAnomaly ? 1 : 0;
-    const falsePositive = actualAnomaly && !expectedAnomaly ? 1 : 0;
-    const falseNegative = !actualAnomaly && expectedAnomaly ? 1 : 0;
-    const precision = truePositive + falsePositive === 0 ? (expectedAnomaly ? 0 : 1) : truePositive;
-    const recall = truePositive + falseNegative === 0 ? 1 : truePositive;
+    const classifier = classifierScores(actualAnomaly, expectedAnomaly);
+    const precision = classifier[0]?.score ?? 0;
+    const recall = classifier[1]?.score ?? 0;
     const f1 = precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall);
-    const falsePositiveRate = falsePositive;
+    const falsePositiveRate = actualAnomaly && !expectedAnomaly ? 1 : 0;
     const expectedType = expected.anomaly_type;
     const actualType = output.anomaly_type;
     return [
-      {
-        field: "classifier.precision",
-        expected: 1,
-        actual: precision,
-        score: precision,
-        passed: precision === 1,
-      },
-      {
-        field: "classifier.recall",
-        expected: 1,
-        actual: recall,
-        score: recall,
-        passed: recall === 1,
-      },
+      ...classifier,
       {
         field: "classifier.f1",
         expected: 1,
@@ -180,28 +158,7 @@ export const complianceMetric: AgentMetric = {
   score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
     const actualViolation = readActualComplianceViolation(output);
     const expectedViolation = expected.expected_violation === true;
-    const truePositive = actualViolation && expectedViolation ? 1 : 0;
-    const falsePositive = actualViolation && !expectedViolation ? 1 : 0;
-    const falseNegative = !actualViolation && expectedViolation ? 1 : 0;
-    const precision =
-      truePositive + falsePositive === 0 ? (expectedViolation ? 0 : 1) : truePositive;
-    const recall = truePositive + falseNegative === 0 ? 1 : truePositive;
-    return [
-      {
-        field: "classifier.precision",
-        expected: 1,
-        actual: precision,
-        score: precision,
-        passed: precision === 1,
-      },
-      {
-        field: "classifier.recall",
-        expected: 1,
-        actual: recall,
-        score: recall,
-        passed: recall === 1,
-      },
-    ];
+    return classifierScores(actualViolation, expectedViolation);
   },
 };
 
@@ -283,27 +240,8 @@ export const subscriptionMetric: AgentMetric = {
   score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
     const actualSubscription = output.is_subscription === true;
     const expectedSubscription = expected.expected_subscription === true;
-    const truePositive = actualSubscription && expectedSubscription ? 1 : 0;
-    const falsePositive = actualSubscription && !expectedSubscription ? 1 : 0;
-    const falseNegative = !actualSubscription && expectedSubscription ? 1 : 0;
-    const precision =
-      truePositive + falsePositive === 0 ? (expectedSubscription ? 0 : 1) : truePositive;
-    const recall = truePositive + falseNegative === 0 ? 1 : truePositive;
     return [
-      {
-        field: "classifier.precision",
-        expected: 1,
-        actual: precision,
-        score: precision,
-        passed: precision === 1,
-      },
-      {
-        field: "classifier.recall",
-        expected: 1,
-        actual: recall,
-        score: recall,
-        passed: recall === 1,
-      },
+      ...classifierScores(actualSubscription, expectedSubscription),
       exactMatch("is_subscription", output.is_subscription, expected.expected_subscription),
       exactMatch("recommended_action", output.recommended_action, expected.recommended_action),
       exactMatch("cadence", output.cadence, expected.cadence),
@@ -332,6 +270,30 @@ function exactMatch(field: string, actual: unknown, expected: unknown): EvalFiel
     score: passed ? 1 : 0,
     passed,
   };
+}
+
+function classifierScores(actualPositive: boolean, expectedPositive: boolean): EvalFieldScore[] {
+  const truePositive = actualPositive && expectedPositive ? 1 : 0;
+  const falsePositive = actualPositive && !expectedPositive ? 1 : 0;
+  const falseNegative = !actualPositive && expectedPositive ? 1 : 0;
+  const precision = truePositive + falsePositive === 0 ? (expectedPositive ? 0 : 1) : truePositive;
+  const recall = truePositive + falseNegative === 0 ? 1 : truePositive;
+  return [
+    {
+      field: "classifier.precision",
+      expected: 1,
+      actual: precision,
+      score: precision,
+      passed: precision === 1,
+    },
+    {
+      field: "classifier.recall",
+      expected: 1,
+      actual: recall,
+      score: recall,
+      passed: recall === 1,
+    },
+  ];
 }
 
 function topOneMatch(field: string, actual: unknown, expected: unknown): EvalFieldScore {

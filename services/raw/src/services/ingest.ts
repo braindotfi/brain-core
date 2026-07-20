@@ -161,9 +161,9 @@ function toIso(d: Date | string): string {
 }
 
 function shouldAutoExtractDocument(input: IngestInput): boolean {
-  if (!["pdf_upload", "csv_upload", "other"].includes(input.sourceType)) return false;
+  if (!["pdf_upload", "csv_upload"].includes(input.sourceType)) return false;
   const mime = input.mimeType?.toLowerCase() ?? "";
   if (mime.startsWith("image/")) return true;
   if (mime.startsWith("text/")) return true;
-  return ["application/pdf", "text/csv", "application/csv", "application/json"].includes(mime);
+  return ["application/pdf", "text/csv", "application/csv"].includes(mime);
 }

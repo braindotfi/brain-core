@@ -228,6 +228,7 @@ export async function getUndeliveredWebhookEvents(
   c: RawQueryClient,
   eventTypes: readonly string[],
   limit: number,
+  opts: { graceMs: number; lookbackMs: number },
 ): Promise<UndeliveredWebhookEvent[]> {
   if (eventTypes.length === 0) return [];
   const { rows } = await c.query<UndeliveredWebhookEvent>(
@@ -254,11 +255,13 @@ export async function getUndeliveredWebhookEvents(
         AND dl.endpoint_id = ep.id
         AND dl.event_id = e.id
       WHERE e.action = ANY($1::text[])
+        AND e.created_at <= now() - ($3::text || ' milliseconds')::interval
+        AND e.created_at >= now() - ($4::text || ' milliseconds')::interval
         AND r.event_id IS NULL
         AND dl.event_id IS NULL
       ORDER BY e.created_at ASC, e.id ASC, ep.id ASC
       LIMIT $2`,
-    [eventTypes, limit],
+    [eventTypes, limit, opts.graceMs, opts.lookbackMs],
   );
   return rows;
 }

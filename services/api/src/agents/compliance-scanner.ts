@@ -192,11 +192,11 @@ async function listComplianceFindings(
     `WITH missing_approvals AS (
        SELECT pi.owner_id AS tenant_id,
               pi.id AS finding_id,
-              'approval_missing'::text AS finding_type,
-              'medium'::text AS severity,
-              'approval.missing'::text AS event_hint,
+              CASE WHEN ev.id IS NULL THEN 'audit_gap_detected' ELSE 'approval_missing' END::text AS finding_type,
+              CASE WHEN ev.id IS NULL THEN 'critical' ELSE 'medium' END::text AS severity,
+              CASE WHEN ev.id IS NULL THEN 'audit.gap_detected' ELSE 'approval.missing' END::text AS event_hint,
               pd.id AS policy_decision_id,
-              ev.id AS audit_event_id,
+              COALESCE(ev.id, 'audit_missing:' || pi.id) AS audit_event_id,
               pi.id AS payment_intent_id,
               pd.subject_type,
               pd.subject_id,
@@ -205,11 +205,11 @@ async function listComplianceFindings(
               GREATEST(COALESCE(array_length(pd.required_approvers, 1), 0), 1) AS required_approvers_count,
               COALESCE(ap.valid_count, 0) AS valid_approval_count,
               COALESCE(ap.stale_count, 0) AS stale_approval_count,
-              GREATEST(pi.updated_at, pd.decided_at, ev.created_at) AS detected_at
+              GREATEST(pi.updated_at, pd.decided_at, COALESCE(ev.created_at, pi.updated_at, pd.decided_at)) AS detected_at
          FROM ledger_payment_intents pi
          JOIN policy_decisions pd
            ON pd.id = pi.policy_decision_id AND pd.tenant_id = pi.owner_id
-         JOIN LATERAL (
+         LEFT JOIN LATERAL (
            SELECT ae.id, ae.created_at
              FROM audit_events ae
             WHERE ae.tenant_id = pi.owner_id

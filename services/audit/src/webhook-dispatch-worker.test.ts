@@ -42,6 +42,30 @@ function makeFakePool(rowsFor: (sql: string) => unknown[]): {
   return { pool: { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool, calls };
 }
 
+function makeFakePoolWithValues(rowsFor: (sql: string, values: readonly unknown[]) => unknown[]): {
+  pool: Pool;
+  calls: { sql: string; values: readonly unknown[] }[];
+} {
+  const calls: { sql: string; values: readonly unknown[] }[] = [];
+  const client = {
+    query: vi.fn((sql: string, values: readonly unknown[] = []) => {
+      calls.push({ sql, values });
+      if (
+        sql === "BEGIN" ||
+        sql === "COMMIT" ||
+        sql === "ROLLBACK" ||
+        sql.startsWith("SELECT set_config")
+      ) {
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }
+      const rows = rowsFor(sql, values);
+      return Promise.resolve({ rows, rowCount: rows.length });
+    }),
+    release: vi.fn(),
+  };
+  return { pool: { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool, calls };
+}
+
 const ENDPOINT = { id: "whe_1", url: "https://example.com/hook", secret: "s", enabled: true };
 
 const ROW_BASE = {
@@ -214,6 +238,84 @@ describe("runWebhookDispatchCycle", () => {
     expect(deliver).toHaveBeenCalledOnce();
     expect(deliver.mock.calls[0]?.[1]).toContain('"type":"proposal.decided"');
     expect(calls.some((s) => s.includes("INSERT INTO webhook_delivery_receipts"))).toBe(true);
+  });
+
+  it("passes grace and lookback bounds to the reconcile scan", async () => {
+    const { pool, calls } = makeFakePoolWithValues(() => []);
+
+    await runWebhookDispatchCycle({
+      pool,
+      audit: new InMemoryAuditEmitter(),
+      deliver: vi.fn(),
+      reconcileGraceMs: 12_000,
+      reconcileLookbackMs: 86_400_000,
+    });
+
+    const reconcileCall = calls.find((c) => c.sql.includes("FROM audit_events e"));
+    expect(reconcileCall?.sql).toContain("e.created_at <= now() -");
+    expect(reconcileCall?.sql).toContain("e.created_at >= now() -");
+    expect(reconcileCall?.values.at(2)).toBe(12_000);
+    expect(reconcileCall?.values.at(3)).toBe(86_400_000);
+  });
+
+  it("does not reconcile in-flight events inside the grace window", async () => {
+    const { pool } = makeFakePoolWithValues((sql, values) => {
+      if (sql.includes("FROM webhook_dead_letters") && sql.includes("attempt_count < $1")) {
+        return [];
+      }
+      if (sql.includes("FROM audit_events e")) {
+        expect(values.at(2)).toBe(60_000);
+        return [];
+      }
+      return [];
+    });
+    const deliver = vi.fn().mockResolvedValue({ ok: true });
+
+    const r = await runWebhookDispatchCycle({
+      pool,
+      audit: new InMemoryAuditEmitter(),
+      deliver,
+      reconcileGraceMs: 60_000,
+    });
+
+    expect(r.reconciled).toBe(0);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it("still reconciles dropped events older than the grace window", async () => {
+    const createdAt = new Date("2026-07-19T21:00:00Z");
+    const { pool } = makeFakePoolWithValues((sql) => {
+      if (sql.includes("FROM webhook_dead_letters") && sql.includes("attempt_count < $1")) {
+        return [];
+      }
+      if (sql.includes("FROM audit_events e")) {
+        return [
+          {
+            tenant_id: TENANT,
+            endpoint_id: "whe_1",
+            endpoint_url: "https://example.com/hook",
+            endpoint_secret: "s",
+            event_id: "evt_dropped",
+            event_type: "agent.action.proposed",
+            created_at: createdAt,
+            inputs: { proposal_id: "prs_1" },
+            outputs: { status: "pending" },
+          },
+        ];
+      }
+      return [];
+    });
+    const deliver = vi.fn().mockResolvedValue({ ok: true });
+
+    const r = await runWebhookDispatchCycle({
+      pool,
+      audit: new InMemoryAuditEmitter(),
+      deliver,
+      reconcileGraceMs: 60_000,
+    });
+
+    expect(r.reconciled).toBe(1);
+    expect(deliver).toHaveBeenCalledOnce();
   });
 });
 
