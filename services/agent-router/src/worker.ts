@@ -130,6 +130,49 @@ export async function routeAndPropose(
     ...(input.context !== undefined ? { context: input.context } : {}),
     requiredEvidence: definition.required_evidence,
   });
+
+  const shadowed = deps.isShadowed(decision.selected_agent_id);
+  let proposed: ProposedAction | undefined;
+  if (shadowed) {
+    try {
+      proposed = handler.build({
+        action,
+        context: input.context ?? {},
+        evidence: bundle,
+        definition,
+        confidence: decision.confidence,
+      });
+    } catch (err) {
+      return {
+        selected_agent_id: decision.selected_agent_id,
+        action,
+        status: "failed",
+        reason: `payload_invalid:${handlerBuildErrorReason(err)}`,
+      };
+    }
+    if (proposed.channel === "payment_intent") {
+      return {
+        selected_agent_id: decision.selected_agent_id,
+        action,
+        status: "shadow_completed",
+        reason: "agent_shadowed",
+      };
+    }
+  }
+
+  if (
+    bundle.critical_missing &&
+    decision.execution_mode !== "reject" &&
+    decision.execution_mode !== "notify_only"
+  ) {
+    return {
+      selected_agent_id: decision.selected_agent_id,
+      action,
+      status: "missing_evidence",
+      reason: `critical_missing_evidence:${bundle.missing_required_evidence.join(",")}`,
+    };
+  }
+
   if (decision.execution_mode === "reject" || decision.execution_mode === "notify_only") {
     return {
       selected_agent_id: decision.selected_agent_id,
@@ -138,30 +181,24 @@ export async function routeAndPropose(
       reason: `execution_mode_${decision.execution_mode}`,
     };
   }
-  if (bundle.critical_missing) {
-    return {
-      selected_agent_id: decision.selected_agent_id,
-      action,
-      status: "missing_evidence",
-      reason: `critical_missing_evidence:${bundle.missing_required_evidence.join(",")}`,
-    };
-  }
-  let proposed: ProposedAction;
-  try {
-    proposed = handler.build({
-      action,
-      context: input.context ?? {},
-      evidence: bundle,
-      definition,
-      confidence: decision.confidence,
-    });
-  } catch (err) {
-    return {
-      selected_agent_id: decision.selected_agent_id,
-      action,
-      status: "failed",
-      reason: `payload_invalid:${handlerBuildErrorReason(err)}`,
-    };
+
+  if (proposed === undefined) {
+    try {
+      proposed = handler.build({
+        action,
+        context: input.context ?? {},
+        evidence: bundle,
+        definition,
+        confidence: decision.confidence,
+      });
+    } catch (err) {
+      return {
+        selected_agent_id: decision.selected_agent_id,
+        action,
+        status: "failed",
+        reason: `payload_invalid:${handlerBuildErrorReason(err)}`,
+      };
+    }
   }
   if (proposed.channel === "agent") {
     const validation = validateAgentPayload(decision.selected_agent_id, proposed.action);
@@ -182,7 +219,6 @@ export async function routeAndPropose(
   // shadowed agent (the §6 gate would still block execution, but the row should
   // never exist). The proposal terminates as shadow_completed.
   if (proposed.channel === "payment_intent") {
-    const shadowed = deps.isShadowed(decision.selected_agent_id);
     const railBlocked =
       !shadowed &&
       deps.checkRail !== undefined &&

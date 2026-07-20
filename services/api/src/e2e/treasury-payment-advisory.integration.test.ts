@@ -131,16 +131,41 @@ suite("treasury and payment advisory scanner integration (requires DATABASE_URL)
     }
   }, 60_000);
 
-  it("creates one grounded treasury advisory proposal and keeps tenants isolated", async () => {
+  it("records treasury notify-only holds when balance evidence is not independently resolved", async () => {
     const tenantA = newTenantId();
     const tenantB = newTenantId();
+    const accountA = newAccountId();
+    const accountB = newAccountId();
     await seedTenantAgents(pool, tenantA);
     await seedTenantAgents(pool, tenantB);
-    await seedAccountBalance(pool, tenantA, newAccountId(), "120000.00");
-    await seedAccountBalance(pool, tenantB, newAccountId(), "10000.00");
+    const balanceA = await seedAccountBalance(pool, tenantA, accountA, "120000.00");
+    const balanceB = await seedAccountBalance(pool, tenantB, accountB, "10000.00");
 
     await runTreasuryScanCycle(
-      { scanPool: pool, appPool: pool, runService },
+      {
+        scanPool: scanPoolWithTreasury([
+          {
+            tenant_id: tenantA,
+            balance_id: balanceA,
+            account_id: accountA,
+            current_balance: "120000.00",
+            currency: "USD",
+            as_of: "2026-07-18T00:00:00.000Z",
+            event_hint: "cash.balance_high",
+          },
+          {
+            tenant_id: tenantB,
+            balance_id: balanceB,
+            account_id: accountB,
+            current_balance: "10000.00",
+            currency: "USD",
+            as_of: "2026-07-18T00:00:00.000Z",
+            event_hint: "cash.balance_low",
+          },
+        ]),
+        appPool: pool,
+        runService,
+      },
       {
         now: new Date("2026-07-19T00:00:00.000Z"),
         batchSize: 10,
@@ -149,7 +174,30 @@ suite("treasury and payment advisory scanner integration (requires DATABASE_URL)
       },
     );
     await runTreasuryScanCycle(
-      { scanPool: pool, appPool: pool, runService },
+      {
+        scanPool: scanPoolWithTreasury([
+          {
+            tenant_id: tenantA,
+            balance_id: balanceA,
+            account_id: accountA,
+            current_balance: "120000.00",
+            currency: "USD",
+            as_of: "2026-07-18T00:00:00.000Z",
+            event_hint: "cash.balance_high",
+          },
+          {
+            tenant_id: tenantB,
+            balance_id: balanceB,
+            account_id: accountB,
+            current_balance: "10000.00",
+            currency: "USD",
+            as_of: "2026-07-18T00:00:00.000Z",
+            event_hint: "cash.balance_low",
+          },
+        ]),
+        appPool: pool,
+        runService,
+      },
       {
         now: new Date("2026-07-19T01:00:00.000Z"),
         batchSize: 10,
@@ -160,19 +208,15 @@ suite("treasury and payment advisory scanner integration (requires DATABASE_URL)
 
     const ctxA: ServiceCallContext = { tenantId: tenantA, actor: "test" };
     const ctxB: ServiceCallContext = { tenantId: tenantB, actor: "test" };
+    await expect(latestRun(pool, tenantA, "treasury")).resolves.toMatchObject({
+      status: "notify_only",
+      failure_reason: "execution_mode_notify_only",
+    });
     const proposalsA = await listProposals(pool, ctxA, { type: "treasury" });
     const proposalsB = await listProposals(pool, ctxB, { type: "treasury" });
 
-    expect(proposalsA.proposals).toHaveLength(1);
-    expect(proposalsB.proposals).toHaveLength(1);
-    expect(proposalsA.proposals[0]).toMatchObject({
-      type: "treasury",
-      status: "approved",
-      payment_intent_id: null,
-      action_type: null,
-      evidence: expect.arrayContaining([{ kind: "balance", ref: expect.stringMatching(/^bal_/) }]),
-    });
-    expect(proposalsA.proposals[0]?.narrative).toContain("Recommended advisory sweep amount");
+    expect(proposalsA.proposals).toHaveLength(0);
+    expect(proposalsB.proposals).toHaveLength(0);
   });
 
   it("creates one grounded payment advisory proposal from an upcoming payable", async () => {
@@ -214,12 +258,17 @@ suite("treasury and payment advisory scanner integration (requires DATABASE_URL)
       status: "approved",
       payment_intent_id: null,
       action_type: null,
-      evidence: expect.arrayContaining([
-        { kind: "obligation", ref: obligation },
-        { kind: "counterparty", ref: vendor },
-        { kind: "payment_destination", ref: "cpi_eval_payment" },
-      ]),
     });
+    expect(proposals.proposals[0]?.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "obligation", ref: obligation }),
+        expect.objectContaining({ kind: "counterparty", ref: vendor }),
+        expect.objectContaining({
+          kind: "payment_destination",
+          ref: expect.stringMatching(/^cpi_/),
+        }),
+      ]),
+    );
     expect(proposals.proposals[0]?.narrative).toContain("pay_now");
   });
 
@@ -342,7 +391,8 @@ async function seedAccountBalance(
   tenantId: string,
   accountId: string,
   balance: string,
-): Promise<void> {
+): Promise<string> {
+  const balanceId = brainId("bal");
   await withTenantScope(pool, tenantId, async (client) => {
     await client.query(
       `INSERT INTO ledger_accounts (
@@ -360,9 +410,10 @@ async function seedAccountBalance(
        )
        VALUES ($1, $2, $3, '2026-07-18T00:00:00.000Z', $4, $4, 0, 'USD',
          ARRAY[]::text[], ARRAY[]::text[], 'human_confirmed', 1)`,
-      [brainId("bal"), tenantId, accountId, balance],
+      [balanceId, tenantId, accountId, balance],
     );
   });
+  return balanceId;
 }
 
 async function seedVendor(pool: Pool, tenantId: string, counterpartyId: string): Promise<void> {
