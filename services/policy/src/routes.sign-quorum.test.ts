@@ -47,7 +47,10 @@ function principal(): Principal {
   };
 }
 
-function fakePool(content: unknown = { version: 1, rules: [] }): Pool {
+function fakePool(
+  content: unknown = { version: 1, rules: [] },
+  tenantKind: "production" | "demo" = "demo",
+): Pool {
   const pending = {
     id: POLICY_ID,
     tenant_id: TENANT,
@@ -66,6 +69,9 @@ function fakePool(content: unknown = { version: 1, rules: [] }): Pool {
   const client = {
     query: async (text: string) => {
       if (/SELECT \* FROM policies WHERE id/.test(text)) return { rows: [pending], rowCount: 1 };
+      if (/SELECT kind FROM tenants/.test(text)) {
+        return { rows: [{ kind: tenantKind }], rowCount: 1 };
+      }
       if (/SET signers/.test(text)) return { rows: [], rowCount: 1 };
       if (/state = 'deactivated'/.test(text)) return { rows: [], rowCount: 0 };
       if (/RETURNING \*/.test(text)) return { rows: [activated], rowCount: 1 };
@@ -173,6 +179,30 @@ describe("POST /policy/:tenant_id/sign — quorum binding (security)", () => {
     const app = await buildApp(
       buildDeps(new Set([a.address.toLowerCase(), b.address.toLowerCase()]), {
         confidenceFloorReject: true,
+      }),
+    );
+
+    const res = await postSign(app, [
+      { address: a.address, signature: await sign(a) },
+      { address: b.address, signature: await sign(b) },
+    ]);
+
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe("policy_rule_invalid");
+    expect(res.json().error.details.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "confidence_floor_missing", severity: "ERROR" }),
+      ]),
+    );
+    await app.close();
+  });
+
+  it("rejects production tenant activation without a confidence floor above 0.5", async () => {
+    const a = newAccount();
+    const b = newAccount();
+    const app = await buildApp(
+      buildDeps(new Set([a.address.toLowerCase(), b.address.toLowerCase()]), {
+        pool: fakePool({ version: 1, rules: [] }, "production"),
       }),
     );
 

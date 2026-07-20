@@ -273,7 +273,10 @@ export interface paths {
          * @description Public route (`skipAuth`), gated by `X-Platform-Service-Auth`.
          *     Rate-limited to 60/minute. Resolves `external_ref` to a member
          *     via its `platform`-surface identity link; the member must be
-         *     `status: active`.
+         *     `status: active`. Optional `scopes` may request a reduced
+         *     subset of the member session entitlements. The server rejects
+         *     any scope the member session does not hold and never widens
+         *     privilege.
          */
         post: operations["createSession"];
         /**
@@ -304,7 +307,9 @@ export interface paths {
          *     token required, only the refresh token itself. Rate-limited to
          *     60/minute. Refresh tokens are single-use: a token that has
          *     already been rotated once is treated as reuse (potential theft)
-         *     and revokes the entire token family.
+         *     and revokes the entire token family. Optional `scopes` may
+         *     further narrow the stored refresh-family scope set, but may not
+         *     request a scope outside that set.
          */
         post: operations["refreshSession"];
         delete?: never;
@@ -4770,6 +4775,8 @@ export interface operations {
             content: {
                 "application/json": {
                     external_ref: string;
+                    /** @description Optional reduced scope subset for the access token. */
+                    scopes?: string[];
                 };
             };
         };
@@ -4785,6 +4792,8 @@ export interface operations {
                         refresh_token?: string;
                         /** @enum {integer} */
                         expires_in?: 900;
+                        /** @description Scopes granted to the access token and refresh family. */
+                        scopes?: string[];
                         member?: components["schemas"]["Member"];
                     };
                 };
@@ -4857,6 +4866,8 @@ export interface operations {
             content: {
                 "application/json": {
                     refresh_token: string;
+                    /** @description Optional further reduced scope subset for the rotated token. */
+                    scopes?: string[];
                 };
             };
         };
@@ -4872,6 +4883,8 @@ export interface operations {
                         refresh_token?: string;
                         /** @enum {integer} */
                         expires_in?: 900;
+                        /** @description Scopes granted to the rotated access token and refresh family. */
+                        scopes?: string[];
                     };
                 };
             };
