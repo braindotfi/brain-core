@@ -47,7 +47,7 @@ switch (action.status) {
 
 ```typescript
 // In your approval UI, signed by the approver's key.
-await brain.approve(actionId, { as: "user_cfo" });
+await brain.approve(actionId);
 ```
 
 `approve` records the typed signature. Once all required approvers have signed, the intent becomes `approved` and Brain's internal settlement path runs the §6 gate and dispatches it; you do not call a separate execute step, and the approver's signature is not itself a settlement call. The action's status moves from `needs_approval` to `auto`.
@@ -58,7 +58,6 @@ For multi-approver policies, every required approver calls `brain.approve`. Brai
 
 ```typescript
 await brain.reject(actionId, {
-  as:     "user_cfo",
   reason: "Vendor under review",
 });
 ```

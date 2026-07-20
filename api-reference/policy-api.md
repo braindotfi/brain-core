@@ -26,34 +26,40 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "rules": [
-    {
-      "id": "rule_invoice_under_5k",
-      "applies_to": ["outbound_payment"],
-      "when": {
-        "amount_lte": { "currency": "USD", "value": "5000" },
-        "counterparty_in": ["cp_aws", "cp_gcp"]
+  "content": {
+    "version": 5,
+    "rules": [
+      {
+        "id": "rule_invoice_under_5k",
+        "applies_to": ["outbound_payment"],
+        "when": {
+          "amount.lte": { "currency": "USD", "value": "5000" },
+          "counterparty.in": "vendors.trusted"
+        },
+        "execute": "auto"
       },
-      "execute": "auto"
-    },
-    {
-      "id": "rule_invoice_above_5k",
-      "applies_to": ["outbound_payment"],
-      "when": { "amount_gt": { "currency": "USD", "value": "5000" } },
-      "require": ["role:cfo"],
-      "execute": "confirm"
-    }
-  ]
+      {
+        "id": "rule_invoice_above_5k",
+        "applies_to": ["outbound_payment"],
+        "when": { "amount.gt": { "currency": "USD", "value": "5000" } },
+        "require": "cfo_approval",
+        "execute": "confirm"
+      }
+    ],
+    "lists": { "vendors.trusted": ["cp_aws", "cp_gcp"] }
+  }
 }
 ```
+
+The `content` wrapper and the numeric `version` are mandatory. An optional top-level `quorum_required` sets how many distinct authorized signers `sign` needs (default `1`).
 
 Response:
 
 ```json
 {
-  "content_hash":     "0xabc123...",
-  "typed_data":       { "domain": {...}, "types": {...}, "message": {...} },
-  "required_signers": ["0xCFO...", "0xCTO..."]
+  "policy_id":       "pol_8231",
+  "state":           "pending_signatures",
+  "signing_payload": { "domain": {...}, "types": {...}, "message": {...} }
 }
 ```
 
@@ -61,7 +67,7 @@ Response:
 
 ### Sign and Activate
 
-Each required signer signs the typed-data payload from `compose`, then someone (any caller with `policy:write`) submits all signatures together:
+Each required signer signs the `signing_payload` from `compose`, then someone (any caller with `policy:sign`) submits the `policy_id` and all signatures together:
 
 ```http
 POST /v1/policy/{tenant_id}/sign
@@ -69,31 +75,37 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "content_hash": "0xabc123...",
+  "policy_id": "pol_8231",
   "signatures": [
-    { "signer": "0xCFO...", "signature": "0x..." },
-    { "signer": "0xCTO...", "signature": "0x..." }
+    { "address": "0xCFO...", "signature": "0x..." },
+    { "address": "0xCTO...", "signature": "0x..." }
   ]
 }
 ```
 
-`201 Created` with the activated `Policy`:
+`200 OK` with the serialized policy, an `activated` flag, and any activation `warnings`:
 
 ```json
 {
-  "id":             "pol_8231",
-  "tenant_id":      "acme",
-  "version":        4,
-  "content":        { "rules": [...] },
-  "content_hash":   "0xabc123...",
-  "signers":        [...],
-  "activated_at":   "2026-05-28T12:00:00Z",
-  "deactivated_at": null,
-  "onchain_tx_hash": "0xdef..."
+  "policy": {
+    "id":             "pol_8231",
+    "version":        4,
+    "state":          "active",
+    "content":        { "version": 4, "rules": [...] },
+    "content_hash":   "abc123...",
+    "signers":        [...],
+    "quorum_required": 2,
+    "activated_at":   "2026-05-28T12:00:00Z",
+    "deactivated_at": null,
+    "created_by":     "usr_...",
+    "created_at":     "2026-05-28T11:59:00Z"
+  },
+  "activated": true,
+  "warnings":  []
 }
 ```
 
-Returns `409` if the supplied signatures don't satisfy the required-signers list from `compose`.
+The signature count reaching `quorum_required` flips the policy to `active` (`activated: true`). Below quorum, the signatures are recorded and the policy stays `pending_signatures`. A signature that fails to verify, a duplicate signer, or a signer that is not an authorized tenant signer returns `401` with `policy_signature_invalid`. Signing a policy that is not awaiting signatures returns `409` with `policy_quorum_not_met`.
 
 ### Get the Active Policy
 
@@ -142,26 +154,31 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "type":         "outbound_payment",
-  "counterparty": "cp_aws",
-  "amount":       { "currency": "USD", "value": "7800" },
-  "rail":         "bank_ach"
+  "action": {
+    "kind":            "outbound_payment",
+    "counterparty_id": "cp_aws",
+    "amount":          { "currency": "USD", "value": "7800" }
+  }
 }
 ```
 
 ```json
 {
-  "decision": "confirm",
+  "outcome": "confirm",
+  "matched_rule_id": "rule_invoice_above_5k",
+  "required_approvers": ["cfo"],
   "trace": [
-    { "rule_id": "rule_invoice_under_5k", "matched": false, "explanation": "amount_lte violated" },
+    {
+      "rule_id": "rule_invoice_under_5k",
+      "matched": false,
+      "checks": [{ "key": "amount.lte", "passed": false, "detail": "USD 5000" }]
+    },
     {
       "rule_id": "rule_invoice_above_5k",
       "matched": true,
-      "explanation": "amount > 5000 and approver(s) required"
+      "checks": [{ "key": "amount.gt", "passed": true, "detail": "USD 5000" }]
     }
-  ],
-  "required_approvers": ["role:cfo"],
-  "policy_version": 4
+  ]
 }
 ```
 
@@ -189,22 +206,18 @@ Compare against `allow | confirm | reject` over HTTP/MCP; the `auto | needs_appr
 
 ### Action Vocabulary
 
-| `type`             | Domain                                            |
+The evaluate `action.kind` is one of the following. There is no `rail` field on the evaluate action.
+
+| `kind`             | Domain                                            |
 | ------------------ | ------------------------------------------------- |
 | `outbound_payment` | Money leaving (ACH, wire, on-chain, x402, escrow) |
 | `inbound_payment`  | Money arriving                                    |
 | `ledger_write`     | A Ledger-row mutation (e.g. agent normalization)  |
 | `onchain_tx`       | A non-payment on-chain transaction                |
-| `any`              | Match everything (typically in catch-all rules)   |
+| `agent_action`     | A non-money agent action gated by policy          |
+| `any`              | Only valid inside a rule's `applies_to` catch-all |
 
-| `rail` (optional) | Settlement Channel               |
-| ----------------- | -------------------------------- |
-| `bank_ach`        | Bank ACH via Plaid Transfer      |
-| `erp_writeback`   | NetSuite (and similar) writeback |
-| `onchain_base`    | `BrainSmartAccount` on Base      |
-| `notification`    | No money. Surface to a human     |
-
-These are the vocabularies the spec's `ProposedAction` accepts. (The PaymentIntent layer uses a separate, broader `action_type` set. `ach_outbound`, `wire`, `x402_settle`, etc.. That maps onto these rails internally.)
+A rule's `applies_to` accepts the same `kind` values, including `any`. (The PaymentIntent layer uses a separate, broader `action_type` set. `ach_outbound`, `wire`, `x402_settle`, etc.. Those map onto the `kind` values internally.)
 
 ### Lint a Draft
 
@@ -228,7 +241,7 @@ Content-Type: application/json
       "code": "rule_amount_currency_missing",
       "severity": "WARN",
       "rule_id": "rule_3",
-      "message": "amount_gt without explicit currency"
+      "message": "amount.gt without explicit currency"
     }
   ]
 }
@@ -244,12 +257,12 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "action":  { "type": "outbound_payment", "counterparty": "cp_aws", "amount": { "currency": "USD", "value": "7800" } },
+  "action":  { "kind": "outbound_payment", "counterparty_id": "cp_aws", "amount": { "currency": "USD", "value": "7800" } },
   "version": 3
 }
 ```
 
-Returns the same `PolicyDecision` shape as `/evaluate`.
+Returns `{ "decision": <same shape as /evaluate>, "policy_version": 3 }`. Unlike `/evaluate`, simulate wraps the decision with the `policy_version` it replayed against.
 
 ### Replay a Period
 
@@ -294,7 +307,12 @@ Content-Type: application/json
   "added": ["rule_x402_micropayment_cap"],
   "removed": [],
   "modified": [
-    { "rule_id": "rule_invoice_above_5k", "field": "require", "before": [], "after": ["role:cfo"] }
+    {
+      "rule_id": "rule_invoice_above_5k",
+      "field": "require",
+      "before": null,
+      "after": "cfo_approval"
+    }
   ]
 }
 ```

@@ -57,7 +57,7 @@ Response (201 on first ingest, 200 on dedup):
 
 Limits: 50 MB per artifact. Errors: `400`, `401`, `403`, `413`, `415`, `429`.
 
-`plaid` and `stripe` are reserved on this route: artifacts of those types may only be created through the HMAC-verified provider webhook, so a caller cannot mint high-trust evidence by labeling an upload. Asserting them here returns `raw_source_reserved`.
+`plaid`, `stripe`, `finch`, and `merge_accounting` are reserved on this route: those source types are provider-authenticated only and may be created solely through their authenticated provider integration, so a caller cannot mint high-trust evidence by labeling an upload. Asserting any of them here returns `raw_source_reserved`.
 
 ### Source Types
 
@@ -68,6 +68,8 @@ The `source_type` you tag an ingested artifact with. Used for routing to the rig
 | `plaid`             | Plaid bank-account artifacts (statements, transactions) |
 | `stripe`            | Stripe API objects                                      |
 | `netsuite`          | NetSuite SuiteTalk extracts                             |
+| `merge_accounting`  | Merge.dev accounting integrations (QuickBooks, Xero)    |
+| `finch`             | Finch payroll and HR provider extracts                  |
 | `email_inbound`     | Inbound email (e.g. invoices forwarded to a mailbox)    |
 | `csv_upload`        | Direct CSV file upload                                  |
 | `pdf_upload`        | Direct PDF / document upload                            |
@@ -93,7 +95,7 @@ X-Provider-Signature: <hmac>
 <provider-specific payload>
 ```
 
-This route has `security: []`. The HMAC signature replaces bearer auth. Brain verifies the signature, stores the payload as a Raw artifact, and returns `202 Accepted` with `{ accepted: true, request_id: "req_..." }`. A signature mismatch returns `401` with `raw_webhook_signature_invalid`.
+This route has `security: []`. The HMAC signature replaces bearer auth. Brain verifies the signature, stores the payload as one or more Raw artifacts, and returns `202 Accepted` with `{ accepted: true, trace_id: "...", artifacts: 1 }`, where `artifacts` is the count persisted (`0` on an idempotent replay). A signature mismatch returns `401` with `raw_webhook_signature_invalid`.
 
 ### Read a Raw Artifact
 

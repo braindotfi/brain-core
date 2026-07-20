@@ -88,32 +88,14 @@ const job = await brain.audit.export("acme", {
   to:     "2025-12-31",
 });
 
-// Poll until ready.
-let status;
-do {
-  await new Promise((r) => setTimeout(r, 1000));
-  status = await brain.audit.exportStatus(job.id);
-} while (status.state !== "ready");
-
-console.log(status.downloadUrl);  // signed URL valid for 24 hours
+console.log(job.jobId);  // track this export job
 ```
 
 The export contains every event in the range plus the Merkle proofs needed to verify any of them after the fact.
 
 ### Streaming Events Live
 
-Subscribe to the audit stream as events happen.
-
-```typescript
-const unsubscribe = brain.audit.subscribe("acme", {
-  onEvent: (e) => {
-    console.log(e.type, e.id, e.timestamp);
-    // ship to your SIEM, Datadog, Splunk, whatever
-  },
-});
-```
-
-Or use webhooks if you'd rather not hold an open connection.
+Use webhooks to receive audit events as they happen, then ship them to your SIEM, Datadog, Splunk, or wherever you centralize logs.
 
 ### Filtering by Actor
 

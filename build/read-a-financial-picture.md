@@ -28,7 +28,7 @@ const [accounts, transactions, obligations, counterparties, cashFlow] = await Pr
   brain.transactions.list("acme", { from: "2025-09-01", limit: 100 }),
   brain.obligations.list("acme", { status: ["upcoming", "due", "overdue"] }),
   brain.counterparties.list("acme", { sortBy: "activity", limit: 20 }),
-  brain.cashFlow.summarize("acme", { days: 30 }),
+  brain.cashFlow.summarize({ tenantId: "acme", since: "2025-09-01", until: "2025-09-30" }),
 ]);
 ```
 
@@ -86,22 +86,9 @@ do {
 } while (cursor);
 ```
 
-### Subscribing to Changes
+### Getting Notified of Changes
 
-Instead of polling, subscribe.
-
-```typescript
-const unsubscribe = brain.transactions.subscribe("acme", {
-  onCreated:    (t) => console.log("new tx:", t.id),
-  onUpdated:    (t) => console.log("tx updated:", t.id, t.status),
-  onSuperseded: (t) => console.log("tx corrected:", t.id, "→", t.supersededBy),
-});
-
-// later
-unsubscribe();
-```
-
-Or use webhooks if you're running stateless services. Set the endpoint in the Console under Settings → Webhooks.
+Instead of polling, use webhooks. Set the endpoint in the Console under Settings → Webhooks.
 
 | Event                     | Payload                                 |
 | ------------------------- | --------------------------------------- |

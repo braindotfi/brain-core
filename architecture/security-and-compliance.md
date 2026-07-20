@@ -4,7 +4,7 @@ Brain's security posture rests on a small set of non-negotiable principles. Each
 
 ### Non-Negotiable Principles
 
-<table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>Non-Custodial</strong></td><td>Brain never takes custody of customer funds. Money flows directly between the tenant's accounts and counterparties on the tenant's chosen rails.</td></tr><tr><td><strong>Tenant-Isolated</strong></td><td>Each tenant has dedicated logical database partitions and tenant-prefixed object paths. Source credentials are encrypted with a global AES-256-GCM key loaded from Azure Key Vault in production.</td></tr><tr><td><strong>Data Minimization</strong></td><td>Brain ingests only what enabled capabilities require. Revoking a source triggers retention and deletion workflows.</td></tr><tr><td><strong>RBAC Across Humans and Agents</strong></td><td>Every API call is scoped by tenant, role, and policy. Agents are subjects in the same RBAC graph as humans.</td></tr><tr><td><strong>Human Approval Thresholds</strong></td><td>Any action above a tenant-defined threshold, any new counterparty, or any new jurisdiction can require human sign-off before execution.</td></tr><tr><td><strong>Compliance Ready</strong></td><td>Sanctions screening, address risk, and anomaly enrichment run on every proposed action via Chainalysis and equivalents.</td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>Non-Custodial</strong></td><td>Brain never takes custody of customer funds. Money flows directly between the tenant's accounts and counterparties on the tenant's chosen rails.</td></tr><tr><td><strong>Tenant-Isolated</strong></td><td>Each tenant has dedicated logical database partitions and tenant-prefixed object paths. Source credentials are encrypted with a global AES-256-GCM key loaded from Azure Key Vault in production.</td></tr><tr><td><strong>Data Minimization</strong></td><td>Brain ingests only what enabled capabilities require. Revoking a source triggers retention and deletion workflows.</td></tr><tr><td><strong>RBAC Across Humans and Agents</strong></td><td>Every API call is scoped by tenant, role, and policy. Agents are subjects in the same RBAC graph as humans.</td></tr><tr><td><strong>Human Approval Thresholds</strong></td><td>Any action above a tenant-defined threshold, any new counterparty, or any new jurisdiction can require human sign-off before execution.</td></tr><tr><td><strong>Compliance Ready</strong></td><td>The pre-execution gate blocks any counterparty an operator has flagged as sanctioned and can require verification before money moves. Live third-party screening (Chainalysis and equivalents) is planned, not yet integrated.</td></tr></tbody></table>
 
 ### Standards and Certifications
 
@@ -23,15 +23,15 @@ Every proposed action passes through three independent gates. **All three must p
 | Layer                                   | Where It Runs       | What It Catches                                                                                                                 |
 | --------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | **1. Backend Policy Engine**            | Off-chain           | Most violations, fast feedback, dynamic risk conditions                                                                         |
-| **2. Compliance enrichment**            | Off-chain           | Sanctions screening (Chainalysis), address risk, anomaly detection                                                              |
+| **2. Counterparty risk checks**         | Off-chain           | The gate rejects a counterparty whose operator-set `risk_level` is `sanctioned` and enforces the policy verification threshold  |
 | **3. On-chain session-key enforcement** | `BrainSmartAccount` | Final gate. `executeViaSessionKey` enforces the key's scope (target/selector allowlists), spend caps, and bound `policyVersion` |
 
 ```
 Agent proposes
    ↓
-[ Gate 1: Policy Engine ]    ← signed verdict produced if ALLOW
+[ Gate 1: Policy Engine ]    ← signed verdict produced if allow
    ↓
-[ Gate 2: Compliance ]       ← sanctions / risk / anomaly checks
+[ Gate 2: Counterparty risk ]  ← operator-set sanctioned / verified checks
    ↓
 [ Gate 3: BrainSmartAccount.executeViaSessionKey ]  ← on-chain
    ↓
@@ -42,17 +42,17 @@ Executes
 **Defence in depth.** Even if the off-chain Policy Engine were fully compromised, the on-chain `BrainSmartAccount` would still reject any call outside the granted session key's policyVersion-bound scope and spend caps.
 {% endhint %}
 
-### Compliance Enrichment
+### Counterparty Risk Attributes
 
-Every proposed action that involves a payment is enriched with compliance data before policy evaluation.
+Sanctions and risk are operator-set attributes on the counterparty record, read by the pre-execution gate. They are not produced by a live third-party screening call in the current build.
 
-| Check                   | Provider Type                 | What It Catches                                                      |
-| ----------------------- | ----------------------------- | -------------------------------------------------------------------- |
-| **Sanctions screening** | Chainalysis (and equivalents) | OFAC, UN, EU, UK lists                                               |
-| **Address risk**        | Chain analytics               | High-risk wallets, mixer exposure, sanctioned counterparty proximity |
-| **Anomaly detection**   | Brain internal                | Statistical outliers vs tenant's baseline                            |
+| Attribute             | Source                    | What It Gates                                                           |
+| --------------------- | ------------------------- | ----------------------------------------------------------------------- |
+| **`risk_level`**      | Operator-set ledger field | A value of `sanctioned` is a hard reject at the gate                    |
+| **`verified_status`** | Operator-set ledger field | Enforces the policy counterparty-verification threshold above an amount |
+| **Anomaly detection** | Brain internal            | Statistical outliers vs tenant's baseline                               |
 
-The output of these checks feeds directly into Policy. A tenant policy can reference `counterparty.risk_score` or `counterparty.sanctions_status` like any other field.
+The gate reads these fields directly: it rejects a counterparty whose `risk_level` is `sanctioned`, and above a policy threshold it requires `verified_status` to be `document_verified` or `sanctions_cleared`. Live third-party screening (Chainalysis and equivalents) that would populate these fields automatically is planned, not yet integrated.
 
 ### Smart Contract Security
 
@@ -79,7 +79,7 @@ On-chain (public):
   - Merkle roots
   - Hashed tenantId
   - Anchor timestamp
-  - Anchorer EIP-712 signature
+  - Event count and period bounds (periodStart, periodEnd)
 
 Off-chain (encrypted):
   - Event payloads

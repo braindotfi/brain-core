@@ -38,7 +38,7 @@ curl -sX POST "$BRAIN/v1/auth/login" -H 'content-type: application/json' \
   -d '{"email":"founder@example.com","password":"a-strong-passphrase-12+"}'
 # → 200 { "access_token":"eyJ…", "expires_in":900,
 #         "principal": { "type":"user", "scopes":["ledger:read","wiki:read",
-#           "policy:read","policy:write","audit:read","execution:read","payment_intent:approve"] } }
+#           "raw:read","raw:write","policy:read","policy:write","audit:read","execution:read","payment_intent:approve"] } }
 ```
 
 Use it as a bearer token. It's tenant-scoped (RLS) and 15-minute-lived; log in again to refresh.

@@ -54,7 +54,7 @@ Content-Type: application/json
 ### Search Entities
 
 ```http
-GET /v1/wiki/search?kind=counterparty&q=AWS&limit=10
+GET /v1/wiki/search?kind=policy&q=wire&limit=10
 Authorization: Bearer <token>
 ```
 
@@ -62,13 +62,13 @@ Authorization: Bearer <token>
 {
   "results": [
     {
-      "id": "cp_aws",
-      "kind": "counterparty",
-      "attributes": { "name": "Amazon Web Services" },
+      "id": "ent_policy_v4",
+      "kind": "policy",
+      "attributes": { "name": "Wire approval policy v4" },
       "valid_from": "2025-01-15",
       "valid_to": null,
-      "provenance": "extracted",
-      "confidence": 0.97,
+      "provenance": "human_confirmed",
+      "confidence": 1.0,
       "source_evidence": ["raw_8231"]
     }
   ],
@@ -76,7 +76,9 @@ Authorization: Bearer <token>
 }
 ```
 
-Query params: `kind` (`account | counterparty | transaction | obligation | policy | agent`), `q` (full-text), `semantic` (pgvector), `since`, `until`, `limit` (default 50, max 500), `cursor`. Pass `semantic=<string>` to run a pgvector similarity search instead of (or in addition to) full-text.
+Query params: `kind` (`policy | agent`), `q` (full-text), `semantic` (pgvector), `since`, `until`, `limit` (default 50, max 500), `cursor`. Pass `semantic=<string>` to run a pgvector similarity search instead of (or in addition to) full-text.
+
+Wiki search returns only Wiki-resident kinds. The four Ledger kinds (`account`, `counterparty`, `transaction`, `obligation`) are rejected with `request_params_invalid` and a redirect hint to the corresponding `/v1/ledger/*` endpoint, since financial truth lives in the Ledger, not the Wiki.
 
 ### Get an Entity
 

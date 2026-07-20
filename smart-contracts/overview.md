@@ -51,12 +51,12 @@ All six contracts are deployed on **Base Sepolia (chain `84532`)**. There is **n
 
 ### Operational Safety
 
-| Mechanism                               | Purpose                                                                             |
-| --------------------------------------- | ----------------------------------------------------------------------------------- |
-| **Immutable contracts**                 | No upgrade path in MVP; any change ships as a separately audited redeploy           |
-| **Anchorer key hardening**              | Current testnet publisher is a single EOA; HSM-backed signing is a pre-mainnet TODO |
-| **Strict monotonicity on `batchIndex`** | History cannot be silently rewritten                                                |
-| **External audit**                      | Required before any mainnet deployment, plus a public bug bounty                    |
+| Mechanism                      | Purpose                                                                             |
+| ------------------------------ | ----------------------------------------------------------------------------------- |
+| **Immutable contracts**        | No upgrade path in MVP; any change ships as a separately audited redeploy           |
+| **Anchorer key hardening**     | Current testnet publisher is a single EOA; HSM-backed signing is a pre-mainnet TODO |
+| **Root-uniqueness per tenant** | A published root cannot be re-anchored, so history cannot be silently rewritten     |
+| **External audit**             | Required before any mainnet deployment, plus a public bug bounty                    |
 
 {% hint style="info" %}
 Most logic is off-chain by design. The on-chain surface is the smallest possible footprint required to anchor truth, register identity, and enforce session-key scope and spend caps.

@@ -94,17 +94,20 @@ The on-chain read is **cached for 60 seconds per agent**. This balances on-chain
 **Revocation is immediate and on-chain.** A tenant can revoke an agent's authorization at any time by calling `revokeAgent` on `BrainMCPAgentRegistry` with their EIP-712 signature. Within the cache window (<= 60 seconds), the MCP server rejects all subsequent calls.
 {% endhint %}
 
-### The Five Capability Scopes
+### The Capability Scopes
 
 The canonical scope document enumerates which of these the tenant has granted to the agent.
 
-| Scope                    | Allows                                                       |
-| ------------------------ | ------------------------------------------------------------ |
-| `ledger:read`            | All `ledger.*` read tools and `brain://ledger/...` resources |
-| `wiki:read`              | All `wiki.*` read tools and `brain://wiki/...` resources     |
-| `raw:write`              | The `raw.contribute` tool                                    |
-| `payment_intent:propose` | The `payment_intent.propose` tool                            |
-| `execution:propose`      | The `agent.action.propose` tool                              |
+| Scope                    | Allows                                                                                                   |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `ledger:read`            | All `ledger.*` read tools and `brain://ledger/...` resources                                             |
+| `wiki:read`              | All `wiki.*` read tools and `brain://wiki/pages/...` resources                                           |
+| `raw:write`              | The `raw.contribute` tool                                                                                |
+| `payment_intent:propose` | The `payment_intent.propose` tool and the `brain://payments/action_types` resource                       |
+| `payment_intent:approve` | Accepted at the `proposals.decide` call boundary; member approval authority is enforced downstream       |
+| `execution:read`         | The `proposals.list`, `proposals.get`, and `evidence.resolve` tools; also accepted by `proposals.decide` |
+| `execution:propose`      | The `agent.action.propose` tool                                                                          |
+| `audit:read`             | The `brain://proofs/{action_id}` resource                                                                |
 
 A tenant can grant any subset. Unused scopes do not appear in the canonical document. The `scopeHash` is the **keccak-256** of the canonical, lexicographically-sorted scope set (`computeAgentScopeHash` in `shared/src/agents/capability.ts`); it is the same hash the registration tooling writes on-chain, so the seed, JWT claim, and registry agree byte-for-byte.
 
@@ -182,4 +185,4 @@ After revocation, the on-chain `revokedAt` becomes non-zero, so the scope read r
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 12 tools and their per-tool scope requirements.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 BrainMCPAgentRegistry</strong></td><td>The on-chain contract this all anchors to.</td><td><a href="../smart-contracts/brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 16 tools and their per-tool scope requirements.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 BrainMCPAgentRegistry</strong></td><td>The on-chain contract this all anchors to.</td><td><a href="../smart-contracts/brainmcpagentregistry.md">brainmcpagentregistry.md</a></td><td></td></tr></tbody></table>

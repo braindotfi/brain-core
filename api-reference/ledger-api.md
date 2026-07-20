@@ -87,7 +87,7 @@ Authorization: Bearer <token>
 }
 ```
 
-`account_type` enum: `bank_checking | bank_savings | card | loan | line_of_credit | onchain`. Filters: `status` (`active | closed | frozen | pending`), `account_type`, `limit` (default 50, max 500), `cursor`.
+`account_type` enum: `bank_checking | bank_savings | card | loan | line_of_credit | onchain | payment_processor`. Filters: `status` (`active | closed | frozen | pending`), `account_type`, `limit` (default 50, max 500), `cursor`.
 
 For one account plus its latest balance:
 
@@ -116,7 +116,7 @@ GET /v1/ledger/counterparties?q=AWS&type=vendor&verified_status=document_verifie
 Authorization: Bearer <token>
 ```
 
-`type` enum: `merchant | vendor | customer | employer | bank | wallet | exchange | tax_authority | other`. `verified_status`: `unverified | self_attested | document_verified | sanctions_cleared`. Each counterparty carries `risk_level` (`low | medium | high | sanctioned`), `aliases[]`, and `linked_accounts[]`.
+`type` enum: `merchant | vendor | customer | employer | employee | bank | wallet | exchange | tax_authority | agent | other`. `verified_status`: `unverified | self_attested | document_verified | sanctions_cleared`. Each counterparty carries `risk_level` (`low | medium | high | sanctioned`), `aliases[]`, and `linked_accounts[]`.
 
 ### List Invoices and Obligations
 
@@ -137,8 +137,7 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "raw_parsed_id":  "rp_001",
-  "target_entities": ["transaction", "counterparty"]
+  "raw_parsed_id":  "rp_001"
 }
 ```
 
@@ -151,7 +150,7 @@ Content-Type: application/json
 }
 ```
 
-`target_entities` (optional) is a subset of `account | balance | transaction | counterparty | obligation | document | category | transfer | invoice`.
+Normalization derives every entity implied by the parsed row. The route accepts an optional `target_entities` field for forward compatibility, but the current handler ignores it: it reads only `raw_parsed_id` and produces the full entity set the parsed row supports.
 
 ### Reconciliation
 
@@ -193,7 +192,7 @@ Authorization: Bearer <token>
 }
 ```
 
-`match_type` enum: `transaction_receipt | invoice_payment | statement_balance | wallet_transfer | payroll_bank_debit | subscription_charge | card_charge`. `status`: `unmatched | matched | partially_matched | duplicate_possible | disputed | cleared | failed | reversed`.
+`match_type` enum: `transaction_receipt | invoice_payment | statement_balance | wallet_transfer | payroll_bank_debit | subscription_charge | card_charge | onchain_settlement | obligation_duplicate`. `status`: `unmatched | matched | partially_matched | duplicate_possible | disputed | cleared | failed | reversed`.
 
 ### Provenance on Every Row
 

@@ -29,7 +29,7 @@ The owner can `pauseSessionKey`/`unpauseSessionKey` or `revokeSessionKey` at any
 
 ## The Shared Pattern
 
-Every internal agent is described by an **agent definition**: its capabilities, the events and intent patterns it responds to, the data it may read, its risk level, its minimum confidence, the evidence it requires, and its default authority. A handler turns a triggered action into a proposal. The agent never executes; it proposes through `POST /v1/agents/{id}/propose`, which runs Policy and the deterministic pre-execution gate.
+Every internal agent is described by an **agent definition**: its capabilities, the events and intent patterns it responds to, the data it may read, its risk level, its minimum confidence, the evidence it requires, and its default authority. A handler turns a triggered action into a proposal. The agent never executes; it proposes through `POST /v1/agents/run`, which runs Policy and the deterministic pre-execution gate.
 
 ## Routing
 
@@ -41,7 +41,7 @@ The proposal decision stays `ALLOW`, `ESCALATE`, or `DENY`. Internal agents add 
 
 ## The Business Agent Library
 
-Brain ships a library of business-category internal agents. Every one follows the shared pattern above: a `keccak256` capability, a definition, a handler that only proposes, and a `policy.template.json` a tenant can adopt. None of them moves money outside `POST /v1/agents/{id}/propose` and the pre-execution gate.
+Brain ships a library of business-category internal agents. Every one follows the shared pattern above: a `keccak256` capability, a definition, a handler that only proposes, and a `policy.template.json` a tenant can adopt. None of them moves money outside `POST /v1/agents/run` and the pre-execution gate.
 
 | Agent                    | Capability             | Risk   | Typical mode             |
 | ------------------------ | ---------------------- | ------ | ------------------------ |
@@ -66,9 +66,9 @@ Brain also ships consumer-category agents for individuals. They follow the same 
 | Agent                 | Capability          | Risk   | Typical mode                |
 | --------------------- | ------------------- | ------ | --------------------------- |
 | **Personal Budget**   | `personal_budget`   | low    | propose                     |
-| **Bill Management**   | `bill_management`   | medium | confirm (financial)         |
-| **Savings**           | `savings_sweep`     | low    | confirm (financial)         |
-| **Debt Optimization** | `debt_optimization` | medium | confirm (financial)         |
+| **Bill Management**   | `bill_management`   | medium | notify_only                 |
+| **Savings**           | `savings_sweep`     | low    | propose                     |
+| **Debt Optimization** | `debt_optimization` | medium | notify_only                 |
 | **Tax Prep**          | `tax_prep`          | low    | propose                     |
 | **Travel Finance**    | `travel_finance`    | low    | propose                     |
 | **Financial Health**  | `financial_health`  | low    | notify_only                 |
