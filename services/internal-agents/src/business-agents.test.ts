@@ -269,7 +269,11 @@ describe("integration", () => {
   it("Vendor Risk blocks payment.destination_changed when flagged risk evidence is present", () => {
     const withRisk = vendorRiskHandler.build({
       action: "flag_vendor_risk",
-      context: { counterparty_id: "cp_1", payment_destination: "dest_2" },
+      context: {
+        counterparty_id: "cp_1",
+        payment_destination: "dest_2",
+        verified_status: "document_verified",
+      },
       evidence: FULL, // includes counterparty_history below
     });
     // FULL lacks counterparty_history; add it explicitly for the block path.
@@ -297,7 +301,7 @@ describe("integration", () => {
   it("Vendor Risk does not block on clean counterparty history presence alone", () => {
     const cleanHistory = vendorRiskHandler.build({
       action: "flag_vendor_risk",
-      context: { counterparty_id: "cp_1" },
+      context: { counterparty_id: "cp_1", verified_status: "document_verified" },
       evidence: {
         items: [{ kind: "counterparty_history", ref: "hist_clean", severity: "low" }],
         completeness: 1,

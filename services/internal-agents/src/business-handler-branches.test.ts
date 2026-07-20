@@ -94,7 +94,7 @@ describe("vendorRiskHandler branches", () => {
   it("keeps a non-flag action unchanged even with risk evidence", () => {
     const proposed = vendorRiskHandler.build({
       action: "escalate",
-      context: { counterparty_id: "cp_2" },
+      context: { counterparty_id: "cp_2", verified_status: "document_verified" },
       evidence: withItems([{ kind: "counterparty_history", ref: "hist_2" }]),
     });
     expect(proposed.channel).toBe("agent");

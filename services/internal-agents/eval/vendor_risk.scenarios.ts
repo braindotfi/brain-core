@@ -16,7 +16,7 @@ const evidence: EvidenceBundle = {
 export const vendorRiskScenarios = [
   scenario(
     "clear high risk new vendor with bank change",
-    "Reviewed vendor risk fixture: a new unverified vendor with a recent changed bank destination should be flagged high risk and held.",
+    "Reviewed vendor risk fixture: an unverified vendor must hard-hold even when other risk signals are present.",
     baseContext({
       verified_status: "unverified",
       created_at: "2026-07-17T00:00:00.000Z",
@@ -25,6 +25,20 @@ export const vendorRiskScenarios = [
       current_destination_hash: "new_hash",
     }),
     { expected_high_risk: true, risk_rank: 3 },
+  ),
+  scenario(
+    "verified vendor with bank change scores via signals",
+    "Reviewed vendor risk fixture: a document-verified vendor with a recent changed bank destination should score elevated through signals, not hard-hold.",
+    baseContext({
+      counterparty_id: "cp_eval_verified_change",
+      verified_status: "document_verified",
+      created_at: "2026-01-01T00:00:00.000Z",
+      payment_destination_changed_at: "2026-07-18T00:00:00.000Z",
+      prior_destination_hash: "old_hash",
+      current_destination_hash: "new_hash",
+      destination_name: "Eval Vendor",
+    }),
+    { expected_high_risk: false, risk_rank: 2 },
   ),
   scenario(
     "clear low risk established vendor",
@@ -41,8 +55,8 @@ export const vendorRiskScenarios = [
     { expected_high_risk: false, risk_rank: 1 },
   ),
   scenario(
-    "near threshold verify",
-    "Reviewed vendor risk fixture: newly created plus unverified should trigger verification but not a high-risk hold.",
+    "unverified identity hard hold",
+    "Reviewed vendor risk fixture: newly created plus unverified must hard-hold until identity is verified.",
     baseContext({
       counterparty_id: "cp_eval_near",
       verified_status: "unverified",
@@ -50,7 +64,7 @@ export const vendorRiskScenarios = [
       prior_destination_hash: "",
       current_destination_hash: "",
     }),
-    { expected_high_risk: false, risk_rank: 2 },
+    { expected_high_risk: true, risk_rank: 3 },
   ),
   scenario(
     "unresolved identity holds",

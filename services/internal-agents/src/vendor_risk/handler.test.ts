@@ -39,12 +39,7 @@ describe("vendorRiskHandler", () => {
         risk_band: "high",
         risk_score: 1,
         recommended_action: "hold",
-        triggering_signals: [
-          "recent_bank_detail_change",
-          "destination_changed_vs_history",
-          "newly_created_vendor",
-          "unverified_identity",
-        ],
+        triggering_signals: ["unverified_identity"],
       });
     }
   });
@@ -79,7 +74,7 @@ describe("vendorRiskHandler", () => {
     }
   });
 
-  it("verifies a near-threshold newly created unverified vendor", () => {
+  it("hard-holds a near-threshold unverified vendor", () => {
     const proposed = vendorRiskHandler.build({
       action: "require_approval",
       now: new Date("2026-07-18T00:00:00.000Z"),
@@ -96,10 +91,42 @@ describe("vendorRiskHandler", () => {
     expect(proposed.channel).toBe("agent");
     if (proposed.channel === "agent") {
       expect(proposed.action).toMatchObject({
-        type: "require_approval",
+        type: "block_payment",
+        risk_band: "high",
+        risk_score: 1,
+        recommended_action: "hold",
+        triggering_signals: ["unverified_identity"],
+      });
+    }
+  });
+
+  it("scores a verified vendor with a bank detail change through graduated signals", () => {
+    const proposed = vendorRiskHandler.build({
+      action: "flag_vendor_risk",
+      now: new Date("2026-07-18T00:00:00.000Z"),
+      context: {
+        counterparty_id: "cp_vendor_4",
+        vendor_name: "Known Vendor",
+        identity_resolved: true,
+        verified_status: "document_verified",
+        created_at: "2026-01-01T00:00:00.000Z",
+        payment_destination_id: "cpi_4",
+        payment_destination_changed_at: "2026-07-18T00:00:00.000Z",
+        prior_destination_hash: "old_hash",
+        current_destination_hash: "new_hash",
+        destination_name: "Known Vendor",
+      },
+      evidence,
+    });
+
+    expect(proposed.channel).toBe("agent");
+    if (proposed.channel === "agent") {
+      expect(proposed.action).toMatchObject({
+        type: "flag_vendor_risk",
         risk_band: "elevated",
-        risk_score: 0.5,
+        risk_score: 0.6,
         recommended_action: "verify",
+        triggering_signals: ["recent_bank_detail_change", "destination_changed_vs_history"],
       });
     }
   });

@@ -93,16 +93,18 @@ function scoreVendorRisk(
   identity: { readonly vendorId: string; readonly identityResolved: boolean },
 ): VendorRiskScore {
   const signals: RiskSignal[] = [];
+  const verifiedStatus = readString(input.context.verified_status);
   if (!identity.identityResolved || identity.vendorId.length === 0) {
-    // Defensive path: the production scanner passes identity_resolved=true for
-    // existing counterparties. Unverified vendors are scored through
-    // verified_status in v1 until canonical vendor identity links are first class.
     signals.push({
       id: "identity_unresolved",
       label: "identity unresolved",
       score: 1,
     });
-    return scoreFromSignals(signals);
+    return hardHoldFromSignals(signals);
+  }
+  if (isUnverifiedStatus(verifiedStatus)) {
+    signals.push({ id: "unverified_identity", label: "unverified identity", score: 1 });
+    return hardHoldFromSignals(signals);
   }
 
   if (isNewVendor(input)) {
@@ -152,6 +154,16 @@ function scoreFromSignals(signals: readonly RiskSignal[]): VendorRiskScore {
   return { riskScore, riskBand, recommendedAction, triggeringSignals: sorted };
 }
 
+function hardHoldFromSignals(signals: readonly RiskSignal[]): VendorRiskScore {
+  const sorted = [...signals].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  return {
+    riskScore: 1,
+    riskBand: "high",
+    recommendedAction: "hold",
+    triggeringSignals: sorted,
+  };
+}
+
 function isNewVendor(input: HandlerInput): boolean {
   return daysSince(input.context.created_at, input.now ?? new Date()) <= 7;
 }
@@ -161,8 +173,11 @@ function hasRecentDestinationChange(input: HandlerInput): boolean {
 }
 
 function isUnverified(input: HandlerInput): boolean {
-  const status = readString(input.context.verified_status, "unverified");
-  return status === "unverified" || status === "self_attested";
+  return isUnverifiedStatus(readString(input.context.verified_status));
+}
+
+function isUnverifiedStatus(status: string): boolean {
+  return status === "" || status === "unverified" || status === "self_attested";
 }
 
 function destinationChangedVsHistory(input: HandlerInput): boolean {
