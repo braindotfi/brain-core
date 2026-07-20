@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import Fastify, { type FastifyRequest } from "fastify";
 import {
   InMemoryAuditEmitter,
+  decodeKeysetCursor,
   errorHandlerPlugin,
   newTenantId,
   type Principal,
@@ -124,6 +125,29 @@ describe("member routes", () => {
       expect(body.members[0].id).toBe("usr_admin");
       expect(body.members[0].role).toBe("admin");
       expect(body.members[0].active).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("returns a next cursor when member list has another page", async () => {
+    const admin = row("usr_admin", "admin");
+    const approver = row("usr_approver", "approver");
+    const { app } = await buildApp({
+      principal: principal("usr_admin"),
+      members: { usr_admin: admin, usr_approver: approver },
+      activeAdmins: 1,
+    });
+    try {
+      const res = await app.inject({ method: "GET", url: "/members?limit=1" });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.members).toHaveLength(1);
+      expect(body.next_cursor).toEqual(expect.any(String));
+      expect(decodeKeysetCursor(body.next_cursor)).toEqual({
+        sort: admin.email,
+        id: admin.id,
+      });
     } finally {
       await app.close();
     }

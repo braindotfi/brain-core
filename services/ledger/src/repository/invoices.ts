@@ -1,4 +1,4 @@
-import type { TenantScopedClient } from "@brain/shared";
+import type { KeysetCursor, TenantScopedClient } from "@brain/shared";
 import type { LedgerRowCommon } from "./types.js";
 
 export interface InvoiceRow extends LedgerRowCommon {
@@ -28,7 +28,7 @@ export async function findInvoiceById(
 
 export async function listInvoices(
   client: TenantScopedClient,
-  filters: { status?: string; counterparty_id?: string; limit: number },
+  filters: { status?: string; counterparty_id?: string; limit: number; cursor?: KeysetCursor },
 ): Promise<InvoiceRow[]> {
   const where: string[] = [];
   const values: unknown[] = [];
@@ -40,12 +40,20 @@ export async function listInvoices(
     values.push(filters.counterparty_id);
     where.push(`counterparty_id = $${values.length}`);
   }
+  if (filters.cursor !== undefined) {
+    values.push(filters.cursor.sort, filters.cursor.id);
+    const sortIdx = values.length - 1;
+    const idIdx = values.length;
+    where.push(
+      `(issue_date < $${sortIdx}::timestamptz OR (issue_date = $${sortIdx}::timestamptz AND id < $${idIdx}))`,
+    );
+  }
   values.push(filters.limit);
   const limitIdx = values.length;
   const whereSql = where.length === 0 ? "" : `WHERE ${where.join(" AND ")}`;
   const { rows } = await client.query<InvoiceRow>(
     `SELECT * FROM ledger_invoices ${whereSql}
-     ORDER BY issue_date DESC
+     ORDER BY issue_date DESC, id DESC
      LIMIT $${limitIdx}`,
     values,
   );

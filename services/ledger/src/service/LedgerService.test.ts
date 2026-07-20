@@ -1,6 +1,12 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, isBrainError, newTenantId, newUserId } from "@brain/shared";
+import {
+  decodeKeysetCursor,
+  InMemoryAuditEmitter,
+  isBrainError,
+  newTenantId,
+  newUserId,
+} from "@brain/shared";
 import { LedgerService } from "./LedgerService.js";
 
 /**
@@ -101,7 +107,34 @@ describe("LedgerService — limit clamping and reads", () => {
     await service.listCounterparties(ctx, { verified_status: "unverified" });
     const list = calls.find((c) => c.text.includes("SELECT * FROM ledger_counterparties"))!;
     expect(list.text).toContain("verified_status = $1");
-    expect(list.values).toEqual(["unverified", 50]);
+    expect(list.values).toEqual(["unverified", 51]);
+  });
+
+  it("returns a keyset cursor when an account list has another page", async () => {
+    const rows = [
+      accountRow("acct_2", new Date("2026-07-02T00:00:00Z")),
+      accountRow("acct_1", new Date("2026-07-01T00:00:00Z")),
+    ];
+    const { pool, calls } = fakePool({ "SELECT * FROM ledger_accounts": rows });
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    const result = await service.listAccounts(ctx, { limit: 1 });
+    expect(result.items.map((account) => account.id)).toEqual(["acct_2"]);
+    expect(result.next_cursor).toEqual(expect.any(String));
+    expect(decodeKeysetCursor(result.next_cursor!)).toEqual({
+      sort: "2026-07-02T00:00:00.000Z",
+      id: "acct_2",
+    });
+    const list = calls.find((c) => c.text.includes("SELECT * FROM ledger_accounts"))!;
+    expect(list.values.at(-1)).toBe(2);
+  });
+
+  it("rejects malformed cursors before a list query runs", async () => {
+    const { pool, calls } = fakePool();
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    await expect(service.listTransactions(ctx, { cursor: "not-base64" })).rejects.toMatchObject({
+      code: "invalid_cursor",
+    });
+    expect(calls.some((c) => c.text.includes("SELECT * FROM ledger_transactions"))).toBe(false);
   });
 });
 
@@ -120,6 +153,22 @@ function rowCommon() {
     confidence: 0.9,
     created_at: NOW,
     updated_at: NOW,
+  };
+}
+
+function accountRow(id: string, createdAt: Date) {
+  return {
+    ...rowCommon(),
+    id,
+    created_at: createdAt,
+    institution: "Mercury",
+    external_account_id: id,
+    account_type: "bank_checking",
+    name: id,
+    currency: "USD",
+    current_balance: "1",
+    available_balance: "1",
+    status: "active",
   };
 }
 

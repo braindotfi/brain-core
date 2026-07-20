@@ -246,4 +246,19 @@ describe("Brain.raw", () => {
     expect(calls[0]?.url).toContain("/sources/src_1/sync/sjob_1");
     expect(calls[0]?.method).toBe("GET");
   });
+
+  it("lists sources with cursor metadata", async () => {
+    const { fetch, calls } = mockFetch(200, {
+      data: [{ id: "src_1", type: "plaid", status: "active" }],
+      next_cursor: "src_cursor",
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const page = await brain.raw.listSources({ limit: 1, cursor: "old" });
+
+    expect(page.sources).toHaveLength(1);
+    expect(page.nextCursor).toBe("src_cursor");
+    expect(calls[0]?.url).toContain("/sources?limit=1");
+    expect(calls[0]?.url).toContain("cursor=old");
+  });
 });

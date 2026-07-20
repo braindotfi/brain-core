@@ -187,15 +187,20 @@ describe("Brain", () => {
   });
 
   describe("counterparties", () => {
-    it("list returns counterparties array (no pagination)", async () => {
-      const { fetch } = mockFetch(200, {
+    it("list returns a backward-compatible counterparty array with nextCursor", async () => {
+      const { fetch, calls } = mockFetch(200, {
         counterparties: [{ id: "cp_1" }, { id: "cp_2" }, { id: "cp_3" }],
+        next_cursor: "cp_cursor",
       });
       const brain = new Brain({ token: "k", fetch });
 
-      const list = await brain.counterparties.list({ q: "stripe" });
+      const list = await brain.counterparties.list({ q: "stripe", limit: 3, cursor: "old" });
 
       expect(list).toHaveLength(3);
+      expect(list.counterparties).toHaveLength(3);
+      expect(list.nextCursor).toBe("cp_cursor");
+      expect(calls[0]?.url).toContain("limit=3");
+      expect(calls[0]?.url).toContain("cursor=old");
     });
 
     it("list returns empty array when body has no counterparties", async () => {
@@ -205,32 +210,39 @@ describe("Brain", () => {
       const list = await brain.counterparties.list();
 
       expect(list).toEqual([]);
+      expect(list.nextCursor).toBeNull();
     });
   });
 
   describe("obligations", () => {
-    it("list returns obligations array", async () => {
+    it("list returns a backward-compatible obligation array with nextCursor", async () => {
       const { fetch } = mockFetch(200, {
         obligations: [{ id: "obl_1" }],
+        next_cursor: "obl_cursor",
       });
       const brain = new Brain({ token: "k", fetch });
 
       const list = await brain.obligations.list({ status: "due" });
 
       expect(list).toHaveLength(1);
+      expect(list.obligations).toHaveLength(1);
+      expect(list.nextCursor).toBe("obl_cursor");
     });
   });
 
   describe("invoices", () => {
-    it("list returns invoices array", async () => {
+    it("list returns a backward-compatible invoice array with nextCursor", async () => {
       const { fetch } = mockFetch(200, {
         invoices: [{ id: "inv_1" }],
+        next_cursor: "inv_cursor",
       });
       const brain = new Brain({ token: "k", fetch });
 
       const list = await brain.invoices.list();
 
       expect(list).toHaveLength(1);
+      expect(list.invoices).toHaveLength(1);
+      expect(list.nextCursor).toBe("inv_cursor");
     });
   });
 

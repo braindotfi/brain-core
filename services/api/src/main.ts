@@ -23,6 +23,7 @@ import {
   idempotencyPlugin,
   JwtVerifier,
   JwtSigner,
+  CorrelatingAuditEmitter,
   PostgresAuditEmitter,
   WebhookDispatcher,
   WebhookAuditEmitter,
@@ -468,9 +469,8 @@ async function main(): Promise<void> {
   const redis = new Redis(cfg.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
   await redis.connect();
 
-  const audit = new WebhookAuditEmitter(
-    new PostgresAuditEmitter(pool),
-    new WebhookDispatcher(pool),
+  const audit = new CorrelatingAuditEmitter(
+    new WebhookAuditEmitter(new PostgresAuditEmitter(pool), new WebhookDispatcher(pool)),
   );
 
   if (cfg.BRAIN_DEMO_MODE && cfg.NODE_ENV === "production") {

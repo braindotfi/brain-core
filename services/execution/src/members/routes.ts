@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { createHash, randomBytes } from "node:crypto";
 import {
   brainError,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
   newUserId,
   requireScope,
   withTenantScope,
@@ -57,17 +59,33 @@ export async function registerMemberRoutes(
 ): Promise<void> {
   app.get(
     "/members",
-    async (request: FastifyRequest<{ Querystring: { role?: string; domain?: string } }>) => {
+    async (
+      request: FastifyRequest<{
+        Querystring: { role?: string; domain?: string; limit?: string; cursor?: string };
+      }>,
+    ) => {
       const ctx = assertCtx(request);
       requireScope(request.principal!.scopes, READ);
       await requireAnyMember(deps.pool, ctx);
+      const limit = parseLimit(request.query.limit, 500);
+      const cursor =
+        request.query.cursor !== undefined ? decodeKeysetCursor(request.query.cursor) : undefined;
       const filters = {
-        limit: 500,
+        limit: limit + 1,
         ...(request.query.role !== undefined ? { role: request.query.role } : {}),
         ...(request.query.domain !== undefined ? { domain: request.query.domain } : {}),
+        ...(cursor !== undefined ? { cursor } : {}),
       };
       const rows = await withTenantScope(deps.pool, ctx.tenantId, (c) => listMembers(c, filters));
-      return { members: rows.map(serializeMember) };
+      const visible = rows.slice(0, limit);
+      const last = visible.at(-1);
+      return {
+        members: visible.map(serializeMember),
+        next_cursor:
+          rows.length > limit && last !== undefined
+            ? encodeKeysetCursor({ sort: last.email, id: last.id })
+            : null,
+      };
     },
   );
 
@@ -444,6 +462,13 @@ function requireString(value: unknown, name: string): string {
     throw brainError("request_body_invalid", `${name} required`);
   }
   return value;
+}
+
+function parseLimit(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, fallback);
 }
 
 function parseRole(value: unknown): "admin" | "approver" | "viewer" {

@@ -577,7 +577,9 @@ export interface paths {
         };
         /**
          * List connected sources
-         * @description Requires `raw:read`.
+         * @description Requires `raw:read`. Cursor pagination is keyset-based and opaque.
+         *     Pass the previous response `next_cursor` unchanged to fetch the next
+         *     page. Malformed cursors return `invalid_cursor`.
          */
         get: operations["listSources"];
         put?: never;
@@ -670,7 +672,8 @@ export interface paths {
         };
         /**
          * List accounts
-         * @description Requires `ledger:read`.
+         * @description Requires `ledger:read`. Cursor pagination is keyset-based and
+         *     opaque. Pass `next_cursor` unchanged to fetch the next page.
          */
         get: operations["listAccounts"];
         put?: never;
@@ -730,7 +733,8 @@ export interface paths {
         };
         /**
          * List transactions
-         * @description Requires `ledger:read`.
+         * @description Requires `ledger:read`. Cursor pagination is keyset-based and
+         *     opaque. Pass `next_cursor` unchanged to fetch the next page.
          */
         get: operations["listTransactions"];
         put?: never;
@@ -770,7 +774,8 @@ export interface paths {
         };
         /**
          * List/search counterparties
-         * @description Requires `ledger:read`.
+         * @description Requires `ledger:read`. Cursor pagination is keyset-based and
+         *     opaque. Pass `next_cursor` unchanged to fetch the next page.
          */
         get: operations["listCounterparties"];
         put?: never;
@@ -832,7 +837,8 @@ export interface paths {
         };
         /**
          * List obligations (bills, invoices, subscriptions)
-         * @description Requires `ledger:read`.
+         * @description Requires `ledger:read`. Cursor pagination is keyset-based and
+         *     opaque. Pass `next_cursor` unchanged to fetch the next page.
          */
         get: operations["listObligations"];
         put?: never;
@@ -924,7 +930,8 @@ export interface paths {
         };
         /**
          * List invoices
-         * @description Requires `ledger:read`.
+         * @description Requires `ledger:read`. Cursor pagination is keyset-based and
+         *     opaque. Pass `next_cursor` unchanged to fetch the next page.
          */
         get: operations["listInvoices"];
         put?: never;
@@ -2198,7 +2205,8 @@ export interface paths {
          * @description Requires `execution:read` and a resolvable active member as the
          *     calling actor (session actor resolution requires
          *     `principal_type=user`; agent and machine principals are not
-         *     member-resolvable and receive 403).
+         *     member-resolvable and receive 403). Cursor pagination is
+         *     keyset-based and opaque.
          */
         get: operations["listMembers"];
         put?: never;
@@ -5844,6 +5852,8 @@ export interface operations {
                 q?: string;
                 type?: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "agent" | "other";
                 verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared";
+                limit?: number;
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -5859,6 +5869,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         counterparties?: components["schemas"]["Counterparty"][];
+                        next_cursor?: string | null;
                     };
                 };
             };
@@ -6029,6 +6040,8 @@ export interface operations {
                 status?: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
                 type?: string;
                 due_before?: string;
+                limit?: number;
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -6044,6 +6057,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         obligations?: components["schemas"]["Obligation"][];
+                        next_cursor?: string | null;
                     };
                 };
             };
@@ -6124,6 +6138,8 @@ export interface operations {
             query?: {
                 status?: string;
                 counterparty_id?: string;
+                limit?: number;
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -6139,6 +6155,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         invoices?: components["schemas"]["Invoice"][];
+                        next_cursor?: string | null;
                     };
                 };
             };
@@ -8176,6 +8193,8 @@ export interface operations {
             query?: {
                 role?: "admin" | "approver" | "viewer";
                 domain?: "ap" | "ar" | "treasury" | "payroll" | "reconciliation";
+                limit?: number;
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -8191,6 +8210,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         members?: components["schemas"]["Member"][];
+                        next_cursor?: string | null;
                     };
                 };
             };

@@ -1,4 +1,4 @@
-import type { TenantScopedClient } from "@brain/shared";
+import type { KeysetCursor, TenantScopedClient } from "@brain/shared";
 import type { LedgerRowCommon } from "./types.js";
 
 export interface AccountRow extends LedgerRowCommon {
@@ -16,7 +16,7 @@ export interface AccountListFilters {
   status?: string;
   account_type?: string;
   limit: number;
-  cursor?: string;
+  cursor?: KeysetCursor;
 }
 
 export async function findAccountById(
@@ -43,6 +43,14 @@ export async function listAccounts(
   if (filters.account_type !== undefined) {
     values.push(filters.account_type);
     where.push(`account_type = $${values.length}`);
+  }
+  if (filters.cursor !== undefined) {
+    values.push(filters.cursor.sort, filters.cursor.id);
+    const sortIdx = values.length - 1;
+    const idIdx = values.length;
+    where.push(
+      `(created_at < $${sortIdx}::timestamptz OR (created_at = $${sortIdx}::timestamptz AND id < $${idIdx}))`,
+    );
   }
   values.push(filters.limit);
   const limitIdx = values.length;

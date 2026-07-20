@@ -155,6 +155,12 @@ Done
   deletion are user-principal and own-tenant only. Exports expire after the
   configured retention horizon, default 7 days, and expired archive blobs are
   purged by object path.
+- Idempotency and request correlation are governed by
+  `docs/contracts/idempotency-correlation.md`. Consequential POST retries with
+  the same tenant, `Idempotency-Key`, and body return the original stored
+  response without re-running the handler. `X-Request-Id` is the request
+  correlation id and is propagated to audit events and outbound webhook
+  payloads as `correlation_id`.
 - Approval actors resolve through `ActorResolver` only. Session surfaces derive
   the actor from authenticated server context and ignore any actor field in the
   payload. Session actor resolution requires `principal_type=user`; agent

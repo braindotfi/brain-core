@@ -24,6 +24,11 @@ export type { Logger, BrainLogContext } from "./logger.js";
 export { createMetrics, MockMetrics } from "./metrics.js";
 export type { MetricsEmitter, MetricTags } from "./metrics.js";
 export * from "./tracing.js";
+export {
+  CorrelatingAuditEmitter,
+  currentCorrelationId,
+  enterCorrelationId,
+} from "./correlation.js";
 
 // Database (§1 principle 2)
 export * from "./db/pool.js";
@@ -75,6 +80,7 @@ export { default as requestIdPlugin, sanitizeRequestId } from "./http/request-id
 export { default as errorHandlerPlugin, mapError } from "./http/error-handler.js";
 export * from "./http/context.js";
 export { parseDateParam, parsePositiveIntParam } from "./http/query-params.js";
+export { encodeKeysetCursor, decodeKeysetCursor, type KeysetCursor } from "./pagination.js";
 
 // Blob storage (§3 Layer 1)
 export * from "./blob/types.js";
