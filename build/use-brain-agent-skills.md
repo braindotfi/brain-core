@@ -165,7 +165,8 @@ Every skill follows the same sequence:
 4. Gather the agent's required evidence.
 5. Respect the agent's minimum-confidence floor and authority boundary.
 6. Call `agent.action.propose`, or `payment_intent.propose` for Payment and
-   Treasury, with an `idempotency_key`.
+   Treasury. Duplicate proposal protection is server-side; the agent does not
+   pass an idempotency key.
 7. Return the proposal id, policy decision, unresolved evidence, and next review
    step.
 
