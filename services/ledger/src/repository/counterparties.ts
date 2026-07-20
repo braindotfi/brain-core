@@ -1,4 +1,4 @@
-import type { TenantScopedClient } from "@brain/shared";
+import type { KeysetCursor, TenantScopedClient } from "@brain/shared";
 import type { LedgerRowCommon } from "./types.js";
 import { normalizeName } from "../service/writes.js";
 
@@ -24,6 +24,7 @@ export interface CounterpartyListFilters {
   type?: string;
   verified_status?: string;
   limit: number;
+  cursor?: KeysetCursor;
 }
 
 export interface CounterpartyIdentityPatch {
@@ -71,12 +72,18 @@ export async function listCounterparties(
     );
     values.push(filters.q.trim());
   }
+  if (filters.cursor !== undefined) {
+    values.push(filters.cursor.sort, filters.cursor.id);
+    const sortIdx = values.length - 1;
+    const idIdx = values.length;
+    where.push(`(name > $${sortIdx} OR (name = $${sortIdx} AND id > $${idIdx}))`);
+  }
   values.push(filters.limit);
   const limitIdx = values.length;
   const whereSql = where.length === 0 ? "" : `WHERE ${where.join(" AND ")}`;
   const { rows } = await client.query<CounterpartyRow>(
     `SELECT * FROM ledger_counterparties ${whereSql}
-     ORDER BY name ASC
+     ORDER BY name ASC, id ASC
      LIMIT $${limitIdx}`,
     values,
   );

@@ -39,7 +39,12 @@ function agentPrincipal(tenantId: string): Principal {
   };
 }
 
-async function buildApp(opts: { principal: Principal | undefined; jobs?: TenantExportJobRow[] }) {
+async function buildApp(opts: {
+  principal: Principal | undefined;
+  jobs?: TenantExportJobRow[];
+  exportTtlMs?: number;
+  omitExportTtlMs?: boolean;
+}) {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
   app.addHook("preHandler", async (request: FastifyRequest) => {
@@ -56,11 +61,28 @@ async function buildApp(opts: { principal: Principal | undefined; jobs?: TenantE
     purgeObject: vi.fn(),
     healthcheck: vi.fn(),
   };
-  await registerTenantExportRoute(app, { pool, blob, exportTtlMs: 86_400_000 });
-  return { app, blob, state };
+  await registerTenantExportRoute(app, {
+    pool,
+    blob,
+    ...(opts.omitExportTtlMs === true ? {} : { exportTtlMs: opts.exportTtlMs ?? 86_400_000 }),
+  });
+  return { app, blob, pool, state };
 }
 
 describe("tenant export routes", () => {
+  it("requires an authenticated user principal", async () => {
+    const { app, pool } = await buildApp({ principal: undefined });
+    try {
+      const r = await app.inject({ method: "POST", url: `/tenants/${TENANT_A}/export` });
+      expect(r.statusCode).toBe(401);
+      expect(r.json()).toMatchObject({ error: { code: "auth_token_missing" } });
+      const connect = pool.connect as unknown as ReturnType<typeof vi.fn>;
+      expect(connect).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
   it("permits a tenant user to enqueue an export for their own tenant", async () => {
     const { app } = await buildApp({ principal: userPrincipal(TENANT_A) });
     try {
@@ -68,6 +90,32 @@ describe("tenant export routes", () => {
       expect(r.statusCode).toBe(202);
       expect(r.json()).toMatchObject({ tenant_id: TENANT_A, status: "queued" });
     } finally {
+      await app.close();
+    }
+  });
+
+  it("reuses an in-flight export job instead of stacking another one", async () => {
+    const existing = jobRow({ status: "running" });
+    const { app } = await buildApp({ principal: userPrincipal(TENANT_A), jobs: [existing] });
+    try {
+      const r = await app.inject({ method: "POST", url: `/tenants/${TENANT_A}/export` });
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toMatchObject({ job_id: existing.id, status: "running" });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("uses the default export TTL when no override is supplied", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-20T00:00:00Z"));
+    const { app } = await buildApp({ principal: userPrincipal(TENANT_A), omitExportTtlMs: true });
+    try {
+      const r = await app.inject({ method: "POST", url: `/tenants/${TENANT_A}/export` });
+      expect(r.statusCode).toBe(202);
+      expect(r.json()).toMatchObject({ expires_at: "2026-07-27T00:00:00.000Z" });
+    } finally {
+      vi.useRealTimers();
       await app.close();
     }
   });
@@ -110,6 +158,34 @@ describe("tenant export routes", () => {
       expect(download.statusCode).toBe(200);
       expect(download.body).toBe("archive\n");
       expect(blob.get).toHaveBeenCalledWith(`${TENANT_A}/exports/x.ndjson`);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects malformed export job ids before querying", async () => {
+    const { app, pool } = await buildApp({ principal: userPrincipal(TENANT_A) });
+    try {
+      const r = await app.inject({ method: "GET", url: `/tenants/${TENANT_A}/export/not-a-job` });
+      expect(r.statusCode).toBe(400);
+      expect(r.json()).toMatchObject({ error: { code: "request_params_invalid" } });
+      const connect = pool.connect as unknown as ReturnType<typeof vi.fn>;
+      expect(connect).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("returns 404 when a well-formed export job is not visible", async () => {
+    const missingId = newTenantExportJobId();
+    const { app } = await buildApp({ principal: userPrincipal(TENANT_A) });
+    try {
+      const r = await app.inject({
+        method: "GET",
+        url: `/tenants/${TENANT_A}/export/${missingId}`,
+      });
+      expect(r.statusCode).toBe(404);
+      expect(r.json()).toMatchObject({ error: { code: "tenant_export_job_not_found" } });
     } finally {
       await app.close();
     }

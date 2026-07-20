@@ -10,7 +10,13 @@
  * @packageDocumentation
  */
 
-import { brainError, newSourceId, type AuditEmitter, type ServiceCallContext } from "@brain/shared";
+import {
+  brainError,
+  newSourceId,
+  type AuditEmitter,
+  type KeysetCursor,
+  type ServiceCallContext,
+} from "@brain/shared";
 import { getConnector, isStub } from "./connectors.js";
 import {
   SOURCE_TYPES,
@@ -72,6 +78,7 @@ export interface ListFilter {
   readonly type?: SourceType;
   readonly status?: SourceStatus;
   readonly limit?: number;
+  readonly cursor?: KeysetCursor;
 }
 
 /**
@@ -102,9 +109,20 @@ export class InMemorySourceRepository implements SourceRepository {
       if (filter.type !== undefined && v.type !== filter.type) continue;
       if (filter.status !== undefined && v.status !== filter.status) continue;
       out.push(v);
-      if (out.length >= limit) break;
     }
-    return out;
+    const sorted = out
+      .sort((a, b) => {
+        if (a.created_at !== b.created_at) return b.created_at.localeCompare(a.created_at);
+        return b.id.localeCompare(a.id);
+      })
+      .filter((source) => {
+        if (filter.cursor === undefined) return true;
+        return (
+          source.created_at < filter.cursor.sort ||
+          (source.created_at === filter.cursor.sort && source.id < filter.cursor.id)
+        );
+      });
+    return sorted.slice(0, limit);
   }
 
   public async updateStatus(

@@ -15,6 +15,7 @@
  *     type:       string,    // e.g. "payment_intent.created"
  *     tenant_id:  string,
  *     created_at: string,    // ISO-8601
+ *     correlation_id?: string,
  *     data: { inputs, outputs }
  *   }
  *
@@ -61,6 +62,16 @@ interface EndpointRow {
   enabled_events: string[] | null;
 }
 
+export interface WebhookPayload {
+  [key: string]: unknown;
+  id: string;
+  type: string;
+  tenant_id: string;
+  created_at: string;
+  correlation_id?: string;
+  data: { inputs: AuditEvent["inputs"]; outputs: AuditEvent["outputs"] };
+}
+
 /** Signs body with HMAC-SHA256 and returns the hex digest. */
 function sign(secret: string, body: string): string {
   return createHmac("sha256", secret).update(body).digest("hex");
@@ -92,6 +103,17 @@ export async function deliverWebhook(
   }
 }
 
+export function buildWebhookPayload(event: AuditEvent): WebhookPayload {
+  return {
+    id: event.id,
+    type: event.action,
+    tenant_id: event.tenantId,
+    created_at: event.createdAt,
+    ...(event.correlationId !== undefined ? { correlation_id: event.correlationId } : {}),
+    data: { inputs: event.inputs, outputs: event.outputs },
+  };
+}
+
 export class WebhookDispatcher {
   public constructor(private readonly pool: Pool) {}
 
@@ -118,13 +140,7 @@ export class WebhookDispatcher {
       return;
     }
 
-    const payloadObj = {
-      id: event.id,
-      type: event.action,
-      tenant_id: event.tenantId,
-      created_at: event.createdAt,
-      data: { inputs: event.inputs, outputs: event.outputs },
-    };
+    const payloadObj = buildWebhookPayload(event);
     const payload = JSON.stringify(payloadObj);
 
     const targets = endpoints.filter(

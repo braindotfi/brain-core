@@ -60,6 +60,8 @@ export interface AuditEventInput {
    * ordinary emits (the common case); they are unconstrained.
    */
   readonly idempotencyKey?: string;
+  /** Request correlation id from `X-Request-Id` or the server-generated request id. */
+  readonly correlationId?: string;
 }
 
 export interface AuditEvent extends AuditEventInput {

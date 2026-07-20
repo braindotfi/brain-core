@@ -1,4 +1,4 @@
-import { withTenantScope, type TenantScopedClient } from "@brain/shared";
+import { withTenantScope, type KeysetCursor, type TenantScopedClient } from "@brain/shared";
 import type { Pool } from "pg";
 import type {
   ApprovalDomain,
@@ -60,7 +60,7 @@ export async function findMemberById(
 
 export async function listMembers(
   client: TenantScopedClient,
-  filters: { role?: string; domain?: string; limit: number },
+  filters: { role?: string; domain?: string; limit: number; cursor?: KeysetCursor },
 ): Promise<MemberAuthority[]> {
   const where: string[] = [];
   const values: unknown[] = [];
@@ -72,6 +72,12 @@ export async function listMembers(
     values.push(filters.domain);
     where.push(`$${values.length} = ANY(approval_domains)`);
   }
+  if (filters.cursor !== undefined) {
+    values.push(filters.cursor.sort, filters.cursor.id);
+    const sortIdx = values.length - 1;
+    const idIdx = values.length;
+    where.push(`(email > $${sortIdx} OR (email = $${sortIdx} AND id > $${idIdx}))`);
+  }
   values.push(filters.limit);
   const limitIndex = values.length;
   const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
@@ -80,7 +86,7 @@ export async function listMembers(
             per_item_limit_cents, requires_second_approver_above_cents
        FROM members
        ${whereSql}
-      ORDER BY email ASC
+      ORDER BY email ASC, id ASC
       LIMIT $${limitIndex}`,
     values,
   );

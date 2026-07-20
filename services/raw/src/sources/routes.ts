@@ -11,7 +11,14 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { brainError, requireScope, type Scope, type ServiceCallContext } from "@brain/shared";
+import {
+  brainError,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+  requireScope,
+  type Scope,
+  type ServiceCallContext,
+} from "@brain/shared";
 import type { SourceService } from "./SourceService.js";
 import { recordToWire, type SourceStatus, type SourceType } from "./types.js";
 
@@ -80,13 +87,24 @@ export async function registerSourceRoutes(
       const ctx = assertCtx(request);
       requireScope(request.principal!.scopes, SCOPE_READ);
       const q = request.query;
+      const limit = parseLimit(q.limit, 50);
+      const cursor = q.cursor !== undefined ? decodeKeysetCursor(q.cursor) : undefined;
       const list = await service.list(ctx, {
         ...(q.type !== undefined ? { type: q.type } : {}),
         ...(q.status !== undefined ? { status: q.status } : {}),
-        ...(q.limit !== undefined ? { limit: Number.parseInt(q.limit, 10) } : {}),
+        limit: limit + 1,
+        ...(cursor !== undefined ? { cursor } : {}),
       });
+      const visible = list.slice(0, limit);
+      const last = visible.at(-1);
       reply.status(200);
-      return { data: list.map((source) => recordToWire(source)), next_cursor: null };
+      return {
+        data: visible.map((source) => recordToWire(source)),
+        next_cursor:
+          list.length > limit && last !== undefined
+            ? encodeKeysetCursor({ sort: last.created_at, id: last.id })
+            : null,
+      };
     },
   );
 
@@ -157,4 +175,11 @@ export async function registerSourceRoutes(
       };
     },
   );
+}
+
+function parseLimit(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, 500);
 }

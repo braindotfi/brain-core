@@ -148,10 +148,12 @@ export class PostgresAuditEmitter implements AuditEmitter {
           policy_decision_id: string | null;
           before_state: Record<string, unknown> | null;
           after_state: Record<string, unknown> | null;
+          correlation_id: string | null;
         }>(
           `SELECT id, event_hash, prev_event_hash, created_at, hash_schema_version,
                   layer, actor, action, inputs, outputs,
-                  policy_version, policy_decision_id, before_state, after_state
+                  policy_version, policy_decision_id, before_state, after_state,
+                  correlation_id
              FROM audit_events
             WHERE tenant_id = $1 AND idempotency_key = $2
             LIMIT 1`,
@@ -194,6 +196,9 @@ export class PostgresAuditEmitter implements AuditEmitter {
                 : {}),
               ...(hit.before_state !== null ? { beforeState: hit.before_state } : {}),
               ...(hit.after_state !== null ? { afterState: hit.after_state } : {}),
+              ...(hit.correlation_id !== null && hit.correlation_id !== undefined
+                ? { correlationId: hit.correlation_id }
+                : {}),
             };
             conflict = logicalPayloadFingerprint(event) !== logicalPayloadFingerprint(stored);
           } else {
@@ -221,6 +226,9 @@ export class PostgresAuditEmitter implements AuditEmitter {
             createdAt: hit.created_at.toISOString(),
             eventHash: storedHash,
             prevEventHash,
+            ...(hit.correlation_id !== null && hit.correlation_id !== undefined
+              ? { correlationId: hit.correlation_id }
+              : {}),
           };
         }
       }
@@ -261,8 +269,8 @@ export class PostgresAuditEmitter implements AuditEmitter {
            id, tenant_id, layer, actor, action, inputs, outputs,
            policy_version, policy_decision_id, before_state, after_state,
            event_hash, prev_event_hash, created_at, idempotency_key,
-           hash_schema_version
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+           hash_schema_version, correlation_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
         [
           id,
           event.tenantId,
@@ -282,6 +290,7 @@ export class PostgresAuditEmitter implements AuditEmitter {
           // Tag the row with the canonicalization that produced event_hash so the
           // consistency verifier only recomputes current-version rows.
           AUDIT_HASH_SCHEMA_VERSION,
+          event.correlationId ?? null,
         ],
       );
 

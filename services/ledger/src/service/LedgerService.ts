@@ -11,7 +11,9 @@
 
 import {
   brainError,
+  decodeKeysetCursor,
   emitDomainEvent,
+  encodeKeysetCursor,
   withTenantScope,
   type ILedgerService,
   type ServiceCallContext,
@@ -111,14 +113,16 @@ export class LedgerService implements ILedgerService {
     f: AccountListFilters,
   ): Promise<ListResult<Account>> {
     const limit = clampLimit(f.limit, 50, 500);
+    const cursor = f.cursor !== undefined ? decodeKeysetCursor(f.cursor) : undefined;
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       listAccountsRepo(c, {
         ...(f.status !== undefined ? { status: f.status } : {}),
         ...(f.account_type !== undefined ? { account_type: f.account_type } : {}),
-        limit,
+        limit: limit + 1,
+        ...(cursor !== undefined ? { cursor } : {}),
       }),
     );
-    return { items: rows.map(serializeAccount), next_cursor: null };
+    return pageRows(rows, limit, serializeAccount, (row) => row.created_at.toISOString());
   }
 
   public async getAccount(
@@ -143,6 +147,7 @@ export class LedgerService implements ILedgerService {
     f: TransactionListFilters,
   ): Promise<ListResult<Transaction>> {
     const limit = clampLimit(f.limit, 100, 1000);
+    const cursor = f.cursor !== undefined ? decodeKeysetCursor(f.cursor) : undefined;
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       listTransactionsRepo(c, {
         ...(f.account_id !== undefined ? { account_id: f.account_id } : {}),
@@ -151,10 +156,11 @@ export class LedgerService implements ILedgerService {
         ...(f.status !== undefined ? { status: f.status } : {}),
         ...(f.since !== undefined ? { since: new Date(f.since) } : {}),
         ...(f.until !== undefined ? { until: new Date(f.until) } : {}),
-        limit,
+        limit: limit + 1,
+        ...(cursor !== undefined ? { cursor } : {}),
       }),
     );
-    return { items: rows.map(serializeTransaction), next_cursor: null };
+    return pageRows(rows, limit, serializeTransaction, (row) => row.transaction_date.toISOString());
   }
 
   public async getTransaction(ctx: ServiceCallContext, id: string): Promise<Transaction | null> {
@@ -171,9 +177,11 @@ export class LedgerService implements ILedgerService {
       type?: Counterparty["type"];
       verified_status?: Counterparty["verified_status"];
       limit?: number;
+      cursor?: string;
     },
   ): Promise<ListResult<Counterparty>> {
     const limit = clampLimit(f.limit, 50, 500);
+    const cursor = f.cursor !== undefined ? decodeKeysetCursor(f.cursor) : undefined;
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       listCounterpartiesRepo(c, {
         ...(f.q !== undefined ? { q: f.q } : {}),
@@ -181,10 +189,11 @@ export class LedgerService implements ILedgerService {
         ...(f.verified_status !== undefined && f.verified_status !== null
           ? { verified_status: f.verified_status }
           : {}),
-        limit,
+        limit: limit + 1,
+        ...(cursor !== undefined ? { cursor } : {}),
       }),
     );
-    return { items: rows.map(serializeCounterparty), next_cursor: null };
+    return pageRows(rows, limit, serializeCounterparty, (row) => row.name);
   }
 
   public async listObligations(
@@ -192,30 +201,34 @@ export class LedgerService implements ILedgerService {
     f: ObligationListFilters,
   ): Promise<ListResult<Obligation>> {
     const limit = clampLimit(f.limit, 50, 500);
+    const cursor = f.cursor !== undefined ? decodeKeysetCursor(f.cursor) : undefined;
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       listObligationsRepo(c, {
         ...(f.status !== undefined ? { status: f.status } : {}),
         ...(f.type !== undefined ? { type: f.type } : {}),
         ...(f.due_before !== undefined ? { due_before: new Date(f.due_before) } : {}),
-        limit,
+        limit: limit + 1,
+        ...(cursor !== undefined ? { cursor } : {}),
       }),
     );
-    return { items: rows.map(serializeObligation), next_cursor: null };
+    return pageRows(rows, limit, serializeObligation, (row) => row.due_date.toISOString());
   }
 
   public async listInvoices(
     ctx: ServiceCallContext,
-    f: { status?: Invoice["status"]; counterparty_id?: string; limit?: number },
+    f: { status?: Invoice["status"]; counterparty_id?: string; limit?: number; cursor?: string },
   ): Promise<ListResult<Invoice>> {
     const limit = clampLimit(f.limit, 50, 500);
+    const cursor = f.cursor !== undefined ? decodeKeysetCursor(f.cursor) : undefined;
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       listInvoicesRepo(c, {
         ...(f.status !== undefined ? { status: f.status } : {}),
         ...(f.counterparty_id !== undefined ? { counterparty_id: f.counterparty_id } : {}),
-        limit,
+        limit: limit + 1,
+        ...(cursor !== undefined ? { cursor } : {}),
       }),
     );
-    return { items: rows.map(serializeInvoice), next_cursor: null };
+    return pageRows(rows, limit, serializeInvoice, (row) => row.issue_date.toISOString());
   }
 
   public async listDocuments(
@@ -606,6 +619,23 @@ function clampLimit(requested: number | undefined, fallback: number, max: number
   if (requested === undefined) return fallback;
   if (requested < 1) return fallback;
   return Math.min(requested, max);
+}
+
+function pageRows<Row extends { id: string }, Item>(
+  rows: readonly Row[],
+  limit: number,
+  serialize: (row: Row) => Item,
+  sortValue: (row: Row) => string,
+): ListResult<Item> {
+  const visible = rows.slice(0, limit);
+  const last = visible.at(-1);
+  return {
+    items: visible.map(serialize),
+    next_cursor:
+      rows.length > limit && last !== undefined
+        ? encodeKeysetCursor({ sort: sortValue(last), id: last.id })
+        : null,
+  };
 }
 
 export type ManualCounterpartyType = Counterparty["type"];
