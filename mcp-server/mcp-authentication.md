@@ -98,16 +98,16 @@ The on-chain read is **cached for 60 seconds per agent**. This balances on-chain
 
 The canonical scope document enumerates which of these the tenant has granted to the agent.
 
-| Scope                    | Allows                                                                                            |
-| ------------------------ | ------------------------------------------------------------------------------------------------- |
-| `ledger:read`            | All `ledger.*` read tools and `brain://ledger/...` resources                                      |
-| `wiki:read`              | All `wiki.*` read tools and `brain://wiki/pages/...` resources                                    |
-| `raw:write`              | The `raw.contribute` tool                                                                         |
-| `payment_intent:propose` | The `payment_intent.propose` tool and the `brain://payments/action_types` resource               |
-| `payment_intent:approve` | Accepted at the `proposals.decide` call boundary; member approval authority is enforced downstream |
+| Scope                    | Allows                                                                                                   |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `ledger:read`            | All `ledger.*` read tools and `brain://ledger/...` resources                                             |
+| `wiki:read`              | All `wiki.*` read tools and `brain://wiki/pages/...` resources                                           |
+| `raw:write`              | The `raw.contribute` tool                                                                                |
+| `payment_intent:propose` | The `payment_intent.propose` tool and the `brain://payments/action_types` resource                       |
+| `payment_intent:approve` | Accepted at the `proposals.decide` call boundary; member approval authority is enforced downstream       |
 | `execution:read`         | The `proposals.list`, `proposals.get`, and `evidence.resolve` tools; also accepted by `proposals.decide` |
-| `execution:propose`      | The `agent.action.propose` tool                                                                   |
-| `audit:read`             | The `brain://proofs/{action_id}` resource                                                         |
+| `execution:propose`      | The `agent.action.propose` tool                                                                          |
+| `audit:read`             | The `brain://proofs/{action_id}` resource                                                                |
 
 A tenant can grant any subset. Unused scopes do not appear in the canonical document. The `scopeHash` is the **keccak-256** of the canonical, lexicographically-sorted scope set (`computeAgentScopeHash` in `shared/src/agents/capability.ts`); it is the same hash the registration tooling writes on-chain, so the seed, JWT claim, and registry agree byte-for-byte.
 

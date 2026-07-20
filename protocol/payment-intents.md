@@ -113,22 +113,22 @@ cap that covers the amount.
 
 ### State Transitions
 
-| From               | To                 | Trigger                                                                  |
-| ------------------ | ------------------ | ------------------------------------------------------------------------ |
-| `proposed`         | `pending_approval` | Policy returned `confirm`; approvers required                            |
-| `proposed`         | `approved`         | Policy returned `auto`; no human in the loop                             |
-| `proposed`         | `rejected`         | Policy returned `reject`                                                 |
-| `pending_approval` | `awaiting_second_approval` | First approver signed; a distinct second approver is required   |
-| `pending_approval` | `approved`         | All required approvers signed                                            |
-| `pending_approval` | `rejected`         | Approver explicitly rejected                                             |
-| `pending_approval` | `cancelled`        | Tenant cancelled before approval                                         |
-| `awaiting_second_approval` | `approved` | Distinct second approver signed                                          |
-| `awaiting_second_approval` | `rejected` | Approver explicitly rejected                                             |
-| `approved`         | `dispatching`      | Gate passed; outbox row and any balance reservation committed atomically |
-| `approved`         | `paused`           | Tenant or halt-category kill-switch paused execution                     |
-| `paused`           | `approved`         | Resume re-ran and passed the live gate                                   |
-| `dispatching`      | `executed`         | Outbox worker received and validated a successful rail receipt           |
-| `dispatching`      | `failed`           | Deterministic rail rejection where the worker can prove no money moved   |
+| From                       | To                         | Trigger                                                                  |
+| -------------------------- | -------------------------- | ------------------------------------------------------------------------ |
+| `proposed`                 | `pending_approval`         | Policy returned `confirm`; approvers required                            |
+| `proposed`                 | `approved`                 | Policy returned `auto`; no human in the loop                             |
+| `proposed`                 | `rejected`                 | Policy returned `reject`                                                 |
+| `pending_approval`         | `awaiting_second_approval` | First approver signed; a distinct second approver is required            |
+| `pending_approval`         | `approved`                 | All required approvers signed                                            |
+| `pending_approval`         | `rejected`                 | Approver explicitly rejected                                             |
+| `pending_approval`         | `cancelled`                | Tenant cancelled before approval                                         |
+| `awaiting_second_approval` | `approved`                 | Distinct second approver signed                                          |
+| `awaiting_second_approval` | `rejected`                 | Approver explicitly rejected                                             |
+| `approved`                 | `dispatching`              | Gate passed; outbox row and any balance reservation committed atomically |
+| `approved`                 | `paused`                   | Tenant or halt-category kill-switch paused execution                     |
+| `paused`                   | `approved`                 | Resume re-ran and passed the live gate                                   |
+| `dispatching`              | `executed`                 | Outbox worker received and validated a successful rail receipt           |
+| `dispatching`              | `failed`                   | Deterministic rail rejection where the worker can prove no money moved   |
 
 Every transition emits an audit event. The full history of any PaymentIntent is reconstructable from `audit_events` ordered by `created_at`.
 

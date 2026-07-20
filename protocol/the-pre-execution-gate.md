@@ -22,21 +22,21 @@ Think of Policy as the **standing rule** and the gate as the **flight check**. B
 
 The gate runs the following classes of check, every payment, every time. Steps are deterministic and versioned with the protocol. These are the 13 numbered checks of the canonical happy path; 10 hardening additions are inserted at their correct positions (checks 1.5, 3.5, 5.5, 6.5, 6.6, 6.7, 7.5, 8.5, 9.5, 11.5. See **Hardening Additions** below) for 23 entries total. The M2M / x402 / escrow additions (3.5, 5.5, 6.5, 6.6, 8.5) record `not_applicable` for non-M2M flows so the canonical happy path is unchanged. Check 6.7 (obligation direction) is dormant when the intent carries no `obligation_id`.
 
-| #   | Step (`check name`)                                                                                                        | Reads From                                       |
-| --- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| 1   | Agent identity verified (`agent_identity_verified`): the principal is an agent that owns this intent, and the agent record is active | agent record (`resolveAgent`)                    |
-| 2   | Agent authorized (`agent_authorized`): the principal carries `payment_intent:execute` scope, or the agent may execute payments | principal scopes, agent scope                    |
-| 3   | Action allowed (`action_allowed`): policy matched a rule for this action type and returned `allow` or `confirm`, never `reject` | `policy_decisions`                               |
-| 4   | Source account allowed (`source_account_allowed`): the source account exists and is active                                 | `ledger_accounts`                                |
-| 5   | Counterparty allowed (`counterparty_allowed`): the destination counterparty exists and is not sanctioned                   | `ledger_counterparties.risk_level`               |
-| 6   | Counterparty verified (`counterparty_verified`): when the policy threshold applies, the counterparty is `document_verified` or `sanctions_cleared` | `ledger_counterparties.verified_status`          |
-| 7   | Amount within limit (`amount_within_limit`): the amount is at or below the policy `amount_upper_bound`, with currency match | `policy_decisions` (`amount_upper_bound`)        |
-| 8   | Available balance sufficient (`available_balance_sufficient`): `available_balance - Σ(active reservations) ≥ amount`, with currency match | `ledger_accounts.available_balance`, `ledger_reservations` |
-| 9   | Required evidence present (`required_evidence_present`): when policy requires evidence kinds, the intent carries evidence references | `policy_decisions`, intent `evidence_ids`        |
-| 10  | Approval requirement determined (`approval_requirement_determined`): the policy decision outcome (`allow` vs `confirm`) is recorded | `policy_decisions`                               |
-| 11  | Approval granted when required (`approval_granted_when_required`): required approver signatures are present, and the hard human-approval floor is satisfied | `approvals`                                      |
-| 12  | Policy decision recorded (`policy_decision_recorded`): the PolicyDecision row is persisted and its id surfaced             | `policy_decisions`                               |
-| 13  | Audit-before emitted (`audit_before_emitted`): the `payment_intent.execute.before` event is written before any rail dispatch | `audit_events`                                   |
+| #   | Step (`check name`)                                                                                                                                         | Reads From                                                 |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 1   | Agent identity verified (`agent_identity_verified`): the principal is an agent that owns this intent, and the agent record is active                        | agent record (`resolveAgent`)                              |
+| 2   | Agent authorized (`agent_authorized`): the principal carries `payment_intent:execute` scope, or the agent may execute payments                              | principal scopes, agent scope                              |
+| 3   | Action allowed (`action_allowed`): policy matched a rule for this action type and returned `allow` or `confirm`, never `reject`                             | `policy_decisions`                                         |
+| 4   | Source account allowed (`source_account_allowed`): the source account exists and is active                                                                  | `ledger_accounts`                                          |
+| 5   | Counterparty allowed (`counterparty_allowed`): the destination counterparty exists and is not sanctioned                                                    | `ledger_counterparties.risk_level`                         |
+| 6   | Counterparty verified (`counterparty_verified`): when the policy threshold applies, the counterparty is `document_verified` or `sanctions_cleared`          | `ledger_counterparties.verified_status`                    |
+| 7   | Amount within limit (`amount_within_limit`): the amount is at or below the policy `amount_upper_bound`, with currency match                                 | `policy_decisions` (`amount_upper_bound`)                  |
+| 8   | Available balance sufficient (`available_balance_sufficient`): `available_balance - Σ(active reservations) ≥ amount`, with currency match                   | `ledger_accounts.available_balance`, `ledger_reservations` |
+| 9   | Required evidence present (`required_evidence_present`): when policy requires evidence kinds, the intent carries evidence references                        | `policy_decisions`, intent `evidence_ids`                  |
+| 10  | Approval requirement determined (`approval_requirement_determined`): the policy decision outcome (`allow` vs `confirm`) is recorded                         | `policy_decisions`                                         |
+| 11  | Approval granted when required (`approval_granted_when_required`): required approver signatures are present, and the hard human-approval floor is satisfied | `approvals`                                                |
+| 12  | Policy decision recorded (`policy_decision_recorded`): the PolicyDecision row is persisted and its id surfaced                                              | `policy_decisions`                                         |
+| 13  | Audit-before emitted (`audit_before_emitted`): the `payment_intent.execute.before` event is written before any rail dispatch                                | `audit_events`                                             |
 
 If **any** step fails, the PaymentIntent transitions to `failed` with a structured reason. No rail call is made.
 

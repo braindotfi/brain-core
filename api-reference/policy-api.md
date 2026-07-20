@@ -171,12 +171,12 @@ Content-Type: application/json
     {
       "rule_id": "rule_invoice_under_5k",
       "matched": false,
-      "checks": [ { "key": "amount.lte", "passed": false, "detail": "USD 5000" } ]
+      "checks": [{ "key": "amount.lte", "passed": false, "detail": "USD 5000" }]
     },
     {
       "rule_id": "rule_invoice_above_5k",
       "matched": true,
-      "checks": [ { "key": "amount.gt", "passed": true, "detail": "USD 5000" } ]
+      "checks": [{ "key": "amount.gt", "passed": true, "detail": "USD 5000" }]
     }
   ]
 }
@@ -307,7 +307,12 @@ Content-Type: application/json
   "added": ["rule_x402_micropayment_cap"],
   "removed": [],
   "modified": [
-    { "rule_id": "rule_invoice_above_5k", "field": "require", "before": null, "after": "cfo_approval" }
+    {
+      "rule_id": "rule_invoice_above_5k",
+      "field": "require",
+      "before": null,
+      "after": "cfo_approval"
+    }
   ]
 }
 ```

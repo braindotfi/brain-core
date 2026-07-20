@@ -61,24 +61,24 @@ PolicyRegistration(
 draft → compile → review → sign (EIP-712) → registerPolicy() → active
 ```
 
-| Phase        | Where                                          |
-| ------------ | ---------------------------------------------- |
-| **Draft**    | Console or API                                 |
-| **Compile**  | Off-chain Policy compiler                      |
-| **Review**   | Tenant reviews compiled JSON plus explanation  |
-| **Sign**     | Tenant signs `PolicyRegistration`              |
-| **Register** | `registerPolicy()` called on Base              |
-| **Active**   | Until superseded by a newer version            |
+| Phase        | Where                                         |
+| ------------ | --------------------------------------------- |
+| **Draft**    | Console or API                                |
+| **Compile**  | Off-chain Policy compiler                     |
+| **Review**   | Tenant reviews compiled JSON plus explanation |
+| **Sign**     | Tenant signs `PolicyRegistration`             |
+| **Register** | `registerPolicy()` called on Base             |
+| **Active**   | Until superseded by a newer version           |
 
 ### What Is on-Chain vs Off-Chain
 
-| On-chain             | Off-chain                 |
-| -------------------- | ------------------------- |
-| `tenantId` (hashed)  | Tenant raw identifier     |
-| `version`            | Plain-English policy text |
-| `policyHash`         | Compiled JSON rules       |
-| `activatedAt`        | Compiler explanation      |
-| Signer addresses     | Diff between versions     |
+| On-chain            | Off-chain                 |
+| ------------------- | ------------------------- |
+| `tenantId` (hashed) | Tenant raw identifier     |
+| `version`           | Plain-English policy text |
+| `policyHash`        | Compiled JSON rules       |
+| `activatedAt`       | Compiler explanation      |
+| Signer addresses    | Diff between versions     |
 
 {% hint style="info" %}
 The policy text is private to the tenant. Only its hash is anchored. A counterparty verifying a policy verdict checks that the verdict references a hash registered on-chain, not the policy text itself.
@@ -103,12 +103,12 @@ the on-chain hash matches the compiled policy it was shown.
 
 ### Versioning Rules
 
-| Rule                                             | Detail                                             |
-| ------------------------------------------------ | -------------------------------------------------- |
-| `version` must increase                          | A version at or below `latestVersion` reverts      |
-| Each `(tenantId, version)` is write-once         | Re-registering the same version reverts            |
-| Signers must be pre-authorized for the tenant    | An unknown signer reverts                          |
-| Signers supplied in ascending address order      | Enforces uniqueness across the signer set          |
+| Rule                                          | Detail                                        |
+| --------------------------------------------- | --------------------------------------------- |
+| `version` must increase                       | A version at or below `latestVersion` reverts |
+| Each `(tenantId, version)` is write-once      | Re-registering the same version reverts       |
+| Signers must be pre-authorized for the tenant | An unknown signer reverts                     |
+| Signers supplied in ascending address order   | Enforces uniqueness across the signer set     |
 
 ### Privacy
 

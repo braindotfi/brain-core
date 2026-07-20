@@ -46,11 +46,11 @@ Executes
 
 Sanctions and risk are operator-set attributes on the counterparty record, read by the pre-execution gate. They are not produced by a live third-party screening call in the current build.
 
-| Attribute            | Source                          | What It Gates                                                        |
-| -------------------- | ------------------------------- | -------------------------------------------------------------------- |
-| **`risk_level`**     | Operator-set ledger field       | A value of `sanctioned` is a hard reject at the gate                 |
-| **`verified_status`**| Operator-set ledger field       | Enforces the policy counterparty-verification threshold above an amount |
-| **Anomaly detection**| Brain internal                  | Statistical outliers vs tenant's baseline                           |
+| Attribute             | Source                    | What It Gates                                                           |
+| --------------------- | ------------------------- | ----------------------------------------------------------------------- |
+| **`risk_level`**      | Operator-set ledger field | A value of `sanctioned` is a hard reject at the gate                    |
+| **`verified_status`** | Operator-set ledger field | Enforces the policy counterparty-verification threshold above an amount |
+| **Anomaly detection** | Brain internal            | Statistical outliers vs tenant's baseline                               |
 
 The gate reads these fields directly: it rejects a counterparty whose `risk_level` is `sanctioned`, and above a policy threshold it requires `verified_status` to be `document_verified` or `sanctions_cleared`. Live third-party screening (Chainalysis and equivalents) that would populate these fields automatically is planned, not yet integrated.
 

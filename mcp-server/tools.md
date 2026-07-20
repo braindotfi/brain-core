@@ -4,24 +4,24 @@ Brain's MCP surface exposes **16 tools** across five capability groups. Each too
 
 ### At a Glance
 
-| Tool                         | Group          | Required Scope           | Mutates State                        |
-| ---------------------------- | -------------- | ------------------------ | ------------------------------------ |
-| `ledger.account.get`         | Ledger read    | `ledger:read`            | No                                   |
-| `ledger.accounts.list`       | Ledger read    | `ledger:read`            | No                                   |
-| `ledger.transactions.list`   | Ledger read    | `ledger:read`            | No                                   |
-| `ledger.obligations.list`    | Ledger read    | `ledger:read`            | No                                   |
-| `ledger.counterparties.list` | Ledger read    | `ledger:read`            | No                                   |
-| `wiki.question`              | Wiki read      | `wiki:read`              | No                                   |
-| `wiki.page.get`              | Wiki read      | `wiki:read`              | No                                   |
-| `raw.contribute`             | Raw contribute | `raw:write`              | Yes (writes Raw artifact)            |
-| `payment_intent.propose`     | PaymentIntent  | `payment_intent:propose` | Yes (writes PaymentIntent in Ledger) |
-| `payment_intent.cancel`      | PaymentIntent  | `payment_intent:propose` | Yes (cancels own proposal)           |
-| `payment_intent.list`        | PaymentIntent  | `payment_intent:propose` | No                                   |
-| `agent.action.propose`       | Agent action   | `execution:propose`      | Yes (writes Proposal)                |
-| `proposals.list`             | Proposals read | `execution:read`         | No                                   |
-| `proposals.get`              | Proposals read | `execution:read`         | No                                   |
-| `proposals.decide`           | Proposals read | member authority (see below) | Yes (records a human decision)   |
-| `evidence.resolve`           | Proposals read | `execution:read`         | No                                   |
+| Tool                         | Group          | Required Scope               | Mutates State                        |
+| ---------------------------- | -------------- | ---------------------------- | ------------------------------------ |
+| `ledger.account.get`         | Ledger read    | `ledger:read`                | No                                   |
+| `ledger.accounts.list`       | Ledger read    | `ledger:read`                | No                                   |
+| `ledger.transactions.list`   | Ledger read    | `ledger:read`                | No                                   |
+| `ledger.obligations.list`    | Ledger read    | `ledger:read`                | No                                   |
+| `ledger.counterparties.list` | Ledger read    | `ledger:read`                | No                                   |
+| `wiki.question`              | Wiki read      | `wiki:read`                  | No                                   |
+| `wiki.page.get`              | Wiki read      | `wiki:read`                  | No                                   |
+| `raw.contribute`             | Raw contribute | `raw:write`                  | Yes (writes Raw artifact)            |
+| `payment_intent.propose`     | PaymentIntent  | `payment_intent:propose`     | Yes (writes PaymentIntent in Ledger) |
+| `payment_intent.cancel`      | PaymentIntent  | `payment_intent:propose`     | Yes (cancels own proposal)           |
+| `payment_intent.list`        | PaymentIntent  | `payment_intent:propose`     | No                                   |
+| `agent.action.propose`       | Agent action   | `execution:propose`          | Yes (writes Proposal)                |
+| `proposals.list`             | Proposals read | `execution:read`             | No                                   |
+| `proposals.get`              | Proposals read | `execution:read`             | No                                   |
+| `proposals.decide`           | Proposals read | member authority (see below) | Yes (records a human decision)       |
+| `evidence.resolve`           | Proposals read | `execution:read`             | No                                   |
 
 {% hint style="warning" %}
 **There is no `payment_intent.execute` tool.** External agents only ever propose. Execution is Brain-internal: an approved intent is dispatched by Brain's own settlement path, never by the proposing agent. A human (or a signed `allow` policy decision) supplies the approval that an intent needs before that internal path runs it; the human does not call a settlement endpoint. Every execution, attended or unattended, passes the same [deterministic pre-execution gate](../protocol/the-pre-execution-gate.md): 13 numbered checks plus 10 hardening additions (23 entries total; several record `not_applicable` until their loaders are wired, so the canonical happy path is the 13 numbered checks). It is the only path to settlement.
@@ -208,14 +208,14 @@ These four tools mirror the HTTP [Proposals API](../api-reference/proposals-api.
 
 List customer-facing agent proposals across payment intents and non-money findings. Tenant-scoped and cursor-paginated.
 
-| Argument         | Type    | Description                                                                    |
-| ---------------- | ------- | ------------------------------------------------------------------------------ |
-| `type`           | string  | Optional: one of the eleven agent types.                                       |
-| `status`         | string  | Optional: lifecycle status filter.                                             |
-| `risk_band`      | string  | Optional: `low`, `standard`, `elevated`, `high`.                               |
-| `min_confidence` | number  | Optional: float in `[0, 1]`.                                                    |
-| `limit`          | integer | Optional: `1` to `100`.                                                        |
-| `cursor`         | string  | Optional: pagination cursor.                                                    |
+| Argument         | Type    | Description                                      |
+| ---------------- | ------- | ------------------------------------------------ |
+| `type`           | string  | Optional: one of the eleven agent types.         |
+| `status`         | string  | Optional: lifecycle status filter.               |
+| `risk_band`      | string  | Optional: `low`, `standard`, `elevated`, `high`. |
+| `min_confidence` | number  | Optional: float in `[0, 1]`.                     |
+| `limit`          | integer | Optional: `1` to `100`.                          |
+| `cursor`         | string  | Optional: pagination cursor.                     |
 
 #### `proposals.get`
 
@@ -242,9 +242,9 @@ Record a human decision on a proposal. Delegates to the same decision service as
 
 Resolve typed proposal evidence refs into tenant-scoped summaries and deep links where the ref kind is supported.
 
-| Argument | Type  | Description                                             |
-| -------- | ----- | ------------------------------------------------------ |
-| `refs`   | array | Required: up to 50 `{ kind, ref }` pairs.              |
+| Argument | Type  | Description                               |
+| -------- | ----- | ----------------------------------------- |
+| `refs`   | array | Required: up to 50 `{ kind, ref }` pairs. |
 
 Resolution fails closed: a supported ref that does not exist returns `not_found`, and an unsupported kind or malformed ref returns `resolvable: false` with a `reason`, never an error. Resolvable kinds: `account`, `counterparty`, `invoice`, `obligation`, `transaction`, `wiki_entity`.
 

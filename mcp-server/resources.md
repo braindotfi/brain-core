@@ -26,11 +26,11 @@ Tools are good for queries with arguments. Resources are good for entities with 
 
 Treating them as resources rather than tool calls has three benefits:
 
-| Benefit              | Detail                                                                                               |
-| -------------------- | ---------------------------------------------------------------------------------------------------- |
-| **Cacheable**        | An MCP runtime can cache resource reads by URI without understanding the tool's argument shape       |
-| **Context-friendly** | Agents can pass URIs back and forth in their planning context without re-fetching                    |
-| **Discoverable**     | `resources/list` enumerates the URI templates Brain advertises                                       |
+| Benefit              | Detail                                                                                         |
+| -------------------- | ---------------------------------------------------------------------------------------------- |
+| **Cacheable**        | An MCP runtime can cache resource reads by URI without understanding the tool's argument shape |
+| **Context-friendly** | Agents can pass URIs back and forth in their planning context without re-fetching              |
+| **Discoverable**     | `resources/list` enumerates the URI templates Brain advertises                                 |
 
 ### Reading a Resource
 

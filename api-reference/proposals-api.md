@@ -12,12 +12,12 @@ and resolves the typed evidence a proposal cites into readable summaries.
 This is the read-and-decide half of the agent loop. Agents propose through the
 gated agent path; humans list, inspect, and decide here.
 
-| Operation                     | Endpoint                            | Scope                                              |
-| ----------------------------- | ----------------------------------- | -------------------------------------------------- |
-| List proposals                | `GET  /v1/proposals`                | `execution:read`                                   |
-| Get one proposal              | `GET  /v1/proposals/{id}`           | `execution:read`                                   |
-| Decide on a proposal          | `POST /v1/proposals/{id}/decide`    | `execution:read` or `payment_intent:approve`, plus member authority (see below) |
-| Resolve proposal evidence     | `POST /v1/evidence/resolve`         | `execution:read`                                   |
+| Operation                 | Endpoint                         | Scope                                                                           |
+| ------------------------- | -------------------------------- | ------------------------------------------------------------------------------- |
+| List proposals            | `GET  /v1/proposals`             | `execution:read`                                                                |
+| Get one proposal          | `GET  /v1/proposals/{id}`        | `execution:read`                                                                |
+| Decide on a proposal      | `POST /v1/proposals/{id}/decide` | `execution:read` or `payment_intent:approve`, plus member authority (see below) |
+| Resolve proposal evidence | `POST /v1/evidence/resolve`      | `execution:read`                                                                |
 
 {% hint style="info" %}
 The same read model and decision service back the MCP tools `proposals.list`,
@@ -36,14 +36,14 @@ Authorization: Bearer <tenant token>
 
 Tenant-scoped and cursor-paginated. Every filter is optional.
 
-| Query parameter  | Type    | Description                                                                                   |
-| ---------------- | ------- | -------------------------------------------------------------------------------------------- |
-| `type`           | string  | One of the eleven agent types (see below).                                                   |
-| `status`         | string  | Lifecycle status filter (see below).                                                         |
-| `risk_band`      | string  | `low`, `standard`, `elevated`, or `high`.                                                     |
-| `min_confidence` | number  | Float in `[0, 1]`. Returns proposals at or above this agent confidence.                       |
-| `limit`          | integer | Page size, `1` to `100`.                                                                      |
-| `cursor`         | string  | Opaque pagination cursor from a prior response's `next_cursor`.                               |
+| Query parameter  | Type    | Description                                                             |
+| ---------------- | ------- | ----------------------------------------------------------------------- |
+| `type`           | string  | One of the eleven agent types (see below).                              |
+| `status`         | string  | Lifecycle status filter (see below).                                    |
+| `risk_band`      | string  | `low`, `standard`, `elevated`, or `high`.                               |
+| `min_confidence` | number  | Float in `[0, 1]`. Returns proposals at or above this agent confidence. |
+| `limit`          | integer | Page size, `1` to `100`.                                                |
+| `cursor`         | string  | Opaque pagination cursor from a prior response's `next_cursor`.         |
 
 ### Response
 
@@ -191,9 +191,9 @@ partially instead of failing whole.
 
 ## Related
 
-| Topic                        | Page                                                 |
-| ---------------------------- | ---------------------------------------------------- |
-| How agents run and propose   | [Agents API](agents-api.md)                          |
-| The money-path proposal      | [Payment Intents API](payment-intents-api.md)        |
-| The same tools over MCP      | [MCP Tools](../mcp-server/tools.md)                  |
-| Who may approve              | [Internal Agents](../concepts/internal-agents.md)    |
+| Topic                      | Page                                              |
+| -------------------------- | ------------------------------------------------- |
+| How agents run and propose | [Agents API](agents-api.md)                       |
+| The money-path proposal    | [Payment Intents API](payment-intents-api.md)     |
+| The same tools over MCP    | [MCP Tools](../mcp-server/tools.md)               |
+| Who may approve            | [Internal Agents](../concepts/internal-agents.md) |

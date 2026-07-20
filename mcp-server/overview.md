@@ -22,15 +22,15 @@ The MCP surface is intentionally small. **16 tools, 7 resource templates, 5 cann
 
 ### What an External Agent Can Do
 
-| Capability               | Tools                                                                                                                             | On-chain Scope           |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| **Read Ledger**          | `ledger.account.get`, `ledger.accounts.list`, `ledger.transactions.list`, `ledger.obligations.list`, `ledger.counterparties.list` | `ledger:read`            |
-| **Read Wiki**            | `wiki.question`, `wiki.page.get`                                                                                                  | `wiki:read`              |
-| **Contribute to Raw**    | `raw.contribute`                                                                                                                  | `raw:write`              |
-| **Propose payment**      | `payment_intent.propose`                                                                                                          | `payment_intent:propose` |
-| **Read proposals**       | `proposals.list`, `proposals.get`, `evidence.resolve`                                                                            | `execution:read`         |
-| **Decide a proposal**    | `proposals.decide`                                                                                                              | `payment_intent:approve` or `execution:read` |
-| **Propose agent action** | `agent.action.propose`                                                                                                            | `execution:propose`      |
+| Capability               | Tools                                                                                                                             | On-chain Scope                               |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Read Ledger**          | `ledger.account.get`, `ledger.accounts.list`, `ledger.transactions.list`, `ledger.obligations.list`, `ledger.counterparties.list` | `ledger:read`                                |
+| **Read Wiki**            | `wiki.question`, `wiki.page.get`                                                                                                  | `wiki:read`                                  |
+| **Contribute to Raw**    | `raw.contribute`                                                                                                                  | `raw:write`                                  |
+| **Propose payment**      | `payment_intent.propose`                                                                                                          | `payment_intent:propose`                     |
+| **Read proposals**       | `proposals.list`, `proposals.get`, `evidence.resolve`                                                                             | `execution:read`                             |
+| **Decide a proposal**    | `proposals.decide`                                                                                                                | `payment_intent:approve` or `execution:read` |
+| **Propose agent action** | `agent.action.propose`                                                                                                            | `execution:propose`                          |
 
 {% hint style="info" %}
 `proposals.decide` declares no tool scope of its own. It accepts either `payment_intent:approve` or `execution:read` at the call boundary, then enforces member approval authority downstream (user-principal actor resolution, active-member and approval-role checks, and the money-path approval gates).

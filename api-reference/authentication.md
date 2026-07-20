@@ -155,14 +155,14 @@ ScopeAttestation(
 
 ### Token Lifetimes
 
-| Token                                          | Default TTL | Refreshable                          |
-| ---------------------------------------------- | ----------- | ------------------------------------ |
-| **Owner JWT** (email/wallet)                   | 15 minutes  | Yes. Log in / re-sign again          |
-| **Agent token (SIWX)**                         | 1 hour      | Yes, by re-signing SIWX              |
-| **Server API key** (`brain_sk_`, Console)      | 90 days     | Rotated by tenant admin              |
-| **Service-token mint** (`/v1/auth/service-token`) | 1 hour   | Re-mint (break-glass sandbox/testnet) |
-| **Email-verification token**                   | 24 hours    | No, single-use                       |
-| **Policy verdict**                             | 60 seconds  | No, single-use                       |
+| Token                                             | Default TTL | Refreshable                           |
+| ------------------------------------------------- | ----------- | ------------------------------------- |
+| **Owner JWT** (email/wallet)                      | 15 minutes  | Yes. Log in / re-sign again           |
+| **Agent token (SIWX)**                            | 1 hour      | Yes, by re-signing SIWX               |
+| **Server API key** (`brain_sk_`, Console)         | 90 days     | Rotated by tenant admin               |
+| **Service-token mint** (`/v1/auth/service-token`) | 1 hour      | Re-mint (break-glass sandbox/testnet) |
+| **Email-verification token**                      | 24 hours    | No, single-use                        |
+| **Policy verdict**                                | 60 seconds  | No, single-use                        |
 
 Owner JWTs include `surfaces:admin` so a tenant admin can connect or revoke
 Slack, Teams, and email approval surfaces. Surface onboarding endpoints derive

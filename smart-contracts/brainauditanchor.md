@@ -61,22 +61,22 @@ Off-chain audit log
    └─ publisher (multi-sig) calls anchor() on Base L2
 ```
 
-| Step | Detail                                                                       |
-| ---- | ---------------------------------------------------------------------------- |
-| 1    | Audit events batch into a Merkle tree per tenant over a period window        |
-| 2    | The publisher multi-sig submits the root, event count, and period bounds     |
-| 3    | The root is published via `anchor()`                                         |
-| 4    | Contract emits `AnchorPublished`; the root becomes immutably retrievable      |
+| Step | Detail                                                                   |
+| ---- | ------------------------------------------------------------------------ |
+| 1    | Audit events batch into a Merkle tree per tenant over a period window    |
+| 2    | The publisher multi-sig submits the root, event count, and period bounds |
+| 3    | The root is published via `anchor()`                                     |
+| 4    | Contract emits `AnchorPublished`; the root becomes immutably retrievable |
 
 ### Replay Protection
 
 The contract records every published `(tenantId, root)` pair and rejects a repeat.
 
-| Behavior                             | Detail                                       |
-| ------------------------------------ | -------------------------------------------- |
-| **First time a root is published**   | Stored as the tenant's latest anchor         |
-| **Re-publishing the same root**      | Reverts with `RootAlreadyPublished`          |
-| **Period bounds**                    | `periodEnd` before `periodStart` reverts     |
+| Behavior                           | Detail                                   |
+| ---------------------------------- | ---------------------------------------- |
+| **First time a root is published** | Stored as the tenant's latest anchor     |
+| **Re-publishing the same root**    | Reverts with `RootAlreadyPublished`      |
+| **Period bounds**                  | `periodEnd` before `periodStart` reverts |
 
 Root-uniqueness per tenant is the replay guard: a published root cannot be re-anchored for the same tenant. There is no batch-index sequence to maintain, so anchoring never depends on submission order.
 
@@ -84,11 +84,11 @@ Root-uniqueness per tenant is the replay guard: a published root cannot be re-an
 
 A counterparty does not need a Brain account to verify an audit event. They just need:
 
-| Input     | Source                                          |
-| --------- | ----------------------------------------------- |
+| Input     | Source                                                            |
+| --------- | ----------------------------------------------------------------- |
 | `root`    | The published Merkle root (read via `latestAnchor` or event logs) |
-| `leaf`    | Hash of the event being verified                |
-| `proof[]` | Merkle path supplied by Brain                   |
+| `leaf`    | Hash of the event being verified                                  |
+| `proof[]` | Merkle path supplied by Brain                                     |
 
 ```solidity
 bool valid = anchor.verifyInclusion(root, leaf, proof);
@@ -126,10 +126,10 @@ function acceptPublisher() external;           // called by the pending publishe
 
 Only Merkle roots and hashed `tenantId` values are on-chain. Everything underneath stays off-chain in tenant-prefixed storage and tenant-scoped database rows. Source credentials use the global AES-256-GCM credential key described in `shared/src/crypto/credential-key-provider.ts`.
 
-| On-chain                          | Off-chain                           |
-| --------------------------------- | ----------------------------------- |
-| `tenantId` (hashed)               | Tenant raw identifier               |
-| `root` (Merkle root)              | Individual audit events             |
+| On-chain                                 | Off-chain                           |
+| ---------------------------------------- | ----------------------------------- |
+| `tenantId` (hashed)                      | Tenant raw identifier               |
+| `root` (Merkle root)                     | Individual audit events             |
 | `eventCount`, `periodStart`, `periodEnd` | Event content, citations, decisions |
 
 ### What's Next
