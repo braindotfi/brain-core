@@ -436,6 +436,34 @@ const envSchema = z.object({
     .positive()
     .default(6 * 60 * 60 * 1000),
 
+  // ---- Treasury scanner ----
+  BRAIN_TREASURY_SCAN_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(15 * 60 * 1000),
+  BRAIN_TREASURY_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  BRAIN_TREASURY_SCAN_PER_TENANT_BATCH_SIZE: z.coerce.number().int().positive().default(25),
+  BRAIN_TREASURY_SCAN_COOLDOWN_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(6 * 60 * 60 * 1000),
+
+  // ---- Payment advisory scanner ----
+  BRAIN_PAYMENT_SCAN_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(15 * 60 * 1000),
+  BRAIN_PAYMENT_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  BRAIN_PAYMENT_SCAN_PER_TENANT_BATCH_SIZE: z.coerce.number().int().positive().default(25),
+  BRAIN_PAYMENT_SCAN_COOLDOWN_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(6 * 60 * 60 * 1000),
+
   // ---- Vendor risk scanner ----
   BRAIN_VENDOR_RISK_SCAN_INTERVAL_MS: z.coerce
     .number()

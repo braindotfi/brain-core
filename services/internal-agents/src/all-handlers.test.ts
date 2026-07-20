@@ -65,6 +65,7 @@ const CONTEXT: Record<string, unknown> = {
   payables: [
     {
       obligation_id: "obl_1",
+      counterparty_id: "cp_1",
       amount: "100.00",
       currency: "USD",
       due_date: "2026-08-15T00:00:00.000Z",

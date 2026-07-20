@@ -3,6 +3,7 @@ import type { AgentMetric, EvalExpectedFields, EvalFieldScore } from "./types.js
 const EXACT_FIELDS = ["recommended_action", "escalation_tier", "aging_tier"] as const;
 const CASH_FORECAST_NUMERIC_TOLERANCE = 0.01;
 const REVENUE_NUMERIC_TOLERANCE = 0.01;
+const TREASURY_NUMERIC_TOLERANCE = 0.01;
 
 export const collectionsMetric: AgentMetric = {
   agent_key: "collections",
@@ -249,15 +250,46 @@ export const subscriptionMetric: AgentMetric = {
   },
 };
 
+export const treasuryMetric: AgentMetric = {
+  agent_key: "treasury",
+  score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
+    return [
+      numericWithinTolerance(
+        "sweep_amount",
+        numberValue(output.sweep_amount),
+        numberValue(expected.sweep_amount),
+        TREASURY_NUMERIC_TOLERANCE,
+      ),
+      exactMatch("recommended_action", output.recommended_action, expected.recommended_action),
+    ];
+  },
+};
+
+export const paymentMetric: AgentMetric = {
+  agent_key: "payment",
+  score(output: Record<string, unknown>, expected: EvalExpectedFields): readonly EvalFieldScore[] {
+    return [
+      exactMatch(
+        "recommended_payment_decision",
+        output.recommended_payment_decision,
+        expected.recommended_payment_decision,
+      ),
+      topOnePayableMatch(output.ranked_payables, expected.ranked_payables),
+    ];
+  },
+};
+
 export const metricRegistry: Readonly<Record<string, AgentMetric>> = {
   cash_forecast: cashForecastMetric,
   collections: collectionsMetric,
   compliance: complianceMetric,
   dispute: disputeMetric,
   fraud_anomaly: fraudAnomalyMetric,
+  payment: paymentMetric,
   reconciliation: reconciliationMetric,
   revenue_intel: revenueIntelMetric,
   subscription: subscriptionMetric,
+  treasury: treasuryMetric,
   vendor_risk: vendorRiskMetric,
 };
 
@@ -307,6 +339,28 @@ function topOneMatch(field: string, actual: unknown, expected: unknown): EvalFie
     score: passed ? 1 : 0,
     passed,
   };
+}
+
+function topOnePayableMatch(actual: unknown, expected: unknown): EvalFieldScore {
+  const actualTop = readTopObligationId(actual);
+  const expectedTop = readTopObligationId(expected);
+  const passed = expectedTop !== null && actualTop === expectedTop;
+  return {
+    field: "ranked_payables.top1",
+    expected: expectedTop,
+    actual: actualTop,
+    score: passed ? 1 : 0,
+    passed,
+  };
+}
+
+function readTopObligationId(raw: unknown): string | null {
+  if (!Array.isArray(raw)) return null;
+  const top = raw[0];
+  if (typeof top === "string") return top;
+  if (typeof top !== "object" || top === null) return null;
+  const id = (top as Record<string, unknown>).obligation_id;
+  return typeof id === "string" ? id : null;
 }
 
 interface ExpectedMatch {

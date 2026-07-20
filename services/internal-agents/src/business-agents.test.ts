@@ -26,6 +26,7 @@ const FULL: EvidenceBundle = {
     { kind: "invoice", ref: "inv_1" },
     { kind: "counterparty", ref: "cp_1" },
     { kind: "payment_destination", ref: "dest_1" },
+    { kind: "obligation", ref: "obl_1" },
     { kind: "transaction", ref: "tx_1" },
     { kind: "balance", ref: "bal_1" },
     { kind: "dispute", ref: "dsp_1" },

@@ -37,6 +37,14 @@
     "subscription": {
       "minimum_score": 1,
       "scenario_count": 5
+    },
+    "treasury": {
+      "minimum_score": 1,
+      "scenario_count": 4
+    },
+    "payment": {
+      "minimum_score": 1,
+      "scenario_count": 4
     }
   }
 }
