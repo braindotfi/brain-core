@@ -341,6 +341,20 @@ describe("makeLedgerEvidenceProvider", () => {
     expect(items).toEqual([]);
   });
 
+  it("does not emit requested context evidence when referenced rows or ids are absent", async () => {
+    const provider = makeLedgerEvidenceProvider(
+      fakeLedger({
+        listObligations: vi.fn(async () => ({ items: [], next_cursor: null })),
+      }),
+    );
+    const items = await provider({
+      tenantId: TENANT,
+      context: { obligation_id: "ob_missing" },
+      requiredEvidence: ["obligation", "dispute", "policy_decision", "audit_event"],
+    });
+    expect(items).toEqual([]);
+  });
+
   it("only reads kinds the agent requires", async () => {
     const ledger = fakeLedger();
     const provider = makeLedgerEvidenceProvider(ledger);
