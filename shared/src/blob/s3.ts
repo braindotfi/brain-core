@@ -172,6 +172,35 @@ export class S3BlobAdapter implements BlobAdapter {
     return { deleted, failures };
   }
 
+  public async purgeObject(path: string): Promise<void> {
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+    do {
+      const list = await this.client.send(
+        new ListObjectVersionsCommand({
+          Bucket: this.opts.bucket,
+          Prefix: path,
+          ...(keyMarker !== undefined ? { KeyMarker: keyMarker } : {}),
+          ...(versionIdMarker !== undefined ? { VersionIdMarker: versionIdMarker } : {}),
+        }),
+      );
+      const entries = [...(list.Versions ?? []), ...(list.DeleteMarkers ?? [])].filter(
+        (entry) => entry.Key === path,
+      );
+      for (const entry of entries) {
+        await this.client.send(
+          new DeleteObjectCommand({
+            Bucket: this.opts.bucket,
+            Key: path,
+            ...(entry.VersionId !== undefined ? { VersionId: entry.VersionId } : {}),
+          }),
+        );
+      }
+      keyMarker = list.IsTruncated === true ? list.NextKeyMarker : undefined;
+      versionIdMarker = list.IsTruncated === true ? list.NextVersionIdMarker : undefined;
+    } while (keyMarker !== undefined || versionIdMarker !== undefined);
+  }
+
   public async healthcheck(): Promise<boolean> {
     try {
       await this.client.send(new HeadBucketCommand({ Bucket: this.opts.bucket }));

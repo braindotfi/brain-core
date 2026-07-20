@@ -4669,6 +4669,104 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /tenants/{id}/export:
+    post:
+      tags: [Admin]
+      summary: Enqueue a tenant data export (GDPR portability)
+      description: |
+        Self-only: requires `principal_type=user` and `principal.tenantId
+        === id`, matching DELETE /tenants/{id}. Agent and API partner
+        principals are rejected. Enqueues one async export job per tenant
+        when no queued or running export already exists. The worker assembles
+        a tenant-scoped NDJSON archive containing Ledger accounts,
+        transactions, counterparties, obligations, invoices, Ledger document
+        rows, Raw artifact metadata with blob URIs, members, sources without
+        encrypted credentials, proposals, and audit events. Archives expire
+        after the configured retention horizon and are purged.
+      operationId: createTenantExport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: Existing queued or running export job returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantExportJob' }
+        '202':
+          description: Export job queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantExportJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /tenants/{id}/export/{job_id}:
+    get:
+      tags: [Admin]
+      summary: Get tenant export job status
+      description: |
+        Self-only user-principal status lookup for a tenant export job.
+        Returns status, byte size when available, expiry, and any terminal
+        error. Does not return the sensitive blob URI.
+      operationId: getTenantExport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^texp_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: Export job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantExportJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /tenants/{id}/export/{job_id}/download:
+    get:
+      tags: [Admin]
+      summary: Download a completed tenant export archive
+      description: |
+        Streams the completed NDJSON archive for the authenticated user's own
+        tenant. The tenant id and job id are path parameters and are checked
+        against the principal. No tenant id or data is accepted in query
+        parameters. Returns 410 after the archive expires.
+      operationId: downloadTenantExport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^texp_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: Export archive
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                format: binary
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410':
+          description: Export archive expired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   #############################################################################
   # REFERENCE — public, tenant-agnostic data
   #############################################################################
@@ -5243,6 +5341,35 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+
+    TenantExportJob:
+      type: object
+      required: [job_id, tenant_id, status, byte_size, expires_at, error, created_at, updated_at]
+      properties:
+        job_id:
+          type: string
+          pattern: '^texp_[0-9A-HJKMNP-TV-Z]{26}$'
+        tenant_id:
+          type: string
+          pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$'
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        byte_size:
+          type: [integer, "null"]
+          minimum: 0
+        expires_at:
+          type: string
+          format: date-time
+        error:
+          type: [object, "null"]
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     ResolvedObligationView:
       type: object

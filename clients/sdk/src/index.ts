@@ -119,6 +119,8 @@ export {
   type SourceSyncJobResult,
 } from "./resources/raw.js";
 
+export { TenantsResource, type TenantExportJob } from "./resources/tenants.js";
+
 export {
   WikiResource,
   type AnnotationResult,

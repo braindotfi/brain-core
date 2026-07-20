@@ -2662,6 +2662,79 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tenants/{id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enqueue a tenant data export (GDPR portability)
+         * @description Self-only: requires `principal_type=user` and `principal.tenantId
+         *     === id`, matching DELETE /tenants/{id}. Agent and API partner
+         *     principals are rejected. Enqueues one async export job per tenant
+         *     when no queued or running export already exists. The worker assembles
+         *     a tenant-scoped NDJSON archive containing Ledger accounts,
+         *     transactions, counterparties, obligations, invoices, Ledger document
+         *     rows, Raw artifact metadata with blob URIs, members, sources without
+         *     encrypted credentials, proposals, and audit events. Archives expire
+         *     after the configured retention horizon and are purged.
+         */
+        post: operations["createTenantExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{id}/export/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get tenant export job status
+         * @description Self-only user-principal status lookup for a tenant export job.
+         *     Returns status, byte size when available, expiry, and any terminal
+         *     error. Does not return the sensitive blob URI.
+         */
+        get: operations["getTenantExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{id}/export/{job_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a completed tenant export archive
+         * @description Streams the completed NDJSON archive for the authenticated user's own
+         *     tenant. The tenant id and job id are path parameters and are checked
+         *     against the principal. No tenant id or data is accepted in query
+         *     parameters. Returns 410 after the archive expires.
+         */
+        get: operations["downloadTenantExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/reference/yield-venues": {
         parameters: {
             query?: never;
@@ -2999,6 +3072,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        TenantExportJob: {
+            job_id: string;
+            tenant_id: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "succeeded" | "failed";
+            byte_size: number | null;
+            /** Format: date-time */
+            expires_at: string;
+            error: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         /**
          * @description One reconciled obligation fact. All observations retained; field-level
          *     authority; conflicts listed; duplicate candidates pending review (§13).
@@ -8987,6 +9076,100 @@ export interface operations {
             };
             /** @description Caller is not a user principal, or principal.tenantId does not match the path id. Error code `auth_scope_insufficient` or `auth_tenant_mismatch`. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createTenantExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Existing queued or running export job returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantExportJob"];
+                };
+            };
+            /** @description Export job queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantExportJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getTenantExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Export job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantExportJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    downloadTenantExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Export archive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Export archive expired */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };

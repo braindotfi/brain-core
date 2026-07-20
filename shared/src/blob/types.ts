@@ -87,6 +87,12 @@ export interface BlobAdapter {
    * deletes the remainder.
    */
   purgeTenant(tenantId: string): Promise<BlobPurgeResult>;
+  /**
+   * Permanently delete one object. Used for expiring sensitive export archives
+   * without touching the rest of the tenant prefix. Idempotent when the object
+   * is already gone.
+   */
+  purgeObject(path: string): Promise<void>;
   healthcheck(): Promise<boolean>;
 }
 

@@ -335,6 +335,13 @@ const envSchema = z.object({
   BRAIN_DOCUMENT_EXTRACT_WORKER_BATCH_SIZE: z.coerce.number().int().positive().default(10),
   BRAIN_DOCUMENT_EXTRACT_WORKER_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
   BRAIN_DOCUMENT_EXTRACT_WORKER_RETRY_BASE_MS: z.coerce.number().int().positive().default(30_000),
+  BRAIN_TENANT_EXPORT_WORKER_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
+  BRAIN_TENANT_EXPORT_WORKER_BATCH_SIZE: z.coerce.number().int().positive().default(5),
+  BRAIN_TENANT_EXPORT_TTL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(7 * 24 * 60 * 60 * 1000),
   /**
    * Shared secret for the X-Brain-Auth HMAC sent to the brain-agents service.
    * The Python side verifies with the same secret (BRAIN_AGENTS_INBOUND_SECRET

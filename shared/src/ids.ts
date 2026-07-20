@@ -91,6 +91,8 @@ export const ID_PREFIX = {
   // RFC 0003 — durable tenant blob purge job (GDPR Art. 17). One row per
   // tenant deletion; survives the deletion and is drained by a privileged worker.
   tenantBlobPurgeJob: "tbp",
+  // BC-9 — durable tenant data export job (GDPR Art. 20 portability).
+  tenantExportJob: "texp",
   // RFC 0003 — transactional audit outbox for purge-lifecycle events. One row per
   // lifecycle transition; delivered to the audit service by the purge worker.
   tenantBlobPurgeAuditOutbox: "tbo",
@@ -156,6 +158,7 @@ export const newExecutionOutboxId = (): string => brainId(ID_PREFIX.executionOut
 export const newLedgerReservationId = (): string => brainId(ID_PREFIX.ledgerReservation);
 export const newWebhookDeadLetterId = (): string => brainId(ID_PREFIX.webhookDeadLetter);
 export const newApiKeyId = (): string => brainId(ID_PREFIX.apiKey);
+export const newTenantExportJobId = (): string => brainId(ID_PREFIX.tenantExportJob);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.

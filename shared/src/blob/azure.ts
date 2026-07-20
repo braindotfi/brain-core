@@ -183,6 +183,32 @@ export class AzureBlobAdapter implements BlobAdapter {
     return { deleted, failures };
   }
 
+  public async purgeObject(path: string): Promise<void> {
+    const container = this.containerClient();
+    let foundVersionOrSnapshot = false;
+    for await (const blob of container.listBlobsFlat({
+      prefix: path,
+      includeVersions: true,
+      includeSnapshots: true,
+    })) {
+      if (blob.name !== path) continue;
+      foundVersionOrSnapshot = true;
+      const blobClient = container.getBlobClient(blob.name);
+      if (blob.versionId !== undefined) {
+        await blobClient.withVersion(blob.versionId).deleteIfExists();
+      } else if (blob.snapshot !== undefined) {
+        await blobClient.withSnapshot(blob.snapshot).deleteIfExists();
+      } else {
+        await container
+          .getBlockBlobClient(blob.name)
+          .deleteIfExists({ deleteSnapshots: "include" });
+      }
+    }
+    if (!foundVersionOrSnapshot) {
+      await container.getBlockBlobClient(path).deleteIfExists({ deleteSnapshots: "include" });
+    }
+  }
+
   public async healthcheck(): Promise<boolean> {
     try {
       await this.containerClient().getProperties();

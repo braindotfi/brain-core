@@ -75,6 +75,10 @@ export class MemoryBlobAdapter implements BlobAdapter {
     return { deleted, failures: [] };
   }
 
+  public async purgeObject(path: string): Promise<void> {
+    this.objects.delete(path);
+  }
+
   public async healthcheck(): Promise<boolean> {
     return true;
   }
