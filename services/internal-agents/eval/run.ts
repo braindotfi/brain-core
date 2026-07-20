@@ -11,11 +11,13 @@ import {
   evalHandlers,
   fraudAnomalyScenarios,
   metricRegistry,
+  paymentScenarios,
   reconciliationScenarios,
   revenueIntelScenarios,
   runGoldenEval,
   summarizeReport,
   subscriptionScenarios,
+  treasuryScenarios,
   vendorRiskScenarios,
 } from "./index.js";
 import type { GoldenEvalBaseline } from "./types.js";
@@ -39,6 +41,8 @@ async function main(): Promise<void> {
       ...disputeScenarios,
       ...revenueIntelScenarios,
       ...subscriptionScenarios,
+      ...treasuryScenarios,
+      ...paymentScenarios,
     ],
     fixedClock: EVAL_FIXED_CLOCK,
   });

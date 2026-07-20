@@ -100,9 +100,11 @@ import { startCashForecastScanner } from "./agents/cash-forecast-scanner.js";
 import { startComplianceScanner } from "./agents/compliance-scanner.js";
 import { startDisputeScanner } from "./agents/dispute-scanner.js";
 import { startFraudAnomalyScanner } from "./agents/fraud-anomaly-scanner.js";
+import { startPaymentAdvisoryScanner } from "./agents/payment-advisory-scanner.js";
 import { startReconciliationUnreconciledScanner } from "./agents/reconciliation-unreconciled-scanner.js";
 import { startRevenueIntelScanner } from "./agents/revenue-intel-scanner.js";
 import { startSubscriptionScanner } from "./agents/subscription-scanner.js";
+import { startTreasuryScanner } from "./agents/treasury-scanner.js";
 import { startVendorRiskScanner } from "./agents/vendor-risk-scanner.js";
 
 import {
@@ -2734,6 +2736,46 @@ async function main(): Promise<void> {
       )
     : undefined;
 
+  // Treasury scanner (BC-1/BC-2): cross-tenant balance enumeration on the
+  // ledger worker pool, then tenant-scoped AgentRunService proposals.
+  const treasuryScanner = composition.workers.has("ledger")
+    ? startTreasuryScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_TREASURY_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_TREASURY_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_TREASURY_SCAN_PER_TENANT_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_TREASURY_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
+  // Payment advisory scanner (BC-1/BC-2): cross-tenant payable enumeration on
+  // the ledger worker pool, then tenant-scoped AgentRunService proposals.
+  const paymentAdvisoryScanner = composition.workers.has("ledger")
+    ? startPaymentAdvisoryScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_PAYMENT_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_PAYMENT_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_PAYMENT_SCAN_PER_TENANT_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_PAYMENT_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
   // Vendor risk scanner (BC-1/BC-2): cross-tenant vendor and payment-instruction
   // enumeration on the ledger worker pool, then tenant-scoped AgentRunService proposals.
   const vendorRiskScanner = composition.workers.has("ledger")
@@ -3049,6 +3091,8 @@ async function main(): Promise<void> {
           collectionsOverdueScanner,
           reconciliationUnreconciledScanner,
           cashForecastScanner,
+          treasuryScanner,
+          paymentAdvisoryScanner,
           vendorRiskScanner,
           fraudAnomalyScanner,
           complianceScanner,

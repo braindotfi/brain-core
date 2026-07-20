@@ -12,10 +12,12 @@ import {
   evalHandlers,
   fraudAnomalyScenarios,
   metricRegistry,
+  paymentScenarios,
   reconciliationScenarios,
   revenueIntelScenarios,
   runGoldenEval,
   subscriptionScenarios,
+  treasuryScenarios,
   vendorRiskScenarios,
 } from "./index.js";
 import type { GoldenEvalBaseline, GoldenScenario } from "./types.js";
@@ -80,6 +82,8 @@ describe("golden eval runner", () => {
         ...disputeScenarios,
         ...revenueIntelScenarios,
         ...subscriptionScenarios,
+        ...treasuryScenarios,
+        ...paymentScenarios,
       ],
       fixedClock: EVAL_FIXED_CLOCK,
     });

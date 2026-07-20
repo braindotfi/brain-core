@@ -174,12 +174,76 @@ describe("paymentHandler — on-chain branch", () => {
 });
 
 describe("paymentHandler — advisory action", () => {
-  it("falls through to agent proposal for request_approval", () => {
+  it("ranks urgent payable advisory without creating a payment intent", () => {
     const proposed = paymentHandler.build({
       action: "request_approval",
-      context: { counterparty_id: "cp_2" },
+      context: {
+        source_account_id: "acct_1",
+        currency: "USD",
+        available_cash: "10000.00",
+        payables: [
+          {
+            obligation_id: "obl_later",
+            counterparty_id: "cp_later",
+            amount: "100.00",
+            currency: "USD",
+            due_date: "2026-08-20T00:00:00.000Z",
+          },
+          {
+            obligation_id: "obl_now",
+            counterparty_id: "cp_now",
+            amount: "200.00",
+            currency: "USD",
+            due_date: "2026-07-20T00:00:00.000Z",
+          },
+        ],
+      },
       evidence: EVIDENCE,
+      now: new Date("2026-07-18T00:00:00.000Z"),
     });
     expect(proposed.channel).toBe("agent");
+    if (proposed.channel !== "agent") return;
+    expect(proposed.action.obligation_id).toBe("obl_now");
+    expect(proposed.action.recommended_payment_decision).toBe("pay_now");
+    expect(proposed.action.ranked_payables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ obligation_id: "obl_now", decision: "pay_now" }),
+        expect.objectContaining({ obligation_id: "obl_later", decision: "defer" }),
+      ]),
+    );
+  });
+
+  it("defers low-priority payable advisory", () => {
+    const proposed = paymentHandler.build({
+      action: "request_approval",
+      context: {
+        source_account_id: "acct_1",
+        currency: "USD",
+        available_cash: "10000.00",
+        obligation_id: "obl_later",
+        counterparty_id: "cp_later",
+        amount: "100.00",
+        due_date: "2026-09-20T00:00:00.000Z",
+      },
+      evidence: EVIDENCE,
+      now: new Date("2026-07-18T00:00:00.000Z"),
+    });
+
+    expect(proposed.channel).toBe("agent");
+    if (proposed.channel !== "agent") return;
+    expect(proposed.action.recommended_payment_decision).toBe("defer");
+  });
+
+  it("fails closed when payable context is missing", () => {
+    expect(() =>
+      paymentHandler.build({
+        action: "request_approval",
+        context: {
+          source_account_id: "acct_1",
+          currency: "USD",
+        },
+        evidence: EVIDENCE,
+      }),
+    ).toThrow(/obligation_id/);
   });
 });

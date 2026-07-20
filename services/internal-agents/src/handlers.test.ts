@@ -194,7 +194,17 @@ describe("Treasury handler", () => {
   it("produces an advisory proposal that passes its policy", () => {
     const proposed = treasuryHandler.build({
       action: "recommend_cash_sweep",
-      context: {},
+      context: {
+        balance_id: "bal_1",
+        account_id: "acct_1",
+        current_balance: "120000.00",
+        currency: "USD",
+        thresholds: {
+          operating_minimum: "50000.00",
+          surplus_floor: "100000.00",
+          low_balance_floor: "25000.00",
+        },
+      },
       evidence: EVIDENCE,
     });
     expect(proposed.channel).toBe("agent");
