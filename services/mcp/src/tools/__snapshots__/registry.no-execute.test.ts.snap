@@ -3,6 +3,7 @@
 exports[`MCP tool registry — no execution surface (P1.2) > snapshots the exposed tool list (additions require explicit review) 1`] = `
 [
   "agent.action.propose",
+  "evidence.resolve",
   "ledger.account.get",
   "ledger.accounts.list",
   "ledger.counterparties.list",
@@ -11,6 +12,9 @@ exports[`MCP tool registry — no execution surface (P1.2) > snapshots the expos
   "payment_intent.cancel",
   "payment_intent.list",
   "payment_intent.propose",
+  "proposals.decide",
+  "proposals.get",
+  "proposals.list",
   "raw.contribute",
   "wiki.page.get",
   "wiki.question",

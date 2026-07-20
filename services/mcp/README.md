@@ -9,8 +9,9 @@ the repo root.
 
 ## What's Exposed
 
-- **10 tools** across 4 capability groups: `ledger:read`, `wiki:read`,
-  `raw:write`, `payment_intent:propose` / `execution:propose`.
+- **16 tools** across 6 capability groups: `ledger:read`, `wiki:read`,
+  `raw:write`, `payment_intent:propose`, `execution:propose`,
+  proposal decisions, and evidence resolution.
 - **6 resources** with stable `brain://...` URIs.
 - **5 prompts** that templatize canonical financial questions.
 
@@ -21,8 +22,10 @@ the repo root.
 - Direct access to `services/raw` / `services/ledger` / `services/policy`
   / `services/audit` databases. Every tool goes through the same
   controlled service methods that the HTTP API uses.
-- Cross-tenant data. Every request is bounded by the agent's
+- Cross-tenant data. Every request is bounded by the principal's
   `tenant_id` JWT claim plus Postgres RLS.
+- Agent self-approval. MCP proposal decisions require a user principal
+  and delegate to the same proposal decision service as HTTP.
 
 ## Local Development
 

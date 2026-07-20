@@ -13,7 +13,9 @@
 import {
   brainError,
   newRequestId,
+  requireScope,
   type AuditEmitter,
+  type Scope,
   type IAgentService,
   type ILedgerService,
   type IPaymentIntentService,
@@ -21,6 +23,7 @@ import {
   type IWikiMemoryService,
   type Principal,
   type Proof,
+  type ServiceCallContext,
 } from "@brain/shared";
 import { dispatch, invalidParams, type JsonRpcHandler } from "./dispatcher.js";
 import {
@@ -36,7 +39,13 @@ import {
   type ToolListResult,
 } from "./types.js";
 import { findTool, toolDescriptors } from "./tools/registry.js";
-import type { Tool, ToolContext, ToolResult } from "./tools/types.js";
+import type {
+  EvidenceToolService,
+  ProposalToolService,
+  Tool,
+  ToolContext,
+  ToolResult,
+} from "./tools/types.js";
 import { listResources, readResource } from "./resources.js";
 import { getPrompt, listPrompts } from "./prompts.js";
 import type { AuthVerifier } from "./auth.js";
@@ -49,6 +58,10 @@ export interface McpServerDeps {
   paymentIntents: IPaymentIntentService;
   /** Optional. When absent, agent.action.propose returns internal_server_error. */
   agentService?: IAgentService;
+  /** Optional until proposal tools are wired by the API composition root. */
+  proposals?: ProposalToolService;
+  /** Optional until evidence tools are wired by the API composition root. */
+  evidence?: EvidenceToolService;
   audit: AuditEmitter;
   /** Optional H-07 proof builder — wires the brain://proofs/{action_id} resource. */
   buildProof?: (tenantId: string, actionId: string) => Promise<Proof | null>;
@@ -65,33 +78,47 @@ export class BrainMcpServer {
   public async handle(payload: unknown, principal: Principal): Promise<JsonRpcResponse> {
     const requestId = newRequestId();
 
-    // Verify the agent FIRST, before we even look at the method name. Any
-    // failure here is re-thrown (not shaped into a JSON-RPC error): it
-    // propagates out of the route handler and surfaces as an HTTP 401/403
-    // Brain error envelope, not a 200 JSON-RPC response. Batch 12: emit an audit row
-    // on auth-verify failures too, so operators see scope-mismatch /
-    // scope-hash drift / tenant-mismatch probes in the trail. We do NOT
-    // have a verified ctx yet, so the audit uses the principal's CLAIMED
-    // tenant + actor from the JWT (that is, what just got rejected). The
-    // act of rejection is the value here -- the row says "someone with
-    // this JWT got bounced at the MCP boundary".
-    let auth: Awaited<ReturnType<AuthVerifier["verify"]>>;
-    try {
-      auth = await this.deps.auth.verify(principal);
-    } catch (err) {
-      await this.emitRejectionAudit(principal, "auth.verify", err);
-      throw err;
+    // Agent principals are verified against the MCP agent registry before any
+    // method dispatch. User principals are already authenticated by the upstream
+    // JWT middleware and pass through as user service context so human-only
+    // proposal decisions can reuse the same ActorResolver path as HTTP.
+    let agent: Awaited<ReturnType<AuthVerifier["verify"]>>["agent"] | undefined;
+    let serviceCtx: ServiceCallContext;
+    if (principal.type === "agent") {
+      try {
+        const auth = await this.deps.auth.verify(principal);
+        agent = auth.agent;
+        serviceCtx = {
+          ...auth.ctx,
+          requestId,
+          principalType: principal.type,
+          scopes: principal.scopes,
+        };
+      } catch (err) {
+        await this.emitRejectionAudit(principal, "auth.verify", err);
+        throw err;
+      }
+    } else {
+      serviceCtx = {
+        tenantId: principal.tenantId,
+        actor: principal.id,
+        requestId,
+        principalType: principal.type,
+        scopes: principal.scopes,
+      };
     }
     const buildProof = this.deps.buildProof;
-    const tenantId = auth.ctx.tenantId;
+    const tenantId = serviceCtx.tenantId;
     const toolCtx: ToolContext = {
-      ctx: { ...auth.ctx, requestId },
-      agent: auth.agent,
+      ctx: serviceCtx,
+      ...(agent !== undefined ? { agent } : {}),
       ledger: this.deps.ledger,
       wiki: this.deps.wiki,
       raw: this.deps.raw,
       paymentIntents: this.deps.paymentIntents,
       ...(this.deps.agentService !== undefined ? { agentService: this.deps.agentService } : {}),
+      ...(this.deps.proposals !== undefined ? { proposals: this.deps.proposals } : {}),
+      ...(this.deps.evidence !== undefined ? { evidence: this.deps.evidence } : {}),
       audit: this.deps.audit,
       // Bind the tenant on the ToolContext so resources don't have to re-derive it.
       ...(buildProof !== undefined
@@ -306,9 +333,11 @@ function extractErrorCode(err: unknown): string {
 
 function enforceScopes(tool: Tool, scopes: ReadonlyArray<string>): void {
   for (const s of tool.requiredScopes) {
-    if (!scopes.includes(s)) {
+    try {
+      requireScope(scopes, s as Scope);
+    } catch (err) {
       throw brainError("auth_scope_insufficient", `tool '${tool.name}' requires scope '${s}'`, {
-        details: { required: tool.requiredScopes, held: scopes },
+        details: { required: tool.requiredScopes, held: scopes, cause: extractErrorCode(err) },
       });
     }
   }
@@ -316,9 +345,11 @@ function enforceScopes(tool: Tool, scopes: ReadonlyArray<string>): void {
 
 function requireAll(scopes: ReadonlyArray<string>, required: ReadonlyArray<string>): void {
   for (const r of required) {
-    if (!scopes.includes(r)) {
+    try {
+      requireScope(scopes, r as Scope);
+    } catch (err) {
       throw brainError("auth_scope_insufficient", `requires scope '${r}'`, {
-        details: { required, held: scopes },
+        details: { required, held: scopes, cause: extractErrorCode(err) },
       });
     }
   }

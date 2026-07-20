@@ -172,6 +172,10 @@ Done
   credentials must assert an actor and are recorded as `tenant_asserted`; Slack
   and Teams resolve through identity links; email uses signed proposal-bound
   tokens.
+- MCP exposes proposal read, proposal decision, and evidence resolution tools.
+  `proposals.decide` is a human decision surface: user principals delegate to
+  the same `ProposalDecisionService` as HTTP, while agent principals still fail
+  `ActorResolver` with `actor_unresolved`.
 - `PaymentIntentService.approve` resolves the actor and calls
   `authorizeApproval` before any approval signature or status transition. The
   gate checks, in order: active tenant member, admin or approver role, authorized

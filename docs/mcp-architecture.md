@@ -33,8 +33,8 @@ it is a _transport_ over the same six-layer policy/audit boundary.
 An MCP client connected to Brain can:
 
 - **List and call tools**: typed actions like `ledger.transactions.list`,
-  `wiki.question`, `payment_intent.propose`. Each tool maps to a
-  controlled service method.
+  `wiki.question`, `payment_intent.propose`, `proposals.list`, and
+  `evidence.resolve`. Each tool maps to a controlled service method.
 - **List and read resources**: typed identifiers like
   `brain://ledger/accounts/{id}` that resolve to a JSON snapshot.
 - **List and get prompts**: canonical question templates the client
@@ -51,6 +51,8 @@ An MCP client _cannot_:
   through the controlled service helpers we already shipped.
 - Skip an audit event. Every tool call emits one
   `agent.mcp.tool_called` audit event, regardless of outcome.
+- Decide as an agent. `proposals.decide` requires a user principal and
+  delegates to the same member-authority service used by HTTP.
 
 ## Where MCP Lives in the Layer Map
 
@@ -59,7 +61,7 @@ An MCP client _cannot_:
    │  External AI agents (Claude Desktop, custom agents, ...)   │
    └────────────────┬───────────────────────────────────────────┘
                     │ JSON-RPC 2.0 over HTTPS
-                    │ Bearer JWT (principal_type=agent)
+                    │ Bearer JWT (principal_type=agent or user)
                     ▼
    ┌────────────────────────────────────────────────────────────┐
    │  POST /v1/agents/mcp     (Fastify route in services/exec)  │
@@ -107,11 +109,13 @@ or real-time resource updates.
 
 ## Authentication and Authorization
 
-Every MCP request must carry a Bearer JWT with `principal_type=agent`.
-The JWT is verified by the existing `authPlugin` upstream of the route
-handler, same code path as every other Brain endpoint.
+Every MCP request must carry a Bearer JWT. The JWT is verified by the
+existing `authPlugin` upstream of the route handler, same code path as
+every other Brain endpoint. The transport accepts `principal_type=agent`
+for agent tools and `principal_type=user` for human proposal decisions.
+API partner principals are rejected at this surface.
 
-After JWT verification, the MCP server runs four extra checks:
+After JWT verification, agent principals run four extra checks:
 
 1. **Agent record exists and is `active`.** Lookup against the `agents`
    table; reject with `agent_not_registered` if missing or in any non-
@@ -134,9 +138,15 @@ For hot-path performance, on-chain scope-hash check (2) is cached for
 60 seconds per (agent_id, scope_hash) pair. Cache miss falls through to
 an `eth_call` against Base RPC.
 
+User principals do not run the agent registry checks. They carry normal
+service context into the same proposal decision service the HTTP route
+uses. That service resolves the actor through `ActorResolver` and denies
+unresolved, inactive, roleless, or agent principals before any decision
+or audit transition.
+
 ## Tool Surface (V0.3)
 
-Ten tools across four capability groups. Each tool name is an
+Sixteen tools across six capability groups. Each tool name is an
 `{layer}.{noun}.{verb}` string; that's the convention.
 
 ### `ledger:read` Capability
@@ -170,6 +180,21 @@ Ten tools across four capability groups. Each tool name is an
 | `payment_intent.cancel`  | `PaymentIntentService.cancel` | Only the proposing agent; allowed from `proposed` / `pending_approval`. Item 17. Needs `payment_intent:propose`. |
 | `payment_intent.list`    | `PaymentIntentService.list`   | Lists the calling agent's own intents (tenant- and agent-scoped). Item 17. Needs `ledger:read`.                  |
 | `agent.action.propose`   | `IAgentService.propose`       | Non-financial proposal.                                                                                          |
+
+### `execution:read` Proposal and Evidence Capabilities
+
+| Tool               | Maps to                          | Notes                                                                                 |
+| ------------------ | -------------------------------- | ------------------------------------------------------------------------------------- |
+| `proposals.list`   | `/v1/proposals` read model       | Unified proposal list over PaymentIntent proposals and agent findings.                |
+| `proposals.get`    | `/v1/proposals/{id}` read model  | Reads one tenant-scoped proposal.                                                     |
+| `evidence.resolve` | `/v1/evidence/resolve` resolver  | Resolves typed evidence refs to summaries and deep links where the kind is supported. |
+| `proposals.decide` | `ProposalDecisionService.decide` | Requires `execution:read` or `payment_intent:approve`; only user principals decide.   |
+
+`proposals.decide` does not implement its own approval model. Money-path
+proposal approvals route through `PaymentIntentService.approve`, so
+member activity, approval role, domain, limit, actor-not-payee, second
+approval, and audit ordering remain identical to HTTP. Agent proposals
+use the same active-member and role gate as the HTTP decision route.
 
 A tool that the agent isn't scoped for is still **listed** (`tools/list`
 returns the full registry); attempting to **call** it returns

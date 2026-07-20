@@ -9,7 +9,13 @@
  * per §3.2 of the architecture.
  */
 
-import { requireString, type Tool, type ToolContext, type ToolResult } from "./types.js";
+import {
+  requireAgentContext,
+  requireString,
+  type Tool,
+  type ToolContext,
+  type ToolResult,
+} from "./types.js";
 
 interface RawContributeInput {
   /** Free-form payload the agent wants to attribute to itself. */
@@ -51,12 +57,13 @@ export const rawContributeTool: Tool<RawContributeInput> = {
     return out;
   },
   async handle(ctx: ToolContext, input): Promise<ToolResult> {
+    const agent = requireAgentContext(ctx, "raw.contribute");
     const body = Buffer.from(input.payload, "utf8");
     const result = await ctx.raw.ingest(ctx.ctx, {
       sourceType: "agent_contributed",
       sourceRef: {
-        agent_id: ctx.agent.id,
-        agent_role: ctx.agent.role,
+        agent_id: agent.id,
+        agent_role: agent.role,
         ...(input.source_ref ?? {}),
       },
       body,

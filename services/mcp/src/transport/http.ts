@@ -13,7 +13,7 @@ import type { BrainMcpServer } from "../server.js";
 export interface McpRouteOptions {
   /** Path the MCP server is mounted at. Default `/agents/mcp`. */
   path?: string;
-  /** Skip principal_type=agent enforcement. Set to true only in dev-bypass mode. */
+  /** Skip principal_type=user|agent enforcement. Set to true only in dev-bypass mode. */
   skipPrincipalTypeCheck?: boolean;
   /**
    * Per-tenant sliding-window rate limiter. When supplied, every MCP request
@@ -36,9 +36,9 @@ export interface McpRouteOptions {
 
 /**
  * Register the MCP route on a Fastify instance. The route requires a
- * Bearer JWT (handled by `authPlugin` upstream) — we just check that
- * `request.principal` exists and has principal_type=agent before
- * delegating to the server.
+ * Bearer JWT handled by `authPlugin` upstream. The MCP surface accepts
+ * registered agents for propose/read tools and user principals for human
+ * proposal decisions. API partner principals are not allowed here.
  */
 export async function registerMcpRoute(
   app: FastifyInstance,
@@ -66,12 +66,16 @@ export async function registerMcpRoute(
     if (request.principal === undefined) {
       throw brainError("auth_token_missing", "principal required");
     }
-    if (!opts.skipPrincipalTypeCheck && request.principal.type !== "agent") {
-      throw brainError("auth_scope_insufficient", "MCP requires principal_type=agent");
+    if (
+      !opts.skipPrincipalTypeCheck &&
+      request.principal.type !== "agent" &&
+      request.principal.type !== "user"
+    ) {
+      throw brainError("auth_scope_insufficient", "MCP requires principal_type=agent or user");
     }
-    // Per-tenant rate limit (must run AFTER auth so an unauthenticated flood
-    // can't poison the limiter, and AFTER the principal_type check so user
-    // tokens hit the global limiter rather than the tenant bucket).
+    // Per-tenant rate limit. It runs after auth so an unauthenticated flood
+    // cannot poison the limiter, and after the principal type check so only
+    // allowed MCP principals consume tenant bucket capacity.
     if (opts.tenantRateLimiter !== undefined) {
       const decision = await opts.tenantRateLimiter.hit(`mcp:tenant:${request.principal.tenantId}`);
       if (!decision.allowed) {

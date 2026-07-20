@@ -22,6 +22,7 @@ import {
 import {
   optionalNumber,
   optionalString,
+  requireAgentContext,
   requireString,
   type Tool,
   type ToolContext,
@@ -147,6 +148,7 @@ export const paymentIntentProposeTool: Tool<PaymentIntentProposeInput> = {
     return out;
   },
   async handle(ctx: ToolContext, input): Promise<ToolResult> {
+    const agent = requireAgentContext(ctx, "payment_intent.propose");
     const intent = await ctx.paymentIntents.create(ctx.ctx, {
       action_type: input.action_type,
       source_account_id: input.source_account_id,
@@ -159,7 +161,7 @@ export const paymentIntentProposeTool: Tool<PaymentIntentProposeInput> = {
       ...(input.pay_to !== undefined ? { pay_to: input.pay_to } : {}),
       ...(input.escrow_id !== undefined ? { escrow_id: input.escrow_id } : {}),
       ...(input.job_terms_hash !== undefined ? { job_terms_hash: input.job_terms_hash } : {}),
-      agent_id: ctx.agent.id,
+      agent_id: agent.id,
     });
     return {
       payload: intent,
@@ -218,17 +220,18 @@ export const paymentIntentCancelTool: Tool<PaymentIntentCancelInput> = {
     return { intent_id: requireString(params, "intent_id") };
   },
   async handle(ctx: ToolContext, input): Promise<ToolResult> {
+    const agent = requireAgentContext(ctx, "payment_intent.cancel");
     const existing = await ctx.paymentIntents.get(ctx.ctx, input.intent_id);
     if (existing === null) {
       throw brainError("payment_intent_not_found", "no such payment intent");
     }
     // Permission: only the proposing agent may cancel via MCP. (Use the
     // closest existing 403 code; there is no per-resource "forbidden" code.)
-    if (existing.created_by_agent_id !== ctx.agent.id) {
+    if (existing.created_by_agent_id !== agent.id) {
       throw brainError(
         "auth_scope_insufficient",
         "only the proposing agent may cancel this intent",
-        { details: { agent_id: ctx.agent.id } },
+        { details: { agent_id: agent.id } },
       );
     }
     if (!CANCELLABLE_STATUSES.has(existing.status)) {
@@ -313,9 +316,10 @@ export const paymentIntentListTool: Tool<PaymentIntentListInput> = {
     return out;
   },
   async handle(ctx: ToolContext, input): Promise<ToolResult> {
+    const agent = requireAgentContext(ctx, "payment_intent.list");
     // Force agent_id = calling agent — never trust client-supplied agent_id.
     const items = await ctx.paymentIntents.list(ctx.ctx, {
-      agent_id: ctx.agent.id,
+      agent_id: agent.id,
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.limit !== undefined ? { limit: input.limit } : {}),
     });
@@ -328,7 +332,7 @@ export const paymentIntentListTool: Tool<PaymentIntentListInput> = {
     const more = items.length > 10 ? `\n(${items.length - 10} more)` : "";
     return {
       payload: items,
-      summary: `Found **${items.length}** PaymentIntent(s)${filterLine} for agent \`${ctx.agent.id}\`.\n${lines.join("\n")}${more}`,
+      summary: `Found **${items.length}** PaymentIntent(s)${filterLine} for agent \`${agent.id}\`.\n${lines.join("\n")}${more}`,
     };
   },
 };
