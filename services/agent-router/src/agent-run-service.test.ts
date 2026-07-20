@@ -198,7 +198,7 @@ describe("AgentRunService (shadow mode)", () => {
     expect(runs.at(-1)?.status).toBe("missing_action");
   });
 
-  it("records notify_only without proposing when required evidence is missing", async () => {
+  it("records missing_evidence before notify_only when required evidence is missing", async () => {
     const { store, runs } = makeStore();
     let createdPI = 0;
     const svc = makeService(
@@ -221,10 +221,10 @@ describe("AgentRunService (shadow mode)", () => {
     const result = await svc.run(CTX, { tenant_id: "tnt_acme", event: "bill.due_soon" });
 
     expect(result.selected_agent_id).toBe("payment");
-    expect(result.status).toBe("notify_only");
+    expect(result.status).toBe("missing_evidence");
     expect(createdPI).toBe(0);
-    expect(runs.at(-1)?.status).toBe("notify_only");
-    expect(runs.at(-1)?.failureReason).toBe("execution_mode_notify_only");
+    expect(runs.at(-1)?.status).toBe("missing_evidence");
+    expect(runs.at(-1)?.failureReason).toBe("critical_missing_evidence");
   });
 
   it("records missing_evidence when the gathered bundle has critical missing evidence", async () => {

@@ -35,7 +35,9 @@ export async function findTransactionById(
   id: string,
 ): Promise<TransactionRow | null> {
   const { rows } = await client.query<TransactionRow>(
-    `SELECT * FROM ledger_transactions WHERE id = $1 LIMIT 1`,
+    `SELECT * FROM ledger_transactions
+      WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)
+      LIMIT 1`,
     [id],
   );
   return rows[0] ?? null;
@@ -45,7 +47,7 @@ export async function listTransactions(
   client: TenantScopedClient,
   filters: TransactionListFilters,
 ): Promise<TransactionRow[]> {
-  const where: string[] = [];
+  const where: string[] = [`owner_id = current_setting('app.tenant_id', true)`];
   const values: unknown[] = [];
   const push = (sqlFragment: string, v: unknown): void => {
     values.push(v);

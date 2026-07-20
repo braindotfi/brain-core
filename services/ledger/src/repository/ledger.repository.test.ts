@@ -38,7 +38,7 @@ describe("listTransactions", () => {
   it("queries with limit only", async () => {
     const { _log, ...client } = fakeClient();
     await listTransactions(client, { limit: 25 });
-    expect(_log[0]!.sql).not.toContain("WHERE");
+    expect(_log[0]!.sql).toContain("owner_id = current_setting('app.tenant_id', true)");
     expect(_log[0]!.values).toContain(25);
   });
 
@@ -89,7 +89,7 @@ describe("listBalances", () => {
   it("queries with no filters", async () => {
     const { _log, ...client } = fakeClient();
     await listBalances(client, {});
-    expect(_log[0]!.sql).not.toContain("WHERE");
+    expect(_log[0]!.sql).toContain("owner_id = current_setting('app.tenant_id', true)");
   });
 
   it("adds account_id and as_of filters", async () => {

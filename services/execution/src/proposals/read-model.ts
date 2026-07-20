@@ -301,6 +301,8 @@ async function queryProposalRows(
          CASE
            WHEN p.action->>'type' = ANY($1::text[]) THEN p.action->>'type'
            WHEN p.action->>'agent_kind' = ANY($1::text[]) THEN p.action->>'agent_kind'
+           WHEN p.action->>'agent_id' = ANY($1::text[]) THEN p.action->>'agent_id'
+           WHEN p.action->>'agent_role' = ANY($1::text[]) THEN p.action->>'agent_role'
            WHEN p.action->>'kind' = ANY($1::text[]) THEN p.action->>'kind'
            WHEN a.role = ANY($1::text[]) THEN a.role
            ELSE NULL

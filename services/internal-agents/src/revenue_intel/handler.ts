@@ -55,6 +55,8 @@ function buildRevenueIntelProposal(input: HandlerInput): ProposedAction {
       agent_kind: "revenue_intel",
       invoice_id: invoiceId,
       transaction_id: transactionId,
+      period: readString(input.context.period, "current"),
+      segment: readString(input.context.segment, "all_customers"),
       currency,
       current_period_revenue: formatMoney(currentRevenue),
       prior_period_revenue: formatMoney(priorRevenue),
@@ -68,6 +70,16 @@ function buildRevenueIntelProposal(input: HandlerInput): ProposedAction {
       at_risk_customer_count: atRiskCustomers.length,
       upcoming_renewals: upcomingRenewals,
       upcoming_renewal_count: upcomingRenewals.length,
+      top_movers: [
+        {
+          invoice_id: invoiceId,
+          transaction_id: transactionId,
+          revenue_delta: formatMoney(revenueDelta),
+          revenue_delta_percent: round(revenueDeltaPercent),
+        },
+      ],
+      anomalies: revenueTrend === "down" || currentDso - priorDso >= 10 ? atRiskCustomers : [],
+      forecast_adjustments: [],
       narrative: narrativeFor({
         trend: revenueTrend,
         revenueDelta,

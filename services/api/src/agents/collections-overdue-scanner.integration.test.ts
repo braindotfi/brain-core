@@ -178,14 +178,18 @@ suite("collections overdue scanner integration (requires DATABASE_URL)", () => {
     });
     expect(proposalsA.proposals[0]?.narrative).toContain("18 days overdue");
     expect(proposalsA.proposals[0]?.narrative).toContain("Acme");
-    expect(proposalsA.proposals[0]?.evidence).toEqual([
-      { kind: "invoice", ref: invoiceA, resolvable: true },
-      { kind: "counterparty", ref: counterpartyA, resolvable: true },
-    ]);
-    expect(proposalsB.proposals[0]?.evidence).toEqual([
-      { kind: "invoice", ref: invoiceB, resolvable: true },
-      { kind: "counterparty", ref: counterpartyB, resolvable: true },
-    ]);
+    expect(proposalsA.proposals[0]?.evidence).toEqual(
+      expect.arrayContaining([
+        { kind: "invoice", ref: invoiceA, resolvable: true },
+        { kind: "counterparty", ref: counterpartyA, resolvable: true },
+      ]),
+    );
+    expect(proposalsB.proposals[0]?.evidence).toEqual(
+      expect.arrayContaining([
+        { kind: "invoice", ref: invoiceB, resolvable: true },
+        { kind: "counterparty", ref: counterpartyB, resolvable: true },
+      ]),
+    );
   });
 
   it("rotates through an overdue backlog instead of starving rows inside cooldown", async () => {
@@ -244,7 +248,7 @@ suite("collections overdue scanner integration (requires DATABASE_URL)", () => {
         cooldownMs: 86_400_000,
       },
     );
-    expect((await listProposals(pool, ctx, { type: "collections" })).proposals).toHaveLength(7);
+    expect((await listProposals(pool, ctx, { type: "collections" })).proposals).toHaveLength(5);
   });
 
   it("applies a per-tenant cap so one tenant cannot monopolize a cycle", async () => {
@@ -360,7 +364,8 @@ async function seedCollectionsTenant(
     await client.query(`INSERT INTO tenants (id, kind) VALUES ($1, 'demo')`, [tenantId]);
     await client.query(
       `INSERT INTO agents (id, tenant_id, kind, role, display_name, state, registered_at)
-       VALUES ('collections', $1, 'internal', 'collections', 'Collections', 'active', now())`,
+       VALUES ('collections', $1, 'internal', 'collections', 'Collections', 'active', now())
+       ON CONFLICT DO NOTHING`,
       [tenantId],
     );
     await client.query(

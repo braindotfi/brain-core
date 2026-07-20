@@ -24,7 +24,9 @@ export async function findAccountById(
   id: string,
 ): Promise<AccountRow | null> {
   const { rows } = await client.query<AccountRow>(
-    `SELECT * FROM ledger_accounts WHERE id = $1 LIMIT 1`,
+    `SELECT * FROM ledger_accounts
+      WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)
+      LIMIT 1`,
     [id],
   );
   return rows[0] ?? null;
@@ -34,7 +36,7 @@ export async function listAccounts(
   client: TenantScopedClient,
   filters: AccountListFilters,
 ): Promise<AccountRow[]> {
-  const where: string[] = [];
+  const where: string[] = [`owner_id = current_setting('app.tenant_id', true)`];
   const values: unknown[] = [];
   if (filters.status !== undefined) {
     values.push(filters.status);

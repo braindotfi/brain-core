@@ -142,7 +142,9 @@ export async function findArtifactById(
   id: string,
 ): Promise<RawArtifactRow | null> {
   const { rows } = await client.query<RawArtifactRow>(
-    `SELECT * FROM raw_artifacts WHERE id = $1 LIMIT 1`,
+    `SELECT * FROM raw_artifacts
+      WHERE id = $1 AND tenant_id = current_setting('app.tenant_id', true)
+      LIMIT 1`,
     [id],
   );
   return rows[0] ?? null;

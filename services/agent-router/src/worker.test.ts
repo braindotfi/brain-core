@@ -290,8 +290,9 @@ describe("routeAndPropose", () => {
     );
 
     expect(result.selected_agent_id).toBe("payment");
-    expect(result.status).toBe("notify_only");
-    expect(result.reason).toBe("execution_mode_notify_only");
+    expect(result.status).toBe("missing_evidence");
+    expect(result.reason).toContain("critical_missing_evidence:");
+    expect(result.reason).toContain("obligation");
     expect(created).toBe(0);
   });
 });

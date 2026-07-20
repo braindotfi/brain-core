@@ -173,7 +173,9 @@ suite("cash forecast scanner integration (requires DATABASE_URL)", () => {
       payment_intent_id: null,
       action_type: null,
       agent: { id: "cash_forecast", kind: "internal", display_name: "Cash Forecasting" },
-      evidence: expect.arrayContaining([{ kind: "balance", ref: expect.stringMatching(/^bal_/) }]),
+      evidence: expect.arrayContaining([
+        { kind: "balance", ref: expect.stringMatching(/^bal_/), resolvable: false },
+      ]),
     });
     expect(proposals.proposals[0]?.narrative).toContain("Recommend hold");
   });
@@ -277,8 +279,8 @@ suite("cash forecast scanner integration (requires DATABASE_URL)", () => {
       return rows[0];
     });
     expect(run).toMatchObject({
-      status: "notify_only",
-      failure_reason: "execution_mode_notify_only",
+      status: "missing_evidence",
+      failure_reason: "critical_missing_evidence",
     });
   });
 });
@@ -373,8 +375,8 @@ async function seedCashTenant(
          ARRAY[]::text[], ARRAY[]::text[], 'human_confirmed', 1)`,
       [brainId("bal"), tenantId, accountId, balance, currency],
     );
-    await seedCounterparty(client, tenantId, customerId, "customer", "Customer");
-    await seedCounterparty(client, tenantId, vendorId, "vendor", "Vendor");
+    await seedCounterparty(client, tenantId, customerId, "customer", `Customer ${customerId}`);
+    await seedCounterparty(client, tenantId, vendorId, "vendor", `Vendor ${vendorId}`);
   });
 }
 

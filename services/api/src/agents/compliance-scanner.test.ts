@@ -78,6 +78,7 @@ describe("runComplianceScanCycle", () => {
             severity: "high",
             event_hint: "policy.violation",
             payment_intent_id: null,
+            subject_id: "pd_reject",
           }),
           finding({
             finding_id: "evt_gap",
@@ -85,6 +86,7 @@ describe("runComplianceScanCycle", () => {
             severity: "critical",
             event_hint: "audit.gap_detected",
             payment_intent_id: null,
+            subject_id: "evt_gap",
           }),
         ]),
         appPool: cooldownPool(),
@@ -101,9 +103,9 @@ describe("runComplianceScanCycle", () => {
 
   it("reports the true eligible backlog when the global cap is hit", async () => {
     const rows = [
-      finding({ tenant_id: tenantA, finding_id: "pi_1" }),
-      finding({ tenant_id: tenantA, finding_id: "pi_2" }),
-      finding({ tenant_id: tenantB, finding_id: "pi_3" }),
+      finding({ tenant_id: tenantA, finding_id: "pi_1", subject_id: "pi_1" }),
+      finding({ tenant_id: tenantA, finding_id: "pi_2", subject_id: "pi_2" }),
+      finding({ tenant_id: tenantB, finding_id: "pi_3", subject_id: "pi_3" }),
     ];
     const scanPool = scanPoolWith(rows, { eligibleCount: "5", fairCount: "3" });
     const metrics = new MockMetrics();
@@ -186,7 +188,7 @@ describe("runComplianceScanCycle", () => {
     );
   });
 
-  it("excludes cooldown rows using the structured compliance aging tier", async () => {
+  it("excludes cooldown rows using the stable compliance subject key", async () => {
     const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [], rowCount: 0 }));
 
     await runComplianceScanCycle(
@@ -199,7 +201,7 @@ describe("runComplianceScanCycle", () => {
     );
 
     expect(String(query.mock.calls[0]?.[0])).toContain(
-      "cd.aging_tier = ('compliance_' || f.finding_type)",
+      "cd.trigger_key = ('compliance:' || f.subject_type || ':' || f.subject_id)",
     );
   });
 });

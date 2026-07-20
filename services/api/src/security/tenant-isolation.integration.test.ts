@@ -265,11 +265,11 @@ async function seedTenantA(
     );
     await client.query(
       `INSERT INTO ledger_obligations (
-         id, owner_id, counterparty_id, type, amount_due, amount_paid, currency,
+         id, owner_id, counterparty_id, type, amount_due, currency,
          due_date, status, source_ids, evidence_ids, provenance, confidence
        )
-       VALUES ($1, $2, $3, 'invoice', 100, 0, 'USD',
-         '2026-08-01T00:00:00.000Z', 'open',
+       VALUES ($1, $2, $3, 'invoice', 100, 'USD',
+         '2026-08-01T00:00:00.000Z', 'due',
          ARRAY[]::text[], ARRAY[]::text[], 'human_confirmed', 1)`,
       [seed.obligation, tenantId, seed.counterparty],
     );
@@ -316,7 +316,7 @@ async function seedTenantA(
          effective_at, observed_at, original_source, intermediaries, source_id,
          source_version, idempotency_key
        )
-       VALUES ($1, $2, $3, 'document', '{}'::jsonb, 'tenant-a/raw', 'application/pdf', 12,
+       VALUES ($1, $2, $3, 'pdf_upload', '{}'::jsonb, 'tenant-a/raw', 'application/pdf', 12,
          'tester', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '[]'::jsonb, NULL, NULL, NULL)`,
       [seed.raw, tenantId, sha],
     );
@@ -338,7 +338,7 @@ async function seedTenantA(
     );
     await client.query(
       `INSERT INTO raw_source_sync_jobs (job_id, tenant_id, source_id, status)
-       VALUES ($1, $2, $3, 'queued')`,
+       VALUES ($1, $2, $3, 'enqueued')`,
       [seed.syncJob, tenantId, seed.source],
     );
     await client.query(

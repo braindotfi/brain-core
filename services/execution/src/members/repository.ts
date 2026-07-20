@@ -50,8 +50,8 @@ export async function findMemberById(
   const { rows } = await client.query<MemberRow>(
     `SELECT tenant_id, id, email, display_name, role, status, active, approval_domains,
             per_item_limit_cents, requires_second_approver_above_cents
-       FROM members
-      WHERE id = $1
+      FROM members
+      WHERE id = $1 AND tenant_id = current_setting('app.tenant_id', true)
       LIMIT 1`,
     [memberId],
   );
@@ -62,7 +62,7 @@ export async function listMembers(
   client: TenantScopedClient,
   filters: { role?: string; domain?: string; limit: number; cursor?: KeysetCursor },
 ): Promise<MemberAuthority[]> {
-  const where: string[] = [];
+  const where: string[] = [`tenant_id = current_setting('app.tenant_id', true)`];
   const values: unknown[] = [];
   if (filters.role !== undefined) {
     values.push(filters.role);

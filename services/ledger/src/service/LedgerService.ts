@@ -492,8 +492,9 @@ function commonFields(row: {
   provenance: string;
   confidence: number;
   created_at: Date;
-  updated_at: Date;
+  updated_at?: Date | null;
 }) {
+  const updatedAt = row.updated_at ?? row.created_at;
   return {
     id: row.id,
     owner_id: row.owner_id,
@@ -502,7 +503,7 @@ function commonFields(row: {
     provenance: row.provenance as Account["provenance"],
     confidence: row.confidence,
     created_at: row.created_at.toISOString(),
-    updated_at: row.updated_at.toISOString(),
+    updated_at: updatedAt.toISOString(),
   };
 }
 

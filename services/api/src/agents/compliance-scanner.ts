@@ -300,6 +300,48 @@ async function listComplianceFindings(
        UNION ALL
        SELECT * FROM audit_gaps
      ),
+     deduped_findings AS (
+       SELECT tenant_id,
+              finding_id,
+              finding_type,
+              severity,
+              event_hint,
+              policy_decision_id,
+              audit_event_id,
+              payment_intent_id,
+              subject_type,
+              subject_id,
+              policy_outcome,
+              rule_id,
+              required_approvers_count,
+              valid_approval_count,
+              stale_approval_count,
+              detected_at
+         FROM (
+           SELECT f.*,
+                  row_number() OVER (
+                    PARTITION BY f.tenant_id, f.subject_type, f.subject_id
+                    ORDER BY
+                      CASE f.severity
+                        WHEN 'critical' THEN 4
+                        WHEN 'high' THEN 3
+                        WHEN 'medium' THEN 2
+                        ELSE 1
+                      END DESC,
+                      CASE f.finding_type
+                        WHEN 'audit_gap_detected' THEN 3
+                        WHEN 'policy_violation' THEN 2
+                        WHEN 'approval_missing' THEN 1
+                        ELSE 0
+                      END DESC,
+                      f.detected_at DESC,
+                      f.finding_id ASC,
+                      f.audit_event_id ASC
+                  ) AS finding_rank
+             FROM findings f
+         ) ranked
+        WHERE finding_rank = 1
+     ),
      eligible AS (
        SELECT f.*,
               row_number() OVER (
@@ -315,13 +357,11 @@ async function listComplianceFindings(
                   f.finding_id ASC
               ) AS tenant_rank,
               COUNT(*) OVER() AS eligible_count
-         FROM findings f
+         FROM deduped_findings f
          LEFT JOIN agent_trigger_cooldowns cd
            ON cd.tenant_id = f.tenant_id
           AND cd.agent_key = 'compliance'
-          AND cd.receivable_kind = 'compliance_record'
-          AND cd.receivable_id = f.finding_id
-          AND cd.aging_tier = ('compliance_' || f.finding_type)
+          AND cd.trigger_key = ('compliance:' || f.subject_type || ':' || f.subject_id)
         WHERE cd.id IS NULL OR cd.last_enqueued_at < $1::timestamptz
      ),
      fair AS (
@@ -443,7 +483,8 @@ function eventFor(row: ComplianceFindingRow): DomainEvent {
 }
 
 function triggerKeyFor(row: ComplianceFindingRow, event: DomainEvent): string {
-  return `compliance:${event}:${row.finding_id}:${agingTierFor(row)}`;
+  void event;
+  return `compliance:${row.subject_type}:${row.subject_id}`;
 }
 
 function agingTierFor(row: ComplianceFindingRow): string {

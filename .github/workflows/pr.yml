@@ -23,6 +23,30 @@ jobs:
     name: typescript (lint + unit)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: brain
+          POSTGRES_PASSWORD: brain
+          POSTGRES_DB: brain
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://brain:brain@localhost:5432/brain
+      REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,6 +75,11 @@ jobs:
 
       - name: Typecheck
         run: pnpm run typecheck
+
+      - name: Migrate
+        run: |
+          pnpm -C tools/migrate run build
+          node tools/migrate/dist/cli.js up
 
       - name: Unit tests + coverage
         run: pnpm run test:coverage
