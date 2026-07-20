@@ -47,7 +47,7 @@ const HARD = [
   [/\b_verifyScope\b/, "non-existent contract function"],
   [
     /\b16-step\b|\b16-check\b|\b16 checks\b/,
-    "gate is 13 numbered checks + 4 hardening additions (17)",
+    "gate is 13 numbered checks + 10 hardening additions (23)",
   ],
   [
     // Only the *anchor cadence* claim, not any "10 minutes" (e.g. a session-key
@@ -55,7 +55,10 @@ const HARD = [
     /(?:anchor|merkle|root)[^\n]*(?:every 10 minutes|10[- ]minute)|(?:every 10 minutes|10[- ]minute)[^\n]*(?:anchor|merkle|root)/i,
     "audit anchor cadence is hourly, not every 10 minutes",
   ],
-  [/\btrace_id\b/, "error envelope uses request_id, not trace_id"],
+  // The error envelope uses request_id. The raw provider-webhook 202 success
+  // response legitimately returns a trace_id field (services/raw webhook.ts), so
+  // allow trace_id only on a success-response line (202 / accepted: true).
+  [/\btrace_id\b/, "error envelope uses request_id, not trace_id", /accepted:\s*true|\b202\b/i],
   [/\bpolicy\.denied\b/, "error codes are snake_case (policy_denied), not dotted"],
 ];
 
@@ -97,8 +100,10 @@ export function findViolations(dirs = GITBOOK_DIRS) {
       readFileSync(file, "utf8")
         .split("\n")
         .forEach((line, i) => {
-          for (const [re, reason] of HARD) {
-            if (re.test(line)) violations.push(`${file}:${i + 1}: ${reason}`);
+          for (const [re, reason, unless] of HARD) {
+            if (re.test(line) && !(unless && unless.test(line))) {
+              violations.push(`${file}:${i + 1}: ${reason}`);
+            }
           }
           for (const [re, name] of MARKED) {
             if (re.test(line) && !ALLOW_MARKER.test(line)) {
