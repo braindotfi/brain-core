@@ -19,10 +19,10 @@ const TENANT_A = "tnt_01TESTAAAAAAAAAAAAAAAAAA";
 const TENANT_B = "tnt_01TESTBBBBBBBBBBBBBBBBBB";
 const AGENT_ID = "agent_01TEST00000000000000000";
 
-function agentPrincipal(tenantId: string): Principal {
+function principal(tenantId: string, type: Principal["type"] = "agent"): Principal {
   return {
-    id: AGENT_ID,
-    type: "agent",
+    id: type === "user" ? "user_01TEST0000000000000000" : AGENT_ID,
+    type,
     tenantId,
     scopes: ["payment_intent:propose"] as unknown as Principal["scopes"],
     tokenId: "tok_01TEST00000000000000000",
@@ -44,12 +44,17 @@ function mockServer(): BrainMcpServer {
 async function withFakeAuth(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", async (request: FastifyRequest) => {
     const headerTenant = request.headers["x-test-tenant"];
+    const headerType = request.headers["x-test-principal-type"];
+    const type =
+      headerType === "user" || headerType === "api_partner" || headerType === "agent"
+        ? headerType
+        : "agent";
     if (typeof headerTenant === "string") {
-      request.principal = agentPrincipal(headerTenant);
+      request.principal = principal(headerTenant, type);
     } else if (request.headers["x-test-skip-principal"] === "1") {
       // leave undefined to exercise the auth_token_missing branch
     } else {
-      request.principal = agentPrincipal(TENANT_A);
+      request.principal = principal(TENANT_A, type);
     }
   });
 }
@@ -186,6 +191,38 @@ describe("registerMcpRoute — principal_type and missing-principal guards", () 
       expect(r.statusCode).toBe(401);
       const body = r.json() as { error: { code: string } };
       expect(body.error.code).toBe("auth_token_missing");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("accepts user principals so human decision tools can use the MCP surface", async () => {
+    const app = await buildApp({});
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: { "x-test-principal-type": "user", "content-type": "application/json" },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects api_partner principals at the MCP boundary", async () => {
+    const app = await buildApp({});
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: { "x-test-principal-type": "api_partner", "content-type": "application/json" },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(403);
+      const body = r.json() as { error: { code: string } };
+      expect(body.error.code).toBe("auth_scope_insufficient");
     } finally {
       await app.close();
     }

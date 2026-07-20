@@ -12,6 +12,7 @@
 
 import type {
   AuditEmitter,
+  Scope,
   IAgentService,
   ILedgerService,
   IPaymentIntentService,
@@ -20,11 +21,38 @@ import type {
   Proof,
   ServiceCallContext,
 } from "@brain/shared";
+import { brainError } from "@brain/shared";
+import type {
+  EvidenceResolveRef,
+  EvidenceResolveResult,
+  ListProposalsInput,
+  ListProposalsResult,
+  ProposalDecision,
+  ProposalDecisionResult,
+  ProposalReadItem,
+} from "@brain/execution";
 import type { AgentRecord } from "../auth.js";
+
+export interface ProposalToolService {
+  list(ctx: ServiceCallContext, input: ListProposalsInput): Promise<ListProposalsResult>;
+  get(ctx: ServiceCallContext, id: string): Promise<ProposalReadItem | null>;
+  decide(
+    ctx: ServiceCallContext,
+    id: string,
+    decision: ProposalDecision,
+  ): Promise<ProposalDecisionResult>;
+}
+
+export interface EvidenceToolService {
+  resolve(
+    ctx: ServiceCallContext,
+    refs: readonly EvidenceResolveRef[],
+  ): Promise<readonly EvidenceResolveResult[]>;
+}
 
 export interface ToolContext {
   ctx: ServiceCallContext;
-  agent: AgentRecord;
+  agent?: AgentRecord;
   ledger: ILedgerService;
   wiki: IWikiMemoryService;
   raw: IRawEvidenceService;
@@ -32,6 +60,10 @@ export interface ToolContext {
   /** Optional — the Agent layer's proposal service. Wired when AGENT_SERVICE_URL
    *  is set; agent.action.propose returns internal_server_error when absent. */
   agentService?: IAgentService;
+  /** Optional until the API composition root wires proposal read and decision services. */
+  proposals?: ProposalToolService;
+  /** Optional until the API composition root wires evidence resolution. */
+  evidence?: EvidenceToolService;
   audit: AuditEmitter;
   /**
    * Optional — builds the canonical H-07 Proof for an action id. Wired by the
@@ -63,6 +95,22 @@ export interface Tool<TInput = unknown> {
   handle(ctx: ToolContext, input: TInput): Promise<ToolResult>;
 }
 
+export function requireAgentContext(ctx: ToolContext, toolName: string): AgentRecord {
+  if (ctx.agent === undefined) {
+    throw brainError("auth_scope_insufficient", `${toolName} requires principal_type=agent`, {
+      details: { principal_type: ctx.ctx.principalType ?? "unknown" },
+    });
+  }
+  return ctx.agent;
+}
+
+export function requireToolService<T>(service: T | undefined, toolName: string): T {
+  if (service === undefined) {
+    throw brainError("dependency_unavailable", `${toolName} is not configured`);
+  }
+  return service;
+}
+
 /** Helper used by every tool's parseInput when a string field is required. */
 export function requireString(params: Record<string, unknown>, name: string): string {
   const v = params[name];
@@ -89,4 +137,24 @@ export function optionalNumber(params: Record<string, unknown>, name: string): n
     if (Number.isFinite(n)) return n;
   }
   return undefined;
+}
+
+export function optionalInteger(params: Record<string, unknown>, name: string): number | undefined {
+  const n = optionalNumber(params, name);
+  if (n === undefined || !Number.isInteger(n)) return undefined;
+  return n;
+}
+
+export function requireAnyScope(held: ReadonlyArray<string>, scopes: readonly Scope[]): void {
+  for (const scope of scopes) {
+    if (held.includes(scope) || held.includes(impliedAdmin(scope))) return;
+  }
+  throw brainError("auth_scope_insufficient", `requires one of: ${scopes.join(", ")}`, {
+    details: { required: scopes, held },
+  });
+}
+
+function impliedAdmin(scope: Scope): Scope {
+  const [layer] = scope.split(":") as [string, string];
+  return `${layer}:admin` as Scope;
 }

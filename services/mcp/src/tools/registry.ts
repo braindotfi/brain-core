@@ -4,8 +4,10 @@
  */
 
 import { agentTools } from "./agent.js";
+import { evidenceTools } from "./evidence.js";
 import { ledgerTools } from "./ledger.js";
 import { paymentIntentTools } from "./payment-intent.js";
+import { proposalTools } from "./proposals.js";
 import { rawTools } from "./raw.js";
 import type { Tool } from "./types.js";
 import { wikiTools } from "./wiki.js";
@@ -15,6 +17,8 @@ export const ALL_TOOLS: ReadonlyArray<Tool> = [
   ...wikiTools,
   ...rawTools,
   ...paymentIntentTools,
+  ...proposalTools,
+  ...evidenceTools,
   ...agentTools,
 ];
 

@@ -8,7 +8,7 @@
  */
 
 import { brainError } from "@brain/shared";
-import { type Tool, type ToolContext, type ToolResult } from "./types.js";
+import { requireAgentContext, type Tool, type ToolContext, type ToolResult } from "./types.js";
 
 interface AgentProposeInput {
   /** Action shape — Brain accepts arbitrary JSON; the policy DSL
@@ -50,6 +50,7 @@ export const agentProposeTool: Tool<AgentProposeInput> = {
     return { action: action as Record<string, unknown> };
   },
   async handle(ctx: ToolContext, input): Promise<ToolResult> {
+    const agent = requireAgentContext(ctx, "agent.action.propose");
     // The Agent layer (services/execution) exposes proposal creation via
     // its IAgentService contract; that's what we call. When the service
     // isn't wired (test mode), we soft-degrade to an audit-only stub
@@ -61,7 +62,7 @@ export const agentProposeTool: Tool<AgentProposeInput> = {
         "agent.action.propose is not available — AGENT_SERVICE_URL not configured",
       );
     }
-    const proposal = await svc.propose(ctx.ctx, ctx.agent.id, { action: input.action });
+    const proposal = await svc.propose(ctx.ctx, agent.id, { action: input.action });
     return {
       payload: proposal,
       summary:

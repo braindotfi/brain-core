@@ -7,6 +7,8 @@ import {
 } from "@brain/shared";
 import { BrainMcpServer } from "./server.js";
 import { FakeAuthVerifier, type AgentRecord, type AuthVerifier } from "./auth.js";
+import type { EvidenceToolService, ProposalToolService } from "./tools/types.js";
+import type { EvidenceResolveRef, ProposalReadItem } from "@brain/execution";
 import type {
   ILedgerService,
   IPaymentIntentService,
@@ -122,7 +124,93 @@ function fakePI(): IPaymentIntentService {
   } as unknown as IPaymentIntentService;
 }
 
+const PROPOSAL_FIXTURE: ProposalReadItem = {
+  id: "prop_TEST",
+  type: "collections",
+  created_at: "2026-07-20T00:00:00.000Z",
+  status: "pending",
+  risk_band: "elevated",
+  confidence: 0.88,
+  mode: "notify_only",
+  narrative: "Invoice is overdue.",
+  evidence: [{ kind: "invoice", ref: "inv_TEST", resolvable: true }],
+  agent: { id: AGENT_ID, kind: "collections", display_name: "Collections" },
+  payment_intent_id: null,
+  action_type: null,
+};
+
+function fakeProposals(): ProposalToolService {
+  return {
+    list: vi.fn(async (ctx, input) => ({
+      proposals: [
+        {
+          ...PROPOSAL_FIXTURE,
+          id: `${PROPOSAL_FIXTURE.id}_${ctx.tenantId}`,
+          status: input.status ?? PROPOSAL_FIXTURE.status,
+        },
+      ],
+      next_cursor: null,
+    })),
+    get: vi.fn(async (ctx, id) =>
+      id === "missing"
+        ? null
+        : {
+            ...PROPOSAL_FIXTURE,
+            id,
+            narrative: `tenant=${ctx.tenantId}`,
+          },
+    ),
+    decide: vi.fn(async (ctx, id, decision) => {
+      if (ctx.principalType !== "user") {
+        throw brainError("payment_intent_approval_invalid", "actor_unresolved", {
+          statusOverride: 403,
+          details: { reason: "actor_unresolved", principal_type: ctx.principalType },
+        });
+      }
+      return {
+        id,
+        decision,
+        status: decision === "acknowledge" ? "acknowledged" : "approved",
+        audit_id: "aud_TEST",
+        payment_intent_id: null,
+      };
+    }),
+  };
+}
+
+function fakeEvidence(): EvidenceToolService {
+  return {
+    resolve: vi.fn(async (ctx, refs: readonly EvidenceResolveRef[]) =>
+      refs.map((ref: EvidenceResolveRef) => ({
+        kind: ref.kind,
+        ref: ref.ref,
+        resolvable: ref.kind === "invoice" && ctx.tenantId === TENANT,
+        not_found: false,
+        summary: ref.kind === "invoice" ? "Invoice INV-1" : null,
+        deep_link: ref.kind === "invoice" ? `/ledger/invoices/${ref.ref}` : null,
+      })),
+    ),
+  };
+}
+
 function makeServer(scopes: string[] = ["ledger:read", "wiki:read"]) {
+  const audit = new InMemoryAuditEmitter();
+  const proposals = fakeProposals();
+  const evidence = fakeEvidence();
+  const server = new BrainMcpServer({
+    auth: new FakeAuthVerifier(ACTIVE_AGENT),
+    ledger: fakeLedger(),
+    wiki: fakeWiki(),
+    raw: fakeRaw(),
+    paymentIntents: fakePI(),
+    proposals,
+    evidence,
+    audit,
+  });
+  return { server, audit, proposals, evidence, p: principal(scopes) };
+}
+
+function makeServerWithoutProposalDeps(scopes: string[] = ["execution:read"]) {
   const audit = new InMemoryAuditEmitter();
   const server = new BrainMcpServer({
     auth: new FakeAuthVerifier(ACTIVE_AGENT),
@@ -133,6 +221,17 @@ function makeServer(scopes: string[] = ["ledger:read", "wiki:read"]) {
     audit,
   });
   return { server, audit, p: principal(scopes) };
+}
+
+function userPrincipal(scopes: string[]): Principal {
+  return {
+    id: "user_X",
+    type: "user",
+    tenantId: TENANT,
+    scopes: scopes as unknown as Principal["scopes"],
+    tokenId: "t",
+    expiresAt: Math.floor(Date.now() / 1000) + 60,
+  };
 }
 
 describe("BrainMcpServer.handle — protocol surface", () => {
@@ -158,12 +257,16 @@ describe("BrainMcpServer.handle — protocol surface", () => {
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" }, p);
     if (!("result" in res)) throw new Error("expected result");
     const r = res.result as { tools: Array<{ name: string }> };
-    expect(r.tools.length).toBe(12);
+    expect(r.tools.length).toBe(16);
     const names = r.tools.map((t) => t.name);
     expect(names).toContain("ledger.account.get");
     expect(names).toContain("payment_intent.propose");
     expect(names).toContain("payment_intent.cancel");
     expect(names).toContain("payment_intent.list");
+    expect(names).toContain("proposals.list");
+    expect(names).toContain("proposals.get");
+    expect(names).toContain("proposals.decide");
+    expect(names).toContain("evidence.resolve");
   });
 
   it("tools/call rejects when the agent lacks the required scope", async () => {
@@ -244,6 +347,284 @@ describe("BrainMcpServer.handle — protocol surface", () => {
     };
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "ping" }, userPrincipal);
     expect("result" in res).toBe(true);
+  });
+});
+
+describe("BrainMcpServer.handle — proposals and evidence tools", () => {
+  it("lists proposals with execution:read and preserves tenant context", async () => {
+    const { server, proposals, p } = makeServer(["execution:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "proposals.list", arguments: { type: "collections", limit: 10 } },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    expect(proposals.list).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: TENANT, actor: AGENT_ID }),
+      expect.objectContaining({ type: "collections", limit: 10 }),
+    );
+    if ("result" in res) {
+      const body = res.result as { structuredContent: { proposals: Array<{ id: string }> } };
+      expect(body.structuredContent.proposals[0]!.id).toContain(TENANT);
+    }
+  });
+
+  it("passes every proposal list filter to the read service", async () => {
+    const { server, proposals, p } = makeServer(["execution:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "proposals.list",
+          arguments: {
+            type: "collections",
+            status: "pending",
+            risk_band: "high",
+            min_confidence: 0.5,
+            limit: 2,
+            cursor: "cursor_TEST",
+          },
+        },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    expect(proposals.list).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: TENANT }),
+      expect.objectContaining({
+        type: "collections",
+        status: "pending",
+        risk_band: "high",
+        min_confidence: 0.5,
+        limit: 2,
+        cursor: "cursor_TEST",
+      }),
+    );
+  });
+
+  it.each([
+    ["type", { type: "banana" }],
+    ["status", { status: "banana" }],
+    ["risk_band", { risk_band: "banana" }],
+    ["min_confidence", { min_confidence: 2 }],
+    ["limit", { limit: 101 }],
+    ["limit", { limit: 1.5 }],
+  ])("rejects invalid proposal list %s", async (_label, args) => {
+    const { server, p } = makeServer(["execution:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "proposals.list", arguments: args },
+      },
+      p,
+    );
+    expect("error" in res && res.error.code).toBe(-32602);
+  });
+
+  it("reads one proposal by id", async () => {
+    const { server, proposals, p } = makeServer(["execution:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "proposals.get", arguments: { proposal_id: "prop_TEST" } },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    expect(proposals.get).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: TENANT }),
+      "prop_TEST",
+    );
+  });
+
+  it("returns not found for a missing proposal", async () => {
+    const { server, p } = makeServer(["execution:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "proposals.get", arguments: { proposal_id: "missing" } },
+      },
+      p,
+    );
+    expect("error" in res && res.error.data?.brain_code).toBe("execution_proposal_not_found");
+  });
+
+  it("fails closed when proposal services are not wired", async () => {
+    const { server, p } = makeServerWithoutProposalDeps(["execution:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "proposals.list", arguments: {} },
+      },
+      p,
+    );
+    expect("error" in res && res.error.data?.brain_code).toBe("dependency_unavailable");
+  });
+
+  it("resolves typed evidence refs through the evidence service", async () => {
+    const { server, evidence, p } = makeServer(["execution:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "evidence.resolve",
+          arguments: { refs: [{ kind: "invoice", ref: "inv_TEST" }] },
+        },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    expect(evidence.resolve).toHaveBeenCalledWith(expect.objectContaining({ tenantId: TENANT }), [
+      { kind: "invoice", ref: "inv_TEST" },
+    ]);
+    if ("result" in res) {
+      const body = res.result as { structuredContent: { results: Array<{ resolvable: boolean }> } };
+      expect(body.structuredContent.results[0]!.resolvable).toBe(true);
+    }
+  });
+
+  it("denies proposal decisions for agent principals", async () => {
+    const { server, proposals, p } = makeServer(["execution:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "proposals.decide",
+          arguments: { proposal_id: "prop_TEST", decision: "acknowledge" },
+        },
+      },
+      p,
+    );
+    expect(proposals.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ principalType: "agent" }),
+      "prop_TEST",
+      "acknowledge",
+    );
+    expect("error" in res && res.error.data?.brain_code).toBe("payment_intent_approval_invalid");
+  });
+
+  it("rejects proposal decisions without a decision-capable scope", async () => {
+    const { server } = makeServer(["wiki:read"]);
+    const user = userPrincipal(["wiki:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "proposals.decide",
+          arguments: { proposal_id: "prop_TEST", decision: "acknowledge" },
+        },
+      },
+      user,
+    );
+    expect("error" in res && res.error.code).toBe(-32002);
+  });
+
+  it("rejects malformed proposal decisions", async () => {
+    const { server } = makeServer(["execution:read"]);
+    const user = userPrincipal(["execution:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "proposals.decide",
+          arguments: { proposal_id: "prop_TEST", decision: "banana" },
+        },
+      },
+      user,
+    );
+    expect("error" in res && res.error.code).toBe(-32602);
+  });
+
+  it("allows proposal decisions for user principals with the HTTP-compatible scope gate", async () => {
+    const { server, proposals } = makeServer(["execution:read"]);
+    const user = userPrincipal(["execution:read"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "proposals.decide",
+          arguments: { proposal_id: "prop_TEST", decision: "acknowledge" },
+        },
+      },
+      user,
+    );
+    expect("result" in res).toBe(true);
+    expect(proposals.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ principalType: "user", actor: "user_X" }),
+      "prop_TEST",
+      "acknowledge",
+    );
+  });
+
+  it("allows user proposal decisions with payment_intent:approve scope", async () => {
+    const { server, proposals } = makeServer(["payment_intent:approve"]);
+    const user = userPrincipal(["payment_intent:approve"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "proposals.decide",
+          arguments: { proposal_id: "prop_TEST", decision: "approve" },
+        },
+      },
+      user,
+    );
+    expect("result" in res).toBe(true);
+    expect(proposals.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ principalType: "user" }),
+      "prop_TEST",
+      "approve",
+    );
+  });
+
+  it("denies user principals on agent-only propose tools", async () => {
+    const { server } = makeServer(["payment_intent:propose"]);
+    const user = userPrincipal(["payment_intent:propose"]);
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "payment_intent.propose",
+          arguments: {
+            action_type: "wire",
+            source_account_id: "acct_TEST",
+            destination_counterparty_id: "cp_TEST",
+            amount: "10.00",
+            currency: "USD",
+          },
+        },
+      },
+      user,
+    );
+    expect("error" in res && res.error.data?.brain_code).toBe("auth_scope_insufficient");
   });
 });
 

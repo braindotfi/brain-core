@@ -172,6 +172,11 @@ import {
   transitionAgent,
   releaseContributionHold,
   getPaymentIntentAgent,
+  getProposal,
+  listProposals,
+  ProposalDecisionService,
+  resolveEvidenceRefs,
+  unsupportedEvidenceKinds,
 } from "@brain/execution";
 import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
 import { parseEther } from "viem";
@@ -1299,6 +1304,13 @@ async function main(): Promise<void> {
     chain: "base-sepolia",
   });
 
+  const proposalDecisionService = new ProposalDecisionService({
+    pool,
+    audit,
+    actorResolver,
+    paymentIntents: paymentIntentService,
+  });
+
   const mcpServer = new BrainMcpServer({
     auth: mcpAuthVerifier,
     ledger: ledgerService,
@@ -1306,6 +1318,20 @@ async function main(): Promise<void> {
     raw: rawEvidenceService,
     paymentIntents: paymentIntentService,
     agentService,
+    proposals: {
+      list: (ctx, input) => listProposals(pool, ctx, input),
+      get: (ctx, id) => getProposal(pool, ctx, id),
+      decide: proposalDecisionService.decide.bind(proposalDecisionService),
+    },
+    evidence: {
+      resolve: async (ctx, refs) => {
+        const unsupported = unsupportedEvidenceKinds(refs);
+        if (unsupported.length > 0) {
+          log.warn({ unsupported_kinds: unsupported }, "unsupported evidence resolve kinds");
+        }
+        return resolveEvidenceRefs(pool, ctx, refs);
+      },
+    },
     audit,
     // Item 17: brain://proofs/{action_id} resource is wired through the shared builder.
     buildProof: proofBuilder,
