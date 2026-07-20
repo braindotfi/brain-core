@@ -148,6 +148,13 @@ Done
   returns a separate user-principal member session for member and approval
   workflows. Missing email is written as `bootstrap+<tenantId>@brain.invalid`
   and can be patched by an admin later.
+- Tenant offboarding is governed by `docs/contracts/tenant-offboarding.md`.
+  Export is `POST /v1/tenants/{id}/export`, status is
+  `GET /v1/tenants/{id}/export/{job_id}`, and download is
+  `GET /v1/tenants/{id}/export/{job_id}/download`. Export, download, and
+  deletion are user-principal and own-tenant only. Exports expire after the
+  configured retention horizon, default 7 days, and expired archive blobs are
+  purged by object path.
 - Approval actors resolve through `ActorResolver` only. Session surfaces derive
   the actor from authenticated server context and ignore any actor field in the
   payload. Session actor resolution requires `principal_type=user`; agent

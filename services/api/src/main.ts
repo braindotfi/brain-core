@@ -79,6 +79,9 @@ import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { TenantDeletionService } from "./tenant-deletion/service.js";
 import { startTenantBlobPurgeWorker } from "./tenant-deletion/blob-purge-worker.js";
 import { registerTenantDeletionRoute } from "./tenant-deletion/route.js";
+import { registerTenantExportRoute } from "./tenant-export/route.js";
+import { TenantExportService } from "./tenant-export/service.js";
+import { startTenantExportWorker } from "./tenant-export/worker.js";
 import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
 import { registerProductionTenancyRoutes } from "./production-tenancy/routes.js";
 import { registerApiKeyRoutes } from "./production-tenancy/api-key-routes.js";
@@ -1152,6 +1155,25 @@ async function main(): Promise<void> {
     : undefined;
   if (tenantBlobPurgeWorker !== undefined) log.info("tenant blob purge worker started");
 
+  const tenantExportService = new TenantExportService({ pool, blob, audit });
+  const tenantExportWorker = composition.workers.has("tenant_export")
+    ? startTenantExportWorker(
+        {
+          scanPool: tenantDeletionPool,
+          appPool: pool,
+          blob,
+          service: tenantExportService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_TENANT_EXPORT_WORKER_INTERVAL_MS,
+          batchSize: cfg.BRAIN_TENANT_EXPORT_WORKER_BATCH_SIZE,
+        },
+      )
+    : undefined;
+  if (tenantExportWorker !== undefined) log.info("tenant export worker started");
+
   const anchorBroadcaster =
     cfg.AUDIT_PUBLISHER_KEY !== undefined
       ? createViemAnchorBroadcaster({
@@ -1774,6 +1796,13 @@ async function main(): Promise<void> {
         });
         await v1.register(async (child) =>
           registerTenantDeletionRoute(child, { service: tenantDeletionService }),
+        );
+        await v1.register(async (child) =>
+          registerTenantExportRoute(child, {
+            pool,
+            blob,
+            exportTtlMs: cfg.BRAIN_TENANT_EXPORT_TTL_MS,
+          }),
         );
         await v1.register(async (child) =>
           registerMcpRoute(child, mcpServer, {
@@ -3031,6 +3060,7 @@ async function main(): Promise<void> {
           outboxWorker,
           webhookDispatchWorker,
           tenantBlobPurgeWorker,
+          tenantExportWorker,
           auditConsistencyVerifier,
           anchorReconciler,
         ].filter((w): w is NonNullable<typeof w> => w !== undefined),

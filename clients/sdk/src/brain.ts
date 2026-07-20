@@ -34,6 +34,7 @@ import { PolicyResource } from "./resources/policy.js";
 import { ProposalsResource } from "./resources/proposals.js";
 import { EvidenceResource } from "./resources/evidence.js";
 import { RawResource } from "./resources/raw.js";
+import { TenantsResource } from "./resources/tenants.js";
 import { WikiResource, type AskParams } from "./resources/wiki.js";
 import type { components } from "./generated/openapi.js";
 
@@ -94,6 +95,7 @@ export class Brain {
   readonly actions: ActionsResource;
   readonly agents: AgentsResource;
   readonly raw: RawResource;
+  readonly tenants: TenantsResource;
   readonly wiki: WikiResource;
   readonly policy: PolicyResource;
   readonly cashFlow: CashFlowResource;
@@ -137,6 +139,7 @@ export class Brain {
     this.actions = new ActionsResource(this.http);
     this.agents = new AgentsResource(this.http);
     this.raw = new RawResource(this.http);
+    this.tenants = new TenantsResource(this.http);
     this.wiki = new WikiResource(this.http);
     this.policy = new PolicyResource(this.http);
     this.compounds = new CompoundsResource(this);

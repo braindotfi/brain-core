@@ -23,6 +23,7 @@ export const WORKER_GROUPS = [
   "audit", // audit consistency verifier + anchor scheduler/reconciler
   "webhook", // webhook dead-letter dispatch worker
   "blob_purge", // tenant blob-purge worker
+  "tenant_export", // tenant data export worker
   "agent_route", // domain-event -> internal-agent route worker
 ] as const;
 
@@ -53,6 +54,7 @@ const WORKER_POOLS: Record<WorkerGroup, ReadonlyArray<PoolName>> = {
   audit: ["audit_verifier", "audit_publisher"], // verifier + anchor enumeration
   webhook: [], // brain_app
   blob_purge: ["tenant_deletion"],
+  tenant_export: ["tenant_deletion"],
   agent_route: [], // brain_app
 };
 

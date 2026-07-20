@@ -268,6 +268,7 @@ GRANT SELECT, DELETE ON tenants TO brain_tenant_deletion;
 GRANT SELECT, UPDATE ON raw_artifacts TO brain_tenant_deletion;
 GRANT SELECT, INSERT, UPDATE ON tenant_blob_purge_jobs, tenant_blob_purge_audit_outbox
   TO brain_tenant_deletion;
+GRANT SELECT, UPDATE ON tenant_export_jobs TO brain_tenant_deletion;
 
 -- §1.4 audit append-only: the audit log must be IMMUTABLE to every runtime role.
 -- The blanket DML grant above (and the default privileges) hand brain_app +

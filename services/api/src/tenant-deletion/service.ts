@@ -151,6 +151,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "domain_events", column: "tenant_id" },
 
   // ---- Onboarding / identity (tenants registry last) ----
+  { table: "tenant_export_jobs", column: "tenant_id" },
   { table: "email_verifications", column: "tenant_id" },
   { table: "wallet_identities", column: "tenant_id" },
   { table: "session_refresh_tokens", column: "tenant_id" },

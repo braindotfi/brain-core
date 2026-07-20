@@ -55,6 +55,7 @@ export {
   findMemberByEmail,
   findMemberById,
   findMemberByIdentityLink,
+  listMembers,
 } from "./members/repository.js";
 export type {
   ActorContext,
@@ -168,7 +169,7 @@ export type {
   ProposalRiskBand,
   ProposalType,
 } from "./proposals/read-model.js";
-export { getPaymentIntentAgent, PROPOSAL_TYPES } from "./proposals/read-model.js";
+export { getPaymentIntentAgent, listProposals, PROPOSAL_TYPES } from "./proposals/read-model.js";
 export { registerMemberRoutes } from "./members/routes.js";
 export type { MemberRoutesDeps } from "./members/routes.js";
 
