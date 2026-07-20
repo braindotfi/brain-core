@@ -45,6 +45,8 @@ describe("runVendorRiskScanCycle", () => {
           counterparty_id: "cp_1",
           vendor_id: "cp_1",
           vendor_name: "Acme",
+          identity_resolved: false,
+          verified_status: "unverified",
           payment_destination_id: "cpi_1",
           counterparty_history_id: "cpi_1",
         }),
@@ -54,6 +56,36 @@ describe("runVendorRiskScanCycle", () => {
     expect(
       metrics.calls.some((call) => call.name === "brain.vendor_risk.scan.last_success_unixtime"),
     ).toBe(true);
+  });
+
+  it("passes verified vendor identity status into context", async () => {
+    const row = vendor({
+      verified_status: "document_verified",
+      history_risk_score: "0.6",
+    });
+    const run = vi.fn(
+      async (_ctx: unknown, _input: unknown): Promise<AgentRunResult> => ({
+        status: "proposal_created",
+        routing_decision_id: "agrd_1",
+        run_id: "agnr_1",
+        selected_agent_id: "vendor_risk",
+        action: "flag_vendor_risk",
+        shadow_mode: false,
+        reason: {},
+      }),
+    );
+
+    await runVendorRiskScanCycle(
+      { scanPool: scanPoolWith([row]), appPool: cooldownPool(), runService: { run } },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    expect(run.mock.calls[0]?.[1]).toMatchObject({
+      context: {
+        identity_resolved: true,
+        verified_status: "document_verified",
+      },
+    });
   });
 
   it("uses payment.destination_changed when the row is marked as a payment destination event", async () => {

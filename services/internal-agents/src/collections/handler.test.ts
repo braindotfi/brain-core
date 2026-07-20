@@ -55,10 +55,47 @@ describe("collectionsHandler", () => {
           { kind: "counterparty", ref: "cp_1" },
         ],
       });
+      expect(proposed.action.ranked_recommendations).toEqual([
+        "create_task",
+        "draft_followup",
+        "escalate",
+        "propose_payment_plan",
+      ]);
       expect(String(proposed.action.narrative)).toContain("Acme");
       expect(String(proposed.action.narrative)).toContain("1200.50 USD");
       expect(String(proposed.action.narrative)).toContain("18 days overdue");
       expect(String(proposed.action.draft_message)).toContain("INV-1");
+    }
+  });
+
+  it("keeps requested-action overrides first in ranked recommendations", () => {
+    const proposed = collectionsHandler.build({
+      action: "escalate",
+      context: {
+        invoice_id: "inv_2",
+        counterparty_id: "cp_1",
+        amount: "1200.50",
+        currency: "USD",
+        due_date: "2026-07-01T00:00:00.000Z",
+        days_overdue: 10,
+        counterparty_name: "Acme",
+      },
+      evidence: EVIDENCE,
+      definition: collectionsDefinition,
+      now: new Date("2026-07-18T00:00:00.000Z"),
+    });
+
+    expect(proposed.channel).toBe("agent");
+    if (proposed.channel === "agent") {
+      expect(proposed.action).toMatchObject({
+        recommended_action: "escalate",
+        ranked_recommendations: [
+          "escalate",
+          "draft_followup",
+          "create_task",
+          "propose_payment_plan",
+        ],
+      });
     }
   });
 

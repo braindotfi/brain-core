@@ -59,7 +59,7 @@ function buildCollectionsProposal(input: HandlerInput): ProposedAction {
       aging_tier: agingTier,
       recommended_action: recommendation.recommendedAction,
       escalation_tier: recommendation.escalationTier,
-      ranked_recommendations: rankedRecommendations(daysOverdue),
+      ranked_recommendations: rankedRecommendations(daysOverdue, recommendation.recommendedAction),
       recommended_tone: recommendation.tone,
       draft_message: draftMessage({
         counterpartyName,
@@ -133,7 +133,10 @@ function recommendationFor(daysOverdue: number, requestedAction: string): Recomm
   };
 }
 
-function rankedRecommendations(daysOverdue: number): string[] {
+function rankedRecommendations(
+  daysOverdue: number,
+  recommendedAction: Recommendation["recommendedAction"],
+): string[] {
   const ordered =
     daysOverdue >= 60
       ? ["propose_payment_plan", "escalate", "create_task", "draft_followup"]
@@ -142,7 +145,7 @@ function rankedRecommendations(daysOverdue: number): string[] {
         : daysOverdue >= 15
           ? ["create_task", "draft_followup", "escalate", "propose_payment_plan"]
           : ["draft_followup", "create_task", "escalate", "propose_payment_plan"];
-  return ordered;
+  return [recommendedAction, ...ordered.filter((candidate) => candidate !== recommendedAction)];
 }
 
 function agingTierFor(daysOverdue: number): string {

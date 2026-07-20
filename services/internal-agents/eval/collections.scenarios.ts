@@ -68,14 +68,14 @@ export const collectionsScenarios = [
     "draft_followup",
   ]),
   tierScenario(10, "escalate", "escalate", "escalation", "1_14", [
+    "escalate",
     "draft_followup",
     "create_task",
-    "escalate",
     "propose_payment_plan",
   ]),
   tierScenario(5, "create_task", "create_task", "task", "1_14", [
-    "draft_followup",
     "create_task",
+    "draft_followup",
     "escalate",
     "propose_payment_plan",
   ]),

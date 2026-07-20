@@ -176,6 +176,43 @@ suite("vendor risk scanner integration (requires DATABASE_URL)", () => {
     expect(proposals.proposals[0]?.narrative).toContain("Recommend hold");
   });
 
+  it("scores a verified vendor with bank-detail change through signals", async () => {
+    const tenant = newTenantId();
+    const vendor = newCounterpartyId();
+    await seedVendorTenant(pool, tenant, vendor, {
+      name: "Verified Vendor",
+      verifiedStatus: "document_verified",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      priorHash: "old_hash",
+      currentHash: "new_hash",
+      changedAt: "2099-01-01T00:00:00.000Z",
+    });
+
+    await runVendorRiskScanCycle(
+      { scanPool: pool, appPool: pool, runService },
+      { now: NOW, batchSize: 10, perTenantBatchSize: 10, cooldownMs: 86_400_000 },
+    );
+
+    const proposals = await listProposals(
+      pool,
+      { tenantId: tenant, actor: "test" },
+      {
+        type: "vendor_risk",
+      },
+    );
+
+    expect(proposals.proposals).toHaveLength(1);
+    expect(proposals.proposals[0]).toMatchObject({
+      type: "vendor_risk",
+      status: "approved",
+      risk_band: "elevated",
+      mode: "propose",
+      payment_intent_id: null,
+      action_type: null,
+    });
+    expect(proposals.proposals[0]?.narrative).toContain("Recommend verify");
+  });
+
   it("keeps tenants isolated and applies per-tenant fairness", async () => {
     const tenantA = newTenantId();
     const tenantB = newTenantId();

@@ -133,10 +133,9 @@ export async function runVendorRiskScanCycle(
           counterparty_id: row.counterparty_id,
           vendor_id: row.counterparty_id,
           vendor_name: row.vendor_name,
-          // Defensive-only handler branch: the scanner is reading existing
-          // counterparties, so identity is present. Production unverified
-          // vendors are scored via verified_status in v1.
-          identity_resolved: true,
+          // VR-1 live path: unverified vendor identity must hard-hold in the
+          // handler instead of being treated as a scored residual.
+          identity_resolved: isVerifiedVendorStatus(row.verified_status),
           verified_status: row.verified_status ?? "unverified",
           risk_level: row.risk_level,
           created_at: row.created_at,
@@ -349,6 +348,10 @@ function ctxFor(tenantId: string): ServiceCallContext {
     principalType: "api_partner",
     scopes: ["execution:propose"],
   };
+}
+
+function isVerifiedVendorStatus(status: string | null): boolean {
+  return status === "document_verified" || status === "sanctions_cleared";
 }
 
 function eventFor(row: VendorRiskRow): DomainEvent {
