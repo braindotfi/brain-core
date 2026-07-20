@@ -1,13 +1,18 @@
 ---
-description: Install all 11 Brain Finance skills and the official MCP connection as one Claude plugin.
+description: Install all 11 Brain Finance skills and the official MCP connection, as a Claude plugin or from any MCP-capable agent runtime.
 ---
 
 # Install the Brain Finance Plugin
 
 The `brain-finance` plugin packages 11 portable `SKILL.md` recipes and the
-official Brain MCP connection in one installation. Each skill teaches Claude
-Code how to gather the evidence required for a finance task, call Brain's MCP
-tools, return the policy result, and stop at the proposal boundary.
+official Brain MCP connection in one installation. Each skill teaches an agent
+how to gather the evidence required for a finance task, call Brain's MCP tools,
+return the policy result, and stop at the proposal boundary.
+
+The Claude plugin is the turnkey packaging, but the skills are provider-neutral.
+The portable core is the Brain MCP server, a standard MCP surface with OAuth 2.0
+discovery, so any MCP-capable runtime can connect. See
+[Use with Other Agent Runtimes](#use-with-other-agent-runtimes) below.
 
 The skills add no protocol behavior. Brain remains the source of financial data,
 policy decisions, approvals, and audit records.
@@ -46,27 +51,29 @@ host resolves the operator's Brain token at runtime.
 
 The current package version is `0.1.0-beta.1`. Its manifests, skills, drift
 checks, isolated installation tests, and static security review are complete.
-Live availability remains gated on the human Phase 0 proof described below.
+The `https://mcp.brain.fi` endpoint is deployed and serves the OAuth 2.0
+discovery contract described below. Full launch remains gated on the human
+Phase 0 proof, which exercises an authenticated read and proposal end to end.
 
 ## OAuth and Runtime Authentication
 
-The plugin stores no credential. An unauthenticated MCP connection is expected
-to receive an HTTP `401` challenge that points to Brain's OAuth protected-resource
-metadata at:
+The plugin stores no credential. An unauthenticated MCP connection receives an
+HTTP `401` challenge whose `WWW-Authenticate: Bearer` header points to Brain's
+OAuth protected-resource metadata at:
 
 ```text
 https://mcp.brain.fi/.well-known/oauth-protected-resource
 ```
 
-The host uses that metadata to discover the authorization server, show the
-requested scopes, obtain user consent, and receive a runtime bearer token. Brain
-then verifies the token's tenant and scopes, including the on-chain
-`scope_hash`, before accepting a tool call.
+That metadata names Brain's authorization server (`https://auth.brain.fi`) and
+the scopes it understands. The host uses it to discover the authorization
+server, show the requested scopes, obtain user consent, and receive a runtime
+bearer token. Brain then verifies the token's tenant and scopes, including the
+on-chain `scope_hash`, before accepting a tool call.
 
-This is the required server contract, not a claim that the public OAuth flow has
-passed launch verification. Phase 0 must prove discovery, consent, token
-issuance, an authorized read, and a confirm/reject proposal from both supported
-hosts.
+The discovery contract is live and can be probed today. Phase 0 remains the
+launch gate for the authenticated path: it must prove consent, token issuance,
+an authorized read, and a confirm/reject proposal from each supported host.
 
 ## Install a Standalone Skill in Agensi
 
@@ -84,6 +91,39 @@ gitignored; ZIP files are not stored in the repository. Each built `SKILL.md`
 includes the prerequisite to connect `https://mcp.brain.fi` manually before
 use.
 
+## Use with Other Agent Runtimes
+
+The skills are not Claude-specific. Because the Brain MCP server is a standard
+MCP surface with OAuth 2.0 discovery, any MCP-capable runtime can register it
+and get the same policy-gated, propose-only tools. Build a provider-neutral
+bundle from the reviewed source:
+
+```bash
+git clone https://github.com/braindotfi/brain-skills.git
+cd brain-skills
+npm run build:portable
+```
+
+This writes `dist/portable/`, which contains `skills-manifest.json`, a
+machine-readable index of all 11 skills (id, description, trigger patterns,
+readable scopes, propose tool, and action types), plus each skill body as a
+provider-neutral instruction file. An orchestrator on any provider can read the
+manifest to route a request to the right skill.
+
+Three invariants make this portable:
+
+1. Point the runtime at `https://mcp.brain.fi` over MCP HTTP.
+2. Never embed a credential. The host supplies the runtime bearer token, and
+   Brain resolves tenant and scopes from it through the OAuth discovery flow.
+3. Keep human approval between propose and execute. There is no execute, settle,
+   or sign tool on the surface.
+
+Copy-paste registration examples for OpenAI (Agents SDK and Responses API),
+Google Gemini, and Anthropic live in the repository under
+[`docs/providers/`](https://github.com/braindotfi/brain-skills/tree/main/docs/providers).
+These are MCP-compatibility guides; each integration should still be exercised
+against a sandbox tenant before production use.
+
 ## Verify the Package
 
 The public repository contains the source and package checks:
@@ -100,7 +140,9 @@ reference copy is byte-identical, enforces money-mover and frontmatter safety
 invariants, builds all 11 Agensi archives, and performs an isolated Claude
 marketplace installation.
 
-The generated specification must be no more than 30 days old. Changes to Brain's
+The drift check warns when the generated specification is more than 30 days old
+and recommends regenerating it; the build no longer fails on age alone, since
+spec correctness is enforced by the field-level comparison. Changes to Brain's
 internal agent definitions trigger a private `brain-core` workflow that
 regenerates the public-safe specification and opens or updates a reviewable pull
 request in `brain-skills`.
