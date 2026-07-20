@@ -20,7 +20,9 @@ export async function findInvoiceById(
   id: string,
 ): Promise<InvoiceRow | null> {
   const { rows } = await client.query<InvoiceRow>(
-    `SELECT * FROM ledger_invoices WHERE id = $1 LIMIT 1`,
+    `SELECT * FROM ledger_invoices
+      WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)
+      LIMIT 1`,
     [id],
   );
   return rows[0] ?? null;
@@ -30,7 +32,7 @@ export async function listInvoices(
   client: TenantScopedClient,
   filters: { status?: string; counterparty_id?: string; limit: number; cursor?: KeysetCursor },
 ): Promise<InvoiceRow[]> {
-  const where: string[] = [];
+  const where: string[] = [`owner_id = current_setting('app.tenant_id', true)`];
   const values: unknown[] = [];
   if (filters.status !== undefined) {
     values.push(filters.status);

@@ -170,7 +170,8 @@ suite("vendor risk scanner integration (requires DATABASE_URL)", () => {
       agent: { id: "vendor_risk", kind: "internal", display_name: "Vendor Risk" },
       evidence: expect.arrayContaining([
         { kind: "counterparty", ref: vendor, resolvable: true },
-        { kind: "unknown", ref: paymentInstructionId(vendor), resolvable: false },
+        { kind: "payment_destination", ref: paymentInstructionId(vendor), resolvable: false },
+        { kind: "counterparty_history", ref: paymentInstructionId(vendor), resolvable: false },
       ]),
     });
     expect(proposals.proposals[0]?.narrative).toContain("Recommend hold");
@@ -274,8 +275,8 @@ suite("vendor risk scanner integration (requires DATABASE_URL)", () => {
       return rows[0];
     });
     expect(run).toMatchObject({
-      status: "notify_only",
-      failure_reason: "execution_mode_notify_only",
+      status: "missing_evidence",
+      failure_reason: "critical_missing_evidence",
     });
   });
 });

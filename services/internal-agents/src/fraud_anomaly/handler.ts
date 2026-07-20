@@ -147,7 +147,10 @@ function scoreFraudAnomaly(input: HandlerInput, amount: number): AnomalyScore {
   const avgDailyCount = readNumber(input.context.account_daily_count_avg);
   if (
     velocityCount !== null &&
-    ((avgDailyCount !== null && avgDailyCount > 0 && velocityCount / avgDailyCount >= 4) ||
+    ((velocityCount >= 3 &&
+      avgDailyCount !== null &&
+      avgDailyCount > 0 &&
+      velocityCount / avgDailyCount >= 4) ||
       velocityCount >= 5)
   ) {
     signals.push({ id: "velocity_spike", label: "transaction velocity spike", score: 0.65 });

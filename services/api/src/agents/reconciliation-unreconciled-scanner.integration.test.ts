@@ -277,8 +277,8 @@ suite("reconciliation unreconciled scanner integration (requires DATABASE_URL)",
       return rows[0];
     });
     expect(run).toMatchObject({
-      status: "notify_only",
-      failure_reason: "execution_mode_notify_only",
+      status: "missing_evidence",
+      failure_reason: "critical_missing_evidence",
     });
   });
 });
@@ -355,7 +355,8 @@ async function seedReconciliationTenant(
     await client.query(`INSERT INTO tenants (id, kind) VALUES ($1, 'demo')`, [tenantId]);
     await client.query(
       `INSERT INTO agents (id, tenant_id, kind, role, display_name, state, registered_at)
-       VALUES ('reconciliation', $1, 'internal', 'reconciliation', 'Reconciliation', 'active', now())`,
+       VALUES ('reconciliation', $1, 'internal', 'reconciliation', 'Reconciliation', 'active', now())
+       ON CONFLICT DO NOTHING`,
       [tenantId],
     );
     await client.query(

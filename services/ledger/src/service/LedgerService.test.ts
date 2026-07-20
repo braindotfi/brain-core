@@ -426,7 +426,7 @@ describe("LedgerService manual counterparty endpoints", () => {
   it("renames with the previous name preserved as an alias and audits changed fields", async () => {
     const audit = new InMemoryAuditEmitter();
     const { pool, calls } = fakePool({
-      "WHERE id = $1 LIMIT 1": [
+      "WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)": [
         {
           ...rowCommon(),
           id: "cp_existing",
@@ -440,7 +440,7 @@ describe("LedgerService manual counterparty endpoints", () => {
           metadata: {},
         },
       ],
-      "WHERE normalized_name = $1 AND type = $2": [],
+      "WHERE normalized_name = $1\n        AND type = $2": [],
       "UPDATE ledger_counterparties": [
         {
           ...rowCommon(),
@@ -480,7 +480,7 @@ describe("LedgerService manual counterparty endpoints", () => {
   it("updates display_name without rename collision and preserves the previous display name", async () => {
     const audit = new InMemoryAuditEmitter();
     const { pool, calls } = fakePool({
-      "WHERE id = $1 LIMIT 1": [
+      "WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)": [
         {
           ...rowCommon(),
           id: "cp_existing",
@@ -519,14 +519,14 @@ describe("LedgerService manual counterparty endpoints", () => {
     expect(result.counterparty.display_name).toBe("Acme Supply");
     expect(result.counterparty.aliases).toContain("Acme Trading");
     expect(result.changed_fields).toEqual(["aliases", "display_name"]);
-    expect(calls.some((c) => c.text.includes("WHERE normalized_name = $1 AND type = $2"))).toBe(
-      false,
-    );
+    expect(
+      calls.some((c) => c.text.includes("WHERE normalized_name = $1\n        AND type = $2")),
+    ).toBe(false);
   });
 
   it("returns name_conflict on rename collision without mutating", async () => {
     const { pool, calls } = fakePool({
-      "WHERE id = $1 LIMIT 1": [
+      "WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)": [
         {
           ...rowCommon(),
           id: "cp_existing",
@@ -540,7 +540,7 @@ describe("LedgerService manual counterparty endpoints", () => {
           metadata: {},
         },
       ],
-      "WHERE normalized_name = $1 AND type = $2": [
+      "WHERE normalized_name = $1\n        AND type = $2": [
         {
           ...rowCommon(),
           id: "cp_other",

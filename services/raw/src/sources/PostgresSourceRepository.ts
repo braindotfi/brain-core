@@ -129,7 +129,12 @@ export class PostgresSourceRepository
 
   public async findById(tenantId: string, id: string): Promise<SourceRecord | null> {
     const { rows } = await withTenantScope(this.deps.pool, tenantId, (c) =>
-      c.query<Record<string, unknown>>(`SELECT * FROM raw_sources WHERE id = $1 LIMIT 1`, [id]),
+      c.query<Record<string, unknown>>(
+        `SELECT * FROM raw_sources
+          WHERE id = $1 AND tenant_id = current_setting('app.tenant_id', true)
+          LIMIT 1`,
+        [id],
+      ),
     );
     return rows[0] !== undefined ? rowToRecord(rows[0]) : null;
   }
@@ -213,7 +218,10 @@ export class PostgresSourceRepository
 
     const { rows } = await withTenantScope(this.deps.pool, tenantId, (c) =>
       c.query<{ encrypted_credentials: Buffer | null }>(
-        `SELECT encrypted_credentials FROM raw_sources WHERE id = $1 LIMIT 1`,
+        `SELECT encrypted_credentials
+           FROM raw_sources
+          WHERE id = $1 AND tenant_id = current_setting('app.tenant_id', true)
+          LIMIT 1`,
         [id],
       ),
     );
@@ -251,7 +259,8 @@ export class PostgresSourceRepository
             SET encrypted_credentials = $2,
                 credential_key_id = $3,
                 updated_at = now()
-          WHERE id = $1`,
+          WHERE id = $1
+            AND tenant_id = current_setting('app.tenant_id', true)`,
         [id, ciphertext, keyId],
       ),
     );
@@ -288,7 +297,9 @@ export class PostgresSourceRepository
   public async findSyncJob(tenantId: string, jobId: string): Promise<SourceSyncJobRecord | null> {
     const { rows } = await withTenantScope(this.deps.pool, tenantId, (c) =>
       c.query<Record<string, unknown>>(
-        `SELECT * FROM raw_source_sync_jobs WHERE job_id = $1 LIMIT 1`,
+        `SELECT * FROM raw_source_sync_jobs
+          WHERE job_id = $1 AND tenant_id = current_setting('app.tenant_id', true)
+          LIMIT 1`,
         [jobId],
       ),
     );

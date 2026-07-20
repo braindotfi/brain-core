@@ -45,13 +45,19 @@ function buildSubscriptionProposal(input: HandlerInput): ProposedAction {
       agent_kind: "subscription",
       transaction_id: transactionId,
       counterparty_id: counterpartyId,
+      merchant: readString(input.context.merchant, counterpartyId),
+      recurring_amount: formatMoney(amount),
+      billing_frequency: detection.cadence ?? "unknown",
       amount: formatMoney(amount),
       currency,
       is_subscription: detection.isSubscription,
       cadence: detection.cadence,
       next_expected_date: detection.nextExpectedDate,
       price_change_percent: detection.priceChangePercent,
+      duplicate_candidates: readRows(input.context.duplicate_candidates),
       recommended_action: detection.recommendedAction,
+      estimated_savings:
+        detection.recommendedAction === "review_price_change" ? formatMoney(amount) : "0.00",
       history_count: history.length,
       narrative: narrativeFor(detection),
       summary: `Subscription detection ${detection.isSubscription ? "matched" : "not_matched"}.`,
@@ -153,6 +159,14 @@ function readHistory(raw: unknown): HistoryCharge[] {
     }
     return { id, amount, date };
   });
+}
+
+function readRows(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (row): row is Record<string, unknown> =>
+      typeof row === "object" && row !== null && !Array.isArray(row),
+  );
 }
 
 function narrativeFor(detection: Detection): string {

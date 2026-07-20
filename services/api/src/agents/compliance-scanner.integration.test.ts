@@ -156,7 +156,11 @@ suite("compliance scanner integration (requires DATABASE_URL)", () => {
       { now: new Date("2026-07-19T01:00:00.000Z"), batchSize: 10, cooldownMs: 86_400_000 },
     );
 
-    const proposals = await listProposals(pool, { tenantId: tenant, actor: "test" }, {});
+    const proposals = await listProposals(
+      pool,
+      { tenantId: tenant, actor: "test" },
+      { type: "compliance" },
+    );
 
     expect(proposals.proposals).toHaveLength(1);
     expect(proposals.proposals[0]).toMatchObject({
@@ -236,7 +240,11 @@ suite("compliance scanner integration (requires DATABASE_URL)", () => {
 
     expect(await countProposals(pool, tenantA)).toBe(1);
     expect(await countProposals(pool, tenantB)).toBe(1);
-    const visibleToA = await listProposals(pool, { tenantId: tenantA, actor: "test" }, {});
+    const visibleToA = await listProposals(
+      pool,
+      { tenantId: tenantA, actor: "test" },
+      { type: "compliance" },
+    );
     expect(visibleToA.proposals).toHaveLength(1);
   });
 
@@ -293,7 +301,7 @@ suite("compliance scanner integration (requires DATABASE_URL)", () => {
     const cases: Array<{
       name: string;
       outcome: "allow" | "confirm" | "reject";
-      status: "pending" | "approved" | "executed";
+      status: "proposed" | "approved" | "dispatching" | "executed";
       requiredApprovers: readonly string[];
       validApprovals: number;
       staleApprovals: number;
@@ -301,9 +309,9 @@ suite("compliance scanner integration (requires DATABASE_URL)", () => {
       expectedFinding: string | null;
     }> = [
       {
-        name: "allow pending no approvals",
+        name: "allow proposed no approvals",
         outcome: "allow",
-        status: "pending",
+        status: "proposed",
         requiredApprovers: [],
         validApprovals: 0,
         staleApprovals: 0,
@@ -361,9 +369,9 @@ suite("compliance scanner integration (requires DATABASE_URL)", () => {
         expectedFinding: null,
       },
       {
-        name: "reject pending policy violation",
+        name: "reject proposed policy violation",
         outcome: "reject",
-        status: "pending",
+        status: "proposed",
         requiredApprovers: [],
         validApprovals: 0,
         staleApprovals: 0,
@@ -382,9 +390,16 @@ suite("compliance scanner integration (requires DATABASE_URL)", () => {
       },
     ];
 
-    const captured: Array<{ name: string; findingType: unknown; auditEventId: unknown }> = [];
+    const captured: Array<{
+      name: string;
+      tenantId: string;
+      findingType: unknown;
+      auditEventId: unknown;
+    }> = [];
+    const caseTenantByName = new Map<string, string>();
     for (const testCase of cases) {
       const tenant = newTenantId();
+      caseTenantByName.set(testCase.name, tenant);
       const account = newAccountId();
       const counterparty = newCounterpartyId();
       await seedTenantAndLedgerOnly(pool, tenant, account, counterparty);
@@ -397,10 +412,11 @@ suite("compliance scanner integration (requires DATABASE_URL)", () => {
         createAudit: testCase.createAudit,
       });
       const runServiceForCase = {
-        run: async (_ctx: ServiceCallContext, input: Parameters<AgentRunService["run"]>[1]) => {
+        run: async (ctx: ServiceCallContext, input: Parameters<AgentRunService["run"]>[1]) => {
           const context = input.context ?? {};
           captured.push({
             name: testCase.name,
+            tenantId: ctx.tenantId,
             findingType: context.finding_type,
             auditEventId: context.audit_event_id,
           });
@@ -423,7 +439,8 @@ suite("compliance scanner integration (requires DATABASE_URL)", () => {
     }
 
     for (const testCase of cases) {
-      const hit = captured.find((row) => row.name === testCase.name);
+      const tenant = caseTenantByName.get(testCase.name);
+      const hit = captured.find((row) => row.name === testCase.name && row.tenantId === tenant);
       if (testCase.expectedFinding === null) {
         expect(hit, testCase.name).toBeUndefined();
       } else {
@@ -560,7 +577,7 @@ async function seedPaymentIntentCase(
   accountId: string,
   counterpartyId: string,
   options: {
-    readonly status: "pending" | "approved" | "dispatching" | "executed";
+    readonly status: "proposed" | "approved" | "dispatching" | "executed";
     readonly outcome?: "allow" | "confirm" | "reject";
     readonly requiredApprovers: readonly string[];
     readonly validApprovals: number;

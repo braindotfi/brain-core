@@ -311,8 +311,9 @@ async function listAnomalousTransactions(
                    AND (e.amount - e.counterparty_mean_amount) / e.counterparty_stddev_amount >= 3 THEN 0.7
                   WHEN e.account_stddev_amount > 0
                    AND (e.amount - e.account_mean_amount) / e.account_stddev_amount >= 3 THEN 0.7
-                  WHEN e.account_daily_count_avg > 0
-                   AND e.velocity_count_24h / e.account_daily_count_avg >= 4 THEN 0.65
+                WHEN e.velocity_count_24h >= 3
+                 AND e.account_daily_count_avg > 0
+                 AND e.velocity_count_24h / e.account_daily_count_avg >= 4 THEN 0.65
                   WHEN e.velocity_count_24h >= 5 THEN 0.65
                   ELSE 0
                 END

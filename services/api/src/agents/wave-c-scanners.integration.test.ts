@@ -341,7 +341,8 @@ async function seedTenant(
     ] as const) {
       await client.query(
         `INSERT INTO agents (id, tenant_id, kind, role, display_name, state, registered_at)
-         VALUES ($1, $2, 'internal', $3, $4, 'active', now())`,
+         VALUES ($1, $2, 'internal', $3, $4, 'active', now())
+         ON CONFLICT DO NOTHING`,
         [id, tenantId, role, displayName],
       );
     }

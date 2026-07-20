@@ -196,6 +196,7 @@ async function listUnreconciledTransactions(
        SELECT tx.owner_id AS tenant_id,
               tx.id AS transaction_id,
               tx.account_id,
+              tx.amount AS amount_value,
               tx.amount::text AS amount,
               tx.currency,
               tx.direction,
@@ -208,6 +209,7 @@ async function listUnreconciledTransactions(
            ON cp.id = tx.counterparty_id AND cp.owner_id = tx.owner_id
         WHERE tx.reconciliation_status = 'unreconciled'
           AND tx.status IN ('posted', 'cleared')
+          AND tx.transaction_date <= $1::timestamptz
      ),
      with_candidates AS (
        SELECT b.*,
@@ -227,7 +229,7 @@ async function listUnreconciledTransactions(
                           icp.name AS counterparty_name,
                           i.invoice_number AS label,
                           i.status,
-                          (CASE WHEN i.currency = b.currency AND i.amount_due - i.amount_paid = b.amount THEN 2 ELSE 0 END) +
+                          (CASE WHEN i.currency = b.currency AND i.amount_due - i.amount_paid = b.amount_value THEN 2 ELSE 0 END) +
                           (CASE WHEN i.counterparty_id = b.counterparty_id THEN 2 ELSE 0 END) +
                           (CASE WHEN ABS(EXTRACT(EPOCH FROM (COALESCE(i.due_date, i.issue_date) - b.transaction_date))) <= 86400 THEN 1 ELSE 0 END)
                             AS sort_score
@@ -248,7 +250,7 @@ async function listUnreconciledTransactions(
                           ocp.name AS counterparty_name,
                           o.type AS label,
                           o.status,
-                          (CASE WHEN o.currency = b.currency AND o.amount_due = b.amount THEN 2 ELSE 0 END) +
+                          (CASE WHEN o.currency = b.currency AND o.amount_due = b.amount_value THEN 2 ELSE 0 END) +
                           (CASE WHEN o.counterparty_id = b.counterparty_id THEN 2 ELSE 0 END) +
                           (CASE WHEN ABS(EXTRACT(EPOCH FROM (o.due_date - b.transaction_date))) <= 86400 THEN 1 ELSE 0 END)
                             AS sort_score
@@ -268,7 +270,7 @@ async function listUnreconciledTransactions(
                           tcp.name AS counterparty_name,
                           COALESCE(other.description_normalized, other.description_raw) AS label,
                           other.status,
-                          (CASE WHEN other.currency = b.currency AND other.amount = b.amount THEN 2 ELSE 0 END) +
+                          (CASE WHEN other.currency = b.currency AND other.amount = b.amount_value THEN 2 ELSE 0 END) +
                           (CASE WHEN other.counterparty_id = b.counterparty_id THEN 2 ELSE 0 END) +
                           (CASE WHEN ABS(EXTRACT(EPOCH FROM (other.transaction_date - b.transaction_date))) <= 86400 THEN 1 ELSE 0 END)
                             AS sort_score

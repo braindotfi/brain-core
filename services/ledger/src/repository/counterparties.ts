@@ -39,7 +39,9 @@ export async function findCounterpartyById(
   id: string,
 ): Promise<CounterpartyRow | null> {
   const { rows } = await client.query<CounterpartyRow>(
-    `SELECT * FROM ledger_counterparties WHERE id = $1 LIMIT 1`,
+    `SELECT * FROM ledger_counterparties
+      WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)
+      LIMIT 1`,
     [id],
   );
   return rows[0] ?? null;
@@ -49,7 +51,7 @@ export async function listCounterparties(
   client: TenantScopedClient,
   filters: CounterpartyListFilters,
 ): Promise<CounterpartyRow[]> {
-  const where: string[] = [];
+  const where: string[] = [`owner_id = current_setting('app.tenant_id', true)`];
   const values: unknown[] = [];
   if (filters.type !== undefined) {
     values.push(filters.type);
@@ -97,7 +99,9 @@ export async function findCounterpartyByNormalizedName(
 ): Promise<CounterpartyRow | null> {
   const { rows } = await client.query<CounterpartyRow>(
     `SELECT * FROM ledger_counterparties
-      WHERE normalized_name = $1 AND type = $2
+      WHERE normalized_name = $1
+        AND type = $2
+        AND owner_id = current_setting('app.tenant_id', true)
       LIMIT 1`,
     [normalizedName, type],
   );
@@ -139,6 +143,7 @@ export async function updateCounterpartyIdentity(
     `UPDATE ledger_counterparties
         SET ${sets.join(", ")}
       WHERE id = $${idIndex}
+        AND owner_id = current_setting('app.tenant_id', true)
       RETURNING *`,
     values,
   );

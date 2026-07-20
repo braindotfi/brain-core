@@ -34,7 +34,9 @@ export async function findObligationById(
   id: string,
 ): Promise<ObligationRow | null> {
   const { rows } = await client.query<ObligationRow>(
-    `SELECT * FROM ledger_obligations WHERE id = $1 LIMIT 1`,
+    `SELECT * FROM ledger_obligations
+      WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)
+      LIMIT 1`,
     [id],
   );
   return rows[0] ?? null;
@@ -44,7 +46,7 @@ export async function listObligations(
   client: TenantScopedClient,
   filters: ObligationListFilters,
 ): Promise<ObligationRow[]> {
-  const where: string[] = [];
+  const where: string[] = [`owner_id = current_setting('app.tenant_id', true)`];
   const values: unknown[] = [];
   if (filters.status !== undefined) {
     values.push(filters.status);

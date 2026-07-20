@@ -119,14 +119,26 @@ async function appendRawArtifacts(lines: string[], client: TenantScopedClient): 
               'source_type', source_type,
               'source_ref', source_ref,
               'sha256', encode(sha256, 'hex'),
-              'size_bytes', size_bytes,
+              'size_bytes', bytes,
               'mime_type', mime_type,
               'blob_uri', blob_uri,
-              'envelope', envelope,
-              'schema_name', schema_name,
-              'schema_version', schema_version,
+              'envelope', jsonb_build_object(
+                'source_schema', source_schema,
+                'object_type', object_type,
+                'external_id', external_id,
+                'operation', operation,
+                'effective_at', effective_at,
+                'observed_at', observed_at,
+                'original_source', original_source,
+                'intermediaries', intermediaries,
+                'source_id', source_id,
+                'source_version', source_version,
+                'idempotency_key', idempotency_key
+              ),
+              'schema_name', source_schema,
+              'schema_version', NULL,
               'tombstoned_at', tombstoned_at,
-              'created_at', created_at
+              'created_at', ingested_at
             ) AS data
        FROM raw_artifacts
       WHERE tenant_id = current_setting('app.tenant_id', true)

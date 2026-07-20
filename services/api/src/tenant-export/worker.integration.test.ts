@@ -92,14 +92,20 @@ suite("tenant export worker integration (requires DATABASE_URL)", () => {
     );
 
     const saved = await withTenantScope(pool, tenant, (client) =>
-      client.query<{ status: string; output_blob_uri: string; byte_size: string }>(
-        `SELECT status, output_blob_uri, byte_size
+      client.query<{
+        status: string;
+        output_blob_uri: string;
+        byte_size: string;
+        error: Record<string, unknown> | null;
+      }>(
+        `SELECT status, output_blob_uri, byte_size, error
            FROM tenant_export_jobs
           WHERE id = $1`,
         [job.row.id],
       ),
     );
-    expect(saved.rows[0]?.status).toBe("succeeded");
+    expect(saved.rows[0]?.error).toBeNull();
+    expect(saved.rows[0]).toMatchObject({ status: "succeeded" });
     expect(Number(saved.rows[0]?.byte_size)).toBeGreaterThan(0);
 
     const archive = await readBlob(blob, saved.rows[0]!.output_blob_uri);

@@ -15,7 +15,9 @@ export async function findLatestBalance(
   accountId: string,
 ): Promise<BalanceRow | null> {
   const { rows } = await client.query<BalanceRow>(
-    `SELECT * FROM ledger_balances WHERE account_id = $1
+    `SELECT * FROM ledger_balances
+     WHERE account_id = $1
+       AND owner_id = current_setting('app.tenant_id', true)
      ORDER BY as_of DESC
      LIMIT 1`,
     [accountId],
@@ -27,7 +29,7 @@ export async function listBalances(
   client: TenantScopedClient,
   filters: { account_id?: string; as_of?: Date },
 ): Promise<BalanceRow[]> {
-  const where: string[] = [];
+  const where: string[] = [`owner_id = current_setting('app.tenant_id', true)`];
   const values: unknown[] = [];
   if (filters.account_id !== undefined) {
     values.push(filters.account_id);

@@ -113,6 +113,7 @@ export async function findLatestExtractionJob(
     `SELECT *
        FROM extraction_jobs
       WHERE raw_id = $1
+        AND tenant_id = current_setting('app.tenant_id', true)
       ORDER BY created_at DESC
       LIMIT 1`,
     [rawId],

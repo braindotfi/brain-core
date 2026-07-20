@@ -131,7 +131,7 @@ suite("treasury and payment advisory scanner integration (requires DATABASE_URL)
     }
   }, 60_000);
 
-  it("records treasury notify-only holds when balance evidence is not independently resolved", async () => {
+  it("records grounded treasury proposals when balance evidence resolves", async () => {
     const tenantA = newTenantId();
     const tenantB = newTenantId();
     const accountA = newAccountId();
@@ -209,14 +209,23 @@ suite("treasury and payment advisory scanner integration (requires DATABASE_URL)
     const ctxA: ServiceCallContext = { tenantId: tenantA, actor: "test" };
     const ctxB: ServiceCallContext = { tenantId: tenantB, actor: "test" };
     await expect(latestRun(pool, tenantA, "treasury")).resolves.toMatchObject({
-      status: "notify_only",
-      failure_reason: "execution_mode_notify_only",
+      status: "proposal_created",
+      failure_reason: null,
     });
     const proposalsA = await listProposals(pool, ctxA, { type: "treasury" });
     const proposalsB = await listProposals(pool, ctxB, { type: "treasury" });
 
-    expect(proposalsA.proposals).toHaveLength(0);
-    expect(proposalsB.proposals).toHaveLength(0);
+    expect(proposalsA.proposals).toHaveLength(1);
+    expect(proposalsB.proposals).toHaveLength(1);
+    expect(proposalsA.proposals[0]).toMatchObject({
+      type: "treasury",
+      evidence: expect.arrayContaining([{ kind: "balance", ref: balanceA, resolvable: false }]),
+    });
+    expect(proposalsB.proposals[0]).toMatchObject({
+      type: "treasury",
+      mode: "propose",
+      evidence: expect.arrayContaining([{ kind: "balance", ref: balanceB, resolvable: false }]),
+    });
   });
 
   it("creates one grounded payment advisory proposal from an upcoming payable", async () => {
@@ -299,8 +308,8 @@ suite("treasury and payment advisory scanner integration (requires DATABASE_URL)
     expect((await listProposals(pool, ctx, { type: "treasury" })).proposals).toHaveLength(0);
     const run = await latestRun(pool, tenant, "treasury");
     expect(run).toMatchObject({
-      status: "notify_only",
-      failure_reason: "execution_mode_notify_only",
+      status: "missing_evidence",
+      failure_reason: "critical_missing_evidence",
     });
   });
 });
