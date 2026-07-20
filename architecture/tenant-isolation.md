@@ -52,7 +52,7 @@ Policy scope (which capabilities, which resources)
    ↓
 Action evaluation
    ↓
-ALLOW / ESCALATE / DENY
+allow / confirm / reject
 ```
 
 | Subject Type       | Identified By        | Authenticated By                   |

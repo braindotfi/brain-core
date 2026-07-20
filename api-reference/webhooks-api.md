@@ -11,21 +11,33 @@ Both routes are tenant-isolated. The `endpoint_id` belongs to the calling tenant
 
 ### Event Types
 
-Brain forwards a fixed set of audit actions to registered endpoints. These are the only `event_type` values an outbound webhook carries:
+Brain forwards a fixed allowlist of audit actions to registered endpoints. These are the only `event_type` values an outbound webhook carries:
 
-| `event_type`                   | Fires when                                              |
-| ------------------------------ | ------------------------------------------------------- |
-| `payment_intent.created`       | A PaymentIntent is proposed                             |
-| `payment_intent.approved`      | All required approvals are in (or Policy said `allow`)  |
-| `payment_intent.rejected`      | Policy or an approver rejected                          |
-| `payment_intent.execute.after` | The §6 gate ran and the intent was dispatched to a rail |
-| `ledger.counterparty.created`  | A counterparty row was created                          |
-| `ledger.transaction.created`   | A transaction row was created                           |
-| `ledger.obligation.created`    | An obligation row was created                           |
-| `policy.evaluate`              | A policy decision was recorded                          |
-| `raw.ingest.completed`         | A Raw ingestion finished                                |
+| `event_type`                              | Fires when                                                      |
+| ----------------------------------------- | -------------------------------------------------------------- |
+| `agent.action.proposed`                   | An agent proposed an action                                     |
+| `payment_intent.created`                  | A PaymentIntent is proposed                                     |
+| `payment_intent.approved`                 | A required approval was recorded (or Policy said `allow`)       |
+| `payment_intent.awaiting_second_approval` | A first approval landed and a distinct second approver is due   |
+| `proposal.awaiting_second_approval`       | Contract-named event for the awaiting-second-approval move      |
+| `proposal.decided`                        | A surface proposal reached a terminal decision                 |
+| `payment_intent.rejected`                 | Policy or an approver rejected                                 |
+| `payment_intent.executed`                 | The intent was executed                                        |
+| `payment_intent.failed`                   | Execution failed                                               |
+| `payment_intent.reconciling`              | The intent was parked for reconciliation                       |
+| `member.changed`                          | A member was created, changed, or deactivated                  |
+| `payment_intent.execute.after`            | The §6 gate ran and the intent was dispatched to a rail        |
+| `ledger.counterparty.created`             | A counterparty row was created                                 |
+| `ledger.counterparty.updated`             | A counterparty identity was edited                             |
+| `ledger.transaction.created`              | A transaction row was created                                  |
+| `ledger.obligation.created`               | An obligation row was created                                  |
+| `policy.evaluate`                         | A policy decision was recorded                                 |
+| `raw.ingest.new`                          | A new Raw artifact was ingested                                |
+| `raw.ingest.deduplicated`                 | A re-submitted artifact matched an existing one                |
+| `raw.extraction.status_changed`           | A Raw extraction changed status                                |
+| `raw.source.status_changed`               | A connected source changed status                              |
 
-There is no `payment_intent.settled` / `payment_intent.failed` event: rail settlement is async and confirmed via the rail-specific provider webhook plus the proof endpoint. The legacy `action.*` names are **not** emitted.
+There is no `payment_intent.settled` event: rail settlement is async and confirmed via the rail-specific provider webhook plus the proof endpoint. `payment_intent.failed` **is** emitted when execution fails. The legacy bare `action.*` names are **not** emitted.
 
 ### How Dead-Lettering Works
 

@@ -17,7 +17,7 @@ Each guide on this page solves one task end-to-end. Pick the one that matches wh
 | You're calling from a backend | Server keys never go in client-side code                  |
 
 ```typescript
-import { Brain } from "@brain/sdk";
+import { Brain } from "@brainfinance/sdk";
 
 export const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY });
 ```

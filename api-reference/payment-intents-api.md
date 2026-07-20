@@ -31,7 +31,7 @@ Content-Type: application/json
 }
 ```
 
-`action_type` is one of `ach_outbound | ach_inbound | wire | onchain_transfer | erp_writeback | card_payment | x402_settle | escrow_release`. `amount` is a decimal string. `currency` matches `^[A-Z]{3}$|^USDC$`.
+`action_type` is one of `ach_outbound | ach_inbound | wire | onchain_transfer | erp_writeback | card_payment | x402_settle | escrow_release`. `amount` is a decimal string. The valid `currency` depends on `action_type`: the two on-chain settlement actions (`x402_settle`, `escrow_release`) require `USDC` and reject three-letter codes, while every other action requires a three-letter code matching `^[A-Z]{3}$` and rejects `USDC`.
 
 For the special invoice shortcut (resolves amount / currency / counterparty / source / evidence from a Ledger invoice):
 
@@ -72,17 +72,20 @@ Returns the same `PaymentIntent` shape as above. `404` if unknown or tenant-isol
 
 ### Status Lifecycle
 
-| Status             | Meaning                                                       |
-| ------------------ | ------------------------------------------------------------- |
-| `proposed`         | Created; Policy is evaluating                                 |
-| `pending_approval` | Policy returned `confirm`; awaiting approver signatures       |
-| `approved`         | All required approvals collected (or Policy returned `allow`) |
-| `rejected`         | Policy returned `reject`, or an approver rejected             |
-| `executed`         | Rail dispatch succeeded                                       |
-| `failed`           | §6 gate failed or rail dispatch errored                       |
-| `cancelled`        | Cancelled before approval, or from `paused → cancelled`       |
+| Status                     | Meaning                                                         |
+| -------------------------- | --------------------------------------------------------------- |
+| `proposed`                 | Created; Policy is evaluating                                   |
+| `pending_approval`         | Policy returned `confirm`; awaiting approver signatures         |
+| `awaiting_second_approval` | First approval recorded; a distinct second approver must sign   |
+| `approved`                 | All required approvals collected (or Policy returned `allow`)   |
+| `paused`                   | Kill-switch hold on an approved intent; resume re-runs the gate |
+| `dispatching`              | Gate passed; execution enqueued to the outbox, settling async   |
+| `rejected`                 | Policy returned `reject`, or an approver rejected               |
+| `executed`                 | Rail dispatch succeeded                                         |
+| `failed`                   | §6 gate failed or rail dispatch errored                         |
+| `cancelled`                | Cancelled before approval, or from `paused → cancelled`         |
 
-Plus three transient states surfaced only by the immediate `execute` response: `dispatching`, `dispatched`, `in_flight` (outbox-row states; settlement is async).
+`dispatching` is a full PaymentIntent state, not an outbox-only one: `execute` transitions the intent `approved → dispatching` and it stays there until the outbox worker settles it to `executed` or `failed`. The `execution` row the worker drives has its own separate `ExecutionState` values (`dispatched`, `in_flight`, `completed`, `failed`).
 
 **SDK status aliases.** The SDK's higher-level `action.status` collapses these HTTP states onto the policy-decision triple: `proposed` / `approved` → **`auto`**, `pending_approval` → **`needs_approval`**, `rejected` → **`rejected`**; `executed`, `failed`, and `cancelled` pass through unchanged. So SDK code branching on `"auto"` is matching the same state HTTP code sees as `approved`. See [Policy → decision vocabulary across surfaces](policy-api.md#decision-vocabulary-across-surfaces).
 

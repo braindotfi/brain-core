@@ -9,20 +9,20 @@ Goal: write a sentence in English describing what an agent (or human user) can d
 ### The Simplest Policy
 
 ```typescript
-const policy = await brain.policy.create("acme", {
+const policy = await brain.policy.compose("acme", {
   text:
     "Allow invoice payments under $5,000 to approved vendors. " +
     "Require CFO approval above $5,000. " +
     "Block payments to new counterparties without review.",
 });
 
-await brain.policy.activate(policy.id);
+await brain.policy.sign(policy.id);
 ```
 
 That's the whole flow. From this point on, every `brain.pay` call evaluates against this policy.
 
 {% hint style="warning" %}
-**Plain-English authoring is the intended experience, but not yet wired.** Today, policies are authored as **structured JSON DSL**, not prose; there is no natural-language compile step on either the SDK or the HTTP API. The real SDK call is `brain.policy.compose(tenantId, dsl)` (also exposed as `create`): it **validates the DSL** and returns the EIP-712 signing payload, which you then submit via `brain.policy.sign(...)` (also exposed as `activate`, which takes signatures, not a policy id). Non-SDK callers POST the same DSL to `/policy/{tenant_id}/compose`. See the [Policy API](../api-reference/policy-api.md#compose-a-candidate-policy) for the JSON shape. Treat the `{ text: "…" }` form below as illustrative of intent until NL authoring ships.
+**Plain-English authoring is the intended experience, but not yet wired.** Today, policies are authored as **structured JSON DSL**, not prose; there is no natural-language compile step on either the SDK or the HTTP API. The real SDK call is `brain.policy.compose(tenantId, dsl)`: it **validates the DSL** and returns the EIP-712 signing payload, which you then submit via `brain.policy.sign(...)` (also exposed as `activate`), which takes signatures, not a policy id. Non-SDK callers POST the same DSL to `/policy/{tenant_id}/compose`. See the [Policy API](../api-reference/policy-api.md#compose-a-candidate-policy) for the JSON shape. Treat the `{ text: "…" }` form below as illustrative of intent until NL authoring ships.
 {% endhint %}
 
 ### Reviewing What Got Compiled
@@ -88,15 +88,9 @@ Approvers are referenced by role or user.
 
 ### Approving Counterparties
 
-Many policies key off "approved vendors." Mark counterparties as approved through the SDK or the Console.
+Many policies key off "approved vendors." A counterparty's trust standing is the server-controlled `verified_status` field (`unverified`, `self_attested`, `document_verified`, `sanctions_cleared`). It is not a value you set directly through the SDK: manual counterparty edits are identity-only, and trust fields are managed server-side through verification and the Console.
 
-```typescript
-await brain.counterparties.update("acme", "cp_vendor_x", {
-  status: "approved",
-});
-```
-
-Once approved, payments to this counterparty fall under the "approved vendor" branch of the policy.
+Once a counterparty is verified, payments to it fall under the "approved vendor" branch of the policy.
 
 ### Multiple Environments
 
@@ -112,11 +106,11 @@ Policies are per-tenant, per-environment. Sandbox and production each have their
 Policies are versioned. New text creates a new version that supersedes the old one.
 
 ```typescript
-const v2 = await brain.policy.create("acme", {
+const v2 = await brain.policy.compose("acme", {
   text: "..."  // new policy text
 });
 
-await brain.policy.activate(v2.id);
+await brain.policy.sign(v2.id);
 ```
 
 The old version is automatically deactivated. Past actions remain bound to the version that was active when they were proposed; you can always see which version evaluated which action by reading the action's metadata.

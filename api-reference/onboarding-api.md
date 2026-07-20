@@ -32,12 +32,11 @@ Content-Type: application/json
   "tenant_id": "tnt_01J0000000000000000000000A",
   "user_id": "usr_01J0000000000000000000000B",
   "status": "pending",
-  "verification_token": "vtok_...",
-  "verification_sent": false
+  "verification_token": "vtok_..."
 }
 ```
 
-`verification_token` is included **only outside production**. In production the API sends the token through the configured ESP client (`EMAIL_ENDPOINT`, `EMAIL_API_KEY`, optional `EMAIL_FROM`) and returns `verification_sent: true`. If self-serve signup is enabled in production without ESP credentials, API boot fails before the route is served. Errors: `400` (validation), `409` (`signup_email_taken`), `429`.
+The response carries exactly one of these fields, never both. `verification_token` is included **only outside production**. In production the API sends the token through the configured ESP client (`EMAIL_ENDPOINT`, `EMAIL_API_KEY`, optional `EMAIL_FROM`) and returns `verification_sent: true` in place of the token. If self-serve signup is enabled in production without ESP credentials, API boot fails before the route is served. Errors: `400` (validation), `409` (`signup_email_taken`), `429`.
 
 ### Verify Email
 
@@ -87,11 +86,14 @@ Content-Type: application/json
     "scopes": [
       "ledger:read",
       "wiki:read",
+      "raw:read",
+      "raw:write",
       "policy:read",
       "policy:write",
       "audit:read",
       "execution:read",
-      "payment_intent:approve"
+      "payment_intent:approve",
+      "surfaces:admin"
     ]
   }
 }
@@ -113,12 +115,12 @@ Authorization: Bearer <owner JWT>
 Content-Type: application/json
 
 {
-  "address":   "0xabc...",
-  "signature": "0x..."
+  "address":        "0xabc...",
+  "principal_type": "human"
 }
 ```
 
-`tenant_id` in the path must equal the JWT's `tenantId`. Returns `201` with the linked wallet record. Errors: `400`, `401`, `403` (tenant mismatch), `409` (`wallet_already_linked`).
+The body requires `address` and `principal_type` (`"human"` or `"agent"`); there is no `signature` field. A `human` link defaults to the calling owner; an `agent` link must also name `principal_id`. `tenant_id` in the path must equal the JWT's `tenantId`. Returns `201` with the linked wallet record. Errors: `400`, `401`, `403` (tenant mismatch), `409` (`wallet_already_linked`).
 
 ### What Comes Next
 

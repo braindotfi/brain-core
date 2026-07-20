@@ -37,7 +37,7 @@ ledger_payment_intents (
   currency,
   obligation_id,          -- optional
   invoice_id,             -- optional
-  status,                 -- proposed | pending_approval | approved | rejected | executed | failed | cancelled
+  status,                 -- proposed | pending_approval | awaiting_second_approval | approved | paused | dispatching | rejected | executed | failed | cancelled
   policy_decision_id,
   approval_ids[],
   execution_receipt_ids[],
@@ -58,7 +58,13 @@ proposed
   │
   ├──► confirm ────────► pending_approval
   │                       │
-  │                       │ approver(s) sign EIP-712
+  │                       │ approver signs EIP-712
+  │                       │
+  │                       ├──► distinct second approver required ──► awaiting_second_approval
+  │                       │                                           │
+  │                       │                                           │ distinct approver signs
+  │                       │                                           │
+  │                       │                                           └──► approved
   │                       │
   │                       └──► approved
   │
@@ -112,9 +118,12 @@ cap that covers the amount.
 | `proposed`         | `pending_approval` | Policy returned `confirm`; approvers required                            |
 | `proposed`         | `approved`         | Policy returned `auto`; no human in the loop                             |
 | `proposed`         | `rejected`         | Policy returned `reject`                                                 |
+| `pending_approval` | `awaiting_second_approval` | First approver signed; a distinct second approver is required   |
 | `pending_approval` | `approved`         | All required approvers signed                                            |
 | `pending_approval` | `rejected`         | Approver explicitly rejected                                             |
 | `pending_approval` | `cancelled`        | Tenant cancelled before approval                                         |
+| `awaiting_second_approval` | `approved` | Distinct second approver signed                                          |
+| `awaiting_second_approval` | `rejected` | Approver explicitly rejected                                             |
 | `approved`         | `dispatching`      | Gate passed; outbox row and any balance reservation committed atomically |
 | `approved`         | `paused`           | Tenant or halt-category kill-switch paused execution                     |
 | `paused`           | `approved`         | Resume re-ran and passed the live gate                                   |
@@ -185,4 +194,4 @@ An `approved` PaymentIntent can be **paused** without a terminal transition: `ap
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🚪 Pre-execution Gate</strong></td><td>The deterministic gate every payment must pass (13 numbered checks + 4 hardening additions).</td><td><a href="the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>How internal and external agents propose actions.</td><td><a href="agents.md">agents.md</a></td><td></td></tr><tr><td><strong>📋 Policy and Permissioning</strong></td><td>How Policy evaluates PaymentIntents.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🚪 Pre-execution Gate</strong></td><td>The deterministic gate every payment must pass (13 numbered checks + 10 hardening additions = 23 entries).</td><td><a href="the-pre-execution-gate.md">the-pre-execution-gate.md</a></td><td></td></tr><tr><td><strong>🤖 Agents</strong></td><td>How internal and external agents propose actions.</td><td><a href="agents.md">agents.md</a></td><td></td></tr><tr><td><strong>📋 Policy and Permissioning</strong></td><td>How Policy evaluates PaymentIntents.</td><td><a href="policy-and-permissioning.md">policy-and-permissioning.md</a></td><td></td></tr></tbody></table>

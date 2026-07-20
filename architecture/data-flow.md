@@ -14,7 +14,7 @@ Source → Raw → Ledger → Wiki → Policy → Agent → Rail → Audit
 | 2    | Extractors normalise it into **Ledger** records                                                                         |
 | 3    | **Wiki** updates incrementally (entity resolution, narrative summarisation, embedding refresh)                          |
 | 4    | An agent proposes an action referencing **Ledger** context                                                              |
-| 5    | **Policy** evaluates the proposal: ALLOW, DENY, or ESCALATE                                                             |
+| 5    | **Policy** evaluates the proposal: allow, confirm, or reject                                                            |
 | 6    | If approved, the **Agent** Layer executes through an external rail (bank API, payment processor, smart account on Base) |
 | 7    | Every step writes an **Audit** event with cryptographic links back to preceding ones                                    |
 
@@ -92,7 +92,7 @@ Policy input:
 Policy evaluation:
   - Counterparty status: approved
   - Amount: $7,800 (above $5,000 threshold)
-  - Outcome: ESCALATE_FOR_APPROVAL, approvers=[role:cfo]
+  - Outcome: confirm, approvers=[role:cfo]
 
 Brain action:
   - Persist the policy decision and trace.

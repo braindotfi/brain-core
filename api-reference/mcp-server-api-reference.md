@@ -37,29 +37,31 @@ The methods the JSON-RPC entry accepts (matches the spec's `JsonRpcRequest.metho
 
 Once a request reaches JSON-RPC dispatch, the HTTP layer returns `200` and application errors live in the JSON-RPC response's `error` field. **Authentication and authorization fail _before_ dispatch**, so they return an HTTP `401`/`403` Brain error envelope (not a `200` with a JSON-RPC `error`). See [Error Codes](#error-codes).
 
-### The 12 Tools
+### The 16 Tools
 
-Five Ledger reads, two Wiki reads, one Raw contribute, three PaymentIntent tools (`payment_intent.propose`, `payment_intent.cancel`, `payment_intent.list`), and one agent action propose. **There is no `payment_intent.execute` tool, and there will never be one**. Execution is reserved for internal Brain workers running under tenant policy and the §6 gate.
+Five Ledger reads, two Wiki reads, one Raw contribute, three PaymentIntent tools (`payment_intent.propose`, `payment_intent.cancel`, `payment_intent.list`), three proposal tools (`proposals.list`, `proposals.get`, `proposals.decide`), one evidence resolve (`evidence.resolve`), and one agent action propose. **There is no `payment_intent.execute` tool, and there will never be one**. Execution is reserved for internal Brain workers running under tenant policy and the §6 gate.
 
 [**→ Tool reference**](../mcp-server/tools.md)
 
-### The 5 Resource Templates
+### The 7 Resource Templates
 
 Resource templates addressable by `brain://` URIs:
 
 ```
 brain://ledger/accounts/{account_id}
 brain://ledger/transactions/{transaction_id}
+brain://ledger/obligations/{obligation_id}
 brain://ledger/payment-intents/{payment_intent_id}
-brain://wiki/{slug}
-brain://raw/{raw_artifact_id}
+brain://wiki/pages/{slug}
+brain://payments/action_types
+brain://proofs/{action_id}
 ```
 
 [**→ Resources reference**](../mcp-server/resources.md)
 
 ### The 5 Prompts
 
-`cash_flow_summary`, `bills_due`, `spending_change`, `invoice_status`, `subscriptions`.
+`wiki.question.cash_flow_summary`, `wiki.question.bills_due`, `wiki.question.spending_change`, `wiki.question.invoice_status`, `wiki.question.subscriptions`.
 
 [**→ Prompts reference**](../mcp-server/prompts.md)
 
@@ -121,4 +123,4 @@ Content-Type: application/json
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔌 MCP Overview</strong></td><td>The full architecture and surface map.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>🛠️ Tools</strong></td><td>The 12 tools in detail.</td><td><a href="../mcp-server/tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT and on-chain scope verification.</td><td><a href="../mcp-server/mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔌 MCP Overview</strong></td><td>The full architecture and surface map.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>🛠️ Tools</strong></td><td>The 16 tools in detail.</td><td><a href="../mcp-server/tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT and on-chain scope verification.</td><td><a href="../mcp-server/mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>

@@ -1,6 +1,6 @@
 # Resources
 
-Brain's MCP server exposes **5 resource templates** that let agents address Brain entities by URI. Resources complement tools: where tools are verbs (`tools/call`), resources are nouns (`resources/read`).
+Brain's MCP server exposes **7 resource templates** that let agents address Brain entities by URI. Resources complement tools: where tools are verbs (`tools/call`), resources are nouns (`resources/read`).
 
 | Property           | Value                            |
 | ------------------ | -------------------------------- |
@@ -8,15 +8,17 @@ Brain's MCP server exposes **5 resource templates** that let agents address Brai
 | **MCP method**     | `resources/read`                 |
 | **Required scope** | Same as the equivalent read tool |
 
-### The 5 Templates
+### The 7 Templates
 
-| Resource               | URI Pattern                                          | Required Scope                          |
-| ---------------------- | ---------------------------------------------------- | --------------------------------------- |
-| **Ledger account**     | `brain://ledger/accounts/{account_id}`               | `ledger:read`                           |
-| **Ledger transaction** | `brain://ledger/transactions/{transaction_id}`       | `ledger:read`                           |
-| **Payment intent**     | `brain://ledger/payment-intents/{payment_intent_id}` | `ledger:read`                           |
-| **Wiki page**          | `brain://wiki/{slug}`                                | `wiki:read`                             |
-| **Raw evidence**       | `brain://raw/{raw_artifact_id}`                      | `ledger:read` _(via parsed projection)_ |
+| Resource                       | URI Pattern                                          | Required Scope           |
+| ------------------------------ | ---------------------------------------------------- | ------------------------ |
+| **Ledger account**             | `brain://ledger/accounts/{account_id}`               | `ledger:read`            |
+| **Ledger transaction**         | `brain://ledger/transactions/{transaction_id}`       | `ledger:read`            |
+| **Ledger obligation**          | `brain://ledger/obligations/{obligation_id}`         | `ledger:read`            |
+| **Payment intent**             | `brain://ledger/payment-intents/{payment_intent_id}` | `ledger:read`            |
+| **Wiki page**                  | `brain://wiki/pages/{slug}`                          | `wiki:read`              |
+| **PaymentIntent action types** | `brain://payments/action_types`                      | `payment_intent:propose` |
+| **Action proof (H-07)**        | `brain://proofs/{action_id}`                         | `audit:read`             |
 
 ### Why Resources
 
@@ -28,7 +30,7 @@ Treating them as resources rather than tool calls has three benefits:
 | -------------------- | ---------------------------------------------------------------------------------------------------- |
 | **Cacheable**        | An MCP runtime can cache resource reads by URI without understanding the tool's argument shape       |
 | **Context-friendly** | Agents can pass URIs back and forth in their planning context without re-fetching                    |
-| **Discoverable**     | `resources/list` enumerates what's reachable; `resources/templates/list` advertises the URI patterns |
+| **Discoverable**     | `resources/list` enumerates the URI templates Brain advertises                                       |
 
 ### Reading a Resource
 
@@ -70,10 +72,12 @@ Response:
 ```
 brain://ledger/accounts/acct_8231
 brain://ledger/transactions/tx_4127
+brain://ledger/obligations/obl_5521
 brain://ledger/payment-intents/pi_a1b2c3
-brain://wiki/monthly-summaries/2025-09
-brain://wiki/counterparties/cp_aws
-brain://raw/raw_01HW3X9...
+brain://wiki/pages/monthly-summaries/2025-09
+brain://wiki/pages/counterparties/cp_aws
+brain://payments/action_types
+brain://proofs/act_01HW3X9...
 ```
 
 {% hint style="info" %}
@@ -82,52 +86,62 @@ The Wiki URI uses the page slug, not the page id. Slugs are stable across regene
 
 ### Resource Discovery
 
-Two methods support discovery.
-
 #### `resources/list`
 
-Lists concrete resources the agent currently has scope to read. For Ledger accounts, this might return one entry per account. For Wiki, one entry per existing page. For Raw, only the raw artifacts the agent itself contributed (others are hidden by scope).
-
-#### `resources/templates/list`
-
-Lists the URI patterns Brain advertises:
+Returns the 7 static URI templates Brain advertises. It is not a per-entity enumeration: the response is the fixed template set below, not one row per account, page, or artifact.
 
 ```json
 {
-  "resourceTemplates": [
+  "resources": [
     {
-      "uriTemplate": "brain://ledger/accounts/{account_id}",
-      "name": "Ledger account",
-      "description": "A bank account, card, loan, or on-chain address.",
+      "uri": "brain://ledger/accounts/{account_id}",
+      "name": "Account",
+      "description": "Account row + latest balance.",
       "mimeType": "application/json"
     },
     {
-      "uriTemplate": "brain://ledger/transactions/{transaction_id}",
-      "name": "Ledger transaction",
-      "description": "A single money-movement event.",
+      "uri": "brain://ledger/transactions/{transaction_id}",
+      "name": "Transaction",
+      "description": "Transaction row.",
       "mimeType": "application/json"
     },
     {
-      "uriTemplate": "brain://ledger/payment-intents/{payment_intent_id}",
-      "name": "Payment intent",
-      "description": "An agent-proposed financial action.",
+      "uri": "brain://ledger/obligations/{obligation_id}",
+      "name": "Obligation",
+      "description": "Obligation row.",
       "mimeType": "application/json"
     },
     {
-      "uriTemplate": "brain://wiki/{slug}",
+      "uri": "brain://ledger/payment-intents/{id}",
+      "name": "PaymentIntent",
+      "description": "PaymentIntent row + PolicyDecision id.",
+      "mimeType": "application/json"
+    },
+    {
+      "uri": "brain://wiki/pages/{slug}",
       "name": "Wiki page",
-      "description": "Human-readable financial memory page.",
+      "description": "Memory page (markdown body).",
       "mimeType": "text/markdown"
     },
     {
-      "uriTemplate": "brain://raw/{raw_artifact_id}",
-      "name": "Raw evidence",
-      "description": "Source evidence (immutable).",
+      "uri": "brain://payments/action_types",
+      "name": "PaymentIntent action types",
+      "description": "Canonical action_type vocabulary + required fields for payment_intent.propose.",
+      "mimeType": "application/json"
+    },
+    {
+      "uri": "brain://proofs/{action_id}",
+      "name": "Action proof (H-07)",
+      "description": "Canonical proof for an executed action: gate trace, policy decision, audit before/after, Merkle proof, and on-chain anchor tx hash.",
       "mimeType": "application/json"
     }
   ]
 }
 ```
+
+{% hint style="info" %}
+Only `resources/list` and `resources/read` are implemented. There is no `resources/templates/list` method on the Brain MCP surface.
+{% endhint %}
 
 ### What Resources Are Not
 
@@ -143,4 +157,4 @@ Every successful `resources/read` emits an `agent.mcp.tool_called` audit event w
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 10 tools at the heart of the MCP surface.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>💬 Prompts</strong></td><td>Canned prompts for common agent loops.</td><td><a href="prompts.md">prompts.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 16 tools at the heart of the MCP surface.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>💬 Prompts</strong></td><td>Canned prompts for common agent loops.</td><td><a href="prompts.md">prompts.md</a></td><td></td></tr></tbody></table>

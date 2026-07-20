@@ -19,9 +19,9 @@ Compiles to:
   "subject": { "agent_capability": "pay_invoice" },
   "resource": { "counterparty.status": ["approved"] },
   "rules": [
-    { "if": "amount < 5000 && counterparty.known", "then": "ALLOW" },
-    { "if": "amount >= 5000 && counterparty.known", "then": "ESCALATE", "approvers": ["role:cfo"] },
-    { "if": "!counterparty.known", "then": "DENY", "reason": "new_counterparty_review_required" }
+    { "if": "amount < 5000 && counterparty.known", "then": "allow" },
+    { "if": "amount >= 5000 && counterparty.known", "then": "confirm", "approvers": ["role:cfo"] },
+    { "if": "!counterparty.known", "then": "reject", "reason": "new_counterparty_review_required" }
   ]
 }
 ```
@@ -40,16 +40,16 @@ Every policy has five elements.
 | **Resources**  | Which accounts, counterparties, asset classes, or jurisdictions are in scope |
 | **Actions**    | What is permitted: read, propose, execute, approve                           |
 | **Conditions** | Thresholds, time windows, frequency caps, required approvers                 |
-| **Outcomes**   | ALLOW, DENY, or ESCALATE                                                     |
+| **Outcomes**   | `allow`, `reject`, or `confirm`                                              |
 
 ### The Three Outcomes
 
 Every policy evaluation produces exactly one of three outcomes.
 
-<table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>✅ ALLOW</strong></td><td>The action proceeds. A signed policy verdict is attached to the resulting session-key call via `executeViaSessionKey` or rail call.</td></tr><tr><td><strong>⚠️ ESCALATE</strong></td><td>Human approval is required before the action can execute. The verdict names the required approvers (e.g. <code>role:cfo</code>).</td></tr><tr><td><strong>❌ DENY</strong></td><td>The action is blocked. The verdict carries a structured reason (e.g. <code>new_counterparty_review_required</code>).</td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>✅ allow</strong></td><td>The action proceeds. A signed policy verdict is attached to the resulting session-key call via `executeViaSessionKey` or rail call.</td></tr><tr><td><strong>⚠️ confirm</strong></td><td>Human approval is required before the action can execute. The verdict names the required approvers (e.g. <code>role:cfo</code>).</td></tr><tr><td><strong>❌ reject</strong></td><td>The action is blocked. The verdict carries a structured reason (e.g. <code>new_counterparty_review_required</code>).</td></tr></tbody></table>
 
 {% hint style="info" %}
-**ESCALATE is the default for unmatched conditions.** If the policy compiler cannot determine a clear ALLOW or DENY for a proposed action, the safe default is to require human review. Failure modes are explicit, not silent.
+**`confirm` is the default for unmatched conditions.** If the policy compiler cannot determine a clear `allow` or `reject` for a proposed action, the safe default is to require human review. Failure modes are explicit, not silent.
 {% endhint %}
 
 ### Worked Example: the $7,800 Invoice
@@ -62,7 +62,7 @@ A walkthrough of the policy from the top of this page, applied to a real proposa
 | 2    | Policy Layer evaluates against version `v3` of the tenant policy                                                                   |
 | 3    | Counterparty Vendor X: known, status = approved                                                                                    |
 | 4    | Amount $7,800: above $5,000 threshold                                                                                              |
-| 5    | Outcome: `ESCALATE_FOR_APPROVAL`, approvers = `[role:cfo]`                                                                         |
+| 5    | Outcome: `confirm`, approvers = `[role:cfo]`                                                                                       |
 | 6    | CFO receives the request with Wiki context (vendor history, prior payments) and Ledger references (invoice, PO)                    |
 | 7    | CFO approves. EIP-712 approval signature recorded                                                                                  |
 | 8    | Action moves to executable. `BrainSmartAccount.executeViaSessionKey` dispatches the on-chain call OR a bank API call is dispatched |

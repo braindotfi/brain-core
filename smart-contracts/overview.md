@@ -55,7 +55,7 @@ All six contracts are deployed on **Base Sepolia (chain `84532`)**. There is **n
 | --------------------------------------- | ----------------------------------------------------------------------------------- |
 | **Immutable contracts**                 | No upgrade path in MVP; any change ships as a separately audited redeploy           |
 | **Anchorer key hardening**              | Current testnet publisher is a single EOA; HSM-backed signing is a pre-mainnet TODO |
-| **Strict monotonicity on `batchIndex`** | History cannot be silently rewritten                                                |
+| **Root-uniqueness per tenant**          | A published root cannot be re-anchored, so history cannot be silently rewritten      |
 | **External audit**                      | Required before any mainnet deployment, plus a public bug bounty                    |
 
 {% hint style="info" %}
