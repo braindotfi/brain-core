@@ -502,8 +502,8 @@ If this RFC is approved, implement in separate PRs:
 
 ## 8. Recommendation table
 
-| Scope | Chosen option | Risk |
-| --- | --- | --- |
-| `raw:read` | Expose `raw.artifact.get`, read-only, tenant-scoped, no blob URL and no list. | Medium. Source metadata and parsed evidence are sensitive, but the surface is single-artifact and excludes raw blob download. |
+| Scope         | Chosen option                                                                   | Risk                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `raw:read`    | Expose `raw.artifact.get`, read-only, tenant-scoped, no blob URL and no list.   | Medium. Source metadata and parsed evidence are sensitive, but the surface is single-artifact and excludes raw blob download.             |
 | `policy:read` | Expose `policy.decision.get`, read-only, tenant-scoped, no full policy content. | Medium high. Decision traces and rule ids reveal control behavior, but the tool is single-decision and avoids policy mutation or signing. |
-| `audit:read` | Expose `audit.event.get`, read-only, tenant-scoped, no list and no export. | High. Audit events reveal operational history, so the first surface must be single-event only and require explicit operator consent. |
+| `audit:read`  | Expose `audit.event.get`, read-only, tenant-scoped, no list and no export.      | High. Audit events reveal operational history, so the first surface must be single-event only and require explicit operator consent.      |
