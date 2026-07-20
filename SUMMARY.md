@@ -64,6 +64,7 @@
 - [Policy API](api-reference/policy-api.md)
 - [Agents API](api-reference/agents-api.md)
 - [Payment Intents API](api-reference/payment-intents-api.md)
+- [Proposals and Evidence API](api-reference/proposals-api.md)
 - [Audit API](api-reference/audit-api.md)
 - [Proof API](api-reference/proof-api.md)
 - [Tenants API (GDPR deletion)](api-reference/tenants-api.md)
