@@ -24,6 +24,15 @@ ALTER TABLE api_keys
   ADD COLUMN IF NOT EXISTS key_last4 TEXT NOT NULL DEFAULT '0000',
   ADD COLUMN IF NOT EXISTS rotated_from_id TEXT;
 
+CREATE OR REPLACE FUNCTION _brain_api_key_scopes_jsonb_to_text_array(value JSONB)
+RETURNS TEXT[]
+LANGUAGE SQL
+IMMUTABLE
+AS $$
+  SELECT COALESCE(array_agg(scope), ARRAY[]::TEXT[])
+    FROM jsonb_array_elements_text(value) AS scope
+$$;
+
 ALTER TABLE api_keys
   ALTER COLUMN id SET NOT NULL,
   ALTER COLUMN hashed_secret SET NOT NULL,
@@ -31,10 +40,12 @@ ALTER TABLE api_keys
     USING (
       CASE
         WHEN jsonb_typeof(scopes) = 'array'
-          THEN ARRAY(SELECT jsonb_array_elements_text(scopes))
+          THEN _brain_api_key_scopes_jsonb_to_text_array(scopes)
         ELSE ARRAY[]::TEXT[]
       END
     );
+
+DROP FUNCTION _brain_api_key_scopes_jsonb_to_text_array(JSONB);
 
 ALTER TABLE api_keys
   ALTER COLUMN scopes SET NOT NULL;
