@@ -256,6 +256,60 @@ jobs:
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
+      - name: Enable staging API key auth
+        env:
+          BRAIN_API_KEY_PEPPER_STAGING: ${{ secrets.BRAIN_API_KEY_PEPPER_STAGING }}
+        run: |
+          test -n "$BRAIN_API_KEY_PEPPER_STAGING"
+          tmp="$(mktemp)"
+          script_tmp="$(mktemp)"
+          chmod 600 "$tmp"
+          {
+            printf 'BRAIN_API_KEY_AUTH_ENABLED=true\n'
+            printf 'BRAIN_API_KEY_PEPPER=%s\n' "$BRAIN_API_KEY_PEPPER_STAGING"
+            printf 'BRAIN_API_KEY_RATE_LIMIT=600\n'
+            printf 'BRAIN_API_KEY_RATE_WINDOW_SECONDS=60\n'
+          } > "$tmp"
+          cat > "$script_tmp" <<'PY'
+          from pathlib import Path
+          import sys
+          import time
+
+          env_path = Path(sys.argv[1])
+          patch_path = Path(sys.argv[2])
+          updates = dict(line.split("=", 1) for line in patch_path.read_text().splitlines())
+          existing = env_path.read_text().splitlines() if env_path.exists() else []
+          seen = set()
+          output = []
+
+          for line in existing:
+              key = line.split("=", 1)[0].strip() if "=" in line and not line.lstrip().startswith("#") else None
+              if key in updates:
+                  output.append(f"{key}={updates[key]}")
+                  seen.add(key)
+              else:
+                  output.append(line)
+
+          if output and output[-1] != "":
+              output.append("")
+          for key, value in updates.items():
+              if key not in seen:
+                  output.append(f"{key}={value}")
+
+          backup = env_path.with_name(f"{env_path.name}.bak-api-key-{time.strftime('%Y%m%d-%H%M%S')}")
+          if env_path.exists():
+              backup.write_text(env_path.read_text())
+          env_path.write_text("\n".join(output) + "\n")
+          patch_path.unlink(missing_ok=True)
+          PY
+          remote_tmp="/tmp/brain-api-key-env-${{ github.run_id }}-${{ github.run_attempt }}"
+          remote_script="$remote_tmp.py"
+          scp -i ~/.ssh/id_deploy "$tmp" "azureuser@$VM_HOST:$remote_tmp"
+          scp -i ~/.ssh/id_deploy "$script_tmp" "azureuser@$VM_HOST:$remote_script"
+          rm -f "$tmp" "$script_tmp"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && python3 '$remote_script' '$VM_ENV_FILE' '$remote_tmp'; rc=\$?; rm -f '$remote_script' '$remote_tmp'; exit \$rc"
+
       # Tag the box's current :prod image as a rollback point BEFORE the
       # `docker tag` below overwrites the :prod tag. See docs/rollback.md §B.
       # Then prune images untouched for 3+ days so the rollback tags minted
