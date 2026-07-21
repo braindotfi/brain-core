@@ -5,9 +5,14 @@ import type { AuditEvent, AuditEventInput } from "./audit/types.js";
 interface RequestAuditContext {
   correlationId?: string;
   keyId?: string;
+  apiKeyAuditEventEmitted?: boolean;
 }
 
 const storage = new AsyncLocalStorage<RequestAuditContext>();
+
+export function beginRequestAuditContext(correlationId: string): void {
+  storage.enterWith({ correlationId });
+}
 
 export function enterCorrelationId(correlationId: string): void {
   const ctx = storage.getStore();
@@ -35,12 +40,28 @@ export function currentApiKeyId(): string | undefined {
   return storage.getStore()?.keyId;
 }
 
+export function markApiKeyAuditEventEmitted(): void {
+  const ctx = storage.getStore();
+  if (ctx !== undefined) {
+    ctx.apiKeyAuditEventEmitted = true;
+    return;
+  }
+  storage.enterWith({ apiKeyAuditEventEmitted: true });
+}
+
+export function currentRequestHasApiKeyAuditEvent(): boolean {
+  return storage.getStore()?.apiKeyAuditEventEmitted === true;
+}
+
 export class CorrelatingAuditEmitter implements AuditEmitter {
   public constructor(private readonly inner: AuditEmitter) {}
 
   public async emit(event: AuditEventInput): Promise<AuditEvent> {
     const correlationId = event.correlationId ?? currentCorrelationId();
     const keyId = event.keyId ?? currentApiKeyId();
+    if (keyId !== undefined) {
+      markApiKeyAuditEventEmitted();
+    }
     return this.inner.emit({
       ...event,
       ...(correlationId !== undefined ? { correlationId } : {}),
