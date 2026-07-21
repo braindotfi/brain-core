@@ -286,11 +286,21 @@ jobs:
       # Cold-start safety: bring up infra + jwks + caddy if the box is fresh.
       # Idempotent on a warm box — --no-recreate leaves running containers
       # (incl. postgres) untouched; depends_on sequences a cold box correctly.
+      #
+      # The one-shots (migrate, db-roles) are deliberately NOT in this list.
+      # --no-recreate restarts the *existing* container, which is frozen with
+      # the entrypoint and image id of the last deploy, while the files it
+      # bind-mounts (infra/db-roles.sql) are the freshly shipped ones. That
+      # mismatch broke the deploy right after the sync step landed: the old
+      # db-roles entrypoint had no -v for the new role passwords, so psql got
+      # an unsubstituted :'var' and exited 3. The next step runs both as
+      # `run --rm`, which always builds a fresh container from the current
+      # compose file, so they belong there and only there.
       - name: Ensure infra up on VM (cold-start safe)
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate postgres redis minio minio-setup db-roles jwks caddy"
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate postgres redis minio minio-setup jwks caddy"
 
       # The VM's ~/brain-core is a copied tree (not a git checkout) that
       # already holds the stage env file and docker-compose.caddy.yml (both
@@ -389,11 +399,21 @@ jobs:
       # Cold-start safety: bring up infra + jwks + caddy if the box is fresh.
       # Idempotent on a warm box — --no-recreate leaves running containers
       # (incl. postgres) untouched; depends_on sequences a cold box correctly.
+      #
+      # The one-shots (migrate, db-roles) are deliberately NOT in this list.
+      # --no-recreate restarts the *existing* container, which is frozen with
+      # the entrypoint and image id of the last deploy, while the files it
+      # bind-mounts (infra/db-roles.sql) are the freshly shipped ones. That
+      # mismatch broke the deploy right after the sync step landed: the old
+      # db-roles entrypoint had no -v for the new role passwords, so psql got
+      # an unsubstituted :'var' and exited 3. The next step runs both as
+      # `run --rm`, which always builds a fresh container from the current
+      # compose file, so they belong there and only there.
       - name: Ensure infra up on VM (cold-start safe)
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate postgres redis minio minio-setup db-roles jwks caddy"
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate postgres redis minio minio-setup jwks caddy"
 
       - name: Migrate + recreate api/worker/agents on VM
         run: |
