@@ -247,19 +247,19 @@ const envSchema = z.object({
   BRAIN_SERVICE_TOKEN_SECRET: optionalNonEmptyString(),
 
   /**
-   * ---- Per-customer API-key auth (token-exchange model) ----
+   * ---- Per-customer API-key auth ----
    *
-   * Set to "true" to register POST /v1/auth/api-key (exchange a customer's
-   * `brain_sk_...` key for a short-lived agent JWT) and the platform-secret
-   * gated issue/revoke routes under /v1/tenants/:tenantId/api-keys. Unlike
-   * BRAIN_SERVICE_TOKEN_ENABLED, keys are never self-minted: only an operator
-   * holding BRAIN_PLATFORM_SERVICE_SECRET can issue or revoke one. Default
-   * OFF. The routes are not registered unless this is enabled.
+   * Set to "true" to register first-class `brain_sk_test_...` and
+   * `brain_sk_live_...` bearer authentication plus tenant-admin key lifecycle
+   * routes. BRAIN_API_KEY_PEPPER is required when this is enabled.
    */
   BRAIN_API_KEY_AUTH_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
     .default("false"),
+  BRAIN_API_KEY_PEPPER: optionalNonEmptyString(),
+  BRAIN_API_KEY_RATE_LIMIT: z.coerce.number().int().positive().default(600),
+  BRAIN_API_KEY_RATE_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
 
   // ---- Self-serve onboarding (RFC 0002) ----
   /**

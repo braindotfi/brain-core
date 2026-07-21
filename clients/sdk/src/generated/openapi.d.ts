@@ -231,6 +231,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{orgId}/tenants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a production tenant for an organization
+         * @description Organization-scoped alias for `POST /tenants`. It persists a
+         *     production tenant with the same bootstrap admin, member session, and
+         *     propose-only agent token behavior, and echoes `org_id` in the response.
+         */
+        post: operations["createOrgTenant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tenants/{tenantId}/agent-token": {
         parameters: {
             query?: never;
@@ -343,57 +365,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/auth/api-key": {
+    "/tenants/{tenantId}/keys": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
         /**
-         * Exchange a customer API key for a short-lived agent JWT
-         * @description Public (`skipAuth`), gated instead by the `X-Api-Key` header
-         *     (`brain_sk_...`, issued by POST /tenants/{tenantId}/api-keys) — not
-         *     a bearer token. Rate-limited to 30/minute. A missing key, an unknown
-         *     key, a revoked key, and an expired key all return the SAME generic
-         *     401 (never leaks which condition failed). On success mints a
-         *     `principal_type=agent` JWT scoped to the key's granted scopes,
-         *     valid for 1 hour. Registered only when `BRAIN_API_KEY_AUTH_ENABLED`
-         *     is set; otherwise the route does not exist (404).
+         * List Brain API keys
+         * @description Requires an authenticated same-tenant admin session. Returns masked
+         *     key metadata only. The plaintext secret is never returned by this
+         *     endpoint.
          */
-        post: operations["exchangeApiKey"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/tenants/{tenantId}/api-keys": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
+        get: operations["listApiKeys"];
         put?: never;
         /**
-         * Issue a customer API key for a tenant
-         * @description Public route (`skipAuth`), gated instead by the
-         *     `X-Platform-Service-Auth` shared secret header, the same fence as
-         *     POST /tenants. Rate-limited to 20/minute. Creates a new
-         *     `kind='external', role='partner'` agent for the tenant and an
-         *     `api_keys` row holding only the key's sha256 hash; the plaintext
-         *     key (`brain_sk_...`) is returned exactly once in this response and
-         *     cannot be retrieved again. `scopes` defaults to a read + propose +
-         *     `audit:read` set when omitted; every requested scope must be within
-         *     the API-key scope cap (a strict subset of the full scope vocabulary
-         *     — no `*:admin`, `*:write` other than `raw:write`, or
-         *     `payment_intent:approve`/`execute`). Registered only when
-         *     `BRAIN_API_KEY_AUTH_ENABLED` is set; otherwise the route does not
-         *     exist (404).
+         * Issue a Brain API key
+         * @description Requires an authenticated same-tenant admin session. Generates a
+         *     `brain_sk_test_...` or `brain_sk_live_...` secret, stores only
+         *     SHA-256 over `BRAIN_API_KEY_PEPPER + "." + secret`, and returns the
+         *     plaintext secret exactly once. Current API-key scopes are
+         *     `ledger:read` and `audit:read`.
          */
         post: operations["issueApiKey"];
         delete?: never;
@@ -402,7 +395,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/tenants/{tenantId}/api-keys/{keyId}": {
+    "/keys/{keyId}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate a Brain API key
+         * @description Requires an authenticated same-tenant admin session. Atomically revokes
+         *     the old key and issues a replacement with the same name, environment,
+         *     and scopes. Returns the new plaintext secret exactly once.
+         */
+        post: operations["rotateApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/keys/{keyId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -413,16 +428,33 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Revoke a customer API key
-         * @description Public route (`skipAuth`), gated instead by the
-         *     `X-Platform-Service-Auth` shared secret header, the same fence as
-         *     POST /tenants. Rate-limited to 20/minute. Revokes the key and
-         *     marks its agent `state='revoked'`. Idempotent: revoking an
-         *     already-revoked key returns 204 with no audit event, only an
-         *     unknown key id 404s. Registered only when `BRAIN_API_KEY_AUTH_ENABLED`
-         *     is set; otherwise the route does not exist (404).
+         * Revoke a Brain API key
+         * @description Requires an authenticated same-tenant admin session. Sets
+         *     `revoked_at`; keys are never hard-deleted.
          */
         delete: operations["revokeApiKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{tenantId}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Aggregate per-key usage
+         * @description Requires `audit:read` for the same tenant. Counts attributed audit
+         *     events over the requested window and optionally filters by environment
+         *     and key id.
+         */
+        get: operations["getTenantUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4702,6 +4734,62 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    createOrgTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    company_name?: string;
+                    founder: {
+                        /** Format: email */
+                        email: string;
+                        display_name?: string;
+                    };
+                    founder_external_ref: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Tenant created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        org_id?: string;
+                        tenant_id?: string;
+                        member?: components["schemas"]["Member"];
+                        session?: {
+                            token?: string;
+                            refresh_token?: string;
+                            /** @enum {integer} */
+                            expires_in?: 900;
+                        };
+                        agent?: components["schemas"]["ProductionAgentToken"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Missing or invalid platform credential. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
     mintProductionAgentToken: {
         parameters: {
             query?: never;
@@ -4979,38 +5067,47 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
-    exchangeApiKey: {
+    listApiKeys: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Customer API key, format: brain_sk_... */
-                "X-Api-Key": string;
+            header?: never;
+            path: {
+                tenantId: string;
             };
-            path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Authenticated; agent token issued */
+            /** @description API keys for the tenant */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        token?: string;
-                        /** @enum {string} */
-                        token_type?: "Bearer";
-                        /** @enum {integer} */
-                        expires_in?: 3600;
-                        tenant_id?: string;
-                        agent_id?: string;
-                        scopes?: string[];
+                        keys?: {
+                            id?: string;
+                            tenant_id?: string;
+                            name?: string;
+                            /** @enum {string} */
+                            environment?: "sandbox" | "live";
+                            scopes?: string[];
+                            key_prefix?: string;
+                            key_last4?: string;
+                            masked_key?: string;
+                            /** Format: date-time */
+                            created_at?: string;
+                            /** Format: date-time */
+                            last_used_at?: string | null;
+                            /** Format: date-time */
+                            revoked_at?: string | null;
+                            rotated_from_id?: string | null;
+                        }[];
                     };
                 };
             };
-            /** @description X-Api-Key header missing, or does not match an active, unrevoked, unexpired key. Error code `auth_header_invalid`. */
-            401: {
+            /** @description Principal is not a same-tenant admin. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5018,7 +5115,6 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            429: components["responses"]["RateLimited"];
         };
     };
     issueApiKey: {
@@ -5030,18 +5126,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
-                    /** @description Optional label for the key. */
-                    name?: string;
-                    /** @description Defaults to a read + propose + audit:read set. Every entry must be within the API-key scope cap. */
-                    scopes?: string[];
-                    /**
-                     * Format: date-time
-                     * @description Optional expiry. Never expires when omitted.
-                     */
-                    expires_at?: string;
+                    /** @description Developer-supplied key label. */
+                    name: string;
+                    /** @enum {string} */
+                    environment: "sandbox" | "live";
+                    scopes: ("ledger:read" | "audit:read")[];
                 };
             };
         };
@@ -5053,19 +5145,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** @description Plaintext key, format: brain_sk_.... Shown only in this response. */
-                        api_key?: string;
-                        key_id?: string;
-                        agent_id?: string;
+                        id?: string;
                         tenant_id?: string;
+                        name?: string;
+                        /** @enum {string} */
+                        environment?: "sandbox" | "live";
                         scopes?: string[];
-                        name?: string | null;
+                        key_prefix?: string;
+                        key_last4?: string;
+                        masked_key?: string;
                         /** Format: date-time */
-                        expires_at?: string | null;
+                        created_at?: string;
+                        /** Format: date-time */
+                        last_used_at?: string | null;
+                        /** Format: date-time */
+                        revoked_at?: string | null;
+                        rotated_from_id?: string | null;
+                        /** @description Plaintext key. Shown only in this response. */
+                        secret?: string;
                     };
                 };
             };
-            /** @description A requested scope is outside the API-key scope cap, or `expires_at` is not a valid ISO 8601 timestamp. Error code `request_body_invalid`. */
+            /** @description Invalid body. Error code `request_body_invalid`. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -5074,8 +5175,8 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Missing/invalid `X-Platform-Service-Auth` header, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`. */
-            401: {
+            /** @description Principal is not a same-tenant admin. Error code `auth_scope_insufficient` or `auth_tenant_mismatch`. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5095,12 +5196,53 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    rotateApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                keyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Key rotated; replacement secret returned exactly once */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Principal is not a same-tenant admin. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Key does not exist or is not active. Error code `api_key_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     revokeApiKey: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                tenantId: string;
                 keyId: string;
             };
             cookie?: never;
@@ -5114,8 +5256,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Missing/invalid `X-Platform-Service-Auth` header, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`. */
-            401: {
+            /** @description Principal is not a same-tenant admin. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5123,8 +5265,59 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description No API key with this id exists for this tenant. Error code `api_key_not_found`. */
+            /** @description Key does not exist. Error code `api_key_not_found`. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getTenantUsage: {
+        parameters: {
+            query?: {
+                window?: string;
+                environment?: "sandbox" | "live";
+                key_id?: string;
+            };
+            header?: never;
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Usage counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tenant_id?: string;
+                        window?: string;
+                        environment?: string;
+                        key_id?: string;
+                        total_events?: number;
+                        keys?: {
+                            key_id?: string;
+                            environment?: string | null;
+                            event_count?: number;
+                            /** Format: date-time */
+                            first_event_at?: string | null;
+                            /** Format: date-time */
+                            last_event_at?: string | null;
+                        }[];
+                    };
+                };
+            };
+            /** @description Principal lacks tenant access or `audit:read`. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

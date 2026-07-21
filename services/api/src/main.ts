@@ -85,7 +85,10 @@ import { TenantExportService } from "./tenant-export/service.js";
 import { startTenantExportWorker } from "./tenant-export/worker.js";
 import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
 import { registerProductionTenancyRoutes } from "./production-tenancy/routes.js";
-import { registerApiKeyRoutes } from "./production-tenancy/api-key-routes.js";
+import {
+  buildApiKeyAuthenticator,
+  registerApiKeyRoutes,
+} from "./production-tenancy/api-key-routes.js";
 import { registerProofViewRoute } from "./proof/view.js";
 import { registerAuditHealthRoute } from "./audit-health/route.js";
 import {
@@ -1643,7 +1646,26 @@ async function main(): Promise<void> {
   // Shared plugins registered ONCE.
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
-  await app.register(authPlugin, { verifier: jwtVerifier });
+  const apiKeyRateLimiter = new RedisSlidingWindowRateLimiter(redis, {
+    windowSeconds: cfg.BRAIN_API_KEY_RATE_WINDOW_SECONDS,
+    limit: cfg.BRAIN_API_KEY_RATE_LIMIT,
+  });
+  const apiKeyAuthenticator =
+    cfg.BRAIN_API_KEY_AUTH_ENABLED && cfg.BRAIN_API_KEY_PEPPER !== undefined
+      ? buildApiKeyAuthenticator({
+          pool,
+          resolverPool,
+          pepper: cfg.BRAIN_API_KEY_PEPPER,
+          rateLimiter: apiKeyRateLimiter,
+        })
+      : undefined;
+  if (cfg.BRAIN_API_KEY_AUTH_ENABLED && cfg.BRAIN_API_KEY_PEPPER === undefined) {
+    throw new Error("BRAIN_API_KEY_PEPPER is required when BRAIN_API_KEY_AUTH_ENABLED=true");
+  }
+  await app.register(authPlugin, {
+    verifier: jwtVerifier,
+    ...(apiKeyAuthenticator !== undefined ? { apiKeyAuthenticator } : {}),
+  });
   const idempotencyStore = new RedisIdempotencyStore(redis);
   await app.register(idempotencyPlugin, {
     store: idempotencyStore,
@@ -1978,20 +2000,15 @@ async function main(): Promise<void> {
               : {}),
           }),
         );
-        // Per-customer API-key auth (token-exchange model). POST
-        // /v1/auth/api-key mints an agent JWT from a customer-held
-        // brain_sk_... key; issue/revoke are platform-secret gated, same
-        // fence as POST /v1/tenants above. Registered only when enabled.
+        // Per-customer API-key auth. Tenant admins issue, list, rotate, revoke,
+        // and view per-key usage under the first-class key contract.
         if (cfg.BRAIN_API_KEY_AUTH_ENABLED) {
           await v1.register(async (child) =>
             registerApiKeyRoutes(child, {
               pool,
               resolverPool,
               audit,
-              signer: siwxSigner,
-              ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
-                ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
-                : {}),
+              pepper: cfg.BRAIN_API_KEY_PEPPER!,
             }),
           );
         }

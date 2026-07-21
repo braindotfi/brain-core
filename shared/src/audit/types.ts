@@ -15,6 +15,7 @@
  *   policy_decision_id TEXT?, -- v0.3 §6 pre-execution gate pointer
  *   before_state JSONB?,      -- v0.3 — material state transitions
  *   after_state JSONB?,
+ *   key_id TEXT?,            -- API key id for request attribution
  *   event_hash BYTEA,         -- deterministic canonical hash
  *   prev_event_hash BYTEA?,   -- per-tenant chain
  *   created_at TIMESTAMPTZ
@@ -62,6 +63,8 @@ export interface AuditEventInput {
   readonly idempotencyKey?: string;
   /** Request correlation id from `X-Request-Id` or the server-generated request id. */
   readonly correlationId?: string;
+  /** API key id that authenticated the request, when present. */
+  readonly keyId?: string;
 }
 
 export interface AuditEvent extends AuditEventInput {

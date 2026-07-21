@@ -231,13 +231,14 @@ export async function verifyContentHashCursor(
       policy_decision_id: string | null;
       before_state: Record<string, unknown> | null;
       after_state: Record<string, unknown> | null;
+      key_id: string | null;
       prev_event_hash: Buffer | null;
       created_at: Date;
       event_hash: Buffer;
     }>(
       `SELECT id, tenant_id, layer, actor, action, inputs, outputs,
               policy_version, policy_decision_id, before_state, after_state,
-              prev_event_hash, created_at, event_hash
+              key_id, prev_event_hash, created_at, event_hash
          FROM audit_events
         WHERE hash_schema_version = $1
           AND ($2::timestamptz IS NULL OR (created_at, id) > ($2, $3))
@@ -260,6 +261,7 @@ export async function verifyContentHashCursor(
           ...(r.policy_decision_id !== null ? { policyDecisionId: r.policy_decision_id } : {}),
           ...(r.before_state !== null ? { beforeState: r.before_state } : {}),
           ...(r.after_state !== null ? { afterState: r.after_state } : {}),
+          ...(r.key_id !== null ? { keyId: r.key_id } : {}),
         },
         id: r.id,
         createdAt: r.created_at.toISOString(),

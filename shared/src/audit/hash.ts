@@ -24,7 +24,7 @@ import type { AuditEventInput } from "./types.js";
  * `canonicalize` changes; 0 means "pre-versioning" and is skipped by the
  * verifier. (Codex c96283d P1 #2.)
  */
-export const AUDIT_HASH_SCHEMA_VERSION = 1;
+export const AUDIT_HASH_SCHEMA_VERSION = 2;
 
 export interface HashInput {
   readonly event: AuditEventInput;
@@ -57,6 +57,7 @@ export function canonicalize(input: HashInput): string {
     policy_decision_id: e.policyDecisionId ?? null,
     before_state: e.beforeState === undefined ? null : stableJsonValue(e.beforeState),
     after_state: e.afterState === undefined ? null : stableJsonValue(e.afterState),
+    key_id: e.keyId ?? null,
     created_at: input.createdAt,
     prev_event_hash: input.prevEventHash,
   };
@@ -87,6 +88,7 @@ export function logicalPayloadFingerprint(e: AuditEventInput): string {
       policy_decision_id: e.policyDecisionId ?? null,
       before_state: e.beforeState ?? null,
       after_state: e.afterState ?? null,
+      key_id: e.keyId ?? null,
     }),
   );
 }
