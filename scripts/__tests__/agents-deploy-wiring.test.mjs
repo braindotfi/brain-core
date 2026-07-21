@@ -103,6 +103,15 @@ test("staging and production deploy recreates include the agents service", () =>
   assert.match(promoteProductionJob, new RegExp(`up -d --no-deps --no-build ${serviceTargets}`));
 });
 
+test("staging deploy starts infra without pulling service dependencies", () => {
+  const deployStagingJob = workflowJob("deploy_staging");
+  const coldStartCommand =
+    /up -d --no-build --no-recreate --no-deps postgres redis minio minio-setup jwks caddy/;
+  assert.match(deployStagingJob, coldStartCommand);
+  assert.match(deployStagingJob, /Staging API key acceptance/);
+  assert.match(deployStagingJob, /scripts\/ops\/staging_api_key_acceptance\.py/);
+});
+
 test("staging and production deploy rerun db role grants after migrations", () => {
   const deployStagingJob = workflowJob("deploy_staging");
   const promoteProductionJob = workflowJob("promote_production");
