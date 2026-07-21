@@ -240,10 +240,16 @@ jobs:
 
       # Tag the box's current :prod image as a rollback point BEFORE the
       # `docker tag` below overwrites the :prod tag. See docs/rollback.md §B.
+      # Then prune images untouched for 3+ days so the rollback tags minted
+      # here don't accumulate forever and fill the disk. `docker image prune
+      # -a` never removes an image a container (running or stopped) still
+      # references, so the live stack stays safe even on a box that hasn't
+      # deployed in over 3 days. `|| true` so a prune failure never blocks
+      # a deploy.
       - name: Tag rollback images on VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'ts=$(date +%Y%m%d-%H%M%S); docker tag brain-core:prod brain-core:prod-rollback-$ts || true; docker tag brain-agents:prod brain-agents:prod-rollback-$ts || true'
+            'ts=$(date +%Y%m%d-%H%M%S); docker tag brain-core:prod brain-core:prod-rollback-$ts || true; docker tag brain-agents:prod brain-agents:prod-rollback-$ts || true; docker image prune -af --filter until=72h || true'
 
       - name: Pull images from GHCR
         # The VM authenticates to ghcr.io via a one-time manual `docker login`
@@ -319,10 +325,16 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
 
+      # Prune images untouched for 3+ days so the rollback tags minted
+      # above don't accumulate forever and fill the disk. `docker image
+      # prune -a` never removes an image a container (running or stopped)
+      # still references, so the live stack stays safe even on a box that
+      # hasn't deployed in over 3 days. `|| true` so a prune failure never
+      # blocks a deploy.
       - name: Tag rollback images on VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'ts=$(date +%Y%m%d-%H%M%S); docker tag brain-core:prod brain-core:prod-rollback-$ts || true; docker tag brain-agents:prod brain-agents:prod-rollback-$ts || true'
+            'ts=$(date +%Y%m%d-%H%M%S); docker tag brain-core:prod brain-core:prod-rollback-$ts || true; docker tag brain-agents:prod brain-agents:prod-rollback-$ts || true; docker image prune -af --filter until=72h || true'
 
       - name: Pull images from GHCR
         # See deploy_staging's "Pull images from GHCR" step: relies on the box's
