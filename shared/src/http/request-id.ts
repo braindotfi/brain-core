@@ -15,7 +15,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import fp from "fastify-plugin";
 import { newRequestId } from "../ids.js";
-import { enterCorrelationId } from "../correlation.js";
+import { beginRequestAuditContext } from "../correlation.js";
 
 const HEADER = "x-request-id";
 const MAX_LEN = 128;
@@ -34,7 +34,7 @@ const plugin: FastifyPluginAsync = async (fastify) => {
     const id = supplied ?? newRequestId();
     // Fastify's FastifyRequest.id is writable; use that as the canonical slot.
     (request as unknown as { id: string }).id = id;
-    enterCorrelationId(id);
+    beginRequestAuditContext(id);
     reply.header(HEADER, id);
   });
 };

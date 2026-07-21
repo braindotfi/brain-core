@@ -25,11 +25,14 @@ export { createMetrics, MockMetrics } from "./metrics.js";
 export type { MetricsEmitter, MetricTags } from "./metrics.js";
 export * from "./tracing.js";
 export {
+  beginRequestAuditContext,
   CorrelatingAuditEmitter,
+  currentRequestHasApiKeyAuditEvent,
   currentApiKeyId,
   currentCorrelationId,
   enterApiKeyId,
   enterCorrelationId,
+  markApiKeyAuditEventEmitted,
 } from "./correlation.js";
 
 // Database (§1 principle 2)

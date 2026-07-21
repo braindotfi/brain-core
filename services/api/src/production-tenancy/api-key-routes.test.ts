@@ -239,8 +239,12 @@ async function buildApp(
       pepper: PEPPER,
       rateLimiter: new InMemorySlidingWindowRateLimiter({ windowSeconds: 60, limit: 100 }),
     }),
+    apiKeyUsageAudit: audit,
   });
   await registerApiKeyRoutes(app, { pool, resolverPool, audit, pepper: PEPPER });
+  app.get("/read-only", async (request) => {
+    return { ok: true, key_id: request.apiKeyId ?? null };
+  });
   app.get("/audited", async (request) => {
     await audit.emit({
       tenantId: request.principal!.tenantId,
@@ -329,6 +333,57 @@ describe("per-customer API keys", () => {
       });
       expect(newRejected.statusCode).toBe(401);
       expect(newRejected.json().error.code).toBe("auth_invalid_key");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("attributes API key usage for successful read requests without domain audit events", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const { app } = await buildApp(store);
+    const token = await adminToken(tenantId);
+    try {
+      const issue = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          name: "CI read key",
+          environment: "sandbox",
+          scopes: ["ledger:read", "audit:read"],
+        },
+      });
+      expect(issue.statusCode).toBe(201);
+      const issued = issue.json();
+
+      const direct = await app.inject({
+        method: "GET",
+        url: "/read-only",
+        headers: { authorization: `Bearer ${issued.secret}` },
+      });
+      expect(direct.statusCode).toBe(200);
+      expect(direct.json().key_id).toBe(issued.id);
+
+      const usage = await app.inject({
+        method: "GET",
+        url: `/tenants/${tenantId}/usage?window=30d&environment=sandbox&key_id=${issued.id}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(usage.statusCode).toBe(200);
+      expect(usage.json()).toMatchObject({ total_events: 1, key_id: issued.id });
+      expect(store.auditEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tenantId,
+            actor: issued.id,
+            action: "http.request",
+            keyId: issued.id,
+            inputs: { method: "GET", route: "/read-only" },
+            outputs: { status_code: 200 },
+          }),
+        ]),
+      );
     } finally {
       await app.close();
     }

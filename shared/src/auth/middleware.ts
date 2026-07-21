@@ -17,8 +17,9 @@
 
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
+import type { AuditEmitter } from "../audit/emitter.js";
 import { brainError } from "../errors.js";
-import { enterApiKeyId } from "../correlation.js";
+import { currentRequestHasApiKeyAuditEvent, enterApiKeyId } from "../correlation.js";
 import type { JwtVerifier } from "./jwt.js";
 import type { Principal } from "./principal.js";
 
@@ -38,6 +39,7 @@ declare module "fastify" {
 export interface AuthPluginOptions {
   verifier: JwtVerifier;
   apiKeyAuthenticator?: (secret: string) => Promise<{ principal: Principal; keyId: string } | null>;
+  apiKeyUsageAudit?: AuditEmitter;
 }
 
 const AUTH_HEADER_RE = /^Bearer\s+(.+)$/i;
@@ -49,7 +51,7 @@ export function extractBearer(header: string | undefined): string | null {
 }
 
 const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
-  const { verifier, apiKeyAuthenticator } = opts;
+  const { verifier, apiKeyAuthenticator, apiKeyUsageAudit } = opts;
 
   fastify.addHook("onRequest", async (request: FastifyRequest) => {
     if (request.routeOptions.config?.skipAuth === true) {
@@ -72,6 +74,41 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
     const principal = await verifier.verify(token);
     request.principal = principal;
   });
+
+  fastify.addHook("onResponse", async (request, reply) => {
+    if (
+      apiKeyUsageAudit === undefined ||
+      request.apiKeyId === undefined ||
+      request.principal === undefined ||
+      reply.statusCode < 200 ||
+      reply.statusCode >= 400 ||
+      currentRequestHasApiKeyAuditEvent()
+    ) {
+      return;
+    }
+
+    try {
+      await apiKeyUsageAudit.emit({
+        tenantId: request.principal.tenantId,
+        layer: "audit",
+        actor: request.principal.id,
+        action: "http.request",
+        inputs: {
+          method: request.method,
+          route: routePattern(request),
+        },
+        outputs: {
+          status_code: reply.statusCode,
+        },
+      });
+    } catch (err) {
+      request.log.warn({ err }, "api key usage audit emit failed");
+    }
+  });
 };
+
+function routePattern(request: FastifyRequest): string {
+  return request.routeOptions.url ?? "unknown";
+}
 
 export default fp(plugin, { name: "brain-auth", fastify: "5.x" });

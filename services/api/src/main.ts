@@ -1665,6 +1665,7 @@ async function main(): Promise<void> {
   await app.register(authPlugin, {
     verifier: jwtVerifier,
     ...(apiKeyAuthenticator !== undefined ? { apiKeyAuthenticator } : {}),
+    apiKeyUsageAudit: audit,
   });
   const idempotencyStore = new RedisIdempotencyStore(redis);
   await app.register(idempotencyPlugin, {
