@@ -54,11 +54,19 @@ def main() -> int:
     )
     require_status(created, 201, "tenant_create_failed")
     tenant_id = require_field(created.body, "tenant_id", "tenant_create_missing_tenant_id")
-    admin_token = require_field(
-        require_field(created.body, "session", "tenant_create_missing_session"),
-        "token",
-        "tenant_create_missing_session_token",
-    )
+    admin_token = session_token_from_create(created.body)
+    if admin_token is None:
+        session = request_json(
+            "POST",
+            f"{base}/sessions",
+            headers={"X-Platform-Service-Auth": platform_secret},
+            payload={
+                "external_ref": external_ref,
+                "scopes": ["ledger:read", "audit:read", "execution:admin"],
+            },
+        )
+        require_status(session, 200, "session_exchange_failed")
+        admin_token = require_field(session.body, "token", "session_exchange_missing_token")
 
     issued = request_json(
         "POST",
@@ -70,6 +78,7 @@ def main() -> int:
             "scopes": ["ledger:read", "audit:read"],
         },
     )
+
     require_status(issued, 201, "api_key_issue_failed")
     issued_id = require_field(issued.body, "id", "api_key_issue_missing_id")
     issued_secret = require_field(issued.body, "secret", "api_key_issue_missing_secret")
@@ -207,6 +216,16 @@ def require_field(value: Any, field: str, reason: str) -> str:
     if not isinstance(found, str) or found == "":
         raise AcceptanceFailure(f"{reason} field={field}")
     return found
+
+
+def session_token_from_create(body: Any) -> str | None:
+    if not isinstance(body, dict):
+        return None
+    session = body.get("session")
+    if not isinstance(session, dict):
+        return None
+    token = session.get("token")
+    return token if isinstance(token, str) and token != "" else None
 
 
 def require_error_code(response: Response, expected: str, reason: str) -> None:
