@@ -14,10 +14,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: main-${{ github.ref }}
-  cancel-in-progress: false # never cancel a deploy mid-flight
-
 jobs:
   # Secret scan on every push to main. PR coverage runs in pr.yml; this is the
   # belt to that suspender for direct pushes (merge commits, hotfix pushes)
@@ -224,6 +220,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: build_image
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # Scoped to this job (not the whole workflow) so a staging deploy is not
+    # blocked by an older run parked at promote_production's approval gate.
+    concurrency:
+      group: deploy-staging-${{ github.ref }}
+      cancel-in-progress: false # never cancel a deploy mid-flight
     env:
       VM_HOST: ${{ secrets.VM_HOST_STAGING }}
       VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
@@ -311,6 +312,11 @@ jobs:
     needs: deploy_staging
     environment: production
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # Scoped to this job so a run waiting on the production approval gate
+    # occupies only its own slot, not deploy_staging's.
+    concurrency:
+      group: promote-prod-${{ github.ref }}
+      cancel-in-progress: false # never cancel a deploy mid-flight
     env:
       VM_HOST: ${{ secrets.VM_HOST }}
       VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
@@ -403,6 +409,12 @@ jobs:
     # Lives here (post-merge) rather than in pr.yml so PRs don't hit a live env
     # or mint $10 ACH intents on every push.
     if: vars.E2E_EXTERNAL_AGENT_ENABLED == 'true'
+    # Opt-in but reachable on a push to main once the repo var is on; it hits
+    # a shared sandbox tenant's fixed vendor/source account and mints a real
+    # $10 ACH intent, so two overlapping runs must not race it.
+    concurrency:
+      group: external-agent-mcp-e2e-${{ github.ref }}
+      cancel-in-progress: false # never cancel a deploy mid-flight
     env:
       # Host root WITHOUT a /v1 suffix. Every e2e path already includes /v1.
       BRAIN_BASE_URL: ${{ vars.E2E_EXTERNAL_AGENT_BASE_URL || 'https://api.sandbox.brain.fi' }}
@@ -434,6 +446,12 @@ jobs:
     # session key; the value-moving success case additionally needs a GRANTED key
     # (BRAIN_TESTNET_SUCCESS_ENABLED). See tests/e2e/README.md.
     if: vars.TESTNET_ONCHAIN_E2E_ENABLED == 'true'
+    # Opt-in but reachable on a push to main once the repo var is on; it
+    # shares one funded testnet session key, so concurrent runs would race
+    # its nonce (the same class of hazard as the anchor-key drain incidents).
+    concurrency:
+      group: testnet-e2e-${{ github.ref }}
+      cancel-in-progress: false # never cancel a deploy mid-flight
     env:
       BRAIN_TESTNET_RPC_URL: ${{ secrets.BRAIN_TESTNET_RPC_URL }}
       BRAIN_TESTNET_SESSION_KEY: ${{ secrets.BRAIN_TESTNET_SESSION_KEY }}
