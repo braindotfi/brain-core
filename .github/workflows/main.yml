@@ -232,12 +232,29 @@ jobs:
       COMPOSE_PROJECT: brain-staging
       HEALTH_URL: ${{ vars.BRAIN_STAGING_HEALTH_URL || 'https://staging-api.brain.fi/health' }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
           echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      # Images alone are not enough: the VM's ~/brain-core is a copied tree,
+      # not a git checkout, so changes to docker-compose.prod.yml and the
+      # host files it bind-mounts into containers (db-roles.sql,
+      # tools/postgres-init) never reach the box on their own. Ship exactly
+      # the repo-tracked paths compose depends on, before any compose
+      # invocation below. Host-only files (VM_ENV_FILE, docker-compose.caddy.yml)
+      # are left untouched, they are not in this repo.
+      - name: Sync compose and bind-mounted host files to VM
+        run: |
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
+          scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
+          scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
+          scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
       # Tag the box's current :prod image as a rollback point BEFORE the
       # `docker tag` below overwrites the :prod tag. See docs/rollback.md §B.
@@ -324,12 +341,29 @@ jobs:
       COMPOSE_PROJECT: brain-prod
       HEALTH_URL: https://api.brain.fi/health
     steps:
+      - uses: actions/checkout@v4
+
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
           echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      # Images alone are not enough: the VM's ~/brain-core is a copied tree,
+      # not a git checkout, so changes to docker-compose.prod.yml and the
+      # host files it bind-mounts into containers (db-roles.sql,
+      # tools/postgres-init) never reach the box on their own. Ship exactly
+      # the repo-tracked paths compose depends on, before any compose
+      # invocation below. Host-only files (VM_ENV_FILE, docker-compose.caddy.yml)
+      # are left untouched, they are not in this repo.
+      - name: Sync compose and bind-mounted host files to VM
+        run: |
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
+          scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
+          scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
+          scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
       # Prune images untouched for 3+ days so the rollback tags minted
       # above don't accumulate forever and fill the disk. `docker image
