@@ -23,7 +23,7 @@ function allRoleUrls(): PrivilegedRoleUrls {
   };
 }
 
-describe("assertDbIsolationFences — BRAIN_WIKI_DB_URL", () => {
+describe("assertDbIsolationFences - BRAIN_WIKI_DB_URL", () => {
   it("throws in NODE_ENV=production when unset", () => {
     expect(() =>
       assertDbIsolationFences({
@@ -69,7 +69,35 @@ describe("assertDbIsolationFences — BRAIN_WIKI_DB_URL", () => {
   });
 });
 
-describe("assertDbIsolationFences — §4 role URLs", () => {
+describe("assertDbIsolationFences - BRAIN_MCP_READER_DB_URL", () => {
+  it("throws in NODE_ENV=production when MCP reader is required and unset", () => {
+    expect(() =>
+      assertDbIsolationFences({
+        nodeEnv: "production",
+        wikiDbUrl: "postgres://reader@host/db",
+        mcpReaderDbUrl: undefined,
+        requireMcpReader: true,
+        privilegedRoleUrls: allRoleUrls(),
+      }),
+    ).toThrow(/BRAIN_MCP_READER_DB_URL is required in NODE_ENV=production/);
+  });
+
+  it("warns in dev when MCP reader is required and unset", () => {
+    const warn = vi.fn();
+    const warnings = assertDbIsolationFences({
+      nodeEnv: "development",
+      wikiDbUrl: "postgres://reader@host/db",
+      mcpReaderDbUrl: undefined,
+      requireMcpReader: true,
+      privilegedRoleUrls: allRoleUrls(),
+      warn,
+    });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warnings[0]).toMatch(/BRAIN_MCP_READER_DB_URL unset/);
+  });
+});
+
+describe("assertDbIsolationFences - §4 role URLs", () => {
   it("throws in NODE_ENV=production when any one role URL is unset", () => {
     expect(() =>
       assertDbIsolationFences({
@@ -135,7 +163,7 @@ describe("assertDbIsolationFences — §4 role URLs", () => {
   });
 });
 
-describe("assertDbIsolationFences — composition scoping (worker/process separation)", () => {
+describe("assertDbIsolationFences - composition scoping (worker/process separation)", () => {
   const blank: PrivilegedRoleUrls = {
     BRAIN_RAW_WORKER_DB_URL: undefined,
     BRAIN_CANONICAL_PROJECTOR_DB_URL: undefined,

@@ -57,6 +57,7 @@ environment approval is the manual promote gate.
    - `DOCUMENT_EXTRACT_AGENT_URL=http://agents:8001`
    - `BRAIN_AGENTS_INBOUND_SECRET`
    - ESP credentials for outbound email onboarding
+   - `BRAIN_MCP_READER_DB_PASSWORD` for the `brain_mcp_reader` role
    - the normal production-mode database, auth, rail, blob, and on-chain values
 
 ## Deploy Flow

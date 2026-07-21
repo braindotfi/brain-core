@@ -6,8 +6,9 @@
  * policies and registering agents.
  *
  * External agents (principal_type=agent, registered in BrainMCPAgentRegistry)
- * may hold the five §3.2 scopes:
- *   ledger:read, wiki:read, raw:write, payment_intent:propose, execution:propose
+ * may hold the six public MCP scopes:
+ *   ledger:read, wiki:read, raw:read, raw:write, payment_intent:propose,
+ *   execution:propose
  * Tenant grants a subset at registration via EIP-712 signature. §3.2 names the
  * non-financial-proposal scope `agent:propose`; the codebase implements it under
  * the legacy name `execution:propose` (the MCP agent.action.propose tool and the
@@ -102,6 +103,7 @@ export function isValidScope(s: string): s is Scope {
 export const AGENT_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "ledger:read",
   "wiki:read",
+  "raw:read",
   "raw:write",
   "payment_intent:propose",
   "execution:propose",

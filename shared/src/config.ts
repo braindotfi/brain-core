@@ -54,6 +54,9 @@ const envSchema = z.object({
   // `brain_wiki_reader` role (SELECT anywhere; write only wiki_* tables). When
   // unset the Wiki falls back to DATABASE_URL (dev/test) with a boot warning.
   BRAIN_WIKI_DB_URL: z.string().url().optional(),
+  // MCP raw evidence reads connect with this URL as brain_mcp_reader. When
+  // unset, raw.artifact.get is unavailable and must not fall back to DATABASE_URL.
+  BRAIN_MCP_READER_DB_URL: optionalNonEmptyString().pipe(z.string().url().optional()),
   // Least-privilege cross-tenant role URLs (replace the single broad
   // DATABASE_PRIVILEGED_URL). Each connects as its own BYPASSRLS role scoped to
   // one layer's tables (infra/db-roles.sql §4). In production all eight are

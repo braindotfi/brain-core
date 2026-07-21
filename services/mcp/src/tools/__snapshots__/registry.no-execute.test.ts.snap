@@ -15,6 +15,7 @@ exports[`MCP tool registry — no execution surface (P1.2) > snapshots the expos
   "proposals.decide",
   "proposals.get",
   "proposals.list",
+  "raw.artifact.get",
   "raw.contribute",
   "wiki.page.get",
   "wiki.question",

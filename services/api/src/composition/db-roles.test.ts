@@ -30,6 +30,12 @@ const wikiRole: RoleIdentity = {
   rolbypassrls: false,
   rolsuper: false,
 };
+const mcpReaderRole: RoleIdentity = {
+  current_user: "brain_mcp_reader",
+  session_user: "brain_mcp_reader",
+  rolbypassrls: false,
+  rolsuper: false,
+};
 
 describe("assertDbRoles", () => {
   it("passes for a correct request/privileged/wiki split with role names + perms", async () => {
@@ -144,6 +150,23 @@ describe("assertDbRoles", () => {
         { enforce: true },
       ),
     ).rejects.toThrow(/must NOT have INSERT on ledger_counterparties/);
+  });
+
+  it("throws when the MCP reader can mutate raw_artifacts", async () => {
+    await expect(
+      assertDbRoles(
+        [
+          {
+            label: "mcp-reader",
+            query: fakeQuery(mcpReaderRole, { "raw_artifacts:INSERT": true }),
+            mustBypassRls: false,
+            expectedRole: "brain_mcp_reader",
+            forbidden: [{ table: "raw_artifacts", privilege: "INSERT" }],
+          },
+        ],
+        { enforce: true },
+      ),
+    ).rejects.toThrow(/must NOT have INSERT on raw_artifacts/);
   });
 
   it("throws when a runtime role can UPDATE audit_events (append-only enforcement)", async () => {

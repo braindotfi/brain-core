@@ -26,6 +26,8 @@ const ROLES = [
   "brain_tenant_deletion",
 ] as const;
 
+const RUNTIME_ROLES = [...ROLES, "brain_mcp_reader"] as const;
+
 describe("infra/db-roles.sql — §4 least-privilege roles", () => {
   it("creates all eight roles as BYPASSRLS", () => {
     for (const role of ROLES) {
@@ -36,6 +38,16 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     }
   });
 
+  it("creates brain_mcp_reader as a tenant-scoped read-only role", () => {
+    expect(SQL).toContain("CREATE ROLE brain_mcp_reader LOGIN");
+    expect(SQL).toMatch(
+      /ALTER ROLE brain_mcp_reader\s+WITH LOGIN PASSWORD :'brain_mcp_reader_password' NOBYPASSRLS/,
+    );
+    expect(SQL).toContain(
+      "GRANT USAGE ON SCHEMA public TO brain_app, brain_privileged, brain_wiki_reader,\n  brain_mcp_reader",
+    );
+  });
+
   it("does NOT add privileged roles to the blanket all-tables grant", () => {
     const blanket = SQL.match(/GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES[\s\S]*?;/);
     expect(blanket).not.toBeNull();
@@ -43,6 +55,7 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
       expect(blanket?.[0]).not.toContain(role);
     }
     expect(blanket?.[0]).not.toContain("brain_privileged");
+    expect(blanket?.[0]).not.toContain("brain_mcp_reader");
     expect(blanket?.[0]).toContain("brain_app");
   });
 
@@ -82,12 +95,28 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
       "GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links",
     );
     expect(SQL).toContain("member_invites, session_refresh_tokens, api_keys TO brain_resolver");
+    const artifactGrant = SQL.match(
+      /GRANT SELECT \(([\s\S]*?)\) ON raw_artifacts TO brain_mcp_reader/,
+    );
+    expect(artifactGrant).not.toBeNull();
+    expect(artifactGrant?.[1]).toContain("id, tenant_id, sha256, source_type, source_ref");
+    expect(artifactGrant?.[1]).toContain("idempotency_key");
+    expect(artifactGrant?.[1]).not.toContain("blob_uri");
+    const parsedGrant = SQL.match(/GRANT SELECT \(([\s\S]*?)\) ON raw_parsed TO brain_mcp_reader/);
+    expect(parsedGrant).not.toBeNull();
+    expect(parsedGrant?.[1]).toContain("id, raw_artifact_id, tenant_id, parser");
+    expect(SQL).not.toMatch(/GRANT (?:SELECT, )?INSERT[^;]*TO brain_mcp_reader/);
+    expect(SQL).not.toMatch(/GRANT (?:SELECT, INSERT, )?UPDATE[^;]*TO brain_mcp_reader/);
+    expect(SQL).not.toMatch(/GRANT (?:SELECT, INSERT, UPDATE, )?DELETE[^;]*TO brain_mcp_reader/);
+    expect(SQL).not.toContain("ON policy_decisions TO brain_mcp_reader");
+    expect(SQL).not.toContain("ON policies TO brain_mcp_reader");
+    expect(SQL).not.toContain("ON audit_events TO brain_mcp_reader");
   });
 
   it("keeps audit history immutable to every new role (incl. tenant_deletion)", () => {
     const revoke = SQL.match(/REVOKE UPDATE, DELETE, TRUNCATE ON audit_events\s+FROM[\s\S]*?;/);
     expect(revoke).not.toBeNull();
-    for (const role of ROLES) {
+    for (const role of RUNTIME_ROLES) {
       expect(revoke?.[0], `${role} not in audit_events REVOKE`).toContain(role);
     }
     const insertRevoke = SQL.match(/REVOKE INSERT ON audit_events\s+FROM[\s\S]*?;/);
@@ -101,7 +130,7 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
       /REVOKE ALL ON audit_verifier_checkpoint, audit_integrity_findings\s+FROM[\s\S]*?;/,
     );
     expect(revokeAll).not.toBeNull();
-    for (const role of ROLES) {
+    for (const role of RUNTIME_ROLES) {
       if (role === "brain_audit_verifier") {
         expect(revokeAll?.[0]).not.toContain(role); // verifier keeps scoped access
       } else {

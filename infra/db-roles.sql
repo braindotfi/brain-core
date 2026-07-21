@@ -57,7 +57,15 @@ DO $$ BEGIN
 END $$;
 ALTER ROLE brain_wiki_reader WITH LOGIN PASSWORD :'brain_wiki_reader_password' NOBYPASSRLS;
 
--- 4. Least-privilege cross-tenant roles (replace the single broad brain_privileged
+-- 4. MCP raw evidence reader. Tenant-scoped and read-only.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'brain_mcp_reader') THEN
+    CREATE ROLE brain_mcp_reader LOGIN;
+  END IF;
+END $$;
+ALTER ROLE brain_mcp_reader WITH LOGIN PASSWORD :'brain_mcp_reader_password' NOBYPASSRLS;
+
+-- 5. Least-privilege cross-tenant roles (replace the single broad brain_privileged
 --    for the API runtime). Each is BYPASSRLS (its job is genuinely cross-tenant)
 --    but receives only the table grants in the matrix below, so a confused-deputy
 --    bug or compromise in one privileged path cannot reach another layer's tables.
@@ -103,7 +111,8 @@ ALTER ROLE brain_surface_audit_writer WITH LOGIN PASSWORD :'brain_surface_audit_
 -- tables, so RLS applies to it. brain_privileged is intentionally excluded from
 -- the blanket runtime grant and receives only the seed and verifier footprint
 -- below.
-GRANT USAGE ON SCHEMA public TO brain_app, brain_privileged, brain_wiki_reader;
+GRANT USAGE ON SCHEMA public TO brain_app, brain_privileged, brain_wiki_reader,
+  brain_mcp_reader;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public
   TO brain_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO brain_app, brain_privileged;
@@ -143,6 +152,20 @@ BEGIN
   END LOOP;
 END
 $$;
+
+-- brain_mcp_reader: MCP raw evidence read path only. Column grants deliberately
+-- omit blob_uri, and this role receives no write grants or grants on Policy or
+-- Audit tables in PR 1 of RFC 0006.
+GRANT SELECT (
+  id, tenant_id, sha256, source_type, source_ref, mime_type, bytes,
+  ingested_at, tombstoned_at, ingested_by, source_schema, object_type,
+  external_id, operation, effective_at, observed_at, original_source,
+  intermediaries, source_id, source_version, idempotency_key
+) ON raw_artifacts TO brain_mcp_reader;
+GRANT SELECT (
+  id, raw_artifact_id, tenant_id, parser, parser_version, extracted,
+  confidence, extracted_at
+) ON raw_parsed TO brain_mcp_reader;
 
 -- ---------------------------------------------------------------------------
 -- Least-privilege grant matrix for the §4 roles. Each role starts with NO
@@ -285,12 +308,14 @@ GRANT SELECT, UPDATE ON tenant_export_jobs TO brain_tenant_deletion;
 -- the audit verifier/publisher keep their SELECT (only mutation is stripped).
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
   FROM brain_app, brain_privileged, brain_wiki_reader,
+       brain_mcp_reader,
        brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
        brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
        brain_resolver, brain_tenant_deletion, brain_surface_gateway,
        brain_surface_audit_writer;
 REVOKE INSERT ON audit_events
   FROM brain_privileged, brain_wiki_reader,
+       brain_mcp_reader,
        brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
        brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
        brain_resolver, brain_tenant_deletion, brain_surface_gateway;
@@ -312,6 +337,7 @@ REVOKE INSERT ON audit_events
 -- the forensic tables are RLS-exempt so they were never in any grant loop).
 REVOKE ALL ON audit_verifier_checkpoint, audit_integrity_findings
   FROM brain_app, brain_wiki_reader,
+       brain_mcp_reader,
        brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
        brain_execution_worker, brain_audit_publisher, brain_resolver,
        brain_tenant_deletion, brain_surface_gateway, brain_surface_audit_writer;
@@ -349,6 +375,7 @@ $$;
 --   brain_audit_publisher     BRAIN_AUDIT_PUBLISHER_DB_URL
 --   brain_resolver            BRAIN_RESOLVER_DB_URL
 --   brain_tenant_deletion     BRAIN_TENANT_DELETION_DB_URL
+--   brain_mcp_reader          BRAIN_MCP_READER_DB_URL
 --   brain_surface_gateway     BRAIN_SURFACE_GATEWAY_DB_URL
 --   brain_surface_audit_writer BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL
 -- In NODE_ENV=production the api fails to boot if BRAIN_WIKI_DB_URL or any of

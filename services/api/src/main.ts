@@ -377,7 +377,9 @@ async function main(): Promise<void> {
   assertDbIsolationFences({
     nodeEnv: cfg.NODE_ENV,
     wikiDbUrl: cfg.BRAIN_WIKI_DB_URL,
+    mcpReaderDbUrl: cfg.BRAIN_MCP_READER_DB_URL,
     requireWiki: composition.httpEnabled,
+    requireMcpReader: composition.httpEnabled,
     requiredEnv: new Set([...composition.pools].map((p) => POOL_ENV[p])),
     privilegedRoleUrls: {
       BRAIN_RAW_WORKER_DB_URL: cfg.BRAIN_RAW_WORKER_DB_URL,
@@ -1047,6 +1049,15 @@ async function main(): Promise<void> {
   const auditPublisherPool = makeRolePool(cfg.BRAIN_AUDIT_PUBLISHER_DB_URL, "audit-publisher");
   const resolverPool = makeRolePool(cfg.BRAIN_RESOLVER_DB_URL, "resolver");
   const tenantDeletionPool = makeRolePool(cfg.BRAIN_TENANT_DELETION_DB_URL, "tenant-deletion");
+  const mcpReaderPool =
+    cfg.BRAIN_MCP_READER_DB_URL === undefined
+      ? undefined
+      : createPool({
+          connectionString: cfg.BRAIN_MCP_READER_DB_URL,
+          max: 3,
+          statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
+          applicationName: `${cfg.SERVICE_NAME}-mcp-reader`,
+        });
 
   await assertRuntimeDbRoles({
     nodeEnv: cfg.NODE_ENV,
@@ -1062,6 +1073,7 @@ async function main(): Promise<void> {
       resolver: resolverPool,
       tenantDeletion: tenantDeletionPool,
       wiki: wikiPool,
+      ...(mcpReaderPool !== undefined ? { mcpReader: mcpReaderPool } : {}),
     },
     log: (msg, ctx) => log.info(ctx, msg),
   });
@@ -1316,6 +1328,7 @@ async function main(): Promise<void> {
     ledger: ledgerService,
     wiki: wikiService,
     raw: rawEvidenceService,
+    ...(mcpReaderPool !== undefined ? { rawReaderPool: mcpReaderPool } : {}),
     paymentIntents: paymentIntentService,
     agentService,
     proposals: {
@@ -3077,6 +3090,7 @@ async function main(): Promise<void> {
         cfg.BRAIN_RESOLVER_DB_URL,
         cfg.BRAIN_TENANT_DELETION_DB_URL,
       ].every((u) => u !== undefined),
+      mcpReaderDbIsolation: cfg.BRAIN_MCP_READER_DB_URL !== undefined,
       // Python brain-agents inbound auth (peer-review batch 2, P1+P2).
       // The Python side fails closed in production; this flag surfaces whether
       // we're signing on the way out.
@@ -3149,6 +3163,7 @@ async function main(): Promise<void> {
             auditPublisherPool,
             resolverPool,
             tenantDeletionPool,
+            ...(mcpReaderPool !== undefined ? [mcpReaderPool] : []),
           ]),
         disconnectRedis: () => redis.disconnect(),
         shutdownTracing: () => shutdownTracing(),

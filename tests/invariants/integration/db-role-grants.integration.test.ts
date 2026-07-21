@@ -135,6 +135,19 @@ const MATRIX: ReadonlyArray<{
       ["audit_integrity_findings", "SELECT"],
     ],
   },
+  {
+    role: "brain_mcp_reader",
+    can: [],
+    cannot: [
+      ["raw_artifacts", "INSERT"],
+      ["raw_artifacts", "UPDATE"],
+      ["raw_artifacts", "DELETE"],
+      ["raw_parsed", "INSERT"],
+      ["policy_decisions", "SELECT"],
+      ["policies", "SELECT"],
+      ["audit_events", "SELECT"],
+    ],
+  },
 ];
 
 suite("§4 DB role grant matrix (integration -- requires SUPERUSER DATABASE_URL)", () => {
@@ -203,4 +216,72 @@ suite("§4 DB role grant matrix (integration -- requires SUPERUSER DATABASE_URL)
       }
     });
   }
+
+  it("brain_mcp_reader: holds only approved Raw column-level SELECT grants", async (ctx) => {
+    if (!isSuper) {
+      ctx.skip();
+      return;
+    }
+    const client = await pool.connect();
+    try {
+      await client.query("SET ROLE brain_mcp_reader");
+      const allowedArtifactColumns = [
+        "id",
+        "tenant_id",
+        "sha256",
+        "source_type",
+        "source_ref",
+        "mime_type",
+        "bytes",
+        "ingested_at",
+        "tombstoned_at",
+        "ingested_by",
+        "source_schema",
+        "object_type",
+        "external_id",
+        "operation",
+        "effective_at",
+        "observed_at",
+        "original_source",
+        "intermediaries",
+        "source_id",
+        "source_version",
+        "idempotency_key",
+      ];
+      const allowedParsedColumns = [
+        "id",
+        "raw_artifact_id",
+        "tenant_id",
+        "parser",
+        "parser_version",
+        "extracted",
+        "confidence",
+        "extracted_at",
+      ];
+      for (const column of allowedArtifactColumns) {
+        const { rows } = await client.query<{ has: boolean }>(
+          "SELECT has_column_privilege(current_user, 'raw_artifacts', $1, 'SELECT') AS has",
+          [column],
+        );
+        expect(rows[0]?.has, `brain_mcp_reader should read raw_artifacts.${column}`).toBe(true);
+      }
+      for (const column of allowedParsedColumns) {
+        const { rows } = await client.query<{ has: boolean }>(
+          "SELECT has_column_privilege(current_user, 'raw_parsed', $1, 'SELECT') AS has",
+          [column],
+        );
+        expect(rows[0]?.has, `brain_mcp_reader should read raw_parsed.${column}`).toBe(true);
+      }
+      for (const column of ["blob_uri"]) {
+        const { rows } = await client.query<{ has: boolean }>(
+          "SELECT has_column_privilege(current_user, 'raw_artifacts', $1, 'SELECT') AS has",
+          [column],
+        );
+        expect(rows[0]?.has, `brain_mcp_reader must not read raw_artifacts.${column}`).toBe(false);
+      }
+    } finally {
+      await client.query("RESET ROLE").catch(() => undefined);
+      client.release();
+    }
+  });
 });

@@ -29,6 +29,7 @@ import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fa
 import type { Redis } from "ioredis";
 import type { Pool } from "pg";
 import { SiweMessage, generateNonce } from "siwe";
+import { internalAgentDefinitions } from "@brain/internal-agents";
 import { brainError, brainId, newAgentId, newTokenId, PAYMENT_AGENT_SCOPES } from "@brain/shared";
 import type { JwtSigner, Scope } from "@brain/shared";
 import { OWNER_SCOPES } from "../onboarding/login.js";
@@ -312,6 +313,10 @@ interface AgentLookupRow {
  */
 function scopesForRole(role: string): Scope[] {
   switch (role) {
+    case "dispute":
+    case "fraud_anomaly":
+    case "vendor_risk":
+      return [...catalogReadableScopesForRole(role), "execution:propose"];
     case "reconciliation":
       return ["ledger:read", "wiki:read", "raw:write", "execution:propose"];
     case "payment":
@@ -362,8 +367,22 @@ function scopesForRole(role: string): Scope[] {
       ];
     default:
       // dev / unknown -- read-heavy, no execution
-      return ["ledger:read", "wiki:read", "raw:read", "policy:read", "audit:read"];
+      return ["ledger:read", "wiki:read", "policy:read", "audit:read"];
   }
+}
+
+function catalogReadableScopesForRole(role: "dispute" | "fraud_anomaly" | "vendor_risk"): Scope[] {
+  const definition = internalAgentDefinitions[role];
+  if (definition === undefined) {
+    throw new Error(`${role} must exist in the internal-agent catalog before SIWX can mint it`);
+  }
+  const scopes = definition.readable_data.filter((scope): scope is Scope =>
+    scope.endsWith(":read"),
+  );
+  if (!scopes.includes("raw:read")) {
+    throw new Error(`${role} must declare raw:read before SIWX can mint it`);
+  }
+  return scopes;
 }
 
 /**

@@ -4,9 +4,10 @@
 # settlement (BRAIN_BASE_CHAIN_ID=84532), an S3-compatible blob store (MinIO,
 # no Azure dependency), and the production role model (RLS enforced). Unlike
 # docker-compose.dev.yml this uses the built runtime image (no bind mounts, no
-# watch) and applies the brain_app / brain_wiki_reader / eight §4 least-privilege
-# cross-tenant role split that the production boot fences require (brain_privileged
-# survives only for the deploy-time seed one-shot).
+# watch) and applies the brain_app, brain_wiki_reader, brain_mcp_reader, and
+# eight §4 least-privilege cross-tenant role split that the production boot
+# fences require (brain_privileged survives only for the deploy-time seed
+# one-shot).
 #
 #   1. cp .env.prod.example .env.prod   and fill it in (DB/MinIO passwords +
 #      the C-series secrets: AUTH_JWKS_URL, BRAIN_SESSION_KEY, BASE_RPC_URL, …)
@@ -27,7 +28,7 @@
 #
 # Boot order is enforced by depends_on conditions:
 #   postgres healthy → migrate (owner role, creates tables) completed
-#                     → db-roles (creates the 3 app roles, FORCE RLS) completed
+#                     → db-roles (creates the app roles, FORCE RLS) completed
 #   minio up → minio-setup (creates the bucket) completed
 #   all of the above + redis healthy → api
 #
@@ -156,7 +157,7 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # One-shot: create the three application roles and FORCE RLS on tenant tables.
+  # One-shot: create the application roles and FORCE RLS on tenant tables.
   # Runs AFTER migrate (the FORCE-RLS sweep only sees tables that already exist)
   # and uses the postgres image purely for its psql client. Idempotent — safe to
   # re-run across restarts (see infra/db-roles.sql).
@@ -179,6 +180,7 @@ services:
           -v brain_app_password="${BRAIN_APP_DB_PASSWORD:-brain_app}" \
           -v brain_privileged_password="${BRAIN_PRIVILEGED_DB_PASSWORD:-brain_privileged}" \
           -v brain_wiki_reader_password="${BRAIN_WIKI_DB_PASSWORD:-brain_wiki_reader}" \
+          -v brain_mcp_reader_password="${BRAIN_MCP_READER_DB_PASSWORD:-brain_mcp_reader}" \
           -v brain_raw_worker_password="${BRAIN_RAW_WORKER_DB_PASSWORD:-brain_raw_worker}" \
           -v brain_canonical_projector_password="${BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD:-brain_canonical_projector}" \
           -v brain_ledger_projector_password="${BRAIN_LEDGER_PROJECTOR_DB_PASSWORD:-brain_ledger_projector}" \
@@ -274,6 +276,7 @@ services:
       BRAIN_HTTP_ENABLED: "true"
       BRAIN_WORKERS: none
       BRAIN_WIKI_DB_URL: postgres://brain_wiki_reader:${BRAIN_WIKI_DB_PASSWORD:-brain_wiki_reader}@postgres:5432/brain
+      BRAIN_MCP_READER_DB_URL: postgres://brain_mcp_reader:${BRAIN_MCP_READER_DB_PASSWORD:-brain_mcp_reader}@postgres:5432/brain
       BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}@postgres:5432/brain
       BRAIN_TENANT_DELETION_DB_URL: postgres://brain_tenant_deletion:${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}@postgres:5432/brain
       BRAIN_AUDIT_VERIFIER_DB_URL: postgres://brain_audit_verifier:${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:-brain_audit_verifier}@postgres:5432/brain
