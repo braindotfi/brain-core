@@ -4,14 +4,19 @@
  *   BRAIN_WIKI_DB_URL   Wiki path MUST connect as brain_wiki_reader in
  *                       production so an accidental ledger_* write is a Postgres
  *                       permission error.
+ *   BRAIN_MCP_READER_DB_URL
+ *                       MCP raw evidence reads MUST connect as brain_mcp_reader
+ *                       when raw.artifact.get is exposed.
  *   §4 role URLs        The cross-tenant workers/resolvers MUST each connect as
  *                       their own least-privilege BYPASSRLS role (replacing the
  *                       single broad brain_privileged). All eight are required
  *                       in production. See infra/db-roles.sql §4.
  *
- * In dev/test each falls back to the main pool with a warning. In production the
- * absence of any throws. Factored out of main.ts so the behavior is
- * unit-testable without booting the full server.
+ * In dev/test the wiki and §4 worker URLs fall back to the main pool with a
+ * warning, while the MCP raw reader warns and leaves raw.artifact.get
+ * unavailable. In production the absence of any required URL throws. Factored
+ * out of main.ts so the behavior is unit-testable without booting the full
+ * server.
  */
 
 /** The eight §4 least-privilege role URLs, keyed by env var name. */
@@ -31,11 +36,18 @@ export interface DbIsolationCheckInput {
   wikiDbUrl: string | undefined;
   /** The eight §4 role connection strings. */
   privilegedRoleUrls: PrivilegedRoleUrls;
+  /** The tenant-scoped read-only MCP evidence role connection string. */
+  mcpReaderDbUrl?: string | undefined;
   /**
    * Whether this process serves the Wiki (HTTP /v1). When false (a worker
    * process), BRAIN_WIKI_DB_URL is not required. Defaults to true (the api).
    */
   requireWiki?: boolean;
+  /**
+   * Whether this process serves MCP raw evidence reads. When false, the reader
+   * URL is not required. Defaults to false.
+   */
+  requireMcpReader?: boolean;
   /**
    * Env var names of the role URLs this process actually needs (worker/process
    * separation): only these are fenced. When omitted, all are required (the
@@ -56,6 +68,7 @@ export function assertDbIsolationFences(input: DbIsolationCheckInput): string[] 
   const warnings: string[] = [];
   const isProd = input.nodeEnv === "production";
   const requireWiki = input.requireWiki ?? true;
+  const requireMcpReader = input.requireMcpReader ?? false;
 
   if (requireWiki && (input.wikiDbUrl === undefined || input.wikiDbUrl.length === 0)) {
     if (isProd) {
@@ -67,6 +80,21 @@ export function assertDbIsolationFences(input: DbIsolationCheckInput): string[] 
     const msg =
       "[boot] BRAIN_WIKI_DB_URL unset — Wiki shares the main DATABASE_URL (full privileges). " +
       "Set it to the brain_wiki_reader role in production (H-14).";
+    warn(msg);
+    warnings.push(msg);
+  }
+
+  if (
+    requireMcpReader &&
+    (input.mcpReaderDbUrl === undefined || input.mcpReaderDbUrl.length === 0)
+  ) {
+    if (isProd) {
+      throw new Error(
+        "BRAIN_MCP_READER_DB_URL is required in NODE_ENV=production. " +
+          "Set it to the brain_mcp_reader role connection string.",
+      );
+    }
+    const msg = "[boot] BRAIN_MCP_READER_DB_URL unset. raw.artifact.get will be unavailable.";
     warn(msg);
     warnings.push(msg);
   }

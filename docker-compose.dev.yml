@@ -74,6 +74,7 @@ services:
       AUTH_JWKS_URL: https://auth.brain.fi/.well-known/jwks.json
       BRAIN_DEMO_MODE: "true"
       BRAIN_MCP_DEV_AUTH_BYPASS: "true"
+      BRAIN_MCP_READER_DB_URL: ${BRAIN_MCP_READER_DB_URL:-}
       BLOB_BACKEND: memory
       # Optional real integrations — passed through from host env if present.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

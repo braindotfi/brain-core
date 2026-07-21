@@ -62,6 +62,7 @@ function base(): BootCapabilities {
     sourceCredentialKeyProvider: "none",
     wikiDbIsolation: false,
     privilegedDbIsolation: false,
+    mcpReaderDbIsolation: false,
     pythonAgentSigning: false,
   };
 }
@@ -97,13 +98,14 @@ describe("logBootCapabilities", () => {
     ]);
   });
 
-  it("emits the new safety-wiring flags (wiki/privileged DB isolation, python agent signing)", () => {
+  it("emits the new safety-wiring flags", () => {
     const { log, calls } = fakeLog();
     logBootCapabilities(
       {
         ...base(),
         wikiDbIsolation: true,
         privilegedDbIsolation: true,
+        mcpReaderDbIsolation: true,
         pythonAgentSigning: true,
       },
       log,
@@ -111,6 +113,7 @@ describe("logBootCapabilities", () => {
     const payload = calls[0]![0];
     expect(payload.wiki_db_isolation).toBe(true);
     expect(payload.privileged_db_isolation).toBe(true);
+    expect(payload.mcp_reader_db_isolation).toBe(true);
     expect(payload.python_agent_signing).toBe(true);
   });
 
@@ -120,6 +123,7 @@ describe("logBootCapabilities", () => {
     const payload = calls[0]![0];
     expect(payload.wiki_db_isolation).toBe(false);
     expect(payload.privileged_db_isolation).toBe(false);
+    expect(payload.mcp_reader_db_isolation).toBe(false);
     expect(payload.python_agent_signing).toBe(false);
   });
 

@@ -435,6 +435,7 @@ describe("PostgresAgentRegistry", () => {
     expect(result?.tenantId).toBe("tnt_01RECON00000000000000000");
     expect(result?.scopes).toContain("ledger:read");
     expect(result?.scopes).toContain("execution:propose");
+    expect(result?.scopes).not.toContain("raw:read");
     expect(result?.scopes).not.toContain("payment_intent:propose");
   });
 
@@ -484,8 +485,31 @@ describe("PostgresAgentRegistry", () => {
     const registry = new PostgresAgentRegistry(pool);
     const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopes).toContain("payment_intent:propose");
+    expect(result?.scopes).not.toContain("raw:read");
     expect(result?.scopes).not.toContain("raw:write");
   });
+
+  it.each(["dispute", "fraud_anomaly", "vendor_risk"] as const)(
+    "issues catalog-bound raw:read scopes for %s role",
+    async (role) => {
+      const pool = makePool([
+        {
+          id: "agent_01RAW00000000000000000000",
+          tenant_id: "tnt_01RAW0000000000000000000",
+          role,
+          scope_hash: null,
+          state: "active",
+        },
+      ]);
+      const registry = new PostgresAgentRegistry(pool);
+      const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+      expect(result?.scopes).toContain("ledger:read");
+      expect(result?.scopes).toContain("wiki:read");
+      expect(result?.scopes).toContain("raw:read");
+      expect(result?.scopes).toContain("execution:propose");
+      expect(result?.scopes).not.toContain("raw:write");
+    },
+  );
 
   it("issues read-only scopes for unknown role", async () => {
     const pool = makePool([
@@ -500,6 +524,7 @@ describe("PostgresAgentRegistry", () => {
     const registry = new PostgresAgentRegistry(pool);
     const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopes).toContain("audit:read");
+    expect(result?.scopes).not.toContain("raw:read");
     expect(result?.scopes).not.toContain("execution:propose");
   });
 

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Pool, PoolClient, QueryResult } from "pg";
 import {
   brainError,
   InMemoryAuditEmitter,
@@ -16,8 +17,11 @@ import type {
   IWikiMemoryService,
 } from "@brain/shared";
 
-const TENANT = "tnt_test";
-const AGENT_ID = "agent_payment01";
+const TENANT = "tnt_01J00000000000000000000000";
+const OTHER_TENANT = "tnt_01J0000000000000000000000A";
+const AGENT_ID = "agent_01J00000000000000000000000";
+const RAW_ID = "raw_01J00000000000000000000000";
+const PARSED_ID = "prs_01J00000000000000000000000";
 
 const ACTIVE_AGENT: AgentRecord = {
   id: AGENT_ID,
@@ -89,6 +93,114 @@ function fakeRaw(): IRawEvidenceService {
     listParsed: vi.fn(async () => []),
     tombstone: vi.fn(),
   } as unknown as IRawEvidenceService;
+}
+
+interface FakeRawArtifact {
+  id: string;
+  tenant_id: string;
+  sha256: string;
+  source_type: string;
+  source_ref: Record<string, unknown>;
+  mime_type: string | null;
+  bytes: number;
+  ingested_at: string;
+  tombstoned_at: string | null;
+  ingested_by: string;
+  source_schema: string | null;
+  object_type: string | null;
+  external_id: string | null;
+  operation: string | null;
+  effective_at: string | null;
+  observed_at: string | null;
+  original_source: string | null;
+  intermediaries: string[] | null;
+  source_id: string | null;
+  source_version: string | null;
+  idempotency_key: string | null;
+}
+
+interface FakeRawParsed {
+  id: string;
+  raw_artifact_id: string;
+  tenant_id: string;
+  parser: string;
+  parser_version: string;
+  extracted: Record<string, unknown>;
+  confidence: number | null;
+  extracted_at: string;
+}
+
+function fakeRawReaderPool(input: {
+  artifacts: FakeRawArtifact[];
+  parsed?: FakeRawParsed[];
+}): Pool {
+  const queryResult = (rows: unknown[], rowCount: number | null = rows.length): QueryResult => ({
+    command: "SELECT",
+    rowCount,
+    oid: 0,
+    fields: [],
+    rows,
+  });
+  return {
+    connect: vi.fn(async () => {
+      let scopedTenant: string | null = null;
+      const client = {
+        query: vi.fn(async (sql: string, params?: readonly unknown[]): Promise<QueryResult> => {
+          if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+            return queryResult([], null);
+          }
+          if (sql.startsWith("SELECT set_config")) {
+            scopedTenant = String(params?.[0] ?? "");
+            return queryResult([], 1);
+          }
+          if (sql.includes("FROM raw_artifacts")) {
+            const id = String(params?.[0] ?? "");
+            const row = input.artifacts.find(
+              (artifact) => artifact.id === id && artifact.tenant_id === scopedTenant,
+            );
+            return queryResult(row === undefined ? [] : [row], row === undefined ? 0 : 1);
+          }
+          if (sql.includes("FROM raw_parsed")) {
+            const id = String(params?.[0] ?? "");
+            const rows = (input.parsed ?? []).filter(
+              (row) => row.raw_artifact_id === id && row.tenant_id === scopedTenant,
+            );
+            return queryResult(rows);
+          }
+          throw new Error(`unexpected query: ${sql}`);
+        }),
+        release: vi.fn(),
+      } as unknown as PoolClient;
+      return client;
+    }),
+  } as unknown as Pool;
+}
+
+function rawArtifactFixture(overrides: Partial<FakeRawArtifact> = {}): FakeRawArtifact {
+  return {
+    id: RAW_ID,
+    tenant_id: TENANT,
+    sha256: "f".repeat(64),
+    source_type: "stripe",
+    source_ref: { object: "charge", id: "ch_test" },
+    mime_type: "application/json",
+    bytes: 256,
+    ingested_at: "2026-07-21T00:00:00.000Z",
+    tombstoned_at: null,
+    ingested_by: AGENT_ID,
+    source_schema: "stripe.charge",
+    object_type: "charge",
+    external_id: "ch_test",
+    operation: "upsert",
+    effective_at: "2026-07-20T00:00:00.000Z",
+    observed_at: "2026-07-21T00:00:00.000Z",
+    original_source: "stripe",
+    intermediaries: ["webhook"],
+    source_id: "src_01J00000000000000000000000",
+    source_version: "2026-07-21",
+    idempotency_key: "raw-test-key",
+    ...overrides,
+  };
 }
 
 function fakePI(): IPaymentIntentService {
@@ -193,21 +305,26 @@ function fakeEvidence(): EvidenceToolService {
   };
 }
 
-function makeServer(scopes: string[] = ["ledger:read", "wiki:read"]) {
+function makeServer(
+  scopes: string[] = ["ledger:read", "wiki:read"],
+  opts: { rawReaderPool?: Pool; raw?: IRawEvidenceService } = {},
+) {
   const audit = new InMemoryAuditEmitter();
   const proposals = fakeProposals();
   const evidence = fakeEvidence();
+  const raw = opts.raw ?? fakeRaw();
   const server = new BrainMcpServer({
     auth: new FakeAuthVerifier(ACTIVE_AGENT),
     ledger: fakeLedger(),
     wiki: fakeWiki(),
-    raw: fakeRaw(),
+    raw,
+    ...(opts.rawReaderPool !== undefined ? { rawReaderPool: opts.rawReaderPool } : {}),
     paymentIntents: fakePI(),
     proposals,
     evidence,
     audit,
   });
-  return { server, audit, proposals, evidence, p: principal(scopes) };
+  return { server, audit, proposals, evidence, raw, p: principal(scopes) };
 }
 
 function makeServerWithoutProposalDeps(scopes: string[] = ["execution:read"]) {
@@ -257,9 +374,10 @@ describe("BrainMcpServer.handle — protocol surface", () => {
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" }, p);
     if (!("result" in res)) throw new Error("expected result");
     const r = res.result as { tools: Array<{ name: string }> };
-    expect(r.tools.length).toBe(16);
+    expect(r.tools.length).toBe(17);
     const names = r.tools.map((t) => t.name);
     expect(names).toContain("ledger.account.get");
+    expect(names).toContain("raw.artifact.get");
     expect(names).toContain("payment_intent.propose");
     expect(names).toContain("payment_intent.cancel");
     expect(names).toContain("payment_intent.list");
@@ -347,6 +465,128 @@ describe("BrainMcpServer.handle — protocol surface", () => {
     };
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "ping" }, userPrincipal);
     expect("result" in res).toBe(true);
+  });
+});
+
+describe("BrainMcpServer.handle - raw.artifact.get", () => {
+  it("returns same-tenant artifact metadata and parsed rows", async () => {
+    const pool = fakeRawReaderPool({
+      artifacts: [rawArtifactFixture()],
+      parsed: [
+        {
+          id: PARSED_ID,
+          raw_artifact_id: RAW_ID,
+          tenant_id: TENANT,
+          parser: "stripe_charge",
+          parser_version: "1.0.0",
+          extracted: { amount: "42.00", currency: "USD" },
+          confidence: 0.97,
+          extracted_at: "2026-07-21T00:01:00.000Z",
+        },
+      ],
+    });
+    const raw = fakeRaw();
+    const { server, p } = makeServer(["raw:read"], { rawReaderPool: pool, raw });
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "raw.artifact.get", arguments: { raw_id: RAW_ID } },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if (!("result" in res)) throw new Error("expected result");
+    const body = res.result as {
+      structuredContent: {
+        raw_id: string;
+        sha256: string;
+        bytes: number;
+        parsed: Array<{ id: string; extracted: Record<string, unknown> }>;
+      };
+    };
+    expect(body.structuredContent.raw_id).toBe(RAW_ID);
+    expect(body.structuredContent.bytes).toBe(256);
+    expect(body.structuredContent.parsed[0]?.id).toBe(PARSED_ID);
+    expect(body.structuredContent.parsed[0]?.extracted).toEqual({
+      amount: "42.00",
+      currency: "USD",
+    });
+    const serialized = JSON.stringify(body.structuredContent);
+    expect(serialized).not.toContain("blob_uri");
+    expect(serialized).not.toContain("signed_url");
+    expect(raw.signedUrl).not.toHaveBeenCalled();
+  });
+
+  it("treats cross-tenant and absent artifacts as not found", async () => {
+    const pool = fakeRawReaderPool({
+      artifacts: [rawArtifactFixture({ tenant_id: OTHER_TENANT })],
+    });
+    const { server, p } = makeServer(["raw:read"], { rawReaderPool: pool });
+    for (const rawId of [RAW_ID, "raw_01J0000000000000000000000B"]) {
+      const res = await server.handle(
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "raw.artifact.get", arguments: { raw_id: rawId } },
+        },
+        p,
+      );
+      expect("error" in res && res.error.data?.brain_code).toBe("raw_artifact_not_found");
+    }
+  });
+
+  it("skips parsed rows when include_parsed is false", async () => {
+    const pool = fakeRawReaderPool({
+      artifacts: [rawArtifactFixture()],
+      parsed: [
+        {
+          id: PARSED_ID,
+          raw_artifact_id: RAW_ID,
+          tenant_id: TENANT,
+          parser: "stripe_charge",
+          parser_version: "1.0.0",
+          extracted: { amount: "42.00" },
+          confidence: 0.97,
+          extracted_at: "2026-07-21T00:01:00.000Z",
+        },
+      ],
+    });
+    const { server, p } = makeServer(["raw:read"], { rawReaderPool: pool });
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "raw.artifact.get",
+          arguments: { raw_id: RAW_ID, include_parsed: false },
+        },
+      },
+      p,
+    );
+    expect("result" in res).toBe(true);
+    if (!("result" in res)) throw new Error("expected result");
+    const body = res.result as { structuredContent: { parsed: unknown[] } };
+    expect(body.structuredContent.parsed).toEqual([]);
+  });
+
+  it("fails closed when the reader pool is not configured", async () => {
+    const raw = fakeRaw();
+    const { server, p } = makeServer(["raw:read"], { raw });
+    const res = await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "raw.artifact.get", arguments: { raw_id: RAW_ID } },
+      },
+      p,
+    );
+    expect("error" in res && res.error.data?.brain_code).toBe("dependency_unavailable");
+    expect(raw.signedUrl).not.toHaveBeenCalled();
   });
 });
 

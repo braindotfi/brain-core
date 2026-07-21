@@ -9,8 +9,8 @@ the repo root.
 
 ## What's Exposed
 
-- **16 tools** across 6 capability groups: `ledger:read`, `wiki:read`,
-  `raw:write`, `payment_intent:propose`, `execution:propose`,
+- **17 tools** across 6 capability groups: `ledger:read`, `wiki:read`,
+  `raw:read`, `raw:write`, `payment_intent:propose`, `execution:propose`,
   proposal decisions, and evidence resolution.
 - **6 resources** with stable `brain://...` URIs.
 - **5 prompts** that templatize canonical financial questions.

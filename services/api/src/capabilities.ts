@@ -91,6 +91,11 @@ export interface BootCapabilities {
    */
   privilegedDbIsolation: boolean;
   /**
+   * Whether raw.artifact.get uses the tenant-scoped brain_mcp_reader pool.
+   * False means the tool is unavailable rather than falling back to DATABASE_URL.
+   */
+  mcpReaderDbIsolation: boolean;
+  /**
    * Whether outbound calls to the Python brain-agents service are HMAC-signed
    * (BRAIN_AGENTS_INBOUND_SECRET present). False ⇒ the Python verifier (which
    * fails closed in production) rejects every request. Required true whenever
@@ -141,6 +146,7 @@ export function logBootCapabilities(c: BootCapabilities, log: Logger): void {
       source_credential_key_provider: c.sourceCredentialKeyProvider,
       wiki_db_isolation: c.wikiDbIsolation,
       privileged_db_isolation: c.privilegedDbIsolation,
+      mcp_reader_db_isolation: c.mcpReaderDbIsolation,
       python_agent_signing: c.pythonAgentSigning,
     },
     "brain.runtime.capabilities",

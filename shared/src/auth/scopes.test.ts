@@ -40,15 +40,12 @@ describe("isValidScope", () => {
 });
 
 describe("AGENT_PERMITTED_SCOPES", () => {
-  it("is the functional five-scope set an external agent may hold (§3.2)", () => {
-    // §3.2 lists five: ledger:read, wiki:read, raw:write, payment_intent:propose,
-    // and the non-financial-proposal scope the doc calls agent:propose — which the
-    // codebase implements under the legacy name execution:propose (the MCP
-    // agent.action.propose tool and SIWX grant both use execution:propose).
-    expect(AGENT_PERMITTED_SCOPES.size).toBe(5);
+  it("is the functional six-scope set an external agent may hold", () => {
+    expect(AGENT_PERMITTED_SCOPES.size).toBe(6);
     for (const s of [
       "ledger:read",
       "wiki:read",
+      "raw:read",
       "raw:write",
       "payment_intent:propose",
       "execution:propose",

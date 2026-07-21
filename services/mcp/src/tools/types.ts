@@ -22,6 +22,7 @@ import type {
   ServiceCallContext,
 } from "@brain/shared";
 import { brainError } from "@brain/shared";
+import type { Pool } from "pg";
 import type {
   EvidenceResolveRef,
   EvidenceResolveResult,
@@ -56,6 +57,8 @@ export interface ToolContext {
   ledger: ILedgerService;
   wiki: IWikiMemoryService;
   raw: IRawEvidenceService;
+  /** Dedicated brain_mcp_reader pool for tenant-scoped read-only Raw evidence. */
+  rawReaderPool?: Pool;
   paymentIntents: IPaymentIntentService;
   /** Optional — the Agent layer's proposal service. Wired when AGENT_SERVICE_URL
    *  is set; agent.action.propose returns internal_server_error when absent. */

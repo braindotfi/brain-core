@@ -13,6 +13,7 @@ export interface RuntimeDbRolePools {
   resolver: Pool;
   tenantDeletion: Pool;
   wiki: Pool;
+  mcpReader?: Pool;
 }
 
 export async function assertRuntimeDbRoles(input: {
@@ -170,6 +171,23 @@ export async function assertRuntimeDbRoles(input: {
       ],
     },
   ];
+  if (input.pools.mcpReader !== undefined) {
+    allRoleExpectations.push({
+      label: "mcp-reader",
+      query: asQuery(input.pools.mcpReader),
+      mustBypassRls: false,
+      expectedRole: "brain_mcp_reader",
+      forbidden: [
+        { table: "raw_artifacts", privilege: "INSERT" },
+        { table: "raw_artifacts", privilege: "UPDATE" },
+        { table: "raw_artifacts", privilege: "DELETE" },
+        { table: "raw_parsed", privilege: "INSERT" },
+        { table: "policy_decisions", privilege: "SELECT" },
+        { table: "policies", privilege: "SELECT" },
+        { table: "audit_events", privilege: "SELECT" },
+      ],
+    });
+  }
 
   await assertDbRoles(
     allRoleExpectations.filter((e) => shouldAssertRuntimeRole(e.label, input.composition)),
@@ -191,6 +209,7 @@ const LABEL_TO_POOL: Partial<Record<string, PoolName>> = {
 function shouldAssertRuntimeRole(label: string, composition: ProcessComposition): boolean {
   if (label === "request") return true;
   if (label === "wiki") return composition.httpEnabled;
+  if (label === "mcp-reader") return composition.httpEnabled;
   const poolName = LABEL_TO_POOL[label];
   return poolName !== undefined && composition.pools.has(poolName);
 }

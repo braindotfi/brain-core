@@ -25,6 +25,7 @@ import {
   type Proof,
   type ServiceCallContext,
 } from "@brain/shared";
+import type { Pool } from "pg";
 import { dispatch, invalidParams, type JsonRpcHandler } from "./dispatcher.js";
 import {
   PROTOCOL_VERSION,
@@ -55,6 +56,7 @@ export interface McpServerDeps {
   ledger: ILedgerService;
   wiki: IWikiMemoryService;
   raw: IRawEvidenceService;
+  rawReaderPool?: Pool;
   paymentIntents: IPaymentIntentService;
   /** Optional. When absent, agent.action.propose returns internal_server_error. */
   agentService?: IAgentService;
@@ -115,6 +117,7 @@ export class BrainMcpServer {
       ledger: this.deps.ledger,
       wiki: this.deps.wiki,
       raw: this.deps.raw,
+      ...(this.deps.rawReaderPool !== undefined ? { rawReaderPool: this.deps.rawReaderPool } : {}),
       paymentIntents: this.deps.paymentIntents,
       ...(this.deps.agentService !== undefined ? { agentService: this.deps.agentService } : {}),
       ...(this.deps.proposals !== undefined ? { proposals: this.deps.proposals } : {}),
