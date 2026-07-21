@@ -2,13 +2,14 @@
 
 Brain authenticates three caller types: humans, internal agents, and external agents. The same API endpoints serve all three. Only the credential differs.
 
-| Caller             | Mode                                                | Credential                                     |
-| ------------------ | --------------------------------------------------- | ---------------------------------------------- |
-| **Human**          | Self-serve email + password, **or** a linked wallet | Bearer owner JWT                               |
-| **Internal agent** | Brain-issued service token (your own backend)       | Bearer service token, the `brain_sk_…` API key |
-| **External agent** | SIWX (EIP-4361 over Base) + on-chain scope          | `access_token` from the SIWX exchange          |
+| Caller             | Mode                                                | Credential                            |
+| ------------------ | --------------------------------------------------- | ------------------------------------- |
+| **Human**          | Self-serve email + password, **or** a linked wallet | Bearer owner JWT                      |
+| **Internal agent** | Brain-issued service token (your own backend)       | Bearer service token                  |
+| **API partner**    | Tenant API key                                      | Bearer `brain_sk_…` key               |
+| **External agent** | SIWX (EIP-4361 over Base) + on-chain scope          | `access_token` from the SIWX exchange |
 
-Every credential is presented the same way: `Authorization: Bearer <token>`. There is one bearer mechanism, not several. The `brain_sk_test_…` / `brain_sk_live_…` value you copy from the Console **is** the internal-agent service token, the same artifact the SDK takes as `new Brain({ token })` and that Concepts calls the "Server API key". See [Server API key](#server-api-key-brain_sk_) below.
+Every credential is presented the same way: `Authorization: Bearer <token>`. There is one bearer mechanism, not several. The `brain_sk_test_…` / `brain_sk_live_…` value you copy from the Console is a tenant API key. The SDK takes it as `new Brain({ apiKey })`. See [Server API key](#server-api-key-brain_sk_) below.
 
 {% hint style="info" %}
 Self-serve signup is gated by the `BRAIN_SELF_SERVE_SIGNUP` flag and is **sandbox-only** (RFC 0002): a new tenant can read and _propose_, but moves no money until the existing promotion + external-audit gates clear. Hosted SSO (Auth0/SAML) is **planned (roadmap)**, not in the MVP.
@@ -20,16 +21,16 @@ The internal `POST /v1/auth/service-token` mint route is a break-glass sandbox/t
 
 ### Server API key (`brain_sk_`)
 
-The credential a server-side integration uses is a Brain-issued **service token**, surfaced in the Console and SDK as an API key with a `brain_sk_` prefix. It is one artifact under three names: "Server API key" (Concepts), "service token" (the table above), and `brain_sk_` (the Console/SDK value). It is **not** a distinct fourth credential.
+The credential a server-side integration uses is a Brain-issued tenant API key with a `brain_sk_` prefix. It authenticates directly as a bearer credential; there is no token exchange step.
 
-| Property            | Value                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------- |
-| **Format**          | `brain_sk_test_…` (sandbox) / `brain_sk_live_…` (live)                                         |
-| **Issued by**       | The Console, per tenant                                                                        |
-| **Presented as**    | `Authorization: Bearer brain_sk_…`, or `new Brain({ token: "brain_sk_…" })` in the SDK         |
-| **Scopes**          | The management/read/propose scopes granted to the backing service principal (never `:execute`) |
-| **Sandbox vs live** | Distinct keys per environment; a sandbox key is rejected against the live host and vice versa  |
-| **Lifetime**        | 90 days; rotated by a tenant admin (see [Token Lifetimes](#token-lifetimes))                   |
+| Property            | Value                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| **Format**          | `brain_sk_test_…` (sandbox) / `brain_sk_live_…` (live)                                  |
+| **Issued by**       | The Console, per tenant                                                                 |
+| **Presented as**    | `Authorization: Bearer brain_sk_…`, or `new Brain({ apiKey: "brain_sk_…" })` in the SDK |
+| **Scopes**          | `ledger:read`, `audit:read`                                                             |
+| **Sandbox vs live** | Distinct keys per environment                                                           |
+| **Lifetime**        | Until revoked or rotated by a tenant admin                                              |
 
 Rate limits, idempotency, and audit attribution are all keyed off this token.
 

@@ -1,328 +1,531 @@
-/**
- * Per-customer API-key authentication (token-exchange model).
- *
- * A customer holding an issued key exchanges it for a short-lived agent JWT:
- *
- *   POST /v1/auth/api-key           header X-Api-Key: brain_sk_...  -> Bearer JWT
- *
- * Keys are ISSUED and REVOKED only by an operator holding the platform
- * credential (the same fence as POST /v1/tenants), never self-minted:
- *
- *   POST   /v1/tenants/:tenantId/api-keys
- *   DELETE /v1/tenants/:tenantId/api-keys/:keyId
- *
- * Storage mirrors session_refresh_tokens: only the sha256 hash of the secret
- * is stored (api_keys.token_hash), and the cross-tenant hash lookup on
- * exchange goes through the resolver pool (brain_resolver, BYPASSRLS + a
- * narrow per-table SELECT grant), exactly like findRefreshToken above.
- */
-
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import { createHash, randomBytes } from "node:crypto";
 import type { Pool } from "pg";
 import {
   API_KEY_PERMITTED_SCOPES,
   brainError,
-  computeAgentScopeHash,
-  newAgentId,
   newApiKeyId,
-  newTokenId,
+  requireScope,
   withTenantScope,
   type AuditEmitter,
-  type JwtSigner,
+  type Principal,
   type Scope,
+  type SlidingWindowRateLimiter,
+  type TenantScopedClient,
 } from "@brain/shared";
-import { findAgent, transitionAgent } from "@brain/execution";
-import { assertPlatformCredential, hashToken, newSecretToken } from "./routes.js";
 
-const API_KEY_PREFIX = "brain_sk_";
-const EXCHANGE_TTL_SECONDS = 60 * 60; // 1 hour, matches service-token.
+export type ApiKeyEnvironment = "sandbox" | "live";
+
+const ENV_PREFIX: Record<ApiKeyEnvironment, string> = {
+  sandbox: "brain_sk_test_",
+  live: "brain_sk_live_",
+};
+
+const DEFAULT_USAGE_WINDOW = "30d";
+const MAX_GENERATE_ATTEMPTS = 5;
 
 export interface ApiKeyRoutesDeps {
   pool: Pool;
-  /** Cross-tenant hash lookup on exchange, same role as session refresh tokens. */
   resolverPool: Pool;
   audit: AuditEmitter;
-  signer: JwtSigner;
-  platformSecret?: string;
+  pepper: string;
+}
+
+export interface ApiKeyAuthenticatorDeps {
+  pool: Pool;
+  resolverPool: Pool;
+  pepper: string;
+  rateLimiter?: SlidingWindowRateLimiter;
 }
 
 interface ApiKeyRow {
-  token_hash: string;
-  key_id: string;
+  id: string;
   tenant_id: string;
-  agent_id: string;
+  name: string;
+  environment: ApiKeyEnvironment;
   scopes: Scope[];
+  key_prefix: string;
+  key_last4: string;
+  hashed_secret: string;
+  created_at: Date | string;
+  last_used_at: Date | string | null;
   revoked_at: Date | string | null;
-  expires_at: Date | string | null;
+  rotated_from_id: string | null;
 }
 
 export async function registerApiKeyRoutes(
   app: FastifyInstance,
   deps: ApiKeyRoutesDeps,
 ): Promise<void> {
-  // ---- Exchange: POST /auth/api-key --------------------------------------
   app.post(
-    "/auth/api-key",
-    { config: { skipAuth: true, rateLimit: { max: 30, timeWindow: "1 minute" } } },
-    async (request, reply) => {
-      const headerRaw = request.headers["x-api-key"];
-      const provided = Array.isArray(headerRaw) ? headerRaw[0] : headerRaw;
-      if (provided === undefined || provided.length === 0) {
-        return exchangeUnauthorized(reply, request.id);
-      }
+    "/tenants/:tenantId/keys",
+    async (request: FastifyRequest<{ Params: { tenantId: string } }>, reply) => {
+      const principal = requireTenantAdmin(request, request.params.tenantId);
+      const body = request.body as
+        | { name?: unknown; environment?: unknown; scopes?: unknown }
+        | undefined;
+      const name = requireName(body?.name);
+      const environment = parseEnvironment(body?.environment);
+      const scopes = parseIssuedScopes(body?.scopes);
 
-      const tokenHash = hashToken(provided);
-      const { rows } = await deps.resolverPool.query<ApiKeyRow>(
-        `SELECT token_hash, key_id, tenant_id, agent_id, scopes, revoked_at, expires_at
-           FROM api_keys WHERE token_hash = $1 LIMIT 1`,
-        [tokenHash],
-      );
-      const row = rows[0];
-      // Not found, revoked, or expired all fall through to the same generic
-      // 401 below — never leak which condition failed.
-      if (row === undefined || row.revoked_at !== null || isPast(row.expires_at)) {
-        return exchangeUnauthorized(reply, request.id);
-      }
-
-      await withTenantScope(deps.pool, row.tenant_id, (client) =>
-        client.query(`UPDATE api_keys SET last_used_at = now() WHERE token_hash = $1`, [tokenHash]),
-      );
-
-      const tokenId = newTokenId();
-      const token = await deps.signer.sign({
-        id: row.agent_id,
-        type: "agent",
-        tenantId: row.tenant_id,
-        tokenId,
-        expiresAt: Math.floor(Date.now() / 1000) + EXCHANGE_TTL_SECONDS,
-        scopes: row.scopes,
+      const issued = await issueKey(deps.pool, {
+        tenantId: request.params.tenantId,
+        name,
+        environment,
+        scopes,
+        pepper: deps.pepper,
       });
 
       await deps.audit.emit({
-        tenantId: row.tenant_id,
-        layer: "agent",
-        actor: row.agent_id,
-        action: "auth.api_key.exchanged",
-        inputs: { key_id: row.key_id },
-        outputs: { tenant_id: row.tenant_id, key_id: row.key_id, token_id: tokenId },
+        tenantId: request.params.tenantId,
+        layer: "identity",
+        actor: principal.id,
+        action: "api_key.issued",
+        inputs: { name, environment, scopes },
+        outputs: { key_id: issued.row.id },
       });
 
-      reply.status(200);
-      return {
-        token,
-        token_type: "Bearer",
-        expires_in: EXCHANGE_TTL_SECONDS,
-        tenant_id: row.tenant_id,
-        agent_id: row.agent_id,
-        scopes: row.scopes,
-      };
+      reply.status(201);
+      return serializeKey(issued.row, issued.secret);
     },
   );
 
-  // ---- Issue: POST /tenants/:tenantId/api-keys ----------------------------
+  app.get(
+    "/tenants/:tenantId/keys",
+    async (request: FastifyRequest<{ Params: { tenantId: string } }>) => {
+      requireTenantAdmin(request, request.params.tenantId);
+      const { rows } = await withTenantScope(deps.pool, request.params.tenantId, (client) =>
+        client.query<ApiKeyRow>(
+          `SELECT id, tenant_id, name, environment, scopes, key_prefix, key_last4,
+                  hashed_secret, created_at, last_used_at, revoked_at, rotated_from_id
+             FROM api_keys
+            WHERE tenant_id = $1
+            ORDER BY created_at DESC, id DESC`,
+          [request.params.tenantId],
+        ),
+      );
+      return { keys: rows.map((row) => serializeKey(row)) };
+    },
+  );
+
   app.post(
-    "/tenants/:tenantId/api-keys",
-    { config: { skipAuth: true, rateLimit: { max: 20, timeWindow: "1 minute" } } },
-    async (request, reply) => {
-      // Same platform fence as POST /v1/tenants; "tenant:create" is the
-      // closest existing literal in the fixed assertPlatformCredential union
-      // (deliberately not widened with a new colon-separated literal, which
-      // check-scope-vocab would flag as a candidate Brain scope).
-      assertPlatformCredential(request, deps.platformSecret, "tenant:create");
-      const { tenantId } = request.params as { tenantId: string };
-      const body = request.body as
-        | { name?: unknown; scopes?: unknown; expires_at?: unknown }
-        | undefined;
-      const scopes = parseIssuedScopes(body?.scopes);
-      const expiresAt = parseExpiresAt(body?.expires_at);
-      const name =
-        typeof body?.name === "string" && body.name.trim().length > 0 ? body.name.trim() : null;
+    "/keys/:id/rotate",
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+      const tenantId = await resolveKeyTenant(deps.resolverPool, request.params.id);
+      if (tenantId === null) {
+        throw brainError("api_key_not_found", "api key does not exist", { statusOverride: 404 });
+      }
+      const principal = requireTenantAdmin(request, tenantId);
 
-      const scopeHash = Buffer.from(computeAgentScopeHash(scopes).slice(2), "hex");
-      const plaintext = API_KEY_PREFIX + newSecretToken();
-      const tokenHash = hashToken(plaintext);
-      const keyId = newApiKeyId();
-      const agentId = newAgentId();
-
-      await withTenantScope(deps.pool, tenantId, async (client) => {
-        const { rows: tenantRows } = await client.query<{ id: string }>(
-          `SELECT id FROM tenants WHERE id = $1 LIMIT 1`,
-          [tenantId],
-        );
-        if (tenantRows[0] === undefined) {
-          throw brainError("tenant_not_found", "tenant does not exist", { statusOverride: 404 });
+      const issued = await withTenantScope(deps.pool, tenantId, async (client) => {
+        const old = await lockActiveKey(client, request.params.id);
+        if (old === null) {
+          throw brainError("api_key_not_found", "api key is not active", { statusOverride: 404 });
         }
-        // kind='external' + role='partner': this agent represents a
-        // customer-held credential, not an internal Brain-owned agent (that
-        // distinction is what service-token's kind='internal' role='payment'
-        // insert encodes). state='active' immediately -- there is no
-        // on-chain registration step for an API-key agent.
         await client.query(
-          `INSERT INTO agents (id, tenant_id, kind, role, display_name, scope_hash, state, registered_at, created_at)
-           VALUES ($1, $2, 'external', 'partner', $3, $4, 'active', now(), now())`,
-          [agentId, tenantId, name ?? "API key", scopeHash],
+          `UPDATE api_keys
+              SET revoked_at = now()
+            WHERE id = $1 AND revoked_at IS NULL`,
+          [old.id],
         );
-        await client.query(
-          `INSERT INTO api_keys (token_hash, key_id, tenant_id, agent_id, scopes, name, expires_at)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
-          [tokenHash, keyId, tenantId, agentId, JSON.stringify(scopes), name, expiresAt],
-        );
+        return insertGeneratedKey(client, {
+          tenantId,
+          name: old.name,
+          environment: old.environment,
+          scopes: old.scopes,
+          pepper: deps.pepper,
+          rotatedFromId: old.id,
+        });
       });
 
       await deps.audit.emit({
         tenantId,
-        layer: "agent",
-        actor: agentId,
-        action: "auth.api_key.issued",
-        inputs: { name, scopes },
-        outputs: { key_id: keyId, agent_id: agentId },
+        layer: "identity",
+        actor: principal.id,
+        action: "api_key.rotated",
+        inputs: { rotated_from_id: request.params.id },
+        outputs: { key_id: issued.row.id },
       });
 
       reply.status(201);
-      // The plaintext key is returned exactly once, right here. Only its
-      // sha256 hash is persisted (api_keys.token_hash) -- it cannot be
-      // retrieved again after this response; a lost key must be reissued.
+      return serializeKey(issued.row, issued.secret);
+    },
+  );
+
+  app.delete("/keys/:id", async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    const tenantId = await resolveKeyTenant(deps.resolverPool, request.params.id);
+    if (tenantId === null) {
+      throw brainError("api_key_not_found", "api key does not exist", { statusOverride: 404 });
+    }
+    const principal = requireTenantAdmin(request, tenantId);
+    const revoked = await withTenantScope(deps.pool, tenantId, async (client) => {
+      const { rows } = await client.query<{ id: string }>(
+        `UPDATE api_keys
+              SET revoked_at = now()
+            WHERE id = $1 AND revoked_at IS NULL
+            RETURNING id`,
+        [request.params.id],
+      );
+      return rows[0] !== undefined;
+    });
+
+    if (revoked) {
+      await deps.audit.emit({
+        tenantId,
+        layer: "identity",
+        actor: principal.id,
+        action: "api_key.revoked",
+        inputs: { key_id: request.params.id },
+        outputs: { revoked: true },
+      });
+    }
+
+    reply.status(204);
+    return null;
+  });
+
+  app.get(
+    "/tenants/:tenantId/usage",
+    async (
+      request: FastifyRequest<{
+        Params: { tenantId: string };
+        Querystring: { window?: string; environment?: string; key_id?: string };
+      }>,
+    ) => {
+      const principal = requireTenantRead(request, request.params.tenantId);
+      requireScope(principal.scopes, "audit:read");
+      const window = parseUsageWindow(request.query.window);
+      const environment =
+        request.query.environment === undefined
+          ? undefined
+          : parseEnvironment(request.query.environment);
+      const keyId = request.query.key_id;
+      if (keyId !== undefined && keyId.length === 0) {
+        throw brainError("request_params_invalid", "key_id must not be empty");
+      }
+
+      const rows = await withTenantScope(deps.pool, request.params.tenantId, (client) =>
+        queryUsage(client, {
+          tenantId: request.params.tenantId,
+          window,
+          ...(environment !== undefined ? { environment } : {}),
+          ...(keyId !== undefined ? { keyId } : {}),
+        }),
+      );
+      const total = rows.reduce((sum, row) => sum + Number(row.event_count), 0);
       return {
-        api_key: plaintext,
-        key_id: keyId,
-        agent_id: agentId,
-        tenant_id: tenantId,
-        scopes,
-        name,
-        expires_at: expiresAt,
+        tenant_id: request.params.tenantId,
+        window,
+        ...(environment !== undefined ? { environment } : {}),
+        ...(keyId !== undefined ? { key_id: keyId } : {}),
+        total_events: total,
+        keys: rows.map((row) => ({
+          key_id: row.key_id,
+          environment: row.environment,
+          event_count: Number(row.event_count),
+          first_event_at: toIso(row.first_event_at),
+          last_event_at: toIso(row.last_event_at),
+        })),
       };
     },
   );
-
-  // ---- Revoke: DELETE /tenants/:tenantId/api-keys/:keyId ------------------
-  app.delete(
-    "/tenants/:tenantId/api-keys/:keyId",
-    { config: { skipAuth: true, rateLimit: { max: 20, timeWindow: "1 minute" } } },
-    async (request, reply) => {
-      assertPlatformCredential(request, deps.platformSecret, "tenant:create");
-      const { tenantId, keyId } = request.params as { tenantId: string; keyId: string };
-
-      // Three-way outcome so a typo'd key id 404s (route is platform-secret
-      // gated -- the caller is trusted, so revealing existence leaks nothing)
-      // while re-revoking an already-revoked key stays a silent no-op (no
-      // repeat audit event, no repeat agent update).
-      const outcome = await withTenantScope(deps.pool, tenantId, async (client) => {
-        const { rows } = await client.query<{ agent_id: string }>(
-          `UPDATE api_keys SET revoked_at = now()
-             WHERE tenant_id = $1 AND key_id = $2 AND revoked_at IS NULL
-           RETURNING agent_id`,
-          [tenantId, keyId],
-        );
-        const row = rows[0];
-        if (row !== undefined) {
-          const agent = await findAgent(client, row.agent_id);
-          if (agent === null) {
-            throw brainError("agent_not_found", "api key agent does not exist");
-          }
-          if (agent.state === "active" || agent.state === "quarantined") {
-            await transitionAgent(client, row.agent_id, agent.state, "revoked");
-          } else if (agent.state !== "revoked") {
-            throw brainError(
-              "execution_agent_not_registered",
-              `cannot revoke api key agent from state ${agent.state}`,
-            );
-          }
-          return { status: "revoked" as const, agentId: row.agent_id };
-        }
-        // No row updated -- either already revoked or never existed.
-        // Disambiguate with a plain existence check.
-        const { rows: existing } = await client.query<{ found: number }>(
-          `SELECT 1 AS found FROM api_keys WHERE tenant_id = $1 AND key_id = $2 LIMIT 1`,
-          [tenantId, keyId],
-        );
-        return existing[0] === undefined
-          ? { status: "not_found" as const }
-          : { status: "already_revoked" as const };
-      });
-
-      if (outcome.status === "not_found") {
-        throw brainError("api_key_not_found", "api key does not exist", { statusOverride: 404 });
-      }
-
-      if (outcome.status === "revoked") {
-        await deps.audit.emit({
-          tenantId,
-          layer: "agent",
-          actor: outcome.agentId,
-          action: "auth.api_key.revoked",
-          inputs: {},
-          outputs: { key_id: keyId, agent_id: outcome.agentId },
-        });
-      }
-
-      reply.status(204);
-      return null;
-    },
-  );
 }
 
-/** Generic 401, deliberately identical for not-found / revoked / expired. */
-function exchangeUnauthorized(
-  reply: { status: (code: number) => void },
-  requestId: string,
-): { error: Record<string, unknown> } {
-  reply.status(401);
-  return {
-    error: {
-      code: "auth_header_invalid",
-      message: "X-Api-Key header missing or does not match an active api key",
-      request_id: requestId,
-      docs_url: "https://docs.brain.fi/api-reference/authentication",
-    },
+export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
+  return async (secret: string): Promise<{ principal: Principal; keyId: string } | null> => {
+    const hashedSecret = hashApiKeySecret(secret, deps.pepper);
+    const { rows } = await deps.resolverPool.query<ApiKeyRow>(
+      `SELECT id, tenant_id, name, environment, scopes, key_prefix, key_last4,
+              hashed_secret, created_at, last_used_at, revoked_at, rotated_from_id
+         FROM api_keys
+        WHERE hashed_secret = $1
+        LIMIT 1`,
+      [hashedSecret],
+    );
+    const row = rows[0];
+    if (row === undefined || row.revoked_at !== null) {
+      return null;
+    }
+
+    if (deps.rateLimiter !== undefined) {
+      const decision = await deps.rateLimiter.hit(`api-key:${row.id}`);
+      if (!decision.allowed) {
+        throw brainError("rate_limited", "api key rate limit exceeded", {
+          details: { key_id: row.id, limit: decision.limit, count: decision.count },
+        });
+      }
+    }
+
+    void withTenantScope(deps.pool, row.tenant_id, (client) =>
+      client.query(`UPDATE api_keys SET last_used_at = now() WHERE id = $1`, [row.id]),
+    ).catch(() => undefined);
+
+    return {
+      keyId: row.id,
+      principal: {
+        id: row.id,
+        type: "api_partner",
+        tenantId: row.tenant_id,
+        scopes: row.scopes,
+        tokenId: row.id,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      },
+    };
   };
 }
 
-// Default (no `scopes` in the issuance body) grants a read+propose+audit set --
-// ledger:read, wiki:read, raw:read, policy:read, execution:read, audit:read,
-// execution:propose, payment_intent:propose. A proper subset of
-// API_KEY_PERMITTED_SCOPES (verified below); `raw:write` (document ingestion)
-// is opt-in only via explicit scopes, not granted by default.
-const DEFAULT_ISSUED_SCOPES: readonly Scope[] = [
-  "ledger:read",
-  "wiki:read",
-  "raw:read",
-  "policy:read",
-  "execution:read",
-  "audit:read",
-  "execution:propose",
-  "payment_intent:propose",
-];
+export function hashApiKeySecret(secret: string, pepper: string): string {
+  return createHash("sha256").update(`${pepper}.${secret}`, "utf8").digest("hex");
+}
+
+function requireTenantAdmin(request: FastifyRequest, tenantId: string): Principal {
+  const principal = requireTenantRead(request, tenantId);
+  requireScope(principal.scopes, "execution:admin");
+  return principal;
+}
+
+function requireTenantRead(request: FastifyRequest, tenantId: string): Principal {
+  const principal = request.principal;
+  if (principal === undefined) {
+    throw brainError("auth_token_missing", "principal required");
+  }
+  if (principal.tenantId !== tenantId) {
+    throw brainError("auth_tenant_mismatch", "tenant id does not match authenticated principal", {
+      details: { tenant_id: tenantId, principal_tenant_id: principal.tenantId },
+    });
+  }
+  return principal;
+}
+
+function requireName(input: unknown): string {
+  if (typeof input !== "string" || input.trim().length === 0) {
+    throw brainError("request_body_invalid", "name must be a non-empty string");
+  }
+  const name = input.trim();
+  if (name.length > 120) {
+    throw brainError("request_body_invalid", "name must be 120 characters or fewer");
+  }
+  return name;
+}
+
+function parseEnvironment(input: unknown): ApiKeyEnvironment {
+  if (input === "sandbox" || input === "live") return input;
+  throw brainError("request_body_invalid", "environment must be sandbox or live");
+}
 
 function parseIssuedScopes(input: unknown): Scope[] {
-  const candidate = input === undefined ? DEFAULT_ISSUED_SCOPES : input;
-  if (!Array.isArray(candidate) || candidate.length === 0) {
+  if (!Array.isArray(input) || input.length === 0) {
     throw brainError("request_body_invalid", "scopes must be a non-empty array of strings");
   }
-  // Same allowlist check for the default and the explicit path -- defense in
-  // depth so the default can never silently drift past the api-key cap.
-  for (const s of candidate) {
-    if (typeof s !== "string" || !API_KEY_PERMITTED_SCOPES.has(s as Scope)) {
-      throw brainError("request_body_invalid", `scope not permitted for an api key: ${String(s)}`, {
-        details: { scope: s },
-      });
+  const scopes: Scope[] = [];
+  for (const value of input) {
+    if (typeof value !== "string" || !API_KEY_PERMITTED_SCOPES.has(value as Scope)) {
+      throw brainError(
+        "request_body_invalid",
+        `scope not permitted for an api key: ${String(value)}`,
+        {
+          details: { scope: value, permitted: [...API_KEY_PERMITTED_SCOPES] },
+        },
+      );
+    }
+    if (!scopes.includes(value as Scope)) scopes.push(value as Scope);
+  }
+  return scopes;
+}
+
+function parseUsageWindow(input: unknown): string {
+  if (input === undefined) return DEFAULT_USAGE_WINDOW;
+  if (typeof input !== "string" || !/^[1-9][0-9]*(d|h)$/.test(input)) {
+    throw brainError("request_params_invalid", "window must be an interval like 30d or 24h");
+  }
+  return input;
+}
+
+async function issueKey(
+  pool: Pool,
+  input: {
+    tenantId: string;
+    name: string;
+    environment: ApiKeyEnvironment;
+    scopes: Scope[];
+    pepper: string;
+  },
+): Promise<{ row: ApiKeyRow; secret: string }> {
+  return withTenantScope(pool, input.tenantId, async (client) => {
+    const tenant = await client.query<{ id: string }>(`SELECT id FROM tenants WHERE id = $1`, [
+      input.tenantId,
+    ]);
+    if (tenant.rows[0] === undefined) {
+      throw brainError("tenant_not_found", "tenant does not exist", { statusOverride: 404 });
+    }
+    return insertGeneratedKey(client, input);
+  });
+}
+
+async function insertGeneratedKey(
+  client: TenantScopedClient,
+  input: {
+    tenantId: string;
+    name: string;
+    environment: ApiKeyEnvironment;
+    scopes: Scope[];
+    pepper: string;
+    rotatedFromId?: string;
+  },
+): Promise<{ row: ApiKeyRow; secret: string }> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_GENERATE_ATTEMPTS; attempt += 1) {
+    const secret = `${ENV_PREFIX[input.environment]}${randomBytes(32).toString("base64url")}`;
+    const row = {
+      id: newApiKeyId(),
+      tenantId: input.tenantId,
+      name: input.name,
+      environment: input.environment,
+      scopes: input.scopes,
+      keyPrefix: ENV_PREFIX[input.environment],
+      keyLast4: secret.slice(-4),
+      hashedSecret: hashApiKeySecret(secret, input.pepper),
+      rotatedFromId: input.rotatedFromId ?? null,
+    };
+    try {
+      const inserted = await client.query<ApiKeyRow>(
+        `INSERT INTO api_keys (
+           id, tenant_id, name, environment, scopes, key_prefix, key_last4,
+           hashed_secret, rotated_from_id
+         )
+         VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8, $9)
+         RETURNING id, tenant_id, name, environment, scopes, key_prefix, key_last4,
+                   hashed_secret, created_at, last_used_at, revoked_at, rotated_from_id`,
+        [
+          row.id,
+          row.tenantId,
+          row.name,
+          row.environment,
+          row.scopes,
+          row.keyPrefix,
+          row.keyLast4,
+          row.hashedSecret,
+          row.rotatedFromId,
+        ],
+      );
+      const insertedRow = inserted.rows[0];
+      if (insertedRow === undefined) {
+        throw brainError("internal_server_error", "api key insert returned no row");
+      }
+      return { row: insertedRow, secret };
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        lastError = err;
+        continue;
+      }
+      throw err;
     }
   }
-  return candidate as Scope[];
+  throw brainError("internal_server_error", "could not generate a unique api key", {
+    details: { cause: String(lastError) },
+  });
 }
 
-function parseExpiresAt(input: unknown): string | null {
-  if (input === undefined || input === null) return null;
-  if (typeof input !== "string") {
-    throw brainError("request_body_invalid", "expires_at must be an ISO 8601 string");
-  }
-  const parsed = new Date(input);
-  if (Number.isNaN(parsed.getTime())) {
-    throw brainError("request_body_invalid", "expires_at must be a valid ISO 8601 timestamp");
-  }
-  return parsed.toISOString();
+async function lockActiveKey(client: TenantScopedClient, id: string): Promise<ApiKeyRow | null> {
+  const { rows } = await client.query<ApiKeyRow>(
+    `SELECT id, tenant_id, name, environment, scopes, key_prefix, key_last4,
+            hashed_secret, created_at, last_used_at, revoked_at, rotated_from_id
+       FROM api_keys
+      WHERE id = $1 AND revoked_at IS NULL
+      FOR UPDATE`,
+    [id],
+  );
+  return rows[0] ?? null;
 }
 
-function isPast(value: Date | string | null): boolean {
-  if (value === null) return false; // NULL expires_at = no expiry.
-  return new Date(value).getTime() <= Date.now();
+async function resolveKeyTenant(pool: Pool, id: string): Promise<string | null> {
+  const { rows } = await pool.query<{ tenant_id: string }>(
+    `SELECT tenant_id FROM api_keys WHERE id = $1 LIMIT 1`,
+    [id],
+  );
+  return rows[0]?.tenant_id ?? null;
+}
+
+interface UsageRow {
+  key_id: string;
+  environment: ApiKeyEnvironment | null;
+  event_count: string | number;
+  first_event_at: Date | string | null;
+  last_event_at: Date | string | null;
+}
+
+async function queryUsage(
+  client: TenantScopedClient,
+  input: {
+    tenantId: string;
+    window: string;
+    environment?: ApiKeyEnvironment;
+    keyId?: string;
+  },
+): Promise<UsageRow[]> {
+  const params: unknown[] = [input.tenantId, intervalForWindow(input.window)];
+  const filters = [
+    "e.tenant_id = $1",
+    "e.created_at >= now() - $2::interval",
+    "e.key_id IS NOT NULL",
+  ];
+  if (input.environment !== undefined) {
+    params.push(input.environment);
+    filters.push(`k.environment = $${params.length}`);
+  }
+  if (input.keyId !== undefined) {
+    params.push(input.keyId);
+    filters.push(`e.key_id = $${params.length}`);
+  }
+  const { rows } = await client.query<UsageRow>(
+    `SELECT e.key_id,
+            k.environment,
+            count(*) AS event_count,
+            min(e.created_at) AS first_event_at,
+            max(e.created_at) AS last_event_at
+       FROM audit_events e
+       LEFT JOIN api_keys k ON k.id = e.key_id AND k.tenant_id = e.tenant_id
+      WHERE ${filters.join(" AND ")}
+      GROUP BY e.key_id, k.environment
+      ORDER BY event_count DESC, e.key_id ASC`,
+    params,
+  );
+  return rows;
+}
+
+function intervalForWindow(window: string): string {
+  const amount = Number(window.slice(0, -1));
+  return window.endsWith("d") ? `${amount} days` : `${amount} hours`;
+}
+
+function serializeKey(row: ApiKeyRow, secret?: string) {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    name: row.name,
+    environment: row.environment,
+    scopes: row.scopes,
+    key_prefix: row.key_prefix,
+    key_last4: row.key_last4,
+    masked_key: `${row.key_prefix}...${row.key_last4}`,
+    created_at: toIso(row.created_at),
+    last_used_at: toIso(row.last_used_at),
+    revoked_at: toIso(row.revoked_at),
+    rotated_from_id: row.rotated_from_id,
+    ...(secret !== undefined ? { secret } : {}),
+  };
+}
+
+function toIso(value: Date | string | null): string | null {
+  if (value === null) return null;
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: unknown }).code === "23505"
+  );
 }

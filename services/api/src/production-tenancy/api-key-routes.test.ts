@@ -1,16 +1,25 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
 import {
+  CorrelatingAuditEmitter,
+  InMemorySlidingWindowRateLimiter,
   authPlugin,
   errorHandlerPlugin,
   requestIdPlugin,
-  API_KEY_PERMITTED_SCOPES,
-  InMemoryAuditEmitter,
   JwtSigner,
   JwtVerifier,
   newTenantId,
+  newUserId,
+  type AuditEmitter,
+  type AuditEvent,
+  type AuditEventInput,
+  type Scope,
 } from "@brain/shared";
-import { registerApiKeyRoutes } from "./api-key-routes.js";
+import {
+  buildApiKeyAuthenticator,
+  hashApiKeySecret,
+  registerApiKeyRoutes,
+} from "./api-key-routes.js";
 import { registerProofRoutes } from "../proof/routes.js";
 
 const HS256_KEY = {
@@ -21,39 +30,33 @@ const HS256_KEY = {
 const HS256_SECRET = "created_in_test_environment_only_";
 const ISSUER = "https://auth.brain.fi.test";
 const AUDIENCE = "https://api.brain.fi.test";
-const PLATFORM_SECRET = "platform-secret";
-
-interface FakeAgentRow {
-  id: string;
-  tenantId: string;
-  state: string;
-}
+const PEPPER = "test-pepper";
 
 interface FakeApiKeyRow {
-  token_hash: string;
-  key_id: string;
+  id: string;
   tenant_id: string;
-  agent_id: string;
-  scopes: string[];
-  name: string | null;
-  expires_at: string | null;
-  revoked_at: string | null;
+  name: string;
+  environment: "sandbox" | "live";
+  scopes: Scope[];
+  key_prefix: string;
+  key_last4: string;
+  hashed_secret: string;
+  created_at: string;
   last_used_at: string | null;
+  revoked_at: string | null;
+  rotated_from_id: string | null;
 }
 
 interface FakeStore {
   tenants: Set<string>;
-  agents: Map<string, FakeAgentRow>;
   apiKeys: Map<string, FakeApiKeyRow>;
+  auditEvents: Array<AuditEventInput & { id: string; createdAt: string }>;
 }
 
 function makeStore(seedTenantId: string): FakeStore {
-  return { tenants: new Set([seedTenantId]), agents: new Map(), apiKeys: new Map() };
+  return { tenants: new Set([seedTenantId]), apiKeys: new Map(), auditEvents: [] };
 }
 
-/** Fake `pg.Pool` backing `withTenantScope`'s `pool.connect()` contract. Real
- * enough to drive the actual SQL branches in api-key-routes.ts against a
- * shared in-memory store, without a real Postgres. */
 function makeAppPool(store: FakeStore) {
   const client = {
     query: async (sql: string, values: unknown[] = []) => {
@@ -67,74 +70,95 @@ function makeAppPool(store: FakeStore) {
         const [id] = values as [string];
         return store.tenants.has(id) ? { rows: [{ id }], rowCount: 1 } : { rows: [], rowCount: 0 };
       }
-      if (sql.includes("INSERT INTO agents")) {
-        const [id, tenantId] = values as [string, string];
-        store.agents.set(id, { id, tenantId, state: "active" });
-        return { rows: [], rowCount: 1 };
-      }
       if (sql.includes("INSERT INTO api_keys")) {
-        const [tokenHash, keyId, tenantId, agentId, scopesJson, name, expiresAt] = values as [
+        const [
+          id,
+          tenantId,
+          name,
+          environment,
+          scopes,
+          keyPrefix,
+          keyLast4,
+          hashedSecret,
+          rotatedFromId,
+        ] = values as [
           string,
           string,
           string,
+          "sandbox" | "live",
+          Scope[],
           string,
           string,
-          string | null,
+          string,
           string | null,
         ];
-        store.apiKeys.set(tokenHash, {
-          token_hash: tokenHash,
-          key_id: keyId,
+        const now = new Date().toISOString();
+        const row: FakeApiKeyRow = {
+          id,
           tenant_id: tenantId,
-          agent_id: agentId,
-          scopes: JSON.parse(scopesJson) as string[],
           name,
-          expires_at: expiresAt,
-          revoked_at: null,
+          environment,
+          scopes,
+          key_prefix: keyPrefix,
+          key_last4: keyLast4,
+          hashed_secret: hashedSecret,
+          created_at: now,
           last_used_at: null,
-        });
-        return { rows: [], rowCount: 1 };
+          revoked_at: null,
+          rotated_from_id: rotatedFromId,
+        };
+        store.apiKeys.set(id, row);
+        return { rows: [row], rowCount: 1 };
+      }
+      if (sql.includes("SELECT id, tenant_id, name, environment, scopes")) {
+        if (sql.includes("WHERE id = $1 AND revoked_at IS NULL")) {
+          const [id] = values as [string];
+          const row = store.apiKeys.get(id);
+          return row !== undefined && row.revoked_at === null
+            ? { rows: [row], rowCount: 1 }
+            : { rows: [], rowCount: 0 };
+        }
+        if (sql.includes("WHERE tenant_id = $1")) {
+          const [tenantId] = values as [string];
+          const rows = [...store.apiKeys.values()].filter((row) => row.tenant_id === tenantId);
+          return { rows, rowCount: rows.length };
+        }
+      }
+      if (sql.includes("UPDATE api_keys") && sql.includes("SET revoked_at = now()")) {
+        const [id] = values as [string];
+        const row = store.apiKeys.get(id);
+        if (row === undefined || row.revoked_at !== null) return { rows: [], rowCount: 0 };
+        row.revoked_at = new Date().toISOString();
+        return { rows: [{ id }], rowCount: 1 };
       }
       if (sql.includes("UPDATE api_keys SET last_used_at")) {
-        const [tokenHash] = values as [string];
-        const row = store.apiKeys.get(tokenHash);
+        const [id] = values as [string];
+        const row = store.apiKeys.get(id);
         if (row !== undefined) row.last_used_at = new Date().toISOString();
         return { rows: [], rowCount: row !== undefined ? 1 : 0 };
       }
-      if (sql.includes("UPDATE api_keys SET revoked_at")) {
-        const [tenantId, keyId] = values as [string, string];
-        const found = [...store.apiKeys.values()].find(
-          (r) => r.tenant_id === tenantId && r.key_id === keyId && r.revoked_at === null,
+      if (sql.includes("FROM audit_events e")) {
+        const [tenantId] = values as [string];
+        const keyFilter = values.find(
+          (value) => typeof value === "string" && value.startsWith("akey_"),
         );
-        if (found === undefined) return { rows: [], rowCount: 0 };
-        found.revoked_at = new Date().toISOString();
-        return { rows: [{ agent_id: found.agent_id }], rowCount: 1 };
-      }
-      if (sql.includes("SELECT 1 AS found FROM api_keys")) {
-        const [tenantId, keyId] = values as [string, string];
-        const found = [...store.apiKeys.values()].some(
-          (r) => r.tenant_id === tenantId && r.key_id === keyId,
-        );
-        return found ? { rows: [{ found: 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
-      }
-      if (sql.includes("SELECT * FROM agents WHERE id = $1")) {
-        const [id] = values as [string];
-        const agent = store.agents.get(id);
-        if (agent === undefined) return { rows: [], rowCount: 0 };
-        return {
-          rows: [{ id: agent.id, tenant_id: agent.tenantId, state: agent.state }],
-          rowCount: 1,
-        };
-      }
-      if (sql.includes("UPDATE agents SET state = $1")) {
-        const [to, id, from] = values as [string, string, string];
-        const agent = store.agents.get(id);
-        if (agent === undefined || agent.state !== from) return { rows: [], rowCount: 0 };
-        agent.state = to;
-        return {
-          rows: [{ id: agent.id, tenant_id: agent.tenantId, state: agent.state }],
-          rowCount: 1,
-        };
+        const environmentFilter = values.find((value) => value === "sandbox" || value === "live");
+        const counts = new Map<string, number>();
+        for (const event of store.auditEvents) {
+          if (event.tenantId !== tenantId || event.keyId === undefined) continue;
+          if (keyFilter !== undefined && event.keyId !== keyFilter) continue;
+          const key = store.apiKeys.get(event.keyId);
+          if (environmentFilter !== undefined && key?.environment !== environmentFilter) continue;
+          counts.set(event.keyId, (counts.get(event.keyId) ?? 0) + 1);
+        }
+        const rows = [...counts].map(([key_id, event_count]) => ({
+          key_id,
+          environment: store.apiKeys.get(key_id)?.environment ?? null,
+          event_count,
+          first_event_at: new Date().toISOString(),
+          last_event_at: new Date().toISOString(),
+        }));
+        return { rows, rowCount: rows.length };
       }
       throw new Error(`unhandled query in fake pool: ${sql}`);
     },
@@ -143,25 +167,62 @@ function makeAppPool(store: FakeStore) {
   return { connect: async () => client };
 }
 
-/** brain_resolver: cross-tenant SELECT on `api_keys` by hash, same shape as
- * findRefreshToken's use of resolverPool in production-tenancy/routes.ts. */
 function makeResolverPool(store: FakeStore) {
   return {
     query: async (sql: string, values: unknown[] = []) => {
-      if (sql.includes("FROM api_keys WHERE token_hash")) {
-        const [tokenHash] = values as [string];
-        const row = store.apiKeys.get(tokenHash);
+      if (sql.includes("WHERE hashed_secret = $1")) {
+        const [hashedSecret] = values as [string];
+        const row = [...store.apiKeys.values()].find((r) => r.hashed_secret === hashedSecret);
         return row !== undefined ? { rows: [row], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("SELECT tenant_id FROM api_keys WHERE id = $1")) {
+        const [id] = values as [string];
+        const row = store.apiKeys.get(id);
+        return row !== undefined
+          ? { rows: [{ tenant_id: row.tenant_id }], rowCount: 1 }
+          : { rows: [], rowCount: 0 };
       }
       return { rows: [], rowCount: 0 };
     },
   };
 }
 
+class StoreAuditEmitter implements AuditEmitter {
+  public constructor(private readonly store: FakeStore) {}
+
+  public async emit(event: AuditEventInput): Promise<AuditEvent> {
+    const id = `evt_${this.store.auditEvents.length + 1}`;
+    const createdAt = new Date().toISOString();
+    this.store.auditEvents.push({ ...event, id, createdAt });
+    return { ...event, id, createdAt, eventHash: "0".repeat(64), prevEventHash: null };
+  }
+}
+
+async function adminToken(tenantId: string): Promise<string> {
+  const signer = new JwtSigner({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    key: HS256_KEY,
+    algorithm: "HS256",
+  });
+  return signer.sign({
+    id: newUserId(),
+    type: "user",
+    tenantId,
+    tokenId: "token_test",
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    scopes: ["execution:admin", "audit:read", "ledger:read"],
+  });
+}
+
 async function buildApp(
   store: FakeStore,
-): Promise<{ app: FastifyInstance; audit: InMemoryAuditEmitter }> {
+): Promise<{ app: FastifyInstance; audit: StoreAuditEmitter }> {
   const app = Fastify({ logger: false });
+  const pool = makeAppPool(store) as never;
+  const resolverPool = makeResolverPool(store) as never;
+  const innerAudit = new StoreAuditEmitter(store);
+  const audit = new CorrelatingAuditEmitter(innerAudit);
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
   await app.register(authPlugin, {
@@ -172,309 +233,162 @@ async function buildApp(
       audience: AUDIENCE,
       clockToleranceSeconds: 5,
     }),
+    apiKeyAuthenticator: buildApiKeyAuthenticator({
+      pool,
+      resolverPool,
+      pepper: PEPPER,
+      rateLimiter: new InMemorySlidingWindowRateLimiter({ windowSeconds: 60, limit: 100 }),
+    }),
   });
-  const audit = new InMemoryAuditEmitter();
-  const signer = new JwtSigner({
-    issuer: ISSUER,
-    audience: AUDIENCE,
-    key: HS256_KEY,
-    algorithm: "HS256",
+  await registerApiKeyRoutes(app, { pool, resolverPool, audit, pepper: PEPPER });
+  app.get("/audited", async (request) => {
+    await audit.emit({
+      tenantId: request.principal!.tenantId,
+      layer: "audit",
+      actor: request.principal!.id,
+      action: "audit.test",
+      inputs: {},
+      outputs: {},
+    });
+    return { ok: true, key_id: request.apiKeyId ?? null };
   });
-  await registerApiKeyRoutes(app, {
-    pool: makeAppPool(store) as never,
-    resolverPool: makeResolverPool(store) as never,
-    audit,
-    signer,
-    platformSecret: PLATFORM_SECRET,
-  });
-  // Stand-in protected route to prove an exchanged token actually
-  // authenticates, the same way login.test.ts proves it against /raw/ingest.
-  app.get("/whoami", async (request) => ({
-    id: request.principal?.id,
-    tenantId: request.principal?.tenantId,
-    scopes: request.principal?.scopes,
-  }));
-  // The real audit:read-gated route (GET /proof/:action_id), mounted so a
-  // lifecycle test can prove an issued key's audit:read scope actually
-  // clears requireScope on a real handler, not just a stand-in. buildProof
-  // always misses (404) -- the point is confirming we get past the 401/403
-  // scope gate, not exercising the proof assembler.
   await registerProofRoutes(app, { buildProof: async () => null });
   await app.ready();
-  return { app, audit };
+  return { app, audit: innerAudit };
 }
 
-describe("per-customer API-key auth (token-exchange model)", () => {
-  it("full lifecycle: issue -> exchange -> authed call -> revoke -> exchange rejected", async () => {
+describe("per-customer API keys", () => {
+  it("full lifecycle: issue, use, usage filter, rotate, old key rejected, revoke new key", async () => {
     const tenantId = newTenantId();
     const store = makeStore(tenantId);
-    const { app, audit } = await buildApp(store);
+    const { app } = await buildApp(store);
+    const token = await adminToken(tenantId);
     try {
       const issue = await app.inject({
         method: "POST",
-        url: `/tenants/${tenantId}/api-keys`,
-        headers: { "x-platform-service-auth": PLATFORM_SECRET },
-        payload: { name: "CI integration key" },
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          name: "CI integration key",
+          environment: "sandbox",
+          scopes: ["ledger:read", "audit:read"],
+        },
       });
       expect(issue.statusCode).toBe(201);
       const issued = issue.json();
-      expect(issued.api_key).toMatch(/^brain_sk_/);
-      expect(issued.key_id).toMatch(/^akey_/);
-      expect(issued.agent_id).toMatch(/^agent_/);
-      expect(issued.scopes).toContain("payment_intent:propose");
-      expect(audit.events.map((e) => e.action)).toContain("auth.api_key.issued");
+      expect(issued.secret).toMatch(/^brain_sk_test_/);
+      expect(issued.id).toMatch(/^akey_/);
+      expect(issued.key_prefix).toBe("brain_sk_test_");
+      expect(issued.key_last4).toBe(issued.secret.slice(-4));
 
-      const exchange1 = await app.inject({
-        method: "POST",
-        url: "/auth/api-key",
-        headers: { "x-api-key": issued.api_key },
-      });
-      expect(exchange1.statusCode).toBe(200);
-      const token1 = exchange1.json();
-      expect(token1.token_type).toBe("Bearer");
-      expect(token1.tenant_id).toBe(tenantId);
-      expect(token1.agent_id).toBe(issued.agent_id);
-      expect(audit.events.map((e) => e.action)).toContain("auth.api_key.exchanged");
-
-      const authed = await app.inject({
+      const direct = await app.inject({
         method: "GET",
-        url: "/whoami",
-        headers: { authorization: `Bearer ${token1.token}` },
+        url: "/audited",
+        headers: { authorization: `Bearer ${issued.secret}` },
       });
-      expect(authed.statusCode).toBe(200);
-      expect(authed.json()).toMatchObject({
-        id: issued.agent_id,
-        tenantId,
-        scopes: issued.scopes,
-      });
+      expect(direct.statusCode).toBe(200);
+      expect(direct.json().key_id).toBe(issued.id);
 
-      const revoke = await app.inject({
-        method: "DELETE",
-        url: `/tenants/${tenantId}/api-keys/${issued.key_id}`,
-        headers: { "x-platform-service-auth": PLATFORM_SECRET },
-      });
-      expect(revoke.statusCode).toBe(204);
-      expect(audit.events.map((e) => e.action)).toContain("auth.api_key.revoked");
-      expect(store.agents.get(issued.agent_id)?.state).toBe("revoked");
-
-      const exchange2 = await app.inject({
-        method: "POST",
-        url: "/auth/api-key",
-        headers: { "x-api-key": issued.api_key },
-      });
-      expect(exchange2.statusCode).toBe(401);
-      expect(exchange2.json().error.code).toBe("auth_header_invalid");
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("rejects exchange for an unknown key with the same generic 401 as a revoked one", async () => {
-    const tenantId = newTenantId();
-    const store = makeStore(tenantId);
-    const { app } = await buildApp(store);
-    try {
-      const res = await app.inject({
-        method: "POST",
-        url: "/auth/api-key",
-        headers: { "x-api-key": "brain_sk_never_issued" },
-      });
-      expect(res.statusCode).toBe(401);
-      expect(res.json().error.code).toBe("auth_header_invalid");
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("rejects exchange when the X-Api-Key header is missing", async () => {
-    const tenantId = newTenantId();
-    const store = makeStore(tenantId);
-    const { app } = await buildApp(store);
-    try {
-      const res = await app.inject({ method: "POST", url: "/auth/api-key" });
-      expect(res.statusCode).toBe(401);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("404s issuance for a tenant that does not exist", async () => {
-    const store = makeStore(newTenantId());
-    const { app } = await buildApp(store);
-    try {
-      const res = await app.inject({
-        method: "POST",
-        url: `/tenants/${newTenantId()}/api-keys`,
-        headers: { "x-platform-service-auth": PLATFORM_SECRET },
-        payload: {},
-      });
-      expect(res.statusCode).toBe(404);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("400s issuance for a scope outside API_KEY_PERMITTED_SCOPES", async () => {
-    const tenantId = newTenantId();
-    const store = makeStore(tenantId);
-    const { app } = await buildApp(store);
-    try {
-      const res = await app.inject({
-        method: "POST",
-        url: `/tenants/${tenantId}/api-keys`,
-        headers: { "x-platform-service-auth": PLATFORM_SECRET },
-        payload: { scopes: ["payment_intent:approve"] },
-      });
-      expect(res.statusCode).toBe(400);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("401s issuance and revocation without the platform credential", async () => {
-    const tenantId = newTenantId();
-    const store = makeStore(tenantId);
-    const { app } = await buildApp(store);
-    try {
-      const issue = await app.inject({
-        method: "POST",
-        url: `/tenants/${tenantId}/api-keys`,
-        payload: {},
-      });
-      expect(issue.statusCode).toBe(401);
-
-      const revoke = await app.inject({
-        method: "DELETE",
-        url: `/tenants/${tenantId}/api-keys/akey_bogus`,
-      });
-      expect(revoke.statusCode).toBe(401);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("404s revocation of a never-issued key id", async () => {
-    const tenantId = newTenantId();
-    const store = makeStore(tenantId);
-    const { app, audit } = await buildApp(store);
-    try {
-      const res = await app.inject({
-        method: "DELETE",
-        url: `/tenants/${tenantId}/api-keys/akey_never_issued`,
-        headers: { "x-platform-service-auth": PLATFORM_SECRET },
-      });
-      expect(res.statusCode).toBe(404);
-      expect(res.json().error.code).toBe("api_key_not_found");
-      expect(audit.events.map((e) => e.action)).not.toContain("auth.api_key.revoked");
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("double-revoke: first call revokes and audits, second is an idempotent 204 no-op", async () => {
-    const tenantId = newTenantId();
-    const store = makeStore(tenantId);
-    const { app, audit } = await buildApp(store);
-    try {
-      const issue = await app.inject({
-        method: "POST",
-        url: `/tenants/${tenantId}/api-keys`,
-        headers: { "x-platform-service-auth": PLATFORM_SECRET },
-        payload: {},
-      });
-      const { key_id: keyId } = issue.json();
-
-      const revoke1 = await app.inject({
-        method: "DELETE",
-        url: `/tenants/${tenantId}/api-keys/${keyId}`,
-        headers: { "x-platform-service-auth": PLATFORM_SECRET },
-      });
-      expect(revoke1.statusCode).toBe(204);
-      const revokedCountAfterFirst = audit.events.filter(
-        (e) => e.action === "auth.api_key.revoked",
-      ).length;
-      expect(revokedCountAfterFirst).toBe(1);
-
-      const revoke2 = await app.inject({
-        method: "DELETE",
-        url: `/tenants/${tenantId}/api-keys/${keyId}`,
-        headers: { "x-platform-service-auth": PLATFORM_SECRET },
-      });
-      expect(revoke2.statusCode).toBe(204);
-      const revokedCountAfterSecond = audit.events.filter(
-        (e) => e.action === "auth.api_key.revoked",
-      ).length;
-      expect(revokedCountAfterSecond).toBe(1);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("default (no scopes in body) issuance stays within API_KEY_PERMITTED_SCOPES, includes audit:read, excludes money-move scopes", async () => {
-    const tenantId = newTenantId();
-    const store = makeStore(tenantId);
-    const { app } = await buildApp(store);
-    try {
-      const res = await app.inject({
-        method: "POST",
-        url: `/tenants/${tenantId}/api-keys`,
-        headers: { "x-platform-service-auth": PLATFORM_SECRET },
-        payload: {},
-      });
-      expect(res.statusCode).toBe(201);
-      const { scopes } = res.json();
-      expect(scopes.length).toBeGreaterThan(0);
-      for (const s of scopes as string[]) {
-        expect(API_KEY_PERMITTED_SCOPES.has(s as never)).toBe(true);
-      }
-      // Product decision: a default-issued API key CAN read its own tenant's
-      // audit trail.
-      expect(scopes).toContain("audit:read");
-      // But it can never move money or administer anything.
-      for (const moneyMove of [
-        "payment_intent:approve",
-        "payment_intent:execute",
-        "execution:admin",
-      ]) {
-        expect(scopes).not.toContain(moneyMove);
-      }
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("a default-issued key's audit:read scope actually clears a real audit-gated route (GET /proof/:id)", async () => {
-    const tenantId = newTenantId();
-    const store = makeStore(tenantId);
-    const { app } = await buildApp(store);
-    try {
-      const issue = await app.inject({
-        method: "POST",
-        url: `/tenants/${tenantId}/api-keys`,
-        headers: { "x-platform-service-auth": PLATFORM_SECRET },
-        payload: {},
-      });
-      const issued = issue.json();
-      expect(issued.scopes).toContain("audit:read");
-
-      const exchange = await app.inject({
-        method: "POST",
-        url: "/auth/api-key",
-        headers: { "x-api-key": issued.api_key },
-      });
-      const { token } = exchange.json();
-
-      const proof = await app.inject({
+      const usage = await app.inject({
         method: "GET",
-        url: "/proof/action_never_issued",
+        url: `/tenants/${tenantId}/usage?window=30d&environment=sandbox&key_id=${issued.id}`,
         headers: { authorization: `Bearer ${token}` },
       });
-      // 404 (buildProof stubbed to always miss), NOT 401/403 -- proves
-      // requireScope("audit:read") on the real proof route passed.
-      expect(proof.statusCode).toBe(404);
-      expect(proof.json().error.code).toBe("proof_not_found");
+      expect(usage.statusCode).toBe(200);
+      expect(usage.json()).toMatchObject({ total_events: 1, key_id: issued.id });
+
+      const rotate = await app.inject({
+        method: "POST",
+        url: `/keys/${issued.id}/rotate`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(rotate.statusCode).toBe(201);
+      const rotated = rotate.json();
+      expect(rotated.secret).toMatch(/^brain_sk_test_/);
+      expect(rotated.rotated_from_id).toBe(issued.id);
+
+      const oldRejected = await app.inject({
+        method: "GET",
+        url: "/audited",
+        headers: { authorization: `Bearer ${issued.secret}` },
+      });
+      expect(oldRejected.statusCode).toBe(401);
+      expect(oldRejected.json().error.code).toBe("auth_invalid_key");
+
+      const revoke = await app.inject({
+        method: "DELETE",
+        url: `/keys/${rotated.id}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(revoke.statusCode).toBe(204);
+
+      const newRejected = await app.inject({
+        method: "GET",
+        url: "/audited",
+        headers: { authorization: `Bearer ${rotated.secret}` },
+      });
+      expect(newRejected.statusCode).toBe(401);
+      expect(newRejected.json().error.code).toBe("auth_invalid_key");
     } finally {
       await app.close();
     }
+  });
+
+  it("lists only masked keys and never returns plaintext after issue", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const { app } = await buildApp(store);
+    const token = await adminToken(tenantId);
+    try {
+      await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: "Read key", environment: "live", scopes: ["audit:read"] },
+      });
+      const list = await app.inject({
+        method: "GET",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(list.statusCode).toBe(200);
+      const key = list.json().keys[0];
+      expect(key.key_prefix).toBe("brain_sk_live_");
+      expect(key.secret).toBeUndefined();
+      expect(key.hashed_secret).toBeUndefined();
+      expect(key.masked_key).toMatch(/^brain_sk_live_\.\.\./);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects invalid scopes and cross-tenant admins", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const { app } = await buildApp(store);
+    try {
+      const badScope = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${await adminToken(tenantId)}` },
+        payload: { name: "Bad", environment: "sandbox", scopes: ["raw:read"] },
+      });
+      expect(badScope.statusCode).toBe(400);
+
+      const crossTenant = await app.inject({
+        method: "GET",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${await adminToken(newTenantId())}` },
+      });
+      expect(crossTenant.statusCode).toBe(403);
+      expect(crossTenant.json().error.code).toBe("auth_tenant_mismatch");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("hashes with the server-side pepper", () => {
+    const secret = "brain_sk_test_example";
+    expect(hashApiKeySecret(secret, "pepper-a")).not.toBe(hashApiKeySecret(secret, "pepper-b"));
   });
 });
