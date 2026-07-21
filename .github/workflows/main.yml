@@ -354,7 +354,7 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate postgres redis minio minio-setup jwks caddy"
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate --no-deps postgres redis minio minio-setup jwks caddy"
 
       # The VM's ~/brain-core is a copied tree (not a git checkout) that
       # already holds the stage env file and docker-compose.caddy.yml (both
@@ -384,6 +384,12 @@ jobs:
           done
           echo "$HEALTH_URL never reported commit=$expected (last seen: '$last_commit')"
           exit 1
+
+      - name: Staging API key acceptance
+        run: |
+          scp -i ~/.ssh/id_deploy scripts/ops/staging_api_key_acceptance.py "azureuser@$VM_HOST:/tmp/staging_api_key_acceptance.py"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && python3 /tmp/staging_api_key_acceptance.py --env-file '$VM_ENV_FILE' --health-url '$HEALTH_URL'; rc=\$?; rm -f /tmp/staging_api_key_acceptance.py; exit \$rc"
 
   promote_production:
     name: promote production VM (api.brain.fi)
