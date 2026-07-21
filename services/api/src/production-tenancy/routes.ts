@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Pool } from "pg";
 import {
@@ -96,105 +96,120 @@ export async function registerProductionTenancyRoutes(
   app: FastifyInstance,
   deps: ProductionTenancyRoutesDeps,
 ): Promise<void> {
+  // Handles POST "/tenants" and POST "/orgs/:orgId/tenants"; keep the BFF agent
+  // and token creation before the 201 response.
+  const createProductionTenant = async (
+    request: FastifyRequest<{
+      Params: { orgId?: string };
+      Body?: {
+        company_name?: unknown;
+        founder?: { email?: unknown; display_name?: unknown };
+        founder_external_ref?: unknown;
+      };
+    }>,
+    reply: FastifyReply,
+  ) => {
+    assertPlatformCredential(request, deps.platformSecret, "tenant:create");
+    if (request.headers["x-demo-provision-auth"] !== undefined) {
+      reply.status(401);
+      return { reason: "platform_service_credential_required" };
+    }
+
+    const body = request.body;
+    const founderEmail = requireString(body?.founder?.email, "founder.email").toLowerCase();
+    const founderDisplayName =
+      typeof body?.founder?.display_name === "string" && body.founder.display_name.length > 0
+        ? body.founder.display_name
+        : founderEmail;
+    const externalRef = requireString(body?.founder_external_ref, "founder_external_ref");
+    const tenantId = newTenantId();
+    const memberId = newUserId();
+    const sessionSeed = newSessionSeed(tenantId, memberId);
+    const smartAccount =
+      deps.smartAccount ?? process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ?? zeroAddress();
+
+    const agentResult = await withTenantScope(deps.pool, tenantId, async (client) => {
+      await client.query(
+        `INSERT INTO tenants (id, kind, sandbox, created_via)
+           VALUES ($1, 'production', FALSE, 'admin')`,
+        [tenantId],
+      );
+      await client.query(
+        `INSERT INTO users (id, tenant_id, email, role)
+           VALUES ($1, $2, $3, 'owner')
+           ON CONFLICT DO NOTHING`,
+        [memberId, tenantId, founderEmail],
+      );
+      await insertBootstrapAdminMember(client, {
+        tenantId,
+        memberId,
+        email: founderEmail,
+        displayName: founderDisplayName,
+      });
+      await insertPlatformIdentityLink(client, tenantId, memberId, externalRef);
+      await insertRefreshToken(client, sessionSeed);
+      const agent = await ensureBffServiceAgent(client, tenantId, smartAccount);
+      const agentToken = await insertProductionAgentToken(client, tenantId, agent.agentId);
+      return { agentId: agent.agentId, agentCreated: agent.created, agentToken };
+    });
+
+    const member = await findMemberInTenant(deps.pool, tenantId, memberId);
+    if (member === null) throw brainError("internal_server_error", "bootstrap member missing");
+    const token = await signMemberToken(deps.signer, sessionSeed);
+    const agentToken = await signAgentToken(deps.signer, agentResult.agentToken);
+    await deps.audit.emit({
+      tenantId,
+      layer: "execution",
+      actor: memberId,
+      action: "tenant.created",
+      inputs: { company_name: typeof body?.company_name === "string" ? body.company_name : null },
+      outputs: { tenant_id: tenantId, member_id: memberId, agent_id: agentResult.agentId },
+    });
+    await deps.audit.emit({
+      tenantId,
+      layer: "execution",
+      actor: memberId,
+      action: "member.changed",
+      inputs: { mutation: "bootstrap", before: null },
+      outputs: { after: serializeMember(member) },
+    });
+    await deps.audit.emit({
+      tenantId,
+      layer: "agent",
+      actor: agentResult.agentId,
+      action: "auth.production_agent_token.minted",
+      inputs: { tenant_created: true, agent_created: agentResult.agentCreated, rotated: false },
+      outputs: {
+        tenant_id: tenantId,
+        agent_id: agentResult.agentId,
+        token_id: agentResult.agentToken.tokenId,
+      },
+    });
+
+    reply.status(201);
+    return {
+      tenant_id: tenantId,
+      ...(request.params.orgId !== undefined ? { org_id: request.params.orgId } : {}),
+      member: serializeMember(member),
+      session: {
+        token,
+        refresh_token: sessionSeed.refreshToken,
+        expires_in: ACCESS_TOKEN_TTL_SECONDS,
+      },
+      agent: serializeAgentToken(agentResult.agentId, agentToken, agentResult.agentToken),
+    };
+  };
+
   app.post(
     "/tenants",
     { config: { skipAuth: true, rateLimit: { max: 20, timeWindow: "1 minute" } } },
-    async (request, reply) => {
-      assertPlatformCredential(request, deps.platformSecret, "tenant:create");
-      if (request.headers["x-demo-provision-auth"] !== undefined) {
-        reply.status(401);
-        return { reason: "platform_service_credential_required" };
-      }
+    createProductionTenant,
+  );
 
-      const body = request.body as
-        | {
-            company_name?: unknown;
-            founder?: { email?: unknown; display_name?: unknown };
-            founder_external_ref?: unknown;
-          }
-        | undefined;
-      const founderEmail = requireString(body?.founder?.email, "founder.email").toLowerCase();
-      const founderDisplayName =
-        typeof body?.founder?.display_name === "string" && body.founder.display_name.length > 0
-          ? body.founder.display_name
-          : founderEmail;
-      const externalRef = requireString(body?.founder_external_ref, "founder_external_ref");
-      const tenantId = newTenantId();
-      const memberId = newUserId();
-      const sessionSeed = newSessionSeed(tenantId, memberId);
-      const smartAccount =
-        deps.smartAccount ?? process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ?? zeroAddress();
-
-      const agentResult = await withTenantScope(deps.pool, tenantId, async (client) => {
-        await client.query(
-          `INSERT INTO tenants (id, kind, sandbox, created_via)
-           VALUES ($1, 'production', FALSE, 'admin')`,
-          [tenantId],
-        );
-        await client.query(
-          `INSERT INTO users (id, tenant_id, email, role)
-           VALUES ($1, $2, $3, 'owner')
-           ON CONFLICT DO NOTHING`,
-          [memberId, tenantId, founderEmail],
-        );
-        await insertBootstrapAdminMember(client, {
-          tenantId,
-          memberId,
-          email: founderEmail,
-          displayName: founderDisplayName,
-        });
-        await insertPlatformIdentityLink(client, tenantId, memberId, externalRef);
-        await insertRefreshToken(client, sessionSeed);
-        const agent = await ensureBffServiceAgent(client, tenantId, smartAccount);
-        const agentToken = await insertProductionAgentToken(client, tenantId, agent.agentId);
-        return { agentId: agent.agentId, agentCreated: agent.created, agentToken };
-      });
-
-      const member = await findMemberInTenant(deps.pool, tenantId, memberId);
-      if (member === null) throw brainError("internal_server_error", "bootstrap member missing");
-      const token = await signMemberToken(deps.signer, sessionSeed);
-      const agentToken = await signAgentToken(deps.signer, agentResult.agentToken);
-      await deps.audit.emit({
-        tenantId,
-        layer: "execution",
-        actor: memberId,
-        action: "tenant.created",
-        inputs: { company_name: typeof body?.company_name === "string" ? body.company_name : null },
-        outputs: { tenant_id: tenantId, member_id: memberId, agent_id: agentResult.agentId },
-      });
-      await deps.audit.emit({
-        tenantId,
-        layer: "execution",
-        actor: memberId,
-        action: "member.changed",
-        inputs: { mutation: "bootstrap", before: null },
-        outputs: { after: serializeMember(member) },
-      });
-      await deps.audit.emit({
-        tenantId,
-        layer: "agent",
-        actor: agentResult.agentId,
-        action: "auth.production_agent_token.minted",
-        inputs: { tenant_created: true, agent_created: agentResult.agentCreated, rotated: false },
-        outputs: {
-          tenant_id: tenantId,
-          agent_id: agentResult.agentId,
-          token_id: agentResult.agentToken.tokenId,
-        },
-      });
-
-      reply.status(201);
-      return {
-        tenant_id: tenantId,
-        member: serializeMember(member),
-        session: {
-          token,
-          refresh_token: sessionSeed.refreshToken,
-          expires_in: ACCESS_TOKEN_TTL_SECONDS,
-        },
-        agent: serializeAgentToken(agentResult.agentId, agentToken, agentResult.agentToken),
-      };
-    },
+  app.post(
+    "/orgs/:orgId/tenants",
+    { config: { skipAuth: true, rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    createProductionTenant,
   );
 
   app.post(

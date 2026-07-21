@@ -110,24 +110,12 @@ export const AGENT_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
 ]);
 
 /**
- * The set of scopes a per-customer API key (principal_type=agent, kind='external'
- * role='partner' — see api-key-routes.ts) may hold. API keys are a distinct,
- * customer-facing tenant-scoped credential class from the generic MCP agent
- * allowlist above: a deliberate product decision permits them to read their own
- * tenant's audit trail (`audit:read`), which AGENT_PERMITTED_SCOPES withholds
- * from MCP agents. They still cannot move money or administer anything — every
- * approve/execute/admin/write(policy) scope is excluded.
+ * The set of scopes a per-customer API key may hold. Current shipped values are
+ * limited to read-only ledger and audit access.
  */
 export const API_KEY_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "ledger:read",
-  "wiki:read",
-  "raw:read",
-  "policy:read",
-  "execution:read",
   "audit:read",
-  "execution:propose",
-  "payment_intent:propose",
-  "raw:write",
 ]);
 
 /**

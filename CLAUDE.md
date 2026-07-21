@@ -238,6 +238,28 @@ Done
   `ledger_counterparty_payment_instructions`.
 - Unknown identity body fields return `unknown_field`; server-controlled trust
   fields return `field_not_editable`.
+- Tenant API keys are core-owned and first-class bearer credentials.
+  `api_keys` stores only the SHA-256 digest of
+  `BRAIN_API_KEY_PEPPER + "." + plaintext_secret`; plaintext
+  `brain_sk_test_` or `brain_sk_live_` secrets are returned exactly once from
+  issue and rotate responses. Tenant admins manage them through
+  `POST /v1/tenants/{id}/keys`, `GET /v1/tenants/{id}/keys`,
+  `POST /v1/keys/{id}/rotate`, and `DELETE /v1/keys/{id}`. Current scopes are
+  `ledger:read` and `audit:read`. Request-path audit events include nullable
+  `key_id`; session-authenticated and pre-enforcement events keep `key_id`
+  null. Per-key usage is exposed through
+  `GET /v1/tenants/{id}/usage?window=30d&environment=sandbox&key_id=...`.
+- Production tenant creation is also available at
+  `POST /v1/orgs/{orgId}/tenants`, using the same persistent production tenant
+  flow as `POST /v1/tenants`.
+
+Pending Dmitriy sign-off
+
+- Demo-to-production transition for tenants and keys: archive, delete, or
+  migrate demo-mode tenants and keys when an org transitions to production.
+- Demo tenant expiry behavior for in-flight API-key requests after the roughly
+  30-minute session window expires: immediate rejection or a defined grace
+  period.
 - Counterparty identity edits require a user principal, preserve the previous
   name as an alias on rename, keep aliases append-only, reject rename
   collisions with `name_conflict`, and emit `ledger.counterparty.updated`.

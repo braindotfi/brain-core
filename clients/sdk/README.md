@@ -92,9 +92,8 @@ pnpm run demo:reset
 Pass exactly one of `apiKey` or `token`. Passing both, or neither, throws.
 
 **`apiKey` (recommended)**. A long-lived Brain API key (`brain_sk_...`),
-issued by a platform operator. The SDK exchanges it lazily for a short-lived
-bearer token on first use (`POST {baseUrl}/auth/api-key`), caches it, and
-transparently re-exchanges on expiry or a 401:
+issued for a tenant. The SDK sends it directly as
+`Authorization: Bearer brain_sk_...`:
 
 ```typescript
 import { Brain } from "@brainfinance/sdk";
@@ -103,7 +102,7 @@ const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY! });
 ```
 
 **`token`**. A static JWT (e.g. from `brain.dev/demo/token` or your own
-auth flow). Sent as-is on every request, no exchange:
+auth flow). Sent as-is on every request:
 
 ```typescript
 const brain = new Brain({ token: process.env.BRAIN_TOKEN! });

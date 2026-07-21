@@ -462,6 +462,63 @@ paths:
                       reason: { type: string, enum: [platform_service_credential_required] }
         '429': { $ref: '#/components/responses/RateLimited' }
 
+  /orgs/{orgId}/tenants:
+    post:
+      tags: [Tenancy]
+      summary: Create a production tenant for an organization
+      description: |
+        Organization-scoped alias for `POST /tenants`. It persists a
+        production tenant with the same bootstrap admin, member session, and
+        propose-only agent token behavior, and echoes `org_id` in the response.
+      operationId: createOrgTenant
+      security: []
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [founder, founder_external_ref]
+              properties:
+                company_name: { type: string }
+                founder:
+                  type: object
+                  required: [email]
+                  properties:
+                    email: { type: string, format: email }
+                    display_name: { type: string }
+                founder_external_ref: { type: string }
+      responses:
+        '201':
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  org_id: { type: string }
+                  tenant_id: { type: string }
+                  member: { $ref: '#/components/schemas/Member' }
+                  session:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      refresh_token: { type: string }
+                      expires_in: { type: integer, enum: [900] }
+                  agent: { $ref: '#/components/schemas/ProductionAgentToken' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Missing or invalid platform credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   /tenants/{tenantId}/agent-token:
     post:
       tags: [Tenancy]
@@ -721,86 +778,35 @@ paths:
                       reason: { type: string, enum: [invite_invalid] }
         '429': { $ref: '#/components/responses/RateLimited' }
 
-  /auth/api-key:
-    post:
-      tags: [Auth]
-      summary: Exchange a customer API key for a short-lived agent JWT
-      description: |
-        Public (`skipAuth`), gated instead by the `X-Api-Key` header
-        (`brain_sk_...`, issued by POST /tenants/{tenantId}/api-keys) — not
-        a bearer token. Rate-limited to 30/minute. A missing key, an unknown
-        key, a revoked key, and an expired key all return the SAME generic
-        401 (never leaks which condition failed). On success mints a
-        `principal_type=agent` JWT scoped to the key's granted scopes,
-        valid for 1 hour. Registered only when `BRAIN_API_KEY_AUTH_ENABLED`
-        is set; otherwise the route does not exist (404).
-      operationId: exchangeApiKey
-      security: [] # public; gated by X-Api-Key header instead
-      parameters:
-        - name: X-Api-Key
-          in: header
-          required: true
-          schema: { type: string }
-          description: 'Customer API key, format: brain_sk_...'
-      responses:
-        '200':
-          description: Authenticated; agent token issued
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  token: { type: string }
-                  token_type: { type: string, enum: [Bearer] }
-                  expires_in: { type: integer, enum: [3600] }
-                  tenant_id: { type: string }
-                  agent_id: { type: string }
-                  scopes: { type: array, items: { type: string } }
-        '401':
-          description: 'X-Api-Key header missing, or does not match an active, unrevoked, unexpired key. Error code `auth_header_invalid`.'
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-
-  /tenants/{tenantId}/api-keys:
+  /tenants/{tenantId}/keys:
     post:
       tags: [Tenancy]
-      summary: Issue a customer API key for a tenant
+      summary: Issue a Brain API key
       description: |
-        Public route (`skipAuth`), gated instead by the
-        `X-Platform-Service-Auth` shared secret header, the same fence as
-        POST /tenants. Rate-limited to 20/minute. Creates a new
-        `kind='external', role='partner'` agent for the tenant and an
-        `api_keys` row holding only the key's sha256 hash; the plaintext
-        key (`brain_sk_...`) is returned exactly once in this response and
-        cannot be retrieved again. `scopes` defaults to a read + propose +
-        `audit:read` set when omitted; every requested scope must be within
-        the API-key scope cap (a strict subset of the full scope vocabulary
-        — no `*:admin`, `*:write` other than `raw:write`, or
-        `payment_intent:approve`/`execute`). Registered only when
-        `BRAIN_API_KEY_AUTH_ENABLED` is set; otherwise the route does not
-        exist (404).
+        Requires an authenticated same-tenant admin session. Generates a
+        `brain_sk_test_...` or `brain_sk_live_...` secret, stores only
+        SHA-256 over `BRAIN_API_KEY_PEPPER + "." + secret`, and returns the
+        plaintext secret exactly once. Current API-key scopes are
+        `ledger:read` and `audit:read`.
       operationId: issueApiKey
-      security: []
       parameters:
         - name: tenantId
           in: path
           required: true
           schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [name, environment, scopes]
               properties:
-                name: { type: string, description: Optional label for the key. }
+                name: { type: string, description: Developer-supplied key label. }
+                environment: { type: string, enum: [sandbox, live] }
                 scopes:
                   type: array
-                  items: { type: string }
-                  description: Defaults to a read + propose + audit:read set. Every entry must be within the API-key scope cap.
-                expires_at: { type: string, format: date-time, description: Optional expiry. Never expires when omitted. }
+                  items: { type: string, enum: ['ledger:read', 'audit:read'] }
       responses:
         '201':
           description: API key issued; plaintext key returned exactly once
@@ -809,20 +815,26 @@ paths:
               schema:
                 type: object
                 properties:
-                  api_key: { type: string, description: 'Plaintext key, format: brain_sk_.... Shown only in this response.' }
-                  key_id: { type: string }
-                  agent_id: { type: string }
+                  id: { type: string }
                   tenant_id: { type: string }
+                  name: { type: string }
+                  environment: { type: string, enum: [sandbox, live] }
                   scopes: { type: array, items: { type: string } }
-                  name: { type: [string, "null"] }
-                  expires_at: { type: [string, "null"], format: date-time }
+                  key_prefix: { type: string }
+                  key_last4: { type: string }
+                  masked_key: { type: string }
+                  created_at: { type: string, format: date-time }
+                  last_used_at: { type: [string, "null"], format: date-time }
+                  revoked_at: { type: [string, "null"], format: date-time }
+                  rotated_from_id: { type: [string, "null"] }
+                  secret: { type: string, description: 'Plaintext key. Shown only in this response.' }
         '400':
-          description: 'A requested scope is outside the API-key scope cap, or `expires_at` is not a valid ISO 8601 timestamp. Error code `request_body_invalid`.'
+          description: Invalid body. Error code `request_body_invalid`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '401':
-          description: Missing/invalid `X-Platform-Service-Auth` header, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`.
+        '403':
+          description: Principal is not a same-tenant admin. Error code `auth_scope_insufficient` or `auth_tenant_mismatch`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -832,26 +844,90 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
-
-  /tenants/{tenantId}/api-keys/{keyId}:
-    delete:
+    get:
       tags: [Tenancy]
-      summary: Revoke a customer API key
+      summary: List Brain API keys
       description: |
-        Public route (`skipAuth`), gated instead by the
-        `X-Platform-Service-Auth` shared secret header, the same fence as
-        POST /tenants. Rate-limited to 20/minute. Revokes the key and
-        marks its agent `state='revoked'`. Idempotent: revoking an
-        already-revoked key returns 204 with no audit event, only an
-        unknown key id 404s. Registered only when `BRAIN_API_KEY_AUTH_ENABLED`
-        is set; otherwise the route does not exist (404).
-      operationId: revokeApiKey
-      security: []
+        Requires an authenticated same-tenant admin session. Returns masked
+        key metadata only. The plaintext secret is never returned by this
+        endpoint.
+      operationId: listApiKeys
       parameters:
         - name: tenantId
           in: path
           required: true
           schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: API keys for the tenant
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        tenant_id: { type: string }
+                        name: { type: string }
+                        environment: { type: string, enum: [sandbox, live] }
+                        scopes: { type: array, items: { type: string } }
+                        key_prefix: { type: string }
+                        key_last4: { type: string }
+                        masked_key: { type: string }
+                        created_at: { type: string, format: date-time }
+                        last_used_at: { type: [string, "null"], format: date-time }
+                        revoked_at: { type: [string, "null"], format: date-time }
+                        rotated_from_id: { type: [string, "null"] }
+        '403':
+          description: Principal is not a same-tenant admin.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /keys/{keyId}/rotate:
+    post:
+      tags: [Tenancy]
+      summary: Rotate a Brain API key
+      description: |
+        Requires an authenticated same-tenant admin session. Atomically revokes
+        the old key and issues a replacement with the same name, environment,
+        and scopes. Returns the new plaintext secret exactly once.
+      operationId: rotateApiKey
+      parameters:
+        - name: keyId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^akey_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '201':
+          description: Key rotated; replacement secret returned exactly once
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '403':
+          description: Principal is not a same-tenant admin.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Key does not exist or is not active. Error code `api_key_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /keys/{keyId}:
+    delete:
+      tags: [Tenancy]
+      summary: Revoke a Brain API key
+      description: |
+        Requires an authenticated same-tenant admin session. Sets
+        `revoked_at`; keys are never hard-deleted.
+      operationId: revokeApiKey
+      parameters:
         - name: keyId
           in: path
           required: true
@@ -859,13 +935,69 @@ paths:
       responses:
         '204':
           description: Key revoked (or already revoked)
-        '401':
-          description: Missing/invalid `X-Platform-Service-Auth` header, or the platform secret is not configured. Error code `auth_token_invalid` or `dependency_unavailable`.
+        '403':
+          description: Principal is not a same-tenant admin.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '404':
-          description: No API key with this id exists for this tenant. Error code `api_key_not_found`.
+          description: Key does not exist. Error code `api_key_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /tenants/{tenantId}/usage:
+    get:
+      tags: [Tenancy]
+      summary: Aggregate per-key usage
+      description: |
+        Requires `audit:read` for the same tenant. Counts attributed audit
+        events over the requested window and optionally filters by environment
+        and key id.
+      operationId: getTenantUsage
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: window
+          in: query
+          required: false
+          schema: { type: string, default: 30d }
+        - name: environment
+          in: query
+          required: false
+          schema: { type: string, enum: [sandbox, live] }
+        - name: key_id
+          in: query
+          required: false
+          schema: { type: string, pattern: '^akey_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: Usage counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id: { type: string }
+                  window: { type: string }
+                  environment: { type: string }
+                  key_id: { type: string }
+                  total_events: { type: integer }
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key_id: { type: string }
+                        environment: { type: [string, "null"] }
+                        event_count: { type: integer }
+                        first_event_at: { type: [string, "null"], format: date-time }
+                        last_event_at: { type: [string, "null"], format: date-time }
+        '403':
+          description: Principal lacks tenant access or `audit:read`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

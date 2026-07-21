@@ -26,7 +26,9 @@ export type { MetricsEmitter, MetricTags } from "./metrics.js";
 export * from "./tracing.js";
 export {
   CorrelatingAuditEmitter,
+  currentApiKeyId,
   currentCorrelationId,
+  enterApiKeyId,
   enterCorrelationId,
 } from "./correlation.js";
 

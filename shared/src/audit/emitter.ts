@@ -149,11 +149,12 @@ export class PostgresAuditEmitter implements AuditEmitter {
           before_state: Record<string, unknown> | null;
           after_state: Record<string, unknown> | null;
           correlation_id: string | null;
+          key_id: string | null;
         }>(
           `SELECT id, event_hash, prev_event_hash, created_at, hash_schema_version,
                   layer, actor, action, inputs, outputs,
                   policy_version, policy_decision_id, before_state, after_state,
-                  correlation_id
+                  correlation_id, key_id
              FROM audit_events
             WHERE tenant_id = $1 AND idempotency_key = $2
             LIMIT 1`,
@@ -182,7 +183,7 @@ export class PostgresAuditEmitter implements AuditEmitter {
                 createdAt: hit.created_at.toISOString(),
                 prevEventHash,
               }) !== storedHash;
-          } else if (hit.hash_schema_version === 0) {
+          } else if (hit.hash_schema_version === 0 || hit.hash_schema_version === 1) {
             const stored: AuditEventInput = {
               tenantId: event.tenantId,
               layer: hit.layer,
@@ -199,6 +200,7 @@ export class PostgresAuditEmitter implements AuditEmitter {
               ...(hit.correlation_id !== null && hit.correlation_id !== undefined
                 ? { correlationId: hit.correlation_id }
                 : {}),
+              ...(hit.key_id !== null && hit.key_id !== undefined ? { keyId: hit.key_id } : {}),
             };
             conflict = logicalPayloadFingerprint(event) !== logicalPayloadFingerprint(stored);
           } else {
@@ -229,6 +231,7 @@ export class PostgresAuditEmitter implements AuditEmitter {
             ...(hit.correlation_id !== null && hit.correlation_id !== undefined
               ? { correlationId: hit.correlation_id }
               : {}),
+            ...(hit.key_id !== null && hit.key_id !== undefined ? { keyId: hit.key_id } : {}),
           };
         }
       }
@@ -269,8 +272,8 @@ export class PostgresAuditEmitter implements AuditEmitter {
            id, tenant_id, layer, actor, action, inputs, outputs,
            policy_version, policy_decision_id, before_state, after_state,
            event_hash, prev_event_hash, created_at, idempotency_key,
-           hash_schema_version, correlation_id
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+           hash_schema_version, correlation_id, key_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
         [
           id,
           event.tenantId,
@@ -291,6 +294,7 @@ export class PostgresAuditEmitter implements AuditEmitter {
           // consistency verifier only recomputes current-version rows.
           AUDIT_HASH_SCHEMA_VERSION,
           event.correlationId ?? null,
+          event.keyId ?? null,
         ],
       );
 

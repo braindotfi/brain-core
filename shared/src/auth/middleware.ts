@@ -18,6 +18,7 @@
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { brainError } from "../errors.js";
+import { enterApiKeyId } from "../correlation.js";
 import type { JwtVerifier } from "./jwt.js";
 import type { Principal } from "./principal.js";
 
@@ -25,6 +26,8 @@ declare module "fastify" {
   interface FastifyRequest {
     /** Present iff the route is non-exempt and auth succeeded. */
     principal?: Principal;
+    /** Present iff a first-class Brain API key authenticated the request. */
+    apiKeyId?: string;
   }
   interface FastifyContextConfig {
     /** Set `skipAuth: true` on a route config to bypass JWT verification. */
@@ -34,6 +37,7 @@ declare module "fastify" {
 
 export interface AuthPluginOptions {
   verifier: JwtVerifier;
+  apiKeyAuthenticator?: (secret: string) => Promise<{ principal: Principal; keyId: string } | null>;
 }
 
 const AUTH_HEADER_RE = /^Bearer\s+(.+)$/i;
@@ -45,7 +49,7 @@ export function extractBearer(header: string | undefined): string | null {
 }
 
 const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
-  const { verifier } = opts;
+  const { verifier, apiKeyAuthenticator } = opts;
 
   fastify.addHook("onRequest", async (request: FastifyRequest) => {
     if (request.routeOptions.config?.skipAuth === true) {
@@ -54,6 +58,16 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
     const token = extractBearer(request.headers.authorization);
     if (token === null) {
       throw brainError("auth_token_missing", "missing bearer token");
+    }
+    if (token.startsWith("brain_sk_")) {
+      const apiKeyAuth = await apiKeyAuthenticator?.(token);
+      if (apiKeyAuth === undefined || apiKeyAuth === null) {
+        throw brainError("auth_invalid_key", "api key invalid");
+      }
+      request.principal = apiKeyAuth.principal;
+      request.apiKeyId = apiKeyAuth.keyId;
+      enterApiKeyId(apiKeyAuth.keyId);
+      return;
     }
     const principal = await verifier.verify(token);
     request.principal = principal;
