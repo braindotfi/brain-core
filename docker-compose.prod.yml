@@ -103,8 +103,12 @@ services:
 
   minio:
     # S3-compatible object store — keeps the blob backend off Azure for a
-    # self-contained single-VM deploy (BLOB_BACKEND=s3).
-    image: minio/minio:latest
+    # self-contained single-VM deploy (BLOB_BACKEND=s3). Pinned to a specific
+    # release tag instead of :latest (unpinned tags are a supply-chain risk:
+    # an unreviewed upstream push could roll onto this VM on the next pull).
+    # Operator: confirm this is still a current, non-EOL MinIO release before
+    # relying on it in production, and bump deliberately, matching mc below.
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
     container_name: brain-prod-minio
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
@@ -118,7 +122,8 @@ services:
   # readiness gate for the api (minio's own image has no reliable healthcheck
   # binary across releases, so we gate on this completing instead).
   minio-setup:
-    image: minio/mc:latest
+    # Pinned to match the minio server release above (see that comment).
+    image: minio/mc:RELEASE.2024-10-08T09-37-26Z
     container_name: brain-prod-minio-setup
     depends_on:
       minio:
