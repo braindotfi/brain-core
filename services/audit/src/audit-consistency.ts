@@ -239,6 +239,8 @@ export async function verifyContentHashCursor(
       outputs: Record<string, unknown>;
       policy_version: number | null;
       policy_decision_id: string | null;
+      policy_check_id: string | null;
+      outcome: string | null;
       before_state: Record<string, unknown> | null;
       after_state: Record<string, unknown> | null;
       key_id: string | null;
@@ -248,7 +250,7 @@ export async function verifyContentHashCursor(
     }>(
       `SELECT id, tenant_id, layer, event_type, severity, actor, actor_display_name, actor_email,
               action, inputs, outputs,
-              policy_version, policy_decision_id, before_state, after_state,
+              policy_version, policy_decision_id, policy_check_id, outcome, before_state, after_state,
               key_id, prev_event_hash, created_at, event_hash
          FROM audit_events
         WHERE hash_schema_version = $1
@@ -274,6 +276,8 @@ export async function verifyContentHashCursor(
           outputs: r.outputs,
           ...(r.policy_version !== null ? { policyVersion: r.policy_version } : {}),
           ...(r.policy_decision_id !== null ? { policyDecisionId: r.policy_decision_id } : {}),
+          ...(r.policy_check_id !== null ? { policyCheckId: r.policy_check_id } : {}),
+          ...(r.outcome !== null ? { outcome: r.outcome } : {}),
           ...(r.before_state !== null ? { beforeState: r.before_state } : {}),
           ...(r.after_state !== null ? { afterState: r.after_state } : {}),
           ...(r.key_id !== null ? { keyId: r.key_id } : {}),

@@ -121,4 +121,15 @@ describe("canonicalize + hashEvent", () => {
     });
     expect(canon).toContain(`"policy_version":null`);
   });
+
+  it("includes native policy report fields in canonical form", () => {
+    const canon = canonicalize({
+      event: { ...base, policyCheckId: "rule_1", outcome: "allow" },
+      id: "evt_1",
+      createdAt: "2026-04-24T00:00:00.000Z",
+      prevEventHash: null,
+    });
+    expect(canon).toContain(`"policy_check_id":"rule_1"`);
+    expect(canon).toContain(`"outcome":"allow"`);
+  });
 });

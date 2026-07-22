@@ -481,6 +481,8 @@ export class PaymentIntentService implements IPaymentIntentService {
         policy_decision_id: decision.id,
       },
       policyDecisionId: decision.id,
+      ...(decision.matched_rule_id !== null ? { policyCheckId: decision.matched_rule_id } : {}),
+      outcome: decision.outcome,
     });
 
     return toRecord(row);

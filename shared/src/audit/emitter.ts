@@ -167,6 +167,8 @@ export class PostgresAuditEmitter implements AuditEmitter {
           outputs: Record<string, unknown>;
           policy_version: number | null;
           policy_decision_id: string | null;
+          policy_check_id?: string | null;
+          outcome?: string | null;
           before_state: Record<string, unknown> | null;
           after_state: Record<string, unknown> | null;
           correlation_id: string | null;
@@ -175,7 +177,8 @@ export class PostgresAuditEmitter implements AuditEmitter {
           `SELECT id, event_hash, prev_event_hash, created_at, hash_schema_version,
                   layer, event_type, severity, actor, actor_display_name, actor_email,
                   action, inputs, outputs,
-                  policy_version, policy_decision_id, before_state, after_state,
+                  policy_version, policy_decision_id, policy_check_id, outcome,
+                  before_state, after_state,
                   correlation_id, key_id
              FROM audit_events
             WHERE tenant_id = $1 AND idempotency_key = $2
@@ -208,7 +211,8 @@ export class PostgresAuditEmitter implements AuditEmitter {
           } else if (
             hit.hash_schema_version === 0 ||
             hit.hash_schema_version === 1 ||
-            hit.hash_schema_version === 2
+            hit.hash_schema_version === 2 ||
+            hit.hash_schema_version === 3
           ) {
             const stored: AuditEventInput = {
               tenantId: normalizedEvent.tenantId,
@@ -231,6 +235,12 @@ export class PostgresAuditEmitter implements AuditEmitter {
               ...(hit.policy_version !== null ? { policyVersion: hit.policy_version } : {}),
               ...(hit.policy_decision_id !== null
                 ? { policyDecisionId: hit.policy_decision_id }
+                : {}),
+              ...(hit.policy_check_id !== null && hit.policy_check_id !== undefined
+                ? { policyCheckId: hit.policy_check_id }
+                : {}),
+              ...(hit.outcome !== null && hit.outcome !== undefined
+                ? { outcome: hit.outcome }
                 : {}),
               ...(hit.before_state !== null ? { beforeState: hit.before_state } : {}),
               ...(hit.after_state !== null ? { afterState: hit.after_state } : {}),
@@ -291,6 +301,10 @@ export class PostgresAuditEmitter implements AuditEmitter {
               ? { correlationId: hit.correlation_id }
               : {}),
             ...(hit.key_id !== null && hit.key_id !== undefined ? { keyId: hit.key_id } : {}),
+            ...(hit.policy_check_id !== null && hit.policy_check_id !== undefined
+              ? { policyCheckId: hit.policy_check_id }
+              : {}),
+            ...(hit.outcome !== null && hit.outcome !== undefined ? { outcome: hit.outcome } : {}),
           };
         }
       }
@@ -330,10 +344,10 @@ export class PostgresAuditEmitter implements AuditEmitter {
         `INSERT INTO audit_events (
            id, tenant_id, layer, event_type, severity, actor, actor_display_name, actor_email,
            action, inputs, outputs,
-           policy_version, policy_decision_id, before_state, after_state,
+           policy_version, policy_decision_id, policy_check_id, outcome, before_state, after_state,
            event_hash, prev_event_hash, created_at, idempotency_key,
            hash_schema_version, correlation_id, key_id
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
         [
           id,
           normalizedEvent.tenantId,
@@ -348,6 +362,8 @@ export class PostgresAuditEmitter implements AuditEmitter {
           JSON.stringify(normalizedEvent.outputs),
           normalizedEvent.policyVersion ?? null,
           normalizedEvent.policyDecisionId ?? null,
+          normalizedEvent.policyCheckId ?? null,
+          normalizedEvent.outcome ?? null,
           normalizedEvent.beforeState === undefined
             ? null
             : JSON.stringify(normalizedEvent.beforeState),

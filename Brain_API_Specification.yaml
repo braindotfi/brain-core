@@ -69,6 +69,11 @@ tags:
     x-deprecated-superseded-by: [Agent, PaymentIntent]
   - name: Audit
     description: Tamper-evident event log and verification (Layer 6)
+  - name: Governance
+    description: |
+      Phase 1 BFF-only governance read surface for agent registry review and
+      audit-derived reports. Gated by `X-Platform-Service-Auth` carrying
+      `governance:read`, not by end-user bearer scopes.
   - name: MCP
     description: Model Context Protocol surface for external agents
   - name: Admin
@@ -4999,6 +5004,177 @@ paths:
                   chain: { type: string, enum: [base-sepolia] }
         '429': { $ref: '#/components/responses/RateLimited' }
 
+  /governance/agents:
+    get:
+      tags: [Governance]
+      summary: List registered agents for governance review
+      description: |
+        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+        with `governance:read`. Tenant is supplied as `tenant_id` because
+        the platform credential is not a tenant bearer principal.
+      operationId: listGovernanceAgents
+      security: []
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, pending, quarantined, revoked]
+        - name: owner
+          in: query
+          schema: { type: string }
+          description: Current v1 alias for tenant owner filtering. Non-matching values return an empty list.
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 500 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Agent list page.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agents, next_cursor]
+                properties:
+                  agents:
+                    type: array
+                    items: { $ref: '#/components/schemas/GovernanceAgent' }
+                  next_cursor: { type: [string, "null"] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /governance/agents/{agent_id}:
+    get:
+      tags: [Governance]
+      summary: Get one registered agent with lifecycle timeline
+      description: |
+        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+        with `governance:read`.
+      operationId: getGovernanceAgent
+      security: []
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Agent detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agent]
+                properties:
+                  agent: { $ref: '#/components/schemas/GovernanceAgentDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Governance]
+      summary: Pause, resume, or revoke an agent
+      description: |
+        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+        with `governance:read`. Writes `governance.agent.lifecycle_changed`
+        to the existing audit event store with actor and reason. No external
+        agent creation surface is exposed in Phase 1.
+      operationId: updateGovernanceAgentLifecycle
+      security: []
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_id, transition, reason, actor]
+              properties:
+                tenant_id: { type: string }
+                transition:
+                  type: string
+                  enum: [pause, resume, revoke]
+                reason: { type: string }
+                actor: { type: string }
+      responses:
+        '200':
+          description: Agent after lifecycle transition.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agent]
+                properties:
+                  agent: { $ref: '#/components/schemas/GovernanceAgent' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /governance/reports:
+    get:
+      tags: [Governance]
+      summary: Build an audit-derived governance report
+      description: |
+        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+        with `governance:read`. Reports include policy-relevant audit events
+        in the requested period. Historical rows are joined to
+        `policy_decisions` when `policy_decision_id` is present. Rows without
+        a native outcome or resolvable policy decision are returned with
+        `decision_data_status=unavailable` rather than omitted.
+      operationId: getGovernanceReport
+      security: []
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: period_start
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: period_end
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: agent_id
+          in: query
+          schema: { type: string }
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+      responses:
+        '200':
+          description: Governance report as JSON or CSV.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GovernanceReport' }
+            text/csv:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /audit/events:
     get:
       tags: [Audit]
@@ -6352,6 +6528,145 @@ components:
     # Audit layer
     #
 
+    GovernanceAgent:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - kind
+        - role
+        - display_name
+        - status
+        - scopes
+        - scope_hash
+        - onchain_address
+        - registered_tx
+        - registered_at
+        - created_at
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        kind: { type: string, enum: [internal, external] }
+        role: { type: string }
+        display_name: { type: string }
+        status: { type: string, enum: [active, pending, quarantined, revoked] }
+        scopes:
+          type: [array, "null"]
+          items: { type: string }
+          description: |
+            Null in Phase 1 because the registry persists a hash of scopes,
+            not the original scope list.
+        scope_hash: { type: [string, "null"] }
+        onchain_address: { type: [string, "null"] }
+        registered_tx: { type: [string, "null"] }
+        registered_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+
+    GovernanceAgentDetail:
+      allOf:
+        - $ref: '#/components/schemas/GovernanceAgent'
+        - type: object
+          required: [lifecycle_events]
+          properties:
+            lifecycle_events:
+              type: array
+              items: { $ref: '#/components/schemas/GovernanceAgentLifecycleEvent' }
+
+    GovernanceAgentLifecycleEvent:
+      type: object
+      required:
+        - audit_event_id
+        - actor
+        - action
+        - policy_decision_id
+        - policy_check_id
+        - outcome
+        - created_at
+        - inputs
+        - outputs
+      properties:
+        audit_event_id: { type: string }
+        actor: { type: string }
+        action: { type: string }
+        policy_decision_id: { type: [string, "null"] }
+        policy_check_id: { type: [string, "null"] }
+        outcome: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        inputs: { type: object, additionalProperties: true }
+        outputs: { type: object, additionalProperties: true }
+
+    GovernanceReport:
+      type: object
+      required: [tenant_id, period_start, period_end, summary, events]
+      properties:
+        tenant_id: { type: string }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        summary: { $ref: '#/components/schemas/GovernanceReportSummary' }
+        events:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/GovernanceReportEvent' }
+
+    GovernanceReportSummary:
+      type: object
+      required: [totals, coverage]
+      properties:
+        totals:
+          type: object
+          required: [proposed, approved, blocked, escalated, decision_data_unavailable]
+          properties:
+            proposed: { type: integer }
+            approved: { type: integer }
+            blocked: { type: integer }
+            escalated: { type: integer }
+            decision_data_unavailable: { type: integer }
+        coverage:
+          type: object
+          required:
+            - events
+            - with_policy_decision_id
+            - joined_policy_decision
+            - with_native_outcome
+          properties:
+            events: { type: integer }
+            with_policy_decision_id: { type: integer }
+            joined_policy_decision: { type: integer }
+            with_native_outcome: { type: integer }
+
+    GovernanceReportEvent:
+      type: object
+      required:
+        - audit_event_id
+        - created_at
+        - actor
+        - agent_id
+        - action
+        - policy_decision_id
+        - policy_check_id
+        - raw_policy_outcome
+        - outcome
+        - decision_data_status
+        - unavailable_reason
+      properties:
+        audit_event_id: { type: string }
+        created_at: { type: string, format: date-time }
+        actor: { type: string }
+        agent_id: { type: [string, "null"] }
+        action: { type: string }
+        policy_decision_id: { type: [string, "null"] }
+        policy_check_id:
+          type: [string, "null"]
+          description: Native forward-going policy check id, or historical join to `policy_decisions.matched_rule_id`.
+        raw_policy_outcome: { type: [string, "null"] }
+        outcome: { type: [string, "null"], enum: [approved, blocked, escalated, null] }
+        decision_data_status:
+          type: string
+          enum: [available, unavailable]
+        unavailable_reason:
+          type: [string, "null"]
+          enum: [policy_decision_id_missing, policy_decision_join_missing, null]
+
     AuditEvent:
       type: object
       properties:
@@ -6396,6 +6711,12 @@ components:
           type: [integer, "null"]
         policy_decision_id:
           type: [string, "null"]
+        policy_check_id:
+          type: [string, "null"]
+          description: Native forward-going policy check id, currently the matched policy rule id when available.
+        outcome:
+          type: [string, "null"]
+          description: Native forward-going policy outcome for report joins and API consumers.
         before_state:
           type: [object, "null"]
           additionalProperties: true

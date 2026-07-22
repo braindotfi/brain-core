@@ -419,16 +419,22 @@ describe("PostgresAuditEmitter", () => {
       severity: "critical",
       actorDisplayName: "Ada Lovelace",
       actorEmail: "ada@example.com",
+      policyCheckId: "rule_1",
+      outcome: "allow",
     });
 
     const insert = calls.find((c) => c.text.includes("INSERT INTO audit_events"));
     expect(insert).toBeDefined();
     expect(insert!.text).toContain("event_type");
     expect(insert!.text).toContain("actor_display_name");
+    expect(insert!.text).toContain("policy_check_id");
+    expect(insert!.text).toContain("outcome");
     expect(insert!.values).toContain("flagged");
     expect(insert!.values).toContain("critical");
     expect(insert!.values).toContain("Ada Lovelace");
     expect(insert!.values).toContain("ada@example.com");
+    expect(insert!.values).toContain("rule_1");
+    expect(insert!.values).toContain("allow");
   });
 
   it("rolls back and rethrows on INSERT failure", async () => {

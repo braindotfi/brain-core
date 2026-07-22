@@ -24,7 +24,7 @@ import { normalizeAuditEventType, normalizeAuditSeverity, type AuditEventInput }
  * `canonicalize` changes; 0 means "pre-versioning" and is skipped by the
  * verifier. (Codex c96283d P1 #2.)
  */
-export const AUDIT_HASH_SCHEMA_VERSION = 3;
+export const AUDIT_HASH_SCHEMA_VERSION = 4;
 
 export interface HashInput {
   readonly event: AuditEventInput;
@@ -59,6 +59,8 @@ export function canonicalize(input: HashInput): string {
     outputs: stableJsonValue(e.outputs),
     policy_version: e.policyVersion ?? null,
     policy_decision_id: e.policyDecisionId ?? null,
+    policy_check_id: e.policyCheckId ?? null,
+    outcome: e.outcome ?? null,
     before_state: e.beforeState === undefined ? null : stableJsonValue(e.beforeState),
     after_state: e.afterState === undefined ? null : stableJsonValue(e.afterState),
     key_id: e.keyId ?? null,
@@ -94,6 +96,8 @@ export function logicalPayloadFingerprint(e: AuditEventInput): string {
       outputs: e.outputs,
       policy_version: e.policyVersion ?? null,
       policy_decision_id: e.policyDecisionId ?? null,
+      policy_check_id: e.policyCheckId ?? null,
+      outcome: e.outcome ?? null,
       before_state: e.beforeState ?? null,
       after_state: e.afterState ?? null,
       key_id: e.keyId ?? null,

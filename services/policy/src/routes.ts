@@ -265,6 +265,8 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
         layer: "policy",
         actor: request.principal!.id,
         action: "policy.evaluate",
+        ...(decision.matched_rule_id !== null ? { policyCheckId: decision.matched_rule_id } : {}),
+        outcome: decision.outcome,
         inputs: { action_kind: action.kind, policy_version: active.version },
         outputs: { decision: decision.outcome, matched_rule_id: decision.matched_rule_id },
       });

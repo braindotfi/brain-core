@@ -449,7 +449,7 @@ export async function registerProductionTenancyRoutes(
 export function assertPlatformCredential(
   request: FastifyRequest,
   secret: string | undefined,
-  scope: "tenant:create" | "tenant:agent-mint" | "session:exchange" | "invite:consume",
+  scope: Scope,
 ): void {
   if (secret === undefined || secret.length === 0) {
     throw brainError("dependency_unavailable", "BRAIN_PLATFORM_SERVICE_SECRET is not configured", {

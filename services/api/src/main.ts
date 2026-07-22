@@ -85,6 +85,7 @@ import { TenantExportService } from "./tenant-export/service.js";
 import { startTenantExportWorker } from "./tenant-export/worker.js";
 import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
 import { registerProductionTenancyRoutes } from "./production-tenancy/routes.js";
+import { registerGovernanceRoutes } from "./governance/routes.js";
 import {
   buildApiKeyAuthenticator,
   registerApiKeyRoutes,
@@ -1996,6 +1997,15 @@ async function main(): Promise<void> {
             audit,
             signer: siwxSigner,
             revocation: revocationStore,
+            ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
+              ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
+              : {}),
+          }),
+        );
+        await v1.register(async (child) =>
+          registerGovernanceRoutes(child, {
+            pool,
+            audit,
             ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
               ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
               : {}),
