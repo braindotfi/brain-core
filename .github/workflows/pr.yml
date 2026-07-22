@@ -134,6 +134,10 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgres://brain:brain@localhost:5432/brain
+      # Least-privilege request-path role (infra/db-roles.sql, applied below).
+      # brain_app is NOBYPASSRLS and not the table owner, so it is the one
+      # connection in this job that Postgres actually subjects to RLS.
+      DATABASE_URL_APP: postgres://brain_app:brain_app@localhost:5432/brain
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
@@ -156,6 +160,36 @@ jobs:
         run: |
           pnpm -C tools/migrate run build
           node tools/migrate/dist/cli.js up
+
+      - name: Apply DB role model (RLS enforcement)
+        # infra/db-roles.sql creates brain_app (NOBYPASSRLS, not the table
+        # owner) and FORCE ROW LEVEL SECURITY-sweeps every RLS table. Every
+        # job's DATABASE_URL connects as the table owner ("brain"), which
+        # Postgres never subjects to RLS regardless of FORCE ROW LEVEL
+        # SECURITY, so this step is the only place CI can catch an RLS
+        # regression. Passwords are test-only, matching db-roles.sql's psql
+        # :'var' placeholders (see docker-compose.prod.yml's db-roles service
+        # for the same invocation shape against real secrets).
+        env:
+          PGPASSWORD: brain
+        run: |
+          command -v psql >/dev/null 2>&1 || { sudo apt-get -qq update && sudo apt-get -qq install -y --no-install-recommends postgresql-client; }
+          psql -v ON_ERROR_STOP=1 -h localhost -U brain -d brain \
+            -v brain_app_password="brain_app" \
+            -v brain_privileged_password="brain_privileged" \
+            -v brain_wiki_reader_password="brain_wiki_reader" \
+            -v brain_mcp_reader_password="brain_mcp_reader" \
+            -v brain_raw_worker_password="brain_raw_worker" \
+            -v brain_canonical_projector_password="brain_canonical_projector" \
+            -v brain_ledger_projector_password="brain_ledger_projector" \
+            -v brain_execution_worker_password="brain_execution_worker" \
+            -v brain_audit_verifier_password="brain_audit_verifier" \
+            -v brain_audit_publisher_password="brain_audit_publisher" \
+            -v brain_resolver_password="brain_resolver" \
+            -v brain_tenant_deletion_password="brain_tenant_deletion" \
+            -v brain_surface_gateway_password="brain_surface_gateway" \
+            -v brain_surface_audit_writer_password="brain_surface_audit_writer" \
+            -f infra/db-roles.sql
 
       - name: Integration tests
         # `--if-present` must precede the script name; after it, pnpm forwards it
