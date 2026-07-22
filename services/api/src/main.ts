@@ -2672,7 +2672,7 @@ async function main(): Promise<void> {
   // normalize worker then promotes to Ledger entities. Cross-tenant poll,
   // hence the raw-worker role; per-artifact writes stay tenant-scoped.
   const interpretWorker = composition.workers.has("raw")
-    ? startInterpretWorker({ pool: rawWorkerPool, blob, audit })
+    ? startInterpretWorker({ pool: rawWorkerPool, blob, audit, metrics })
     : undefined;
 
   const documentExtractionWorker = composition.workers.has("raw")

@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, MemoryBlobAdapter, newTenantId } from "@brain/shared";
+import { InMemoryAuditEmitter, MemoryBlobAdapter, MockMetrics, newTenantId } from "@brain/shared";
 import { runInterpretCycle } from "./interpretWorker.js";
 
 interface Call {
@@ -57,8 +57,15 @@ function artifactRow(
     source_id: "src_1",
     object_type: "balance_transaction",
     blob_uri: `${tenantId}/blob1`,
+    attempt_count: 0,
     ...over,
   };
+}
+
+function interpretationLogInsert(calls: Call[], rawArtifactId: string): Call | undefined {
+  return calls.find(
+    (c) => c.text.includes("INSERT INTO raw_interpretation_log") && c.values[0] === rawArtifactId,
+  );
 }
 
 describe("runInterpretCycle", () => {
@@ -78,7 +85,7 @@ describe("runInterpretCycle", () => {
     const insert = calls.find((c) => c.text.startsWith("INSERT INTO raw_parsed"));
     expect(insert).toBeDefined();
     expect(insert!.values[3]).toBe("stripe_v1"); // parser
-    const log = calls.find((c) => c.text.includes("INSERT INTO raw_interpretation_log"));
+    const log = interpretationLogInsert(calls, "raw_A1");
     expect(log).toBeDefined();
     expect(log!.values[0]).toBe("raw_A1");
     expect(log!.values[4]).toBeNull(); // no error
@@ -96,9 +103,11 @@ describe("runInterpretCycle", () => {
     await runInterpretCycle({ pool, blob, audit: new InMemoryAuditEmitter() });
 
     expect(calls.some((c) => c.text.startsWith("INSERT INTO raw_parsed"))).toBe(false);
-    const log = calls.find((c) => c.text.includes("INSERT INTO raw_interpretation_log"));
+    const log = interpretationLogInsert(calls, "raw_A1");
     expect(log!.values[3]).toBeNull(); // parsed_id
     expect(log!.values[4]).toBeNull(); // error
+    expect(log!.values[5]).toBe(0); // attempt_count unchanged
+    expect(log!.values[6]).toBeNull(); // next_attempt_at: terminal, never re-polled
   });
 
   it("quarantines a failing artifact in the log without blocking the cycle", async () => {
@@ -117,12 +126,96 @@ describe("runInterpretCycle", () => {
 
     await runInterpretCycle({ pool, blob, audit: new InMemoryAuditEmitter() });
 
-    const logs = calls.filter((c) => c.text.includes("INSERT INTO raw_interpretation_log"));
-    const bad = logs.find((c) => c.values[0] === "raw_BAD")!;
+    const bad = interpretationLogInsert(calls, "raw_BAD")!;
     expect(bad.values[4]).toMatch(/not JSON/);
     // The failure did not block the next artifact.
-    const good = logs.find((c) => c.values[0] === "raw_GOOD")!;
+    const good = interpretationLogInsert(calls, "raw_GOOD")!;
     expect(good.values[4]).toBeNull();
     expect(calls.some((c) => c.text.startsWith("INSERT INTO raw_parsed"))).toBe(true);
+  });
+
+  it("poll query is retryable-aware, not the old permanent NOT EXISTS exclusion", async () => {
+    const blob = new MemoryBlobAdapter();
+    const { pool, calls } = fakePool([]);
+
+    await runInterpretCycle({ pool, blob, audit: new InMemoryAuditEmitter() });
+
+    const poll = calls.find((c) => c.text.includes("FROM raw_artifacts ra"))!;
+    expect(poll.text).toContain("LEFT JOIN raw_interpretation_log il");
+    expect(poll.text).not.toContain("NOT EXISTS");
+    expect(poll.text).toContain("il.error IS NOT NULL");
+    expect(poll.text).toContain("il.attempt_count < $3");
+    expect(poll.text).toContain("il.next_attempt_at IS NULL OR il.next_attempt_at <= now()");
+  });
+
+  it("requeues a failing artifact with bounded exponential backoff before the attempt ceiling", async () => {
+    const tenantId = newTenantId();
+    const blob = new MemoryBlobAdapter();
+    await blob.put(`${tenantId}/bad`, Buffer.from("not json"), { immutable: true, metadata: {} });
+    // Simulates the second poll pick-up: one prior failed attempt already logged.
+    const { pool, calls } = fakePool([
+      artifactRow(tenantId, { id: "raw_BAD", blob_uri: `${tenantId}/bad`, attempt_count: 1 }),
+    ]);
+    const metrics = new MockMetrics();
+    const now = new Date("2026-07-06T00:00:00Z");
+
+    await runInterpretCycle(
+      { pool, blob, audit: new InMemoryAuditEmitter(), metrics },
+      { maxAttempts: 3, retryBaseMs: 1_000, now: () => now },
+    );
+
+    const log = interpretationLogInsert(calls, "raw_BAD")!;
+    expect(log.values[4]).toMatch(/not JSON/); // error
+    expect(log.values[5]).toBe(2); // attempt_count incremented
+    // delay = retryBaseMs * 2^(attemptCount-1) = 1000 * 2^1 = 2000ms
+    expect(log.values[6]).toEqual(new Date("2026-07-06T00:00:02Z"));
+    expect(metrics.calls.some((c) => c.name === "brain.raw.interpretation.retry.count")).toBe(true);
+    expect(metrics.calls.some((c) => c.name === "brain.raw.interpretation.stranded.count")).toBe(
+      false,
+    );
+  });
+
+  it("becomes terminal-failed once the attempt ceiling is reached, and stops retrying", async () => {
+    const tenantId = newTenantId();
+    const blob = new MemoryBlobAdapter();
+    await blob.put(`${tenantId}/bad`, Buffer.from("not json"), { immutable: true, metadata: {} });
+    // Two prior failed attempts already logged; this third attempt exhausts maxAttempts=3.
+    const { pool, calls } = fakePool([
+      artifactRow(tenantId, { id: "raw_BAD", blob_uri: `${tenantId}/bad`, attempt_count: 2 }),
+    ]);
+    const metrics = new MockMetrics();
+
+    await runInterpretCycle(
+      { pool, blob, audit: new InMemoryAuditEmitter(), metrics },
+      { maxAttempts: 3, retryBaseMs: 1_000 },
+    );
+
+    const log = interpretationLogInsert(calls, "raw_BAD")!;
+    expect(log.values[5]).toBe(3); // attempt_count at ceiling
+    expect(log.values[6]).toBeNull(); // no further retry scheduled
+    expect(metrics.calls.some((c) => c.name === "brain.raw.interpretation.stranded.count")).toBe(
+      true,
+    );
+    expect(metrics.calls.some((c) => c.name === "brain.raw.interpretation.retry.count")).toBe(
+      false,
+    );
+  });
+
+  it("a successful interpretation clears a prior error and is never re-polled again", async () => {
+    const tenantId = newTenantId();
+    const blob = new MemoryBlobAdapter();
+    await seedBlob(blob, `${tenantId}/blob1`, {
+      object: "list",
+      data: [{ id: "txn_1", amount: -100, currency: "usd" }],
+      has_more: false,
+    });
+    // Simulates an artifact that failed once before and is now retried successfully.
+    const { pool, calls } = fakePool([artifactRow(tenantId, { attempt_count: 1 })]);
+
+    await runInterpretCycle({ pool, blob, audit: new InMemoryAuditEmitter() });
+
+    const log = interpretationLogInsert(calls, "raw_A1")!;
+    expect(log.values[4]).toBeNull(); // error cleared
+    expect(log.values[6]).toBeNull(); // next_attempt_at cleared: terminal-success
   });
 });

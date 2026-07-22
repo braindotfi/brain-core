@@ -261,6 +261,59 @@
         "docs/audit/findings/tier-0-contracts-payment.md",
         "docs/rails-matrix.md"
       ]
+    },
+    {
+      "id": "R-16",
+      "title": "Raw interpretation strands artifacts permanently on transient failure",
+      "priority": "P0",
+      "status": "mitigating",
+      "mitigation_summary": "interpretWorker.ts polled raw_artifacts for rows with NO raw_interpretation_log row, and the failure path wrote that log row via ON CONFLICT DO NOTHING. A transient failure (a blob read blip, a DB hiccup) therefore permanently stranded the artifact: the log row written to record the error satisfied the exclusion itself, so no later cycle would ever retry it, and a later success could not overwrite the failure row. Fixed in this PR: migration 0016 adds attempt_count and next_attempt_at to raw_interpretation_log; the poll query now selects a row with no log yet OR a retryable failed row (error IS NOT NULL, attempt_count below the ceiling, backoff elapsed); recordInterpretation is now ON CONFLICT DO UPDATE. Retry policy mirrors the existing document-extraction worker exactly (services/api/src/raw-extract/worker.ts): 3 attempts, 30s base, exponential, capped at 15 minutes. A row with error IS NULL (including the interpreter-yielded-nothing case) stays terminal-success and is never re-polled, preserving existing behavior. Metrics brain.raw.interpretation.retry.count and .stranded.count are emitted on retry-scheduled and terminal-ceiling respectively.",
+      "exit_criteria": [
+        "terminal-success (error IS NULL) is never re-polled",
+        "a retryable failure is re-polled only after its backoff elapses",
+        "a failing artifact becomes terminal-failed after the attempt ceiling, not before",
+        "unit tests cover backoff scheduling, the ceiling, and success clearing a prior error"
+      ],
+      "owner": "engineering",
+      "evidence": [
+        "services/raw/migrations/0016_raw_interpretation_log_retry.sql",
+        "services/raw/src/workers/interpretWorker.ts",
+        "services/raw/src/workers/interpretWorker.test.ts",
+        "services/api/src/raw-extract/worker.ts"
+      ]
+    },
+    {
+      "id": "R-17",
+      "title": "Blob store has no backup, snapshot, or replication",
+      "priority": "P0",
+      "status": "open",
+      "mitigation_summary": "Production raw blob storage is a single MinIO container on one VM, backed by one named Docker volume, with no backup, snapshot, or replication anywhere else. raw_artifacts stores only a blob_uri pointer and a sha256 hash, never the bytes, so loss of that disk permanently destroys every raw artifact (bank statements, invoice uploads, connector payloads) while Postgres still shows the rows and hashes for bytes that no longer exist. This PR does not implement backups. It (1) pins the minio and minio/mc images in docker-compose.prod.yml to specific release tags instead of :latest, closing the separate supply-chain risk of an unreviewed upstream push landing on the VM on the next pull, and (2) documents the operator backup and restore procedure end to end (docs/blob-backup-restore.md), including an explicit warning that the procedure is not yet scheduled to run automatically.",
+      "exit_criteria": [
+        "a scheduled off-VM mc mirror (or equivalent) backup job runs unattended with failure alerting",
+        "the restore procedure in docs/blob-backup-restore.md has been exercised at least once against a real recovery target",
+        "replicated object storage, or an equivalent always-on DR substrate, replaces the single-VM MinIO container"
+      ],
+      "owner": "operations",
+      "evidence": ["docker-compose.prod.yml", "docs/blob-backup-restore.md"]
+    },
+    {
+      "id": "R-18",
+      "title": "RLS was unverified by CI because integration tests connected as the table owner",
+      "priority": "P0",
+      "status": "mitigating",
+      "mitigation_summary": "Every CI job set POSTGRES_USER=brain and DATABASE_URL=postgres://brain:brain@..., and the official Postgres image bootstrap user is a superuser. Postgres never subjects a superuser or table owner to row security regardless of FORCE ROW LEVEL SECURITY, and infra/db-roles.sql (which creates the least-privilege, non-owner, NOBYPASSRLS brain_app role) was never executed in .github/workflows/pr.yml. No automated test could therefore catch an RLS regression: an app-level tenant filter could be deleted from a route and every owner-connected integration test would stay green. Fixed in this PR: the pr.yml integration job now applies infra/db-roles.sql against the CI Postgres after migrations and before the test suites, and exposes a second connection string, DATABASE_URL_APP, for the brain_app role. A new adversarial test, services/raw/src/__integration__/rls.integration.test.ts, seeds two tenants via the owner connection, then proves a brain_app connection scoped to tenant A via withTenantScope returns zero rows belonging to tenant B, for raw_artifacts and raw_interpretation_log, and that an unscoped brain_app query returns nothing at all. Verified locally: the same assertions fail (cross-tenant rows leak through) when RLS is disabled on the test schema, and pass again once it is restored.",
+      "exit_criteria": [
+        "pr.yml integration job applies infra/db-roles.sql before any test suite runs",
+        "a DATABASE_URL_APP connection string for the brain_app role is available to tests",
+        "an adversarial integration test connects as brain_app (NOBYPASSRLS, non-owner) and proves cross-tenant row isolation",
+        "the test is proven to fail when the underlying RLS policy is removed"
+      ],
+      "owner": "engineering",
+      "evidence": [
+        ".github/workflows/pr.yml",
+        "services/raw/src/__integration__/rls.integration.test.ts",
+        "infra/db-roles.sql"
+      ]
     }
   ]
 }
