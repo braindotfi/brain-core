@@ -6,10 +6,14 @@
  *
  *   id TEXT,
  *   tenant_id TEXT,
- *   layer TEXT,              -- raw | ledger | wiki | policy | execution | agent | audit
+ *   layer TEXT,              -- raw | canonical | ledger | wiki | policy | execution | agent | audit | identity
+ *   event_type TEXT,         -- system_activity | assistant_activity | flagged
+ *   severity TEXT,           -- info | warning | critical
  *   actor TEXT,              -- agent ID | user ID | partner ID
+ *   actor_display_name TEXT?,
+ *   actor_email TEXT?,
  *   action TEXT,
- *   inputs JSONB,            -- hashes and evidence refs, not full content
+ *   inputs JSONB,            -- hashes and evidence refs unless action contract allows text
  *   outputs JSONB,
  *   policy_version INT?,
  *   policy_decision_id TEXT?, -- v0.3 §6 pre-execution gate pointer
@@ -20,8 +24,9 @@
  *   prev_event_hash BYTEA?,   -- per-tenant chain
  *   created_at TIMESTAMPTZ
  *
- * `inputs` and `outputs` must not contain PII (§7.1). Hashes, IDs, and
- * evidence pointers only. Callers hash/redact before emitting.
+ * `inputs` and `outputs` must not contain PII (§7.1) unless the action's
+ * audit contract explicitly allows client-display text, such as wiki.question.
+ * Callers hash or redact before emitting.
  */
 
 export type AuditLayer =
@@ -35,11 +40,27 @@ export type AuditLayer =
   | "audit"
   | "identity";
 
+export type AuditEventType = "system_activity" | "assistant_activity" | "flagged";
+
+export type AuditSeverity = "info" | "warning" | "critical";
+
+export interface AuditActorDisplay {
+  readonly displayName?: string;
+  readonly email?: string;
+}
+
 export interface AuditEventInput {
   readonly tenantId: string;
   readonly layer: AuditLayer;
+  /** Client-facing audit classification. `flagged` is reserved for risk events. */
+  readonly eventType?: AuditEventType;
+  /** Severity implied by eventType unless explicitly set. */
+  readonly severity?: AuditSeverity;
   /** Principal ID that caused the event (user, agent, partner). */
   readonly actor: string;
+  /** Optional human display fields when the emitting service already knows them. */
+  readonly actorDisplayName?: string;
+  readonly actorEmail?: string;
   /** Short verb describing the action, e.g. "raw.ingest" or "policy.sign". */
   readonly action: string;
   readonly inputs: Readonly<Record<string, unknown>>;
@@ -72,4 +93,27 @@ export interface AuditEvent extends AuditEventInput {
   readonly eventHash: string;
   readonly prevEventHash: string | null;
   readonly createdAt: string; // ISO-8601 UTC
+}
+
+export interface NormalizedAuditEventInput extends AuditEventInput {
+  readonly eventType: AuditEventType;
+  readonly severity: AuditSeverity;
+}
+
+export function normalizeAuditEventType(eventType: AuditEventType | undefined): AuditEventType {
+  return eventType ?? "system_activity";
+}
+
+export function normalizeAuditSeverity(
+  eventType: AuditEventType | undefined,
+  severity: AuditSeverity | undefined,
+): AuditSeverity {
+  if (severity !== undefined) return severity;
+  return normalizeAuditEventType(eventType) === "flagged" ? "warning" : "info";
+}
+
+export function normalizeAuditEventInput(event: AuditEventInput): NormalizedAuditEventInput {
+  const eventType = normalizeAuditEventType(event.eventType);
+  const severity = normalizeAuditSeverity(eventType, event.severity);
+  return { ...event, eventType, severity };
 }
