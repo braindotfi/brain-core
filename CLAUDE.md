@@ -218,6 +218,15 @@ Done
 - The platform repo must conform to `docs/contracts/members-attribution.md`.
   Platform-side member UI is mock-only until it is wired against the core
   `/v1/members` API and core approval responses.
+- BrainMVB must use `docs/api-surface.brainmvb.json` as the machine-readable
+  integration contract for stable brain-core endpoints. The artifact enumerates
+  every non-feature-gated deployed API route as of `c120d0e`, including auth
+  mode, required scope, route-local enforcement status, request and response
+  shape, and examples. Scope checks are enforced by route handlers through
+  `requireScope`; HEAD does not have a central gateway route-to-scope matrix.
+  API-key auth and API-key management remain code-gated behind
+  `BRAIN_API_KEY_AUTH_ENABLED`, even though staging enables that flag today, so
+  they are tracked as feature-gated rather than stable in the BrainMVB surface.
 - Manual counterparty creation, search, and identity edit are governed by
   `docs/contracts/counterparty-manual.md`. Ledger exposes
   `GET /ledger/counterparties`, `GET /ledger/counterparties/:id`,
