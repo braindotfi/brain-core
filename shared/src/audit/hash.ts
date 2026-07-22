@@ -13,7 +13,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { AuditEventInput } from "./types.js";
+import { normalizeAuditEventType, normalizeAuditSeverity, type AuditEventInput } from "./types.js";
 
 /**
  * Version of the canonical-hash serialization that produced an event's
@@ -24,7 +24,7 @@ import type { AuditEventInput } from "./types.js";
  * `canonicalize` changes; 0 means "pre-versioning" and is skipped by the
  * verifier. (Codex c96283d P1 #2.)
  */
-export const AUDIT_HASH_SCHEMA_VERSION = 2;
+export const AUDIT_HASH_SCHEMA_VERSION = 3;
 
 export interface HashInput {
   readonly event: AuditEventInput;
@@ -49,7 +49,11 @@ export function canonicalize(input: HashInput): string {
     id: input.id,
     tenant_id: e.tenantId,
     layer: e.layer,
+    event_type: normalizeAuditEventType(e.eventType),
+    severity: normalizeAuditSeverity(e.eventType, e.severity),
     actor: e.actor,
+    actor_display_name: e.actorDisplayName ?? null,
+    actor_email: e.actorEmail ?? null,
     action: e.action,
     inputs: stableJsonValue(e.inputs),
     outputs: stableJsonValue(e.outputs),
@@ -80,7 +84,11 @@ export function logicalPayloadFingerprint(e: AuditEventInput): string {
     stableJsonValue({
       tenant_id: e.tenantId,
       layer: e.layer,
+      event_type: normalizeAuditEventType(e.eventType),
+      severity: normalizeAuditSeverity(e.eventType, e.severity),
       actor: e.actor,
+      actor_display_name: e.actorDisplayName ?? null,
+      actor_email: e.actorEmail ?? null,
       action: e.action,
       inputs: e.inputs,
       outputs: e.outputs,

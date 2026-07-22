@@ -63,7 +63,11 @@ describe("GET /audit/event/:id inclusion_proof shape", () => {
   const eventRow = {
     id: "evt_1",
     layer: "ledger",
+    event_type: "assistant_activity",
+    severity: "info",
     actor: "user_1",
+    actor_display_name: null,
+    actor_email: null,
     action: "ledger.account.created",
     inputs: {},
     outputs: {},
@@ -118,6 +122,14 @@ describe("GET /audit/event/:id inclusion_proof shape", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.event.id).toBe("evt_1");
+    expect(body.event.event_type).toBe("assistant_activity");
+    expect(body.event.category).toBe("assistant_activity");
+    expect(body.event.severity).toBe("info");
+    expect(body.event.actor_ref).toMatchObject({
+      id: "user_1",
+      type: "user",
+      lookup: "/v1/members/user_1",
+    });
     expect(body.inclusion_proof).toBeTypeOf("object");
     expect(body.inclusion_proof).toHaveProperty("merkle_root");
     expect(body.inclusion_proof).toHaveProperty("merkle_proof");

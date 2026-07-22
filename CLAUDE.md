@@ -140,6 +140,10 @@ Done
 - Members are now the core approval authority model. `members` and
   `member_identity_links` are tenant-scoped RLS tables; authenticated identities
   are backfilled as tenant admins on upgrade to preserve behavior.
+- Audit events expose `event_type`, `category`, `severity`, and `actor_ref`.
+  `flagged` is reserved for risk events that require attention. `wiki.question`
+  emits `assistant_activity` with severity `info` and includes the original
+  question text at `inputs.question`.
 - Tenant provisioning must create one active bootstrap admin member in the same
   transaction as the tenant row. The bootstrap member uses all approval domains,
   a per-item limit of `9223372036854775807`, no second-approver threshold, and

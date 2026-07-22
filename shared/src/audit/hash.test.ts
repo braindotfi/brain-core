@@ -101,6 +101,17 @@ describe("canonicalize + hashEvent", () => {
     expect(canon).toContain(`"layer":"raw"`);
   });
 
+  it("includes audit classification in canonical form", () => {
+    const canon = canonicalize({
+      event: { ...base, eventType: "assistant_activity", severity: "info" },
+      id: "evt_1",
+      createdAt: "2026-04-24T00:00:00.000Z",
+      prevEventHash: null,
+    });
+    expect(canon).toContain(`"event_type":"assistant_activity"`);
+    expect(canon).toContain(`"severity":"info"`);
+  });
+
   it("serializes missing policy_version as null", () => {
     const canon = canonicalize({
       event: base,

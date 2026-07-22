@@ -393,10 +393,15 @@ function requirePrincipal(request: FastifyRequest) {
 }
 
 function serializeEvent(row: AuditEventRow): Record<string, unknown> {
+  const eventType = row.event_type ?? "system_activity";
   return {
     id: row.id,
     layer: row.layer,
+    event_type: eventType,
+    category: eventType,
+    severity: row.severity ?? (eventType === "flagged" ? "warning" : "info"),
     actor: row.actor,
+    actor_ref: serializeActorRef(row),
     action: row.action,
     inputs: row.inputs,
     outputs: row.outputs,
@@ -405,4 +410,32 @@ function serializeEvent(row: AuditEventRow): Record<string, unknown> {
     prev_event_hash: row.prev_event_hash?.toString("hex") ?? null,
     created_at: row.created_at.toISOString(),
   };
+}
+
+function serializeActorRef(row: AuditEventRow): Record<string, unknown> {
+  const type = inferActorType(row.actor);
+  return {
+    id: row.actor,
+    type,
+    display_name: row.actor_display_name ?? null,
+    email: row.actor_email ?? null,
+    lookup: actorLookupPath(type, row.actor),
+  };
+}
+
+function inferActorType(actor: string): string {
+  if (actor.startsWith("user_")) return "user";
+  if (actor.startsWith("agent_")) return "agent";
+  if (actor.startsWith("partner_")) return "partner";
+  if (actor.startsWith("key_") || actor.startsWith("ak_")) return "api_key";
+  if (actor === "system" || actor.startsWith("system_") || actor.endsWith("_worker")) {
+    return "system";
+  }
+  return "unknown";
+}
+
+function actorLookupPath(type: string, actor: string): string | null {
+  if (type === "user") return `/v1/members/${encodeURIComponent(actor)}`;
+  if (type === "agent") return `/v1/agents/${encodeURIComponent(actor)}`;
+  return null;
 }

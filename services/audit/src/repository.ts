@@ -5,12 +5,17 @@
  */
 
 import type { TenantScopedClient } from "@brain/shared";
+import type { AuditEventType, AuditSeverity } from "@brain/shared";
 
 export interface AuditEventRow {
   id: string;
   tenant_id: string;
   layer: string;
+  event_type: AuditEventType;
+  severity: AuditSeverity;
   actor: string;
+  actor_display_name: string | null;
+  actor_email: string | null;
   action: string;
   inputs: Record<string, unknown>;
   outputs: Record<string, unknown>;

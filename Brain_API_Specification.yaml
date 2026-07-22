@@ -6359,16 +6359,35 @@ components:
         tenant_id: { type: string }
         layer:
           type: string
-          enum: [raw, ledger, wiki, policy, agent, execution, audit]
+          enum: [raw, canonical, ledger, wiki, policy, agent, execution, audit, identity]
           description: |
             v0.2 adds `ledger`, `agent`, and `audit`. Legacy `execution`
             value is preserved for back-compat with v0.1 clients; new code
             emits `agent`.
         actor: { type: string }
+        actor_ref:
+          $ref: '#/components/schemas/AuditActorRef'
+        event_type:
+          type: string
+          enum: [system_activity, assistant_activity, flagged]
+          description: |
+            Client-facing classification. `assistant_activity` is benign
+            assistant or wiki activity. `flagged` is reserved for risk events
+            requiring attention.
+        category:
+          type: string
+          enum: [system_activity, assistant_activity, flagged]
+          description: Alias of `event_type` for client grouping.
+        severity:
+          type: string
+          enum: [info, warning, critical]
         action: { type: string }
         inputs:
           type: object
-          description: Hashes and evidence refs, not full content
+          description: |
+            Hashes and evidence refs unless the action contract explicitly
+            allows display text. For `wiki.question`, `inputs.question` is
+            always the original question text.
           additionalProperties: true
         outputs:
           type: object
@@ -6386,6 +6405,25 @@ components:
         event_hash: { type: string }
         prev_event_hash: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
+
+    AuditActorRef:
+      type: object
+      description: Human-resolvable actor metadata for an audit event.
+      properties:
+        id: { type: string }
+        type:
+          type: string
+          enum: [user, agent, partner, api_key, system, unknown]
+        display_name:
+          type: [string, "null"]
+        email:
+          type: [string, "null"]
+        lookup:
+          type: [string, "null"]
+          description: |
+            Relative API path clients can call to resolve the actor when
+            display fields are null. User actors resolve through `/v1/members/{id}`;
+            agent actors resolve through `/v1/agents/{id}`.
 
     #
     # Ledger layer (v0.2)

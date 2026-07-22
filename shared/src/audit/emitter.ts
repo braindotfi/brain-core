@@ -30,7 +30,13 @@ import type { Pool, PoolClient } from "pg";
 import { newAuditEventId } from "../ids.js";
 import { brainError } from "../errors.js";
 import { AUDIT_HASH_SCHEMA_VERSION, hashEvent, logicalPayloadFingerprint } from "./hash.js";
-import type { AuditEvent, AuditEventInput } from "./types.js";
+import {
+  normalizeAuditEventInput,
+  normalizeAuditEventType,
+  normalizeAuditSeverity,
+  type AuditEvent,
+  type AuditEventInput,
+} from "./types.js";
 
 // Fixed advisory-lock namespace (int4) for the per-tenant audit chain. Paired
 // with hashtext(tenant_id) so the two-key form locks one namespace per tenant.
@@ -46,18 +52,21 @@ export class InMemoryAuditEmitter implements AuditEmitter {
   public readonly events: AuditEvent[] = [];
 
   public async emit(event: AuditEventInput): Promise<AuditEvent> {
+    const normalizedEvent = normalizeAuditEventInput(event);
     // Idempotent delivery parity with the Postgres emitter: same tenant + key
     // returns the existing event rather than a duplicate.
-    if (event.idempotencyKey !== undefined) {
+    if (normalizedEvent.idempotencyKey !== undefined) {
       const existing = this.events.find(
-        (e) => e.tenantId === event.tenantId && e.idempotencyKey === event.idempotencyKey,
+        (e) =>
+          e.tenantId === normalizedEvent.tenantId &&
+          e.idempotencyKey === normalizedEvent.idempotencyKey,
       );
       if (existing !== undefined) {
         // Same conflict check as the Postgres emitter: recompute the hash with
         // the caller's payload pinned to the stored chain fields. A mismatch
         // means the key was reused for different content (doc A P1.2).
         const recomputed = hashEvent({
-          event,
+          event: normalizedEvent,
           id: existing.id,
           createdAt: existing.createdAt,
           prevEventHash: existing.prevEventHash,
@@ -66,7 +75,12 @@ export class InMemoryAuditEmitter implements AuditEmitter {
           throw brainError(
             "audit_idempotency_conflict",
             "idempotency key reused for a different audit event payload",
-            { details: { tenantId: event.tenantId, idempotencyKey: event.idempotencyKey } },
+            {
+              details: {
+                tenantId: normalizedEvent.tenantId,
+                idempotencyKey: normalizedEvent.idempotencyKey,
+              },
+            },
           );
         }
         return existing;
@@ -74,15 +88,15 @@ export class InMemoryAuditEmitter implements AuditEmitter {
     }
     const id = newAuditEventId();
     const createdAt = new Date().toISOString();
-    const prev = this.latestForTenant(event.tenantId);
+    const prev = this.latestForTenant(normalizedEvent.tenantId);
     const eventHash = hashEvent({
-      event,
+      event: normalizedEvent,
       id,
       createdAt,
       prevEventHash: prev?.eventHash ?? null,
     });
     const stored: AuditEvent = {
-      ...event,
+      ...normalizedEvent,
       id,
       createdAt,
       eventHash,
@@ -114,25 +128,28 @@ export class PostgresAuditEmitter implements AuditEmitter {
   public constructor(private readonly pool: Pool) {}
 
   public async emit(event: AuditEventInput): Promise<AuditEvent> {
+    const normalizedEvent = normalizeAuditEventInput(event);
     const client: PoolClient = await this.pool.connect();
     try {
       await client.query("BEGIN");
       // Set tenant scope for RLS — audit_events has per-tenant isolation policies.
-      await client.query("SELECT set_config('app.tenant_id', $1, true)", [event.tenantId]);
+      await client.query("SELECT set_config('app.tenant_id', $1, true)", [
+        normalizedEvent.tenantId,
+      ]);
 
       // Serialize all emits for THIS tenant so the per-tenant hash chain cannot
       // fork under concurrency. Transaction-scoped (auto-released at COMMIT/
       // ROLLBACK); different tenants hash to different keys and stay concurrent.
       await client.query(
         `SELECT pg_advisory_xact_lock(${AUDIT_CHAIN_LOCK_NAMESPACE}, hashtext($1))`,
-        [event.tenantId],
+        [normalizedEvent.tenantId],
       );
 
       // Idempotent delivery: if this logical event was already written (same
       // tenant + external idempotency key), return it instead of inserting a
       // duplicate. Makes an at-least-once publisher effectively exactly-once.
       // Race-free here because the advisory lock serialises this tenant's emits.
-      if (event.idempotencyKey !== undefined) {
+      if (normalizedEvent.idempotencyKey !== undefined) {
         const existing = await client.query<{
           id: string;
           event_hash: Buffer;
@@ -140,7 +157,11 @@ export class PostgresAuditEmitter implements AuditEmitter {
           created_at: Date;
           hash_schema_version: number;
           layer: AuditEventInput["layer"];
+          event_type?: AuditEventInput["eventType"] | null;
+          severity?: AuditEventInput["severity"] | null;
           actor: string;
+          actor_display_name?: string | null;
+          actor_email?: string | null;
           action: string;
           inputs: Record<string, unknown>;
           outputs: Record<string, unknown>;
@@ -152,13 +173,14 @@ export class PostgresAuditEmitter implements AuditEmitter {
           key_id: string | null;
         }>(
           `SELECT id, event_hash, prev_event_hash, created_at, hash_schema_version,
-                  layer, actor, action, inputs, outputs,
+                  layer, event_type, severity, actor, actor_display_name, actor_email,
+                  action, inputs, outputs,
                   policy_version, policy_decision_id, before_state, after_state,
                   correlation_id, key_id
              FROM audit_events
             WHERE tenant_id = $1 AND idempotency_key = $2
             LIMIT 1`,
-          [event.tenantId, event.idempotencyKey],
+          [normalizedEvent.tenantId, normalizedEvent.idempotencyKey],
         );
         const hit = existing.rows[0];
         if (hit !== undefined) {
@@ -178,16 +200,31 @@ export class PostgresAuditEmitter implements AuditEmitter {
           if (hit.hash_schema_version === AUDIT_HASH_SCHEMA_VERSION) {
             conflict =
               hashEvent({
-                event,
+                event: normalizedEvent,
                 id: hit.id,
                 createdAt: hit.created_at.toISOString(),
                 prevEventHash,
               }) !== storedHash;
-          } else if (hit.hash_schema_version === 0 || hit.hash_schema_version === 1) {
+          } else if (
+            hit.hash_schema_version === 0 ||
+            hit.hash_schema_version === 1 ||
+            hit.hash_schema_version === 2
+          ) {
             const stored: AuditEventInput = {
-              tenantId: event.tenantId,
+              tenantId: normalizedEvent.tenantId,
               layer: hit.layer,
+              eventType: normalizeAuditEventType(hit.event_type ?? undefined),
+              severity: normalizeAuditSeverity(
+                hit.event_type ?? undefined,
+                hit.severity ?? undefined,
+              ),
               actor: hit.actor,
+              ...(hit.actor_display_name !== null && hit.actor_display_name !== undefined
+                ? { actorDisplayName: hit.actor_display_name }
+                : {}),
+              ...(hit.actor_email !== null && hit.actor_email !== undefined
+                ? { actorEmail: hit.actor_email }
+                : {}),
               action: hit.action,
               inputs: hit.inputs,
               outputs: hit.outputs,
@@ -202,12 +239,18 @@ export class PostgresAuditEmitter implements AuditEmitter {
                 : {}),
               ...(hit.key_id !== null && hit.key_id !== undefined ? { keyId: hit.key_id } : {}),
             };
-            conflict = logicalPayloadFingerprint(event) !== logicalPayloadFingerprint(stored);
+            conflict =
+              logicalPayloadFingerprint(normalizedEvent) !== logicalPayloadFingerprint(stored);
           } else {
             throw brainError(
               "audit_hash_version_unsupported",
               `audit row hash_schema_version ${hit.hash_schema_version} is not verifiable by this build`,
-              { details: { tenantId: event.tenantId, idempotencyKey: event.idempotencyKey } },
+              {
+                details: {
+                  tenantId: normalizedEvent.tenantId,
+                  idempotencyKey: normalizedEvent.idempotencyKey,
+                },
+              },
             );
           }
 
@@ -216,14 +259,30 @@ export class PostgresAuditEmitter implements AuditEmitter {
             throw brainError(
               "audit_idempotency_conflict",
               "idempotency key reused for a different audit event payload",
-              { details: { tenantId: event.tenantId, idempotencyKey: event.idempotencyKey } },
+              {
+                details: {
+                  tenantId: normalizedEvent.tenantId,
+                  idempotencyKey: normalizedEvent.idempotencyKey,
+                },
+              },
             );
           }
           await client.query("COMMIT");
           // Content equality is proven (by hash or by logical-field comparison),
           // so this is equivalent to reconstructing the row from the DB.
           return {
-            ...event,
+            ...normalizedEvent,
+            eventType: normalizeAuditEventType(hit.event_type ?? undefined),
+            severity: normalizeAuditSeverity(
+              hit.event_type ?? undefined,
+              hit.severity ?? undefined,
+            ),
+            ...(hit.actor_display_name !== null && hit.actor_display_name !== undefined
+              ? { actorDisplayName: hit.actor_display_name }
+              : {}),
+            ...(hit.actor_email !== null && hit.actor_email !== undefined
+              ? { actorEmail: hit.actor_email }
+              : {}),
             id: hit.id,
             createdAt: hit.created_at.toISOString(),
             eventHash: storedHash,
@@ -254,14 +313,14 @@ export class PostgresAuditEmitter implements AuditEmitter {
           WHERE tenant_id = $1
           ORDER BY created_at DESC, id DESC
           LIMIT 1`,
-        [event.tenantId],
+        [normalizedEvent.tenantId],
       );
       const prevHash = prev.rows[0]?.event_hash.toString("hex") ?? null;
 
       const id = newAuditEventId();
       const createdAt = new Date().toISOString();
       const eventHash = hashEvent({
-        event,
+        event: normalizedEvent,
         id,
         createdAt,
         prevEventHash: prevHash,
@@ -269,38 +328,47 @@ export class PostgresAuditEmitter implements AuditEmitter {
 
       await client.query(
         `INSERT INTO audit_events (
-           id, tenant_id, layer, actor, action, inputs, outputs,
+           id, tenant_id, layer, event_type, severity, actor, actor_display_name, actor_email,
+           action, inputs, outputs,
            policy_version, policy_decision_id, before_state, after_state,
            event_hash, prev_event_hash, created_at, idempotency_key,
            hash_schema_version, correlation_id, key_id
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
         [
           id,
-          event.tenantId,
-          event.layer,
-          event.actor,
-          event.action,
-          JSON.stringify(event.inputs),
-          JSON.stringify(event.outputs),
-          event.policyVersion ?? null,
-          event.policyDecisionId ?? null,
-          event.beforeState === undefined ? null : JSON.stringify(event.beforeState),
-          event.afterState === undefined ? null : JSON.stringify(event.afterState),
+          normalizedEvent.tenantId,
+          normalizedEvent.layer,
+          normalizedEvent.eventType,
+          normalizedEvent.severity,
+          normalizedEvent.actor,
+          normalizedEvent.actorDisplayName ?? null,
+          normalizedEvent.actorEmail ?? null,
+          normalizedEvent.action,
+          JSON.stringify(normalizedEvent.inputs),
+          JSON.stringify(normalizedEvent.outputs),
+          normalizedEvent.policyVersion ?? null,
+          normalizedEvent.policyDecisionId ?? null,
+          normalizedEvent.beforeState === undefined
+            ? null
+            : JSON.stringify(normalizedEvent.beforeState),
+          normalizedEvent.afterState === undefined
+            ? null
+            : JSON.stringify(normalizedEvent.afterState),
           Buffer.from(eventHash, "hex"),
           prevHash === null ? null : Buffer.from(prevHash, "hex"),
           createdAt,
-          event.idempotencyKey ?? null,
+          normalizedEvent.idempotencyKey ?? null,
           // Tag the row with the canonicalization that produced event_hash so the
           // consistency verifier only recomputes current-version rows.
           AUDIT_HASH_SCHEMA_VERSION,
-          event.correlationId ?? null,
-          event.keyId ?? null,
+          normalizedEvent.correlationId ?? null,
+          normalizedEvent.keyId ?? null,
         ],
       );
 
       await client.query("COMMIT");
       return {
-        ...event,
+        ...normalizedEvent,
         id,
         createdAt,
         eventHash,

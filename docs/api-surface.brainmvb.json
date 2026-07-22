@@ -51,6 +51,65 @@
       }
     }
   },
+  "audit_event_contract": {
+    "all_events": {
+      "always_present": [
+        "id",
+        "layer",
+        "event_type",
+        "category",
+        "severity",
+        "actor",
+        "actor_ref",
+        "action",
+        "inputs",
+        "outputs",
+        "event_hash",
+        "prev_event_hash",
+        "created_at"
+      ],
+      "optional_or_nullable": [
+        "policy_version",
+        "policy_decision_id",
+        "before_state",
+        "after_state",
+        "actor_ref.display_name",
+        "actor_ref.email",
+        "actor_ref.lookup"
+      ],
+      "actor_resolution": "The raw actor string remains for compatibility. actor_ref.id repeats it, actor_ref.type is inferred from the id prefix, and actor_ref.lookup is a relative path when core exposes a resolver today. user actors resolve through /v1/members/{id}; agent actors resolve through /v1/agents/{id}. display_name and email are present when the emitting service captured them."
+    },
+    "event_types": {
+      "system_activity": {
+        "severity": "info unless explicitly raised by the emitter",
+        "category": "system_activity",
+        "meaning": "Normal system, user, ingestion, projection, policy, execution, and audit bookkeeping activity that is not inherently a risk alert."
+      },
+      "assistant_activity": {
+        "severity": "info",
+        "category": "assistant_activity",
+        "meaning": "Benign assistant or wiki activity. Clients should not render this as a risk flag.",
+        "action_guarantees": {
+          "wiki.question": {
+            "always_present_inputs": [
+              "question",
+              "question_length",
+              "as_of",
+              "max_evidence_depth",
+              "model"
+            ],
+            "always_present_outputs": ["evidence_count", "input_tokens", "output_tokens"],
+            "question_text": "inputs.question is the original question text submitted to /v1/wiki/question."
+          }
+        }
+      },
+      "flagged": {
+        "severity": "warning by default, critical when explicitly set by the emitter",
+        "category": "flagged",
+        "meaning": "Risk event requiring attention, such as vendor payment detail changes, escalations, policy violations, or other risk alerts. Assistant and wiki question activity must not use this event_type."
+      }
+    }
+  },
   "endpoint_groups": [
     {
       "group": "root_and_docs",
@@ -1708,7 +1767,42 @@
           "request_shape": "query { layer?, since?, until?, limit? }",
           "response_shape": "200 { events }",
           "example_request": "GET /v1/audit/events?limit=25",
-          "example_response": { "events": [] },
+          "example_response": {
+            "events": [
+              {
+                "id": "evt_example",
+                "layer": "wiki",
+                "event_type": "assistant_activity",
+                "category": "assistant_activity",
+                "severity": "info",
+                "actor": "user_example",
+                "actor_ref": {
+                  "id": "user_example",
+                  "type": "user",
+                  "display_name": null,
+                  "email": null,
+                  "lookup": "/v1/members/user_example"
+                },
+                "action": "wiki.question",
+                "inputs": {
+                  "question": "What changed in revenue?",
+                  "question_length": 24,
+                  "as_of": null,
+                  "max_evidence_depth": 2,
+                  "model": "configured"
+                },
+                "outputs": {
+                  "evidence_count": 0,
+                  "input_tokens": 10,
+                  "output_tokens": 4
+                },
+                "policy_version": null,
+                "event_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "prev_event_hash": null,
+                "created_at": "2026-07-22T00:00:00.000Z"
+              }
+            ]
+          },
           "openapi": "documented:/audit/events"
         },
         {
@@ -1720,7 +1814,22 @@
           "request_shape": "path { event_id }",
           "response_shape": "200 { event, inclusion_proof }",
           "example_request": "GET /v1/audit/event/audit_example",
-          "example_response": { "event": {}, "inclusion_proof": {} },
+          "example_response": {
+            "event": {
+              "id": "evt_example",
+              "event_type": "assistant_activity",
+              "category": "assistant_activity",
+              "severity": "info",
+              "actor_ref": {
+                "id": "user_example",
+                "type": "user",
+                "display_name": null,
+                "email": null,
+                "lookup": "/v1/members/user_example"
+              }
+            },
+            "inclusion_proof": {}
+          },
           "openapi": "documented:/audit/event/{event_id}"
         },
         {

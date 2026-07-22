@@ -48,9 +48,12 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
     await deps.audit.emit({
       tenantId: request.principal.tenantId,
       layer: "wiki",
+      eventType: "assistant_activity",
+      severity: "info",
       actor: request.principal.id,
       action: "wiki.question",
       inputs: {
+        question,
         question_length: question.length,
         as_of: asOf?.toISOString() ?? null,
         max_evidence_depth: depth,

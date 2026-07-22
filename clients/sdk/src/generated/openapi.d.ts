@@ -3710,10 +3710,29 @@ export interface components {
              *     emits `agent`.
              * @enum {string}
              */
-            layer?: "raw" | "ledger" | "wiki" | "policy" | "agent" | "execution" | "audit";
+            layer?: "raw" | "canonical" | "ledger" | "wiki" | "policy" | "agent" | "execution" | "audit" | "identity";
             actor?: string;
+            actor_ref?: components["schemas"]["AuditActorRef"];
+            /**
+             * @description Client-facing classification. `assistant_activity` is benign
+             *     assistant or wiki activity. `flagged` is reserved for risk events
+             *     requiring attention.
+             * @enum {string}
+             */
+            event_type?: "system_activity" | "assistant_activity" | "flagged";
+            /**
+             * @description Alias of `event_type` for client grouping.
+             * @enum {string}
+             */
+            category?: "system_activity" | "assistant_activity" | "flagged";
+            /** @enum {string} */
+            severity?: "info" | "warning" | "critical";
             action?: string;
-            /** @description Hashes and evidence refs, not full content */
+            /**
+             * @description Hashes and evidence refs unless the action contract explicitly
+             *     allows display text. For `wiki.question`, `inputs.question` is
+             *     always the original question text.
+             */
             inputs?: {
                 [key: string]: unknown;
             };
@@ -3732,6 +3751,20 @@ export interface components {
             prev_event_hash?: string | null;
             /** Format: date-time */
             created_at?: string;
+        };
+        /** @description Human-resolvable actor metadata for an audit event. */
+        AuditActorRef: {
+            id?: string;
+            /** @enum {string} */
+            type?: "user" | "agent" | "partner" | "api_key" | "system" | "unknown";
+            display_name?: string | null;
+            email?: string | null;
+            /**
+             * @description Relative API path clients can call to resolve the actor when
+             *     display fields are null. User actors resolve through `/v1/members/{id}`;
+             *     agent actors resolve through `/v1/agents/{id}`.
+             */
+            lookup?: string | null;
         };
         /**
          * @description Trust contract for derived rows. `customer_asserted` marks generic-push and unknown-source data: confidence is capped at 0.5 and the §6 gate refuses auto-execution on it until corroboration promotes the row to `extracted`.

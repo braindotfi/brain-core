@@ -21,7 +21,13 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { AUDIT_HASH_SCHEMA_VERSION, hashEvent, startManagedInterval } from "@brain/shared";
-import type { AuditEventInput, ManagedWorker, MetricsEmitter } from "@brain/shared";
+import type {
+  AuditEventInput,
+  AuditEventType,
+  AuditSeverity,
+  ManagedWorker,
+  MetricsEmitter,
+} from "@brain/shared";
 
 export interface AuditConsistencyDeps {
   /**
@@ -223,7 +229,11 @@ export async function verifyContentHashCursor(
       id: string;
       tenant_id: string;
       layer: AuditEventInput["layer"];
+      event_type: AuditEventType;
+      severity: AuditSeverity;
       actor: string;
+      actor_display_name: string | null;
+      actor_email: string | null;
       action: string;
       inputs: Record<string, unknown>;
       outputs: Record<string, unknown>;
@@ -236,7 +246,8 @@ export async function verifyContentHashCursor(
       created_at: Date;
       event_hash: Buffer;
     }>(
-      `SELECT id, tenant_id, layer, actor, action, inputs, outputs,
+      `SELECT id, tenant_id, layer, event_type, severity, actor, actor_display_name, actor_email,
+              action, inputs, outputs,
               policy_version, policy_decision_id, before_state, after_state,
               key_id, prev_event_hash, created_at, event_hash
          FROM audit_events
@@ -253,7 +264,11 @@ export async function verifyContentHashCursor(
         event: {
           tenantId: r.tenant_id,
           layer: r.layer,
+          eventType: r.event_type,
+          severity: r.severity,
           actor: r.actor,
+          ...(r.actor_display_name !== null ? { actorDisplayName: r.actor_display_name } : {}),
+          ...(r.actor_email !== null ? { actorEmail: r.actor_email } : {}),
           action: r.action,
           inputs: r.inputs,
           outputs: r.outputs,

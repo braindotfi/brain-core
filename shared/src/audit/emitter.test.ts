@@ -51,6 +51,13 @@ describe("InMemoryAuditEmitter", () => {
     expect(recomputed).toBe(ev.eventHash);
   });
 
+  it("defaults classification and severity for older emit call sites", async () => {
+    const emitter = new InMemoryAuditEmitter();
+    const ev = await emitter.emit(baseEvent());
+    expect(ev.eventType).toBe("system_activity");
+    expect(ev.severity).toBe("info");
+  });
+
   it("dedupes by idempotency key (same tenant + key returns the SAME event)", async () => {
     const emitter = new InMemoryAuditEmitter();
     const tenant = newTenantId();
@@ -188,8 +195,12 @@ describe("PostgresAuditEmitter", () => {
                 event_hash: existingHash,
                 prev_event_hash: null,
                 created_at: createdAt,
-                hash_schema_version: 2,
+                hash_schema_version: 3,
                 layer: input.layer,
+                event_type: "system_activity",
+                severity: "info",
+                actor_display_name: null,
+                actor_email: null,
                 actor: input.actor,
                 action: input.action,
                 inputs: input.inputs,
@@ -254,8 +265,12 @@ describe("PostgresAuditEmitter", () => {
                 event_hash: storedHash,
                 prev_event_hash: null,
                 created_at: createdAt,
-                hash_schema_version: 2,
+                hash_schema_version: 3,
                 layer: base.layer,
+                event_type: "system_activity",
+                severity: "info",
+                actor_display_name: null,
+                actor_email: null,
                 actor: base.actor,
                 action: "raw.ingest",
                 inputs: base.inputs,
@@ -384,6 +399,36 @@ describe("PostgresAuditEmitter", () => {
     expect(insert).toBeDefined();
     expect(insert!.text).toContain("idempotency_key");
     expect(insert!.values).toContain("k1");
+  });
+
+  it("persists explicit classification, severity, and actor display metadata", async () => {
+    const calls: { text: string; values: unknown[] }[] = [];
+    const client = {
+      query: vi.fn(async (text: string, values?: unknown[]) => {
+        calls.push({ text, values: values ?? [] });
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+    const emitter = new PostgresAuditEmitter(pool);
+
+    await emitter.emit({
+      ...baseEvent(),
+      eventType: "flagged",
+      severity: "critical",
+      actorDisplayName: "Ada Lovelace",
+      actorEmail: "ada@example.com",
+    });
+
+    const insert = calls.find((c) => c.text.includes("INSERT INTO audit_events"));
+    expect(insert).toBeDefined();
+    expect(insert!.text).toContain("event_type");
+    expect(insert!.text).toContain("actor_display_name");
+    expect(insert!.values).toContain("flagged");
+    expect(insert!.values).toContain("critical");
+    expect(insert!.values).toContain("Ada Lovelace");
+    expect(insert!.values).toContain("ada@example.com");
   });
 
   it("rolls back and rethrows on INSERT failure", async () => {
