@@ -1,0 +1,2020 @@
+{
+  "artifact": "brainmvb_api_surface",
+  "version": 1,
+  "generated_from": {
+    "repository": "brain-core",
+    "head": "c120d0e2a8b97b34fba078fc7bc1c5db817efdf7",
+    "openapi_source": "Brain_API_Specification.yaml",
+    "runtime_sources": [
+      "services/api/src/main.ts",
+      "shared/src/auth/middleware.ts",
+      "shared/src/auth/scopes.ts",
+      "services/*/src/**/*routes.ts"
+    ]
+  },
+  "deployment_scope": {
+    "service": "api",
+    "compose_service": "docker-compose.prod.yml:api",
+    "stable_prefix": "/v1",
+    "excluded_services": [
+      {
+        "service": "services/surface-gateway",
+        "reason": "not mounted by the deployed brain-prod api service"
+      }
+    ]
+  },
+  "enforcement_model": {
+    "authentication": "Fastify authPlugin enforces bearer authentication for non-skipAuth routes. API keys authenticate at the same gateway hook only when BRAIN_API_KEY_AUTH_ENABLED=true.",
+    "scope_enforcement": "Scopes are checked inside route handlers with requireScope. There is no central gateway route-to-scope matrix in HEAD.",
+    "enforcement_modes": {
+      "public_skip_auth": "Route sets skipAuth=true and requires no bearer token.",
+      "shared_secret_header": "Route sets skipAuth=true but checks an operator or platform secret header in the handler.",
+      "hmac_provider_signed": "Route sets skipAuth=true and verifies provider signatures in the handler.",
+      "route_scope_check_enforced": "Route requires bearer auth and calls requireScope before work.",
+      "auth_only_no_scope_check": "Route requires bearer auth but has no scope check in HEAD.",
+      "conditional_dependency": "Route is registered only when an optional dependency is wired."
+    },
+    "api_key_scope_access": {
+      "permitted_scopes": ["ledger:read", "audit:read"],
+      "note": "API-key management routes and API-key gateway authentication remain behind BRAIN_API_KEY_AUTH_ENABLED in code. Staging enables the flag, but this artifact marks those routes as feature-gated rather than stable."
+    }
+  },
+  "common_examples": {
+    "bearer_header": {
+      "Authorization": "Bearer <jwt_or_api_key>"
+    },
+    "brain_error_response": {
+      "error": {
+        "code": "auth_scope_insufficient",
+        "message": "missing required scope: ledger:read",
+        "request_id": "req_example"
+      }
+    }
+  },
+  "endpoint_groups": [
+    {
+      "group": "root_and_docs",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/health",
+          "auth": "public",
+          "required_scope": null,
+          "enforcement": "public_skip_auth",
+          "request_shape": "no params",
+          "response_shape": "200 { ok, version, service, commit }",
+          "example_request": "GET /health",
+          "example_response": {
+            "ok": true,
+            "version": "dev",
+            "service": "brain-api",
+            "commit": "dev"
+          },
+          "openapi": "missing_from_openapi_root_operational_route"
+        },
+        {
+          "method": "GET",
+          "path": "/.well-known/oauth-protected-resource",
+          "auth": "public",
+          "required_scope": null,
+          "enforcement": "public_skip_auth",
+          "request_shape": "no params",
+          "response_shape": "200 OAuth protected resource metadata",
+          "example_request": "GET /.well-known/oauth-protected-resource",
+          "example_response": {
+            "resource": "https://mcp.brain.fi",
+            "authorization_servers": ["https://auth.brain.fi"],
+            "scopes_supported": ["ledger:read"],
+            "bearer_methods_supported": ["header"]
+          },
+          "openapi": "missing_from_openapi_root_oauth_metadata_route"
+        },
+        {
+          "method": "GET",
+          "path": "/internal/audit/health",
+          "auth": "bearer",
+          "required_scope": "audit:admin",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "no params",
+          "response_shape": "200 { status, verifier, outbox }",
+          "example_request": "GET /internal/audit/health",
+          "example_response": { "status": "safe", "verifier": {}, "outbox": {} },
+          "openapi": "intentionally_missing_internal_route"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/docs",
+          "auth": "public",
+          "required_scope": null,
+          "enforcement": "public_skip_auth",
+          "request_shape": "no params",
+          "response_shape": "200 text/html",
+          "example_request": "GET /v1/docs",
+          "example_response": "<html>...</html>",
+          "openapi": "documented:/docs"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/docs/scalar.js",
+          "auth": "public",
+          "required_scope": null,
+          "enforcement": "public_skip_auth",
+          "request_shape": "no params",
+          "response_shape": "200 application/javascript",
+          "example_request": "GET /v1/docs/scalar.js",
+          "example_response": "/* Scalar bundle */",
+          "openapi": "missing_from_openapi_docs_asset"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/openapi.yaml",
+          "auth": "public",
+          "required_scope": null,
+          "enforcement": "public_skip_auth",
+          "request_shape": "no params",
+          "response_shape": "200 application/yaml",
+          "example_request": "GET /v1/openapi.yaml",
+          "example_response": "openapi: 3.1.0",
+          "openapi": "documented:/openapi.yaml"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/reference/yield-venues",
+          "auth": "public",
+          "required_scope": null,
+          "enforcement": "public_skip_auth",
+          "request_shape": "no params",
+          "response_shape": "200 { venues, chain }",
+          "example_request": "GET /v1/reference/yield-venues",
+          "example_response": { "venues": [], "chain": "base-sepolia" },
+          "openapi": "documented:/reference/yield-venues"
+        }
+      ]
+    },
+    {
+      "group": "auth_and_tenancy",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/auth/siwx/challenge",
+          "auth": "public",
+          "required_scope": null,
+          "enforcement": "public_skip_auth",
+          "request_shape": "{}",
+          "response_shape": "200 { nonce, session_id, domain }",
+          "example_request": { "body": {} },
+          "example_response": {
+            "nonce": "328917",
+            "session_id": "token_example",
+            "domain": "api.brain.fi"
+          },
+          "openapi": "documented:/auth/siwx/challenge"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/auth/siwx",
+          "auth": "public",
+          "required_scope": null,
+          "enforcement": "public_skip_auth",
+          "request_shape": "{ message, signature, session_id? }",
+          "response_shape": "200 { access_token, token_type, expires_in, principal }",
+          "example_request": {
+            "body": {
+              "message": "<eip4361_message>",
+              "signature": "0x...",
+              "session_id": "token_example"
+            }
+          },
+          "example_response": {
+            "access_token": "<jwt>",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "principal": {
+              "id": "agent_example",
+              "type": "agent",
+              "tenantId": "tnt_example",
+              "scopes": ["ledger:read"]
+            }
+          },
+          "openapi": "documented:/auth/siwx"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/tenants",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "tenant:create",
+          "enforcement": "shared_secret_header",
+          "request_shape": "{ company_name?, founder: { email, display_name? }, founder_external_ref }",
+          "response_shape": "201 { tenant_id, member, session, agent }",
+          "example_request": {
+            "headers": { "X-Platform-Service-Auth": "<secret>" },
+            "body": {
+              "company_name": "Example Inc",
+              "founder": { "email": "founder@example.com" },
+              "founder_external_ref": "mvb_user_123"
+            }
+          },
+          "example_response": {
+            "tenant_id": "tnt_example",
+            "member": {},
+            "session": { "token": "<jwt>", "refresh_token": "<secret>", "expires_in": 900 },
+            "agent": {}
+          },
+          "openapi": "documented:/tenants"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/orgs/{orgId}/tenants",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "tenant:create",
+          "enforcement": "shared_secret_header",
+          "request_shape": "path { orgId }; body { company_name?, founder: { email, display_name? }, founder_external_ref }",
+          "response_shape": "201 { tenant_id, org_id, member, session, agent }",
+          "example_request": {
+            "path": "/v1/orgs/org_123/tenants",
+            "body": {
+              "founder": { "email": "founder@example.com" },
+              "founder_external_ref": "mvb_user_123"
+            }
+          },
+          "example_response": {
+            "tenant_id": "tnt_example",
+            "org_id": "org_123",
+            "member": {},
+            "session": {},
+            "agent": {}
+          },
+          "openapi": "documented:/orgs/{orgId}/tenants"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/tenants/{tenantId}/agent-token",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "tenant:agent-mint",
+          "enforcement": "shared_secret_header",
+          "request_shape": "path { tenantId }; body { rotate? }",
+          "response_shape": "200 or 201 production BFF agent token",
+          "example_request": {
+            "path": "/v1/tenants/tnt_example/agent-token",
+            "body": { "rotate": true }
+          },
+          "example_response": {
+            "agent_id": "agent_example",
+            "token": "<jwt>",
+            "token_id": "token_example",
+            "expires_in": 3600
+          },
+          "openapi": "documented:/tenants/{tenantId}/agent-token"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/sessions",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "session:exchange",
+          "enforcement": "shared_secret_header",
+          "request_shape": "{ external_ref, scopes? }",
+          "response_shape": "200 { token, refresh_token, expires_in, scopes, member }",
+          "example_request": {
+            "body": { "external_ref": "mvb_user_123", "scopes": ["ledger:read"] }
+          },
+          "example_response": {
+            "token": "<jwt>",
+            "refresh_token": "<secret>",
+            "expires_in": 900,
+            "scopes": ["ledger:read"],
+            "member": {}
+          },
+          "openapi": "documented:/sessions"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/sessions/refresh",
+          "auth": "refresh_token",
+          "required_scope": null,
+          "enforcement": "public_skip_auth",
+          "request_shape": "{ refresh_token, scopes? }",
+          "response_shape": "200 { token, refresh_token, expires_in, scopes }",
+          "example_request": { "body": { "refresh_token": "<secret>" } },
+          "example_response": {
+            "token": "<jwt>",
+            "refresh_token": "<new_secret>",
+            "expires_in": 900,
+            "scopes": ["ledger:read"]
+          },
+          "openapi": "documented:/sessions/refresh"
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/sessions",
+          "auth": "bearer user",
+          "required_scope": null,
+          "enforcement": "auth_only_no_scope_check",
+          "request_shape": "no body",
+          "response_shape": "200 { revoked: true }",
+          "example_request": "DELETE /v1/sessions",
+          "example_response": { "revoked": true },
+          "openapi": "documented:/sessions"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/invites/consume",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "invite:consume",
+          "enforcement": "shared_secret_header",
+          "request_shape": "{ invite_token, external_ref, display_name? }",
+          "response_shape": "200 { tenant_id, member, session }",
+          "example_request": {
+            "body": { "invite_token": "<secret>", "external_ref": "mvb_user_456" }
+          },
+          "example_response": { "tenant_id": "tnt_example", "member": {}, "session": {} },
+          "openapi": "documented:/invites/consume"
+        }
+      ]
+    },
+    {
+      "group": "raw_sources",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/raw/ingest",
+          "auth": "bearer",
+          "required_scope": "raw:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "multipart { source_type, file } or json { source_type, url } plus optional envelope fields",
+          "response_shape": "200 or 201 raw artifact envelope",
+          "example_request": {
+            "body": { "source_type": "generic", "url": "https://example.com/invoice.pdf" }
+          },
+          "example_response": { "raw_id": "raw_example", "sha256": "abc", "bytes": 123 },
+          "openapi": "documented:/raw/ingest"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/raw/webhooks/{provider}",
+          "auth": "provider signature",
+          "required_scope": null,
+          "enforcement": "hmac_provider_signed",
+          "request_shape": "raw provider webhook body; provider is plaid or stripe in HEAD",
+          "response_shape": "200 or 202 provider ingest result; 501 for unsupported providers or unconfigured Stripe",
+          "example_request": {
+            "path": "/v1/raw/webhooks/plaid",
+            "headers": { "Plaid-Verification": "<jwt>" },
+            "body": "<provider_bytes>"
+          },
+          "example_response": { "accepted": true },
+          "openapi": "documented:/raw/webhooks/{provider}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/raw/{raw_id}",
+          "auth": "bearer",
+          "required_scope": "raw:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { raw_id }",
+          "response_shape": "200 { raw_id, sha256, signed_url, expires_at, mime_type, bytes }",
+          "example_request": "GET /v1/raw/raw_example",
+          "example_response": {
+            "raw_id": "raw_example",
+            "sha256": "abc",
+            "signed_url": "https://...",
+            "expires_at": "2026-07-22T00:00:00.000Z",
+            "mime_type": "application/pdf",
+            "bytes": 123
+          },
+          "openapi": "documented:/raw/{raw_id}"
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/raw/{raw_id}",
+          "auth": "bearer",
+          "required_scope": "raw:admin",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { raw_id }",
+          "response_shape": "204 empty",
+          "example_request": "DELETE /v1/raw/raw_example",
+          "example_response": null,
+          "openapi": "documented:/raw/{raw_id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/raw/{raw_id}/extract",
+          "auth": "bearer",
+          "required_scope": "raw:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { raw_id }",
+          "response_shape": "200 extraction job",
+          "example_request": "POST /v1/raw/raw_example/extract",
+          "example_response": { "job_id": "rex_example", "status": "queued" },
+          "openapi": "documented:/raw/{raw_id}/extract"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/raw/{raw_id}/extraction",
+          "auth": "bearer",
+          "required_scope": "raw:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { raw_id }",
+          "response_shape": "200 latest extraction job",
+          "example_request": "GET /v1/raw/raw_example/extraction",
+          "example_response": { "job_id": "rex_example", "status": "completed" },
+          "openapi": "documented:/raw/{raw_id}/extraction"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/raw/{raw_id}/parsed",
+          "auth": "bearer",
+          "required_scope": "raw:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { raw_id }; query { parser?, parser_version? }",
+          "response_shape": "200 { raw_id, parsed[] }",
+          "example_request": "GET /v1/raw/raw_example/parsed",
+          "example_response": { "raw_id": "raw_example", "parsed": [] },
+          "openapi": "documented:/raw/{raw_id}/parsed"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/raw/{raw_id}/parsed",
+          "auth": "bearer",
+          "required_scope": "raw:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ parser, parser_version, extracted, confidence? }",
+          "response_shape": "200 or 201 parsed row",
+          "example_request": {
+            "body": {
+              "parser": "invoice",
+              "parser_version": "1",
+              "extracted": {},
+              "confidence": 0.9
+            }
+          },
+          "example_response": {
+            "id": "rp_example",
+            "raw_artifact_id": "raw_example",
+            "parser": "invoice",
+            "parser_version": "1",
+            "extracted": {},
+            "confidence": 0.9
+          },
+          "openapi": "documented:/raw/{raw_id}/parsed"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/sources",
+          "auth": "bearer",
+          "required_scope": "raw:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ type, credentials, metadata? }",
+          "response_shape": "201 source",
+          "example_request": { "body": { "type": "plaid", "credentials": {}, "metadata": {} } },
+          "example_response": { "id": "src_example", "type": "plaid", "status": "connected" },
+          "openapi": "documented:/sources"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/sources",
+          "auth": "bearer",
+          "required_scope": "raw:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { type?, status?, limit?, cursor? }",
+          "response_shape": "200 { data, next_cursor }",
+          "example_request": "GET /v1/sources?limit=25",
+          "example_response": { "data": [], "next_cursor": null },
+          "openapi": "documented:/sources"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/sources/{source_id}",
+          "auth": "bearer",
+          "required_scope": "raw:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { source_id }",
+          "response_shape": "200 source",
+          "example_request": "GET /v1/sources/src_example",
+          "example_response": { "id": "src_example", "status": "connected" },
+          "openapi": "documented:/sources/{source_id}"
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/sources/{source_id}",
+          "auth": "bearer",
+          "required_scope": "raw:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { source_id }",
+          "response_shape": "200 disconnected source",
+          "example_request": "DELETE /v1/sources/src_example",
+          "example_response": { "id": "src_example", "status": "disconnected" },
+          "openapi": "documented:/sources/{source_id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/sources/{source_id}/sync",
+          "auth": "bearer",
+          "required_scope": "raw:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { source_id }",
+          "response_shape": "202 sync job",
+          "example_request": "POST /v1/sources/src_example/sync",
+          "example_response": { "job_id": "sync_example", "status": "queued" },
+          "openapi": "documented:/sources/{source_id}/sync"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/sources/{source_id}/sync/{job_id}",
+          "auth": "bearer",
+          "required_scope": "raw:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { source_id, job_id }",
+          "response_shape": "200 sync job",
+          "example_request": "GET /v1/sources/src_example/sync/sync_example",
+          "example_response": {
+            "job_id": "sync_example",
+            "source_id": "src_example",
+            "status": "completed"
+          },
+          "openapi": "documented:/sources/{source_id}/sync/{job_id}"
+        }
+      ]
+    },
+    {
+      "group": "ledger_and_canonical",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/v1/ledger/accounts",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { status?, account_type?, limit?, cursor? }",
+          "response_shape": "200 { accounts, next_cursor }",
+          "example_request": "GET /v1/ledger/accounts?limit=25",
+          "example_response": { "accounts": [], "next_cursor": null },
+          "openapi": "documented:/ledger/accounts"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/accounts/{account_id}",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { account_id }",
+          "response_shape": "200 account",
+          "example_request": "GET /v1/ledger/accounts/acct_example",
+          "example_response": { "id": "acct_example" },
+          "openapi": "documented:/ledger/accounts/{account_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/balances",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { account_id?, as_of? }",
+          "response_shape": "200 { balances }",
+          "example_request": "GET /v1/ledger/balances",
+          "example_response": { "balances": [] },
+          "openapi": "documented:/ledger/balances"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/transactions",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query filters plus limit and cursor",
+          "response_shape": "200 { transactions, next_cursor }",
+          "example_request": "GET /v1/ledger/transactions?limit=25",
+          "example_response": { "transactions": [], "next_cursor": null },
+          "openapi": "documented:/ledger/transactions"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/transactions/{transaction_id}",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { transaction_id }",
+          "response_shape": "200 transaction",
+          "example_request": "GET /v1/ledger/transactions/tx_example",
+          "example_response": { "id": "tx_example" },
+          "openapi": "documented:/ledger/transactions/{transaction_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/counterparties",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { q?, type?, verified_status?, limit?, cursor? }",
+          "response_shape": "200 { counterparties, next_cursor }",
+          "example_request": "GET /v1/ledger/counterparties",
+          "example_response": { "counterparties": [], "next_cursor": null },
+          "openapi": "documented:/ledger/counterparties"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/ledger/counterparties",
+          "auth": "bearer",
+          "required_scope": "ledger:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "manual counterparty create body",
+          "response_shape": "200 or 201 { counterparty, created }",
+          "example_request": { "body": { "name": "Acme", "type": "vendor" } },
+          "example_response": { "counterparty": { "id": "cp_example" }, "created": true },
+          "openapi": "documented:/ledger/counterparties"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/counterparties/{counterparty_id}",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { counterparty_id }",
+          "response_shape": "200 counterparty",
+          "example_request": "GET /v1/ledger/counterparties/cp_example",
+          "example_response": { "id": "cp_example" },
+          "openapi": "documented:/ledger/counterparties/{counterparty_id}"
+        },
+        {
+          "method": "PATCH",
+          "path": "/v1/ledger/counterparties/{counterparty_id}",
+          "auth": "bearer user",
+          "required_scope": "ledger:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { counterparty_id }; body manual counterparty patch",
+          "response_shape": "200 { counterparty }",
+          "example_request": { "body": { "name": "Acme LLC" } },
+          "example_response": { "counterparty": { "id": "cp_example" } },
+          "openapi": "documented:/ledger/counterparties/{counterparty_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/obligations",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { status?, type?, due_before?, limit?, cursor? }",
+          "response_shape": "200 { obligations, next_cursor }",
+          "example_request": "GET /v1/ledger/obligations",
+          "example_response": { "obligations": [], "next_cursor": null },
+          "openapi": "documented:/ledger/obligations"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/obligations/{obligation_id}/resolved",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { obligation_id }",
+          "response_shape": "200 resolved obligation",
+          "example_request": "GET /v1/ledger/obligations/obl_example/resolved",
+          "example_response": { "id": "obl_example", "resolved": true },
+          "openapi": "documented:/ledger/obligations/{obligation_id}/resolved"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/counterparties/{counterparty_id}/resolved",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { counterparty_id }",
+          "response_shape": "200 resolved counterparty",
+          "example_request": "GET /v1/ledger/counterparties/cp_example/resolved",
+          "example_response": { "id": "cp_example", "resolved": true },
+          "openapi": "documented:/ledger/counterparties/{counterparty_id}/resolved"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/accounts/{account_id}/resolved",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { account_id }",
+          "response_shape": "200 resolved account",
+          "example_request": "GET /v1/ledger/accounts/acct_example/resolved",
+          "example_response": { "id": "acct_example", "resolved": true },
+          "openapi": "documented:/ledger/accounts/{account_id}/resolved"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/invoices",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { status?, counterparty_id?, limit?, cursor? }",
+          "response_shape": "200 { invoices, next_cursor }",
+          "example_request": "GET /v1/ledger/invoices",
+          "example_response": { "invoices": [], "next_cursor": null },
+          "openapi": "documented:/ledger/invoices"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/invoices/{invoice_id}",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { invoice_id }",
+          "response_shape": "200 invoice",
+          "example_request": "GET /v1/ledger/invoices/inv_example",
+          "example_response": { "id": "inv_example" },
+          "openapi": "documented:/ledger/invoices/{invoice_id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/ledger/normalize",
+          "auth": "bearer",
+          "required_scope": "ledger:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ raw_parsed_id, target_entities? }",
+          "response_shape": "200 { ledger_rows_created }",
+          "example_request": { "body": { "raw_parsed_id": "rp_example" } },
+          "example_response": { "ledger_rows_created": 1 },
+          "openapi": "documented:/ledger/normalize"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/ledger/reconcile",
+          "auth": "bearer",
+          "required_scope": "ledger:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ since?, match_types? }",
+          "response_shape": "202 reconciliation summary",
+          "example_request": { "body": { "since": "2026-07-01T00:00:00.000Z" } },
+          "example_response": { "status": "completed" },
+          "openapi": "documented:/ledger/reconcile"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/reconciliation-matches",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { status?, match_type?, limit? }",
+          "response_shape": "200 { matches }",
+          "example_request": "GET /v1/ledger/reconciliation-matches",
+          "example_response": { "matches": [] },
+          "openapi": "documented:/ledger/reconciliation-matches"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/ledger/cash_flows",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "ledger:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { days?, currency? }",
+          "response_shape": "200 cash-flow summary",
+          "example_request": "GET /v1/ledger/cash_flows?days=30",
+          "example_response": { "tenantId": "tnt_example", "currency": "USD" },
+          "openapi": "documented:/ledger/cash_flows"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/canonical/obligations",
+          "auth": "bearer",
+          "required_scope": "canonical:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { direction?, limit? }",
+          "response_shape": "200 { obligations }",
+          "example_request": "GET /v1/canonical/obligations",
+          "example_response": { "obligations": [] },
+          "openapi": "documented:/canonical/obligations"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/canonical/obligations/{obligation_id}",
+          "auth": "bearer",
+          "required_scope": "canonical:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { obligation_id }",
+          "response_shape": "200 canonical obligation product",
+          "example_request": "GET /v1/canonical/obligations/obl_example",
+          "example_response": { "id": "obl_example" },
+          "openapi": "documented:/canonical/obligations/{obligation_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/canonical/gl-accounts",
+          "auth": "bearer",
+          "required_scope": "canonical:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { classification?, limit? }",
+          "response_shape": "200 { gl_accounts }",
+          "example_request": "GET /v1/canonical/gl-accounts",
+          "example_response": { "gl_accounts": [] },
+          "openapi": "documented:/canonical/gl-accounts"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/canonical/gl-accounts/{gl_account_id}",
+          "auth": "bearer",
+          "required_scope": "canonical:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { gl_account_id }",
+          "response_shape": "200 canonical GL account product",
+          "example_request": "GET /v1/canonical/gl-accounts/gl_example",
+          "example_response": { "id": "gl_example" },
+          "openapi": "documented:/canonical/gl-accounts/{gl_account_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/canonical/journal-entries",
+          "auth": "bearer",
+          "required_scope": "canonical:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { limit? }",
+          "response_shape": "200 { journal_entries }",
+          "example_request": "GET /v1/canonical/journal-entries",
+          "example_response": { "journal_entries": [] },
+          "openapi": "documented:/canonical/journal-entries"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/canonical/journal-entries/{journal_entry_id}",
+          "auth": "bearer",
+          "required_scope": "canonical:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { journal_entry_id }",
+          "response_shape": "200 canonical journal entry product",
+          "example_request": "GET /v1/canonical/journal-entries/jrn_example",
+          "example_response": { "id": "jrn_example" },
+          "openapi": "documented:/canonical/journal-entries/{journal_entry_id}"
+        }
+      ]
+    },
+    {
+      "group": "wiki_memory_policy",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/v1/memory/pages",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { page_type?, q?, limit? }",
+          "response_shape": "200 page list",
+          "example_request": "GET /v1/memory/pages",
+          "example_response": { "pages": [] },
+          "openapi": "documented:/memory/pages"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/memory/pages/{slug_or_id}",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { slug_or_id }",
+          "response_shape": "200 page",
+          "example_request": "GET /v1/memory/pages/acme",
+          "example_response": { "id": "page_example", "slug": "acme" },
+          "openapi": "documented:/memory/pages/{slug_or_id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/memory/regenerate",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ slug_or_id }",
+          "response_shape": "200 regenerated page",
+          "example_request": { "body": { "slug_or_id": "acme" } },
+          "example_response": { "id": "page_example", "slug": "acme" },
+          "openapi": "documented:/memory/regenerate"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/memory/search",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { q, limit? }",
+          "response_shape": "200 { results }",
+          "example_request": "GET /v1/memory/search?q=vendor",
+          "example_response": { "results": [] },
+          "openapi": "documented:/memory/search"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/wiki/entity/{entity_id}",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { entity_id }; query { include_neighbors?, as_of? }",
+          "response_shape": "200 { entity, neighbors }",
+          "example_request": "GET /v1/wiki/entity/ent_example",
+          "example_response": { "entity": { "id": "ent_example" }, "neighbors": [] },
+          "openapi": "documented:/wiki/entity/{entity_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/wiki/entity/{entity_id}/evidence",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { entity_id }",
+          "response_shape": "200 { entity_id, chain }",
+          "example_request": "GET /v1/wiki/entity/ent_example/evidence",
+          "example_response": { "entity_id": "ent_example", "chain": [] },
+          "openapi": "documented:/wiki/entity/{entity_id}/evidence"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/wiki/entity/{entity_id}/history",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { entity_id }",
+          "response_shape": "200 { entity_id, versions }",
+          "example_request": "GET /v1/wiki/entity/ent_example/history",
+          "example_response": { "entity_id": "ent_example", "versions": [] },
+          "openapi": "documented:/wiki/entity/{entity_id}/history"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/wiki/search",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { kind?, q?, semantic?, since?, until?, limit?, cursor? }",
+          "response_shape": "200 { results, next_cursor }",
+          "example_request": "GET /v1/wiki/search?q=policy",
+          "example_response": { "results": [], "next_cursor": null },
+          "openapi": "documented:/wiki/search"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/wiki/question",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ question, as_of?, max_evidence_depth? }",
+          "response_shape": "200 { question, answer, evidence, model, usage }",
+          "example_request": { "body": { "question": "What changed in policy?" } },
+          "example_response": {
+            "question": "What changed in policy?",
+            "answer": "",
+            "evidence": [],
+            "model": "configured",
+            "usage": {}
+          },
+          "openapi": "documented:/wiki/question"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/wiki/annotate",
+          "auth": "bearer",
+          "required_scope": "wiki:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "entity or relation annotation body",
+          "response_shape": "201 annotation ids",
+          "example_request": { "body": { "target": "entity", "kind": "policy", "attributes": {} } },
+          "example_response": { "annotation_id": "ent_example", "new_version_id": "ent_example" },
+          "openapi": "documented:/wiki/annotate"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/wiki/schema",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { kind? }",
+          "response_shape": "200 schema map",
+          "example_request": "GET /v1/wiki/schema",
+          "example_response": { "entity/policy": {} },
+          "openapi": "documented:/wiki/schema"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/policy/{tenant_id}",
+          "auth": "bearer",
+          "required_scope": "policy:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { tenant_id } must match principal tenant",
+          "response_shape": "200 active policy",
+          "example_request": "GET /v1/policy/tnt_example",
+          "example_response": { "id": "pol_example", "state": "active" },
+          "openapi": "documented:/policy/{tenant_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/policy/{tenant_id}/versions",
+          "auth": "bearer",
+          "required_scope": "policy:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { tenant_id }",
+          "response_shape": "200 { versions }",
+          "example_request": "GET /v1/policy/tnt_example/versions",
+          "example_response": { "versions": [] },
+          "openapi": "documented:/policy/{tenant_id}/versions"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/policy/{tenant_id}/compose",
+          "auth": "bearer",
+          "required_scope": "policy:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ content, quorum_required? }",
+          "response_shape": "200 { policy_id, state, signing_payload }",
+          "example_request": { "body": { "content": { "version": 1, "rules": [] } } },
+          "example_response": {
+            "policy_id": "pol_example",
+            "state": "pending_signatures",
+            "signing_payload": {}
+          },
+          "openapi": "documented:/policy/{tenant_id}/compose"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/policy/{tenant_id}/sign",
+          "auth": "bearer",
+          "required_scope": "policy:sign",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ policy_id, signatures[] }",
+          "response_shape": "200 { policy, activated, warnings }",
+          "example_request": { "body": { "policy_id": "pol_example", "signatures": [] } },
+          "example_response": { "policy": {}, "activated": false, "warnings": [] },
+          "openapi": "documented:/policy/{tenant_id}/sign"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/policy/{tenant_id}/evaluate",
+          "auth": "bearer",
+          "required_scope": "policy:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ action }",
+          "response_shape": "200 policy decision",
+          "example_request": { "body": { "action": { "kind": "outbound_payment" } } },
+          "example_response": { "outcome": "allow" },
+          "openapi": "documented:/policy/{tenant_id}/evaluate"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/policy/{tenant_id}/simulate",
+          "auth": "bearer",
+          "required_scope": "policy:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ action, version }",
+          "response_shape": "200 { decision, policy_version }",
+          "example_request": { "body": { "version": 1, "action": { "kind": "outbound_payment" } } },
+          "example_response": { "decision": {}, "policy_version": 1 },
+          "openapi": "documented:/policy/{tenant_id}/simulate"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/policy/{tenant_id}/lint",
+          "auth": "bearer",
+          "required_scope": "policy:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ policy_content }",
+          "response_shape": "200 { tenant_id, findings, errors, warnings }",
+          "example_request": { "body": { "policy_content": { "version": 1, "rules": [] } } },
+          "example_response": {
+            "tenant_id": "tnt_example",
+            "findings": [],
+            "errors": 0,
+            "warnings": 0
+          },
+          "openapi": "documented:/policy/{tenant_id}/lint"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/policy/{tenant_id}/diff",
+          "auth": "bearer",
+          "required_scope": "policy:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ from_version, to_version }",
+          "response_shape": "200 semantic diff",
+          "example_request": { "body": { "from_version": 1, "to_version": 2 } },
+          "example_response": { "from_version": 1, "to_version": 2 },
+          "openapi": "documented:/policy/{tenant_id}/diff"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/policy/{tenant_id}/simulate-historical",
+          "auth": "bearer",
+          "required_scope": "policy:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ policy_content, period_start, period_end }",
+          "response_shape": "200 historical simulation result",
+          "example_request": {
+            "body": {
+              "policy_content": { "version": 1, "rules": [] },
+              "period_start": "2026-07-01T00:00:00.000Z",
+              "period_end": "2026-07-22T00:00:00.000Z"
+            }
+          },
+          "example_response": { "would_allow": 0, "would_reject": 0 },
+          "openapi": "documented:/policy/{tenant_id}/simulate-historical"
+        }
+      ]
+    },
+    {
+      "group": "agents_execution_payments_members",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/v1/agents",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { kind?, capability?, category?, state? }",
+          "response_shape": "200 { agents }",
+          "example_request": "GET /v1/agents",
+          "example_response": { "agents": [] },
+          "openapi": "documented:/agents"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/agents/{agent_id}",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { agent_id }",
+          "response_shape": "200 { definition, registration }",
+          "example_request": "GET /v1/agents/payment_agent",
+          "example_response": { "definition": {}, "registration": null },
+          "openapi": "documented:/agents/{agent_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/agents/{agent_id}/actions",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { agent_id }; query { limit? }",
+          "response_shape": "200 { actions }",
+          "example_request": "GET /v1/agents/agent_example/actions",
+          "example_response": { "actions": [] },
+          "openapi": "documented:/agents/{agent_id}/actions"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/agents/route",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ event? or intent?, context? }",
+          "response_shape": "200 routing decision",
+          "example_request": { "body": { "intent": "collect overdue invoices" } },
+          "example_response": { "policy_status": "routed" },
+          "openapi": "documented:/agents/route"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/agents/run",
+          "auth": "bearer",
+          "required_scope": "payment_intent:propose",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ event? or intent?, context? }",
+          "response_shape": "200 agent run",
+          "example_request": { "body": { "intent": "pay invoice inv_example" } },
+          "example_response": { "run_id": "run_example" },
+          "openapi": "documented:/agents/run"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/agents/events",
+          "auth": "bearer",
+          "required_scope": "payment_intent:propose",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ event? or intent?, context? }",
+          "response_shape": "202 { job_id, status }",
+          "example_request": { "body": { "event": "invoice.due" } },
+          "example_response": { "job_id": "req_example", "status": "queued" },
+          "openapi": "documented:/agents/events"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/agents/runs",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { agent_id?, status?, category?, limit? }",
+          "response_shape": "200 { runs }",
+          "example_request": "GET /v1/agents/runs",
+          "example_response": { "runs": [] },
+          "openapi": "documented:/agents/runs"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/agents/runs/{run_id}",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { run_id }",
+          "response_shape": "200 run summary",
+          "example_request": "GET /v1/agents/runs/run_example",
+          "example_response": { "run_id": "run_example" },
+          "openapi": "documented:/agents/runs/{run_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/agents/runs/{run_id}/why",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { run_id }",
+          "response_shape": "200 run explanation",
+          "example_request": "GET /v1/agents/runs/run_example/why",
+          "example_response": { "run_id": "run_example" },
+          "openapi": "documented:/agents/runs/{run_id}/why"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/agents/runs/{run_id}/evidence",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { run_id }",
+          "response_shape": "200 { run_id, evidence }",
+          "example_request": "GET /v1/agents/runs/run_example/evidence",
+          "example_response": { "run_id": "run_example", "evidence": [] },
+          "openapi": "documented:/agents/runs/{run_id}/evidence"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/agents/runs/{run_id}/gate-trace",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { run_id }",
+          "response_shape": "200 gate trace",
+          "example_request": "GET /v1/agents/runs/run_example/gate-trace",
+          "example_response": { "gate_checks": [] },
+          "openapi": "documented:/agents/runs/{run_id}/gate-trace"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/agents/runs/{run_id}/proof",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { run_id }",
+          "response_shape": "200 proof",
+          "example_request": "GET /v1/agents/runs/run_example/proof",
+          "example_response": { "proof_id": "proof_example" },
+          "openapi": "documented:/agents/runs/{run_id}/proof"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/agents/routing-decisions/{id}",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { id }",
+          "response_shape": "200 routing decision",
+          "example_request": "GET /v1/agents/routing-decisions/route_example",
+          "example_response": { "id": "route_example" },
+          "openapi": "documented:/agents/routing-decisions/{id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/agents/{agent_id}/halt",
+          "auth": "bearer",
+          "required_scope": "payment_intent:approve",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { agent_id }",
+          "response_shape": "200 { agent_id, paused, quarantined }",
+          "example_request": "POST /v1/agents/agent_example/halt",
+          "example_response": { "agent_id": "agent_example", "paused": [], "quarantined": true },
+          "openapi": "documented:/agents/{agent_id}/halt"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/agents/{agent_id}/restore",
+          "auth": "bearer",
+          "required_scope": "payment_intent:approve",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { agent_id }",
+          "response_shape": "200 { agent_id, restored }",
+          "example_request": "POST /v1/agents/agent_example/restore",
+          "example_response": { "agent_id": "agent_example", "restored": true },
+          "openapi": "missing_from_openapi_code_route"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/agents/{agent_id}/contribution-hold/release",
+          "auth": "bearer",
+          "required_scope": "payment_intent:approve",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { agent_id }",
+          "response_shape": "200 { agent_id, contribution_hold_released }",
+          "example_request": "POST /v1/agents/agent_example/contribution-hold/release",
+          "example_response": { "agent_id": "agent_example", "contribution_hold_released": true },
+          "openapi": "documented:/agents/{agent_id}/contribution-hold/release"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/agents/halt-category",
+          "auth": "bearer",
+          "required_scope": "payment_intent:approve",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ category: business|consumer|agnostic }",
+          "response_shape": "200 { category, halted }",
+          "example_request": { "body": { "category": "business" } },
+          "example_response": { "category": "business", "halted": [] },
+          "openapi": "documented:/agents/halt-category"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/agents/mcp",
+          "auth": "bearer agent or user",
+          "required_scope": "per MCP tool",
+          "enforcement": "auth_then_mcp_tool_scope_checks",
+          "request_shape": "JSON-RPC 2.0 request",
+          "response_shape": "200 JSON-RPC 2.0 response or error",
+          "example_request": { "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} },
+          "example_response": { "jsonrpc": "2.0", "id": 1, "result": {} },
+          "openapi": "documented:/agents/mcp"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/proposals",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query filters plus limit and cursor",
+          "response_shape": "200 proposals page",
+          "example_request": "GET /v1/proposals",
+          "example_response": { "proposals": [], "next_cursor": null },
+          "openapi": "documented:/proposals"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/proposals/{id}",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { id }",
+          "response_shape": "200 proposal",
+          "example_request": "GET /v1/proposals/prop_example",
+          "example_response": { "id": "prop_example" },
+          "openapi": "documented:/proposals/{id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/proposals/{id}/decide",
+          "auth": "bearer user preferred",
+          "required_scope": "execution:read or payment_intent:approve",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ decision }",
+          "response_shape": "200 decision result",
+          "example_request": { "body": { "decision": "approve" } },
+          "example_response": { "proposal_id": "prop_example", "decision": "approve" },
+          "openapi": "documented:/proposals/{id}/decide"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/evidence/resolve",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "evidence reference list body",
+          "response_shape": "200 { results }",
+          "example_request": { "body": [{ "kind": "payment_intent", "id": "pi_example" }] },
+          "example_response": { "results": [] },
+          "openapi": "documented:/evidence/resolve"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/payment-intents",
+          "auth": "bearer",
+          "required_scope": "payment_intent:propose",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "payment intent create body or { type: pay_invoice, invoice_id } shortcut",
+          "response_shape": "201 payment intent",
+          "example_request": { "body": { "type": "pay_invoice", "invoice_id": "inv_example" } },
+          "example_response": { "id": "pi_example", "status": "proposed" },
+          "openapi": "documented:/payment-intents"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/payment-intents/{id}",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { id }; query { expand? }",
+          "response_shape": "200 payment intent",
+          "example_request": "GET /v1/payment-intents/pi_example?expand=agent",
+          "example_response": { "id": "pi_example", "agent": null },
+          "openapi": "documented:/payment-intents/{id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/payment-intents/{id}/approve",
+          "auth": "bearer user",
+          "required_scope": "payment_intent:approve",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { id }; body { asserted_actor_id? }",
+          "response_shape": "200 payment intent",
+          "example_request": { "body": {} },
+          "example_response": { "id": "pi_example", "status": "approved" },
+          "openapi": "documented:/payment-intents/{id}/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/payment-intents/{id}/reject",
+          "auth": "bearer user",
+          "required_scope": "payment_intent:approve",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ reason? }",
+          "response_shape": "200 payment intent",
+          "example_request": { "body": { "reason": "duplicate" } },
+          "example_response": { "id": "pi_example", "status": "rejected" },
+          "openapi": "documented:/payment-intents/{id}/reject"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/payment-intents/{id}/execute",
+          "auth": "bearer",
+          "required_scope": "payment_intent:execute",
+          "enforcement": "route_scope_check_enforced_plus_pre_execution_gate",
+          "request_shape": "path { id }",
+          "response_shape": "202 execution result",
+          "example_request": "POST /v1/payment-intents/pi_example/execute",
+          "example_response": { "status": "queued" },
+          "openapi": "documented:/payment-intents/{id}/execute"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/payment-intents/{id}/pause",
+          "auth": "bearer user",
+          "required_scope": "payment_intent:approve",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { id }",
+          "response_shape": "200 payment intent",
+          "example_request": "POST /v1/payment-intents/pi_example/pause",
+          "example_response": { "id": "pi_example", "status": "paused" },
+          "openapi": "documented:/payment-intents/{id}/pause"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/payment-intents/{id}/resume",
+          "auth": "bearer user",
+          "required_scope": "payment_intent:approve",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { id }",
+          "response_shape": "200 payment intent",
+          "example_request": "POST /v1/payment-intents/pi_example/resume",
+          "example_response": { "id": "pi_example", "status": "approved" },
+          "openapi": "documented:/payment-intents/{id}/resume"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/payment-intents/{id}/replay-investigation",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { id }",
+          "response_shape": "200 replay investigation bundle",
+          "example_request": "GET /v1/payment-intents/pi_example/replay-investigation",
+          "example_response": { "payment_intent_id": "pi_example" },
+          "openapi": "documented:/payment-intents/{id}/replay-investigation"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/members",
+          "auth": "bearer user",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced_plus_member_context",
+          "request_shape": "query { role?, domain?, limit?, cursor? }",
+          "response_shape": "200 { members, next_cursor }",
+          "example_request": "GET /v1/members",
+          "example_response": { "members": [], "next_cursor": null },
+          "openapi": "documented:/members"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/members",
+          "auth": "bearer admin member",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced_plus_member_admin",
+          "request_shape": "member create body",
+          "response_shape": "201 { member, audit_id, invite_token? }",
+          "example_request": { "body": { "email": "approver@example.com", "role": "approver" } },
+          "example_response": { "member": {}, "audit_id": "audit_example" },
+          "openapi": "documented:/members"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/members/{id}",
+          "auth": "bearer user",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced_plus_member_context",
+          "request_shape": "path { id }",
+          "response_shape": "200 member",
+          "example_request": "GET /v1/members/user_example",
+          "example_response": { "id": "user_example" },
+          "openapi": "documented:/members/{id}"
+        },
+        {
+          "method": "PATCH",
+          "path": "/v1/members/{id}",
+          "auth": "bearer admin member",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced_plus_member_admin",
+          "request_shape": "member patch body",
+          "response_shape": "200 { member, audit_id }",
+          "example_request": { "body": { "display_name": "Approver" } },
+          "example_response": { "member": {}, "audit_id": "audit_example" },
+          "openapi": "documented:/members/{id}"
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/members/{id}",
+          "auth": "bearer admin member",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced_plus_member_admin",
+          "request_shape": "path { id }",
+          "response_shape": "200 { member, audit_id }",
+          "example_request": "DELETE /v1/members/user_example",
+          "example_response": { "member": {}, "audit_id": "audit_example" },
+          "openapi": "documented:/members/{id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/members/{id}/invites",
+          "auth": "bearer admin member",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced_plus_member_admin",
+          "request_shape": "path { id }",
+          "response_shape": "200 { invite_token, expires_at }",
+          "example_request": "POST /v1/members/user_example/invites",
+          "example_response": {
+            "invite_token": "<secret>",
+            "expires_at": "2026-07-25T00:00:00.000Z"
+          },
+          "openapi": "documented:/members/{id}/invites"
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/members/{id}/invites",
+          "auth": "bearer admin member",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced_plus_member_admin",
+          "request_shape": "path { id }",
+          "response_shape": "200 { revoked }",
+          "example_request": "DELETE /v1/members/user_example/invites",
+          "example_response": { "revoked": true },
+          "openapi": "documented:/members/{id}/invites"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/members/{id}/identity-links",
+          "auth": "bearer admin member",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced_plus_member_admin",
+          "request_shape": "{ surface, external_ref }",
+          "response_shape": "200 { audit_id }",
+          "example_request": { "body": { "surface": "slack", "external_ref": "U123" } },
+          "example_response": { "audit_id": "audit_example" },
+          "openapi": "documented:/members/{id}/identity-links"
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/members/{id}/identity-links",
+          "auth": "bearer admin member",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced_plus_member_admin",
+          "request_shape": "{ surface, external_ref }",
+          "response_shape": "200 { audit_id }",
+          "example_request": { "body": { "surface": "slack", "external_ref": "U123" } },
+          "example_response": { "audit_id": "audit_example" },
+          "openapi": "documented:/members/{id}/identity-links"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/execution/propose",
+          "auth": "bearer",
+          "required_scope": "execution:propose",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ action, agent_id? }",
+          "response_shape": "201 proposal",
+          "example_request": { "body": { "action": { "kind": "outbound_payment" } } },
+          "example_response": { "id": "prop_example", "status": "pending" },
+          "openapi": "documented:/execution/propose"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/execution/execute",
+          "auth": "bearer",
+          "required_scope": "execution:write",
+          "enforcement": "route_scope_check_enforced_but_disabled",
+          "request_shape": "{ proposal_id, rail? }",
+          "response_shape": "422 gate_no_policy_decision",
+          "example_request": { "body": { "proposal_id": "prop_example" } },
+          "example_response": { "error": { "code": "gate_no_policy_decision" } },
+          "openapi": "documented:/execution/execute"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/execution/{execution_id}",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { execution_id }",
+          "response_shape": "200 execution",
+          "example_request": "GET /v1/execution/exec_example",
+          "example_response": { "id": "exec_example" },
+          "openapi": "documented:/execution/{execution_id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/execution/approve",
+          "auth": "bearer",
+          "required_scope": "execution:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ proposal_id }",
+          "response_shape": "200 proposal",
+          "example_request": { "body": { "proposal_id": "prop_example" } },
+          "example_response": { "id": "prop_example", "status": "approved" },
+          "openapi": "documented:/execution/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/execution/escalate",
+          "auth": "bearer",
+          "required_scope": "execution:propose",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ proposal_id, note? }",
+          "response_shape": "202 { escalated, proposal_id }",
+          "example_request": { "body": { "proposal_id": "prop_example" } },
+          "example_response": { "escalated": true, "proposal_id": "prop_example" },
+          "openapi": "documented:/execution/escalate"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/execution/agents",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "no params",
+          "response_shape": "200 { agents }",
+          "example_request": "GET /v1/execution/agents",
+          "example_response": { "agents": [] },
+          "openapi": "documented:/execution/agents"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/execution/agents/register",
+          "auth": "bearer",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ agent_id, role, display_name, scope_hash?, onchain_address?, registered_tx? }",
+          "response_shape": "201 agent",
+          "example_request": {
+            "body": {
+              "agent_id": "agent_example",
+              "role": "payment",
+              "display_name": "Payment Agent"
+            }
+          },
+          "example_response": { "id": "agent_example", "state": "pending_onchain" },
+          "openapi": "documented:/execution/agents/register"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/execution/agents/{agent_id}",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { agent_id }",
+          "response_shape": "200 agent",
+          "example_request": "GET /v1/execution/agents/agent_example",
+          "example_response": { "id": "agent_example" },
+          "openapi": "documented:/execution/agents/{agent_id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/execution/mcp",
+          "auth": "bearer agent only",
+          "required_scope": null,
+          "enforcement": "auth_only_no_scope_check_deprecated_ping_only",
+          "request_shape": "{ method, params? }",
+          "response_shape": "200 { ok } for ping; 501 otherwise",
+          "example_request": { "body": { "method": "ping" } },
+          "example_response": { "ok": true },
+          "openapi": "documented:/execution/mcp"
+        }
+      ]
+    },
+    {
+      "group": "audit_proof_tenant",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/v1/audit/events",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "audit:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { layer?, since?, until?, limit? }",
+          "response_shape": "200 { events }",
+          "example_request": "GET /v1/audit/events?limit=25",
+          "example_response": { "events": [] },
+          "openapi": "documented:/audit/events"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/audit/event/{event_id}",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "audit:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { event_id }",
+          "response_shape": "200 { event, inclusion_proof }",
+          "example_request": "GET /v1/audit/event/audit_example",
+          "example_response": { "event": {}, "inclusion_proof": {} },
+          "openapi": "documented:/audit/event/{event_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/audit/entity/{entityType}/{entityId}",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "audit:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { entityType, entityId }; query { limit? }",
+          "response_shape": "200 { entity_type, entity_id, events }",
+          "example_request": "GET /v1/audit/entity/payment_intent/pi_example",
+          "example_response": {
+            "entity_type": "payment_intent",
+            "entity_id": "pi_example",
+            "events": []
+          },
+          "openapi": "documented:/audit/entity/{entityType}/{entityId}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/audit/export",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "audit:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ format: jsonl|csv, since?, until? }",
+          "response_shape": "202 { job_id, format, status }",
+          "example_request": { "body": { "format": "jsonl" } },
+          "example_response": { "job_id": "exp_example", "format": "jsonl", "status": "enqueued" },
+          "openapi": "documented:/audit/export"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/audit/anchor/latest",
+          "auth": "bearer or api_key_when_enabled",
+          "required_scope": "audit:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "no params",
+          "response_shape": "200 latest anchor",
+          "example_request": "GET /v1/audit/anchor/latest",
+          "example_response": { "id": "anchor_example", "event_count": 1 },
+          "openapi": "documented:/audit/anchor/latest"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/audit/anchor/publish",
+          "auth": "bearer",
+          "required_scope": "audit:admin",
+          "enforcement": "conditional_dependency",
+          "request_shape": "no body",
+          "response_shape": "200 published anchor; route absent when broadcaster is not wired",
+          "example_request": "POST /v1/audit/anchor/publish",
+          "example_response": { "id": "anchor_example", "event_count": 1, "tx_hash": null },
+          "openapi": "documented:/audit/anchor/publish"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/audit/webhooks/endpoints",
+          "auth": "bearer",
+          "required_scope": "audit:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ url, enabled_events? }",
+          "response_shape": "201 endpoint with secret returned once",
+          "example_request": { "body": { "url": "https://example.com/webhook" } },
+          "example_response": {
+            "id": "wh_example",
+            "url": "https://example.com/webhook",
+            "secret": "<secret>"
+          },
+          "openapi": "documented:/audit/webhooks/endpoints"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/audit/webhooks/endpoints",
+          "auth": "bearer",
+          "required_scope": "audit:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "no params",
+          "response_shape": "200 { endpoints }",
+          "example_request": "GET /v1/audit/webhooks/endpoints",
+          "example_response": { "endpoints": [] },
+          "openapi": "documented:/audit/webhooks/endpoints"
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/audit/webhooks/endpoints/{id}",
+          "auth": "bearer",
+          "required_scope": "audit:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { id }",
+          "response_shape": "204 empty",
+          "example_request": "DELETE /v1/audit/webhooks/endpoints/wh_example",
+          "example_response": null,
+          "openapi": "documented:/audit/webhooks/endpoints/{id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/webhooks/{endpoint_id}/dead-letters",
+          "auth": "bearer",
+          "required_scope": "audit:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { endpoint_id }",
+          "response_shape": "200 { endpoint_id, dead_letters }",
+          "example_request": "GET /v1/webhooks/wh_example/dead-letters",
+          "example_response": { "endpoint_id": "wh_example", "dead_letters": [] },
+          "openapi": "documented:/webhooks/{endpoint_id}/dead-letters"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/webhooks/{endpoint_id}/replay",
+          "auth": "bearer",
+          "required_scope": "audit:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { endpoint_id }",
+          "response_shape": "200 replay summary",
+          "example_request": "POST /v1/webhooks/wh_example/replay",
+          "example_response": {
+            "endpoint_id": "wh_example",
+            "attempted": 0,
+            "redelivered": 0,
+            "still_failing": 0
+          },
+          "openapi": "documented:/webhooks/{endpoint_id}/replay"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/audit/verify",
+          "auth": "public",
+          "required_scope": null,
+          "enforcement": "public_skip_auth",
+          "request_shape": "{ event_hash, merkle_proof, merkle_root }",
+          "response_shape": "200 { verified, onchain_block }",
+          "example_request": {
+            "body": { "event_hash": "00", "merkle_proof": [], "merkle_root": "00" }
+          },
+          "example_response": { "verified": true, "onchain_block": null },
+          "openapi": "documented:/audit/verify"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/proof/{action_id}",
+          "auth": "bearer",
+          "required_scope": "audit:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { action_id }",
+          "response_shape": "200 proof",
+          "example_request": "GET /v1/proof/pi_example",
+          "example_response": { "action_id": "pi_example" },
+          "openapi": "documented:/proof/{action_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/proof/{action_id}/view",
+          "auth": "bearer",
+          "required_scope": "audit:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { action_id }",
+          "response_shape": "200 text/html",
+          "example_request": "GET /v1/proof/pi_example/view",
+          "example_response": "<html>...</html>",
+          "openapi": "documented:/proof/{action_id}/view"
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/tenants/{id}",
+          "auth": "bearer user own tenant",
+          "required_scope": null,
+          "enforcement": "auth_only_no_scope_check_plus_own_tenant_user",
+          "request_shape": "path { id } must equal principal tenant",
+          "response_shape": "200 tenant deletion result",
+          "example_request": "DELETE /v1/tenants/tnt_example",
+          "example_response": { "tenant_id": "tnt_example", "deleted": true },
+          "openapi": "documented:/tenants/{id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/tenants/{id}/export",
+          "auth": "bearer user own tenant",
+          "required_scope": null,
+          "enforcement": "auth_only_no_scope_check_plus_own_tenant_user",
+          "request_shape": "path { id }",
+          "response_shape": "200 or 202 tenant export job",
+          "example_request": "POST /v1/tenants/tnt_example/export",
+          "example_response": { "id": "texp_example", "status": "queued" },
+          "openapi": "documented:/tenants/{id}/export"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/tenants/{id}/export/{job_id}",
+          "auth": "bearer user own tenant",
+          "required_scope": null,
+          "enforcement": "auth_only_no_scope_check_plus_own_tenant_user",
+          "request_shape": "path { id, job_id }",
+          "response_shape": "200 tenant export job",
+          "example_request": "GET /v1/tenants/tnt_example/export/texp_example",
+          "example_response": { "id": "texp_example", "status": "completed" },
+          "openapi": "documented:/tenants/{id}/export/{job_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/tenants/{id}/export/{job_id}/download",
+          "auth": "bearer user own tenant",
+          "required_scope": null,
+          "enforcement": "auth_only_no_scope_check_plus_own_tenant_user",
+          "request_shape": "path { id, job_id }",
+          "response_shape": "200 application/x-ndjson stream",
+          "example_request": "GET /v1/tenants/tnt_example/export/texp_example/download",
+          "example_response": "{\"type\":\"tenant_export\"}",
+          "openapi": "documented:/tenants/{id}/export/{job_id}/download"
+        }
+      ]
+    }
+  ],
+  "feature_gated_or_not_stable": [
+    {
+      "flag": "BRAIN_SELF_SERVE_SIGNUP",
+      "paths": [
+        "POST /v1/signup",
+        "POST /v1/auth/verify-email",
+        "POST /v1/auth/login",
+        "POST /v1/tenants/{tenant_id}/wallets"
+      ],
+      "openapi_status": "documented",
+      "runtime_status": "not registered unless flag true"
+    },
+    {
+      "flag": "BRAIN_DEMO_MODE",
+      "paths": [
+        "GET /v1/demo/token",
+        "POST /v1/demo/policy/activate",
+        "POST /v1/demo/anchor/trigger"
+      ],
+      "openapi_status": "not documented",
+      "runtime_status": "not production stable"
+    },
+    {
+      "flag": "BRAIN_DEMO_PROVISION_ENABLED",
+      "paths": ["POST /v1/demo/provision-run", "POST /v1/demo/provision-run/{tenantId}/anchor"],
+      "openapi_status": "not documented",
+      "runtime_status": "not registered unless flag true"
+    },
+    {
+      "flag": "BRAIN_SERVICE_TOKEN_ENABLED",
+      "paths": ["POST /v1/auth/service-token"],
+      "openapi_status": "not documented",
+      "runtime_status": "not registered unless flag true"
+    },
+    {
+      "flag": "BRAIN_API_KEY_AUTH_ENABLED",
+      "paths": [
+        "POST /v1/tenants/{tenantId}/keys",
+        "GET /v1/tenants/{tenantId}/keys",
+        "POST /v1/keys/{id}/rotate",
+        "DELETE /v1/keys/{id}",
+        "GET /v1/tenants/{tenantId}/usage"
+      ],
+      "openapi_status": "documented",
+      "runtime_status": "not registered unless flag true; staging enables this today"
+    }
+  ],
+  "drift": [
+    {
+      "kind": "openapi_invalid_yaml_for_ruby_psych",
+      "detail": "Brain_API_Specification.yaml line 5201 has an inline description containing https:// without quoting. Repo Redocly tolerates this, but Ruby Psych rejects it."
+    },
+    {
+      "kind": "openapi_only_not_mounted_stable",
+      "paths": [
+        "POST /v1/signup",
+        "POST /v1/auth/verify-email",
+        "POST /v1/auth/login",
+        "POST /v1/tenants/{tenant_id}/wallets",
+        "POST /v1/tenants/{tenantId}/keys",
+        "GET /v1/tenants/{tenantId}/keys",
+        "POST /v1/keys/{keyId}/rotate",
+        "DELETE /v1/keys/{keyId}",
+        "GET /v1/tenants/{tenantId}/usage",
+        "POST /v1/agents/{agent_id}/propose",
+        "POST /v1/agents/register"
+      ]
+    },
+    {
+      "kind": "code_only_stable",
+      "paths": [
+        "GET /health",
+        "GET /.well-known/oauth-protected-resource",
+        "GET /internal/audit/health",
+        "GET /v1/docs/scalar.js",
+        "POST /v1/agents/{agent_id}/restore"
+      ]
+    },
+    {
+      "kind": "conditional_dependency",
+      "paths": ["POST /v1/audit/anchor/publish"],
+      "detail": "Registered only when audit broadcaster is wired."
+    }
+  ]
+}
