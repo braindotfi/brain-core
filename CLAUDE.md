@@ -439,20 +439,29 @@ and production pull the same SHA-tagged images and retag them locally as
 `brain-core:prod` and `brain-agents:prod`, so both environments run the same
 commit.
 
-Deployment is a single Docker VM per environment. `deploy_staging` runs
-automatically on green `main`, connects to `VM_HOST_STAGING` with
-`VM_SSH_KEY_STAGING`, uses `.env.staging`, pulls the SHA-tagged images, runs
-`tools/migrate up`, reruns `infra/db-roles.sql`, recreates `api`, `worker`, and
-`agents`, then smokes the staging health URL with a commit match. Production
-deployment is also automated from green `main`: the workflow connects to
-`VM_HOST`, uses `.env.prod`, pulls the SHA-tagged images, runs
-`tools/migrate up`, reruns `infra/db-roles.sql` before any compose recreate,
-recreates `api`, `worker`, and `agents`, and smokes
-`https://api.brain.fi/health`.
+Deployment is a single Docker VM per environment. `deploy_staging` (in
+`main.yml`) runs automatically on green `main`, connects to `VM_HOST_STAGING`
+with `VM_SSH_KEY_STAGING`, uses `.env.staging`, pulls the SHA-tagged images,
+runs `tools/migrate up`, reruns `infra/db-roles.sql`, recreates `api`,
+`worker`, and `agents`, then smokes the staging health URL with a commit
+match.
 
-The old manual staging-to-production promote is retired. The remaining
-discipline is the post-deploy probe: verify what is serving, not only what is
-merged. For production tenancy changes, operators must probe
+Production promotion is manual: `.github/workflows/promote-prod.yml` is a
+separate `workflow_dispatch` workflow, run by hand from the Actions tab, so
+promoting production is decoupled from the per-commit `main.yml` run (that
+run's `environment: production` approval used to sit inside the same
+concurrency group as `build_image`/`deploy_staging`, so the oldest queued run
+held the approval slot and approving it could ship a stale SHA). It takes an
+optional `sha` input; left blank, it resolves the SHA currently live on
+staging (`GET https://staging-api.brain.fi/health`) and promotes that. It
+still requires the `production` environment approval, connects to `VM_HOST`,
+uses `.env.prod`, pulls the resolved SHA's images, runs `tools/migrate up`,
+reruns `infra/db-roles.sql` before any compose recreate, recreates `api`,
+`worker`, and `agents`, and smokes `https://api.brain.fi/health` for a commit
+match against the resolved SHA.
+
+The remaining discipline is the post-deploy probe: verify what is serving,
+not only what is merged. For production tenancy changes, operators must probe
 `POST /v1/tenants` with `X-Platform-Service-Auth`, confirm the response returns
 a user-principal member session, then record the result in the PR or release
 notes. A failed migration or smoke check fails the workflow before the deploy is
@@ -491,7 +500,8 @@ Humans touch the version only to move a **tier**: tag `main` with `vMAJOR.MINOR.
 automatic. Do not cut `v0.0.x` patch tags. The machine fills that in.
 
 Every production promote pushes a lightweight **deploy tag**
-`deploy/prod/<utc-timestamp>-<short-sha>` (last step of `promote_production`), so
+`deploy/prod/<utc-timestamp>-<short-sha>` (last step of `promote-prod.yml`'s
+`promote` job), so
 `git tag --list 'deploy/prod/*'` is a reviewable, timestamped history of what
 shipped to `api.brain.fi`. These sit outside the `v*` namespace so they never
 become a `git describe` base.
