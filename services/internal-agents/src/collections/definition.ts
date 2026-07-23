@@ -7,7 +7,12 @@ export const collectionsDefinition: InternalAgentDefinition = {
   provenance: "internal",
   category: "business",
   capabilities: ["collections_followup"],
-  triggers: ["invoice.overdue", "payment.failed", "receivable.aging_threshold_crossed"],
+  triggers: [
+    "invoice.overdue",
+    "payment.failed",
+    "receivable.aging_threshold_crossed",
+    "ledger.upload.projected",
+  ],
   intent_patterns: [
     "follow up on overdue invoice",
     "chase late payment",
@@ -23,6 +28,7 @@ export const collectionsDefinition: InternalAgentDefinition = {
     "invoice.overdue": "draft_followup",
     "payment.failed": "escalate",
     "receivable.aging_threshold_crossed": "create_task",
+    "ledger.upload.projected": "draft_followup",
   },
   default_action: "draft_followup",
 };

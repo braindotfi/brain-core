@@ -12,6 +12,10 @@ export interface RoutingInput {
   readonly tenant_id: string;
   /** Domain-event name, e.g. "invoice.overdue". */
   readonly event?: string;
+  /** Optional targeted route for bounded fan-out callers. */
+  readonly target_agent_id?: string;
+  /** Event-layer dedupe key; duplicate keys skip handler execution. */
+  readonly idempotency_key?: string;
   /** Free-form natural-language intent, classified against intent_patterns. */
   readonly intent?: string;
   readonly context?: Record<string, unknown>;

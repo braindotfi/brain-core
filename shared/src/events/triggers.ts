@@ -53,6 +53,8 @@ export const DOMAIN_EVENTS = [
   "transaction.unusual", // fraud_anomaly
   "merchant.risk_detected", // fraud_anomaly
   "duplicate_charge.detected", // fraud_anomaly
+  // Upload ingestion trigger.
+  "ledger.upload.projected",
 ] as const;
 
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number];

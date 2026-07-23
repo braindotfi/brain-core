@@ -129,6 +129,7 @@ function mergeConfidence(objectType: string | undefined): number | null {
 export interface ProjectionWorkerDeps {
   pool: Pool;
   audit: AuditEmitter;
+  onUploadProjected?: (event: LedgerUploadProjectedEvent) => Promise<void>;
   /** Optional: emits brain.canonical.projector.records.count so a stalled
    *  money-path projector (records flatlining while raw_parsed grows) is
    *  observable. No-op when absent. */
@@ -136,6 +137,23 @@ export interface ProjectionWorkerDeps {
   log?: {
     debug(obj: unknown, msg?: string): void;
   };
+}
+
+export interface LedgerUploadProjectionSummary {
+  readonly accounts: number;
+  readonly transactions: number;
+  readonly receivables: number;
+  readonly obligations: number;
+  readonly newCounterparties: number;
+}
+
+export interface LedgerUploadProjectedEvent {
+  readonly event: "ledger.upload.projected";
+  readonly tenantId: string;
+  readonly rawArtifactId: string;
+  readonly rawParsedId: string;
+  readonly projector: string;
+  readonly summary: LedgerUploadProjectionSummary;
 }
 
 export interface ProjectionWorkerOptions {
@@ -464,6 +482,43 @@ async function persistConnectorProjection(
   }
 }
 
+function isUploadProjector(projector: string): boolean {
+  return (
+    projector === BANK_STATEMENT_UPLOAD_PROJECTOR || projector === DOCUMENT_RECORDS_UPLOAD_PROJECTOR
+  );
+}
+
+function summarizeUploadProjection(
+  projections: readonly ConnectorLedgerProjection[],
+): LedgerUploadProjectionSummary {
+  let accounts = 0;
+  let transactions = 0;
+  let receivables = 0;
+  let obligations = 0;
+  let newCounterparties = 0;
+  for (const projection of projections) {
+    if (projection.kind === "account") accounts += 1;
+    if (projection.kind === "transaction") transactions += 1;
+    if (projection.kind === "counterparty") newCounterparties += 1;
+    if (projection.kind === "obligation") {
+      obligations += 1;
+      if (projection.input.direction === "receivable") receivables += 1;
+    }
+  }
+  return { accounts, transactions, receivables, obligations, newCounterparties };
+}
+
+function hasProjectedRows(summary: LedgerUploadProjectionSummary): boolean {
+  return (
+    summary.accounts +
+      summary.transactions +
+      summary.receivables +
+      summary.obligations +
+      summary.newCounterparties >
+    0
+  );
+}
+
 async function runConnectorLedgerPasses(
   deps: ProjectionWorkerDeps,
   batchSize: number,
@@ -499,6 +554,7 @@ async function runConnectorLedgerPasses(
         const written = await withTenantScope(deps.pool, row.tenant_id, async (c) => {
           const diagnostics: ConnectorProjectionDiagnostics = { skippedRows: {} };
           const projections = pass.project(row.extracted, common, diagnostics);
+          const summary = summarizeUploadProjection(projections);
           let count = 0;
           for (const projection of projections) {
             await persistConnectorProjection(c, row.tenant_id, projection);
@@ -517,7 +573,7 @@ async function runConnectorLedgerPasses(
                projected_at = now()`,
             [row.id, row.tenant_id, pass.projector, count],
           );
-          return { count, skippedRows: diagnostics.skippedRows };
+          return { count, skippedRows: diagnostics.skippedRows, summary };
         });
 
         await deps.audit.emit({
@@ -540,6 +596,27 @@ async function runConnectorLedgerPasses(
           { projector: pass.projector, object_type: pass.objectType },
           written.count,
         );
+        if (
+          deps.onUploadProjected !== undefined &&
+          isUploadProjector(pass.projector) &&
+          hasProjectedRows(written.summary)
+        ) {
+          try {
+            await deps.onUploadProjected({
+              event: "ledger.upload.projected",
+              tenantId: row.tenant_id,
+              rawArtifactId: row.raw_artifact_id,
+              rawParsedId: row.id,
+              projector: pass.projector,
+              summary: written.summary,
+            });
+          } catch (err) {
+            console.error(
+              `[canonicalProjector] upload projection trigger failed for ${row.id}:`,
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+        }
         for (const [reason, count] of Object.entries(written.skippedRows)) {
           if (count <= 0) continue;
           deps.metrics?.increment(

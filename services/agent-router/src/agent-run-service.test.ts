@@ -58,20 +58,29 @@ function makeStore(): {
   store: AgentRunStore;
   runs: RecordRunInput[];
   decisions: RecordRoutingDecisionInput[];
+  claims: Map<string, string>;
 } {
   const runs: RecordRunInput[] = [];
   const decisions: RecordRoutingDecisionInput[] = [];
+  const claims = new Map<string, string>();
   const store: AgentRunStore = {
+    claimRunIdempotencyKey: async (_ctx, input) => {
+      const existing = claims.get(input.key);
+      if (existing !== undefined) return { claimed: false, runId: existing };
+      const runId = `agnr_claim_${claims.size + 1}`;
+      claims.set(input.key, runId);
+      return { claimed: true, runId };
+    },
     recordRoutingDecision: async (_ctx, input) => {
       decisions.push(input);
       return { id: `agrd_${decisions.length}` };
     },
     recordRun: async (_ctx, input) => {
       runs.push(input);
-      return { id: `agnr_${runs.length}` };
+      return { id: input.runId ?? `agnr_${runs.length}` };
     },
   };
-  return { store, runs, decisions };
+  return { store, runs, decisions, claims };
 }
 
 function makeService(
@@ -289,5 +298,35 @@ describe("AgentRunService (shadow mode)", () => {
         missing_fields: expect.arrayContaining(["invoice_id is required"]),
       },
     });
+  });
+
+  it("skips duplicate idempotency keys before proposing", async () => {
+    const { store, runs } = makeStore();
+    let proposed = 0;
+    const svc = makeService(
+      store,
+      ["collections_followup"],
+      () => {
+        proposed += 1;
+      },
+      () => {},
+      { handlers: { ...internalAgentHandlers, collections: COMPLETE_COLLECTIONS_HANDLER } },
+    );
+    const input = {
+      tenant_id: "tnt_acme",
+      event: "invoice.overdue",
+      idempotency_key: "tnt_acme:ledger.upload.projected:raw_1:collections",
+    };
+
+    const first = await svc.run(CTX, input);
+    const second = await svc.run(CTX, input);
+
+    expect(first.status).toBe("proposal_created");
+    expect(first.run_id).toBe("agnr_claim_1");
+    expect(second.status).toBe("duplicate_skipped");
+    expect(second.run_id).toBe("agnr_claim_1");
+    expect(proposed).toBe(1);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.idempotencyKey).toBe(input.idempotency_key);
   });
 });

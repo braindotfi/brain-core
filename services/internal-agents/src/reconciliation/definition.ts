@@ -15,7 +15,12 @@ export const reconciliationDefinition: InternalAgentDefinition = {
   provenance: "internal",
   category: "agnostic",
   capabilities: ["reconciliation_review"],
-  triggers: ["transaction.unreconciled", "statement.imported", "reconciliation.candidate_found"],
+  triggers: [
+    "transaction.unreconciled",
+    "statement.imported",
+    "reconciliation.candidate_found",
+    "ledger.upload.projected",
+  ],
   intent_patterns: [
     "reconcile transactions",
     "match statement to ledger",
@@ -31,6 +36,7 @@ export const reconciliationDefinition: InternalAgentDefinition = {
     "transaction.unreconciled": "propose_match",
     "statement.imported": "propose_match",
     "reconciliation.candidate_found": "propose_match",
+    "ledger.upload.projected": "propose_match",
   },
   default_action: "propose_match",
 };

@@ -7,7 +7,12 @@ export const vendorRiskDefinition: InternalAgentDefinition = {
   provenance: "internal",
   category: "business",
   capabilities: ["vendor_risk"],
-  triggers: ["vendor.created", "vendor.bank_details_changed", "payment.destination_changed"],
+  triggers: [
+    "vendor.created",
+    "vendor.bank_details_changed",
+    "payment.destination_changed",
+    "ledger.upload.projected",
+  ],
   intent_patterns: ["check vendor risk", "review a new vendor", "verify a bank detail change"],
   readable_data: ["ledger:read", "wiki:read", "raw:read"],
   risk_level: "high",
@@ -20,5 +25,6 @@ export const vendorRiskDefinition: InternalAgentDefinition = {
     "vendor.created": "flag_vendor_risk",
     "vendor.bank_details_changed": "flag_vendor_risk",
     "payment.destination_changed": "require_approval",
+    "ledger.upload.projected": "flag_vendor_risk",
   },
 };

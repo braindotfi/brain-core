@@ -125,7 +125,9 @@ upload (source_type=upload)                                   [exists today]
   -> Ledger normalize promotes raw_parsed -> candidate rows   [NEW: deterministic extractor in the switch]
        provenance = agent_contributed -> confidence auto-capped <= 0.5
        source_ids / evidence_ids = [raw_parsed_id]
-  -> EXISTING Wiki page-gen, Wiki Q&A, agent-router, reconciliation light up
+  -> canonical projector emits ledger.upload.projected once per artifact
+  -> agent-router runs scoped internal agents propose-only, deduped by artifact
+  -> EXISTING Wiki page-gen, Wiki Q&A, reconciliation light up
 ```
 
 The load-bearing decision: **all non-deterministic model judgment lives in the
@@ -309,6 +311,13 @@ independent of this RFC.
   contract document types.
 - `doc_obligation_v1` deterministic Ledger extractor + `upsertObligationRow`.
 - `target_entities` enum extension.
+- Upload projection events: the canonical projector emits `ledger.upload.projected`
+  once per artifact, carrying the raw artifact id and counts for projected
+  transactions, receivables, obligations, accounts, and counterparties.
+- Post-ingestion agent fan-out: collections, cash_forecast, treasury,
+  vendor_risk, and reconciliation run through `AgentRunService` in propose-only
+  mode when their trigger conditions match. Each run is idempotent by tenant,
+  raw artifact id, and agent.
 - Outcome: a prospect uploads the financials they already have, Brain organizes
   what they owe and own and when, and answers plain-language questions about it.
   Recommendations are advisory (summaries, due / overdue awareness, anomalies

@@ -49,6 +49,7 @@ export interface RecordRoutingDecisionInput {
 }
 
 export interface RecordRunInput {
+  runId?: string;
   tenantCategory: string;
   agentId: string;
   agentKind: "internal" | "external";
@@ -66,9 +67,14 @@ export interface RecordRunInput {
   proposalId?: string | null;
   paymentIntentId?: string | null;
   failureReason?: string | null;
+  idempotencyKey?: string | null;
 }
 
 export interface AgentRunStore {
+  claimRunIdempotencyKey?(
+    ctx: ServiceCallContext,
+    input: { key: string },
+  ): Promise<{ claimed: boolean; runId: string | null }>;
   recordRoutingDecision(
     ctx: ServiceCallContext,
     input: RecordRoutingDecisionInput,
@@ -129,6 +135,7 @@ export class AgentRunService {
       prose: decision.reason,
       trigger: input.event !== undefined ? { kind: "event", value: input.event } : null,
       intent: input.intent ?? null,
+      target_agent_id: input.target_agent_id ?? null,
       category_match: {
         tenant: category,
         selected: decision.selected_agent_id,
@@ -169,6 +176,35 @@ export class AgentRunService {
     }
 
     const agentId = decision.selected_agent_id;
+    const runClaim =
+      input.idempotency_key !== undefined && this.deps.store.claimRunIdempotencyKey !== undefined
+        ? await this.deps.store.claimRunIdempotencyKey(ctx, { key: input.idempotency_key })
+        : null;
+    const runIdentity = {
+      ...(runClaim?.runId !== undefined && runClaim.runId !== null
+        ? { runId: runClaim.runId }
+        : {}),
+      ...(input.idempotency_key !== undefined ? { idempotencyKey: input.idempotency_key } : {}),
+    };
+    if (runClaim?.claimed === false) {
+      return {
+        status: "duplicate_skipped",
+        routing_decision_id: routing.id,
+        run_id: runClaim.runId,
+        selected_agent_id: agentId,
+        action: null,
+        shadow_mode: false,
+        reason: {
+          ...reason,
+          idempotency: {
+            status: "duplicate_skipped",
+            key: input.idempotency_key,
+            existing_run_id: runClaim.runId,
+          },
+        },
+      };
+    }
+
     const handler = this.deps.handlers[agentId];
     const definition = this.deps.definitions[agentId];
     const executionMode: ExecutionMode = decision.execution_mode ?? "notify_only";
@@ -185,6 +221,7 @@ export class AgentRunService {
         confidence: decision.confidence,
         failureReason: "no handler/definition for selected agent",
         shadowMode: false,
+        ...runIdentity,
       });
     }
 
@@ -208,6 +245,7 @@ export class AgentRunService {
         confidence: decision.confidence,
         failureReason: resolution.reason,
         shadowMode: false,
+        ...runIdentity,
       });
     }
 
@@ -258,6 +296,7 @@ export class AgentRunService {
           action: resolution.action,
           failureReason: "payload_invalid",
           shadowMode: false,
+          ...runIdentity,
         });
       }
       if (proposed.channel === "payment_intent") {
@@ -279,6 +318,7 @@ export class AgentRunService {
           action: resolution.action,
           confidence: decision.confidence,
           evidenceScore: bundle.evidence_score,
+          ...runIdentity,
         });
         return {
           status: "shadow_completed",
@@ -309,6 +349,7 @@ export class AgentRunService {
         action: resolution.action,
         failureReason: "critical_missing_evidence",
         shadowMode: false,
+        ...runIdentity,
       });
     }
 
@@ -326,6 +367,7 @@ export class AgentRunService {
         action: resolution.action,
         failureReason: `execution_mode_${executionMode}`,
         shadowMode: false,
+        ...runIdentity,
       });
     }
     if (proposed === undefined) {
@@ -358,6 +400,7 @@ export class AgentRunService {
           action: resolution.action,
           failureReason: "payload_invalid",
           shadowMode: false,
+          ...runIdentity,
         });
       }
     }
@@ -383,6 +426,7 @@ export class AgentRunService {
           action: resolution.action,
           failureReason: "payload_invalid",
           shadowMode: false,
+          ...runIdentity,
         });
       }
     }
@@ -414,6 +458,7 @@ export class AgentRunService {
           action: resolution.action,
           confidence: decision.confidence,
           evidenceScore: bundle.evidence_score,
+          ...runIdentity,
         });
         return {
           status: "shadow_completed",
@@ -453,6 +498,7 @@ export class AgentRunService {
       proposalId: proposed.channel === "agent" ? result.id : null,
       paymentIntentId: proposed.channel === "payment_intent" ? result.id : null,
       policyStatus: toPolicyStatus(result.policy_decision_id),
+      ...runIdentity,
     });
     return {
       status: "proposal_created",
@@ -481,10 +527,13 @@ export class AgentRunService {
       action?: string | null;
       failureReason: string;
       shadowMode: boolean;
+      runId?: string;
+      idempotencyKey?: string;
     },
   ): Promise<AgentRunResult> {
     const kind = this.deps.definitions[args.agentId]?.provenance ?? "internal";
     const run = await this.deps.store.recordRun(ctx, {
+      ...(args.runId !== undefined ? { runId: args.runId } : {}),
       tenantCategory: args.category,
       agentId: args.agentId,
       agentKind: kind,
@@ -499,6 +548,7 @@ export class AgentRunService {
       confidence: args.confidence,
       evidenceScore: args.evidenceScore ?? null,
       failureReason: args.failureReason,
+      idempotencyKey: args.idempotencyKey ?? null,
     });
     return {
       status: args.status,
