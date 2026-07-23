@@ -3,7 +3,7 @@
   "version": 1,
   "generated_from": {
     "repository": "brain-core",
-    "head": "c120d0e2a8b97b34fba078fc7bc1c5db817efdf7",
+    "head": "64c3a218dffc71be0cb145e2664fc15a8d5b06ee",
     "openapi_source": "Brain_API_Specification.yaml",
     "runtime_sources": [
       "services/api/src/main.ts",
@@ -35,8 +35,8 @@
       "conditional_dependency": "Route is registered only when an optional dependency is wired."
     },
     "api_key_scope_access": {
-      "permitted_scopes": ["ledger:read", "audit:read"],
-      "note": "API-key management routes and API-key gateway authentication remain behind BRAIN_API_KEY_AUTH_ENABLED in code. Staging enables the flag, but this artifact marks those routes as feature-gated rather than stable."
+      "permitted_scopes": ["ledger:read", "audit:read", "governance:read"],
+      "note": "API-key management routes and API-key gateway authentication remain behind BRAIN_API_KEY_AUTH_ENABLED in code. Staging enables the flag, but this artifact marks those routes as feature-gated rather than stable. The governance Phase 1 HTTP routes are mounted as BFF-only shared-secret routes today, and the governance:read scope is checked on that platform credential."
     }
   },
   "common_examples": {
@@ -71,13 +71,16 @@
       "optional_or_nullable": [
         "policy_version",
         "policy_decision_id",
+        "policy_check_id",
+        "outcome",
         "before_state",
         "after_state",
         "actor_ref.display_name",
         "actor_ref.email",
         "actor_ref.lookup"
       ],
-      "actor_resolution": "The raw actor string remains for compatibility. actor_ref.id repeats it, actor_ref.type is inferred from the id prefix, and actor_ref.lookup is a relative path when core exposes a resolver today. user actors resolve through /v1/members/{id}; agent actors resolve through /v1/agents/{id}. display_name and email are present when the emitting service captured them."
+      "actor_resolution": "The raw actor string remains for compatibility. actor_ref.id repeats it, actor_ref.type is inferred from the id prefix, and actor_ref.lookup is a relative path when core exposes a resolver today. user actors resolve through /v1/members/{id}; agent actors resolve through /v1/agents/{id}. display_name and email are present when the emitting service captured them.",
+      "policy_report_fields": "policy_decision_id is not populated on every historical audit_events row. It is present on some gate execution events, absent on older rows and on policy event paths that only wrote decision ids inside outputs. New forward-going policy, gate, payment-intent creation, and agent-proposal emitters add native policy_check_id and outcome when those values are known. Governance reports join historical rows to policy_decisions when policy_decision_id is present and surface decision_data_status=unavailable when the decision id or join is missing."
     },
     "event_types": {
       "system_activity": {
@@ -2040,6 +2043,191 @@
           "openapi": "documented:/tenants/{id}/export/{job_id}/download"
         }
       ]
+    },
+    {
+      "group": "governance_phase1",
+      "status": "staging_exposed_bff_only",
+      "notes": [
+        "Routes are mounted by the API service and gated by X-Platform-Service-Auth with governance:read.",
+        "No POST agent creation endpoint is exposed in Phase 1.",
+        "Agent scopes are reported as null because the registry stores scope_hash, not the original scope list.",
+        "Historical audit coverage is partial: policy_decision_id is present on some gate rows, absent on older and alternate policy paths. Reports return decision_data_status=unavailable for rows without a native outcome or resolvable policy decision."
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/v1/governance/agents",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "governance:read",
+          "enforcement": "shared_secret_header",
+          "request_shape": "query { tenant_id, status?, owner?, limit?, cursor? }",
+          "response_shape": "200 { agents: GovernanceAgent[], next_cursor }",
+          "example_request": {
+            "headers": { "X-Platform-Service-Auth": "<secret-with-governance-read>" },
+            "path": "/v1/governance/agents?tenant_id=tnt_example&status=active&limit=50"
+          },
+          "example_response": {
+            "agents": [
+              {
+                "id": "agent_example",
+                "tenant_id": "tnt_example",
+                "kind": "internal",
+                "role": "finance_ops",
+                "display_name": "Finance Ops Agent",
+                "status": "active",
+                "scopes": null,
+                "scope_hash": "abcdef",
+                "onchain_address": null,
+                "registered_tx": null,
+                "registered_at": "2026-07-22T00:00:00.000Z",
+                "created_at": "2026-07-22T00:00:00.000Z"
+              }
+            ],
+            "next_cursor": null
+          },
+          "openapi": "documented:/governance/agents"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/governance/agents/{agent_id}",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "governance:read",
+          "enforcement": "shared_secret_header",
+          "request_shape": "path { agent_id }; query { tenant_id }",
+          "response_shape": "200 { agent: GovernanceAgent plus lifecycle_events[] }",
+          "example_request": {
+            "headers": { "X-Platform-Service-Auth": "<secret-with-governance-read>" },
+            "path": "/v1/governance/agents/agent_example?tenant_id=tnt_example"
+          },
+          "example_response": {
+            "agent": {
+              "id": "agent_example",
+              "tenant_id": "tnt_example",
+              "kind": "internal",
+              "role": "finance_ops",
+              "display_name": "Finance Ops Agent",
+              "status": "active",
+              "scopes": null,
+              "scope_hash": "abcdef",
+              "onchain_address": null,
+              "registered_tx": null,
+              "registered_at": "2026-07-22T00:00:00.000Z",
+              "created_at": "2026-07-22T00:00:00.000Z",
+              "lifecycle_events": [
+                {
+                  "audit_event_id": "evt_example",
+                  "actor": "user_admin",
+                  "action": "governance.agent.lifecycle_changed",
+                  "policy_decision_id": null,
+                  "policy_check_id": null,
+                  "outcome": null,
+                  "created_at": "2026-07-22T00:00:00.000Z",
+                  "inputs": { "agent_id": "agent_example", "transition": "pause" },
+                  "outputs": { "after_state": "quarantined" }
+                }
+              ]
+            }
+          },
+          "openapi": "documented:/governance/agents/{agent_id}"
+        },
+        {
+          "method": "PATCH",
+          "path": "/v1/governance/agents/{agent_id}",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "governance:read",
+          "enforcement": "shared_secret_header",
+          "request_shape": "{ tenant_id, transition: pause|resume|revoke, reason, actor }",
+          "response_shape": "200 { agent: GovernanceAgent } and audit event governance.agent.lifecycle_changed",
+          "example_request": {
+            "headers": { "X-Platform-Service-Auth": "<secret-with-governance-read>" },
+            "body": {
+              "tenant_id": "tnt_example",
+              "transition": "pause",
+              "reason": "review requested",
+              "actor": "user_admin"
+            }
+          },
+          "example_response": {
+            "agent": {
+              "id": "agent_example",
+              "tenant_id": "tnt_example",
+              "kind": "internal",
+              "role": "finance_ops",
+              "display_name": "Finance Ops Agent",
+              "status": "quarantined",
+              "scopes": null,
+              "scope_hash": "abcdef",
+              "onchain_address": null,
+              "registered_tx": null,
+              "registered_at": "2026-07-22T00:00:00.000Z",
+              "created_at": "2026-07-22T00:00:00.000Z"
+            }
+          },
+          "openapi": "documented:/governance/agents/{agent_id}"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/governance/reports",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "governance:read",
+          "enforcement": "shared_secret_header",
+          "request_shape": "query { tenant_id, period_start, period_end, agent_id?, format?: json|csv }",
+          "response_shape": "200 JSON GovernanceReport by default, or text/csv when format=csv",
+          "example_request": {
+            "headers": { "X-Platform-Service-Auth": "<secret-with-governance-read>" },
+            "path": "/v1/governance/reports?tenant_id=tnt_example&period_start=2026-07-01T00:00:00.000Z&period_end=2026-08-01T00:00:00.000Z"
+          },
+          "example_response": {
+            "tenant_id": "tnt_example",
+            "period_start": "2026-07-01T00:00:00.000Z",
+            "period_end": "2026-08-01T00:00:00.000Z",
+            "summary": {
+              "totals": {
+                "proposed": 2,
+                "approved": 1,
+                "blocked": 0,
+                "escalated": 0,
+                "decision_data_unavailable": 1
+              },
+              "coverage": {
+                "events": 2,
+                "with_policy_decision_id": 1,
+                "joined_policy_decision": 1,
+                "with_native_outcome": 0
+              }
+            },
+            "events": [
+              {
+                "audit_event_id": "evt_policy_joined",
+                "created_at": "2026-07-22T00:00:00.000Z",
+                "actor": "agent_example",
+                "agent_id": "agent_example",
+                "action": "payment_intent.execute.before",
+                "policy_decision_id": "dec_example",
+                "policy_check_id": "rule_example",
+                "raw_policy_outcome": "allow",
+                "outcome": "approved",
+                "decision_data_status": "available",
+                "unavailable_reason": null
+              },
+              {
+                "audit_event_id": "evt_missing_decision",
+                "created_at": "2026-07-22T00:01:00.000Z",
+                "actor": "agent_example",
+                "agent_id": "agent_example",
+                "action": "agent.action.proposed",
+                "policy_decision_id": null,
+                "policy_check_id": null,
+                "raw_policy_outcome": null,
+                "outcome": null,
+                "decision_data_status": "unavailable",
+                "unavailable_reason": "policy_decision_id_missing"
+              }
+            ]
+          },
+          "openapi": "documented:/governance/reports"
+        }
+      ]
     }
   ],
   "feature_gated_or_not_stable": [
@@ -2087,6 +2275,17 @@
       ],
       "openapi_status": "documented",
       "runtime_status": "not registered unless flag true; staging enables this today"
+    },
+    {
+      "flag": "governance_phase1_staging_only",
+      "paths": [
+        "GET /v1/governance/agents",
+        "GET /v1/governance/agents/{agent_id}",
+        "PATCH /v1/governance/agents/{agent_id}",
+        "GET /v1/governance/reports"
+      ],
+      "openapi_status": "documented",
+      "runtime_status": "mounted as BFF-only routes; expose through staging first and keep production promotion as a separate decision"
     }
   ],
   "drift": [

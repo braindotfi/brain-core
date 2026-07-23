@@ -17,6 +17,8 @@
  *   outputs JSONB,
  *   policy_version INT?,
  *   policy_decision_id TEXT?, -- v0.3 §6 pre-execution gate pointer
+ *   policy_check_id TEXT?,
+ *   outcome TEXT?,
  *   before_state JSONB?,      -- v0.3 — material state transitions
  *   after_state JSONB?,
  *   key_id TEXT?,            -- API key id for request attribution
@@ -70,6 +72,10 @@ export interface AuditEventInput {
   readonly policyVersion?: number;
   /** PolicyDecision id for §6-gated events. */
   readonly policyDecisionId?: string;
+  /** Native policy check or matched rule id for forward report coverage. */
+  readonly policyCheckId?: string;
+  /** Native outcome for forward report coverage. */
+  readonly outcome?: string;
   /** Pre-image of the entity for material state transitions. */
   readonly beforeState?: Readonly<Record<string, unknown>>;
   /** Post-image of the entity for material state transitions. */

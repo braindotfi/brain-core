@@ -20,6 +20,9 @@ export interface AuditEventRow {
   inputs: Record<string, unknown>;
   outputs: Record<string, unknown>;
   policy_version: number | null;
+  policy_decision_id: string | null;
+  policy_check_id: string | null;
+  outcome: string | null;
   event_hash: Buffer;
   prev_event_hash: Buffer | null;
   created_at: Date;

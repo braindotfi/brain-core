@@ -41,6 +41,7 @@ const VALID_SCOPES = new Set([
   "audit:read",
   "audit:write",
   "audit:admin",
+  "governance:read",
   "surfaces:admin",
   "tenant:create",
   "session:exchange",

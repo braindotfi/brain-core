@@ -143,6 +143,10 @@ export class AgentService implements IAgentService {
       layer: "agent",
       actor: agentId,
       action: "agent.action.proposed",
+      ...(policyResult.matched_rule_id !== null
+        ? { policyCheckId: policyResult.matched_rule_id }
+        : {}),
+      outcome: policyResult.outcome,
       inputs: { action_kind: String(action["kind"] ?? "agent_action"), proposal_id: id },
       outputs: {
         status,

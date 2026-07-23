@@ -1037,6 +1037,9 @@ export async function runPreExecutionGate(
       layer: "agent",
       actor: input.ctx.actor,
       action: "payment_intent.execute.before",
+      policyDecisionId: decision.id,
+      ...(decision.matched_rule_id !== null ? { policyCheckId: decision.matched_rule_id } : {}),
+      outcome: decision.outcome,
       inputs: {
         payment_intent_id: input.intent.id,
         action_type: input.intent.action_type,
@@ -1053,7 +1056,6 @@ export async function runPreExecutionGate(
       // post-emit `pass(checks, 13, …)` below cannot mutate the stored trace.
       // Additive — no decision logic changes; the event hash commits to it too.
       outputs: { gate_passed: true, gate_checks: [...checks] },
-      policyDecisionId: decision.id,
     });
     auditBeforeEventId = auditEvent.id;
     pass(checks, 13, "audit_before_emitted", { audit_event_id: auditEvent.id });

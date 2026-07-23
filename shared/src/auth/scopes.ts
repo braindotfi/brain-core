@@ -29,6 +29,7 @@ export const LAYERS = [
   "payment_intent",
   "audit",
   "surfaces",
+  "governance",
   "tenant",
   "session",
   "invite",
@@ -82,6 +83,7 @@ export const VALID_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "audit:read",
   "audit:write",
   "audit:admin",
+  "governance:read",
   "surfaces:admin",
   "tenant:create",
   "tenant:agent-mint",
@@ -116,6 +118,7 @@ export const AGENT_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
 export const API_KEY_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "ledger:read",
   "audit:read",
+  "governance:read",
 ]);
 
 /**

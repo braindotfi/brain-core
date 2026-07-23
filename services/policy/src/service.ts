@@ -107,6 +107,9 @@ export class PolicyService {
       layer: "policy",
       actor: ctx.actor,
       action: "policy.evaluate",
+      policyDecisionId: id,
+      ...(decision.matched_rule_id !== null ? { policyCheckId: decision.matched_rule_id } : {}),
+      outcome: decision.outcome,
       inputs: {
         subject_type: "agent_action",
         action_kind: action.kind,
@@ -258,6 +261,9 @@ export class PolicyService {
       layer: "policy",
       actor: ctx.actor,
       action: "policy.evaluate",
+      policyDecisionId: id,
+      ...(final.matched_rule_id !== null ? { policyCheckId: final.matched_rule_id } : {}),
+      outcome: final.outcome,
       inputs: {
         subject_type: "payment_intent",
         subject_id: intent.id,

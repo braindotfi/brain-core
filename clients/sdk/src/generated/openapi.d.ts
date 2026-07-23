@@ -2803,6 +2803,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/governance/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List registered agents for governance review
+         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+         *     with `governance:read`. Tenant is supplied as `tenant_id` because
+         *     the platform credential is not a tenant bearer principal.
+         */
+        get: operations["listGovernanceAgents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/governance/agents/{agent_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get one registered agent with lifecycle timeline
+         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+         *     with `governance:read`.
+         */
+        get: operations["getGovernanceAgent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Pause, resume, or revoke an agent
+         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+         *     with `governance:read`. Writes `governance.agent.lifecycle_changed`
+         *     to the existing audit event store with actor and reason. No external
+         *     agent creation surface is exposed in Phase 1.
+         */
+        patch: operations["updateGovernanceAgentLifecycle"];
+        trace?: never;
+    };
+    "/governance/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Build an audit-derived governance report
+         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+         *     with `governance:read`. Reports include policy-relevant audit events
+         *     in the requested period. Historical rows are joined to
+         *     `policy_decisions` when `policy_decision_id` is present. Rows without
+         *     a native outcome or resolvable policy decision are returned with
+         *     `decision_data_status=unavailable` rather than omitted.
+         */
+        get: operations["getGovernanceReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit/events": {
         parameters: {
             query?: never;
@@ -3701,6 +3776,89 @@ export interface components {
             status?: components["schemas"]["ExecutionStatus"];
             error?: string | null;
         };
+        GovernanceAgent: {
+            id: string;
+            tenant_id: string;
+            /** @enum {string} */
+            kind: "internal" | "external";
+            role: string;
+            display_name: string;
+            /** @enum {string} */
+            status: "active" | "pending" | "quarantined" | "revoked";
+            /**
+             * @description Null in Phase 1 because the registry persists a hash of scopes,
+             *     not the original scope list.
+             */
+            scopes: string[] | null;
+            scope_hash: string | null;
+            onchain_address: string | null;
+            registered_tx: string | null;
+            /** Format: date-time */
+            registered_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        GovernanceAgentDetail: components["schemas"]["GovernanceAgent"] & {
+            lifecycle_events: components["schemas"]["GovernanceAgentLifecycleEvent"][];
+        };
+        GovernanceAgentLifecycleEvent: {
+            audit_event_id: string;
+            actor: string;
+            action: string;
+            policy_decision_id: string | null;
+            policy_check_id: string | null;
+            outcome: string | null;
+            /** Format: date-time */
+            created_at: string;
+            inputs: {
+                [key: string]: unknown;
+            };
+            outputs: {
+                [key: string]: unknown;
+            };
+        };
+        GovernanceReport: {
+            tenant_id: string;
+            /** Format: date-time */
+            period_start: string;
+            /** Format: date-time */
+            period_end: string;
+            summary: components["schemas"]["GovernanceReportSummary"];
+            events: components["schemas"]["GovernanceReportEvent"][];
+        };
+        GovernanceReportSummary: {
+            totals: {
+                proposed: number;
+                approved: number;
+                blocked: number;
+                escalated: number;
+                decision_data_unavailable: number;
+            };
+            coverage: {
+                events: number;
+                with_policy_decision_id: number;
+                joined_policy_decision: number;
+                with_native_outcome: number;
+            };
+        };
+        GovernanceReportEvent: {
+            audit_event_id: string;
+            /** Format: date-time */
+            created_at: string;
+            actor: string;
+            agent_id: string | null;
+            action: string;
+            policy_decision_id: string | null;
+            /** @description Native forward-going policy check id, or historical join to `policy_decisions.matched_rule_id`. */
+            policy_check_id: string | null;
+            raw_policy_outcome: string | null;
+            /** @enum {string|null} */
+            outcome: "approved" | "blocked" | "escalated" | null;
+            /** @enum {string} */
+            decision_data_status: "available" | "unavailable";
+            /** @enum {string|null} */
+            unavailable_reason: "policy_decision_id_missing" | "policy_decision_join_missing" | null;
+        };
         AuditEvent: {
             id?: string;
             tenant_id?: string;
@@ -3741,6 +3899,10 @@ export interface components {
             };
             policy_version?: number | null;
             policy_decision_id?: string | null;
+            /** @description Native forward-going policy check id, currently the matched policy rule id when available. */
+            policy_check_id?: string | null;
+            /** @description Native forward-going policy outcome for report joins and API consumers. */
+            outcome?: string | null;
             before_state?: {
                 [key: string]: unknown;
             } | null;
@@ -9471,6 +9633,137 @@ export interface operations {
                 };
             };
             429: components["responses"]["RateLimited"];
+        };
+    };
+    listGovernanceAgents: {
+        parameters: {
+            query: {
+                tenant_id: string;
+                status?: "active" | "pending" | "quarantined" | "revoked";
+                /** @description Current v1 alias for tenant owner filtering. Non-matching values return an empty list. */
+                owner?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent list page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agents: components["schemas"]["GovernanceAgent"][];
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getGovernanceAgent: {
+        parameters: {
+            query: {
+                tenant_id: string;
+            };
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agent: components["schemas"]["GovernanceAgentDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateGovernanceAgentLifecycle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    tenant_id: string;
+                    /** @enum {string} */
+                    transition: "pause" | "resume" | "revoke";
+                    reason: string;
+                    actor: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Agent after lifecycle transition. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agent: components["schemas"]["GovernanceAgent"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getGovernanceReport: {
+        parameters: {
+            query: {
+                tenant_id: string;
+                period_start: string;
+                period_end: string;
+                agent_id?: string;
+                format?: "json" | "csv";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Governance report as JSON or CSV. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GovernanceReport"];
+                    "text/csv": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     queryAuditEvents: {
