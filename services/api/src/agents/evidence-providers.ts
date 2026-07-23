@@ -282,6 +282,21 @@ export function makeLedgerEvidenceProvider(
           const latest = balances[0];
           if (latest !== undefined) {
             out.push(balanceEvidence(latest));
+            balanceResolved = true;
+          }
+        }
+        if (!balanceResolved && balanceId !== undefined) {
+          const account = await ledger.getAccount(ctx, balanceId);
+          if (account !== null && account.account.current_balance !== null) {
+            out.push({
+              kind: "balance",
+              ref: balanceId,
+              source_system: "ledger",
+              object_type: "account",
+              object_id: account.account.id,
+              confidence: evidenceConfidence(account.account.confidence),
+              excerpt: `${account.account.currency} current ${account.account.current_balance}`,
+            });
           }
         }
       } catch {
@@ -364,6 +379,21 @@ export function makeLedgerEvidenceProvider(
         const inv = invoiceId !== undefined ? items.find((i) => i.id === invoiceId) : items[0];
         if (inv !== undefined) {
           out.push(invoiceEvidence(inv));
+        } else if (obligationId !== undefined) {
+          const obligations = await ledger.listObligations(ctx, { limit: 100 });
+          const obligation = obligations.items.find((o) => o.id === obligationId);
+          if (obligation !== undefined) {
+            out.push({
+              kind: "invoice",
+              ref: obligation.id,
+              source_system: "ledger",
+              object_type: "obligation",
+              object_id: obligation.id,
+              confidence: evidenceConfidence(obligation.confidence),
+              timestamp: obligation.due_date,
+              excerpt: `${obligation.type} ${obligation.status} due ${obligation.currency} ${obligation.amount_due}`,
+            });
+          }
         }
       } catch {
         // best-effort.

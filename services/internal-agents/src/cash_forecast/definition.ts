@@ -7,7 +7,12 @@ export const cashForecastDefinition: InternalAgentDefinition = {
   provenance: "internal",
   category: "business",
   capabilities: ["cash_forecast"],
-  triggers: ["forecast.requested", "cashflow.material_change", "large_payable.created"],
+  triggers: [
+    "forecast.requested",
+    "cashflow.material_change",
+    "large_payable.created",
+    "ledger.upload.projected",
+  ],
   intent_patterns: ["forecast our cash", "what is our runway", "project cash flow"],
   readable_data: ["ledger:read", "wiki:read"],
   risk_level: "low",
@@ -19,6 +24,7 @@ export const cashForecastDefinition: InternalAgentDefinition = {
     "forecast.requested": "generate_forecast",
     "cashflow.material_change": "recommend_action",
     "large_payable.created": "alert_shortfall",
+    "ledger.upload.projected": "generate_forecast",
   },
   default_action: "generate_forecast",
 };

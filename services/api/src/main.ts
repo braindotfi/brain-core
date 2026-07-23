@@ -129,9 +129,12 @@ import {
   startLedgerProjectionWorker,
   startLedgerAparProjectionWorker,
   startLedgerAccountTransactionProjectionWorker,
+  runLedgerAparProjectionCycle,
+  runLedgerAccountTransactionProjectionCycle,
 } from "@brain/ledger";
 
 import { registerCanonicalRoutes, startCanonicalProjectionWorker } from "@brain/canonical";
+import type { LedgerUploadProjectedEvent } from "@brain/canonical";
 
 import { WikiPageService, registerWikiPlugin, loadRegistry } from "@brain/wiki";
 
@@ -173,6 +176,7 @@ import {
   findAgentRun,
   listAgentRuns,
   findRoutingDecision,
+  claimEventIdempotencyKey,
   transitionAgent,
   releaseContributionHold,
   getPaymentIntentAgent,
@@ -248,6 +252,7 @@ import {
 import { buildRawEvidenceService } from "./adapters/raw-evidence-adapter.js";
 import { buildWikiMemoryService } from "./adapters/wiki-memory-adapter.js";
 import { buildEvidenceProviders } from "./agents/evidence-providers.js";
+import { createUploadProjectionAgentTrigger } from "./agents/upload-projection-trigger.js";
 import {
   makeResolveAgent,
   makeResolveTenantFlags,
@@ -1536,6 +1541,17 @@ async function main(): Promise<void> {
   // Runs persist through the execution-owned agent_runs tables (tenant-scoped,
   // RLS). The store boundary keeps @brain/agent-router free of an execution dep.
   const agentRunStore: AgentRunStore = {
+    claimRunIdempotencyKey: (claimCtx, input) =>
+      withTenantScope(pool, claimCtx.tenantId, async (c) => {
+        const runId = brainId("agnr");
+        const result = await claimEventIdempotencyKey(c, {
+          id: brainId("agik"),
+          tenantId: claimCtx.tenantId,
+          key: input.key,
+          runId,
+        });
+        return { claimed: result.claimed, runId: result.runId };
+      }),
     recordRoutingDecision: (rdCtx, input) =>
       withTenantScope(pool, rdCtx.tenantId, async (c) => {
         const row = await insertRoutingDecision(c, {
@@ -1556,7 +1572,7 @@ async function main(): Promise<void> {
     recordRun: (runCtx, input) =>
       withTenantScope(pool, runCtx.tenantId, async (c) => {
         const row = await insertAgentRun(c, {
-          id: brainId("agnr"),
+          id: input.runId ?? brainId("agnr"),
           tenantId: runCtx.tenantId,
           tenantCategory: input.tenantCategory,
           agentId: input.agentId,
@@ -1575,6 +1591,7 @@ async function main(): Promise<void> {
           proposalId: input.proposalId ?? null,
           paymentIntentId: input.paymentIntentId ?? null,
           failureReason: input.failureReason ?? null,
+          idempotencyKey: input.idempotencyKey ?? null,
         });
         return { id: row.id };
       }),
@@ -1625,6 +1642,12 @@ async function main(): Promise<void> {
     checkRail,
     intentClassifierStrategy: cfg.AGENT_INTENT_CLASSIFIER === "embedding" ? "embedding" : "rules",
     agentOverrides,
+  });
+  const uploadProjectionAgentTrigger = createUploadProjectionAgentTrigger({
+    pool,
+    runService: agentRunService,
+    audit,
+    log,
   });
 
   // -- Fastify root app -----------------------------------------------
@@ -2716,6 +2739,11 @@ async function main(): Promise<void> {
     audit,
     metrics,
     log,
+    onUploadProjected: async (event: LedgerUploadProjectedEvent) => {
+      await runLedgerAparProjectionCycle({ pool: ledgerProjectorPool, metrics });
+      await runLedgerAccountTransactionProjectionCycle({ pool: ledgerProjectorPool, metrics });
+      await uploadProjectionAgentTrigger.handle(event);
+    },
   };
   const canonicalProjectionWorker = composition.workers.has("canonical")
     ? startCanonicalProjectionWorker(canonicalProjectionWorkerDeps)

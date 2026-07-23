@@ -12,6 +12,7 @@ export const treasuryDefinition: InternalAgentDefinition = {
     "cash.balance_low",
     "runway.changed",
     "yield_opportunity.detected",
+    "ledger.upload.projected",
   ],
   intent_patterns: [
     "sweep idle cash",
@@ -31,5 +32,6 @@ export const treasuryDefinition: InternalAgentDefinition = {
     "cash.balance_low": "alert_low_balance",
     "runway.changed": "create_liquidity_plan",
     "yield_opportunity.detected": "recommend_cash_sweep",
+    "ledger.upload.projected": "create_liquidity_plan",
   },
 };

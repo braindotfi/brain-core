@@ -36,7 +36,11 @@ describe("router selects each agent for its declared triggers (category-aware)",
   it.each(TRIPLES)(
     "routes %s (%s tenant) trigger '%s' to its agent",
     async (agentKey, category, trigger) => {
-      const decision = await router(category).route(CTX, { tenant_id: "tnt_acme", event: trigger });
+      const input =
+        trigger === "ledger.upload.projected"
+          ? { tenant_id: "tnt_acme", event: trigger, target_agent_id: agentKey }
+          : { tenant_id: "tnt_acme", event: trigger };
+      const decision = await router(category).route(CTX, input);
       expect(decision.selected_agent_id).toBe(agentKey);
     },
   );

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { Client, Pool } from "pg";
@@ -14,6 +15,7 @@ import { runProjectionCycle } from "@brain/canonical";
 import {
   ActorResolver,
   AgentService,
+  claimEventIdempotencyKey,
   insertAgentRun,
   insertRoutingDecision,
   PostgresMemberLookup,
@@ -42,6 +44,7 @@ import {
 } from "@brain/shared";
 import { applyAll, discoverMigrations } from "../../../../tools/migrate/src/index.js";
 import { buildEvidenceProviders } from "../agents/evidence-providers.js";
+import { createUploadProjectionAgentTrigger } from "../agents/upload-projection-trigger.js";
 import { runCollectionsOverdueScanCycle } from "../agents/collections-overdue-scanner.js";
 import { runDocumentExtractionCycle, type DocumentExtractPort } from "../raw-extract/worker.js";
 import { LedgerService } from "../../../ledger/src/service/LedgerService.js";
@@ -336,16 +339,21 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
     expect(await proposalDecisionAuditCount(tenantB, proposal.id)).toBe(0);
   }, 60_000);
 
-  it("projects uploaded bank statements and AR aging files into ledger reads", async () => {
+  it("routes upload-derived ledger projections through propose-only agents", async () => {
     const actor = memberA;
+    const trigger = createUploadProjectionAgentTrigger({
+      pool: appPool,
+      runService,
+      audit: appAudit,
+    });
     const bank = await ingestOne(
       { pool: appPool, blob, audit: appAudit },
       {
         tenantId: tenantA,
         actor,
         sourceType: "pdf_upload",
-        sourceRef: { filename: "june-bank-statement.pdf", account_id: "uploaded_operating" },
-        body: Buffer.from(syntheticJuneBankStatement()),
+        sourceRef: { filename: "bank_statement_2026-06.pdf" },
+        body: readFixture("bank_statement_2026-06.pdf"),
         mimeType: "application/pdf",
       },
     );
@@ -355,20 +363,26 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
         tenantId: tenantA,
         actor,
         sourceType: "csv_upload",
-        sourceRef: { filename: "ar-aging.csv" },
-        body: Buffer.from(
-          [
-            "Customer,Invoice Ref,Amount,Aging Bucket,Due Date",
-            "Northwind Traders,INV-JUN-001,1200.50,31-60,2026-07-15",
-            "Contoso Retail,INV-JUN-002,875.00,Current,2026-07-30",
-          ].join("\n"),
-        ),
-        mimeType: "text/csv",
+        sourceRef: { filename: "ar_aging_2026-06-30.xlsx" },
+        body: readFixture("ar_aging_2026-06-30.xlsx"),
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+    );
+    const payroll = await ingestOne(
+      { pool: appPool, blob, audit: appAudit },
+      {
+        tenantId: tenantA,
+        actor,
+        sourceType: "csv_upload",
+        sourceRef: { filename: "payroll_register_2026-06.xlsx" },
+        body: readFixture("payroll_register_2026-06.xlsx"),
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       },
     );
 
     expect(bank.sourceSchema).toBe("brain.upload.document.v1");
     expect(ar.sourceSchema).toBe("brain.upload.document.v1");
+    expect(payroll.sourceSchema).toBe("brain.upload.document.v1");
 
     await runInterpretCycle({ pool, blob, audit: workerAudit }, { batchSize: 10 });
     await runNormalizeCycle({ pool, audit: workerAudit }, { batchSize: 20 });
@@ -391,21 +405,80 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
     expect(cashFlows.json().currencies[0].transaction_count).toBeGreaterThanOrEqual(19);
 
     const arObligations = await ledgerObligationsForRaw(tenantA, ar.rawId);
-    expect(arObligations).toHaveLength(2);
+    expect(arObligations.length).toBeGreaterThan(0);
     expect(arObligations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: "invoice",
           direction: "receivable",
-          amount_due: "1200.50000000",
-        }),
-        expect.objectContaining({
-          type: "invoice",
-          direction: "receivable",
-          amount_due: "875.00000000",
+          invoice_ref: "NL-2417",
         }),
       ]),
     );
+    const payrollObligations = await ledgerObligationsForRaw(tenantA, payroll.rawId);
+    expect(payrollObligations).toHaveLength(2);
+
+    await trigger.handle({
+      event: "ledger.upload.projected",
+      tenantId: tenantA,
+      rawArtifactId: ar.rawId,
+      rawParsedId: await parsedIdForRaw(tenantA, ar.rawId),
+      projector: "document_records_upload_canonical_v1",
+      summary: {
+        accounts: 0,
+        transactions: 0,
+        receivables: arObligations.length,
+        obligations: arObligations.length,
+        newCounterparties: await ledgerCounterpartyCountForRaw(tenantA, ar.rawId),
+      },
+    });
+    await trigger.handle({
+      event: "ledger.upload.projected",
+      tenantId: tenantA,
+      rawArtifactId: bank.rawId,
+      rawParsedId: await parsedIdForRaw(tenantA, bank.rawId),
+      projector: "bank_statement_upload_canonical_v1",
+      summary: {
+        accounts: 1,
+        transactions: 19,
+        receivables: 0,
+        obligations: 0,
+        newCounterparties: await ledgerCounterpartyCountForRaw(tenantA, bank.rawId),
+      },
+    });
+
+    const collections = await getCollectionsProposalsAs(tenantA, memberA);
+    const overdue = collections.find((proposal) => proposal.narrative?.includes("Helios"));
+    expect(overdue).toBeDefined();
+    expect(overdue?.narrative).toContain("NL-2417");
+    expect(overdue?.mode).toBe("propose");
+
+    const cashForecast = await getProposalsByTypeAs(tenantA, memberA, "cash_forecast");
+    const treasury = await getProposalsByTypeAs(tenantA, memberA, "treasury");
+    expect(cashForecast.length).toBeGreaterThan(0);
+    expect(treasury.length).toBeGreaterThan(0);
+    expect(cashForecast[0]?.narrative).toContain("USD");
+    expect(treasury[0]?.narrative).toContain("USD");
+
+    const proposalCountBeforeReplay = await proposalCount(tenantA);
+    await trigger.handle({
+      event: "ledger.upload.projected",
+      tenantId: tenantA,
+      rawArtifactId: bank.rawId,
+      rawParsedId: await parsedIdForRaw(tenantA, bank.rawId),
+      projector: "bank_statement_upload_canonical_v1",
+      summary: {
+        accounts: 1,
+        transactions: 19,
+        receivables: 0,
+        obligations: 0,
+        newCounterparties: await ledgerCounterpartyCountForRaw(tenantA, bank.rawId),
+      },
+    });
+    expect(await proposalCount(tenantA)).toBe(proposalCountBeforeReplay);
+    expect(await auditCountForUploadRuns(tenantA, ar.rawId)).toBeGreaterThan(0);
+    expect(await auditCountForUploadRuns(tenantA, bank.rawId)).toBeGreaterThan(0);
+    expect(await paymentIntentCount(tenantA)).toBe(0);
   }, 60_000);
 
   async function getObligationsAs(tenantId: string, memberId: string): Promise<unknown[]> {
@@ -438,6 +511,29 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
   > {
     currentPrincipal = principal(tenantId, memberId);
     const query = new URLSearchParams({ type: "collections", limit: "10" });
+    const response = await app.inject({
+      method: "GET",
+      url: `/proposals?${query.toString()}`,
+    });
+    expect(response.statusCode).toBe(200);
+    return response.json().proposals;
+  }
+
+  async function getProposalsByTypeAs(
+    tenantId: string,
+    memberId: string,
+    type: string,
+  ): Promise<
+    Array<{
+      id: string;
+      type: string;
+      status: string;
+      narrative: string | null;
+      mode: string;
+    }>
+  > {
+    currentPrincipal = principal(tenantId, memberId);
+    const query = new URLSearchParams({ type, limit: "10" });
     const response = await app.inject({
       method: "GET",
       url: `/proposals?${query.toString()}`,
@@ -485,7 +581,13 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
   async function ledgerObligationsForRaw(tenantId: string, rawId: string): Promise<unknown[]> {
     return withTenantScope(appPool, tenantId, async (client) => {
       const { rows } = await client.query(
-        `SELECT type, direction, amount_due, currency, provenance, confidence
+        `SELECT type,
+                direction,
+                amount_due,
+                currency,
+                provenance,
+                confidence,
+                metadata #>> '{document_upload,invoice_ref}' AS invoice_ref
            FROM ledger_obligations
           WHERE owner_id = $1
             AND source_ids @> ARRAY[$2]::text[]
@@ -493,6 +595,68 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
         [tenantId, rawId],
       );
       return rows;
+    });
+  }
+
+  async function ledgerCounterpartyCountForRaw(tenantId: string, rawId: string): Promise<number> {
+    return withTenantScope(appPool, tenantId, async (client) => {
+      const { rows } = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+           FROM ledger_counterparties
+          WHERE owner_id = $1
+            AND source_ids @> ARRAY[$2]::text[]`,
+        [tenantId, rawId],
+      );
+      return Number(rows[0]?.count ?? "0");
+    });
+  }
+
+  async function parsedIdForRaw(tenantId: string, rawId: string): Promise<string> {
+    return withTenantScope(appPool, tenantId, async (client) => {
+      const { rows } = await client.query<{ id: string }>(
+        `SELECT id FROM raw_parsed
+          WHERE tenant_id = $1 AND raw_artifact_id = $2
+          ORDER BY extracted_at DESC
+          LIMIT 1`,
+        [tenantId, rawId],
+      );
+      const id = rows[0]?.id;
+      if (id === undefined) throw new Error(`missing raw_parsed row for ${rawId}`);
+      return id;
+    });
+  }
+
+  async function proposalCount(tenantId: string): Promise<number> {
+    return withTenantScope(appPool, tenantId, async (client) => {
+      const { rows } = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM proposals WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      return Number(rows[0]?.count ?? "0");
+    });
+  }
+
+  async function paymentIntentCount(tenantId: string): Promise<number> {
+    return withTenantScope(appPool, tenantId, async (client) => {
+      const { rows } = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM ledger_payment_intents WHERE owner_id = $1`,
+        [tenantId],
+      );
+      return Number(rows[0]?.count ?? "0");
+    });
+  }
+
+  async function auditCountForUploadRuns(tenantId: string, rawId: string): Promise<number> {
+    return withTenantScope(appPool, tenantId, async (client) => {
+      const { rows } = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+           FROM audit_events
+          WHERE tenant_id = $1
+            AND action IN ('agent.upload_projection.run', 'agent.upload_projection.run_failed')
+            AND inputs->>'raw_artifact_id' = $2`,
+        [tenantId, rawId],
+      );
+      return Number(rows[0]?.count ?? "0");
     });
   }
 
@@ -519,11 +683,20 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
         [tenantId, memberId, `${memberId}@example.com`],
       );
       if (seedCollectionsAgent) {
-        await client.query(
-          `INSERT INTO agents (id, tenant_id, kind, role, display_name, state, registered_at)
-           VALUES ('collections', $1, 'internal', 'collections', 'Collections', 'active', now())`,
-          [tenantId],
-        );
+        for (const [id, displayName] of [
+          ["collections", "Collections"],
+          ["cash_forecast", "Cash Forecasting"],
+          ["treasury", "Treasury"],
+          ["vendor_risk", "Vendor Risk"],
+          ["reconciliation", "Reconciliation"],
+        ] as const) {
+          await client.query(
+            `INSERT INTO agents (id, tenant_id, kind, role, display_name, state, registered_at)
+             VALUES ($1, $2, 'internal', $1, $3, 'active', now())
+             ON CONFLICT (tenant_id, id) DO NOTHING`,
+            [id, tenantId, displayName],
+          );
+        }
       }
     });
   }
@@ -571,29 +744,10 @@ function principal(tenantId: string, memberId: string): Principal {
   };
 }
 
-function syntheticJuneBankStatement(): string {
-  return [
-    "June 2026 Statement",
-    "06/01 ACH CREDIT Northwind Traders 2500.00 12500.00",
-    "06/02 POS Office Depot 120.45 12379.55",
-    "06/03 Payroll 1750.00 10629.55",
-    "06/04 Interest Credit 4.12 10633.67",
-    "06/05 Card Stripe Fees 42.00 10591.67",
-    "06/06 Deposit Contoso Retail 875.00 11466.67",
-    "06/07 ACH Debit Cloud Hosting 310.20 11156.47",
-    "06/08 POS Fuel Station 64.11 11092.36",
-    "06/09 ACH CREDIT Fabrikam 1900.00 12992.36",
-    "06/10 Wire Rent 3200.00 9792.36",
-    "06/11 POS Coffee 18.50 9773.86",
-    "06/12 Deposit Tailspin Toys 640.00 10413.86",
-    "06/13 ACH Debit Insurance 455.33 9958.53",
-    "06/14 POS Hardware Store 214.60 9743.93",
-    "06/15 ACH CREDIT Acme Co 1200.50 10944.43",
-    "06/16 Payroll Tax 525.00 10419.43",
-    "06/17 POS Shipping 89.40 10330.03",
-    "06/18 Deposit Adventure Works 720.00 11050.03",
-    "06/19 Bank Fee 15.00 11035.03",
-  ].join("\n");
+function readFixture(name: string): Buffer {
+  return readFileSync(
+    new URL(`../../../raw/src/interpreters/__fixtures__/${name}`, import.meta.url),
+  );
 }
 
 function emptyWikiService(): IWikiMemoryService {
@@ -644,6 +798,17 @@ function quoteIdent(value: string): string {
 
 function runStore(pool: Pool): AgentRunStore {
   return {
+    claimRunIdempotencyKey: (ctx, input) =>
+      withTenantScope(pool, ctx.tenantId, async (client) => {
+        const runId = brainId("agnr");
+        const result = await claimEventIdempotencyKey(client, {
+          id: brainId("agik"),
+          tenantId: ctx.tenantId,
+          key: input.key,
+          runId,
+        });
+        return { claimed: result.claimed, runId: result.runId };
+      }),
     recordRoutingDecision: (ctx, input) =>
       withTenantScope(pool, ctx.tenantId, async (client) => {
         const row = await insertRoutingDecision(client, {
@@ -664,7 +829,7 @@ function runStore(pool: Pool): AgentRunStore {
     recordRun: (ctx, input) =>
       withTenantScope(pool, ctx.tenantId, async (client) => {
         const row = await insertAgentRun(client, {
-          id: brainId("agnr"),
+          id: input.runId ?? brainId("agnr"),
           tenantId: ctx.tenantId,
           tenantCategory: input.tenantCategory,
           agentId: input.agentId,
@@ -683,6 +848,7 @@ function runStore(pool: Pool): AgentRunStore {
           proposalId: input.proposalId ?? null,
           paymentIntentId: input.paymentIntentId ?? null,
           failureReason: input.failureReason ?? null,
+          idempotencyKey: input.idempotencyKey ?? null,
         });
         return { id: row.id };
       }),

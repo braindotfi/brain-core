@@ -94,14 +94,22 @@ export class AgentRouter {
       layer: "agent",
       actor: ctx.actor,
       action: "agent.router.started",
-      inputs: { event: input.event ?? null, intent: input.intent ?? null },
+      inputs: {
+        event: input.event ?? null,
+        intent: input.intent ?? null,
+        target_agent_id: input.target_agent_id ?? null,
+      },
       outputs: {},
     });
 
     const catalog = await this.deps.catalog();
     const enabled = catalog.filter((def) => def.enabled_by_default);
     const matchFlags = await Promise.all(enabled.map((def) => this.matches(def, input)));
-    const candidates = enabled.filter((_, i) => matchFlags[i]);
+    const candidates = enabled
+      .filter((_, i) => matchFlags[i])
+      .filter(
+        (def) => input.target_agent_id === undefined || def.agent_key === input.target_agent_id,
+      );
 
     if (candidates.length === 0) {
       return this.noMatch(ctx, input, "no_match", "no agent matches the event or intent");
@@ -150,7 +158,11 @@ export class AgentRouter {
       layer: "agent",
       actor: ctx.actor,
       action: "agent.router.selected",
-      inputs: { event: input.event ?? null, intent: input.intent ?? null },
+      inputs: {
+        event: input.event ?? null,
+        intent: input.intent ?? null,
+        target_agent_id: input.target_agent_id ?? null,
+      },
       outputs: {
         selected_agent_id: decision.selected_agent_id,
         fallback_agent_ids: decision.fallback_agent_ids,
@@ -229,7 +241,11 @@ export class AgentRouter {
       layer: "agent",
       actor: ctx.actor,
       action: "agent.router.no_match",
-      inputs: { event: input.event ?? null, intent: input.intent ?? null },
+      inputs: {
+        event: input.event ?? null,
+        intent: input.intent ?? null,
+        target_agent_id: input.target_agent_id ?? null,
+      },
       outputs: { policy_status: policyStatus },
     });
     return {
