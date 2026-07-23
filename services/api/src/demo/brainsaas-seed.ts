@@ -245,6 +245,7 @@ export interface BrainSaasSeed {
 }
 
 const NOW = new Date();
+const DEMO_BOOTSTRAP_DISPLAY_NAME = "Demo Owner";
 function daysAgo(n: number): Date {
   const d = new Date(NOW);
   d.setUTCDate(d.getUTCDate() - n);
@@ -409,7 +410,7 @@ export async function seedBrainSaasDemo(
       tenantId,
       memberId: actor,
       email: null,
-      displayName: "Bootstrap Admin",
+      displayName: DEMO_BOOTSTRAP_DISPLAY_NAME,
     });
   });
 

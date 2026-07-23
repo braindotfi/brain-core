@@ -3,15 +3,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const workflow = readFileSync(".github/workflows/main.yml", "utf8");
+const promoteWorkflow = readFileSync(".github/workflows/promote-prod.yml", "utf8");
 const composeProd = readFileSync("docker-compose.prod.yml", "utf8");
 const envProdExample = readFileSync(".env.prod.example", "utf8");
 
-function workflowJob(name) {
-  const start = workflow.indexOf(`  ${name}:`);
+function workflowJob(name, source = workflow) {
+  const start = source.indexOf(`  ${name}:`);
   assert.notEqual(start, -1, `missing workflow job ${name}`);
-  const next = workflow.slice(start + 1).match(/\n  [a-zA-Z0-9_]+:\n/);
-  const end = next ? start + 1 + next.index : workflow.length;
-  return workflow.slice(start, end);
+  const next = source.slice(start + 1).match(/\n  [a-zA-Z0-9_]+:\n/);
+  const end = next ? start + 1 + next.index : source.length;
+  return source.slice(start, end);
 }
 
 test("main workflow runs Python agents checks before VM image build", () => {
@@ -31,7 +32,7 @@ test("main workflow runs Python agents checks before VM image build", () => {
 test("main workflow builds app and agents images before deployment", () => {
   const buildImageJob = workflowJob("build_image");
   const deployStagingJob = workflowJob("deploy_staging");
-  const promoteProductionJob = workflowJob("promote_production");
+  const promoteProductionJob = workflowJob("promote", promoteWorkflow);
 
   assert.match(
     buildImageJob,
@@ -52,7 +53,8 @@ test("main workflow builds app and agents images before deployment", () => {
   assert.match(deployStagingJob, /needs: build_image/);
   assert.match(deployStagingJob, /VM_HOST: \$\{\{ secrets\.VM_HOST_STAGING \}\}/);
   assert.match(deployStagingJob, /VM_ENV_FILE: \.env\.staging/);
-  assert.match(promoteProductionJob, /needs: deploy_staging/);
+  assert.match(promoteWorkflow, /workflow_dispatch:/);
+  assert.match(promoteProductionJob, /ref: \$\{\{ steps\.resolve\.outputs\.sha \}\}/);
   assert.match(promoteProductionJob, /environment:\s*production/);
   assert.match(promoteProductionJob, /VM_HOST: \$\{\{ secrets\.VM_HOST \}\}/);
   assert.match(promoteProductionJob, /VM_ENV_FILE: \.env\.prod/);
@@ -62,7 +64,7 @@ test("main workflow builds app and agents images before deployment", () => {
   );
   assert.match(
     promoteProductionJob,
-    /docker pull ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\}/,
+    /docker pull ghcr\.io\/braindotfi\/brain-core:\$\{\{ steps\.resolve\.outputs\.sha \}\}/,
   );
   assert.match(
     deployStagingJob,
@@ -70,7 +72,7 @@ test("main workflow builds app and agents images before deployment", () => {
   );
   assert.match(
     promoteProductionJob,
-    /docker pull ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\}/,
+    /docker pull ghcr\.io\/braindotfi\/brain-agents:\$\{\{ steps\.resolve\.outputs\.sha \}\}/,
   );
   assert.match(
     deployStagingJob,
@@ -78,7 +80,7 @@ test("main workflow builds app and agents images before deployment", () => {
   );
   assert.match(
     promoteProductionJob,
-    /docker tag ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\} brain-core:prod/,
+    /docker tag ghcr\.io\/braindotfi\/brain-core:\$\{\{ steps\.resolve\.outputs\.sha \}\} brain-core:prod/,
   );
   assert.match(
     deployStagingJob,
@@ -86,18 +88,19 @@ test("main workflow builds app and agents images before deployment", () => {
   );
   assert.match(
     promoteProductionJob,
-    /docker tag ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\} brain-agents:prod/,
+    /docker tag ghcr\.io\/braindotfi\/brain-agents:\$\{\{ steps\.resolve\.outputs\.sha \}\} brain-agents:prod/,
   );
   assert.match(deployStagingJob, /brain-agents:prod-rollback-\$ts/);
   assert.match(promoteProductionJob, /brain-agents:prod-rollback-\$ts/);
   assert.match(workflow, /tools\/migrate\/dist\/cli\.js up/);
-  assert.match(workflow, /https:\/\/api\.brain\.fi\/health/);
+  assert.match(promoteWorkflow, /https:\/\/api\.brain\.fi\/health/);
   assert.match(workflow, /last_commit.*expected/s);
+  assert.match(promoteWorkflow, /last_commit.*expected/s);
 });
 
 test("staging and production deploy recreates include the agents service", () => {
   const deployStagingJob = workflowJob("deploy_staging");
-  const promoteProductionJob = workflowJob("promote_production");
+  const promoteProductionJob = workflowJob("promote", promoteWorkflow);
   const serviceTargets = "api worker agents";
   assert.match(deployStagingJob, new RegExp(`up -d --no-deps --no-build ${serviceTargets}`));
   assert.match(promoteProductionJob, new RegExp(`up -d --no-deps --no-build ${serviceTargets}`));
@@ -114,7 +117,7 @@ test("staging deploy starts infra without pulling service dependencies", () => {
 
 test("staging and production deploy rerun db role grants after migrations", () => {
   const deployStagingJob = workflowJob("deploy_staging");
-  const promoteProductionJob = workflowJob("promote_production");
+  const promoteProductionJob = workflowJob("promote", promoteWorkflow);
 
   for (const [name, job] of [
     ["deploy_staging", deployStagingJob],
