@@ -191,7 +191,9 @@ async function cashContext(
               a.currency,
               COALESCE(receivable.items, '[]'::jsonb) AS receivables,
               COALESCE(payable.items, '[]'::jsonb) AS payables
-         FROM ledger_accounts a
+	         FROM ledger_transactions seed
+	         JOIN ledger_accounts a
+	           ON a.id = seed.account_id AND a.owner_id = seed.owner_id
          LEFT JOIN LATERAL (
            SELECT jsonb_agg(
                     jsonb_build_object(
@@ -232,16 +234,10 @@ async function cashContext(
               AND o.status IN ('due', 'overdue', 'upcoming')
               AND o.currency = a.currency
          ) payable ON true
-        WHERE a.owner_id = current_setting('app.tenant_id', true)
-          AND EXISTS (
-            SELECT 1
-              FROM ledger_transactions t
-             WHERE t.owner_id = a.owner_id
-               AND t.account_id = a.id
-               AND $1 = ANY(t.source_ids)
-          )
+        WHERE seed.owner_id = current_setting('app.tenant_id', true)
+          AND $1 = ANY(seed.source_ids)
           AND a.current_balance IS NOT NULL
-        ORDER BY a.updated_at DESC, a.id ASC
+        ORDER BY seed.transaction_date DESC, seed.id DESC
         LIMIT 1`,
       [event.rawArtifactId],
     );
