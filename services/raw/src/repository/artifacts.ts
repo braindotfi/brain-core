@@ -77,7 +77,9 @@ export async function insertOrReuseArtifact(
           original_source, intermediaries, source_id, source_version, idempotency_key)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
                $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-       ON CONFLICT (tenant_id, sha256) DO UPDATE SET source_ref = raw_artifacts.source_ref
+       ON CONFLICT (tenant_id, sha256) DO UPDATE SET
+         source_ref = raw_artifacts.source_ref,
+         source_schema = COALESCE(raw_artifacts.source_schema, EXCLUDED.source_schema)
        RETURNING *`,
       [
         input.id,
