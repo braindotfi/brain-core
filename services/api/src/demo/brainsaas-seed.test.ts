@@ -222,7 +222,7 @@ describe("seedBrainSaasDemo", () => {
       TENANT,
       ACTOR,
       `bootstrap+${TENANT}@brain.invalid`,
-      "Bootstrap Admin",
+      "Demo Owner",
       ["ap", "ar", "treasury", "payroll", "reconciliation"],
       "9223372036854775807",
     ]);
