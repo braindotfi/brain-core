@@ -76,6 +76,7 @@ interface PendingArtifactRow {
   source_ref: Record<string, unknown>;
   source_id: string | null;
   object_type: string | null;
+  mime_type: string | null;
   blob_uri: string;
   /** Attempts already recorded for this artifact (0 if never logged). */
   attempt_count: number;
@@ -147,7 +148,7 @@ export async function runInterpretCycle(
     // matched by either branch.
     const result = await deps.pool.query<PendingArtifactRow>(
       `SELECT ra.id, ra.tenant_id, ra.source_type, ra.source_schema, ra.source_ref,
-              ra.source_id, ra.object_type, ra.blob_uri,
+              ra.source_id, ra.object_type, ra.mime_type, ra.blob_uri,
               COALESCE(il.attempt_count, 0) AS attempt_count
          FROM raw_artifacts ra
          LEFT JOIN raw_interpretation_log il ON il.raw_artifact_id = ra.id
@@ -185,6 +186,7 @@ export async function runInterpretCycle(
         sourceRef: row.source_ref,
         sourceId: row.source_id,
         objectType: row.object_type,
+        mimeType: row.mime_type,
       });
 
       if (output === null) {

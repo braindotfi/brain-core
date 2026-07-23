@@ -16,6 +16,7 @@
  */
 
 import { brainError } from "@brain/shared";
+import { UPLOAD_DOCUMENT_SCHEMA, uploadDocumentInterpreter } from "./upload.js";
 
 export interface InterpreterArtifactContext {
   rawArtifactId: string;
@@ -26,6 +27,7 @@ export interface InterpreterArtifactContext {
   /** raw_sources connection that produced the artifact, when one exists. */
   sourceId: string | null;
   objectType: string | null;
+  mimeType: string | null;
 }
 
 export interface InterpretedOutput {
@@ -198,3 +200,5 @@ registerInterpreter("finch.payments.v1", (bytes, _ctx) => {
     confidence: null,
   };
 });
+
+registerInterpreter(UPLOAD_DOCUMENT_SCHEMA, uploadDocumentInterpreter);

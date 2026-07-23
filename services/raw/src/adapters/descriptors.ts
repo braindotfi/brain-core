@@ -175,8 +175,8 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     format: ["document"],
     authentication: ["none"], // RBAC-scoped bearer auth on the route itself
     capabilities: NO_CAPABILITIES,
-    objectTypes: ["document"],
-    parserVersions: ["doc_obligation_v1"],
+    objectTypes: ["document", "ar_aging", "payroll_register"],
+    parserVersions: ["doc_obligation_v1", "document_records_upload_v1"],
   },
   {
     connectorType: "pdf_upload",
@@ -188,8 +188,8 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     format: ["document"],
     authentication: ["none"], // RBAC-scoped bearer auth on the route itself
     capabilities: NO_CAPABILITIES,
-    objectTypes: ["document"],
-    parserVersions: ["doc_obligation_v1"],
+    objectTypes: ["document", "bank_statement"],
+    parserVersions: ["doc_obligation_v1", "bank_statement_upload_v1"],
   },
   {
     connectorType: "alchemy_wallet",

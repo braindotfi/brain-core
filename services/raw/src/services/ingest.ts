@@ -23,6 +23,7 @@ import {
   type ExtractionJobWire,
 } from "../repository/extractionJobs.js";
 import type { IngestEnvelopeFields } from "../envelope.js";
+import { defaultSourceSchemaForUpload } from "../interpreters/upload.js";
 
 export interface IngestInput {
   tenantId: string;
@@ -63,6 +64,7 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
   const sha = sha256Hex(input.body);
   const id = newRawArtifactId();
   const path = blobPath(input.tenantId, sha);
+  const envelope = withDefaultUploadEnvelope(input);
 
   // Upload bytes with immutable flag (§3 Layer 1 immutability).
   await deps.blob.put(path, input.body, {
@@ -90,7 +92,7 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
         mimeType: input.mimeType,
         bytes: input.body.length,
         ingestedBy: input.actor,
-        ...(input.envelope !== undefined ? { envelope: input.envelope } : {}),
+        ...(envelope !== undefined ? { envelope } : {}),
       });
       let job: ExtractionJobWire | null = null;
       if (
@@ -121,12 +123,8 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
       source_type: input.sourceType,
       sha256: sha,
       bytes: input.body.length,
-      ...(input.envelope?.sourceSchema !== undefined
-        ? { source_schema: input.envelope.sourceSchema }
-        : {}),
-      ...(input.envelope?.objectType !== undefined
-        ? { object_type: input.envelope.objectType }
-        : {}),
+      ...(envelope?.sourceSchema !== undefined ? { source_schema: envelope.sourceSchema } : {}),
+      ...(envelope?.objectType !== undefined ? { object_type: envelope.objectType } : {}),
     },
     outputs: {
       raw_id: row.id,
@@ -165,5 +163,18 @@ function shouldAutoExtractDocument(input: IngestInput): boolean {
   const mime = input.mimeType?.toLowerCase() ?? "";
   if (mime.startsWith("image/")) return true;
   if (mime.startsWith("text/")) return true;
-  return ["application/pdf", "text/csv", "application/csv"].includes(mime);
+  return [
+    "application/pdf",
+    "application/csv",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/csv",
+  ].includes(mime);
+}
+
+function withDefaultUploadEnvelope(input: IngestInput): IngestEnvelopeFields | undefined {
+  if (input.envelope?.sourceSchema !== undefined) return input.envelope;
+  const sourceSchema = defaultSourceSchemaForUpload(input.sourceType);
+  if (sourceSchema === null) return input.envelope;
+  return { ...(input.envelope ?? {}), sourceSchema };
 }
