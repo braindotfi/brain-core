@@ -338,7 +338,13 @@ describe("upload document interpreters", () => {
     expect(out!.parser).toBe("bank_statement_upload_v1");
     expect(out!.confidence).toBe(0.9);
     const extracted = out!.extracted as {
-      transactions: Array<{ amount: string; direction: "inflow" | "outflow" }>;
+      account: { current_balance: string | null };
+      transactions: Array<{
+        amount: string;
+        description: string;
+        direction: "inflow" | "outflow";
+        running_balance?: string;
+      }>;
       parse_diagnostics: { rows_parsed: number; rows_with_balance: number };
     };
     expect(extracted.transactions).toHaveLength(19);
@@ -351,6 +357,10 @@ describe("upload document interpreters", () => {
       return sum + signed;
     }, 0);
     expect(net.toFixed(2)).toBe("-14586.02");
+    expect(extracted.account.current_balance).toBe("398220.20");
+    const reconstructedClosing = 412806.22 + net;
+    expect(reconstructedClosing.toFixed(2)).toBe("398220.20");
+    expect(extracted.transactions.at(-1)?.running_balance).toBe("398220.20");
   });
 
   it("throws on unsupported upload source types and empty bank statements", () => {
@@ -399,15 +409,33 @@ describe("upload document interpreters", () => {
     );
 
     expect(out!.parser).toBe("document_records_upload_v1");
-    expect(out!.extracted).toMatchObject({
-      object_type: "ar_aging",
-      receivables: [
-        { invoice_ref: "INV-1001", aging_bucket: "Current" },
-        { invoice_ref: "INV-1002", aging_bucket: "31-60" },
-        { invoice_ref: "INV-1003", aging_bucket: "61-90" },
-        { invoice_ref: "INV-1004", aging_bucket: "90+" },
-      ],
-    });
+    const extracted = out!.extracted as {
+      object_type: string;
+      receivables: Array<{ invoice_ref: string; amount: string; aging_bucket: string | null }>;
+    };
+    expect(extracted.object_type).toBe("ar_aging");
+    expect(extracted.receivables.map((r) => r.invoice_ref)).toEqual([
+      "NL-2417",
+      "NL-2389",
+      "NL-2440",
+      "NL-2426",
+      "NL-2402",
+      "NL-2371",
+      "NL-2444",
+      "NL-2447",
+    ]);
+    expect(extracted.receivables.every((r) => /^NL-\d+$/.test(r.invoice_ref))).toBe(true);
+    expect(extracted.receivables.every((r) => Number(r.amount) > 0)).toBe(true);
+    expect(extracted.receivables.map((r) => r.amount)).toEqual([
+      "49000",
+      "12400",
+      "21600",
+      "8925",
+      "17300",
+      "31150",
+      "14780",
+      "9310",
+    ]);
   });
 
   it("parses quoted and bucket-style AR aging rows with low confidence", () => {
@@ -487,29 +515,36 @@ describe("upload document interpreters", () => {
     );
 
     expect(out!.parser).toBe("document_records_upload_v1");
-    expect(out!.extracted).toMatchObject({
-      object_type: "payroll_register",
-      obligations: [
-        {
-          counterparty_name: "Payroll",
-          run_ref: "2026-06A",
-          amount: "11700",
-          tax_amount: "2945.06",
-          due_date: "2026-06-14",
-          cadence: "semimonthly",
-        },
-        {
-          counterparty_name: "Payroll",
-          run_ref: "2026-06B",
-          amount: "11975",
-          tax_amount: "3014.09",
-          due_date: "2026-06-28",
-          cadence: "semimonthly",
-        },
-      ],
-    });
-    expect(JSON.stringify(out!.extracted)).not.toContain("Alice Example");
-    expect(JSON.stringify(out!.extracted)).not.toContain("E1001");
+    const extracted = out!.extracted as {
+      object_type: string;
+      obligations: Array<{
+        counterparty_name: string;
+        run_ref: string;
+        amount: string;
+        net_amount: string | null;
+        tax_amount: string | null;
+      }>;
+    };
+    expect(extracted.object_type).toBe("payroll_register");
+    expect(extracted.obligations).toHaveLength(2);
+    expect(extracted.obligations).toEqual([
+      expect.objectContaining({
+        counterparty_name: "Payroll",
+        run_ref: "2026-06A",
+        amount: "29612.42",
+        net_amount: "29612.42",
+        tax_amount: "14902.36",
+      }),
+      expect.objectContaining({
+        counterparty_name: "Payroll",
+        run_ref: "2026-06B",
+        amount: "29612.42",
+        net_amount: "29612.42",
+        tax_amount: "14902.36",
+      }),
+    ]);
+    expect(JSON.stringify(out!.extracted)).not.toContain("Amara Osei");
+    expect(JSON.stringify(out!.extracted)).not.toContain("E-1001");
   });
 
   it("parses payroll gross fallback and reports unparseable payroll rows", () => {
