@@ -35,6 +35,21 @@ Every internal agent is described by an **agent definition**: its capabilities, 
 
 A multi-agent router selects an agent for an incoming event or intent. It filters candidates by capability and by the tenant's scope grants, scores them by trigger match, intent match, evidence completeness, reputation, and cost, and returns the best agent plus fallbacks. The selection is itself an audit event, so a tenant can later verify why a particular agent was chosen. Routing only selects; the selected agent still proposes through the gated path.
 
+## Upload-Driven Triggers
+
+When an uploaded document is interpreted and projected into Ledger, the canonical projector emits one `ledger.upload.projected` event for the artifact. The event carries the tenant id, raw artifact id, and a summary of created records: transactions, receivables, obligations, accounts, and counterparties.
+
+The API worker handles that event server-side and fans out only to the relevant internal agents:
+
+| Projection summary                   | Agents considered          |
+| ------------------------------------ | -------------------------- |
+| Receivables created                  | Collections                |
+| Transactions created                 | Cash Forecasting, Treasury |
+| Counterparties created               | Vendor Risk                |
+| Transactions plus tenant receivables | Reconciliation             |
+
+This path is propose-only. It uses service identity, routes through the existing `AgentRunService`, persists `agent_runs`, creates ordinary proposals or informational agent actions, and emits agent audit events. API-key scopes are not involved because upload-triggered runs are internal server-side work. Each run is deduped by tenant, raw artifact id, and agent, so replaying the same projection does not create duplicate proposals.
+
 ## The Decision
 
 The proposal decision stays `ALLOW`, `ESCALATE`, or `DENY`. Internal agents add three fields to that response without changing it: `confidence`, `evidence_score`, and an `execution_mode` of `execute`, `propose`, `confirm`, `notify_only`, or `reject`. Low confidence or missing required evidence yields `notify_only`: surface to a human, take no action. Existing callers who read `decision` are unaffected.

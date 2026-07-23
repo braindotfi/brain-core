@@ -55,6 +55,25 @@ The Ledger Layer normalizes raw evidence into standard linkable objects.
 | `permissions`              | Authorizations affecting the Ledger         |
 | `events`                   | Lifecycle events tied to records            |
 
+#### Post-Projection Agent Routing
+
+For uploaded financial documents, projection into Ledger also emits a single
+artifact-level `ledger.upload.projected` event. The event is not per row. It
+summarizes what the artifact created, including transaction, receivable,
+obligation, account, and counterparty counts.
+
+The API worker routes that event to the internal-agent fleet through the normal
+agent run machinery. Collections can respond to receivables, Cash Forecasting
+and Treasury can respond to transactions, Vendor Risk can respond to new
+counterparties, and Reconciliation can respond when uploaded transactions and
+tenant receivables coexist. The run remains propose-only: it may create
+reviewable proposals or informational agent actions, but it does not execute
+payments or bypass Policy.
+
+Each upload-triggered run is idempotent by tenant, raw artifact id, and agent.
+Reprojecting the same artifact can refresh Ledger state, but it does not spawn
+duplicate agent proposals.
+
 #### Provenance on Every Record
 
 Every Ledger record carries:
