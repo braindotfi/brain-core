@@ -260,7 +260,7 @@ export function makeLedgerEvidenceProvider(
     if (want.has("balance")) {
       try {
         let balanceResolved = false;
-        if (balanceId !== undefined) {
+        if (balanceId !== undefined && balanceId !== accountId) {
           const balances = await ledger.listBalances(ctx, {
             ...(accountId !== undefined ? { account_id: accountId } : {}),
           });
@@ -274,6 +274,27 @@ export function makeLedgerEvidenceProvider(
           const res = await ledger.getAccount(ctx, accountId);
           if (res !== null && res.latest_balance !== null) {
             out.push(balanceEvidence(res.latest_balance));
+            balanceResolved = true;
+          } else if (res !== null && res.account.current_balance !== null) {
+            out.push({
+              kind: "balance",
+              ref: accountId,
+              source_system: "ledger",
+              object_type: "account",
+              object_id: res.account.id,
+              confidence: evidenceConfidence(res.account.confidence),
+              excerpt: `${res.account.currency} current ${res.account.current_balance}`,
+            });
+            balanceResolved = true;
+          }
+        }
+        if (!balanceResolved && balanceId !== undefined) {
+          const balances = await ledger.listBalances(ctx, {
+            ...(accountId !== undefined ? { account_id: accountId } : {}),
+          });
+          const referenced = balances.find((b) => b.id === balanceId);
+          if (referenced !== undefined) {
+            out.push(balanceEvidence(referenced));
             balanceResolved = true;
           }
         }
