@@ -34,9 +34,13 @@ function buildPool(
     timeline?: unknown[];
     report?: unknown[];
     updateRows?: unknown[];
+    snapshots?: unknown[];
   } = {},
 ) {
   const calls: QueryCall[] = [];
+  const snapshots = new Map<string, unknown>(
+    (opts.snapshots ?? []).map((row) => [(row as { id: string }).id, row]),
+  );
   const client = {
     query: vi.fn(async (sql: string, values?: readonly unknown[]) => {
       calls.push(values === undefined ? { sql } : { sql, values });
@@ -53,6 +57,28 @@ function buildPool(
           rows: opts.updateRows ?? [agentRow({ state: values?.[0] })],
           rowCount: opts.updateRows?.length ?? 1,
         };
+      }
+      if (sql.includes("INSERT INTO governance_report_snapshots")) {
+        const reportValue = values?.[6];
+        const row = {
+          id: values?.[0],
+          tenant_id: values?.[1],
+          period_start: values?.[2],
+          period_end: values?.[3],
+          agent_id: values?.[4],
+          created_by: values?.[5],
+          created_at: new Date("2026-07-03T00:00:00.000Z"),
+          report:
+            typeof reportValue === "string"
+              ? (JSON.parse(reportValue) as Record<string, unknown>)
+              : reportValue,
+        };
+        snapshots.set(row.id as string, row);
+        return { rows: [row], rowCount: 1 };
+      }
+      if (sql.includes("FROM governance_report_snapshots")) {
+        const row = snapshots.get(String(values?.[0]));
+        return { rows: row === undefined ? [] : [row], rowCount: row === undefined ? 0 : 1 };
       }
       if (sql.includes("FROM audit_events") && sql.includes("LEFT JOIN policy_decisions")) {
         return { rows: opts.report ?? [], rowCount: opts.report?.length ?? 0 };
@@ -79,6 +105,7 @@ async function build(
     timeline?: unknown[];
     report?: unknown[];
     updateRows?: unknown[];
+    snapshots?: unknown[];
   } = {},
 ) {
   const app = Fastify();
@@ -479,6 +506,166 @@ describe("governance routes", () => {
     expect(res.body).toContain('"user_""admin"""');
     expect(res.body).toContain("agent_from_output");
     expect(res.body).toContain("approved");
+    await app.close();
+  });
+
+  it("creates immutable governance report snapshots from generated report data", async () => {
+    const tenantId = newTenantId();
+    const { app, db } = await build({
+      report: [
+        {
+          id: "evt_snapshot",
+          actor: "agent_1",
+          action: "payment_intent.execute.before",
+          inputs: {},
+          outputs: {},
+          policy_decision_id: "pd_1",
+          policy_check_id: null,
+          outcome: null,
+          native_policy_check_id: null,
+          native_outcome: null,
+          joined_policy_decision_id: "pd_1",
+          joined_outcome: "allow",
+          joined_policy_check_id: "rule_allow",
+          created_at: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      ],
+    });
+    const res = await app.inject({
+      method: "POST",
+      url:
+        `/governance/reports/snapshot?tenant_id=${tenantId}` +
+        "&period_start=2026-07-01T00:00:00.000Z&period_end=2026-07-02T00:00:00.000Z&agent_id=agent_1",
+      headers: { "x-platform-service-auth": platformSecret },
+      payload: { created_by: "user_admin" },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const body = res.json();
+    expect(body.report_id).toMatch(/^grpt_/);
+    expect(body.snapshot).toMatchObject({
+      report_id: body.report_id,
+      tenant_id: tenantId,
+      agent_id: "agent_1",
+      created_by: "user_admin",
+      report: {
+        tenant_id: tenantId,
+        summary: { totals: { proposed: 1, approved: 1 } },
+      },
+    });
+    const insert = db.calls.find((call) =>
+      call.sql.includes("INSERT INTO governance_report_snapshots"),
+    );
+    expect(insert?.values?.[4]).toBe("agent_1");
+    expect(insert?.values?.[5]).toBe("user_admin");
+    await app.close();
+  });
+
+  it("retrieves the frozen snapshot without re-querying live audit events", async () => {
+    const tenantId = newTenantId();
+    const reportRows = [
+      {
+        id: "evt_before_snapshot",
+        actor: "agent_1",
+        action: "agent.action.proposed",
+        inputs: {},
+        outputs: { outcome: "allow" },
+        policy_decision_id: null,
+        policy_check_id: null,
+        outcome: null,
+        native_policy_check_id: null,
+        native_outcome: null,
+        joined_policy_decision_id: null,
+        joined_outcome: null,
+        joined_policy_check_id: null,
+        created_at: new Date("2026-07-01T00:00:00.000Z"),
+      },
+    ];
+    const { app, db } = await build({ report: reportRows });
+    const created = await app.inject({
+      method: "POST",
+      url:
+        `/governance/reports/snapshot?tenant_id=${tenantId}` +
+        "&period_start=2026-07-01T00:00:00.000Z&period_end=2026-07-02T00:00:00.000Z",
+      headers: { "x-platform-service-auth": platformSecret },
+      payload: { created_by: "user_admin" },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const reportId = created.json().report_id as string;
+    reportRows.push({
+      id: "evt_after_snapshot",
+      actor: "agent_1",
+      action: "agent.action.proposed",
+      inputs: {},
+      outputs: { outcome: "reject" },
+      policy_decision_id: null,
+      policy_check_id: null,
+      outcome: null,
+      native_policy_check_id: null,
+      native_outcome: null,
+      joined_policy_decision_id: null,
+      joined_outcome: null,
+      joined_policy_check_id: null,
+      created_at: new Date("2026-07-01T00:01:00.000Z"),
+    });
+    const callsBeforeGet = db.calls.length;
+    const read = await app.inject({
+      method: "GET",
+      url: `/governance/reports/${reportId}?tenant_id=${tenantId}`,
+      headers: { "x-platform-service-auth": platformSecret },
+    });
+    expect(read.statusCode).toBe(200);
+    expect(read.json().report.events).toHaveLength(1);
+    expect(read.json().report.events[0].audit_event_id).toBe("evt_before_snapshot");
+    const newCalls = db.calls.slice(callsBeforeGet);
+    expect(newCalls.some((call) => call.sql.includes("FROM audit_events"))).toBe(false);
+    expect(newCalls.some((call) => call.sql.includes("FROM governance_report_snapshots"))).toBe(
+      true,
+    );
+    await app.close();
+  });
+
+  it("requires platform auth for snapshot create and read routes", async () => {
+    const tenantId = newTenantId();
+    const { app } = await build();
+    const create = await app.inject({
+      method: "POST",
+      url:
+        `/governance/reports/snapshot?tenant_id=${tenantId}` +
+        "&period_start=2026-07-01T00:00:00.000Z&period_end=2026-07-02T00:00:00.000Z",
+      payload: { created_by: "user_admin" },
+    });
+    expect(create.statusCode).toBe(401);
+    const read = await app.inject({
+      method: "GET",
+      url: `/governance/reports/grpt_01J00000000000000000000000?tenant_id=${tenantId}`,
+    });
+    expect(read.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it("does not expose mutation routes for governance report snapshots", async () => {
+    const tenantId = newTenantId();
+    const { app } = await build();
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/governance/reports/grpt_01J00000000000000000000000?tenant_id=${tenantId}`,
+      headers: { "x-platform-service-auth": platformSecret },
+      payload: { created_by: "other_user" },
+    });
+    expect(res.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("returns 404 for missing governance report snapshots", async () => {
+    const tenantId = newTenantId();
+    const { app } = await build();
+    const res = await app.inject({
+      method: "GET",
+      url: `/governance/reports/grpt_01J00000000000000000000000?tenant_id=${tenantId}`,
+      headers: { "x-platform-service-auth": platformSecret },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe("governance_report_not_found");
     await app.close();
   });
 });

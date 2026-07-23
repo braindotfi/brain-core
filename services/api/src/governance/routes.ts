@@ -4,6 +4,7 @@ import {
   brainError,
   decodeKeysetCursor,
   encodeKeysetCursor,
+  newGovernanceReportSnapshotId,
   parseDateParam,
   parsePositiveIntParam,
   withTenantScope,
@@ -53,8 +54,21 @@ interface ReportRow extends AuditTimelineRow {
   joined_policy_check_id: string | null;
 }
 
+interface SnapshotRow {
+  id: string;
+  tenant_id: string;
+  period_start: Date;
+  period_end: Date;
+  agent_id: string | null;
+  created_by: string;
+  created_at: Date;
+  report: GovernanceReport;
+}
+
 const GOVERNANCE_READ = "governance:read";
 const REPORT_LIMIT = 1000;
+
+type GovernanceReport = ReturnType<typeof buildReport>;
 
 export async function registerGovernanceRoutes(
   app: FastifyInstance,
@@ -199,29 +213,87 @@ export async function registerGovernanceRoutes(
       reply,
     ) => {
       assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
-      const tenantId = requireTenantId(request.query.tenant_id);
-      const periodStart = requireDate("period_start", request.query.period_start);
-      const periodEnd = requireDate("period_end", request.query.period_end);
-      if (periodEnd.getTime() <= periodStart.getTime()) {
-        throw brainError("request_params_invalid", "period_end must be after period_start");
-      }
-      const format = request.query.format ?? "json";
-      if (format !== "json" && format !== "csv") {
-        throw brainError("request_params_invalid", "format must be json or csv");
-      }
-      const rows = await withTenantScope(deps.pool, tenantId, (client) =>
+      const params = requireReportParams(request.query);
+      const rows = await withTenantScope(deps.pool, params.tenantId, (client) =>
         queryReportEvents(client, {
-          periodStart,
-          periodEnd,
-          ...(request.query.agent_id !== undefined ? { agentId: request.query.agent_id } : {}),
+          periodStart: params.periodStart,
+          periodEnd: params.periodEnd,
+          ...(params.agentId !== undefined ? { agentId: params.agentId } : {}),
         }),
       );
-      const report = buildReport(tenantId, periodStart, periodEnd, rows);
-      if (format === "csv") {
+      const report = buildReport(params.tenantId, params.periodStart, params.periodEnd, rows);
+      if (params.format === "csv") {
         reply.type("text/csv");
         return renderReportCsv(report.events);
       }
       return report;
+    },
+  );
+
+  app.post(
+    "/governance/reports/snapshot",
+    { config: { skipAuth: true } },
+    async (
+      request: FastifyRequest<{
+        Querystring: {
+          tenant_id?: string;
+          period_start?: string;
+          period_end?: string;
+          agent_id?: string;
+          format?: string;
+        };
+        Body?: { created_by?: unknown };
+      }>,
+      reply,
+    ) => {
+      assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
+      const params = requireReportParams(request.query);
+      if (params.format !== "json") {
+        throw brainError("request_params_invalid", "snapshot format must be json");
+      }
+      const createdBy = requireString(request.body?.created_by, "created_by");
+      const snapshot = await withTenantScope(deps.pool, params.tenantId, async (client) => {
+        const rows = await queryReportEvents(client, {
+          periodStart: params.periodStart,
+          periodEnd: params.periodEnd,
+          ...(params.agentId !== undefined ? { agentId: params.agentId } : {}),
+        });
+        const report = buildReport(params.tenantId, params.periodStart, params.periodEnd, rows);
+        return insertReportSnapshot(client, {
+          id: newGovernanceReportSnapshotId(),
+          tenantId: params.tenantId,
+          periodStart: params.periodStart,
+          periodEnd: params.periodEnd,
+          agentId: params.agentId ?? null,
+          createdBy,
+          report,
+        });
+      });
+      reply.status(201);
+      return { report_id: snapshot.id, snapshot: serializeSnapshot(snapshot) };
+    },
+  );
+
+  app.get(
+    "/governance/reports/:report_id",
+    { config: { skipAuth: true } },
+    async (
+      request: FastifyRequest<{
+        Params: { report_id: string };
+        Querystring: { tenant_id?: string };
+      }>,
+    ) => {
+      assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
+      const tenantId = requireTenantId(request.query.tenant_id);
+      const snapshot = await withTenantScope(deps.pool, tenantId, (client) =>
+        findReportSnapshot(client, request.params.report_id),
+      );
+      if (snapshot === null) {
+        throw brainError("governance_report_not_found", "governance report snapshot not found", {
+          statusOverride: 404,
+        });
+      }
+      return serializeSnapshot(snapshot);
     },
   );
 }
@@ -239,6 +311,38 @@ function requireDate(name: string, value: string | undefined): Date {
     throw brainError("request_params_invalid", `${name} is required`);
   }
   return parsed;
+}
+
+function requireReportParams(query: {
+  tenant_id?: string;
+  period_start?: string;
+  period_end?: string;
+  agent_id?: string;
+  format?: string;
+}): {
+  tenantId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  agentId?: string;
+  format: "json" | "csv";
+} {
+  const tenantId = requireTenantId(query.tenant_id);
+  const periodStart = requireDate("period_start", query.period_start);
+  const periodEnd = requireDate("period_end", query.period_end);
+  if (periodEnd.getTime() <= periodStart.getTime()) {
+    throw brainError("request_params_invalid", "period_end must be after period_start");
+  }
+  const format = query.format ?? "json";
+  if (format !== "json" && format !== "csv") {
+    throw brainError("request_params_invalid", "format must be json or csv");
+  }
+  return {
+    tenantId,
+    periodStart,
+    periodEnd,
+    ...(query.agent_id !== undefined ? { agentId: query.agent_id } : {}),
+    format,
+  };
 }
 
 function requireString(value: unknown, name: string): string {
@@ -377,6 +481,55 @@ async function queryReportEvents(
   return rows;
 }
 
+async function insertReportSnapshot(
+  client: TenantScopedClient,
+  input: {
+    id: string;
+    tenantId: string;
+    periodStart: Date;
+    periodEnd: Date;
+    agentId: string | null;
+    createdBy: string;
+    report: GovernanceReport;
+  },
+): Promise<SnapshotRow> {
+  const { rows } = await client.query<SnapshotRow>(
+    `INSERT INTO governance_report_snapshots (
+        id, tenant_id, period_start, period_end, agent_id, created_by, report
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      RETURNING id, tenant_id, period_start, period_end, agent_id, created_by, created_at, report`,
+    [
+      input.id,
+      input.tenantId,
+      input.periodStart,
+      input.periodEnd,
+      input.agentId,
+      input.createdBy,
+      JSON.stringify(input.report),
+    ],
+  );
+  const row = rows[0];
+  if (row === undefined) {
+    throw brainError("dependency_unavailable", "governance report snapshot insert returned no row");
+  }
+  return row;
+}
+
+async function findReportSnapshot(
+  client: TenantScopedClient,
+  reportId: string,
+): Promise<SnapshotRow | null> {
+  const { rows } = await client.query<SnapshotRow>(
+    `SELECT id, tenant_id, period_start, period_end, agent_id, created_by, created_at, report
+       FROM governance_report_snapshots
+      WHERE id = $1
+      LIMIT 1`,
+    [reportId],
+  );
+  return rows[0] ?? null;
+}
+
 function serializeAgent(row: AgentRow): Record<string, unknown> {
   return {
     id: row.id,
@@ -405,6 +558,19 @@ function serializeTimelineEvent(row: AuditTimelineRow): Record<string, unknown> 
     created_at: row.created_at.toISOString(),
     inputs: row.inputs,
     outputs: row.outputs,
+  };
+}
+
+function serializeSnapshot(row: SnapshotRow): Record<string, unknown> {
+  return {
+    report_id: row.id,
+    tenant_id: row.tenant_id,
+    period_start: row.period_start.toISOString(),
+    period_end: row.period_end.toISOString(),
+    agent_id: row.agent_id,
+    created_by: row.created_by,
+    created_at: row.created_at.toISOString(),
+    report: row.report,
   };
 }
 

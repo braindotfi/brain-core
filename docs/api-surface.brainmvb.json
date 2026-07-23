@@ -2045,13 +2045,15 @@
       ]
     },
     {
-      "group": "governance_phase1",
+      "group": "governance_phase1_phase2_snapshots",
       "status": "staging_exposed_bff_only",
       "notes": [
         "Routes are mounted by the API service and gated by X-Platform-Service-Auth with governance:read.",
-        "No POST agent creation endpoint is exposed in Phase 1.",
+        "No POST agent creation endpoint is exposed. External agent registration is removed from the Phase 2 backlog for this cycle because there is no product need yet.",
+        "GET /v1/governance/policy-checks is deferred pending a future security/legal review and is not mounted in this cycle.",
         "Agent scopes are reported as null because the registry stores scope_hash, not the original scope list.",
-        "Historical audit coverage is partial: policy_decision_id is present on some gate rows, absent on older and alternate policy paths. Reports return decision_data_status=unavailable for rows without a native outcome or resolvable policy decision."
+        "Historical audit coverage is partial: policy_decision_id is present on some gate rows, absent on older and alternate policy paths. Reports return decision_data_status=unavailable for rows without a native outcome or resolvable policy decision.",
+        "Report snapshots freeze the generated GovernanceReport JSON at creation time and GET /v1/governance/reports/{report_id} does not re-query the live audit store."
       ],
       "endpoints": [
         {
@@ -2226,6 +2228,98 @@
             ]
           },
           "openapi": "documented:/governance/reports"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/governance/reports/snapshot",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "governance:read",
+          "enforcement": "shared_secret_header",
+          "request_shape": "query { tenant_id, period_start, period_end, agent_id?, format?: json }; body { created_by }",
+          "response_shape": "201 { report_id, snapshot: GovernanceReportSnapshot }",
+          "example_request": {
+            "headers": { "X-Platform-Service-Auth": "<secret-with-governance-read>" },
+            "path": "/v1/governance/reports/snapshot?tenant_id=tnt_example&period_start=2026-07-01T00:00:00.000Z&period_end=2026-08-01T00:00:00.000Z",
+            "body": { "created_by": "user_admin" }
+          },
+          "example_response": {
+            "report_id": "grpt_example",
+            "snapshot": {
+              "report_id": "grpt_example",
+              "tenant_id": "tnt_example",
+              "period_start": "2026-07-01T00:00:00.000Z",
+              "period_end": "2026-08-01T00:00:00.000Z",
+              "agent_id": null,
+              "created_by": "user_admin",
+              "created_at": "2026-07-22T00:02:00.000Z",
+              "report": {
+                "tenant_id": "tnt_example",
+                "period_start": "2026-07-01T00:00:00.000Z",
+                "period_end": "2026-08-01T00:00:00.000Z",
+                "summary": {
+                  "totals": {
+                    "proposed": 2,
+                    "approved": 1,
+                    "blocked": 0,
+                    "escalated": 0,
+                    "decision_data_unavailable": 1
+                  },
+                  "coverage": {
+                    "events": 2,
+                    "with_policy_decision_id": 1,
+                    "joined_policy_decision": 1,
+                    "with_native_outcome": 0
+                  }
+                },
+                "events": []
+              }
+            }
+          },
+          "openapi": "documented:/governance/reports/snapshot"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/governance/reports/{report_id}",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "governance:read",
+          "enforcement": "shared_secret_header",
+          "request_shape": "path { report_id }; query { tenant_id }",
+          "response_shape": "200 GovernanceReportSnapshot frozen at creation time",
+          "example_request": {
+            "headers": { "X-Platform-Service-Auth": "<secret-with-governance-read>" },
+            "path": "/v1/governance/reports/grpt_example?tenant_id=tnt_example"
+          },
+          "example_response": {
+            "report_id": "grpt_example",
+            "tenant_id": "tnt_example",
+            "period_start": "2026-07-01T00:00:00.000Z",
+            "period_end": "2026-08-01T00:00:00.000Z",
+            "agent_id": null,
+            "created_by": "user_admin",
+            "created_at": "2026-07-22T00:02:00.000Z",
+            "report": {
+              "tenant_id": "tnt_example",
+              "period_start": "2026-07-01T00:00:00.000Z",
+              "period_end": "2026-08-01T00:00:00.000Z",
+              "summary": {
+                "totals": {
+                  "proposed": 2,
+                  "approved": 1,
+                  "blocked": 0,
+                  "escalated": 0,
+                  "decision_data_unavailable": 1
+                },
+                "coverage": {
+                  "events": 2,
+                  "with_policy_decision_id": 1,
+                  "joined_policy_decision": 1,
+                  "with_native_outcome": 0
+                }
+              },
+              "events": []
+            }
+          },
+          "openapi": "documented:/governance/reports/{report_id}"
         }
       ]
     }
@@ -2277,12 +2371,14 @@
       "runtime_status": "not registered unless flag true; staging enables this today"
     },
     {
-      "flag": "governance_phase1_staging_only",
+      "flag": "governance_staging_only",
       "paths": [
         "GET /v1/governance/agents",
         "GET /v1/governance/agents/{agent_id}",
         "PATCH /v1/governance/agents/{agent_id}",
-        "GET /v1/governance/reports"
+        "GET /v1/governance/reports",
+        "POST /v1/governance/reports/snapshot",
+        "GET /v1/governance/reports/{report_id}"
       ],
       "openapi_status": "documented",
       "runtime_status": "mounted as BFF-only routes; expose through staging first and keep production promotion as a separate decision"

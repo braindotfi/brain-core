@@ -93,6 +93,8 @@ export const ID_PREFIX = {
   tenantBlobPurgeJob: "tbp",
   // BC-9 — durable tenant data export job (GDPR Art. 20 portability).
   tenantExportJob: "texp",
+  // Governance API — immutable audit report snapshots for external review.
+  governanceReportSnapshot: "grpt",
   // RFC 0003 — transactional audit outbox for purge-lifecycle events. One row per
   // lifecycle transition; delivered to the audit service by the purge worker.
   tenantBlobPurgeAuditOutbox: "tbo",
@@ -159,6 +161,8 @@ export const newLedgerReservationId = (): string => brainId(ID_PREFIX.ledgerRese
 export const newWebhookDeadLetterId = (): string => brainId(ID_PREFIX.webhookDeadLetter);
 export const newApiKeyId = (): string => brainId(ID_PREFIX.apiKey);
 export const newTenantExportJobId = (): string => brainId(ID_PREFIX.tenantExportJob);
+export const newGovernanceReportSnapshotId = (): string =>
+  brainId(ID_PREFIX.governanceReportSnapshot);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.
