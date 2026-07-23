@@ -1,4 +1,5 @@
 import { deflateRawSync } from "node:zlib";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   interpreterForSchema,
@@ -6,7 +7,7 @@ import {
   registerInterpreter,
   type InterpreterArtifactContext,
 } from "./registry.js";
-import { UPLOAD_DOCUMENT_SCHEMA } from "./upload.js";
+import { UPLOAD_DOCUMENT_SCHEMA, uploadDocumentInterpreter } from "./upload.js";
 
 function ctx(over: Partial<InterpreterArtifactContext> = {}): InterpreterArtifactContext {
   return {
@@ -152,6 +153,10 @@ function escapeXml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+function fixtureBytes(name: string): Buffer {
+  return readFileSync(new URL(`./__fixtures__/${name}`, import.meta.url));
 }
 
 describe("interpreter registry", () => {
@@ -318,6 +323,36 @@ describe("upload document interpreters", () => {
     ]);
   });
 
+  it("parses the June demo bank statement PDF fixture end to end", () => {
+    const out = uploadDocumentInterpreter(
+      fixtureBytes("bank_statement_2026-06.pdf"),
+      ctx({
+        rawArtifactId: "raw_demo_bank",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "pdf_upload",
+        sourceRef: { account_id: "acct_demo", institution: "Demo Bank" },
+        mimeType: "application/pdf",
+      }),
+    );
+
+    expect(out!.parser).toBe("bank_statement_upload_v1");
+    expect(out!.confidence).toBe(0.9);
+    const extracted = out!.extracted as {
+      transactions: Array<{ amount: string; direction: "inflow" | "outflow" }>;
+      parse_diagnostics: { rows_parsed: number; rows_with_balance: number };
+    };
+    expect(extracted.transactions).toHaveLength(19);
+    expect(extracted.parse_diagnostics).toMatchObject({
+      rows_parsed: 19,
+      rows_with_balance: 19,
+    });
+    const net = extracted.transactions.reduce((sum, tx) => {
+      const signed = tx.direction === "inflow" ? Number(tx.amount) : -Number(tx.amount);
+      return sum + signed;
+    }, 0);
+    expect(net.toFixed(2)).toBe("-14586.02");
+  });
+
   it("throws on unsupported upload source types and empty bank statements", () => {
     expect(() =>
       interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
@@ -350,6 +385,29 @@ describe("upload document interpreters", () => {
     expect(out!.parser).toBe("document_records_upload_v1");
     expect(out!.extracted).toMatchObject({ object_type: "ar_aging" });
     expect((out!.extracted as { receivables: unknown[] }).receivables).toHaveLength(2);
+  });
+
+  it("parses the June demo AR aging XLSX fixture end to end", () => {
+    const out = uploadDocumentInterpreter(
+      fixtureBytes("ar_aging_2026-06-30.xlsx"),
+      ctx({
+        rawArtifactId: "raw_demo_ar",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    );
+
+    expect(out!.parser).toBe("document_records_upload_v1");
+    expect(out!.extracted).toMatchObject({
+      object_type: "ar_aging",
+      receivables: [
+        { invoice_ref: "INV-1001", aging_bucket: "Current" },
+        { invoice_ref: "INV-1002", aging_bucket: "31-60" },
+        { invoice_ref: "INV-1003", aging_bucket: "61-90" },
+        { invoice_ref: "INV-1004", aging_bucket: "90+" },
+      ],
+    });
   });
 
   it("parses quoted and bucket-style AR aging rows with low confidence", () => {
@@ -413,8 +471,45 @@ describe("upload document interpreters", () => {
     expect(out!.parser).toBe("document_records_upload_v1");
     expect(out!.extracted).toMatchObject({ object_type: "payroll_register" });
     expect(out!.extracted).toMatchObject({
-      obligations: [{ run_ref: "RUN-2026-06-15", amount: "11100" }],
+      obligations: [{ run_ref: "RUN-2026-06-15", amount: "9000", tax_amount: "2100" }],
     });
+  });
+
+  it("parses the June demo payroll register XLSX fixture as run-level obligations", () => {
+    const out = uploadDocumentInterpreter(
+      fixtureBytes("payroll_register_2026-06.xlsx"),
+      ctx({
+        rawArtifactId: "raw_demo_payroll",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    );
+
+    expect(out!.parser).toBe("document_records_upload_v1");
+    expect(out!.extracted).toMatchObject({
+      object_type: "payroll_register",
+      obligations: [
+        {
+          counterparty_name: "Payroll",
+          run_ref: "2026-06A",
+          amount: "11700",
+          tax_amount: "2945.06",
+          due_date: "2026-06-14",
+          cadence: "semimonthly",
+        },
+        {
+          counterparty_name: "Payroll",
+          run_ref: "2026-06B",
+          amount: "11975",
+          tax_amount: "3014.09",
+          due_date: "2026-06-28",
+          cadence: "semimonthly",
+        },
+      ],
+    });
+    expect(JSON.stringify(out!.extracted)).not.toContain("Alice Example");
+    expect(JSON.stringify(out!.extracted)).not.toContain("E1001");
   });
 
   it("parses payroll gross fallback and reports unparseable payroll rows", () => {
