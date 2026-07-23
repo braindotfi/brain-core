@@ -4,11 +4,13 @@ import {
   brainError,
   decodeKeysetCursor,
   encodeKeysetCursor,
+  hashBody,
   newGovernanceReportSnapshotId,
   parseDateParam,
   parsePositiveIntParam,
   withTenantScope,
   type AuditEmitter,
+  type IdempotencyStore,
   type TenantScopedClient,
 } from "@brain/shared";
 import { assertAgentTransition, type AgentState } from "@brain/execution";
@@ -18,6 +20,8 @@ export interface GovernanceRoutesDeps {
   pool: Pool;
   audit: AuditEmitter;
   platformSecret?: string;
+  idempotencyStore?: IdempotencyStore;
+  idempotencyTtlSeconds?: number;
 }
 
 interface AgentRow {
@@ -67,8 +71,17 @@ interface SnapshotRow {
 
 const GOVERNANCE_READ = "governance:read";
 const REPORT_LIMIT = 1000;
+const IDEMPOTENCY_HEADER = "idempotency-key";
+const IDEMPOTENCY_DEFAULT_TTL_SECONDS = 86_400;
+const IDEMPOTENCY_MAX_KEY_LEN = 256;
 
 type GovernanceReport = ReturnType<typeof buildReport>;
+type SnapshotResponse = { report_id: string; snapshot: Record<string, unknown> };
+type SnapshotIdempotencyMarker = {
+  tenantId: string;
+  key: string;
+  bodyHash: string;
+};
 
 export async function registerGovernanceRoutes(
   app: FastifyInstance,
@@ -252,25 +265,53 @@ export async function registerGovernanceRoutes(
         throw brainError("request_params_invalid", "snapshot format must be json");
       }
       const createdBy = requireString(request.body?.created_by, "created_by");
-      const snapshot = await withTenantScope(deps.pool, params.tenantId, async (client) => {
-        const rows = await queryReportEvents(client, {
-          periodStart: params.periodStart,
-          periodEnd: params.periodEnd,
-          ...(params.agentId !== undefined ? { agentId: params.agentId } : {}),
+      const idempotency = await beginSnapshotIdempotency(request, deps, params, createdBy);
+      if (idempotency.replay !== undefined) {
+        reply.status(idempotency.replay.status);
+        reply.header("content-type", "application/json");
+        reply.header("idempotent-replay", "true");
+        return reply.send(idempotency.replay.body);
+      }
+      let responseBody: SnapshotResponse;
+      try {
+        const snapshot = await withTenantScope(deps.pool, params.tenantId, async (client) => {
+          const rows = await queryReportEvents(client, {
+            periodStart: params.periodStart,
+            periodEnd: params.periodEnd,
+            ...(params.agentId !== undefined ? { agentId: params.agentId } : {}),
+          });
+          const report = buildReport(params.tenantId, params.periodStart, params.periodEnd, rows);
+          return insertReportSnapshot(client, {
+            id: newGovernanceReportSnapshotId(),
+            tenantId: params.tenantId,
+            periodStart: params.periodStart,
+            periodEnd: params.periodEnd,
+            agentId: params.agentId ?? null,
+            createdBy,
+            report,
+          });
         });
-        const report = buildReport(params.tenantId, params.periodStart, params.periodEnd, rows);
-        return insertReportSnapshot(client, {
-          id: newGovernanceReportSnapshotId(),
-          tenantId: params.tenantId,
-          periodStart: params.periodStart,
-          periodEnd: params.periodEnd,
-          agentId: params.agentId ?? null,
-          createdBy,
-          report,
+        responseBody = { report_id: snapshot.id, snapshot: serializeSnapshot(snapshot) };
+      } catch (err) {
+        if (idempotency.marker !== undefined) {
+          await deps.idempotencyStore?.discard({
+            tenantId: idempotency.marker.tenantId,
+            key: idempotency.marker.key,
+          });
+        }
+        throw err;
+      }
+      if (idempotency.marker !== undefined && deps.idempotencyStore !== undefined) {
+        await deps.idempotencyStore.complete({
+          tenantId: idempotency.marker.tenantId,
+          key: idempotency.marker.key,
+          bodyHash: idempotency.marker.bodyHash,
+          response: { status: 201, body: JSON.stringify(responseBody) },
+          ttlSeconds: deps.idempotencyTtlSeconds ?? IDEMPOTENCY_DEFAULT_TTL_SECONDS,
         });
-      });
+      }
       reply.status(201);
-      return { report_id: snapshot.id, snapshot: serializeSnapshot(snapshot) };
+      return responseBody;
     },
   );
 
@@ -343,6 +384,74 @@ function requireReportParams(query: {
     ...(query.agent_id !== undefined ? { agentId: query.agent_id } : {}),
     format,
   };
+}
+
+async function beginSnapshotIdempotency(
+  request: FastifyRequest,
+  deps: GovernanceRoutesDeps,
+  params: {
+    tenantId: string;
+    periodStart: Date;
+    periodEnd: Date;
+    agentId?: string;
+    format: "json" | "csv";
+  },
+  createdBy: string,
+): Promise<{
+  marker?: SnapshotIdempotencyMarker;
+  replay?: { status: number; body: string };
+}> {
+  const rawKey = request.headers[IDEMPOTENCY_HEADER];
+  if (rawKey === undefined) return {};
+  const key = Array.isArray(rawKey) ? rawKey[0] : rawKey;
+  if (typeof key !== "string" || key.length === 0 || key.length > IDEMPOTENCY_MAX_KEY_LEN) {
+    throw brainError("request_params_invalid", "malformed Idempotency-Key header");
+  }
+  if (deps.idempotencyStore === undefined) {
+    throw brainError("dependency_unavailable", "idempotency store is not configured");
+  }
+  const bodyHash = hashBody(
+    JSON.stringify({
+      method: "POST",
+      path: "/governance/reports/snapshot",
+      tenant_id: params.tenantId,
+      period_start: params.periodStart.toISOString(),
+      period_end: params.periodEnd.toISOString(),
+      agent_id: params.agentId ?? null,
+      format: params.format,
+      created_by: createdBy,
+    }),
+  );
+  const probe = await deps.idempotencyStore.probeAndMark({
+    tenantId: params.tenantId,
+    key,
+    bodyHash,
+    ttlSeconds: deps.idempotencyTtlSeconds ?? IDEMPOTENCY_DEFAULT_TTL_SECONDS,
+  });
+  switch (probe.state) {
+    case "miss":
+      return { marker: { tenantId: params.tenantId, key, bodyHash } };
+    case "done":
+      return { replay: { status: probe.response.status, body: probe.response.body } };
+    case "in_flight":
+      throw brainError(
+        "execution_idempotency_conflict",
+        "a concurrent request with this Idempotency-Key is still in flight",
+        { statusOverride: 409 },
+      );
+    case "conflict":
+      throw brainError(
+        "execution_idempotency_conflict",
+        "Idempotency-Key reused with a different governance report snapshot request",
+        {
+          statusOverride: 409,
+          details: {
+            stored_body_hash: probe.storedBodyHash,
+            supplied_body_hash: probe.suppliedBodyHash,
+          },
+        },
+      );
+  }
 }
 
 function requireString(value: unknown, name: string): string {

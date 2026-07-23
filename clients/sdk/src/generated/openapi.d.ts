@@ -2894,6 +2894,8 @@ export interface paths {
          *     `GET /governance/reports`, stores that payload with the exact filter
          *     parameters, and returns the persisted snapshot. Snapshot format is
          *     JSON only.
+         *     An optional `Idempotency-Key` header makes retries of the same
+         *     snapshot request return the original `201` response.
          */
         post: operations["createGovernanceReportSnapshot"];
         delete?: never;
@@ -4555,6 +4557,15 @@ export interface components {
         };
         /** @description Resource not found or not accessible to this tenant */
         NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Request conflicts with existing state */
+        Conflict: {
             headers: {
                 [name: string]: unknown;
             };
@@ -9835,7 +9846,10 @@ export interface operations {
                 agent_id?: string;
                 format?: "json";
             };
-            header?: never;
+            header?: {
+                /** @description Optional tenant-scoped retry key. Reusing a key with different snapshot parameters returns 409. */
+                "Idempotency-Key"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -9863,6 +9877,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
     getGovernanceReportSnapshot: {

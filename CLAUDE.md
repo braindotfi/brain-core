@@ -169,6 +169,9 @@ Done
   response without re-running the handler. `X-Request-Id` is the request
   correlation id and is propagated to audit events and outbound webhook
   payloads as `correlation_id`.
+  `POST /v1/governance/reports/snapshot` is BFF-only and uses a route-local
+  idempotency wrapper against the same store, scoped by explicit `tenant_id` and
+  the full snapshot request parameters.
 - Approval actors resolve through `ActorResolver` only. Session surfaces derive
   the actor from authenticated server context and ignore any actor field in the
   payload. Session actor resolution requires `principal_type=user`; agent

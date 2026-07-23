@@ -5186,9 +5186,16 @@ paths:
         `GET /governance/reports`, stores that payload with the exact filter
         parameters, and returns the persisted snapshot. Snapshot format is
         JSON only.
+        An optional `Idempotency-Key` header makes retries of the same
+        snapshot request return the original `201` response.
       operationId: createGovernanceReportSnapshot
       security: []
       parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, maxLength: 256 }
+          description: Optional tenant-scoped retry key. Reusing a key with different snapshot parameters returns 409.
         - name: tenant_id
           in: query
           required: true
@@ -5235,6 +5242,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /governance/reports/{report_id}:
     get:
@@ -5775,6 +5783,11 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     NotFound:
       description: Resource not found or not accessible to this tenant
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Request conflicts with existing state
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

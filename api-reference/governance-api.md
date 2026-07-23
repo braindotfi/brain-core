@@ -233,6 +233,7 @@ The full request and response schema is maintained in
 ```http
 POST /v1/governance/reports/snapshot
 X-Platform-Service-Auth: <secret-with-governance-read>
+Idempotency-Key: <optional-retry-key>
 Content-Type: application/json
 
 { "created_by": "user_admin" }
@@ -251,6 +252,10 @@ Query parameters:
 Snapshot creation generates the same JSON `GovernanceReport` as
 `GET /v1/governance/reports`, stores that exact payload with its filters, and
 returns a `grpt_` report id. The stored payload is immutable.
+
+`Idempotency-Key` is optional. When supplied, a retry with the same key and same
+snapshot request returns the original `201` response with the same `report_id`.
+Reusing the same key with different snapshot parameters returns `409`.
 
 ```json
 {
