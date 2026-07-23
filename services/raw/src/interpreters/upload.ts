@@ -137,7 +137,7 @@ function interpretSpreadsheetUpload(bytes: Buffer, ctx: UploadContext): Interpre
     );
   }
   if (looksLikePayroll(sheet)) return payrollOutput(sheet, ctx);
-  if (looksLikeArAging(sheet)) return arAgingOutput(sheet, ctx);
+  if (looksLikeArAging(sheet)) return arAgingOutput(sheet);
   throw brainError(
     "raw_source_unsupported",
     "spreadsheet upload did not match AR aging or payroll register headers",
@@ -228,16 +228,13 @@ function ascii85Group(group: string, emitted: number): number[] {
 
 function extractPdfTextOperations(content: string): string[] {
   const out: string[] = [];
-  const tjArrayRe =
-    /\[((?:\s*(?:\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>|-?\d+(?:\.\d+)?)\s*)+)\]\s*TJ\b/g;
-  for (const match of content.matchAll(tjArrayRe)) {
-    const pieces = extractPdfStringTokens(match[1] ?? "");
-    if (pieces.length > 0) out.push(pieces.join("").trim());
-  }
-
-  const tjRe = /(\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>)\s*Tj\b/g;
-  for (const match of content.matchAll(tjRe)) {
-    const s = decodePdfStringToken(match[1] ?? "").trim();
+  const textOpRe =
+    /(\[((?:\s*(?:\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>|-?\d+(?:\.\d+)?)\s*)+)\]\s*TJ\b)|((?:\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>)\s*Tj\b)/g;
+  for (const match of content.matchAll(textOpRe)) {
+    const s =
+      match[2] !== undefined
+        ? extractPdfStringTokens(match[2]).join("").trim()
+        : decodePdfStringToken((match[3] ?? "").replace(/\s*Tj\b$/, "")).trim();
     if (s.length > 0) out.push(s);
   }
   return out.filter((s) => s.length > 0);
@@ -306,16 +303,16 @@ function decodePdfHexString(value: string): string {
 }
 
 function parseBankStatementText(text: string, ctx: UploadContext): BankStatementOutput {
-  const lines = text
+  const tokens = text
     .split(/\r?\n/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter((line) => line.length > 0);
-  const year = inferYear(lines) ?? new Date().getUTCFullYear();
-  const transactions: BankTransaction[] = [];
-  for (const line of lines) {
-    const parsed = parseBankTransactionLine(line, year, ctx.rawArtifactId, transactions.length);
-    if (parsed !== null) transactions.push(parsed);
-  }
+    .map((token) => token.replace(/\s+/g, " ").trim())
+    .filter((token) => token.length > 0);
+  const year = inferYear(tokens) ?? new Date().getUTCFullYear();
+  const assembled = parseBankTransactionsFromTokens(tokens, year, ctx.rawArtifactId);
+  const transactions =
+    assembled.length > 0
+      ? assembled
+      : parseBankTransactionsFromLines(tokens, year, ctx.rawArtifactId);
   const rowsWithBalance = transactions.filter((tx) => tx.running_balance !== undefined).length;
   const currentBalance = [...transactions]
     .reverse()
@@ -331,11 +328,141 @@ function parseBankStatementText(text: string, ctx: UploadContext): BankStatement
     },
     transactions,
     parse_diagnostics: {
-      lines_seen: lines.length,
+      lines_seen: tokens.length,
       rows_parsed: transactions.length,
       rows_with_balance: rowsWithBalance,
     },
   };
+}
+
+function parseBankTransactionsFromLines(
+  lines: string[],
+  year: number,
+  rawArtifactId: string,
+): BankTransaction[] {
+  const transactions: BankTransaction[] = [];
+  for (const line of lines) {
+    const parsed = parseBankTransactionLine(line, year, rawArtifactId, transactions.length);
+    if (parsed !== null) transactions.push(parsed);
+  }
+  return transactions;
+}
+
+function parseBankTransactionsFromTokens(
+  tokens: string[],
+  fallbackYear: number,
+  rawArtifactId: string,
+): BankTransaction[] {
+  const rows: Array<{ dateToken: string; cells: string[] }> = [];
+  let current: { dateToken: string; cells: string[] } | null = null;
+  for (const token of tokens) {
+    if (isStandaloneFullDateToken(token)) {
+      if (current !== null) rows.push(current);
+      current = { dateToken: token, cells: [] };
+      continue;
+    }
+    current?.cells.push(token);
+  }
+  if (current !== null) rows.push(current);
+  if (rows.length === 0) return [];
+
+  let previousBalance = inferOpeningBalance(tokens);
+  const out: BankTransaction[] = [];
+  for (const row of rows) {
+    const parsed = parseBankTransactionTokenRow(
+      row.dateToken,
+      row.cells,
+      fallbackYear,
+      rawArtifactId,
+      out.length,
+      previousBalance,
+    );
+    if (parsed === null) continue;
+    previousBalance = moneyToNumber(parsed.running_balance);
+    out.push(parsed);
+  }
+  return out;
+}
+
+function parseBankTransactionTokenRow(
+  dateToken: string,
+  cells: string[],
+  fallbackYear: number,
+  rawArtifactId: string,
+  index: number,
+  previousBalance: number | null,
+): BankTransaction | null {
+  const date = normalizeDate(dateToken, fallbackYear);
+  if (date === null) return null;
+
+  const amountCells = cells
+    .map((token, cellIndex) => ({ token, cellIndex, value: moneyToNumber(token) }))
+    .filter(
+      (cell): cell is { token: string; cellIndex: number; value: number } => cell.value !== null,
+    );
+  if (amountCells.length < 2) return null;
+
+  const running = amountCells[amountCells.length - 1]!;
+  const displayAmount =
+    amountCells
+      .slice(0, -1)
+      .filter((cell) => cell.value !== 0)
+      .at(-1) ?? amountCells[amountCells.length - 2]!;
+  const description = cells.slice(0, displayAmount.cellIndex).join(" ").replace(/\s+/g, " ").trim();
+  if (description.length === 0) return null;
+  if (isBankStatementSummaryDescription(description)) return null;
+
+  let direction = inferDirection(displayAmount.token, displayAmount.value, description);
+  let amount = Math.abs(displayAmount.value);
+  if (previousBalance !== null) {
+    const delta = roundCents(running.value - previousBalance);
+    if (delta !== 0) {
+      direction = delta > 0 ? "inflow" : "outflow";
+      amount = Math.abs(delta);
+    }
+  }
+
+  return {
+    transaction_id: `${rawArtifactId}:bank:${String(index + 1).padStart(4, "0")}`,
+    date,
+    description,
+    amount: decimalString(amount),
+    direction,
+    currency: DEFAULT_CURRENCY,
+    running_balance: decimalString(running.value),
+    ...(counterpartyFromDescription(description) !== null
+      ? { counterparty_name: counterpartyFromDescription(description)! }
+      : {}),
+  };
+}
+
+function isStandaloneFullDateToken(token: string): boolean {
+  return /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/20\d{2}$/.test(token.trim());
+}
+
+function inferOpeningBalance(tokens: string[]): number | null {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    const lower = token.toLowerCase();
+    if (!/\b(opening|beginning|starting)\s+balance\b/.test(lower)) continue;
+    const sameToken = [...token.matchAll(/(?:\(?-?\$?\d[\d,]*\.\d{2}\)?)/g)].at(-1)?.[0];
+    const sameTokenValue = moneyToNumber(sameToken);
+    if (sameTokenValue !== null) return sameTokenValue;
+    for (const nextToken of tokens.slice(index + 1, index + 8)) {
+      if (isStandaloneFullDateToken(nextToken)) break;
+      const value = moneyToNumber(nextToken);
+      if (value !== null) return value;
+    }
+  }
+  return null;
+}
+
+function isBankStatementSummaryDescription(description: string): boolean {
+  return /\bopening balance\b/i.test(description) && /\bclosing balance\b/i.test(description);
+}
+
+function roundCents(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function parseBankTransactionLine(
@@ -492,10 +619,16 @@ function rowsFromXlsx(bytes: Buffer): string[][] {
   );
   const sheetEntry = [...files.keys()]
     .filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))
-    .sort()[0];
-  if (sheetEntry === undefined) return [];
-  const sheetXml = files.get(sheetEntry)?.toString("utf8");
-  return sheetXml === undefined ? [] : parseSheetRows(sheetXml, sharedStrings);
+    .sort((a, b) => worksheetNumber(a) - worksheetNumber(b));
+  if (sheetEntry.length === 0) return [];
+  return sheetEntry.flatMap((entry) => {
+    const sheetXml = files.get(entry)?.toString("utf8");
+    return sheetXml === undefined ? [] : parseSheetRows(sheetXml, sharedStrings);
+  });
+}
+
+function worksheetNumber(name: string): number {
+  return Number(name.match(/sheet(\d+)\.xml$/)?.[1] ?? "0");
 }
 
 function unzipXlsx(bytes: Buffer): Map<string, Buffer> {
@@ -673,19 +806,33 @@ function looksLikePayroll(sheet: ParsedSpreadsheet): boolean {
   return keywordMatchCount(joined, PAYROLL_HEADER_KEYWORDS) > 0;
 }
 
-function arAgingOutput(sheet: ParsedSpreadsheet, ctx: UploadContext): InterpretedOutput {
+function arAgingOutput(sheet: ParsedSpreadsheet): InterpretedOutput {
   const receivables = [];
-  for (const [index, record] of sheet.records.entries()) {
+  for (const record of sheet.records) {
     const counterparty = firstField(record, ["counterparty", "customer", "client", "name"]);
+    if (counterparty === null || /^total$/i.test(counterparty)) continue;
     const invoiceRef =
-      firstField(record, ["invoice_ref", "invoice", "invoice_number", "inv", "number"]) ??
-      `${ctx.rawArtifactId}:ar:${index + 1}`;
+      firstField(record, [
+        "invoice_ref",
+        "invoice_no",
+        "invoice",
+        "invoice_number",
+        "inv",
+        "number",
+      ]) ?? null;
     const explicitAmount = moneyToDecimal(
-      firstField(record, ["amount", "balance", "open_amount", "total", "total_amount"]),
+      firstField(record, [
+        "total_due",
+        "amount",
+        "balance",
+        "open_amount",
+        "total",
+        "total_amount",
+      ]),
     );
     const bucketAmount = amountFromAgingBucketColumns(record);
     const amount = explicitAmount ?? bucketAmount?.amount;
-    if (counterparty === null || amount === null) continue;
+    if (invoiceRef === null || amount === null || amount === "0" || amount === "0.00") continue;
     receivables.push({
       counterparty_name: counterparty,
       invoice_ref: invoiceRef,
@@ -772,6 +919,8 @@ function payrollAggregates(
     if (looksLikePreambleRow(row)) continue;
 
     const record = recordFromRow(currentHeaders, row);
+    if (applyPayrollSummaryRow(out, currentContext, record, row)) continue;
+    if (!isPayrollEmployeeRow(record)) continue;
     const netAmount = moneyToNumber(firstField(record, ["net_pay", "net", "net_amount"]));
     const taxAmount = sumMoneyFields(record, [
       "tax",
@@ -797,8 +946,9 @@ function payrollAggregates(
       currentContext.runRef ??
       `${ctx.rawArtifactId}:payroll:${out.size + 1}`;
     const payDate =
-      firstField(record, ["pay_date", "payment_date", "run_date", "due_date"]) ??
-      currentContext.payDate;
+      normalizeSpreadsheetDate(
+        firstField(record, ["pay_date", "payment_date", "run_date", "due_date"]),
+      ) ?? currentContext.payDate;
     const cadence =
       firstField(record, ["cadence", "frequency", "run_cadence"]) ??
       currentContext.cadence ??
@@ -829,7 +979,18 @@ function payrollAggregates(
 }
 
 function looksLikePayrollHeaderRow(row: string[]): boolean {
-  return keywordMatchCount(headerSearchText(row), PAYROLL_HEADER_KEYWORDS) > 0;
+  const text = headerSearchText(row);
+  return (
+    (text.includes(" net pay ") || text.includes(" gross pay ")) &&
+    (text.includes(" employee ") ||
+      text.includes(" employee id ") ||
+      text.includes(" payroll run ") ||
+      text.includes(" pay run ") ||
+      text.includes(" tax ") ||
+      text.includes(" withholding ") ||
+      text.includes(" fica ") ||
+      text.includes(" w h "))
+  );
 }
 
 function looksLikePreambleRow(row: string[]): boolean {
@@ -840,6 +1001,17 @@ function looksLikePreambleRow(row: string[]): boolean {
 
 function payrollContextFromRow(row: string[]): PayrollContext {
   const context: PayrollContext = { runRef: null, payDate: null, cadence: null };
+  const joined = row
+    .map((cell) => cell.trim())
+    .filter((cell) => cell.length > 0)
+    .join(" | ");
+  const runMatch = joined.match(/\bpay\s+run\s*:\s*([^|,;]+)/i);
+  if (runMatch !== null) context.runRef = runMatch[1]!.trim();
+  const dateMatch = joined.match(/\bpay\s+date\s*:\s*([^|,;]+)/i);
+  if (dateMatch !== null) context.payDate = normalizeSpreadsheetDate(dateMatch[1]!.trim());
+  const cadenceMatch = joined.match(/\bcadence\s*:\s*([^|,;]+)/i);
+  if (cadenceMatch !== null) context.cadence = cadenceMatch[1]!.trim();
+
   for (let index = 0; index < row.length; index += 1) {
     const raw = row[index]?.trim() ?? "";
     if (raw.length === 0) continue;
@@ -847,15 +1019,23 @@ function payrollContextFromRow(row: string[]): PayrollContext {
     const next = row[index + 1]?.trim() ?? "";
     const labelValue = raw.match(/^\s*([^:]+):\s*(.+?)\s*$/);
     const label = normalizeHeader(labelValue?.[1] ?? raw);
-    const value = labelValue?.[2]?.trim() ?? next;
-    if (/^(pay_run|pay_run_id|payroll_run|payroll_id|run_id)$/.test(normalized) && next) {
-      context.runRef = next;
-    } else if (/^(pay_run|pay_run_id|payroll_run|payroll_id|run_id)$/.test(label) && value) {
+    const value = firstPreambleValue(labelValue?.[2]?.trim() ?? next);
+    if (
+      context.runRef === null &&
+      /^(pay_run|pay_run_id|payroll_run|payroll_id|run_id)$/.test(normalized) &&
+      next
+    ) {
+      context.runRef = firstPreambleValue(next);
+    } else if (
+      context.runRef === null &&
+      /^(pay_run|pay_run_id|payroll_run|payroll_id|run_id)$/.test(label) &&
+      value
+    ) {
       context.runRef = value;
     } else if (/^(pay_date|payment_date|run_date)$/.test(normalized) && next) {
-      context.payDate = next;
+      context.payDate = normalizeSpreadsheetDate(next);
     } else if (/^(pay_date|payment_date|run_date)$/.test(label) && value) {
-      context.payDate = value;
+      context.payDate = normalizeSpreadsheetDate(value);
     } else if (/^(cadence|frequency|run_cadence)$/.test(normalized) && next) {
       context.cadence = next;
     } else if (/^(cadence|frequency|run_cadence)$/.test(label) && value) {
@@ -863,6 +1043,10 @@ function payrollContextFromRow(row: string[]): PayrollContext {
     }
   }
   return context;
+}
+
+function firstPreambleValue(value: string): string {
+  return value.split(/[|,;]/, 1)[0]!.trim();
 }
 
 function mergePayrollContext(base: PayrollContext, next: PayrollContext): PayrollContext {
@@ -875,11 +1059,78 @@ function mergePayrollContext(base: PayrollContext, next: PayrollContext): Payrol
 
 function sumMoneyFields(record: SpreadsheetRecord, names: string[]): number {
   let total = 0;
+  const matched = new Set<string>();
   for (const name of names) {
-    const value = moneyToNumber(record[normalizeHeader(name)]);
+    const field = normalizeHeader(name);
+    const value = moneyToNumber(record[field]);
+    matched.add(field);
+    if (value !== null) total += value;
+  }
+  for (const [field, raw] of Object.entries(record)) {
+    if (matched.has(field) || !looksLikePayrollTaxField(field)) continue;
+    const value = moneyToNumber(raw);
     if (value !== null) total += value;
   }
   return total;
+}
+
+function isPayrollEmployeeRow(record: SpreadsheetRecord): boolean {
+  return (
+    firstField(record, ["emp_id", "employee_id", "employee", "employee_name"]) !== null ||
+    firstField(record, ["run_ref", "pay_run", "payroll_run", "payroll_id", "run_id"]) !== null
+  );
+}
+
+function applyPayrollSummaryRow(
+  aggregates: Map<string, PayrollAggregate>,
+  context: PayrollContext,
+  record: SpreadsheetRecord,
+  row: string[],
+): boolean {
+  const rowText = headerSearchText(row);
+  const runRef = context.runRef;
+  if (runRef === null) return false;
+  const payDate = context.payDate;
+  const key = `${runRef}|${payDate ?? ""}`;
+  const aggregate = aggregates.get(key);
+  if (aggregate === undefined) return false;
+  const value = firstMoneyValue(row);
+  if (value === null) return /\b(total|summary|remittance|ach debit)\b/.test(rowText);
+  if (rowText.includes(" total tax remittance ")) {
+    aggregate.taxTotal = value;
+    return true;
+  }
+  if (rowText.includes(" net pay ach debit ")) {
+    aggregate.netTotal = value;
+    return true;
+  }
+  if (firstField(record, ["emp_id", "employee_id", "employee", "employee_name"]) === null) {
+    return /\b(total|summary|remittance|ach debit|employer)\b/.test(rowText);
+  }
+  return false;
+}
+
+function firstMoneyValue(row: string[]): number | null {
+  for (const cell of row) {
+    const value = moneyToNumber(cell);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function looksLikePayrollTaxField(field: string): boolean {
+  const text = ` ${field.replace(/_/g, " ")} `;
+  if (text.includes(" net ") || text.includes(" gross ") || text.includes(" pay date ")) {
+    return false;
+  }
+  return (
+    text.includes(" withholding ") ||
+    text.includes(" w h ") ||
+    text.includes(" fica ") ||
+    text.includes(" medicare ") ||
+    text.includes(" social security ") ||
+    /\b(fed|federal|state|local)\s+w\s+h\b/.test(text)
+  );
 }
 
 function payrollParsedRowCount(aggregates: Map<string, PayrollAggregate>): number {
@@ -951,6 +1202,12 @@ function currencyFromRef(sourceRef: Record<string, unknown>): string {
   const c = stringRef(sourceRef, "currency");
   if (c !== null && /^[A-Za-z]{3}$/.test(c)) return c.toUpperCase();
   return DEFAULT_CURRENCY;
+}
+
+function normalizeSpreadsheetDate(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined || raw.trim().length === 0) return null;
+  const year = raw.match(/\b(20\d{2})\b/)?.[1];
+  return normalizeDate(raw, year === undefined ? new Date().getUTCFullYear() : Number(year));
 }
 
 function stringRef(ref: Record<string, unknown>, key: string): string | null {
