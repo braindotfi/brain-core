@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TenantScopedClient } from "@brain/shared";
-import { findArtifactById, insertOrReuseArtifact, tombstoneArtifact } from "./artifacts.js";
+import {
+  findArtifactById,
+  insertOrReuseArtifact,
+  tombstoneArtifact,
+  type RawArtifactRow,
+} from "./artifacts.js";
 
 function fakeClient(rows: unknown[] = []): {
   client: TenantScopedClient;
@@ -16,7 +21,7 @@ function fakeClient(rows: unknown[] = []): {
   return { client: client as unknown as TenantScopedClient, log };
 }
 
-const stubRow = {
+const stubRow: RawArtifactRow = {
   id: "raw_1",
   tenant_id: "t1",
   sha256: Buffer.from("aa", "hex"),
@@ -28,7 +33,57 @@ const stubRow = {
   ingested_at: new Date(),
   tombstoned_at: null,
   ingested_by: "agent_1",
+  source_schema: null,
+  object_type: null,
+  external_id: null,
+  operation: null,
+  effective_at: null,
+  observed_at: null,
+  original_source: null,
+  intermediaries: null,
+  source_id: null,
+  source_version: null,
+  idempotency_key: null,
 };
+
+function statefulDedupClient(initialRows: RawArtifactRow[] = []): {
+  client: TenantScopedClient;
+  rows: Map<string, RawArtifactRow>;
+  log: { sql: string; values: unknown[] }[];
+} {
+  const rows = new Map(initialRows.map((row) => [row.sha256.toString("hex"), { ...row }]));
+  const log: { sql: string; values: unknown[] }[] = [];
+  const client = {
+    query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
+      log.push({ sql, values: Array.from(values ?? []) });
+      if (!sql.startsWith("INSERT INTO raw_artifacts")) return { rows: [], rowCount: 0 };
+      const sha = values?.[2] as Buffer;
+      const key = sha.toString("hex");
+      const incomingSchema = (values?.[9] as string | null) ?? null;
+      const existing = rows.get(key);
+      if (existing !== undefined) {
+        existing.source_schema = existing.source_schema ?? incomingSchema;
+        return { rows: [existing], rowCount: 1 };
+      }
+      const row = {
+        ...stubRow,
+        id: values?.[0] as string,
+        tenant_id: values?.[1] as string,
+        sha256: sha,
+        source_type: values?.[3] as string,
+        source_ref: JSON.parse((values?.[4] as string) ?? "{}") as Record<string, unknown>,
+        blob_uri: values?.[5] as string,
+        mime_type: (values?.[6] as string | null) ?? null,
+        bytes: String(values?.[7]),
+        ingested_by: values?.[8] as string,
+        source_schema: incomingSchema,
+      };
+      rows.set(key, row);
+      return { rows: [row], rowCount: 1 };
+    }),
+  };
+  return { client: client as unknown as TenantScopedClient, rows, log };
+}
 
 describe("insertOrReuseArtifact", () => {
   it("inserts and returns the row with deduplicated=false when id matches", async () => {
@@ -63,6 +118,68 @@ describe("insertOrReuseArtifact", () => {
       ingestedBy: "agent_1",
     });
     expect(result.deduplicated).toBe(true);
+  });
+
+  it("fills a missing source_schema when identical bytes are reingested with schema metadata", async () => {
+    const { client, log } = statefulDedupClient();
+    const first = await insertOrReuseArtifact(client, {
+      id: "raw_old",
+      tenantId: "t1",
+      sha256Hex: "aa",
+      sourceType: "csv_upload",
+      sourceRef: {},
+      blobUri: "az://b/upload",
+      mimeType: "text/csv",
+      bytes: 128,
+      ingestedBy: "agent_1",
+    });
+    const firstSchema = first.row.source_schema;
+    const second = await insertOrReuseArtifact(client, {
+      id: "raw_new",
+      tenantId: "t1",
+      sha256Hex: "aa",
+      sourceType: "csv_upload",
+      sourceRef: {},
+      blobUri: "az://b/upload",
+      mimeType: "text/csv",
+      bytes: 128,
+      ingestedBy: "agent_1",
+      envelope: { sourceSchema: "brain.upload.document.v1" },
+    });
+
+    expect(firstSchema).toBeNull();
+    expect(second.deduplicated).toBe(true);
+    expect(second.row.id).toBe("raw_old");
+    expect(second.row.source_schema).toBe("brain.upload.document.v1");
+    expect(log[0]!.sql).toContain(
+      "source_schema = COALESCE(raw_artifacts.source_schema, EXCLUDED.source_schema)",
+    );
+  });
+
+  it("does not replace an existing source_schema when identical bytes are reingested differently", async () => {
+    const existing = {
+      ...stubRow,
+      id: "raw_existing",
+      sha256: Buffer.from("bb", "hex"),
+      source_schema: "brain.upload.document.v1",
+    };
+    const { client } = statefulDedupClient([existing]);
+    const result = await insertOrReuseArtifact(client, {
+      id: "raw_new",
+      tenantId: "t1",
+      sha256Hex: "bb",
+      sourceType: "csv_upload",
+      sourceRef: {},
+      blobUri: "az://b/upload",
+      mimeType: "text/csv",
+      bytes: 128,
+      ingestedBy: "agent_1",
+      envelope: { sourceSchema: "different.schema.v1" },
+    });
+
+    expect(result.deduplicated).toBe(true);
+    expect(result.row.id).toBe("raw_existing");
+    expect(result.row.source_schema).toBe("brain.upload.document.v1");
   });
 
   it("throws when insert returns no row", async () => {

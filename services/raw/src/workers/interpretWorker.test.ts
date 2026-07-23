@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryAuditEmitter, MemoryBlobAdapter, MockMetrics, newTenantId } from "@brain/shared";
 import { runInterpretCycle } from "./interpretWorker.js";
+import { DOCUMENT_RECORDS_UPLOAD_PARSER, UPLOAD_DOCUMENT_SCHEMA } from "../interpreters/upload.js";
 
 interface Call {
   text: string;
@@ -92,6 +93,46 @@ describe("runInterpretCycle", () => {
     expect(audit.events.map((e) => e.action)).toContain("raw.parsed.write");
     // §6.1: the audit body carries a hash of extracted, never the payload.
     expect(audit.events[0]!.inputs.extracted_sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("processes a previously stranded upload once source_schema is supplied", async () => {
+    const tenantId = newTenantId();
+    const blob = new MemoryBlobAdapter();
+    const csv = [
+      "Customer,Invoice No,Total Due,Current",
+      "Northwind Labs,INV-1001,120.50,120.50",
+    ].join("\n");
+    await blob.put(`${tenantId}/upload.csv`, Buffer.from(csv), {
+      immutable: true,
+      metadata: {},
+    });
+    const { pool, calls } = fakePool([
+      artifactRow(tenantId, {
+        id: "raw_UPLOAD",
+        source_type: "csv_upload",
+        source_schema: UPLOAD_DOCUMENT_SCHEMA,
+        source_ref: { filename: "ar-aging.csv" },
+        object_type: null,
+        mime_type: "text/csv",
+        blob_uri: `${tenantId}/upload.csv`,
+      }),
+    ]);
+    const audit = new InMemoryAuditEmitter();
+
+    await runInterpretCycle({ pool, blob, audit });
+
+    const insert = calls.find((c) => c.text.startsWith("INSERT INTO raw_parsed"));
+    expect(insert).toBeDefined();
+    expect(insert!.values[3]).toBe(DOCUMENT_RECORDS_UPLOAD_PARSER);
+    const extracted = JSON.parse(insert!.values[5] as string) as {
+      receivables?: Array<{ invoice_ref?: string; amount?: string }>;
+    };
+    expect(extracted.receivables).toEqual([
+      expect.objectContaining({ invoice_ref: "INV-1001", amount: "120.50" }),
+    ]);
+    const log = interpretationLogInsert(calls, "raw_UPLOAD");
+    expect(log!.values[4]).toBeNull();
+    expect(audit.events.map((event) => event.action)).toContain("raw.parsed.write");
   });
 
   it("logs an empty page without writing a parsed row (and never re-polls it)", async () => {
