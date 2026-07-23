@@ -195,12 +195,13 @@ async function cashContext(
 	         JOIN ledger_accounts a
 	           ON a.id = seed.account_id AND a.owner_id = seed.owner_id
          LEFT JOIN LATERAL (
-           SELECT jsonb_agg(
-                    jsonb_build_object(
-                      'obligation_id', o.id,
-                      'amount', o.amount_due::text,
-                      'currency', o.currency,
-                      'due_date', o.due_date::text,
+	           SELECT jsonb_agg(
+	                    jsonb_build_object(
+	                      'invoice_id', o.id,
+	                      'obligation_id', o.id,
+	                      'amount', o.amount_due::text,
+	                      'currency', o.currency,
+	                      'due_date', o.due_date::text,
                       'counterparty_id', o.counterparty_id,
                       'counterparty_name', cp.name
                     )

@@ -459,16 +459,6 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
 
     const cashForecast = await getProposalsByTypeAs(tenantA, memberA, "cash_forecast");
     const treasury = await getProposalsByTypeAs(tenantA, memberA, "treasury");
-    if (cashForecast.length === 0 || treasury.length === 0) {
-      throw new Error(
-        `missing bank proposals ${JSON.stringify({
-          cashForecast: cashForecast.length,
-          treasury: treasury.length,
-          runs: await agentRunsForRaw(tenantA, bank.rawId),
-          proposals: await proposalsForTenant(tenantA),
-        })}`,
-      );
-    }
     expect(cashForecast.length).toBeGreaterThan(0);
     expect(treasury.length).toBeGreaterThan(0);
     expect(cashForecast[0]?.narrative).toContain("USD");
@@ -657,33 +647,6 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
         [tenantId],
       );
       return Number(rows[0]?.count ?? "0");
-    });
-  }
-
-  async function agentRunsForRaw(tenantId: string, rawId: string): Promise<unknown[]> {
-    return withTenantScope(appPool, tenantId, async (client) => {
-      const { rows } = await client.query(
-        `SELECT agent_id, status, execution_mode, failure_reason, proposal_id, reason
-           FROM agent_runs
-          WHERE tenant_id = $1
-            AND idempotency_key LIKE $2
-          ORDER BY created_at ASC`,
-        [tenantId, `${tenantId}:ledger.upload.projected:${rawId}:%`],
-      );
-      return rows;
-    });
-  }
-
-  async function proposalsForTenant(tenantId: string): Promise<unknown[]> {
-    return withTenantScope(appPool, tenantId, async (client) => {
-      const { rows } = await client.query(
-        `SELECT id, proposing_agent, action->>'type' AS type, action->>'narrative' AS narrative
-           FROM proposals
-          WHERE tenant_id = $1
-          ORDER BY created_at ASC`,
-        [tenantId],
-      );
-      return rows;
     });
   }
 
