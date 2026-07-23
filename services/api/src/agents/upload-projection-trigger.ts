@@ -233,7 +233,13 @@ async function cashContext(
               AND o.currency = a.currency
          ) payable ON true
         WHERE a.owner_id = current_setting('app.tenant_id', true)
-          AND $1 = ANY(a.source_ids)
+          AND EXISTS (
+            SELECT 1
+              FROM ledger_transactions t
+             WHERE t.owner_id = a.owner_id
+               AND t.account_id = a.id
+               AND $1 = ANY(t.source_ids)
+          )
           AND a.current_balance IS NOT NULL
         ORDER BY a.updated_at DESC, a.id ASC
         LIMIT 1`,
