@@ -1,8 +1,9 @@
 # Brain main-branch pipeline.
 # On merge to main: secret scan, unit+integration, golden-path smoke, Python
-# agents lint/type/test, build one VM image, deploy that image to staging, then
-# wait for a production environment approval before promoting the same image to
-# api.brain.fi.
+# agents lint/type/test, build one VM image, and deploy that image to staging.
+# Production is promoted separately via .github/workflows/promote-prod.yml
+# (workflow_dispatch, requires the production environment approval), not as
+# part of this run.
 
 name: main
 
@@ -390,126 +391,6 @@ jobs:
           scp -i ~/.ssh/id_deploy scripts/ops/staging_api_key_acceptance.py "azureuser@$VM_HOST:/tmp/staging_api_key_acceptance.py"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && python3 /tmp/staging_api_key_acceptance.py --env-file '$VM_ENV_FILE' --health-url '$HEALTH_URL'; rc=\$?; rm -f /tmp/staging_api_key_acceptance.py; exit \$rc"
-
-  promote_production:
-    name: promote production VM (api.brain.fi)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # push the deploy/prod/* review tag after a green promote
-    needs: deploy_staging
-    environment: production
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    # Scoped to this job so a run waiting on the production approval gate
-    # occupies only its own slot, not deploy_staging's.
-    concurrency:
-      group: promote-prod-${{ github.ref }}
-      cancel-in-progress: false # never cancel a deploy mid-flight
-    env:
-      VM_HOST: ${{ secrets.VM_HOST }}
-      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
-      VM_ENV_FILE: .env.prod
-      COMPOSE_PROJECT: brain-prod
-      HEALTH_URL: https://api.brain.fi/health
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
-
-      # Images alone are not enough: the VM's ~/brain-core is a copied tree,
-      # not a git checkout, so changes to docker-compose.prod.yml and the
-      # host files it bind-mounts into containers (db-roles.sql,
-      # tools/postgres-init) never reach the box on their own. Ship exactly
-      # the repo-tracked paths compose depends on, before any compose
-      # invocation below. Host-only files (VM_ENV_FILE, docker-compose.caddy.yml)
-      # are left untouched, they are not in this repo.
-      - name: Sync compose and bind-mounted host files to VM
-        run: |
-          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
-          scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
-          scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
-          scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
-
-      # Prune images untouched for 3+ days so the rollback tags minted
-      # above don't accumulate forever and fill the disk. `docker image
-      # prune -a` never removes an image a container (running or stopped)
-      # still references, so the live stack stays safe even on a box that
-      # hasn't deployed in over 3 days. `|| true` so a prune failure never
-      # blocks a deploy.
-      - name: Tag rollback images on VM
-        run: |
-          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'ts=$(date +%Y%m%d-%H%M%S); docker tag brain-core:prod brain-core:prod-rollback-$ts || true; docker tag brain-agents:prod brain-agents:prod-rollback-$ts || true; docker image prune -af --filter until=72h || true'
-
-      - name: Pull images from GHCR
-        # See deploy_staging's "Pull images from GHCR" step: relies on the box's
-        # stored `docker login`, no token over SSH; retag keeps compose unchanged.
-        run: |
-          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "docker pull ghcr.io/braindotfi/brain-core:${{ github.sha }} && \
-             docker pull ghcr.io/braindotfi/brain-agents:${{ github.sha }} && \
-             docker tag ghcr.io/braindotfi/brain-core:${{ github.sha }} brain-core:prod && \
-             docker tag ghcr.io/braindotfi/brain-agents:${{ github.sha }} brain-agents:prod"
-
-      # Cold-start safety: bring up infra + jwks + caddy if the box is fresh.
-      # Idempotent on a warm box — --no-recreate leaves running containers
-      # (incl. postgres) untouched; depends_on sequences a cold box correctly.
-      #
-      # The one-shots (migrate, db-roles) are deliberately NOT in this list.
-      # --no-recreate restarts the *existing* container, which is frozen with
-      # the entrypoint and image id of the last deploy, while the files it
-      # bind-mounts (infra/db-roles.sql) are the freshly shipped ones. That
-      # mismatch broke the deploy right after the sync step landed: the old
-      # db-roles entrypoint had no -v for the new role passwords, so psql got
-      # an unsubstituted :'var' and exited 3. The next step runs both as
-      # `run --rm`, which always builds a fresh container from the current
-      # compose file, so they belong there and only there.
-      - name: Ensure infra up on VM (cold-start safe)
-        run: |
-          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "cd ~/brain-core && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate postgres redis minio minio-setup jwks caddy"
-
-      - name: Migrate + recreate api/worker/agents on VM
-        run: |
-          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "cd ~/brain-core && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps db-roles && \
-             (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents || \
-              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 api worker agents && false))"
-
-      - name: Smoke test /health
-        run: |
-          expected="${{ github.sha }}"
-          last_commit=""
-          for i in $(seq 1 10); do
-            body=$(curl -s "$HEALTH_URL" || true)
-            last_commit=$(echo "$body" | grep -o '"commit":"[^"]*"' | sed 's/.*:"//;s/"$//')
-            [ "$last_commit" = "$expected" ] && exit 0
-            sleep 6
-          done
-          echo "$HEALTH_URL never reported commit=$expected (last seen: '$last_commit')"
-          exit 1
-
-      - name: Tag deployed commit for review
-        # Lightweight tag recording exactly what shipped to prod, so every deploy
-        # is reviewable by tag. Non-`v*` namespace so it never becomes a
-        # `git describe` base (those are human tier tags only: v0.1.0, v1.0.0).
-        run: |
-          ts=$(date -u +%Y%m%dT%H%M%SZ)
-          tag="deploy/prod/${ts}-$(echo '${{ github.sha }}' | cut -c1-7)"
-          curl -sSf -X POST \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/git/refs" \
-            -d "{\"ref\":\"refs/tags/${tag}\",\"sha\":\"${{ github.sha }}\"}"
-          echo "Tagged prod deploy: ${tag}"
 
   external_agent_mcp_e2e:
     name: external-agent MCP E2E

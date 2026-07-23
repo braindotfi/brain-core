@@ -1,0 +1,168 @@
+# Brain manual production promotion.
+# Decoupled from main.yml so that promoting production is not gated inside
+# the same run as build + staging deploy. When promote_production lived in
+# main.yml, GitHub's concurrency semantics meant the OLDEST queued run held
+# the production approval slot, so approving it could ship a stale SHA while
+# newer runs piled up as cancelled noise. This workflow is dispatched by hand,
+# resolves the SHA to promote (explicit input, or whatever commit is
+# currently live on staging), and deploys exactly that.
+
+name: promote-prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full commit SHA to promote. Leave blank to promote whatever is currently live on staging."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  promote:
+    name: promote production VM (api.brain.fi)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the deploy/prod/* review tag after a green promote
+    environment: production
+    # Single slot: never promote two SHAs to prod at once.
+    concurrency:
+      group: promote-prod
+      cancel-in-progress: false # never cancel a deploy mid-flight
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      VM_ENV_FILE: .env.prod
+      COMPOSE_PROJECT: brain-prod
+      HEALTH_URL: https://api.brain.fi/health
+    steps:
+      # Resolve which commit to promote before checking anything out. An
+      # explicit input always wins; otherwise ask staging what it's
+      # currently running, so "promote production" defaults to "match
+      # staging" rather than requiring the operator to look up a SHA by hand.
+      - name: Resolve SHA
+        id: resolve
+        run: |
+          sha="${{ inputs.sha }}"
+          if [ -z "$sha" ]; then
+            body=$(curl -s https://staging-api.brain.fi/health || true)
+            sha=$(echo "$body" | grep -o '"commit":"[^"]*"' | sed 's/.*:"//;s/"$//')
+          fi
+          if [ -z "$sha" ]; then
+            echo "Could not resolve a SHA to promote (no input given and staging-api.brain.fi/health returned no commit)."
+            exit 1
+          fi
+          echo "Promoting commit: $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # Check out the resolved SHA, not whatever triggered this dispatch, so
+      # the compose file / db-roles.sql / scripts shipped to the box match
+      # the image being deployed below.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      # Images alone are not enough: the VM's ~/brain-core is a copied tree,
+      # not a git checkout, so changes to docker-compose.prod.yml and the
+      # host files it bind-mounts into containers (db-roles.sql,
+      # tools/postgres-init) never reach the box on their own. Ship exactly
+      # the repo-tracked paths compose depends on, before any compose
+      # invocation below. Host-only files (VM_ENV_FILE, docker-compose.caddy.yml)
+      # are left untouched, they are not in this repo.
+      - name: Sync compose and bind-mounted host files to VM
+        run: |
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
+          scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
+          scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
+          scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
+
+      # Prune images untouched for 3+ days so the rollback tags minted
+      # above don't accumulate forever and fill the disk. `docker image
+      # prune -a` never removes an image a container (running or stopped)
+      # still references, so the live stack stays safe even on a box that
+      # hasn't deployed in over 3 days. `|| true` so a prune failure never
+      # blocks a deploy.
+      - name: Tag rollback images on VM
+        run: |
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            'ts=$(date +%Y%m%d-%H%M%S); docker tag brain-core:prod brain-core:prod-rollback-$ts || true; docker tag brain-agents:prod brain-agents:prod-rollback-$ts || true; docker image prune -af --filter until=72h || true'
+
+      - name: Pull images from GHCR
+        # See deploy_staging's "Pull images from GHCR" step: relies on the box's
+        # stored `docker login`, no token over SSH; retag keeps compose unchanged.
+        # Pulls by the resolved SHA, not the dispatch SHA: build_image already
+        # pushed ghcr.io/braindotfi/brain-core:<sha> and brain-agents:<sha> for
+        # every merged commit, so this works for any SHA that landed on main.
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "docker pull ghcr.io/braindotfi/brain-core:${{ steps.resolve.outputs.sha }} && \
+             docker pull ghcr.io/braindotfi/brain-agents:${{ steps.resolve.outputs.sha }} && \
+             docker tag ghcr.io/braindotfi/brain-core:${{ steps.resolve.outputs.sha }} brain-core:prod && \
+             docker tag ghcr.io/braindotfi/brain-agents:${{ steps.resolve.outputs.sha }} brain-agents:prod"
+
+      # Cold-start safety: bring up infra + jwks + caddy if the box is fresh.
+      # Idempotent on a warm box: --no-recreate leaves running containers
+      # (incl. postgres) untouched; depends_on sequences a cold box correctly.
+      #
+      # The one-shots (migrate, db-roles) are deliberately NOT in this list.
+      # --no-recreate restarts the *existing* container, which is frozen with
+      # the entrypoint and image id of the last deploy, while the files it
+      # bind-mounts (infra/db-roles.sql) are the freshly shipped ones. That
+      # mismatch broke the deploy right after the sync step landed: the old
+      # db-roles entrypoint had no -v for the new role passwords, so psql got
+      # an unsubstituted :'var' and exited 3. The next step runs both as
+      # `run --rm`, which always builds a fresh container from the current
+      # compose file, so they belong there and only there.
+      - name: Ensure infra up on VM (cold-start safe)
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate postgres redis minio minio-setup jwks caddy"
+
+      - name: Migrate + recreate api/worker/agents on VM
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps db-roles && \
+             (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents || \
+              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 api worker agents && false))"
+
+      - name: Smoke test /health
+        # A bare 200 is not enough: /health returns 200 before a deploy too, so
+        # a deploy that silently failed to recreate the container would still
+        # pass. Assert the live commit matches the SHA we resolved and shipped.
+        run: |
+          expected="${{ steps.resolve.outputs.sha }}"
+          last_commit=""
+          for i in $(seq 1 10); do
+            body=$(curl -s "$HEALTH_URL" || true)
+            last_commit=$(echo "$body" | grep -o '"commit":"[^"]*"' | sed 's/.*:"//;s/"$//')
+            [ "$last_commit" = "$expected" ] && exit 0
+            sleep 6
+          done
+          echo "$HEALTH_URL never reported commit=$expected (last seen: '$last_commit')"
+          exit 1
+
+      - name: Tag deployed commit for review
+        # Lightweight tag recording exactly what shipped to prod, so every deploy
+        # is reviewable by tag. Non-`v*` namespace so it never becomes a
+        # `git describe` base (those are human tier tags only: v0.1.0, v1.0.0).
+        run: |
+          ts=$(date -u +%Y%m%dT%H%M%SZ)
+          tag="deploy/prod/${ts}-$(echo '${{ steps.resolve.outputs.sha }}' | cut -c1-7)"
+          curl -sSf -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/git/refs" \
+            -d "{\"ref\":\"refs/tags/${tag}\",\"sha\":\"${{ steps.resolve.outputs.sha }}\"}"
+          echo "Tagged prod deploy: ${tag}"
