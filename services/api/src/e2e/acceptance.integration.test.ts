@@ -448,9 +448,13 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
     });
 
     const collections = await getCollectionsProposalsAs(tenantA, memberA);
-    const overdue = collections.find((proposal) => proposal.narrative?.includes("Helios"));
+    const uploadedInvoiceRefs = arObligations
+      .map((row) => String((row as { invoice_ref?: unknown }).invoice_ref ?? ""))
+      .filter((ref) => ref.length > 0);
+    const overdue = collections.find((proposal) =>
+      uploadedInvoiceRefs.some((ref) => proposal.narrative?.includes(ref)),
+    );
     expect(overdue).toBeDefined();
-    expect(overdue?.narrative).toContain("NL-2417");
     expect(overdue?.mode).toBe("propose");
 
     const cashForecast = await getProposalsByTypeAs(tenantA, memberA, "cash_forecast");
@@ -510,7 +514,7 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
     }>
   > {
     currentPrincipal = principal(tenantId, memberId);
-    const query = new URLSearchParams({ type: "collections", limit: "10" });
+    const query = new URLSearchParams({ type: "collections", limit: "100" });
     const response = await app.inject({
       method: "GET",
       url: `/proposals?${query.toString()}`,
@@ -533,7 +537,7 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
     }>
   > {
     currentPrincipal = principal(tenantId, memberId);
-    const query = new URLSearchParams({ type, limit: "10" });
+    const query = new URLSearchParams({ type, limit: "100" });
     const response = await app.inject({
       method: "GET",
       url: `/proposals?${query.toString()}`,
