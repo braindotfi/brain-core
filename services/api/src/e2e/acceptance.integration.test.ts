@@ -20,7 +20,7 @@ import {
   ProposalDecisionService,
   registerProposalReadRoutes,
 } from "@brain/execution";
-import { ingestOne } from "@brain/raw";
+import { ingestOne, runInterpretCycle } from "@brain/raw";
 import {
   internalAgentCatalog,
   internalAgentDefinitions,
@@ -46,8 +46,10 @@ import { runCollectionsOverdueScanCycle } from "../agents/collections-overdue-sc
 import { runDocumentExtractionCycle, type DocumentExtractPort } from "../raw-extract/worker.js";
 import { LedgerService } from "../../../ledger/src/service/LedgerService.js";
 import { registerLedgerRoutes } from "../../../ledger/src/routes/index.js";
+import { registerCashFlowRoutes } from "../../../ledger/src/cash_flows/routes.js";
 import { runNormalizeCycle } from "../../../ledger/src/workers/normalizeWorker.js";
 import { runLedgerAparProjectionCycle } from "../../../ledger/src/projection/obligations.js";
+import { runLedgerAccountTransactionProjectionCycle } from "../../../ledger/src/projection/accounts-transactions.js";
 
 const DB_URL = process.env.DATABASE_URL;
 const suite = DB_URL ? describe : describe.skip;
@@ -169,6 +171,7 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
       request.principal = currentPrincipal;
     });
     await registerLedgerRoutes(app, ledger);
+    await registerCashFlowRoutes(app, ledger);
     await registerProposalReadRoutes(app, {
       pool,
       decisions: new ProposalDecisionService({
@@ -333,6 +336,78 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
     expect(await proposalDecisionAuditCount(tenantB, proposal.id)).toBe(0);
   }, 60_000);
 
+  it("projects uploaded bank statements and AR aging files into ledger reads", async () => {
+    const actor = memberA;
+    const bank = await ingestOne(
+      { pool: appPool, blob, audit: appAudit },
+      {
+        tenantId: tenantA,
+        actor,
+        sourceType: "pdf_upload",
+        sourceRef: { filename: "june-bank-statement.pdf", account_id: "uploaded_operating" },
+        body: Buffer.from(syntheticJuneBankStatement()),
+        mimeType: "application/pdf",
+      },
+    );
+    const ar = await ingestOne(
+      { pool: appPool, blob, audit: appAudit },
+      {
+        tenantId: tenantA,
+        actor,
+        sourceType: "csv_upload",
+        sourceRef: { filename: "ar-aging.csv" },
+        body: Buffer.from(
+          [
+            "Customer,Invoice Ref,Amount,Aging Bucket,Due Date",
+            "Northwind Traders,INV-JUN-001,1200.50,31-60,2026-07-15",
+            "Contoso Retail,INV-JUN-002,875.00,Current,2026-07-30",
+          ].join("\n"),
+        ),
+        mimeType: "text/csv",
+      },
+    );
+
+    expect(bank.sourceSchema).toBe("brain.upload.document.v1");
+    expect(ar.sourceSchema).toBe("brain.upload.document.v1");
+
+    await runInterpretCycle({ pool, blob, audit: workerAudit }, { batchSize: 10 });
+    await runNormalizeCycle({ pool, audit: workerAudit }, { batchSize: 20 });
+    await runProjectionCycle({ pool, audit: workerAudit }, { batchSize: 50 });
+    await runLedgerAccountTransactionProjectionCycle({ pool }, { batchSize: 50 });
+    await runLedgerAparProjectionCycle({ pool }, { batchSize: 50 });
+
+    expect(await ledgerTransactionCountForRaw(tenantA, bank.rawId)).toBe(19);
+
+    currentPrincipal = principal(tenantA, memberA);
+    const cashFlows = await app.inject({
+      method: "GET",
+      url: "/ledger/cash_flows?days=90&currency=USD",
+    });
+    expect(cashFlows.statusCode).toBe(200);
+    expect(cashFlows.json().currencies[0]).toMatchObject({
+      currency: "USD",
+      transaction_count: expect.any(Number),
+    });
+    expect(cashFlows.json().currencies[0].transaction_count).toBeGreaterThanOrEqual(19);
+
+    const arObligations = await ledgerObligationsForRaw(tenantA, ar.rawId);
+    expect(arObligations).toHaveLength(2);
+    expect(arObligations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "invoice",
+          direction: "receivable",
+          amount_due: "1200.50000000",
+        }),
+        expect.objectContaining({
+          type: "invoice",
+          direction: "receivable",
+          amount_due: "875.00000000",
+        }),
+      ]),
+    );
+  }, 60_000);
+
   async function getObligationsAs(tenantId: string, memberId: string): Promise<unknown[]> {
     currentPrincipal = principal(tenantId, memberId);
     const response = await app.inject({
@@ -391,6 +466,33 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
         [proposalId],
       );
       return Number(rows[0]?.count ?? "0");
+    });
+  }
+
+  async function ledgerTransactionCountForRaw(tenantId: string, rawId: string): Promise<number> {
+    return withTenantScope(appPool, tenantId, async (client) => {
+      const { rows } = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+           FROM ledger_transactions
+          WHERE owner_id = $1
+            AND source_ids @> ARRAY[$2]::text[]`,
+        [tenantId, rawId],
+      );
+      return Number(rows[0]?.count ?? "0");
+    });
+  }
+
+  async function ledgerObligationsForRaw(tenantId: string, rawId: string): Promise<unknown[]> {
+    return withTenantScope(appPool, tenantId, async (client) => {
+      const { rows } = await client.query(
+        `SELECT type, direction, amount_due, currency, provenance, confidence
+           FROM ledger_obligations
+          WHERE owner_id = $1
+            AND source_ids @> ARRAY[$2]::text[]
+          ORDER BY amount_due DESC`,
+        [tenantId, rawId],
+      );
+      return rows;
     });
   }
 
@@ -467,6 +569,31 @@ function principal(tenantId: string, memberId: string): Principal {
     tokenId: "tok_01ACCEPTANCE000000000000",
     expiresAt: Math.floor(Date.now() / 1000) + 900,
   };
+}
+
+function syntheticJuneBankStatement(): string {
+  return [
+    "June 2026 Statement",
+    "06/01 ACH CREDIT Northwind Traders 2500.00 12500.00",
+    "06/02 POS Office Depot 120.45 12379.55",
+    "06/03 Payroll 1750.00 10629.55",
+    "06/04 Interest Credit 4.12 10633.67",
+    "06/05 Card Stripe Fees 42.00 10591.67",
+    "06/06 Deposit Contoso Retail 875.00 11466.67",
+    "06/07 ACH Debit Cloud Hosting 310.20 11156.47",
+    "06/08 POS Fuel Station 64.11 11092.36",
+    "06/09 ACH CREDIT Fabrikam 1900.00 12992.36",
+    "06/10 Wire Rent 3200.00 9792.36",
+    "06/11 POS Coffee 18.50 9773.86",
+    "06/12 Deposit Tailspin Toys 640.00 10413.86",
+    "06/13 ACH Debit Insurance 455.33 9958.53",
+    "06/14 POS Hardware Store 214.60 9743.93",
+    "06/15 ACH CREDIT Acme Co 1200.50 10944.43",
+    "06/16 Payroll Tax 525.00 10419.43",
+    "06/17 POS Shipping 89.40 10330.03",
+    "06/18 Deposit Adventure Works 720.00 11050.03",
+    "06/19 Bank Fee 15.00 11035.03",
+  ].join("\n");
 }
 
 function emptyWikiService(): IWikiMemoryService {

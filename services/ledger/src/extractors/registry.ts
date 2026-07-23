@@ -98,3 +98,29 @@ registerParser("merge_accounting_v1", async (pool, audit, ctx, input) =>
 registerParser("finch_payroll_v1", async (pool, audit, ctx, input) =>
   normalizeFinchArtifact(pool, audit, ctx, input),
 );
+
+registerParser("bank_statement_upload_v1", async (_pool, _audit, _ctx, input) => {
+  validateDocumentUploadPayload(input.payload, "bank_statement");
+  return [];
+});
+
+registerParser("document_records_upload_v1", async (_pool, _audit, _ctx, input) => {
+  const objectType = validateDocumentUploadPayload(input.payload, "ar_aging", "payroll_register");
+  const rows =
+    objectType === "ar_aging" ? input.payload["receivables"] : input.payload["obligations"];
+  if (!Array.isArray(rows)) {
+    throw new Error(`${input.rawParsedId}: ${objectType} payload rows must be an array`);
+  }
+  return [];
+});
+
+function validateDocumentUploadPayload(
+  payload: Record<string, unknown>,
+  ...allowedObjectTypes: string[]
+): string {
+  const objectType = payload["object_type"];
+  if (typeof objectType !== "string" || !allowedObjectTypes.includes(objectType)) {
+    throw new Error(`document upload parser expected ${allowedObjectTypes.join("|")}`);
+  }
+  return objectType;
+}

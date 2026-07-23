@@ -8,6 +8,7 @@ import {
   newUserId,
 } from "@brain/shared";
 import { ingestOne } from "./ingest.js";
+import { UPLOAD_DOCUMENT_SCHEMA } from "../interpreters/upload.js";
 
 function makeFakePool(
   options: { existing?: boolean; idempotencyHit?: boolean; autoExtract?: boolean } = {},
@@ -232,6 +233,55 @@ describe("ingestOne", () => {
 
     // Audit carries the declared schema (identifier, not payload).
     expect(audit.events[0]!.inputs.source_schema).toBe("acme_neobank.warehouse_tx.v1");
+  });
+
+  it("defaults BrainMVB upload source types to the registered upload schema", async () => {
+    const { pool, client } = makeFakePool();
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await ingestOne(
+      { pool: pool as unknown as Pool, blob, audit },
+      {
+        tenantId: newTenantId(),
+        actor: newUserId(),
+        sourceType: "csv_upload",
+        sourceRef: { filename: "ar-aging.csv" },
+        body: Buffer.from("Customer,Invoice Ref,Amount\nAcme,INV-1,100"),
+        mimeType: "text/csv",
+      },
+    );
+
+    expect(result.sourceSchema).toBe(UPLOAD_DOCUMENT_SCHEMA);
+    expect(client.inserts[0]?.[9]).toBe(UPLOAD_DOCUMENT_SCHEMA);
+    expect(audit.events[0]!.inputs.source_schema).toBe(UPLOAD_DOCUMENT_SCHEMA);
+  });
+
+  it("queues auto-extraction for XLSX uploads when tenant auto-extract is enabled", async () => {
+    const { pool, client } = makeFakePool({ autoExtract: true });
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await ingestOne(
+      {
+        pool: pool as unknown as Pool,
+        blob,
+        audit,
+        extractionJobs: { documentExtractorConfigured: true },
+      },
+      {
+        tenantId: newTenantId(),
+        actor: newUserId(),
+        sourceType: "csv_upload",
+        sourceRef: { filename: "ar-aging.xlsx" },
+        body: Buffer.from("PK fake xlsx body"),
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+    );
+
+    expect(result.sourceSchema).toBe(UPLOAD_DOCUMENT_SCHEMA);
+    expect(result.extractionJob).not.toBeNull();
+    expect(client.jobs).toHaveLength(1);
   });
 
   it("dedups by envelope idempotency_key before inserting", async () => {

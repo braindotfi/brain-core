@@ -11,12 +11,19 @@ import {
 const ctx = { tenantId: "tnt_1", actor: "user_1", requestId: "req_1" };
 
 describe("parser registry", () => {
-  it("registers both built-in parsers", () => {
+  it("registers built-in parsers", () => {
     expect(registeredParsers()).toEqual(
-      expect.arrayContaining(["plaid_tx_v1", "doc_obligation_v1"]),
+      expect.arrayContaining([
+        "plaid_tx_v1",
+        "doc_obligation_v1",
+        "bank_statement_upload_v1",
+        "document_records_upload_v1",
+      ]),
     );
     expect(extractorForParser("plaid_tx_v1")).toBeDefined();
     expect(extractorForParser("doc_obligation_v1")).toBeDefined();
+    expect(extractorForParser("bank_statement_upload_v1")).toBeDefined();
+    expect(extractorForParser("document_records_upload_v1")).toBeDefined();
   });
 
   it("returns undefined for an unregistered parser id", () => {

@@ -5,10 +5,14 @@ import { normalizeName } from "./merge-apar.js";
 export const PLAID_LEDGER_PARSER = "plaid_tx_v1" as const;
 export const STRIPE_LEDGER_PARSER = "stripe_v1" as const;
 export const FINCH_LEDGER_PARSER = "finch_payroll_v1" as const;
+export const BANK_STATEMENT_UPLOAD_PARSER = "bank_statement_upload_v1" as const;
+export const DOCUMENT_RECORDS_UPLOAD_PARSER = "document_records_upload_v1" as const;
 
 export const PLAID_LEDGER_PROJECTOR = "plaid_canonical_ledger_v1" as const;
 export const STRIPE_LEDGER_PROJECTOR = "stripe_canonical_ledger_v1" as const;
 export const FINCH_LEDGER_PROJECTOR = "finch_canonical_ledger_v1" as const;
+export const BANK_STATEMENT_UPLOAD_PROJECTOR = "bank_statement_upload_canonical_v1" as const;
+export const DOCUMENT_RECORDS_UPLOAD_PROJECTOR = "document_records_upload_canonical_v1" as const;
 
 export interface CanonicalAccountUpsert {
   sourceSystem: string;
@@ -120,6 +124,10 @@ function plaidAccountType(type: string | null, subtype: string | null): string {
 
 function commonWithConfidence(common: ProjectionCommon, confidence: number): ProjectionCommon {
   return { ...common, confidence };
+}
+
+function commonWithParserConfidence(common: ProjectionCommon): ProjectionCommon {
+  return { ...common, confidence: common.confidence ?? 0.5 };
 }
 
 export function projectPlaidLedger(
@@ -497,6 +505,233 @@ export function projectFinchLedger(
         },
       });
     }
+  }
+  return out;
+}
+
+export function projectBankStatementUploadLedger(
+  extracted: unknown,
+  common: ProjectionCommon,
+  diag?: ConnectorProjectionDiagnostics,
+): ConnectorLedgerProjection[] {
+  const payload = asRecord(extracted);
+  if (payload === null) throw new Error("bank statement upload payload must be an object");
+  if (str(payload["object_type"]) !== "bank_statement") {
+    throw new Error("bank statement upload payload missing object_type=bank_statement");
+  }
+  const account = asRecord(payload["account"]);
+  const accountId = str(account?.["account_id"]);
+  const transactions = Array.isArray(payload["transactions"]) ? payload["transactions"] : [];
+  if (account === null || accountId === null) {
+    throw new Error("bank statement upload payload missing account.account_id");
+  }
+  const sourceCommon = commonWithParserConfidence(common);
+  const out: ConnectorLedgerProjection[] = [
+    {
+      kind: "account",
+      input: {
+        sourceSystem: "document_upload",
+        sourceNaturalKey: accountId,
+        institution: str(account["institution"]) ?? "Uploaded statement",
+        externalAccountId: accountId,
+        accountType: "bank_checking",
+        name: str(account["name"]) ?? "Uploaded bank statement",
+        currency: currency(account["currency"]),
+        currentBalance: decimal(account["current_balance"]),
+        availableBalance: null,
+        status: "active",
+        extensions: { document_upload: { object_type: "bank_statement", account } },
+        common: sourceCommon,
+      },
+    },
+  ];
+
+  for (const raw of transactions) {
+    const tx = asRecord(raw);
+    const key = str(tx?.["transaction_id"]);
+    const amount = decimal(tx?.["amount"]);
+    const date = str(tx?.["date"]);
+    const direction = str(tx?.["direction"]);
+    if (
+      tx === null ||
+      key === null ||
+      amount === null ||
+      date === null ||
+      (direction !== "inflow" && direction !== "outflow")
+    ) {
+      skipped(diag, "bank_statement_transaction_missing_required_field");
+      continue;
+    }
+    const counterpartyName = str(tx["counterparty_name"]);
+    const counterpartyKey =
+      counterpartyName === null ? null : `upload_counterparty:${normalizeName(counterpartyName)}`;
+    if (counterpartyName !== null && counterpartyKey !== null) {
+      out.push({
+        kind: "counterparty",
+        input: {
+          sourceSystem: "document_upload",
+          sourceNaturalKey: counterpartyKey,
+          name: counterpartyName,
+          normalizedName: normalizeName(counterpartyName) || null,
+          type: "merchant",
+          email: null,
+          extensions: { document_upload: { object_type: "bank_statement" } },
+          common: sourceCommon,
+        },
+      });
+    }
+    out.push({
+      kind: "transaction",
+      input: {
+        sourceSystem: "document_upload",
+        sourceNaturalKey: key,
+        accountSourceKey: accountId,
+        counterpartySourceKey: counterpartyKey,
+        amount,
+        currency: currency(tx["currency"]),
+        direction,
+        transactionDate: date,
+        postedDate: date,
+        status: "posted",
+        descriptionRaw: str(tx["description"]),
+        descriptionNormalized: counterpartyName ?? str(tx["description"]),
+        reconciliationStatus: "unreconciled",
+        extensions: { document_upload: tx },
+        common: sourceCommon,
+      },
+    });
+  }
+
+  return out;
+}
+
+export function projectDocumentRecordsUploadLedger(
+  extracted: unknown,
+  common: ProjectionCommon,
+  diag?: ConnectorProjectionDiagnostics,
+): ConnectorLedgerProjection[] {
+  const payload = asRecord(extracted);
+  if (payload === null) throw new Error("document records upload payload must be an object");
+  const objectType = str(payload["object_type"]);
+  if (objectType === "ar_aging") return projectArAging(payload, common, diag);
+  if (objectType === "payroll_register") return projectPayrollRegister(payload, common, diag);
+  throw new Error("document records upload payload has unsupported object_type");
+}
+
+function projectArAging(
+  payload: Record<string, unknown>,
+  common: ProjectionCommon,
+  diag?: ConnectorProjectionDiagnostics,
+): ConnectorLedgerProjection[] {
+  const receivables = Array.isArray(payload["receivables"]) ? payload["receivables"] : [];
+  const sourceCommon = commonWithParserConfidence(common);
+  const out: ConnectorLedgerProjection[] = [];
+  for (const raw of receivables) {
+    const obj = asRecord(raw);
+    const name = str(obj?.["counterparty_name"]);
+    const invoiceRef = str(obj?.["invoice_ref"]);
+    const amount = decimal(obj?.["amount"]);
+    if (obj === null || name === null || invoiceRef === null || amount === null) {
+      skipped(diag, "ar_aging_receivable_missing_required_field");
+      continue;
+    }
+    const counterpartyKey = `ar_customer:${normalizeName(name) || name}`;
+    out.push({
+      kind: "counterparty",
+      input: {
+        sourceSystem: "document_upload",
+        sourceNaturalKey: counterpartyKey,
+        name,
+        normalizedName: normalizeName(name) || null,
+        type: "customer",
+        email: null,
+        extensions: { document_upload: { object_type: "ar_aging" } },
+        common: sourceCommon,
+      },
+    });
+    out.push({
+      kind: "obligation",
+      input: {
+        sourceSystem: "document_upload",
+        sourceNaturalKey: `ar:${invoiceRef}`,
+        direction: "receivable",
+        type: "invoice",
+        counterpartySourceKey: counterpartyKey,
+        amount,
+        currency: currency(obj["currency"]),
+        issueDate: null,
+        dueDate: str(obj["due_date"]),
+        status: str(obj["status"]) ?? "due",
+        extensions: {
+          document_upload: {
+            object_type: "ar_aging",
+            invoice_ref: invoiceRef,
+            aging_bucket: str(obj["aging_bucket"]),
+          },
+        },
+        common: sourceCommon,
+      },
+    });
+  }
+  return out;
+}
+
+function projectPayrollRegister(
+  payload: Record<string, unknown>,
+  common: ProjectionCommon,
+  diag?: ConnectorProjectionDiagnostics,
+): ConnectorLedgerProjection[] {
+  const obligations = Array.isArray(payload["obligations"]) ? payload["obligations"] : [];
+  const sourceCommon = commonWithParserConfidence(common);
+  const out: ConnectorLedgerProjection[] = [];
+  for (const raw of obligations) {
+    const obj = asRecord(raw);
+    const name = str(obj?.["counterparty_name"]) ?? "Payroll";
+    const runRef = str(obj?.["run_ref"]);
+    const amount = decimal(obj?.["amount"]);
+    if (obj === null || runRef === null || amount === null) {
+      skipped(diag, "payroll_register_obligation_missing_required_field");
+      continue;
+    }
+    const counterpartyKey = `payroll:${normalizeName(name) || "payroll"}`;
+    out.push({
+      kind: "counterparty",
+      input: {
+        sourceSystem: "document_upload",
+        sourceNaturalKey: counterpartyKey,
+        name,
+        normalizedName: normalizeName(name) || null,
+        type: name === "Payroll" ? "other" : "employee",
+        email: null,
+        extensions: { document_upload: { object_type: "payroll_register" } },
+        common: sourceCommon,
+      },
+    });
+    out.push({
+      kind: "obligation",
+      input: {
+        sourceSystem: "document_upload",
+        sourceNaturalKey: `payroll:${runRef}`,
+        direction: "payable",
+        type: "payroll",
+        counterpartySourceKey: counterpartyKey,
+        amount,
+        currency: currency(obj["currency"]),
+        issueDate: null,
+        dueDate: str(obj["due_date"]),
+        status: str(obj["status"]) ?? "upcoming",
+        extensions: {
+          document_upload: {
+            object_type: "payroll_register",
+            run_ref: runRef,
+            net_amount: decimal(obj["net_amount"]),
+            tax_amount: decimal(obj["tax_amount"]),
+            cadence: str(obj["cadence"]),
+          },
+        },
+        common: sourceCommon,
+      },
+    });
   }
   return out;
 }

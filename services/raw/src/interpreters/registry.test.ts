@@ -1,3 +1,4 @@
+import { deflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
   interpreterForSchema,
@@ -5,6 +6,7 @@ import {
   registerInterpreter,
   type InterpreterArtifactContext,
 } from "./registry.js";
+import { UPLOAD_DOCUMENT_SCHEMA } from "./upload.js";
 
 function ctx(over: Partial<InterpreterArtifactContext> = {}): InterpreterArtifactContext {
   return {
@@ -15,8 +17,141 @@ function ctx(over: Partial<InterpreterArtifactContext> = {}): InterpreterArtifac
     sourceRef: { stripe_account_id: "acct_stripe1" },
     sourceId: "src_1",
     objectType: "balance_transaction",
+    mimeType: null,
     ...over,
   };
+}
+
+function makeXlsxRows(rows: string[][], options: { deflate?: boolean } = {}): Buffer {
+  const sheetRows = rows
+    .map((row, rowIndex) => {
+      const cells = row
+        .map((value, colIndex) => {
+          const ref = `${columnName(colIndex)}${rowIndex + 1}`;
+          return `<c r="${ref}" t="inlineStr"><is><t>${escapeXml(value)}</t></is></c>`;
+        })
+        .join("");
+      return `<row r="${rowIndex + 1}">${cells}</row>`;
+    })
+    .join("");
+  return makeXlsxWithSheet(sheetRows, options);
+}
+
+function makeXlsxWithSheet(
+  sheetRows: string,
+  options: { deflate?: boolean; sharedStrings?: string } = {},
+): Buffer {
+  return makeZip(
+    {
+      "[Content_Types].xml": [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+        '<Default Extension="xml" ContentType="application/xml"/>',
+        "</Types>",
+      ].join(""),
+      "xl/workbook.xml": [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+        '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>',
+        "</workbook>",
+      ].join(""),
+      ...(options.sharedStrings !== undefined
+        ? { "xl/sharedStrings.xml": options.sharedStrings }
+        : {}),
+      "xl/worksheets/sheet1.xml": [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+        `<sheetData>${sheetRows}</sheetData>`,
+        "</worksheet>",
+      ].join(""),
+    },
+    options.deflate === undefined ? {} : { deflate: options.deflate },
+  );
+}
+
+function makeZip(
+  files: Record<string, string>,
+  options: { deflate?: boolean; method?: number } = {},
+): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  for (const [name, content] of Object.entries(files)) {
+    const nameBytes = Buffer.from(name, "utf8");
+    const data = Buffer.from(content, "utf8");
+    const method = options.method ?? (options.deflate === true ? 8 : 0);
+    const compressed = method === 8 ? deflateRawSync(data) : data;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(0, 14);
+    local.writeUInt32LE(compressed.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    local.writeUInt16LE(0, 28);
+    localParts.push(local, nameBytes, compressed);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt16LE(0, 12);
+    central.writeUInt16LE(0, 14);
+    central.writeUInt32LE(0, 16);
+    central.writeUInt32LE(compressed.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, nameBytes);
+    offset += local.length + nameBytes.length + compressed.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(Object.keys(files).length, 8);
+  eocd.writeUInt16LE(Object.keys(files).length, 10);
+  eocd.writeUInt32LE(centralDirectory.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  eocd.writeUInt16LE(0, 20);
+  return Buffer.concat([...localParts, centralDirectory, eocd]);
+}
+
+function makeMinimalPdf(lines: string[]): Buffer {
+  const text = lines.map((line) => `(${line.replace(/([\\()])/g, "\\$1")}) Tj`).join("\n");
+  return Buffer.from(`%PDF-1.7\n1 0 obj\n<<>>\nstream\n${text}\nendstream\nendobj\n`, "latin1");
+}
+
+function columnName(index: number): string {
+  let n = index + 1;
+  let out = "";
+  while (n > 0) {
+    const mod = (n - 1) % 26;
+    out = String.fromCharCode(65 + mod) + out;
+    n = Math.floor((n - mod) / 26);
+  }
+  return out;
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 describe("interpreter registry", () => {
@@ -108,6 +243,324 @@ describe("interpreter registry", () => {
         ctx({ sourceSchema: "stripe.charges.v1" }),
       ),
     ).toThrow(/not JSON/);
+  });
+});
+
+describe("upload document interpreters", () => {
+  it("registers the generic upload document schema", () => {
+    expect(registeredSchemas()).toEqual(expect.arrayContaining([UPLOAD_DOCUMENT_SCHEMA]));
+  });
+
+  it("parses a bank statement text upload into document-sourced transactions", () => {
+    const statement = [
+      "June 2026 Statement",
+      "06/01 ACH CREDIT Acme Customer 2,500.00 12,500.00",
+      "06/02 POS Office Depot 120.45 12,379.55",
+      "06/03 Payroll 1,750.00 10,629.55",
+      "06/04 Interest Credit 4.12 10,633.67",
+      "06/05 Card Stripe Fees 42.00 10,591.67",
+    ].join("\n");
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      Buffer.from(statement),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "pdf_upload",
+        sourceRef: { account_id: "acct_upload", institution: "Mercury" },
+        mimeType: "application/pdf",
+      }),
+    );
+    expect(out!.parser).toBe("bank_statement_upload_v1");
+    expect(out!.confidence).toBeGreaterThanOrEqual(0.7);
+    expect(out!.extracted).toMatchObject({
+      object_type: "bank_statement",
+      account: { account_id: "acct_upload", institution: "Mercury" },
+    });
+    const txs = (out!.extracted as { transactions: Array<{ direction: string }> }).transactions;
+    expect(txs).toHaveLength(5);
+    expect(txs.map((tx) => tx.direction)).toEqual([
+      "inflow",
+      "outflow",
+      "outflow",
+      "inflow",
+      "outflow",
+    ]);
+  });
+
+  it("parses transaction text from a simple PDF stream", () => {
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      makeMinimalPdf([
+        "June 2026 Statement",
+        "06/20 ACH CREDIT Split Customer 10.00 20.00 999.00",
+        "06/21 Fee Adjustment 7.00 8.00 991.00",
+        "Jun 22 Deposit Named Month 15.00",
+      ]),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "pdf_upload",
+        sourceRef: { currency: "eur", bank_name: "Demo Bank" },
+        mimeType: "application/pdf",
+      }),
+    );
+
+    expect(out!.confidence).toBe(0.62);
+    expect(out!.extracted).toMatchObject({
+      account: { institution: "Demo Bank", currency: "EUR" },
+    });
+    const txs = (
+      out!.extracted as {
+        transactions: Array<{ amount: string; date: string; direction: string }>;
+      }
+    ).transactions;
+    expect(txs).toEqual([
+      expect.objectContaining({ amount: "20", date: "2026-06-20", direction: "inflow" }),
+      expect.objectContaining({ amount: "7", date: "2026-06-21", direction: "outflow" }),
+      expect.objectContaining({ amount: "15", date: "2026-06-22", direction: "inflow" }),
+    ]);
+  });
+
+  it("throws on unsupported upload source types and empty bank statements", () => {
+    expect(() =>
+      interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+        Buffer.from("x"),
+        ctx({ sourceSchema: UPLOAD_DOCUMENT_SCHEMA, sourceType: "other" }),
+      ),
+    ).toThrow(/does not support other/);
+    expect(() =>
+      interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+        Buffer.from("June 2026 Statement"),
+        ctx({ sourceSchema: UPLOAD_DOCUMENT_SCHEMA, sourceType: "pdf_upload" }),
+      ),
+    ).toThrow(/contained no transaction rows/);
+  });
+
+  it("parses AR aging CSV rows into receivables", () => {
+    const csv = [
+      "Customer,Invoice Ref,Amount,Aging Bucket,Due Date",
+      "Acme Co,INV-100,1200.50,31-60,2026-07-15",
+      "Beta LLC,INV-101,99.00,Current,2026-07-30",
+    ].join("\n");
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      Buffer.from(csv),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "text/csv",
+      }),
+    );
+    expect(out!.parser).toBe("document_records_upload_v1");
+    expect(out!.extracted).toMatchObject({ object_type: "ar_aging" });
+    expect((out!.extracted as { receivables: unknown[] }).receivables).toHaveLength(2);
+  });
+
+  it("parses quoted and bucket-style AR aging rows with low confidence", () => {
+    const csv = [
+      "Customer,Invoice Ref,Current,31-60,Currency,Status",
+      '"Acme ""Quoted"" Co",INV-Q,0,321.10,eur,open',
+      ",INV-SKIP,10,0,usd,open",
+      ",INV-SKIP-2,0,10,usd,open",
+    ].join("\n");
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      Buffer.from(csv),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "text/csv",
+      }),
+    );
+
+    expect(out!.confidence).toBe(0.48);
+    expect(out!.extracted).toMatchObject({
+      object_type: "ar_aging",
+      receivables: [
+        {
+          counterparty_name: 'Acme "Quoted" Co',
+          invoice_ref: "INV-Q",
+          amount: "321.10",
+          currency: "EUR",
+          aging_bucket: "31-60",
+          status: "open",
+        },
+      ],
+    });
+  });
+
+  it("throws when spreadsheet headers match AR aging but no receivable rows parse", () => {
+    expect(() =>
+      interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+        Buffer.from("Customer,Invoice Ref,Amount\n,INV-EMPTY,"),
+        ctx({
+          sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+          sourceType: "csv_upload",
+          mimeType: "text/csv",
+        }),
+      ),
+    ).toThrow(/contained no receivable rows/);
+  });
+
+  it("parses payroll register CSV rows into payroll obligations", () => {
+    const csv = [
+      "Pay Run,Net Pay,Tax Amount,Pay Date,Cadence",
+      "RUN-2026-06-15,9000,2100,2026-06-15,biweekly",
+    ].join("\n");
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      Buffer.from(csv),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "text/csv",
+      }),
+    );
+    expect(out!.parser).toBe("document_records_upload_v1");
+    expect(out!.extracted).toMatchObject({ object_type: "payroll_register" });
+    expect(out!.extracted).toMatchObject({
+      obligations: [{ run_ref: "RUN-2026-06-15", amount: "11100" }],
+    });
+  });
+
+  it("parses payroll gross fallback and reports unparseable payroll rows", () => {
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      Buffer.from("Payroll Run,Gross Pay,Pay Date\nRUN-GROSS,1234.56,2026-06-30"),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "text/csv",
+      }),
+    );
+    expect(out!.extracted).toMatchObject({
+      object_type: "payroll_register",
+      obligations: [
+        {
+          run_ref: "RUN-GROSS",
+          amount: "1234.56",
+          net_amount: null,
+          tax_amount: null,
+          due_date: "2026-06-30",
+          cadence: "unknown",
+        },
+      ],
+    });
+
+    expect(() =>
+      interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+        Buffer.from("Pay Run,Net Pay\nRUN-NO-AMOUNT,"),
+        ctx({
+          sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+          sourceType: "csv_upload",
+          mimeType: "text/csv",
+        }),
+      ),
+    ).toThrow(/payroll register upload contained no payroll rows/);
+  });
+
+  it("throws on spreadsheets with parseable rows but unknown headers", () => {
+    expect(() =>
+      interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+        Buffer.from("Name,Value\nA,1"),
+        ctx({
+          sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+          sourceType: "csv_upload",
+          mimeType: "text/csv",
+        }),
+      ),
+    ).toThrow(/did not match AR aging or payroll register headers/);
+  });
+
+  it("throws on empty upload spreadsheets so interpretation failures are logged", () => {
+    expect(() =>
+      interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+        Buffer.from("Customer,Invoice Ref,Amount\n"),
+        ctx({
+          sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+          sourceType: "csv_upload",
+          mimeType: "text/csv",
+        }),
+      ),
+    ).toThrow(/no parseable data rows/);
+  });
+
+  it("parses XLSX upload bytes with the csv_upload source type", () => {
+    const bytes = makeXlsxRows([
+      ["Customer", "Invoice Ref", "Amount", "Aging Bucket"],
+      ["Acme & Co", "INV-XLSX-1", "250.25", "Current"],
+    ]);
+
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      bytes,
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    );
+
+    expect(out!.parser).toBe("document_records_upload_v1");
+    expect(out!.extracted).toMatchObject({
+      object_type: "ar_aging",
+      receivables: [{ invoice_ref: "INV-XLSX-1", amount: "250.25" }],
+    });
+  });
+
+  it("parses deflated XLSX shared strings, raw values, and booleans", () => {
+    const sharedStrings = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+      "<si><t>Customer</t></si>",
+      "<si><t>Invoice Ref</t></si>",
+      "<si><t>Amount</t></si>",
+      "<si><t>Status</t></si>",
+      "<si><t>Shared Customer</t></si>",
+      "<si><t>INV-SHARED</t></si>",
+      "</sst>",
+    ].join("");
+    const sheetRows = [
+      '<row r="1">',
+      '<c r="A1" t="s"><v>0</v></c>',
+      '<c r="B1" t="s"><v>1</v></c>',
+      '<c r="C1" t="s"><v>2</v></c>',
+      '<c r="D1" t="s"><v>3</v></c>',
+      "</row>",
+      '<row r="2">',
+      '<c r="A2" t="s"><v>4</v></c>',
+      '<c r="B2" t="s"><v>5</v></c>',
+      '<c r="C2"><v>77.70</v></c>',
+      '<c r="D2" t="b"><v>1</v></c>',
+      "</row>",
+    ].join("");
+
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      makeXlsxWithSheet(sheetRows, { deflate: true, sharedStrings }),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "application/vnd.ms-excel",
+      }),
+    );
+
+    expect(out!.extracted).toMatchObject({
+      object_type: "ar_aging",
+      receivables: [
+        {
+          counterparty_name: "Shared Customer",
+          invoice_ref: "INV-SHARED",
+          amount: "77.70",
+          status: "TRUE",
+        },
+      ],
+    });
+  });
+
+  it("throws on XLSX files without a readable worksheet", () => {
+    const bytes = makeZip({ "xl/not-a-sheet.xml": "<xml />" });
+    expect(() =>
+      interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+        bytes,
+        ctx({
+          sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+          sourceType: "csv_upload",
+          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+      ),
+    ).toThrow(/no parseable data rows/);
   });
 });
 

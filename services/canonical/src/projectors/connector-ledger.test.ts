@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { projectFinchLedger, projectPlaidLedger, projectStripeLedger } from "./connector-ledger.js";
+import {
+  projectBankStatementUploadLedger,
+  projectDocumentRecordsUploadLedger,
+  projectFinchLedger,
+  projectPlaidLedger,
+  projectStripeLedger,
+} from "./connector-ledger.js";
 import type { ProjectionCommon } from "./merge-accounting.js";
 
 const common: ProjectionCommon = {
@@ -314,5 +320,123 @@ describe("connector ledger canonical projectors", () => {
       },
     });
     expect(ignored).toEqual([]);
+  });
+
+  it("projects bank statement uploads while preserving parser confidence", () => {
+    const lowConfidence: ProjectionCommon = { ...common, confidence: 0.42 };
+    const out = projectBankStatementUploadLedger(
+      {
+        object_type: "bank_statement",
+        account: {
+          account_id: "upload:raw_1:account",
+          institution: "Mercury",
+          name: "Operating",
+          currency: "USD",
+          current_balance: "1000",
+        },
+        transactions: [
+          {
+            transaction_id: "raw_1:bank:0001",
+            date: "2026-06-01",
+            description: "ACH CREDIT Acme Customer",
+            amount: "2500",
+            direction: "inflow",
+            currency: "USD",
+            counterparty_name: "Acme Customer",
+          },
+        ],
+      },
+      lowConfidence,
+    );
+
+    expect(out.map((p) => p.kind)).toEqual(["account", "counterparty", "transaction"]);
+    expect(out[0]).toMatchObject({
+      kind: "account",
+      input: {
+        sourceSystem: "document_upload",
+        sourceNaturalKey: "upload:raw_1:account",
+        common: { confidence: 0.42 },
+      },
+    });
+    expect(out[2]).toMatchObject({
+      kind: "transaction",
+      input: {
+        sourceNaturalKey: "raw_1:bank:0001",
+        direction: "inflow",
+        amount: "2500",
+        common: { confidence: 0.42 },
+      },
+    });
+  });
+
+  it("projects AR aging upload rows into receivable obligations", () => {
+    const out = projectDocumentRecordsUploadLedger(
+      {
+        object_type: "ar_aging",
+        receivables: [
+          {
+            counterparty_name: "Acme Co",
+            invoice_ref: "INV-100",
+            amount: "1200.50",
+            currency: "USD",
+            aging_bucket: "31-60",
+            due_date: "2026-07-15",
+          },
+        ],
+      },
+      { ...common, confidence: 0.88 },
+    );
+
+    expect(out.map((p) => p.kind)).toEqual(["counterparty", "obligation"]);
+    expect(out[1]).toMatchObject({
+      kind: "obligation",
+      input: {
+        sourceSystem: "document_upload",
+        sourceNaturalKey: "ar:INV-100",
+        direction: "receivable",
+        type: "invoice",
+        amount: "1200.50",
+        common: { confidence: 0.88 },
+      },
+    });
+  });
+
+  it("projects payroll register upload rows into payroll obligations", () => {
+    const out = projectDocumentRecordsUploadLedger(
+      {
+        object_type: "payroll_register",
+        obligations: [
+          {
+            counterparty_name: "Payroll",
+            run_ref: "RUN-2026-06-15",
+            amount: "11100",
+            net_amount: "9000",
+            tax_amount: "2100",
+            currency: "USD",
+            due_date: "2026-06-15",
+            cadence: "biweekly",
+          },
+        ],
+      },
+      { ...common, confidence: 0.81 },
+    );
+
+    expect(out.map((p) => p.kind)).toEqual(["counterparty", "obligation"]);
+    expect(out[1]).toMatchObject({
+      kind: "obligation",
+      input: {
+        sourceNaturalKey: "payroll:RUN-2026-06-15",
+        direction: "payable",
+        type: "payroll",
+        amount: "11100",
+        extensions: {
+          document_upload: {
+            net_amount: "9000",
+            tax_amount: "2100",
+            cadence: "biweekly",
+          },
+        },
+      },
+    });
   });
 });

@@ -46,12 +46,18 @@ import { projectMergeContact, projectMergeInvoice } from "./merge-apar.js";
 import { projectDocObligation } from "./doc-obligation.js";
 import { upsertCanonicalCounterparty, upsertCanonicalObligation } from "../repository/apar.js";
 import {
+  BANK_STATEMENT_UPLOAD_PARSER,
+  BANK_STATEMENT_UPLOAD_PROJECTOR,
+  DOCUMENT_RECORDS_UPLOAD_PARSER,
+  DOCUMENT_RECORDS_UPLOAD_PROJECTOR,
   FINCH_LEDGER_PARSER,
   FINCH_LEDGER_PROJECTOR,
   PLAID_LEDGER_PARSER,
   PLAID_LEDGER_PROJECTOR,
   STRIPE_LEDGER_PARSER,
   STRIPE_LEDGER_PROJECTOR,
+  projectBankStatementUploadLedger,
+  projectDocumentRecordsUploadLedger,
   projectFinchLedger,
   projectPlaidLedger,
   projectStripeLedger,
@@ -87,6 +93,18 @@ const CONNECTOR_LEDGER_PASSES = [
     projector: FINCH_LEDGER_PROJECTOR,
     objectType: "finch",
     project: projectFinchLedger,
+  },
+  {
+    parser: BANK_STATEMENT_UPLOAD_PARSER,
+    projector: BANK_STATEMENT_UPLOAD_PROJECTOR,
+    objectType: "bank_statement_upload",
+    project: projectBankStatementUploadLedger,
+  },
+  {
+    parser: DOCUMENT_RECORDS_UPLOAD_PARSER,
+    projector: DOCUMENT_RECORDS_UPLOAD_PROJECTOR,
+    objectType: "document_records_upload",
+    project: projectDocumentRecordsUploadLedger,
   },
 ] as const;
 
