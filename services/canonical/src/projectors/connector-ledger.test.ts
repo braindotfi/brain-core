@@ -409,7 +409,7 @@ describe("connector ledger canonical projectors", () => {
           {
             counterparty_name: "Payroll",
             run_ref: "RUN-2026-06-15",
-            amount: "11100",
+            amount: "9000",
             net_amount: "9000",
             tax_amount: "2100",
             currency: "USD",
@@ -428,7 +428,7 @@ describe("connector ledger canonical projectors", () => {
         sourceNaturalKey: "payroll:RUN-2026-06-15",
         direction: "payable",
         type: "payroll",
-        amount: "11100",
+        amount: "9000",
         extensions: {
           document_upload: {
             net_amount: "9000",

@@ -7,6 +7,37 @@ export const BANK_STATEMENT_UPLOAD_PARSER = "bank_statement_upload_v1";
 export const DOCUMENT_RECORDS_UPLOAD_PARSER = "document_records_upload_v1";
 const INTERPRETER_VERSION = "1.0.0";
 const DEFAULT_CURRENCY = "USD";
+const HEADER_SCAN_LIMIT = 10;
+const AR_HEADER_KEYWORDS = [
+  "ar",
+  "accounts receivable",
+  "receivable",
+  "invoice",
+  "inv",
+  "aging",
+  "customer",
+  "client",
+  "bucket",
+  "open amount",
+] as const;
+const PAYROLL_HEADER_KEYWORDS = [
+  "payroll",
+  "pay run",
+  "run id",
+  "employee",
+  "employee id",
+  "employee name",
+  "gross pay",
+  "net pay",
+  "net amount",
+  "tax",
+  "federal withholding",
+  "state withholding",
+  "withholding",
+  "fica",
+  "pay date",
+  "cadence",
+] as const;
 
 export function defaultSourceSchemaForUpload(sourceType: string): string | null {
   if (sourceType === "pdf_upload" || sourceType === "csv_upload") return UPLOAD_DOCUMENT_SCHEMA;
@@ -54,6 +85,9 @@ interface SpreadsheetRecord {
 
 interface ParsedSpreadsheet {
   headers: string[];
+  rawHeaders: string[];
+  rows: string[][];
+  headerIndex: number;
   records: SpreadsheetRecord[];
 }
 
@@ -119,49 +153,137 @@ function extractPdfText(bytes: Buffer): string {
   const streamRe = /<<([\s\S]*?)>>\s*stream\r?\n?([\s\S]*?)\r?\n?endstream/g;
   for (const match of raw.matchAll(streamRe)) {
     const dict = match[1] ?? "";
-    const streamBody = Buffer.from(match[2] ?? "", "latin1");
-    let body: Buffer;
+    const streamBody = Buffer.from(trimPdfStreamBody(match[2] ?? ""), "latin1");
+    let body: Buffer = streamBody;
     try {
-      body = /\/FlateDecode\b/.test(dict) ? inflateSync(streamBody) : streamBody;
+      body = decodePdfStream(streamBody, pdfFilters(dict));
     } catch {
       body = streamBody;
     }
     const content = body.toString("latin1");
-    chunks.push(...extractPdfStringLiterals(content));
+    chunks.push(...extractPdfTextOperations(content));
   }
   return chunks.length > 0 ? chunks.join("\n") : raw;
 }
 
-function extractPdfStringLiterals(content: string): string[] {
+function trimPdfStreamBody(body: string): string {
+  return body.replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+}
+
+function pdfFilters(dict: string): string[] {
+  const match = dict.match(/\/Filter\s*(\[[\s\S]*?\]|\/[A-Za-z0-9]+)/);
+  if (match === null) return [];
+  const value = match[1] ?? "";
+  return [...value.matchAll(/\/([A-Za-z0-9]+)/g)].map((m) => m[1] ?? "");
+}
+
+function decodePdfStream(streamBody: Buffer, filters: string[]): Buffer {
+  let body = streamBody;
+  for (const filter of filters) {
+    if (filter === "ASCII85Decode" || filter === "A85") {
+      body = ascii85Decode(body.toString("latin1"));
+    } else if (filter === "FlateDecode" || filter === "Fl") {
+      body = inflateSync(body);
+    }
+  }
+  return body;
+}
+
+function ascii85Decode(input: string): Buffer {
+  let encoded = input.trim();
+  if (encoded.startsWith("<~")) encoded = encoded.slice(2);
+  const end = encoded.indexOf("~>");
+  if (end !== -1) encoded = encoded.slice(0, end);
+
+  const bytes: number[] = [];
+  let group = "";
+  for (const ch of encoded) {
+    if (/\s/.test(ch)) continue;
+    if (ch === "z" && group.length === 0) {
+      bytes.push(0, 0, 0, 0);
+      continue;
+    }
+    if (ch < "!" || ch > "u") continue;
+    group += ch;
+    if (group.length === 5) {
+      bytes.push(...ascii85Group(group, 4));
+      group = "";
+    }
+  }
+  if (group.length > 0) {
+    const emitted = group.length - 1;
+    bytes.push(...ascii85Group(group.padEnd(5, "u"), emitted));
+  }
+  return Buffer.from(bytes);
+}
+
+function ascii85Group(group: string, emitted: number): number[] {
+  let value = 0;
+  for (const ch of group) value = value * 85 + ch.charCodeAt(0) - 33;
+  return [value >>> 24, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff].slice(
+    0,
+    emitted,
+  );
+}
+
+function extractPdfTextOperations(content: string): string[] {
   const out: string[] = [];
-  let current = "";
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < content.length; i += 1) {
-    const ch = content[i]!;
-    if (!inString) {
-      if (ch === "(") {
-        inString = true;
-        current = "";
+  const tjArrayRe =
+    /\[((?:\s*(?:\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>|-?\d+(?:\.\d+)?)\s*)+)\]\s*TJ\b/g;
+  for (const match of content.matchAll(tjArrayRe)) {
+    const pieces = extractPdfStringTokens(match[1] ?? "");
+    if (pieces.length > 0) out.push(pieces.join("").trim());
+  }
+
+  const tjRe = /(\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>)\s*Tj\b/g;
+  for (const match of content.matchAll(tjRe)) {
+    const s = decodePdfStringToken(match[1] ?? "").trim();
+    if (s.length > 0) out.push(s);
+  }
+  return out.filter((s) => s.length > 0);
+}
+
+function extractPdfStringTokens(content: string): string[] {
+  const out: string[] = [];
+  const tokenRe = /\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>/g;
+  for (const match of content.matchAll(tokenRe)) {
+    const decoded = decodePdfStringToken(match[0]).trim();
+    if (decoded.length > 0) out.push(decoded);
+  }
+  return out;
+}
+
+function decodePdfStringToken(token: string): string {
+  if (token.startsWith("(") && token.endsWith(")")) {
+    return decodePdfLiteralString(token.slice(1, -1));
+  }
+  if (token.startsWith("<") && token.endsWith(">")) return decodePdfHexString(token.slice(1, -1));
+  return token;
+}
+
+function decodePdfLiteralString(value: string): string {
+  let out = "";
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i]!;
+    if (ch !== "\\") {
+      out += ch;
+      continue;
+    }
+    const next = value[i + 1];
+    if (next === undefined) continue;
+    if (/[0-7]/.test(next)) {
+      let octal = next;
+      let j = i + 2;
+      while (j < value.length && octal.length < 3 && /[0-7]/.test(value[j]!)) {
+        octal += value[j]!;
+        j += 1;
       }
+      out += String.fromCharCode(Number.parseInt(octal, 8));
+      i = j - 1;
       continue;
     }
-    if (escaped) {
-      current += decodePdfEscape(ch);
-      escaped = false;
-      continue;
-    }
-    if (ch === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (ch === ")") {
-      const s = current.trim();
-      if (s.length > 0) out.push(s);
-      inString = false;
-      continue;
-    }
-    current += ch;
+    out += decodePdfEscape(next);
+    i += 1;
   }
   return out;
 }
@@ -172,7 +294,15 @@ function decodePdfEscape(ch: string): string {
   if (ch === "t") return "\t";
   if (ch === "b") return "\b";
   if (ch === "f") return "\f";
+  if (ch === "\n" || ch === "\r") return "";
   return ch;
+}
+
+function decodePdfHexString(value: string): string {
+  const cleaned = value.replace(/\s+/g, "");
+  if (!/^[0-9A-Fa-f]*$/.test(cleaned)) return "";
+  const even = cleaned.length % 2 === 0 ? cleaned : `${cleaned}0`;
+  return Buffer.from(even, "hex").toString("latin1");
 }
 
 function parseBankStatementText(text: string, ctx: UploadContext): BankStatementOutput {
@@ -306,14 +436,44 @@ function parseSpreadsheet(bytes: Buffer, ctx: UploadContext): ParsedSpreadsheet 
   const rows = isXlsx(bytes, ctx)
     ? rowsFromXlsx(bytes)
     : parseCsv(bytes.toString("utf8")).map((row) => row.map((cell) => cell.trim()));
-  const headerIndex = rows.findIndex((row) => row.some((cell) => cell.trim().length > 0));
-  if (headerIndex === -1) return { headers: [], records: [] };
-  const headers = rows[headerIndex]!.map((h) => normalizeHeader(h));
+  const headerIndex = detectHeaderRow(rows);
+  if (headerIndex === -1) {
+    return { headers: [], rawHeaders: [], rows, headerIndex, records: [] };
+  }
+  const rawHeaders = rows[headerIndex]!.map((h) => h.trim());
+  const headers = rawHeaders.map((h) => normalizeHeader(h));
   const records = rows
     .slice(headerIndex + 1)
     .map((row) => recordFromRow(headers, row))
     .filter((record) => Object.values(record).some((v) => v.length > 0));
-  return { headers, records };
+  return { headers, rawHeaders, rows, headerIndex, records };
+}
+
+function detectHeaderRow(rows: string[][]): number {
+  let fallback = -1;
+  let best = { index: -1, score: -1 };
+  for (let index = 0; index < Math.min(rows.length, HEADER_SCAN_LIMIT); index += 1) {
+    const row = rows[index] ?? [];
+    if (!row.some((cell) => cell.trim().length > 0)) continue;
+    if (fallback === -1) fallback = index;
+    const score = headerRowScore(row);
+    if (score > best.score) best = { index, score };
+  }
+  return best.index === -1 ? fallback : best.index;
+}
+
+function headerRowScore(row: string[]): number {
+  const normalized = row.map((cell) => normalizeHeader(cell)).filter((cell) => cell.length > 0);
+  const distinct = new Set(normalized).size;
+  const keywords = Math.max(
+    keywordMatchCount(headerSearchText(row), AR_HEADER_KEYWORDS),
+    keywordMatchCount(headerSearchText(row), PAYROLL_HEADER_KEYWORDS),
+  );
+  return keywords * 10 + distinct;
+}
+
+function keywordMatchCount(text: string, keywords: readonly string[]): number {
+  return keywords.filter((keyword) => text.includes(` ${keyword} `)).length;
 }
 
 function isXlsx(bytes: Buffer, ctx: UploadContext): boolean {
@@ -504,15 +664,13 @@ function recordFromRow(headers: string[], row: string[]): SpreadsheetRecord {
 }
 
 function looksLikeArAging(sheet: ParsedSpreadsheet): boolean {
-  const joined = sheet.headers.join(" ");
-  return (
-    /\b(invoice|inv|receivable|ar|aging|customer|client)\b/.test(joined) && !looksLikePayroll(sheet)
-  );
+  const joined = headerSearchText(sheet.rawHeaders.length > 0 ? sheet.rawHeaders : sheet.headers);
+  return keywordMatchCount(joined, AR_HEADER_KEYWORDS) > 0 && !looksLikePayroll(sheet);
 }
 
 function looksLikePayroll(sheet: ParsedSpreadsheet): boolean {
-  const joined = sheet.headers.join(" ");
-  return /\b(payroll|net_pay|net|tax|withholding|pay_date|cadence|pay_run)\b/.test(joined);
+  const joined = headerSearchText(sheet.rawHeaders.length > 0 ? sheet.rawHeaders : sheet.headers);
+  return keywordMatchCount(joined, PAYROLL_HEADER_KEYWORDS) > 0;
 }
 
 function arAgingOutput(sheet: ParsedSpreadsheet, ctx: UploadContext): InterpretedOutput {
@@ -553,29 +711,18 @@ function arAgingOutput(sheet: ParsedSpreadsheet, ctx: UploadContext): Interprete
 }
 
 function payrollOutput(sheet: ParsedSpreadsheet, ctx: UploadContext): InterpretedOutput {
-  const obligations = [];
-  for (const [index, record] of sheet.records.entries()) {
-    const netAmount = moneyToDecimal(firstField(record, ["net_pay", "net", "net_amount"]));
-    const taxAmount = moneyToDecimal(
-      firstField(record, ["tax", "taxes", "tax_amount", "withholding", "employer_tax"]),
-    );
-    const grossAmount = moneyToDecimal(firstField(record, ["gross", "gross_pay", "total"]));
-    const amount = addDecimals(netAmount, taxAmount) ?? grossAmount;
-    if (amount === null) continue;
-    obligations.push({
-      counterparty_name: firstField(record, ["counterparty", "payee", "processor"]) ?? "Payroll",
-      run_ref:
-        firstField(record, ["run_ref", "pay_run", "payroll_run", "payroll_id"]) ??
-        `${ctx.rawArtifactId}:payroll:${index + 1}`,
-      amount,
-      net_amount: netAmount,
-      tax_amount: taxAmount,
-      currency: currencyField(record),
-      due_date: firstField(record, ["pay_date", "payment_date", "run_date", "due_date"]),
-      cadence: firstField(record, ["cadence", "frequency", "run_cadence"]) ?? "unknown",
-      status: firstField(record, ["status"]) ?? "upcoming",
-    });
-  }
+  const aggregates = payrollAggregates(sheet, ctx);
+  const obligations = [...aggregates.values()].map((aggregate) => ({
+    counterparty_name: "Payroll",
+    run_ref: aggregate.runRef,
+    amount: decimalString(aggregate.netTotal !== 0 ? aggregate.netTotal : aggregate.grossTotal),
+    net_amount: aggregate.netTotal === 0 ? null : decimalString(aggregate.netTotal),
+    tax_amount: aggregate.taxTotal === 0 ? null : decimalString(aggregate.taxTotal),
+    currency: aggregate.currency,
+    due_date: aggregate.payDate,
+    cadence: aggregate.cadence,
+    status: aggregate.status,
+  }));
   if (obligations.length === 0) {
     throw brainError("raw_source_unsupported", "payroll register upload contained no payroll rows");
   }
@@ -583,8 +730,160 @@ function payrollOutput(sheet: ParsedSpreadsheet, ctx: UploadContext): Interprete
     parser: DOCUMENT_RECORDS_UPLOAD_PARSER,
     parserVersion: INTERPRETER_VERSION,
     extracted: { object_type: "payroll_register", obligations },
-    confidence: spreadsheetConfidence(obligations.length, sheet.records.length),
+    confidence: spreadsheetConfidence(payrollParsedRowCount(aggregates), sheet.records.length),
   };
+}
+
+interface PayrollContext {
+  runRef: string | null;
+  payDate: string | null;
+  cadence: string | null;
+}
+
+interface PayrollAggregate {
+  runRef: string;
+  payDate: string | null;
+  cadence: string;
+  status: string;
+  currency: string;
+  netTotal: number;
+  taxTotal: number;
+  grossTotal: number;
+  rowCount: number;
+}
+
+function payrollAggregates(
+  sheet: ParsedSpreadsheet,
+  ctx: UploadContext,
+): Map<string, PayrollAggregate> {
+  const out = new Map<string, PayrollAggregate>();
+  let currentContext: PayrollContext = { runRef: null, payDate: null, cadence: null };
+  let currentHeaders: string[] | null = null;
+
+  for (let index = 0; index < sheet.rows.length; index += 1) {
+    const row = sheet.rows[index] ?? [];
+    if (!row.some((cell) => cell.trim().length > 0)) continue;
+    currentContext = mergePayrollContext(currentContext, payrollContextFromRow(row));
+    if (looksLikePayrollHeaderRow(row)) {
+      currentHeaders = row.map((cell) => normalizeHeader(cell));
+      continue;
+    }
+    if (currentHeaders === null) continue;
+    if (looksLikePreambleRow(row)) continue;
+
+    const record = recordFromRow(currentHeaders, row);
+    const netAmount = moneyToNumber(firstField(record, ["net_pay", "net", "net_amount"]));
+    const taxAmount = sumMoneyFields(record, [
+      "tax",
+      "taxes",
+      "tax_amount",
+      "withholding",
+      "federal_withholding",
+      "state_withholding",
+      "fica",
+      "fica_tax",
+      "fica_social_security",
+      "fica_medicare",
+      "medicare",
+      "social_security",
+      "employer_tax",
+    ]);
+    const grossAmount = moneyToNumber(firstField(record, ["gross", "gross_pay", "total"]));
+    const amount = netAmount ?? grossAmount;
+    if (amount === null) continue;
+
+    const runRef =
+      firstField(record, ["run_ref", "pay_run", "payroll_run", "payroll_id", "run_id"]) ??
+      currentContext.runRef ??
+      `${ctx.rawArtifactId}:payroll:${out.size + 1}`;
+    const payDate =
+      firstField(record, ["pay_date", "payment_date", "run_date", "due_date"]) ??
+      currentContext.payDate;
+    const cadence =
+      firstField(record, ["cadence", "frequency", "run_cadence"]) ??
+      currentContext.cadence ??
+      "unknown";
+    const status = firstField(record, ["status"]) ?? "upcoming";
+    const currency = currencyField(record);
+    const key = `${runRef}|${payDate ?? ""}`;
+    const aggregate =
+      out.get(key) ??
+      ({
+        runRef,
+        payDate,
+        cadence,
+        status,
+        currency,
+        netTotal: 0,
+        taxTotal: 0,
+        grossTotal: 0,
+        rowCount: 0,
+      } satisfies PayrollAggregate);
+    aggregate.netTotal += netAmount ?? 0;
+    aggregate.taxTotal += taxAmount;
+    aggregate.grossTotal += grossAmount ?? 0;
+    aggregate.rowCount += 1;
+    out.set(key, aggregate);
+  }
+  return out;
+}
+
+function looksLikePayrollHeaderRow(row: string[]): boolean {
+  return keywordMatchCount(headerSearchText(row), PAYROLL_HEADER_KEYWORDS) > 0;
+}
+
+function looksLikePreambleRow(row: string[]): boolean {
+  const nonEmpty = row.filter((cell) => cell.trim().length > 0).length;
+  if (nonEmpty === 0) return true;
+  return nonEmpty <= 4 && payrollContextFromRow(row).runRef !== null;
+}
+
+function payrollContextFromRow(row: string[]): PayrollContext {
+  const context: PayrollContext = { runRef: null, payDate: null, cadence: null };
+  for (let index = 0; index < row.length; index += 1) {
+    const raw = row[index]?.trim() ?? "";
+    if (raw.length === 0) continue;
+    const normalized = normalizeHeader(raw);
+    const next = row[index + 1]?.trim() ?? "";
+    const labelValue = raw.match(/^\s*([^:]+):\s*(.+?)\s*$/);
+    const label = normalizeHeader(labelValue?.[1] ?? raw);
+    const value = labelValue?.[2]?.trim() ?? next;
+    if (/^(pay_run|pay_run_id|payroll_run|payroll_id|run_id)$/.test(normalized) && next) {
+      context.runRef = next;
+    } else if (/^(pay_run|pay_run_id|payroll_run|payroll_id|run_id)$/.test(label) && value) {
+      context.runRef = value;
+    } else if (/^(pay_date|payment_date|run_date)$/.test(normalized) && next) {
+      context.payDate = next;
+    } else if (/^(pay_date|payment_date|run_date)$/.test(label) && value) {
+      context.payDate = value;
+    } else if (/^(cadence|frequency|run_cadence)$/.test(normalized) && next) {
+      context.cadence = next;
+    } else if (/^(cadence|frequency|run_cadence)$/.test(label) && value) {
+      context.cadence = value;
+    }
+  }
+  return context;
+}
+
+function mergePayrollContext(base: PayrollContext, next: PayrollContext): PayrollContext {
+  return {
+    runRef: next.runRef ?? base.runRef,
+    payDate: next.payDate ?? base.payDate,
+    cadence: next.cadence ?? base.cadence,
+  };
+}
+
+function sumMoneyFields(record: SpreadsheetRecord, names: string[]): number {
+  let total = 0;
+  for (const name of names) {
+    const value = moneyToNumber(record[normalizeHeader(name)]);
+    if (value !== null) total += value;
+  }
+  return total;
+}
+
+function payrollParsedRowCount(aggregates: Map<string, PayrollAggregate>): number {
+  return [...aggregates.values()].reduce((sum, aggregate) => sum + aggregate.rowCount, 0);
 }
 
 function spreadsheetConfidence(parsedRows: number, totalRows: number): number {
@@ -602,6 +901,15 @@ function normalizeHeader(value: string): string {
     .replace(/[#/]+/g, " ")
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
+}
+
+function headerSearchText(values: string[]): string {
+  return ` ${values
+    .map((value) => value.trim().toLowerCase().replace(/_/g, " "))
+    .join(" ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()} `;
 }
 
 function firstField(record: SpreadsheetRecord, names: string[]): string | null {
@@ -705,8 +1013,8 @@ function monthNumber(raw: string): number | null {
   return months[key] ?? null;
 }
 
-function moneyToNumber(raw: string | undefined): number | null {
-  if (raw === undefined) return null;
+function moneyToNumber(raw: string | null | undefined): number | null {
+  if (raw === null || raw === undefined) return null;
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
   const negative = trimmed.includes("(") || trimmed.includes("-");
@@ -726,10 +1034,4 @@ function moneyToDecimal(raw: string | null | undefined): string | null {
 
 function decimalString(value: number): string {
   return value.toFixed(2).replace(/\.00$/, "");
-}
-
-function addDecimals(a: string | null, b: string | null): string | null {
-  if (a === null && b === null) return null;
-  const sum = Number(a ?? "0") + Number(b ?? "0");
-  return Number.isFinite(sum) ? decimalString(sum) : null;
 }
