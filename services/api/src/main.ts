@@ -2006,6 +2006,8 @@ async function main(): Promise<void> {
           registerGovernanceRoutes(child, {
             pool,
             audit,
+            idempotencyStore,
+            idempotencyTtlSeconds: cfg.IDEMPOTENCY_TTL_SECONDS,
             ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
               ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
               : {}),

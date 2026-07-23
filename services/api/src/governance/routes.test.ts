@@ -1,7 +1,12 @@
 import Fastify from "fastify";
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, errorHandlerPlugin, newTenantId } from "@brain/shared";
+import {
+  InMemoryAuditEmitter,
+  InMemoryIdempotencyStore,
+  errorHandlerPlugin,
+  newTenantId,
+} from "@brain/shared";
 import { registerGovernanceRoutes } from "./routes.js";
 
 const platformSecret = "platform-secret";
@@ -116,6 +121,8 @@ async function build(
     pool: db.pool,
     audit,
     platformSecret,
+    idempotencyStore: new InMemoryIdempotencyStore(),
+    idempotencyTtlSeconds: 86_400,
   });
   return { app, db, audit };
 }
@@ -557,6 +564,110 @@ describe("governance routes", () => {
     );
     expect(insert?.values?.[4]).toBe("agent_1");
     expect(insert?.values?.[5]).toBe("user_admin");
+    await app.close();
+  });
+
+  it("replays idempotent snapshot creation without creating another row", async () => {
+    const tenantId = newTenantId();
+    const { app, db } = await build({
+      report: [
+        {
+          id: "evt_snapshot",
+          actor: "agent_1",
+          action: "payment_intent.execute.before",
+          inputs: {},
+          outputs: {},
+          policy_decision_id: "pd_1",
+          policy_check_id: null,
+          outcome: null,
+          native_policy_check_id: null,
+          native_outcome: null,
+          joined_policy_decision_id: "pd_1",
+          joined_outcome: "allow",
+          joined_policy_check_id: "rule_allow",
+          created_at: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      ],
+    });
+    const request = {
+      method: "POST" as const,
+      url:
+        `/governance/reports/snapshot?tenant_id=${tenantId}` +
+        "&period_start=2026-07-01T00:00:00.000Z&period_end=2026-07-02T00:00:00.000Z",
+      headers: {
+        "x-platform-service-auth": platformSecret,
+        "idempotency-key": "snapshot-retry-1",
+      },
+      payload: { created_by: "user_admin" },
+    };
+    const first = await app.inject(request);
+    const second = await app.inject(request);
+    expect(first.statusCode, first.body).toBe(201);
+    expect(second.statusCode, second.body).toBe(201);
+    expect(second.headers["idempotent-replay"]).toBe("true");
+    expect(second.json().report_id).toBe(first.json().report_id);
+    expect(
+      db.calls.filter((call) => call.sql.includes("INSERT INTO governance_report_snapshots")),
+    ).toHaveLength(1);
+    expect(
+      db.calls.filter(
+        (call) => call.sql.includes("FROM audit_events") && call.sql.includes("LEFT JOIN"),
+      ),
+    ).toHaveLength(1);
+    await app.close();
+  });
+
+  it("rejects reused snapshot idempotency keys with different query params", async () => {
+    const tenantId = newTenantId();
+    const { app, db } = await build();
+    const base = {
+      method: "POST" as const,
+      headers: {
+        "x-platform-service-auth": platformSecret,
+        "idempotency-key": "snapshot-retry-conflict",
+      },
+      payload: { created_by: "user_admin" },
+    };
+    const first = await app.inject({
+      ...base,
+      url:
+        `/governance/reports/snapshot?tenant_id=${tenantId}` +
+        "&period_start=2026-07-01T00:00:00.000Z&period_end=2026-07-02T00:00:00.000Z",
+    });
+    const second = await app.inject({
+      ...base,
+      url:
+        `/governance/reports/snapshot?tenant_id=${tenantId}` +
+        "&period_start=2026-07-01T00:00:00.000Z&period_end=2026-07-03T00:00:00.000Z",
+    });
+    expect(first.statusCode, first.body).toBe(201);
+    expect(second.statusCode).toBe(409);
+    expect(second.json().error.code).toBe("execution_idempotency_conflict");
+    expect(
+      db.calls.filter((call) => call.sql.includes("INSERT INTO governance_report_snapshots")),
+    ).toHaveLength(1);
+    await app.close();
+  });
+
+  it("creates distinct snapshots for duplicate requests without an idempotency key", async () => {
+    const tenantId = newTenantId();
+    const { app, db } = await build();
+    const request = {
+      method: "POST" as const,
+      url:
+        `/governance/reports/snapshot?tenant_id=${tenantId}` +
+        "&period_start=2026-07-01T00:00:00.000Z&period_end=2026-07-02T00:00:00.000Z",
+      headers: { "x-platform-service-auth": platformSecret },
+      payload: { created_by: "user_admin" },
+    };
+    const first = await app.inject(request);
+    const second = await app.inject(request);
+    expect(first.statusCode, first.body).toBe(201);
+    expect(second.statusCode, second.body).toBe(201);
+    expect(second.json().report_id).not.toBe(first.json().report_id);
+    expect(
+      db.calls.filter((call) => call.sql.includes("INSERT INTO governance_report_snapshots")),
+    ).toHaveLength(2);
     await app.close();
   });
 
