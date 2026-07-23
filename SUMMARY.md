@@ -63,6 +63,7 @@
 - [Wiki API](api-reference/wiki-api.md)
 - [Policy API](api-reference/policy-api.md)
 - [Agents API](api-reference/agents-api.md)
+- [Governance API](api-reference/governance-api.md)
 - [Payment Intents API](api-reference/payment-intents-api.md)
 - [Proposals and Evidence API](api-reference/proposals-api.md)
 - [Audit API](api-reference/audit-api.md)
