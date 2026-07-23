@@ -71,9 +71,10 @@ tags:
     description: Tamper-evident event log and verification (Layer 6)
   - name: Governance
     description: |
-      Phase 1 BFF-only governance read surface for agent registry review and
-      audit-derived reports. Gated by `X-Platform-Service-Auth` carrying
-      `governance:read`, not by end-user bearer scopes.
+      BFF-only governance read surface for agent registry review,
+      audit-derived reports, and immutable report snapshots. Gated by
+      `X-Platform-Service-Auth` carrying `governance:read`, not by end-user
+      bearer scopes.
   - name: MCP
     description: Model Context Protocol surface for external agents
   - name: Admin
@@ -5175,6 +5176,96 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /governance/reports/snapshot:
+    post:
+      tags: [Governance]
+      summary: Persist an immutable governance report snapshot
+      description: |
+        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+        with `governance:read`. Generates the same JSON GovernanceReport as
+        `GET /governance/reports`, stores that payload with the exact filter
+        parameters, and returns the persisted snapshot. Snapshot format is
+        JSON only.
+      operationId: createGovernanceReportSnapshot
+      security: []
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: period_start
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: period_end
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: agent_id
+          in: query
+          schema: { type: string }
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json]
+            default: json
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [created_by]
+              properties:
+                created_by:
+                  type: string
+                  description: Human-readable platform actor recorded with the snapshot.
+      responses:
+        '201':
+          description: Governance report snapshot created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [report_id, snapshot]
+                properties:
+                  report_id: { type: string }
+                  snapshot: { $ref: '#/components/schemas/GovernanceReportSnapshot' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /governance/reports/{report_id}:
+    get:
+      tags: [Governance]
+      summary: Get an immutable governance report snapshot
+      description: |
+        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+        with `governance:read`. Returns the frozen snapshot payload stored at
+        creation time and never re-queries the live audit store.
+      operationId: getGovernanceReportSnapshot
+      security: []
+      parameters:
+        - name: report_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Frozen governance report snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GovernanceReportSnapshot' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /audit/events:
     get:
       tags: [Audit]
@@ -6607,6 +6698,29 @@ components:
           type: array
           maxItems: 1000
           items: { $ref: '#/components/schemas/GovernanceReportEvent' }
+
+    GovernanceReportSnapshot:
+      type: object
+      required:
+        - report_id
+        - tenant_id
+        - period_start
+        - period_end
+        - agent_id
+        - created_by
+        - created_at
+        - report
+      properties:
+        report_id:
+          type: string
+          description: Immutable snapshot id with `grpt_` prefix.
+        tenant_id: { type: string }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        agent_id: { type: [string, "null"] }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        report: { $ref: '#/components/schemas/GovernanceReport' }
 
     GovernanceReportSummary:
       type: object

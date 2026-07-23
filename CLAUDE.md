@@ -224,24 +224,30 @@ Done
   `/v1/members` API and core approval responses.
 - BrainMVB must use `docs/api-surface.brainmvb.json` as the machine-readable
   integration contract for stable brain-core endpoints. The artifact enumerates
-  every non-feature-gated deployed API route as of `64c3a21`, including auth
-  mode, required scope, route-local enforcement status, request and response
-  shape, and examples. Scope checks are enforced by route handlers through
-  `requireScope`; HEAD does not have a central gateway route-to-scope matrix.
+  non-feature-gated deployed API routes including auth mode, required scope,
+  route-local enforcement status, request and response shape, and examples.
+  Scope checks are enforced by route handlers through `requireScope`; HEAD does
+  not have a central gateway route-to-scope matrix.
   API-key auth and API-key management remain code-gated behind
   `BRAIN_API_KEY_AUTH_ENABLED`, even though staging enables that flag today, so
   they are tracked as feature-gated rather than stable in the BrainMVB surface.
 - Governance Phase 1 exposes BFF-only `GET /v1/governance/agents`,
   `GET /v1/governance/agents/{agent_id}`,
   `PATCH /v1/governance/agents/{agent_id}`, and
-  `GET /v1/governance/reports`. These routes are mounted with `skipAuth` but
-  require `X-Platform-Service-Auth` carrying `governance:read`. Agent creation
-  is not exposed. Reports are built from audit events, join `policy_decisions`
-  when historical rows have `policy_decision_id`, and return
+  `GET /v1/governance/reports`. Governance Phase 2 adds
+  `POST /v1/governance/reports/snapshot` and
+  `GET /v1/governance/reports/{report_id}` for immutable report snapshots.
+  These routes are mounted with `skipAuth` but require
+  `X-Platform-Service-Auth` carrying `governance:read`. Agent creation is not
+  exposed. Reports are built from audit events, join `policy_decisions` when
+  historical rows have `policy_decision_id`, and return
   `decision_data_status=unavailable` for rows that lack a native outcome or a
   resolvable policy decision. Forward-going policy, gate, payment-intent
   creation, and agent-proposal audit emitters add native nullable
-  `policy_check_id` and `outcome` fields when those values are known.
+  `policy_check_id` and `outcome` fields when those values are known. Policy
+  check catalog publication is deferred pending a future security and legal
+  review. External governance agent registration is removed from the current
+  backlog until a concrete product trigger exists.
 - Manual counterparty creation, search, and identity edit are governed by
   `docs/contracts/counterparty-manual.md`. Ledger exposes
   `GET /ledger/counterparties`, `GET /ledger/counterparties/:id`,

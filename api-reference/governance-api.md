@@ -4,7 +4,7 @@ Review registered agents, change agent lifecycle state, and build audit-derived
 governance reports for compliance workflows.
 
 {% hint style="info" %}
-These Phase 1 routes are staging-only and BFF-only today. They use
+These governance routes are staging-only and BFF-only today. They use
 `X-Platform-Service-Auth` with the `governance:read` scope, not an end-user
 bearer token.
 {% endhint %}
@@ -15,9 +15,12 @@ bearer token.
 | Get one registered agent          | `GET /v1/governance/agents/{agent_id}`   |
 | Pause, resume, or revoke an agent | `PATCH /v1/governance/agents/{agent_id}` |
 | Build a governance report         | `GET /v1/governance/reports`             |
+| Create a report snapshot          | `POST /v1/governance/reports/snapshot`   |
+| Get a report snapshot             | `GET /v1/governance/reports/{report_id}` |
 
-No external agent creation endpoint is exposed in Phase 1. Agents continue to be
-created through existing provisioning flows.
+No external agent creation endpoint is exposed. Agents continue to be created
+through existing provisioning flows. The policy check catalog is not exposed in
+this cycle because it is deferred pending a future security and legal review.
 
 ### Authentication
 
@@ -224,3 +227,79 @@ without a native outcome or resolvable policy decision are returned with
 
 The full request and response schema is maintained in
 `Brain_API_Specification.yaml`.
+
+### Create A Report Snapshot
+
+```http
+POST /v1/governance/reports/snapshot
+X-Platform-Service-Auth: <secret-with-governance-read>
+Content-Type: application/json
+
+{ "created_by": "user_admin" }
+```
+
+Query parameters:
+
+| Parameter      | Required | Notes                                            |
+| -------------- | -------- | ------------------------------------------------ |
+| `tenant_id`    | Yes      | Tenant whose audit events should be reported.    |
+| `period_start` | Yes      | Inclusive report start timestamp.                |
+| `period_end`   | Yes      | Exclusive report end timestamp.                  |
+| `agent_id`     | No       | Filters policy-relevant events to one agent.     |
+| `format`       | No       | `json` only for snapshots. CSV is not persisted. |
+
+Snapshot creation generates the same JSON `GovernanceReport` as
+`GET /v1/governance/reports`, stores that exact payload with its filters, and
+returns a `grpt_` report id. The stored payload is immutable.
+
+```json
+{
+  "report_id": "grpt_example",
+  "snapshot": {
+    "report_id": "grpt_example",
+    "tenant_id": "tnt_example",
+    "period_start": "2026-07-01T00:00:00.000Z",
+    "period_end": "2026-08-01T00:00:00.000Z",
+    "agent_id": null,
+    "created_by": "user_admin",
+    "created_at": "2026-07-22T00:02:00.000Z",
+    "report": {
+      "tenant_id": "tnt_example",
+      "period_start": "2026-07-01T00:00:00.000Z",
+      "period_end": "2026-08-01T00:00:00.000Z",
+      "summary": {
+        "totals": {
+          "proposed": 2,
+          "approved": 1,
+          "blocked": 0,
+          "escalated": 0,
+          "decision_data_unavailable": 1
+        },
+        "coverage": {
+          "events": 2,
+          "with_policy_decision_id": 1,
+          "joined_policy_decision": 1,
+          "with_native_outcome": 0
+        }
+      },
+      "events": []
+    }
+  }
+}
+```
+
+### Get A Report Snapshot
+
+```http
+GET /v1/governance/reports/grpt_example
+X-Platform-Service-Auth: <secret-with-governance-read>
+```
+
+Query parameters:
+
+| Parameter   | Required | Notes                     |
+| ----------- | -------- | ------------------------- |
+| `tenant_id` | Yes      | Tenant that owns the row. |
+
+This route returns the frozen snapshot and does not re-query the live audit
+store.

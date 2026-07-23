@@ -12,6 +12,7 @@ import {
   newDocumentId,
   newExecutionId,
   newExecutionOutboxId,
+  newGovernanceReportSnapshotId,
   newInvoiceId,
   newObligationId,
   newPaymentIntentId,
@@ -57,6 +58,7 @@ describe("convenience generators", () => {
     expect(newProposalId().startsWith("prop_")).toBe(true);
     expect(newExecutionId().startsWith("exec_")).toBe(true);
     expect(newPolicyId().startsWith("pol_")).toBe(true);
+    expect(newGovernanceReportSnapshotId().startsWith("grpt_")).toBe(true);
   });
 });
 

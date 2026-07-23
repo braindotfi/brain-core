@@ -2878,6 +2878,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/governance/reports/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Persist an immutable governance report snapshot
+         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+         *     with `governance:read`. Generates the same JSON GovernanceReport as
+         *     `GET /governance/reports`, stores that payload with the exact filter
+         *     parameters, and returns the persisted snapshot. Snapshot format is
+         *     JSON only.
+         */
+        post: operations["createGovernanceReportSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/governance/reports/{report_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an immutable governance report snapshot
+         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
+         *     with `governance:read`. Returns the frozen snapshot payload stored at
+         *     creation time and never re-queries the live audit store.
+         */
+        get: operations["getGovernanceReportSnapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit/events": {
         parameters: {
             query?: never;
@@ -3825,6 +3871,20 @@ export interface components {
             period_end: string;
             summary: components["schemas"]["GovernanceReportSummary"];
             events: components["schemas"]["GovernanceReportEvent"][];
+        };
+        GovernanceReportSnapshot: {
+            /** @description Immutable snapshot id with `grpt_` prefix. */
+            report_id: string;
+            tenant_id: string;
+            /** Format: date-time */
+            period_start: string;
+            /** Format: date-time */
+            period_end: string;
+            agent_id: string | null;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            report: components["schemas"]["GovernanceReport"];
         };
         GovernanceReportSummary: {
             totals: {
@@ -9764,6 +9824,73 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    createGovernanceReportSnapshot: {
+        parameters: {
+            query: {
+                tenant_id: string;
+                period_start: string;
+                period_end: string;
+                agent_id?: string;
+                format?: "json";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Human-readable platform actor recorded with the snapshot. */
+                    created_by: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Governance report snapshot created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        report_id: string;
+                        snapshot: components["schemas"]["GovernanceReportSnapshot"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getGovernanceReportSnapshot: {
+        parameters: {
+            query: {
+                tenant_id: string;
+            };
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Frozen governance report snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GovernanceReportSnapshot"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     queryAuditEvents: {
