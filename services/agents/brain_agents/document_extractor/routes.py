@@ -11,6 +11,7 @@ import base64
 import binascii
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -120,14 +121,31 @@ async def run_document_extract(
         else extracted["confidence"]
     )
 
-    result = await deps.brain_client.post_parsed(
-        raw_id=req.raw_id,
-        parser=_PARSER,
-        parser_version=_PARSER_VERSION,
-        extracted=extracted["payload"],
-        confidence=confidence,
-        tenant_id=req.tenant_id,
-    )
+    try:
+        result = await deps.brain_client.post_parsed(
+            raw_id=req.raw_id,
+            parser=_PARSER,
+            parser_version=_PARSER_VERSION,
+            extracted=extracted["payload"],
+            confidence=confidence,
+            tenant_id=req.tenant_id,
+        )
+    except httpx.HTTPStatusError as exc:
+        # The extraction itself succeeded; the Brain API rejected the write-back.
+        # A rejected credential is a configuration fault, not a transient blip:
+        # retrying re-runs the (paid) extraction and fails identically. Surface
+        # it as 424 so the caller can mark the job terminal, and name the cause
+        # so an operator does not have to correlate api logs by timestamp.
+        if exc.response.status_code in (401, 403):
+            raise HTTPException(
+                status_code=424,
+                detail=(
+                    "brain api rejected the parsed write with "
+                    f"{exc.response.status_code}; the agent BRAIN_API_TOKEN is "
+                    "invalid, expired, or missing raw:write"
+                ),
+            ) from exc
+        raise
 
     return DocumentExtractResult(
         kind="doc_extract",

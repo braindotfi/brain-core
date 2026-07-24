@@ -141,6 +141,68 @@ async def test_run_writes_parsed_record_and_returns_result(
     mock_deps.brain_client.propose.assert_not_awaited()  # type: ignore[union-attr]
 
 
+async def test_run_maps_upstream_auth_rejection_to_424(
+    client: httpx.AsyncClient,
+    mock_deps: AppDeps,
+) -> None:
+    """A rejected agent credential must fail the job terminally, not transiently.
+
+    The extraction has already run and cost a model call by this point. Retrying
+    repeats that spend and fails identically, so the route reports 424, which the
+    caller classifies as permanent, rather than letting an unhandled error become
+    a 500 that looks retryable. The detail names the credential so an operator
+    does not have to correlate api logs by timestamp to find `auth_token_expired`.
+    """
+    request = httpx.Request("POST", "http://api:3000/v1/raw/raw_x/parsed")
+    mock_deps.brain_client.post_parsed.side_effect = httpx.HTTPStatusError(  # type: ignore[union-attr]
+        "401 Unauthorized",
+        request=request,
+        response=httpx.Response(401, request=request),
+    )
+
+    resp = await client.post(
+        "/run/document_extract",
+        json={
+            "agent_id": "agent_01TEST000000000000000000",
+            "tenant_id": "tnt_01TEST000000000000000000",
+            "raw_id": "raw_01TEST000000000000000000",
+            "document_text": "INVOICE\nAcme Utilities\nTotal due: $120.50",
+        },
+    )
+
+    assert resp.status_code == 424
+    assert "BRAIN_API_TOKEN" in resp.json()["detail"]
+
+
+async def test_run_leaves_non_auth_upstream_failures_alone(
+    client: httpx.AsyncClient,
+    mock_deps: AppDeps,
+) -> None:
+    """A genuine upstream blip must stay retryable.
+
+    Only 401/403 are treated as terminal configuration faults; a 503 from the
+    Brain API is transient and must keep the existing propagate-and-retry
+    behaviour rather than being wrongly marked permanent.
+    """
+    request = httpx.Request("POST", "http://api:3000/v1/raw/raw_x/parsed")
+    mock_deps.brain_client.post_parsed.side_effect = httpx.HTTPStatusError(  # type: ignore[union-attr]
+        "503 Service Unavailable",
+        request=request,
+        response=httpx.Response(503, request=request),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.post(
+            "/run/document_extract",
+            json={
+                "agent_id": "agent_01TEST000000000000000000",
+                "tenant_id": "tnt_01TEST000000000000000000",
+                "raw_id": "raw_01TEST000000000000000000",
+                "document_text": "INVOICE\nAcme Utilities\nTotal due: $120.50",
+            },
+        )
+
+
 async def test_run_extracts_text_from_base64_csv_bytes(
     client: httpx.AsyncClient,
     mock_deps: AppDeps,
