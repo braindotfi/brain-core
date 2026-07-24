@@ -1,6 +1,8 @@
 import type { Pool } from "pg";
 import {
   isBrainError,
+  newRawParsedId,
+  sha256Hex,
   startManagedInterval,
   withTenantScope,
   type BlobAdapter,
@@ -56,6 +58,16 @@ interface PendingExtractionJobRow {
   id: string;
   tenant_id: string;
   raw_id: string;
+}
+
+interface RawParsedLookupRow {
+  id: string;
+  raw_artifact_id: string;
+  tenant_id: string;
+  parser: string;
+  parser_version: string;
+  extracted: Record<string, unknown>;
+  confidence: number | null;
 }
 
 export interface DocumentExtractPort {
@@ -153,9 +165,17 @@ export async function runDocumentExtractionCycle(
         documentB64: bytes.toString("base64"),
         agentId,
       });
+      const parsedId = await reconcileReturnedParsedParser(deps, {
+        tenantId: row.tenant_id,
+        rawId: artifact.id,
+        parsedId: result.parsed_id,
+        parser: result.parser,
+        confidence: result.confidence,
+        actor: workerId,
+      });
       await withTenantScope(deps.appPool, row.tenant_id, (c) =>
         markExtractionJobSucceeded(c, row.id, {
-          parsedId: result.parsed_id,
+          parsedId,
           confidence: Math.min(result.confidence, 0.5),
         }),
       );
@@ -165,7 +185,7 @@ export async function runDocumentExtractionCycle(
         rawId: row.raw_id,
         before: "running",
         after: "succeeded",
-        parsedId: result.parsed_id,
+        parsedId,
         confidence: Math.min(result.confidence, 0.5),
       });
     } catch (err) {
@@ -221,6 +241,90 @@ export function startDocumentExtractionWorker(
       onError: (err) => deps.log?.error({ err }, "document extraction worker failed"),
     },
   );
+}
+
+async function reconcileReturnedParsedParser(
+  deps: DocumentExtractionWorkerDeps,
+  input: {
+    tenantId: string;
+    rawId: string;
+    parsedId: string;
+    parser: string;
+    confidence: number;
+    actor: string;
+  },
+): Promise<string> {
+  if (input.parser.length === 0) {
+    deps.log?.warn(
+      { raw_id: input.rawId, parsed_id: input.parsedId },
+      "document extraction agent returned no parser",
+    );
+    return input.parsedId;
+  }
+
+  return withTenantScope(deps.appPool, input.tenantId, async (c) => {
+    const existing = await c.query<RawParsedLookupRow>(
+      `SELECT id, raw_artifact_id, tenant_id, parser, parser_version, extracted, confidence
+         FROM raw_parsed
+        WHERE id = $1 AND raw_artifact_id = $2
+        LIMIT 1`,
+      [input.parsedId, input.rawId],
+    );
+    const row = existing.rows[0];
+    if (row === undefined) {
+      deps.log?.warn(
+        { raw_id: input.rawId, parsed_id: input.parsedId, parser: input.parser },
+        "document extraction agent returned a parsed id with no matching raw_parsed row",
+      );
+      return input.parsedId;
+    }
+    if (row.parser === input.parser) return row.id;
+
+    const fixedId = newRawParsedId();
+    const inserted = await c.query<Pick<RawParsedLookupRow, "id">>(
+      `INSERT INTO raw_parsed
+         (id, raw_artifact_id, tenant_id, parser, parser_version, extracted, confidence)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (raw_artifact_id, parser, parser_version) DO NOTHING
+       RETURNING id`,
+      [
+        fixedId,
+        input.rawId,
+        input.tenantId,
+        input.parser,
+        row.parser_version,
+        JSON.stringify(row.extracted),
+        Math.min(row.confidence ?? input.confidence, 0.5),
+      ],
+    );
+    const parsedId = inserted.rows[0]?.id;
+    if (parsedId !== undefined) {
+      await deps.audit?.emit({
+        tenantId: input.tenantId,
+        layer: "raw",
+        actor: input.actor,
+        action: "raw.parsed.write",
+        inputs: {
+          raw_id: input.rawId,
+          parser: input.parser,
+          parser_version: row.parser_version,
+          source_parser: row.parser,
+          extracted_sha256: sha256Hex(Buffer.from(JSON.stringify(row.extracted))),
+        },
+        outputs: { parsed_id: parsedId, created: true },
+      });
+      return parsedId;
+    }
+
+    const corrected = await c.query<Pick<RawParsedLookupRow, "id">>(
+      `SELECT id
+         FROM raw_parsed
+        WHERE raw_artifact_id = $1 AND parser = $2 AND parser_version = $3
+        LIMIT 1`,
+      [input.rawId, input.parser, row.parser_version],
+    );
+    return corrected.rows[0]?.id ?? input.parsedId;
+  });
 }
 
 function ctxFor(tenantId: string, actor: string): ServiceCallContext {

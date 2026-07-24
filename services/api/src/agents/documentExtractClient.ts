@@ -15,6 +15,7 @@ export interface DocumentExtractInput {
 
 export interface DocumentExtractResult {
   parsed_id: string;
+  parser: string;
   confidence: number;
 }
 

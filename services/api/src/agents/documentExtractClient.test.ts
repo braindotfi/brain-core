@@ -26,7 +26,11 @@ describe("DocumentExtractClient.extract", () => {
       vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ parsed_id: "prs_01TEST000000000000000000000", confidence: 0.91 }),
+        json: async () => ({
+          parsed_id: "prs_01TEST000000000000000000000",
+          parser: "bank_statement_upload_v1",
+          confidence: 0.91,
+        }),
       }),
     );
   });
@@ -65,7 +69,11 @@ describe("DocumentExtractClient.extract", () => {
         documentB64: BODY.document_b64,
         agentId: BODY.agent_id,
       }),
-    ).resolves.toEqual({ parsed_id: "prs_01TEST000000000000000000000", confidence: 0.91 });
+    ).resolves.toEqual({
+      parsed_id: "prs_01TEST000000000000000000000",
+      parser: "bank_statement_upload_v1",
+      confidence: 0.91,
+    });
   });
 
   it("passes unsupported document responses through as HTTP 422", async () => {

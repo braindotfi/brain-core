@@ -115,7 +115,7 @@ suite("document extraction jobs integration (requires DATABASE_URL)", () => {
             ],
           ),
         );
-        return { parsed_id: parsedId, confidence: 0.91 };
+        return { parsed_id: parsedId, parser: "doc_obligation_v1", confidence: 0.91 };
       },
     };
 

@@ -141,6 +141,77 @@ async def test_run_writes_parsed_record_and_returns_result(
     mock_deps.brain_client.propose.assert_not_awaited()  # type: ignore[union-attr]
 
 
+async def test_run_returns_agent_parser_for_bank_statement_upload(
+    client: httpx.AsyncClient,
+    mock_deps: AppDeps,
+) -> None:
+    payload = {
+        "object_type": "bank_statement",
+        "account": {"account_id": "acct_demo", "currency": "USD"},
+        "transactions": [],
+    }
+    mock_deps.document_extractor_agent.extract.return_value = {  # type: ignore[union-attr]
+        "kind": "bank_statement",
+        "parser": "bank_statement_upload_v1",
+        "payload": payload,
+        "confidence": 0.86,
+    }
+
+    resp = await client.post(
+        "/run/document_extract",
+        json={
+            "agent_id": "agent_01TEST000000000000000000",
+            "tenant_id": "tnt_01TEST000000000000000000",
+            "raw_id": "raw_01TEST000000000000000000",
+            "document_text": "BANK STATEMENT",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["parser"] == "bank_statement_upload_v1"
+    kwargs = mock_deps.brain_client.post_parsed.await_args.kwargs  # type: ignore[union-attr]
+    assert kwargs["parser"] == "bank_statement_upload_v1"
+    assert kwargs["extracted"] == payload
+
+
+async def test_run_infers_document_records_parser_from_payload_object_type(
+    client: httpx.AsyncClient,
+    mock_deps: AppDeps,
+) -> None:
+    payload = {
+        "object_type": "ar_aging",
+        "receivables": [
+            {
+                "counterparty_name": "Helios",
+                "invoice_ref": "NL-2417",
+                "amount": "1400.00",
+                "currency": "USD",
+            }
+        ],
+    }
+    mock_deps.document_extractor_agent.extract.return_value = {  # type: ignore[union-attr]
+        "kind": "document_records",
+        "payload": payload,
+        "confidence": 0.83,
+    }
+
+    resp = await client.post(
+        "/run/document_extract",
+        json={
+            "agent_id": "agent_01TEST000000000000000000",
+            "tenant_id": "tnt_01TEST000000000000000000",
+            "raw_id": "raw_01TEST000000000000000000",
+            "document_text": "Accounts Receivable Aging",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["parser"] == "document_records_upload_v1"
+    kwargs = mock_deps.brain_client.post_parsed.await_args.kwargs  # type: ignore[union-attr]
+    assert kwargs["parser"] == "document_records_upload_v1"
+    assert kwargs["extracted"] == payload
+
+
 async def test_run_maps_upstream_auth_rejection_to_424(
     client: httpx.AsyncClient,
     mock_deps: AppDeps,

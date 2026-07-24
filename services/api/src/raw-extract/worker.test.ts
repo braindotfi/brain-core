@@ -142,6 +142,7 @@ describe("runDocumentExtractionCycle", () => {
     const client: DocumentExtractPort = {
       extract: vi.fn(async () => ({
         parsed_id: "prs_01TEST000000000000000000000",
+        parser: "bank_statement_upload_v1",
         confidence: 0.91,
       })),
     };
@@ -178,6 +179,89 @@ describe("runDocumentExtractionCycle", () => {
     expect(audit.events[1]?.outputs).toMatchObject({
       before: { status: "running" },
       after: { status: "succeeded", confidence: 0.5 },
+    });
+  });
+
+  it("creates a matching parser row when the agent wrote a legacy parser", async () => {
+    const updates: Array<{ kind: string; values: unknown[] | undefined }> = [];
+    const client = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        if (
+          sql === "BEGIN" ||
+          sql === "COMMIT" ||
+          sql === "ROLLBACK" ||
+          sql.startsWith("SELECT set_config")
+        ) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith("UPDATE extraction_jobs") && sql.includes("status = 'running'")) {
+          updates.push({ kind: "claim", values });
+          return { rows: [jobRow("running", 1)], rowCount: 1 };
+        }
+        if (sql.includes("FROM raw_artifacts")) {
+          return { rows: [artifactRow()], rowCount: 1 };
+        }
+        if (sql.includes("FROM raw_parsed") && sql.includes("WHERE id = $1")) {
+          return {
+            rows: [
+              {
+                id: "prs_01LEGACY000000000000000000",
+                raw_artifact_id: RAW_ID,
+                tenant_id: TENANT,
+                parser: "doc_obligation_v1",
+                parser_version: "1.0.0",
+                extracted: { object_type: "bank_statement", transactions: [] },
+                confidence: 0.91,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.startsWith("INSERT INTO raw_parsed")) {
+          updates.push({ kind: "parsed", values });
+          return {
+            rows: [{ id: "prs_01FIXED0000000000000000000" }],
+            rowCount: 1,
+          };
+        }
+        if (sql.startsWith("UPDATE extraction_jobs") && sql.includes("status = 'succeeded'")) {
+          updates.push({ kind: "succeeded", values });
+          return { rows: [], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    const audit = new InMemoryAuditEmitter();
+    const extractClient: DocumentExtractPort = {
+      extract: vi.fn(async () => ({
+        parsed_id: "prs_01LEGACY000000000000000000",
+        parser: "bank_statement_upload_v1",
+        confidence: 0.91,
+      })),
+    };
+
+    await runDocumentExtractionCycle(
+      {
+        scanPool: scanPool(),
+        appPool: { connect: vi.fn(async () => client) } as unknown as Pool,
+        blob: blob(),
+        client: extractClient,
+        audit,
+      },
+      { batchSize: 1 },
+    );
+
+    const inserted = updates.find((u) => u.kind === "parsed");
+    expect(inserted?.values?.[3]).toBe("bank_statement_upload_v1");
+    expect(inserted?.values?.[4]).toBe("1.0.0");
+    const succeeded = updates.find((u) => u.kind === "succeeded");
+    expect(succeeded?.values).toEqual([JOB_ID, "prs_01FIXED0000000000000000000", 0.5]);
+    const parsedAudit = audit.events.find((e) => e.action === "raw.parsed.write");
+    expect(parsedAudit).toMatchObject({
+      action: "raw.parsed.write",
+      inputs: { parser: "bank_statement_upload_v1", source_parser: "doc_obligation_v1" },
+      outputs: { parsed_id: "prs_01FIXED0000000000000000000", created: true },
     });
   });
 

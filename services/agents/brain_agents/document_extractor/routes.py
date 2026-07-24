@@ -27,8 +27,15 @@ from brain_agents.document_extractor.extract_text import (
 router = APIRouter(dependencies=[Depends(require_inbound_auth)])
 _get_deps = Depends(get_deps)
 
-_PARSER = "doc_obligation_v1"
+_DOC_OBLIGATION_PARSER = "doc_obligation_v1"
+_BANK_STATEMENT_UPLOAD_PARSER = "bank_statement_upload_v1"
+_DOCUMENT_RECORDS_UPLOAD_PARSER = "document_records_upload_v1"
 _PARSER_VERSION = "1.0.0"
+_SUPPORTED_PARSERS = {
+    _DOC_OBLIGATION_PARSER,
+    _BANK_STATEMENT_UPLOAD_PARSER,
+    _DOCUMENT_RECORDS_UPLOAD_PARSER,
+}
 
 
 class DocumentExtractRequest(BaseModel):
@@ -64,6 +71,27 @@ def _is_ocr_image_mime(mime_type: str | None) -> bool:
 
 def _is_scanned_pdf_error(mime_type: str | None, exc: DocumentTextUnavailableError) -> bool:
     return _normalized_mime(mime_type) == "application/pdf" and "no text layer" in exc.reason
+
+
+def _parser_for_extracted(extracted: dict[str, Any]) -> str:
+    explicit_parser = extracted.get("parser")
+    if explicit_parser is not None:
+        if explicit_parser not in _SUPPORTED_PARSERS:
+            raise HTTPException(status_code=422, detail=f"unsupported parser: {explicit_parser}")
+        return str(explicit_parser)
+
+    payload = extracted.get("payload")
+    payload_object_type = payload.get("object_type") if isinstance(payload, dict) else None
+    kind = extracted.get("kind")
+    if payload_object_type == "bank_statement" or kind == "bank_statement":
+        return _BANK_STATEMENT_UPLOAD_PARSER
+    if payload_object_type in {"ar_aging", "payroll_register"} or kind in {
+        "ar_aging",
+        "payroll_register",
+        "document_records",
+    }:
+        return _DOCUMENT_RECORDS_UPLOAD_PARSER
+    return _DOC_OBLIGATION_PARSER
 
 
 async def _ocr_document_text(
@@ -120,11 +148,12 @@ async def run_document_extract(
         if confidence_cap is not None
         else extracted["confidence"]
     )
+    parser = _parser_for_extracted(extracted)
 
     try:
         result = await deps.brain_client.post_parsed(
             raw_id=req.raw_id,
-            parser=_PARSER,
+            parser=parser,
             parser_version=_PARSER_VERSION,
             extracted=extracted["payload"],
             confidence=confidence,
@@ -150,7 +179,7 @@ async def run_document_extract(
     return DocumentExtractResult(
         kind="doc_extract",
         raw_id=req.raw_id,
-        parser=_PARSER,
+        parser=parser,
         parsed_id=result.get("id"),
         created=result.get("created"),
         confidence=confidence,
