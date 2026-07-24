@@ -257,6 +257,35 @@ describe("ingestOne", () => {
     expect(audit.events[0]!.inputs.source_schema).toBe(UPLOAD_DOCUMENT_SCHEMA);
   });
 
+  it("runs the post-ingest hook after upload schema stamping and raw audit", async () => {
+    const { pool } = makeFakePool();
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+    const afterIngest = vi.fn(async () => undefined);
+
+    const result = await ingestOne(
+      { pool: pool as unknown as Pool, blob, audit, afterIngest },
+      {
+        tenantId: newTenantId(),
+        actor: newUserId(),
+        sourceType: "pdf_upload",
+        sourceRef: { filename: "bank.pdf" },
+        body: Buffer.from("%PDF fake"),
+        mimeType: "application/pdf",
+      },
+    );
+
+    expect(result.sourceSchema).toBe(UPLOAD_DOCUMENT_SCHEMA);
+    expect(audit.events[0]!.action).toBe("raw.ingest.new");
+    expect(afterIngest).toHaveBeenCalledWith({
+      input: expect.objectContaining({ sourceType: "pdf_upload" }),
+      result: expect.objectContaining({
+        rawId: result.rawId,
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+      }),
+    });
+  });
+
   it("queues auto-extraction for XLSX uploads when tenant auto-extract is enabled", async () => {
     const { pool, client } = makeFakePool({ autoExtract: true });
     const blob = new MemoryBlobAdapter();

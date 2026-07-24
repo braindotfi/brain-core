@@ -114,6 +114,7 @@ import {
   regenerateWikiForUploadProjection,
   startWikiRegenerationWorker,
 } from "./wiki/regeneration-worker.js";
+import { createUploadIngestPipelineDrain } from "./uploads/post-ingest-pipeline.js";
 
 import {
   registerRawPlugin,
@@ -1672,6 +1673,19 @@ async function main(): Promise<void> {
     pool,
     runService: agentRunService,
     audit,
+    log,
+  });
+  rawDeps.afterIngest = createUploadIngestPipelineDrain({
+    rawWorkerPool,
+    appPool: pool,
+    canonicalProjectorPool,
+    ledgerProjectorPool,
+    tenantDiscoveryPool: tenantDeletionPool,
+    blob,
+    audit,
+    pageService: wikiPageService,
+    uploadProjectionAgentTrigger,
+    ...(metrics !== undefined ? { metrics } : {}),
     log,
   });
 

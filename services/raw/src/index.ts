@@ -31,6 +31,7 @@ export {
   type InterpretedOutput,
   type InterpreterArtifactContext,
 } from "./interpreters/registry.js";
+export { UPLOAD_DOCUMENT_SCHEMA } from "./interpreters/upload.js";
 export {
   startSyncWorker,
   runSyncCycle,

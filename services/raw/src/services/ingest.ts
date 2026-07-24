@@ -58,6 +58,7 @@ export interface IngestDeps {
   extractionJobs?: {
     documentExtractorConfigured: boolean;
   };
+  afterIngest?: (event: { input: IngestInput; result: IngestResult }) => Promise<void>;
 }
 
 export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<IngestResult> {
@@ -132,7 +133,7 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
     },
   });
 
-  return {
+  const result = {
     rawId: row.id,
     sha256: sha,
     bytes: Number(row.bytes),
@@ -142,6 +143,8 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
     deduplicated,
     extractionJob,
   };
+  await deps.afterIngest?.({ input, result });
+  return result;
 }
 
 /** Fan out a webhook-produced artifact set through ingestOne. */

@@ -33,6 +33,7 @@ export {
   type ExtractedLedgerRow,
 } from "./extractors/plaid.js";
 export {
+  runNormalizeCycle,
   startNormalizeWorker,
   type NormalizeWorker,
   type NormalizeWorkerOptions,

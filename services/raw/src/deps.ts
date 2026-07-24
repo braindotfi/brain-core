@@ -7,6 +7,12 @@
 
 import type { AuditEmitter, BlobAdapter } from "@brain/shared";
 import type { Pool } from "pg";
+import type { IngestInput, IngestResult } from "./services/ingest.js";
+
+export interface AfterIngestInput {
+  input: IngestInput;
+  result: IngestResult;
+}
 
 export interface RawDeps {
   pool: Pool;
@@ -15,4 +21,5 @@ export interface RawDeps {
   extractionJobs?: {
     documentExtractorConfigured: boolean;
   };
+  afterIngest?: (event: AfterIngestInput) => Promise<void>;
 }
