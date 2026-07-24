@@ -596,6 +596,22 @@ async function runConnectorLedgerPasses(
           { projector: pass.projector, object_type: pass.objectType },
           written.count,
         );
+        if (isUploadProjector(pass.projector) && hasProjectedRows(written.summary)) {
+          await deps.audit.emit({
+            tenantId: row.tenant_id,
+            layer: "ledger",
+            eventType: "system_activity",
+            severity: "info",
+            actor,
+            action: "ledger.upload.projected",
+            inputs: {
+              raw_artifact_id: row.raw_artifact_id,
+              raw_parsed_id: row.id,
+              projector: pass.projector,
+            },
+            outputs: { summary: written.summary },
+          });
+        }
         if (
           deps.onUploadProjected !== undefined &&
           isUploadProjector(pass.projector) &&

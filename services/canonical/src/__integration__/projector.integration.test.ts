@@ -273,3 +273,88 @@ DESCRIBE("canonical projector poison handling (requires DATABASE_URL)", () => {
     expect(poison?.quarantined).toBe(false);
   });
 });
+
+DESCRIBE("canonical upload projector audit integration (requires DATABASE_URL)", () => {
+  let pool: Pool;
+  const tenant = newTenantId();
+  const rawId = newRawArtifactId();
+  const parsedId = newRawParsedId();
+  const audit = new InMemoryAuditEmitter();
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    await pool.query(
+      `INSERT INTO raw_artifacts (id, tenant_id, sha256, source_type, blob_uri, bytes, ingested_by)
+       VALUES ($1,$2,$3,'pdf_upload',$4,$5,'sys_test')`,
+      [rawId, tenant, Buffer.from(rawId), `blob://${rawId}`, 1],
+    );
+    await pool.query(
+      `INSERT INTO raw_parsed (id, raw_artifact_id, tenant_id, parser, parser_version, extracted, confidence)
+       VALUES ($1,$2,$3,'bank_statement_upload_v1','1.0.0',$4::jsonb,0.92)`,
+      [
+        parsedId,
+        rawId,
+        tenant,
+        JSON.stringify({
+          object_type: "bank_statement",
+          account: {
+            account_id: "acct_upload_audit",
+            name: "Operating",
+            currency: "USD",
+            current_balance: "100.00",
+          },
+          transactions: [
+            {
+              transaction_id: "tx_upload_audit_1",
+              date: "2026-06-10",
+              amount: "42.00",
+              currency: "USD",
+              direction: "outflow",
+              description: "Office supplies",
+              counterparty_name: "Office Depot",
+            },
+          ],
+        }),
+      ],
+    );
+  }, 60_000);
+
+  afterAll(async () => {
+    if (pool === undefined) return;
+    await pool.query(`DELETE FROM canonical_transaction WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM canonical_counterparty WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM canonical_account WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM canonical_projection_log WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM raw_parsed WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM raw_artifacts WHERE tenant_id = $1`, [tenant]);
+    await pool.end();
+  });
+
+  it("emits ledger.upload.projected after upload projection completes", async () => {
+    await runProjectionCycle({ pool, audit }, { batchSize: 50 });
+
+    const actions = audit.events.map((event) => event.action);
+    expect(actions.indexOf("canonical.projected")).toBeGreaterThanOrEqual(0);
+    expect(actions.indexOf("ledger.upload.projected")).toBeGreaterThan(
+      actions.indexOf("canonical.projected"),
+    );
+    expect(audit.events.find((event) => event.action === "ledger.upload.projected")).toMatchObject({
+      tenantId: tenant,
+      layer: "ledger",
+      eventType: "system_activity",
+      severity: "info",
+      inputs: {
+        raw_artifact_id: rawId,
+        raw_parsed_id: parsedId,
+        projector: "bank_statement_upload_canonical_v1",
+      },
+      outputs: {
+        summary: expect.objectContaining({
+          accounts: 1,
+          transactions: 1,
+          newCounterparties: 1,
+        }),
+      },
+    });
+  });
+});

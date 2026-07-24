@@ -2771,6 +2771,7 @@ async function main(): Promise<void> {
         {
           tenantDiscoveryPool: tenantDeletionPool,
           pageService: wikiPageService,
+          audit,
           log,
         },
         event,
@@ -2811,6 +2812,7 @@ async function main(): Promise<void> {
         {
           tenantDiscoveryPool: tenantDeletionPool,
           pageService: wikiPageService,
+          audit,
           log,
         },
         { intervalMs: cfg.BRAIN_WIKI_REGENERATION_WORKER_INTERVAL_MS },

@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import {
   startManagedInterval,
   withTenantScope,
+  type AuditEmitter,
   type ManagedWorker,
   type ServiceCallContext,
 } from "@brain/shared";
@@ -25,6 +26,7 @@ interface Logger {
 export interface WikiRegenerationDeps {
   readonly tenantDiscoveryPool: Pool;
   readonly pageService: WikiPageServicePort;
+  readonly audit?: AuditEmitter;
   readonly log?: Logger;
 }
 
@@ -85,9 +87,43 @@ export async function regenerateWikiForUploadProjection(
     opts.pageBatchSize ?? DEFAULT_PAGE_BATCH_SIZE,
   );
   const ctx = ctxFor(event.tenantId);
+  let regeneratedCount = 0;
   for (const slug of slugs) {
-    await regenerateSlug(deps, ctx, slug, event);
+    if (await regenerateSlug(deps, ctx, slug, event)) regeneratedCount += 1;
   }
+  if (regeneratedCount === 0) {
+    deps.log?.warn?.(
+      {
+        tenantId: event.tenantId,
+        rawArtifactId: event.rawArtifactId,
+        rawParsedId: event.rawParsedId,
+        projector: event.projector,
+        projectionSummary: event.summary,
+        pageCandidates: slugs.length,
+      },
+      "upload-triggered wiki regeneration produced zero pages",
+    );
+  }
+  await deps.audit?.emit({
+    tenantId: event.tenantId,
+    layer: "wiki",
+    eventType: "system_activity",
+    severity: "info",
+    actor: ACTOR,
+    action: "wiki.pages.regenerated",
+    inputs: {
+      trigger: event.event,
+      raw_artifact_id: event.rawArtifactId,
+      raw_parsed_id: event.rawParsedId,
+      projector: event.projector,
+      projection_summary: event.summary,
+    },
+    outputs: {
+      pages_regenerated: regeneratedCount,
+      page_candidates: slugs.length,
+      slugs,
+    },
+  });
 }
 
 async function listTenantsWithWikiPages(pool: Pool, limit: number): Promise<string[]> {
@@ -173,9 +209,10 @@ async function regenerateSlug(
   ctx: ServiceCallContext,
   slug: string,
   event?: LedgerUploadProjectedEvent,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await deps.pageService.regenerate(ctx, slug);
+    return true;
   } catch (err) {
     deps.log?.warn?.(
       {
@@ -187,6 +224,7 @@ async function regenerateSlug(
       },
       "wiki page regeneration failed",
     );
+    return false;
   }
 }
 

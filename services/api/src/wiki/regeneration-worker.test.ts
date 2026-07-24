@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
-import { newTenantId } from "@brain/shared";
+import { InMemoryAuditEmitter, newTenantId } from "@brain/shared";
 import type { LedgerUploadProjectedEvent } from "@brain/canonical";
 import {
   regenerateWikiForUploadProjection,
@@ -22,10 +22,12 @@ describe("wiki regeneration worker", () => {
       queries,
     );
     const regenerated: string[] = [];
+    const audit = new InMemoryAuditEmitter();
 
     await regenerateWikiForUploadProjection(
       {
         tenantDiscoveryPool: pool,
+        audit,
         pageService: {
           listPages: async () => ({ pages: [] }),
           regenerate: async (_ctx, slug) => {
@@ -45,6 +47,56 @@ describe("wiki regeneration worker", () => {
       "/monthly-summaries/2026-06",
       "/obligations/obl_1",
     ]);
+    expect(audit.events).toHaveLength(1);
+    expect(audit.events[0]).toMatchObject({
+      tenantId,
+      layer: "wiki",
+      eventType: "system_activity",
+      severity: "info",
+      actor: "system:wiki-regeneration-worker",
+      action: "wiki.pages.regenerated",
+      outputs: {
+        pages_regenerated: 4,
+        page_candidates: 4,
+      },
+    });
+  });
+
+  it("warns and audits when upload-triggered regeneration produces zero pages", async () => {
+    const tenantId = newTenantId();
+    const warnings: unknown[] = [];
+    const audit = new InMemoryAuditEmitter();
+
+    await regenerateWikiForUploadProjection(
+      {
+        tenantDiscoveryPool: poolWithScopedRows([], []),
+        audit,
+        pageService: {
+          listPages: async () => ({ pages: [] }),
+          regenerate: async () => null as never,
+        },
+        log: {
+          warn: (obj) => warnings.push(obj),
+          error: () => undefined,
+        },
+      },
+      eventFor(tenantId),
+    );
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      tenantId,
+      rawArtifactId: "raw_01K0RAWARTIFACT000000000000",
+      pageCandidates: 0,
+    });
+    expect(audit.events[0]).toMatchObject({
+      action: "wiki.pages.regenerated",
+      outputs: {
+        pages_regenerated: 0,
+        page_candidates: 0,
+        slugs: [],
+      },
+    });
   });
 
   it("refreshes existing pages on the scheduled cycle", async () => {
