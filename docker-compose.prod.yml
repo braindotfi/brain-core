@@ -102,13 +102,25 @@ services:
       retries: 30
 
   minio:
-    # S3-compatible object store — keeps the blob backend off Azure for a
-    # self-contained single-VM deploy (BLOB_BACKEND=s3). Pinned to a specific
-    # release tag instead of :latest (unpinned tags are a supply-chain risk:
-    # an unreviewed upstream push could roll onto this VM on the next pull).
-    # Operator: confirm this is still a current, non-EOL MinIO release before
-    # relying on it in production, and bump deliberately, matching mc below.
-    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    # S3-compatible object store. Keeps the blob backend off Azure for a
+    # self-contained single-VM deploy (BLOB_BACKEND=s3). Pinned by digest, not
+    # by tag alone: an unpinned :latest is a supply-chain risk, since an
+    # unreviewed upstream push could roll onto this VM on the next pull.
+    #
+    # DOWNGRADE HAZARD. MinIO stamps an on-disk format version into its data
+    # volume and refuses to boot against a volume written by a newer release
+    # ("Unknown xl meta version N"). Because api and worker both gate on
+    # minio-setup completing, a MinIO that cannot boot takes the entire API
+    # down, not just the blob path. On 2026-07-24 this pin sat at
+    # RELEASE.2024-10-13 while the VM had been running :latest for weeks. The
+    # first recreate downgraded MinIO and took api.brain.fi offline until it
+    # was repointed at the release below.
+    #
+    # Operator: never lower this below the release that last wrote the volume.
+    # Bump deliberately and verify the recreate on staging before production.
+    # The mc client below is pinned separately; an older mc against this
+    # server is fine and is what prod runs today.
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     container_name: brain-prod-minio
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
