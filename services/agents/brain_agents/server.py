@@ -1,6 +1,11 @@
 """FastAPI application factory for brain-agents."""
 
+import base64
+import binascii
+import json
+import logging
 import os
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -74,6 +79,72 @@ def _assert_runtime_credentials_configured() -> None:
         )
 
 
+_TOKEN_EXPIRY_WARN_SECONDS = 30 * 24 * 60 * 60
+_JWT_SEGMENTS = 3
+
+_log = logging.getLogger(__name__)
+
+
+def _jwt_expiry_epoch(token: str) -> int | None:
+    """Read the `exp` claim out of a JWT without verifying its signature.
+
+    Verification is the API's job; the agents only need the claim in order to
+    say something useful before it lapses. Returns None when the token is not a
+    readable JWT, so an opaque or malformed credential degrades to "cannot
+    tell" rather than blocking boot on a parsing detail.
+    """
+    parts = token.split(".")
+    if len(parts) != _JWT_SEGMENTS:
+        return None
+    payload = parts[1]
+    try:
+        decoded = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+        claims = json.loads(decoded)
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+    exp = claims.get("exp") if isinstance(claims, dict) else None
+    return exp if isinstance(exp, int) else None
+
+
+def _assert_api_token_not_expired() -> None:
+    """Refuse to boot on an already-expired BRAIN_API_TOKEN, warn when it nears.
+
+    An expired token does not stop the service from starting or reporting
+    healthy; it fails only at the moment a document extraction tries to write
+    its result back, as an upstream 401. That is the most expensive place to
+    discover it, because the model call has already been paid for. Checking the
+    claim at boot moves the discovery to deploy time, and the warning window
+    gives an operator a month of notice before extraction breaks.
+
+    Mirrors the surrounding fences: production only, so dev and test boot are
+    unaffected.
+    """
+    if not _is_production():
+        return
+    token = os.environ.get("BRAIN_API_TOKEN", "")
+    if token == "":
+        return  # already covered by _assert_runtime_credentials_configured
+    exp = _jwt_expiry_epoch(token)
+    if exp is None:
+        return  # not a readable JWT; nothing trustworthy to assert
+    remaining = exp - int(time.time())
+    if remaining <= 0:
+        raise RuntimeError(
+            "BRAIN_API_TOKEN expired at "
+            f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(exp))}. "
+            "Every document extraction would run, cost a model call, then fail "
+            "when the Brain API rejects the write-back with 401. Refusing to "
+            "start so the deploy surfaces this instead of the job queue."
+        )
+    if remaining <= _TOKEN_EXPIRY_WARN_SECONDS:
+        _log.warning(
+            "BRAIN_API_TOKEN expires in %d day(s), at %s. Mint a replacement "
+            "before then or document extraction will begin failing.",
+            remaining // 86400,
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(exp)),
+        )
+
+
 def create_app(deps: AppDeps | None = None) -> FastAPI:
     """Return a configured FastAPI app. Pass `deps` to skip live wiring (tests)."""
     # Fail-fast boot fences — must run BEFORE FastAPI is constructed so a
@@ -84,6 +155,7 @@ def create_app(deps: AppDeps | None = None) -> FastAPI:
     # the fence would be a false positive there.
     if deps is None:
         _assert_runtime_credentials_configured()
+        _assert_api_token_not_expired()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
