@@ -60,6 +60,16 @@ export class DocumentExtractClient {
           cause: new Error(text),
         });
       }
+      if (resp.status === 424) {
+        // The agent extracted fine but could not write the result back, because
+        // the Brain API rejected its credential. Retrying repeats the paid
+        // extraction and fails the same way, so this must not be classified
+        // transient (isTransientExtractionError keys off statusCode >= 500).
+        throw brainError("dependency_unavailable", `document extraction agent: ${text}`, {
+          statusOverride: 424,
+          details: { upstream_status: resp.status },
+        });
+      }
       throw brainError(
         "internal_server_error",
         `document extraction agent returned ${String(resp.status)}: ${text}`,
