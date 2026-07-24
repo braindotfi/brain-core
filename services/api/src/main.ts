@@ -110,6 +110,10 @@ import { startRevenueIntelScanner } from "./agents/revenue-intel-scanner.js";
 import { startSubscriptionScanner } from "./agents/subscription-scanner.js";
 import { startTreasuryScanner } from "./agents/treasury-scanner.js";
 import { startVendorRiskScanner } from "./agents/vendor-risk-scanner.js";
+import {
+  regenerateWikiForUploadProjection,
+  startWikiRegenerationWorker,
+} from "./wiki/regeneration-worker.js";
 
 import {
   registerRawPlugin,
@@ -684,7 +688,13 @@ async function main(): Promise<void> {
     agentReader,
   };
 
-  const wikiPageService = new WikiPageService({ pool, audit, embed, policyReader, agentReader });
+  const wikiPageService = new WikiPageService({
+    pool: wikiPool,
+    audit,
+    embed,
+    policyReader,
+    agentReader,
+  });
   const wikiService = buildWikiMemoryService(wikiPageService, wikiDeps, rawDeps);
 
   const policyDeps: PolicyDeps = {
@@ -2757,6 +2767,14 @@ async function main(): Promise<void> {
     onUploadProjected: async (event: LedgerUploadProjectedEvent) => {
       await runLedgerAparProjectionCycle({ pool: ledgerProjectorPool, metrics });
       await runLedgerAccountTransactionProjectionCycle({ pool: ledgerProjectorPool, metrics });
+      await regenerateWikiForUploadProjection(
+        {
+          tenantDiscoveryPool: tenantDeletionPool,
+          pageService: wikiPageService,
+          log,
+        },
+        event,
+      );
       await uploadProjectionAgentTrigger.handle(event);
     },
   };
@@ -2786,6 +2804,17 @@ async function main(): Promise<void> {
         pool: ledgerProjectorPool,
         metrics,
       })
+    : undefined;
+
+  const wikiRegenerationWorker = composition.workers.has("wiki")
+    ? startWikiRegenerationWorker(
+        {
+          tenantDiscoveryPool: tenantDeletionPool,
+          pageService: wikiPageService,
+          log,
+        },
+        { intervalMs: cfg.BRAIN_WIKI_REGENERATION_WORKER_INTERVAL_MS },
+      )
     : undefined;
 
   // Collections overdue scanner (BC-1/BC-2): cross-tenant invoice enumeration
@@ -3201,6 +3230,7 @@ async function main(): Promise<void> {
           ledgerProjectionWorker,
           ledgerAparProjectionWorker,
           ledgerAccountTransactionProjectionWorker,
+          wikiRegenerationWorker,
           collectionsOverdueScanner,
           reconciliationUnreconciledScanner,
           cashForecastScanner,
