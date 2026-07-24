@@ -378,8 +378,11 @@ async function main(): Promise<void> {
   // `brain_wiki_reader` role (SELECT anywhere; write only wiki_* tables) so an
   // accidental ledger_* write from a Wiki path raises a Postgres permission
   // error. Falls back to the main pool in dev/test with a warning.
-  // Fail-closed in NODE_ENV=production for both DB-isolation URLs; warn
-  // in dev/test. Logic + tests live in composition/db-isolation.ts.
+  // Fail-closed in NODE_ENV=production for the wiki URL, the MCP reader URL,
+  // and the §4 role URLs by default; warns in dev/test. BRAIN_ALLOW_MISSING_MCP_READER
+  // is the explicit escape hatch, MCP reader only: an operator who sets it
+  // gets a warn-and-disable-raw.artifact.get boot instead of a throw. Logic +
+  // tests live in composition/db-isolation.ts.
   // Only fence the URLs this process role actually needs (worker/process
   // separation): an api-only or single-worker process must not require the
   // other roles' URLs. requireWiki only when serving the /v1 Wiki routes.
@@ -389,7 +392,14 @@ async function main(): Promise<void> {
     mcpReaderDbUrl: cfg.BRAIN_MCP_READER_DB_URL,
     requireWiki: composition.httpEnabled,
     requireMcpReader: composition.httpEnabled,
+    allowMissingMcpReader: cfg.BRAIN_ALLOW_MISSING_MCP_READER,
     requiredEnv: new Set([...composition.pools].map((p) => POOL_ENV[p])),
+    // Route through the structured logger at warn level instead of the default
+    // plain console.warn, so this is never invisible to a log pipeline that
+    // expects JSON or filters by severity. Matters most for the MCP reader
+    // opt-out case: it is the only boot-time signal an operator running with
+    // BRAIN_ALLOW_MISSING_MCP_READER=true has.
+    warn: (msg: string) => log.warn({ isolation_gap: true }, msg),
     privilegedRoleUrls: {
       BRAIN_RAW_WORKER_DB_URL: cfg.BRAIN_RAW_WORKER_DB_URL,
       BRAIN_CANONICAL_PROJECTOR_DB_URL: cfg.BRAIN_CANONICAL_PROJECTOR_DB_URL,

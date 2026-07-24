@@ -305,6 +305,19 @@ const envSchema = z.object({
     .default("0x683893ccd84d9a3487095d09fed324b6b8ea2501"),
   BRAIN_MCP_DEV_AUTH_BYPASS: z.coerce.boolean().default(false),
   /**
+   * Explicit operator opt-out for the BRAIN_WIKI_DB_URL-style fail-closed
+   * fence on BRAIN_MCP_READER_DB_URL. Default false: a missing MCP reader
+   * URL still throws at boot in NODE_ENV=production. Set to "true" to
+   * instead warn and boot with raw.artifact.get disabled. See
+   * composition/db-isolation.ts.
+   */
+  BRAIN_ALLOW_MISSING_MCP_READER: z
+    .preprocess(
+      (v) => (typeof v === "string" && v.length === 0 ? undefined : v),
+      z.enum(["true", "false"]).default("false"),
+    )
+    .transform((v) => v === "true"),
+  /**
    * Per-tenant MCP rate limit: how many tool calls one tenant may make in a
    * sliding window before further calls are rejected with rate_limited.
    * Defaults aim at ~10 req/s per tenant; tune per launch.

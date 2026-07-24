@@ -32,7 +32,6 @@ export function createBrainHttpClient(options: BrainHttpClientOptions): BrainHtt
 
   const baseUrl = options.baseUrl ?? "https://api.brain.fi/v1";
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
     ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
     ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
     ...(options.headers ?? {}),

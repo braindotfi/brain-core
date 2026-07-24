@@ -447,3 +447,176 @@ describe("per-customer API keys", () => {
     expect(hashApiKeySecret(secret, "pepper-a")).not.toBe(hashApiKeySecret(secret, "pepper-b"));
   });
 });
+
+// Review P3: last_used_at was an unawaited UPDATE fired on every single
+// API-key-authenticated request. Fix coalesces writes for the same key into
+// at most one per cooldown window (default 60s), using an in-memory
+// per-authenticator-instance clock check, no new DB shape, no queue.
+//
+// The write is deliberately still fire-and-forget (unchanged from before),
+// so authenticate() resolves before its background UPDATE promise chain
+// necessarily settles. Tests must flush microtasks after each call before
+// asserting on writeCount().
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
+  function countingPool(store: FakeStore): { pool: unknown; writeCount: () => number } {
+    let writes = 0;
+    const client = {
+      query: async (sql: string, values: unknown[] = []) => {
+        if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith("SELECT set_config")) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes("UPDATE api_keys SET last_used_at")) {
+          writes += 1;
+          const [id] = values as [string];
+          const row = store.apiKeys.get(id);
+          if (row !== undefined) row.last_used_at = new Date().toISOString();
+          return { rows: [], rowCount: row !== undefined ? 1 : 0 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    return { pool: { connect: async () => client }, writeCount: () => writes };
+  }
+
+  function seedKey(store: FakeStore, tenantId: string, secret: string): string {
+    const id = `akey_${store.apiKeys.size + 1}`;
+    store.apiKeys.set(id, {
+      id,
+      tenant_id: tenantId,
+      name: "cooldown test key",
+      environment: "sandbox",
+      scopes: ["ledger:read"],
+      key_prefix: "brain_sk_test_",
+      key_last4: secret.slice(-4),
+      hashed_secret: hashApiKeySecret(secret, PEPPER),
+      created_at: new Date().toISOString(),
+      last_used_at: null,
+      revoked_at: null,
+      rotated_from_id: null,
+    });
+    return id;
+  }
+
+  it("writes on the first use, then skips a burst within the cooldown window", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const secret = "brain_sk_test_cooldown1";
+    seedKey(store, tenantId, secret);
+    const { pool, writeCount } = countingPool(store);
+    let clock = 1_000_000;
+    const authenticate = buildApiKeyAuthenticator({
+      pool: pool as never,
+      resolverPool: makeResolverPool(store) as never,
+      pepper: PEPPER,
+      lastUsedAtCooldownMs: 60_000,
+      now: () => clock,
+    });
+
+    await authenticate(secret);
+    await flush();
+    expect(writeCount()).toBe(1);
+
+    // A burst of calls milliseconds later must not each fire a write.
+    clock += 1;
+    await authenticate(secret);
+    clock += 500;
+    await authenticate(secret);
+    await flush();
+    expect(writeCount()).toBe(1);
+  });
+
+  it("writes again once the cooldown window has fully elapsed", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const secret = "brain_sk_test_cooldown2";
+    seedKey(store, tenantId, secret);
+    const { pool, writeCount } = countingPool(store);
+    let clock = 1_000_000;
+    const authenticate = buildApiKeyAuthenticator({
+      pool: pool as never,
+      resolverPool: makeResolverPool(store) as never,
+      pepper: PEPPER,
+      lastUsedAtCooldownMs: 60_000,
+      now: () => clock,
+    });
+
+    await authenticate(secret);
+    await flush();
+    expect(writeCount()).toBe(1);
+
+    clock += 59_999; // one ms short of the window
+    await authenticate(secret);
+    await flush();
+    expect(writeCount()).toBe(1);
+
+    clock += 1; // now exactly at the window boundary
+    await authenticate(secret);
+    await flush();
+    expect(writeCount()).toBe(2);
+  });
+
+  it("tracks each key's cooldown independently", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const secretA = "brain_sk_test_cooldownA";
+    const secretB = "brain_sk_test_cooldownB";
+    seedKey(store, tenantId, secretA);
+    seedKey(store, tenantId, secretB);
+    const { pool, writeCount } = countingPool(store);
+    let clock = 1_000_000;
+    const authenticate = buildApiKeyAuthenticator({
+      pool: pool as never,
+      resolverPool: makeResolverPool(store) as never,
+      pepper: PEPPER,
+      lastUsedAtCooldownMs: 60_000,
+      now: () => clock,
+    });
+
+    await authenticate(secretA);
+    clock += 1;
+    await authenticate(secretB);
+    await flush();
+    expect(writeCount()).toBe(2); // each key's FIRST use always writes
+
+    clock += 1;
+    await authenticate(secretA);
+    await authenticate(secretB);
+    await flush();
+    expect(writeCount()).toBe(2); // both still within their own cooldowns
+  });
+
+  it("defaults to a 60s cooldown when unset", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const secret = "brain_sk_test_cooldowndefault";
+    seedKey(store, tenantId, secret);
+    const { pool, writeCount } = countingPool(store);
+    let clock = 1_000_000;
+    const authenticate = buildApiKeyAuthenticator({
+      pool: pool as never,
+      resolverPool: makeResolverPool(store) as never,
+      pepper: PEPPER,
+      now: () => clock,
+    });
+
+    await authenticate(secret);
+    clock += 59_999;
+    await authenticate(secret);
+    await flush();
+    expect(writeCount()).toBe(1);
+
+    clock += 1;
+    await authenticate(secret);
+    await flush();
+    expect(writeCount()).toBe(2);
+  });
+});

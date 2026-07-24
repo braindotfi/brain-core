@@ -46,6 +46,26 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # One-shot: wait for LocalStack, then create the artifacts bucket. Mirrors
+  # docker-compose.prod.yml's minio-setup; LocalStack's S3 emulation has no
+  # bucket-creation step of its own.
+  localstack-setup:
+    image: localstack/localstack:3
+    container_name: brain-localstack-setup
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      LOCALSTACK_HOST: localstack
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "awslocal s3 mb s3://brain-artifacts || true"
+    restart: "no"
+
   # The API gateway in watch mode (tsx watch src/main.ts). Demo mode keeps auth
   # self-contained (static HS256 secret, no JWKS fetch) and relaxes the boot
   # fences, which only fail-closed in NODE_ENV=production.
@@ -75,9 +95,20 @@ services:
       BRAIN_DEMO_MODE: "true"
       BRAIN_MCP_DEV_AUTH_BYPASS: "true"
       BRAIN_MCP_READER_DB_URL: ${BRAIN_MCP_READER_DB_URL:-}
-      BLOB_BACKEND: memory
+      # BLOB_BACKEND: s3-via-localstack, so blob-backed flows (tenant export/
+      # download) exercise the real S3 adapter code path instead of the
+      # in-memory stub. LocalStack's S3 emulation accepts any credentials.
+      BLOB_BACKEND: s3
+      BLOB_CONTAINER: brain-artifacts
+      S3_ENDPOINT: http://localstack:4566
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: test
+      S3_SECRET_ACCESS_KEY: test
+      S3_FORCE_PATH_STYLE: "true"
       # Optional real integrations — passed through from host env if present.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # For local testing of POST /v1/tenants (production tenancy). See .env.
+      BRAIN_PLATFORM_SERVICE_SECRET: ${BRAIN_PLATFORM_SERVICE_SECRET:-}
     volumes:
       - .:/app
       - bc_node_modules:/app/node_modules
@@ -86,6 +117,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      localstack:
+        condition: service_healthy
+      localstack-setup:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
     healthcheck:

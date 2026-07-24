@@ -3,6 +3,8 @@ export {
   BRAIN_BASE_URLS,
   resolveBaseUrl,
   type BrainOptions,
+  type BrainPublicClient,
+  type BrainPublicOptions,
   type PayResult,
 } from "./brain.js";
 
@@ -103,12 +105,27 @@ export {
 } from "./resources/actions.js";
 
 export {
+  AuthResource,
+  type LoginBody,
+  type LoginResult,
+  type SignupBody,
+  type SignupResult,
+  type SiwxChallengeResult,
+  type SiwxVerifyBody,
+  type SiwxVerifyResult,
+  type VerifyEmailBody,
+  type VerifyEmailResult,
+} from "./resources/auth.js";
+
+export {
   AgentsResource,
   type AgentActionsList,
   type ListAgentActionsParams,
   type ProposeFromAgentResult,
   type RegisterAgentBody,
 } from "./resources/agents.js";
+
+export { ReferenceResource, type YieldVenuesResult } from "./resources/reference.js";
 
 export {
   RawResource,
@@ -121,7 +138,47 @@ export {
   type SourceSyncJobResult,
 } from "./resources/raw.js";
 
-export { TenantsResource, type TenantExportJob } from "./resources/tenants.js";
+export {
+  TenantsResource,
+  type CreateTenantBody,
+  type CreateTenantResult,
+  type LinkWalletBody,
+  type LinkWalletResult,
+  type MintAgentTokenBody,
+  type ProductionAgentToken,
+  type TenantExportJob,
+} from "./resources/tenants.js";
+
+export {
+  SessionsResource,
+  type CreateSessionBody,
+  type CreateSessionResult,
+  type RefreshSessionBody,
+  type RefreshSessionResult,
+  type RevokeSessionResult,
+} from "./resources/sessions.js";
+
+export {
+  InvitesResource,
+  type ConsumeInviteBody,
+  type ConsumeInviteResult,
+} from "./resources/invites.js";
+
+export {
+  MembersResource,
+  type CreateMemberInviteResult,
+  type CreateMemberResult,
+  type DeactivateMemberResult,
+  type ListMembersParams,
+  type ListMembersResult,
+  type Member,
+  type MemberCreateRequest,
+  type MemberIdentityLinkRequest,
+  type MemberIdentityLinkResult,
+  type MemberUpdateRequest,
+  type RevokeMemberInviteResult,
+  type UpdateMemberResult,
+} from "./resources/members.js";
 
 export {
   WikiResource,

@@ -36,7 +36,21 @@ export interface ApiKeyAuthenticatorDeps {
   resolverPool: Pool;
   pepper: string;
   rateLimiter?: SlidingWindowRateLimiter;
+  /**
+   * Minimum time between `last_used_at` DB writes for the same key (Review P3).
+   * A busy key would otherwise fire one unawaited UPDATE per request; this
+   * coalesces bursts into at most one write per window. Default 60s. This is
+   * a display timestamp only, a per-process, in-memory cooldown is fine even
+   * though the API runs as multiple replicas (worst case: one write per
+   * replica per window, still a hard, predictable ceiling instead of one per
+   * request). Set to 0 to disable (e.g. in tests that assert every write).
+   */
+  lastUsedAtCooldownMs?: number;
+  /** Injectable clock for deterministic tests. Defaults to Date.now. */
+  now?: () => number;
 }
+
+const DEFAULT_LAST_USED_AT_COOLDOWN_MS = 60_000;
 
 interface ApiKeyRow {
   id: string;
@@ -232,6 +246,13 @@ export async function registerApiKeyRoutes(
 }
 
 export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
+  const cooldownMs = deps.lastUsedAtCooldownMs ?? DEFAULT_LAST_USED_AT_COOLDOWN_MS;
+  const now = deps.now ?? (() => Date.now());
+  // Per-authenticator-instance (i.e. per process), not shared across replicas.
+  // See the ApiKeyAuthenticatorDeps.lastUsedAtCooldownMs doc comment for why
+  // that's an acceptable tradeoff for this field.
+  const lastWrittenAt = new Map<string, number>();
+
   return async (secret: string): Promise<{ principal: Principal; keyId: string } | null> => {
     const hashedSecret = hashApiKeySecret(secret, deps.pepper);
     const { rows } = await deps.resolverPool.query<ApiKeyRow>(
@@ -256,9 +277,23 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
       }
     }
 
-    void withTenantScope(deps.pool, row.tenant_id, (client) =>
-      client.query(`UPDATE api_keys SET last_used_at = now() WHERE id = $1`, [row.id]),
-    ).catch(() => undefined);
+    // Ceiling on the never-evicted cooldown map (revoked/rotated keys never get
+    // removed). Clearing on overflow is safe: worst case is one extra
+    // last_used_at write per key afterward, and the field is display-only.
+    if (lastWrittenAt.size > 50_000) {
+      lastWrittenAt.clear();
+    }
+    const nowMs = now();
+    const lastWrite = lastWrittenAt.get(row.id);
+    if (lastWrite === undefined || nowMs - lastWrite >= cooldownMs) {
+      // Set before firing the write (not after it resolves) so a burst of
+      // requests arriving before this async write settles doesn't each pass
+      // the cooldown check and pile up duplicate writes for the same key.
+      lastWrittenAt.set(row.id, nowMs);
+      void withTenantScope(deps.pool, row.tenant_id, (client) =>
+        client.query(`UPDATE api_keys SET last_used_at = now() WHERE id = $1`, [row.id]),
+      ).catch(() => undefined);
+    }
 
     return {
       keyId: row.id,

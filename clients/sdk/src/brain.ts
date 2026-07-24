@@ -5,6 +5,7 @@ import {
 } from "./client.js";
 import { PolicyApprovalRequiredError, PolicyRejectedError, type PaymentIntent } from "./errors.js";
 import { ActionsResource } from "./resources/actions.js";
+import { AuthResource } from "./resources/auth.js";
 import { AgentsResource } from "./resources/agents.js";
 import { AuditResource } from "./resources/audit.js";
 import { ProofResource, type Proof } from "./resources/proof.js";
@@ -14,6 +15,7 @@ import {
   BalancesResource,
   CounterpartiesResource,
   InvoicesResource,
+  LedgerOperationsResource,
   ObligationsResource,
   TransactionsResource,
 } from "./resources/ledger.js";
@@ -31,11 +33,16 @@ import {
   type SnapshotOptions,
 } from "./resources/compounds.js";
 import { PolicyResource } from "./resources/policy.js";
+import { CanonicalResource } from "./resources/canonical.js";
 import { ProposalsResource } from "./resources/proposals.js";
 import { EvidenceResource } from "./resources/evidence.js";
 import { RawResource } from "./resources/raw.js";
 import { TenantsResource } from "./resources/tenants.js";
-import { WikiResource, type AskParams } from "./resources/wiki.js";
+import { SessionsResource } from "./resources/sessions.js";
+import { InvitesResource } from "./resources/invites.js";
+import { MembersResource } from "./resources/members.js";
+import { WikiResource, MemoryResource, type AskParams } from "./resources/wiki.js";
+import { ReferenceResource } from "./resources/reference.js";
 import type { components } from "./generated/openapi.js";
 
 export interface BrainOptions extends Omit<BrainHttpClientOptions, "baseUrl"> {
@@ -50,6 +57,22 @@ export interface BrainOptions extends Omit<BrainHttpClientOptions, "baseUrl"> {
 export interface PayResult {
   intent: PaymentIntent;
   execution: ExecutionReceipt | undefined;
+}
+
+export interface BrainPublicOptions {
+  /** Named environment shorthand. Ignored when `baseUrl` is set explicitly. */
+  environment?: "production" | "sandbox" | "staging" | "local";
+  /** Explicit base URL override. Takes precedence over `environment`. */
+  baseUrl?: string;
+  /** Optional fetch implementation override (testing, custom transports). */
+  fetch?: typeof globalThis.fetch;
+}
+
+/** Returned by `Brain.public(...)`. Only the genuinely credential-free resources. */
+export interface BrainPublicClient {
+  readonly baseUrl: string;
+  readonly auth: AuthResource;
+  readonly reference: ReferenceResource;
 }
 
 export const BRAIN_BASE_URLS: Record<"production" | "sandbox" | "staging" | "local", string> = {
@@ -75,6 +98,11 @@ export function resolveBaseUrl(options: Pick<BrainOptions, "environment" | "base
  * are shipped. Agents, raw/sources, wiki, policy, and client-side
  * compounds follow in subsequent PRs. See clients/sdk/README.md for
  * status.
+ *
+ * `new Brain(...)` requires a `token` or `apiKey` up front because almost
+ * every resource here needs one. The few genuinely public routes (signup,
+ * login, SIWX, and the public reference catalog) are reachable before you
+ * hold a credential via the separate `Brain.public(...)` entry point.
  */
 export class Brain {
   readonly http: BrainHttpClient;
@@ -93,12 +121,21 @@ export class Brain {
   readonly proposals: ProposalsResource;
   readonly evidence: EvidenceResource;
   readonly actions: ActionsResource;
+  /** Public (no bearer token) signup/login/SIWX routes. See resources/auth.ts. */
+  readonly auth: AuthResource;
   readonly agents: AgentsResource;
   readonly raw: RawResource;
   readonly tenants: TenantsResource;
+  readonly sessions: SessionsResource;
+  readonly invites: InvitesResource;
+  readonly members: MembersResource;
   readonly wiki: WikiResource;
   readonly policy: PolicyResource;
   readonly cashFlow: CashFlowResource;
+  readonly canonical: CanonicalResource;
+  readonly ledgerOperations: LedgerOperationsResource;
+  readonly memory: MemoryResource;
+  readonly reference: ReferenceResource;
   private readonly _token: string | undefined;
   private readonly _apiKey: string | undefined;
   private readonly _fetch: typeof globalThis.fetch;
@@ -116,7 +153,7 @@ export class Brain {
     }
     const fetch = options.fetch ?? globalThis.fetch;
     if (typeof fetch !== "function") {
-      throw new Error("Brain: no fetch implementation available — pass options.fetch");
+      throw new Error("Brain: no fetch implementation available, pass options.fetch");
     }
     this.baseUrl = resolveBaseUrl(options);
     this.defaultTenantId = options.defaultTenantId;
@@ -137,24 +174,55 @@ export class Brain {
     this.proposals = new ProposalsResource(this.http);
     this.evidence = new EvidenceResource(this.http);
     this.actions = new ActionsResource(this.http);
+    this.auth = new AuthResource(this.baseUrl, this._fetch);
     this.agents = new AgentsResource(this.http);
     this.raw = new RawResource(this.http);
     this.tenants = new TenantsResource(this.http);
+    this.sessions = new SessionsResource(this.http);
+    this.invites = new InvitesResource(this.http);
+    this.members = new MembersResource(this.http);
     this.wiki = new WikiResource(this.http);
     this.policy = new PolicyResource(this.http);
     this.compounds = new CompoundsResource(this);
     this.cashFlow = new CashFlowResource(this);
+    this.canonical = new CanonicalResource(this.http);
+    this.ledgerOperations = new LedgerOperationsResource(this.http);
+    this.memory = new MemoryResource(this.http);
+    this.reference = new ReferenceResource(this.baseUrl, this._fetch);
   }
 
   /**
    * Convenience factory for local development. Points at `localhost:3000/v1`
-   * using the provided token — useful when running `pnpm -C services/api run dev`.
+   * using the provided token, useful when running `pnpm -C services/api run dev`.
    */
   static local(
     token: string,
     options?: Omit<BrainOptions, "token" | "environment" | "baseUrl">,
   ): Brain {
     return new Brain({ ...options, token, environment: "local" });
+  }
+
+  /**
+   * Entry point for the routes that require no credential at all:
+   * `auth.signup`/`login`/`verifyEmail`/`siwxChallenge`/`siwx` (how a
+   * caller GETS a credential in the first place) and
+   * `reference.yieldVenues` (a public, `skipAuth`, rate-limited route).
+   * `new Brain(...)` can't reach these without a junk token, since its
+   * constructor requires one; `Brain.public(...)` skips that requirement
+   * and only exposes these two resources, so nothing else is reachable
+   * without a real credential.
+   */
+  static public(options: BrainPublicOptions = {}): BrainPublicClient {
+    const baseUrl = resolveBaseUrl(options);
+    const fetch = options.fetch ?? globalThis.fetch;
+    if (typeof fetch !== "function") {
+      throw new Error("Brain.public: no fetch implementation available, pass options.fetch");
+    }
+    return {
+      baseUrl,
+      auth: new AuthResource(baseUrl, fetch),
+      reference: new ReferenceResource(baseUrl, fetch),
+    };
   }
 
   /**
@@ -289,7 +357,7 @@ export class Brain {
   /**
    * Flat helper documented as `brain.proof(action.id)` on the homepage (H-07).
    * Returns the canonical, verifiable Proof for an action (PaymentIntent or
-   * agent-action id) — the §6 gate trace, evidence chain, policy decision, and
+   * agent-action id): the §6 gate trace, evidence chain, policy decision, and
    * on-chain-anchored audit Merkle proof, plus a human-readable explanation.
    *
    * For the low-level Merkle inclusion proof of a single audit event, use

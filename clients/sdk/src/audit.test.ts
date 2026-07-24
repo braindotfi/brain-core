@@ -190,6 +190,128 @@ describe("Brain.audit", () => {
   });
 });
 
+describe("Brain.audit webhook endpoint management", () => {
+  it("createWebhookEndpoint posts url/enabled_events and returns the secret once", async () => {
+    const { fetch, calls } = mockFetch(201, {
+      id: "whep_1",
+      url: "https://example.com/hook",
+      enabled_events: ["proposal.decided"],
+      enabled: true,
+      secret: "whsec_plaintext",
+      created_at: "2026-07-22T00:00:00.000Z",
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const result = await brain.audit.createWebhookEndpoint({
+      url: "https://example.com/hook",
+      enabled_events: ["proposal.decided"],
+    });
+
+    expect(result.secret).toBe("whsec_plaintext");
+    expect(result.enabledEvents).toEqual(["proposal.decided"]);
+    const sent = await calls[0]!.text();
+    expect(sent).toContain('"url":"https://example.com/hook"');
+  });
+
+  it("listWebhookEndpoints maps secret_preview, never a raw secret field", async () => {
+    const { fetch } = mockFetch(200, {
+      endpoints: [
+        {
+          id: "whep_1",
+          url: "https://example.com/hook",
+          enabled_events: null,
+          enabled: true,
+          secret_preview: "whsec_pl...",
+          created_at: "2026-07-22T00:00:00.000Z",
+        },
+      ],
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const result = await brain.audit.listWebhookEndpoints();
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.secretPreview).toBe("whsec_pl...");
+  });
+
+  it("deleteWebhookEndpoint sends DELETE with a truly empty body and resolves on 204", async () => {
+    const calls: Request[] = [];
+    const fetch = vi.fn(async (input: Request | URL | string) => {
+      calls.push(input as Request);
+      return new Response(null, { status: 204 });
+    });
+    const brain = new Brain({ token: "k", fetch: fetch as unknown as typeof globalThis.fetch });
+
+    await expect(brain.audit.deleteWebhookEndpoint("whep_1")).resolves.toBeUndefined();
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toContain("/audit/webhooks/endpoints/whep_1");
+    expect(calls[0]?.headers.get("content-type")).toBeNull();
+    expect(await calls[0]!.text()).toBe("");
+  });
+
+  it("deleteWebhookEndpoint surfaces a 404 as BrainAPIError", async () => {
+    const { fetch } = mockFetch(404, {
+      error: {
+        code: "audit_event_not_found",
+        message: "webhook endpoint not found",
+        request_id: "req_1",
+        docs_url: "https://docs.brain.fi/resources/errors#audit_event_not_found",
+      },
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    await expect(brain.audit.deleteWebhookEndpoint("whep_missing")).rejects.toBeInstanceOf(
+      BrainAPIError,
+    );
+  });
+
+  it("getWebhookDeadLetters maps the dead-letter list", async () => {
+    const { fetch, calls } = mockFetch(200, {
+      endpoint_id: "whep_1",
+      dead_letters: [
+        {
+          id: "wdl_1",
+          event_id: "evt_1",
+          event_type: "proposal.decided",
+          last_error: "connection refused",
+          attempt_count: 2,
+          created_at: "2026-07-22T00:00:00.000Z",
+          last_attempt_at: "2026-07-22T00:05:00.000Z",
+        },
+      ],
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const result = await brain.audit.getWebhookDeadLetters("whep_1");
+
+    expect(result.deadLetters).toHaveLength(1);
+    expect(result.deadLetters[0]?.attemptCount).toBe(2);
+    expect(calls[0]?.url).toContain("/webhooks/whep_1/dead-letters");
+  });
+
+  it("replayWebhook posts a truly empty body and maps the replay result", async () => {
+    const { fetch, calls } = mockFetch(200, {
+      endpoint_id: "whep_1",
+      attempted: 2,
+      redelivered: 1,
+      still_failing: 1,
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const result = await brain.audit.replayWebhook("whep_1");
+
+    expect(result).toEqual({
+      endpointId: "whep_1",
+      attempted: 2,
+      redelivered: 1,
+      stillFailing: 1,
+    });
+    expect(calls[0]?.url).toContain("/webhooks/whep_1/replay");
+    expect(calls[0]?.headers.get("content-type")).toBeNull();
+    expect(await calls[0]!.text()).toBe("");
+  });
+});
+
 describe("Brain.proof (H-07 flagship artifact)", () => {
   it("returns the full Proof for an action id via /proof/{action_id}", async () => {
     const { fetch, calls } = mockFetch(200, {

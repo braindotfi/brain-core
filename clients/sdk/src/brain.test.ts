@@ -212,6 +212,99 @@ describe("Brain", () => {
       expect(list).toEqual([]);
       expect(list.nextCursor).toBeNull();
     });
+
+    it("get fetches a single counterparty by id", async () => {
+      const { fetch, calls } = mockFetch(200, { id: "cp_1", name: "Acme Vendor" });
+      const brain = new Brain({ token: "k", fetch });
+
+      const cp = await brain.counterparties.get("cp_1");
+
+      expect(cp.id).toBe("cp_1");
+      expect(calls[0]?.url).toContain("/ledger/counterparties/cp_1");
+    });
+
+    it("get propagates a 404 as BrainAPIError", async () => {
+      const { fetch } = mockFetch(404, {
+        error: {
+          code: "ledger_row_not_found",
+          message: "no such counterparty",
+          request_id: "req_1",
+          docs_url: "https://docs.brain.fi/resources/errors#ledger_row_not_found",
+        },
+      });
+      const brain = new Brain({ token: "k", fetch });
+
+      await expect(brain.counterparties.get("cp_missing")).rejects.toMatchObject({
+        status: 404,
+      });
+    });
+
+    it("create posts identity fields and returns the created counterparty", async () => {
+      const { fetch, calls } = mockFetch(201, {
+        counterparty: { id: "cp_1", name: "Acme Vendor", type: "vendor" },
+        created: true,
+      });
+      const brain = new Brain({ token: "k", fetch });
+
+      const result = await brain.counterparties.create({ name: "Acme Vendor", type: "vendor" });
+
+      expect(result.created).toBe(true);
+      expect(result.counterparty?.id).toBe("cp_1");
+      const sent = await calls[0]!.text();
+      expect(sent).toContain('"name":"Acme Vendor"');
+    });
+
+    it("create surfaces payment_fields_not_allowed as a 400 BrainAPIError", async () => {
+      const { fetch } = mockFetch(400, {
+        error: {
+          code: "request_body_invalid",
+          message: "payment fields not allowed",
+          request_id: "req_1",
+          docs_url: "https://docs.brain.fi/resources/errors#request_body_invalid",
+          details: { reason: "payment_fields_not_allowed", fields: ["iban"] },
+        },
+      });
+      const brain = new Brain({ token: "k", fetch });
+
+      await expect(
+        brain.counterparties.create({
+          name: "Acme Vendor",
+          type: "vendor",
+          // @ts-expect-error -- payment fields are intentionally not part of the typed body
+          iban: "DE89370400440532013000",
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("update patches identity fields by id", async () => {
+      const { fetch, calls } = mockFetch(200, {
+        counterparty: { id: "cp_1", name: "Acme Vendor Renamed" },
+      });
+      const brain = new Brain({ token: "k", fetch });
+
+      const result = await brain.counterparties.update("cp_1", { name: "Acme Vendor Renamed" });
+
+      expect(result.counterparty?.name).toBe("Acme Vendor Renamed");
+      expect(calls[0]?.method).toBe("PATCH");
+      expect(calls[0]?.url).toContain("/ledger/counterparties/cp_1");
+    });
+
+    it("update surfaces a 409 name_conflict as BrainAPIError", async () => {
+      const { fetch } = mockFetch(409, {
+        error: {
+          code: "ledger_reconciliation_conflict",
+          message: "rename conflicts with another counterparty",
+          request_id: "req_1",
+          docs_url: "https://docs.brain.fi/resources/errors#ledger_reconciliation_conflict",
+          details: { reason: "name_conflict" },
+        },
+      });
+      const brain = new Brain({ token: "k", fetch });
+
+      await expect(
+        brain.counterparties.update("cp_1", { name: "Existing Name" }),
+      ).rejects.toMatchObject({ status: 409 });
+    });
   });
 
   describe("obligations", () => {

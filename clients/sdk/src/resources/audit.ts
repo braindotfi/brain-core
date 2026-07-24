@@ -1,6 +1,6 @@
 import type { BrainHttpClient } from "../client.js";
 import { BrainAPIError, type BrainErrorBody } from "../errors.js";
-import type { components, paths } from "../generated/openapi.js";
+import type { components, operations, paths } from "../generated/openapi.js";
 
 type AuditEvent = components["schemas"]["AuditEvent"];
 
@@ -64,6 +64,51 @@ export interface VerifyAuditRequest {
 export interface VerifyAuditResult {
   verified: boolean;
   onchainBlock: number | null;
+}
+
+export interface WebhookEndpoint {
+  id: string | undefined;
+  url: string | undefined;
+  enabledEvents: string[] | null | undefined;
+  enabled: boolean | undefined;
+  secretPreview: string | undefined;
+  createdAt: string | undefined;
+}
+
+export type CreateWebhookEndpointRequest = NonNullable<
+  operations["createAuditWebhookEndpoint"]["requestBody"]
+>["content"]["application/json"];
+
+export interface CreatedWebhookEndpoint {
+  id: string | undefined;
+  url: string | undefined;
+  enabledEvents: string[] | null | undefined;
+  enabled: boolean | undefined;
+  /** Plaintext signing secret. Shown only in this response, never retrievable again. */
+  secret: string | undefined;
+  createdAt: string | undefined;
+}
+
+export interface WebhookDeadLetter {
+  id: string | undefined;
+  eventId: string | undefined;
+  eventType: string | undefined;
+  lastError: string | null | undefined;
+  attemptCount: number | undefined;
+  createdAt: string | undefined;
+  lastAttemptAt: string | undefined;
+}
+
+export interface WebhookDeadLetterList {
+  endpointId: string | undefined;
+  deadLetters: WebhookDeadLetter[];
+}
+
+export interface WebhookReplayResult {
+  endpointId: string | undefined;
+  attempted: number | undefined;
+  redelivered: number | undefined;
+  stillFailing: number | undefined;
 }
 
 function unwrap<T>(data: T | undefined, error: BrainErrorBody | undefined, status: number): T {
@@ -162,6 +207,112 @@ export class AuditResource {
     return {
       verified: body.verified ?? false,
       onchainBlock: body.onchain_block ?? null,
+    };
+  }
+
+  /** Requires `audit:read`. Secrets are masked to an 8-character preview. */
+  async listWebhookEndpoints(): Promise<WebhookEndpoint[]> {
+    const { data, error, response } = await this.http.GET("/audit/webhooks/endpoints");
+    const body = unwrap(data, error, response.status);
+    return (body.endpoints ?? []).map((e) => ({
+      id: e.id,
+      url: e.url,
+      enabledEvents: e.enabled_events,
+      enabled: e.enabled,
+      secretPreview: e.secret_preview,
+      createdAt: e.created_at,
+    }));
+  }
+
+  /**
+   * Requires `audit:write`. As of this writing, no currently issued
+   * credential (member session, owner token, agent, or API key) carries
+   * `audit:write` anywhere in the codebase, so this will 403 with
+   * `auth_scope_insufficient` until that's provisioned, the same
+   * scope-provisioning gap pattern documented for `raw:admin` and
+   * `canonical:read` elsewhere in this project. The signing secret is
+   * generated server-side and returned exactly once, in this response;
+   * subsequent `listWebhookEndpoints` calls only ever return a masked
+   * preview.
+   */
+  async createWebhookEndpoint(req: CreateWebhookEndpointRequest): Promise<CreatedWebhookEndpoint> {
+    const { data, error, response } = await this.http.POST("/audit/webhooks/endpoints", {
+      body: req,
+    });
+    const body = unwrap(data, error, response.status);
+    return {
+      id: body.id,
+      url: body.url,
+      enabledEvents: body.enabled_events,
+      enabled: body.enabled,
+      secret: body.secret,
+      createdAt: body.created_at,
+    };
+  }
+
+  /**
+   * Requires `audit:write`. As of this writing, no currently issued
+   * credential (member session, owner token, agent, or API key) carries
+   * `audit:write` anywhere in the codebase, so this will 403 with
+   * `auth_scope_insufficient` until that's provisioned, the same
+   * scope-provisioning gap pattern documented for `raw:admin` and
+   * `canonical:read` elsewhere in this project.
+   */
+  async deleteWebhookEndpoint(id: string): Promise<void> {
+    const { error, response } = await this.http.DELETE("/audit/webhooks/endpoints/{id}", {
+      params: { path: { id } },
+    });
+    if (error !== undefined) {
+      throw new BrainAPIError(response.status, error);
+    }
+  }
+
+  /**
+   * Requires `audit:read`. Outbound webhook deliveries that failed are
+   * durably recorded here instead of being lost. Once `attemptCount` reaches
+   * 5, a dead letter is exhausted and `replayWebhook` will no longer
+   * auto-retry it.
+   */
+  async getWebhookDeadLetters(endpointId: string): Promise<WebhookDeadLetterList> {
+    const { data, error, response } = await this.http.GET("/webhooks/{endpoint_id}/dead-letters", {
+      params: { path: { endpoint_id: endpointId } },
+    });
+    const body = unwrap(data, error, response.status);
+    return {
+      endpointId: body.endpoint_id,
+      deadLetters: (body.dead_letters ?? []).map((d) => ({
+        id: d.id,
+        eventId: d.event_id,
+        eventType: d.event_type,
+        lastError: d.last_error,
+        attemptCount: d.attempt_count,
+        createdAt: d.created_at,
+        lastAttemptAt: d.last_attempt_at,
+      })),
+    };
+  }
+
+  /**
+   * Requires `audit:write`. As of this writing, no currently issued
+   * credential (member session, owner token, agent, or API key) carries
+   * `audit:write` anywhere in the codebase, so this will 403 with
+   * `auth_scope_insufficient` until that's provisioned, the same
+   * scope-provisioning gap pattern documented for `raw:admin` and
+   * `canonical:read` elsewhere in this project. Re-delivers each dead-letter
+   * still under the attempt cap for this endpoint. A successful re-delivery
+   * clears the row; a failure bumps its attempt count. Idempotent, safe to
+   * call again.
+   */
+  async replayWebhook(endpointId: string): Promise<WebhookReplayResult> {
+    const { data, error, response } = await this.http.POST("/webhooks/{endpoint_id}/replay", {
+      params: { path: { endpoint_id: endpointId } },
+    });
+    const body = unwrap(data, error, response.status);
+    return {
+      endpointId: body.endpoint_id,
+      attempted: body.attempted,
+      redelivered: body.redelivered,
+      stillFailing: body.still_failing,
     };
   }
 }

@@ -5,7 +5,7 @@ import type { components, paths } from "../generated/openapi.js";
 type Agent = components["schemas"]["Agent"];
 
 // GET /agents now lists the internal-agent CATALOG (definitions +
-// enablement), and GET /agents/{id} returns {definition, registration} —
+// enablement), and GET /agents/{id} returns {definition, registration},
 // derive from the path responses so spec drift fails here loudly.
 type AgentsListResponse =
   paths["/agents"]["get"]["responses"]["200"]["content"]["application/json"];
@@ -19,7 +19,7 @@ export type AgentRunDetail =
   paths["/agents/runs/{run_id}"]["get"]["responses"]["200"]["content"]["application/json"];
 
 export type RegisterAgentBody = NonNullable<
-  paths["/agents/register"]["post"]["requestBody"]
+  paths["/execution/agents/register"]["post"]["requestBody"]
 >["content"]["application/json"];
 
 export type ListAgentActionsParams = NonNullable<
@@ -74,8 +74,13 @@ export class AgentsResource {
     return unwrap(data, error, response.status);
   }
 
+  /**
+   * The documented `/agents/register` path is `deprecated: true` and not yet
+   * implemented server-side; this calls the still-live legacy route,
+   * `POST /execution/agents/register`, which does the actual work.
+   */
   async register(body: RegisterAgentBody): Promise<Agent> {
-    const { data, error, response } = await this.http.POST("/agents/register", {
+    const { data, error, response } = await this.http.POST("/execution/agents/register", {
       body,
     });
     return unwrap(data, error, response.status);
@@ -194,5 +199,38 @@ export class AgentsResource {
       body: { category },
     });
     return unwrap(data, error, response.status) as Record<string, unknown>;
+  }
+
+  /**
+   * Requires `payment_intent:approve` (same scope as `halt`). Operator
+   * compare-and-swap restore: moves the agent from `quarantined` back to
+   * `active`. Rejects every other source state (409,
+   * `execution_agent_not_registered`), not a general state setter, only the
+   * halt-to-active path. Does not un-pause PaymentIntents paused by the
+   * prior halt; those remain paused and must be resumed separately.
+   */
+  async restore(agentId: string): Promise<{ agent_id?: string; restored?: boolean }> {
+    const { data, error, response } = await this.http.POST("/agents/{agent_id}/restore", {
+      params: { path: { agent_id: agentId } },
+    });
+    return unwrap(data, error, response.status);
+  }
+
+  /**
+   * Requires `payment_intent:approve` (same scope as `halt`). Clears the
+   * contribution hold so subsequent agent contributions extract normally
+   * again. Idempotent, safe to call again. Does not un-pause PaymentIntents
+   * paused by a prior halt.
+   */
+  async releaseContributionHold(
+    agentId: string,
+  ): Promise<{ agent_id?: string; contribution_hold_released?: boolean }> {
+    const { data, error, response } = await this.http.POST(
+      "/agents/{agent_id}/contribution-hold/release",
+      {
+        params: { path: { agent_id: agentId } },
+      },
+    );
+    return unwrap(data, error, response.status);
   }
 }

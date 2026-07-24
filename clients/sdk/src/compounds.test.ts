@@ -220,3 +220,59 @@ describe("Brain.cashFlow.summarize", () => {
     expect(calls[0]?.url).toContain("account_id=acct_1");
   });
 });
+
+describe("Brain.cashFlow.getServerSummary", () => {
+  it("calls the real GET /ledger/cash_flows endpoint with days/currency query params", async () => {
+    const { fetch, calls } = mockSequence([
+      {
+        status: 200,
+        body: {
+          tenantId: "tnt_1",
+          since: "2026-06-22T00:00:00.000Z",
+          until: "2026-07-22T00:00:00.000Z",
+          currencies: [
+            {
+              currency: "USD",
+              inflow: "150.00",
+              outflow: "50.00",
+              net: "100.00",
+              transaction_count: 5,
+              by_day: [],
+            },
+          ],
+        },
+      },
+    ]);
+    const brain = new Brain({ token: "k", fetch });
+
+    const summary = await brain.cashFlow.getServerSummary({ days: 30, currency: "USD" });
+
+    expect(summary.tenantId).toBe("tnt_1");
+    expect(summary.currencies).toHaveLength(1);
+    expect(summary.currencies[0]?.transaction_count).toBe(5);
+    expect(calls[0]?.url).toContain("/ledger/cash_flows");
+    expect(calls[0]?.url).toContain("days=30");
+    expect(calls[0]?.url).toContain("currency=USD");
+  });
+
+  it("propagates a 400 (malformed currency) as BrainAPIError", async () => {
+    const { fetch } = mockSequence([
+      {
+        status: 400,
+        body: {
+          error: {
+            code: "request_params_invalid",
+            message: "currency must match ^[A-Z]{3}$",
+            request_id: "req_1",
+            docs_url: "https://docs.brain.fi/resources/errors#request_params_invalid",
+          },
+        },
+      },
+    ]);
+    const brain = new Brain({ token: "k", fetch });
+
+    await expect(brain.cashFlow.getServerSummary({ currency: "usd" })).rejects.toMatchObject({
+      status: 400,
+    });
+  });
+});

@@ -1903,6 +1903,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{agent_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a halted agent from quarantine
+         * @description Requires `payment_intent:approve` (same scope as halt). Operator
+         *     compare-and-swap restore: moves the agent from `quarantined` back to
+         *     `active`. Rejects every other source state (409,
+         *     `execution_agent_not_registered`), it is not a general state setter,
+         *     only the halt-to-active path. Does not un-pause PaymentIntents paused
+         *     by the prior halt; those remain paused and must be resumed
+         *     separately.
+         */
+        post: operations["restoreAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{agent_id}/contribution-hold/release": {
         parameters: {
             query?: never;
@@ -2051,6 +2077,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Actions
+         * @description Requires `execution:read`. `status=auto` widens to the underlying
+         *     `proposed` and `approved` storage states and is filtered
+         *     client-side; a typed multi-status storage filter is a follow-up.
+         *     Not yet cursor-paginated (`next_cursor` is always `null`).
+         */
+        get: operations["listActions"];
+        put?: never;
+        /**
+         * Create an Action (proposed)
+         * @description Requires `payment_intent:propose`. Idempotent (config
+         *     `idempotent: true`). The v0.3 user-facing write path for financial
+         *     actions, supersedes `/payment-intents` (see the `Deprecation`
+         *     header on those routes), backed by the same underlying storage.
+         *
+         *     `type` is translated to an internal action type (`pay_invoice` and
+         *     `outbound_payment` both map to `ach_outbound`; `ach_inbound`, `wire`,
+         *     `onchain_transfer`, `erp_writeback`, and `card_payment` pass
+         *     through). Requires `source_account_id`, `to.counterparty_id`,
+         *     `amount`, and a 3-letter `currency`.
+         */
+        post: operations["createAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an Action
+         * @description Requires `execution:read`.
+         */
+        get: operations["getAction"];
+        put?: never;
+        post?: never;
+        /**
+         * Cancel an Action
+         * @description Requires `payment_intent:propose`.
+         */
+        delete: operations["cancelAction"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve an Action
+         * @description Requires `payment_intent:approve`. Delegates to the PaymentIntent approval lifecycle, so member authority and human-approval floors apply.
+         */
+        post: operations["approveAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject an Action
+         * @description Requires `payment_intent:approve`.
+         */
+        post: operations["rejectAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/{id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute an Action (runs the money-path gate)
+         * @description Requires `payment_intent:execute`.
+         */
+        post: operations["executeAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payment-intents": {
         parameters: {
             query?: never;
@@ -2062,7 +2208,10 @@ export interface paths {
         put?: never;
         /**
          * Create a PaymentIntent (proposed)
-         * @description Requires `payment_intent:propose`. Idempotent (config `idempotent: true`).
+         * @description Requires `payment_intent:propose`. Idempotent (config
+         *     `idempotent: true`). **Deprecated** (RFC 8594 `Deprecation` header),
+         *     superseded by `POST /actions`, the v0.3 public write path. Both
+         *     operate on the same underlying storage.
          */
         post: operations["createPaymentIntent"];
         delete?: never;
@@ -4301,6 +4450,40 @@ export interface components {
             execution_receipt_ids?: string[];
             /** @description Present only when requested with `?expand=agent`. */
             agent?: components["schemas"]["ProposalAgent"] | null;
+        };
+        /** @description The v0.3 public wire shape for `/v1/actions/*`. Internally backed by the same storage row as `PaymentIntent` (translation layer in `services/execution/src/actions/mapper.ts`), `id` is a `pi_...` Brain id either way. */
+        Action: {
+            id: string;
+            tenantId: string;
+            agent_id?: string | null;
+            type: string;
+            /** @enum {string} */
+            decision: "ALLOW" | "ESCALATE" | "DENY";
+            /** @enum {string} */
+            status: "auto" | "needs_approval" | "approved" | "paused" | "dispatching" | "rejected" | "executed" | "failed" | "cancelled";
+            approvers?: string[];
+            approvals?: unknown[];
+            rail?: string | null;
+            tx_hash?: string | null;
+            rail_receipt?: Record<string, never> | null;
+            /** Format: date-time */
+            executed_at?: string | null;
+            /** Format: date-time */
+            settled_at?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            policy_version?: number | null;
+            matched_rule?: string | null;
+            reason?: Record<string, never> | null;
+            signed_verdict?: string | null;
+            confidence: number;
+            evidence_score: number;
+            execution_mode: string;
+            audit_events?: string[];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
         };
         ReconciliationMatch: {
             id: string;
@@ -8142,6 +8325,50 @@ export interface operations {
             400: components["responses"]["BadRequest"];
         };
     };
+    restoreAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Restore result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agent_id?: string;
+                        /** @enum {boolean} */
+                        restored?: true;
+                    };
+                };
+            };
+            /** @description No such agent. Error code `execution_agent_not_registered`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Agent is not currently quarantined. Error code `execution_agent_not_registered`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     releaseContributionHold: {
         parameters: {
             query?: never;
@@ -8332,6 +8559,255 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             403: components["responses"]["Forbidden"];
             /** @description No proposal exists for this tenant. Error code `execution_proposal_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listActions: {
+        parameters: {
+            query?: {
+                agent_id?: string;
+                status?: "auto" | "needs_approval" | "approved" | "rejected" | "executed" | "failed" | "cancelled";
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Actions page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Action"][];
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    type: "pay_invoice" | "outbound_payment" | "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment";
+                    /** @description Only honored for callers with `execution:admin`. */
+                    agent_id?: string;
+                    to: {
+                        counterparty_id: string;
+                    };
+                    amount: string;
+                    currency: string;
+                    source_account_id: string;
+                    memo?: string;
+                    evidence_ids?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Action created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Action"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Action */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Action"];
+                };
+            };
+            /** @description No such action. Error code `action_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    cancelAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Action cancelled */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Action"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No such action. Error code `action_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    approveAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    asserted_actor_id?: string;
+                    actor_id?: unknown;
+                    actor?: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Action approved (or advanced toward approval, e.g. awaiting second approval) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Action"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such action. Error code `action_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rejectAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Action rejected */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Action"];
+                };
+            };
+            /** @description No such action. Error code `action_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    executeAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Execution accepted (async — poll the action or the execution record for terminal state) */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        action_id?: string;
+                        execution_id?: string | null;
+                        rail?: string | null;
+                        status?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such action. Error code `action_not_found`. */
             404: {
                 headers: {
                     [name: string]: unknown;

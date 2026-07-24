@@ -181,3 +181,68 @@ describe("Brain.ask (compound)", () => {
     expect(body).toContain('"max_evidence_depth":7');
   });
 });
+
+describe("Brain.memory", () => {
+  it("listPages passes page_type/q/limit as query params", async () => {
+    const { fetch, calls } = mockFetch(200, {
+      pages: [{ id: "wp_1", slug: "acct-123", page_type: "account" }],
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const pages = await brain.memory.listPages({ page_type: "account", q: "acct", limit: 10 });
+
+    expect(pages).toHaveLength(1);
+    expect(calls[0]?.url).toContain("/memory/pages");
+    expect(calls[0]?.url).toContain("page_type=account");
+    expect(calls[0]?.url).toContain("limit=10");
+  });
+
+  it("getPage fetches one page by slug_or_id", async () => {
+    const { fetch, calls } = mockFetch(200, { id: "wp_1", slug: "acct-123" });
+    const brain = new Brain({ token: "k", fetch });
+
+    const page = await brain.memory.getPage("acct-123");
+
+    expect(page.slug).toBe("acct-123");
+    expect(calls[0]?.url).toContain("/memory/pages/acct-123");
+  });
+
+  it("getPage propagates a 404 as BrainAPIError", async () => {
+    const { fetch } = mockFetch(404, {
+      error: {
+        code: "wiki_page_not_found",
+        message: "no such page",
+        request_id: "req_1",
+        docs_url: "https://docs.brain.fi/resources/errors#wiki_page_not_found",
+      },
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    await expect(brain.memory.getPage("missing")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("regenerate posts slug_or_id and returns the refreshed page", async () => {
+    const { fetch, calls } = mockFetch(200, { id: "wp_1", slug: "acct-123", regenerated: true });
+    const brain = new Brain({ token: "k", fetch });
+
+    const page = await brain.memory.regenerate("acct-123");
+
+    expect(page).toMatchObject({ slug: "acct-123" });
+    expect(calls[0]?.url).toContain("/memory/regenerate");
+    const sent = await calls[0]!.text();
+    expect(sent).toContain('"slug_or_id":"acct-123"');
+  });
+
+  it("search requires q and passes limit", async () => {
+    const { fetch, calls } = mockFetch(200, {
+      results: [{ page: { id: "wp_1" }, score: 0.9 }],
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const result = await brain.memory.search({ q: "cash flow", limit: 5 });
+
+    expect(result.results).toHaveLength(1);
+    expect(calls[0]?.url).toContain("q=cash");
+    expect(calls[0]?.url).toContain("limit=5");
+  });
+});
