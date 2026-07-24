@@ -502,6 +502,11 @@ async function main(): Promise<void> {
       "BLOB_BACKEND=memory is not allowed in NODE_ENV=production — set BLOB_BACKEND=azure or BLOB_BACKEND=s3",
     );
   }
+  if (cfg.BLOB_BACKEND === "memory" && composition.workers.size > 0) {
+    log.warn(
+      "BLOB_BACKEND is 'memory' but worker processes cannot share memory blobs with the API process; uploads will fail to interpret.",
+    );
+  }
 
   // Single source of truth for the demo HS256 secret. Used by both JwtVerifier
   // (to accept demo tokens) and JwtSigner (to mint them). Having it in two
