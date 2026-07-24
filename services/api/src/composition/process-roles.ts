@@ -25,6 +25,7 @@ export const WORKER_GROUPS = [
   "blob_purge", // tenant blob-purge worker
   "tenant_export", // tenant data export worker
   "agent_route", // domain-event -> internal-agent route worker
+  "wiki", // wiki page regeneration worker
 ] as const;
 
 export type WorkerGroup = (typeof WORKER_GROUPS)[number];
@@ -56,6 +57,7 @@ const WORKER_POOLS: Record<WorkerGroup, ReadonlyArray<PoolName>> = {
   blob_purge: ["tenant_deletion"],
   tenant_export: ["tenant_deletion"],
   agent_route: [], // brain_app
+  wiki: ["tenant_deletion"], // tenant discovery only; page generation uses brain_wiki_reader
 };
 
 /** Role pools the HTTP /v1 routes need (webhook/SIWX/login, tenant deletion, audit health). */

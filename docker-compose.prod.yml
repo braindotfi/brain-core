@@ -344,7 +344,7 @@ services:
       <<: *brain-common-env
       SERVICE_NAME: brain-worker
       BRAIN_HTTP_ENABLED: "false"
-      BRAIN_WORKERS: all
+      BRAIN_WORKERS: "all"
       # Worker-only role URLs (no resolver: that is request-path only).
       BRAIN_RAW_WORKER_DB_URL: postgres://brain_raw_worker:${BRAIN_RAW_WORKER_DB_PASSWORD:-brain_raw_worker}@postgres:5432/brain
       BRAIN_CANONICAL_PROJECTOR_DB_URL: postgres://brain_canonical_projector:${BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD:-brain_canonical_projector}@postgres:5432/brain

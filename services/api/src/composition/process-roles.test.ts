@@ -4,6 +4,7 @@ import { WORKER_GROUPS, parseWorkerSelection, resolveComposition } from "./proce
 describe("parseWorkerSelection", () => {
   it('"all" selects every worker group', () => {
     expect(parseWorkerSelection("all")).toEqual(new Set(WORKER_GROUPS));
+    expect(parseWorkerSelection("all").has("wiki")).toBe(true);
   });
 
   it('"none" and "" select nothing', () => {
@@ -43,6 +44,12 @@ describe("resolveComposition", () => {
   it("the audit worker group needs both verifier and publisher pools", () => {
     const c = resolveComposition({ httpEnabled: false, workers: "audit" });
     expect([...c.pools].sort()).toEqual(["audit_publisher", "audit_verifier"]);
+  });
+
+  it("the wiki worker group gets tenant discovery access", () => {
+    const c = resolveComposition({ httpEnabled: false, workers: "wiki" });
+    expect(c.workers).toEqual(new Set(["wiki"]));
+    expect([...c.pools]).toEqual(["tenant_deletion"]);
   });
 
   it("shared pools appear once for both a route and a worker consumer", () => {

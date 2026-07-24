@@ -156,6 +156,11 @@ const envSchema = z.object({
   WIKI_EMBED_MODEL: z.string().default("text-embedding-3-small"),
   // P0.3: per-(tenant, principal) wiki annotation rate limit, events/hour.
   WIKI_ANNOTATION_RATE_PER_HOUR: z.coerce.number().int().positive().default(60),
+  BRAIN_WIKI_REGENERATION_WORKER_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(15 * 60 * 1000),
 
   // ---- LLM (Anthropic, legacy / tests only) ----
   ANTHROPIC_API_KEY: optionalNonEmptyString(),
