@@ -12,7 +12,9 @@ import { Pool } from "pg";
 import { InMemoryAuditEmitter, newRawArtifactId, newRawParsedId, newTenantId } from "@brain/shared";
 import { replayQuarantined, runProjectionCycle } from "../projectors/worker.js";
 
-const DESCRIBE = process.env.DATABASE_URL !== undefined ? describe : describe.skip;
+// runProjectionCycle polls pending raw_parsed rows across tenants, so keep this
+// file's database-backed suites from seeding competing tenants at the same time.
+const DESCRIBE = process.env.DATABASE_URL !== undefined ? describe.sequential : describe.skip;
 
 const noopAudit = new InMemoryAuditEmitter();
 
