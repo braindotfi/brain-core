@@ -114,6 +114,34 @@ describe("Brain.agents", () => {
     const body = await calls[0]!.text();
     expect(body).toContain('"type":"categorize_transaction"');
   });
+
+  it("restore posts a truly empty body to the restore route", async () => {
+    const { fetch, calls } = mockFetch(200, { agent_id: "agent_1", restored: true });
+    const brain = new Brain({ token: "k", fetch });
+
+    const result = await brain.agents.restore("agent_1");
+
+    expect(result).toEqual({ agent_id: "agent_1", restored: true });
+    expect(calls[0]?.url).toContain("/agents/agent_1/restore");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.headers.get("content-type")).toBeNull();
+    expect(await calls[0]!.text()).toBe("");
+  });
+
+  it("releaseContributionHold posts a truly empty body", async () => {
+    const { fetch, calls } = mockFetch(200, {
+      agent_id: "agent_1",
+      contribution_hold_released: true,
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const result = await brain.agents.releaseContributionHold("agent_1");
+
+    expect(result).toEqual({ agent_id: "agent_1", contribution_hold_released: true });
+    expect(calls[0]?.url).toContain("/agents/agent_1/contribution-hold/release");
+    expect(calls[0]?.headers.get("content-type")).toBeNull();
+    expect(await calls[0]!.text()).toBe("");
+  });
 });
 
 describe("Brain.raw", () => {
@@ -260,5 +288,92 @@ describe("Brain.raw", () => {
     expect(page.nextCursor).toBe("src_cursor");
     expect(calls[0]?.url).toContain("/sources?limit=1");
     expect(calls[0]?.url).toContain("cursor=old");
+  });
+
+  it("deleteArtifact sends DELETE with a truly empty body and resolves on 204", async () => {
+    const calls: Request[] = [];
+    const fetch = vi.fn(async (input: Request | URL | string) => {
+      calls.push(input as Request);
+      return new Response(null, { status: 204 });
+    });
+    const brain = new Brain({ token: "k", fetch: fetch as unknown as typeof globalThis.fetch });
+
+    await expect(brain.raw.deleteArtifact("raw_1")).resolves.toBeUndefined();
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toContain("/raw/raw_1");
+    expect(calls[0]?.headers.get("content-type")).toBeNull();
+    expect(await calls[0]!.text()).toBe("");
+  });
+
+  it("deleteArtifact surfaces a scope-insufficient 403 as BrainAPIError (no principal has raw:admin yet)", async () => {
+    const { fetch } = mockFetch(403, {
+      error: {
+        code: "auth_scope_insufficient",
+        message: "missing required scope: raw:admin",
+        request_id: "req_1",
+        docs_url: "https://docs.brain.fi/resources/errors#auth_scope_insufficient",
+      },
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    await expect(brain.raw.deleteArtifact("raw_1")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("writeParsed posts parser/parser_version/extracted and returns the parsed row", async () => {
+    const { fetch, calls } = mockFetch(201, {
+      id: "rp_1",
+      raw_id: "raw_1",
+      parser: "pdf_text",
+      parser_version: "1.0.0",
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    const result = await brain.raw.writeParsed("raw_1", {
+      parser: "pdf_text",
+      parser_version: "1.0.0",
+      extracted: { total: "42.00" },
+    });
+
+    expect(result.id).toBe("rp_1");
+    expect(calls[0]?.url).toContain("/raw/raw_1/parsed");
+    const sent = await calls[0]!.text();
+    expect(sent).toContain('"parser":"pdf_text"');
+  });
+
+  it("connectSource posts type/credentials and returns the created source", async () => {
+    const { fetch, calls } = mockFetch(201, { id: "src_1", type: "plaid", status: "active" });
+    const brain = new Brain({ token: "k", fetch });
+
+    const source = await brain.raw.connectSource({
+      type: "plaid",
+      credentials: { access_token: "sandbox-token" },
+    });
+
+    expect(source.id).toBe("src_1");
+    expect(calls[0]?.url).toContain("/sources");
+    const sent = await calls[0]!.text();
+    expect(sent).toContain('"access_token":"sandbox-token"');
+  });
+
+  it("getSource fetches one source by id", async () => {
+    const { fetch, calls } = mockFetch(200, { id: "src_1", type: "plaid" });
+    const brain = new Brain({ token: "k", fetch });
+
+    await brain.raw.getSource("src_1");
+
+    expect(calls[0]?.url).toContain("/sources/src_1");
+  });
+
+  it("disconnectSource sends DELETE with a truly empty body and returns the disconnected source", async () => {
+    const { fetch, calls } = mockFetch(200, { id: "src_1", status: "disconnected" });
+    const brain = new Brain({ token: "k", fetch });
+
+    const source = await brain.raw.disconnectSource("src_1");
+
+    expect(source.status).toBe("disconnected");
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.headers.get("content-type")).toBeNull();
+    const sent = await calls[0]!.text();
+    expect(sent).toBe("");
   });
 });

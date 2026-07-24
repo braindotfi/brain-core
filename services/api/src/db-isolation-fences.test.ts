@@ -70,7 +70,7 @@ describe("assertDbIsolationFences - BRAIN_WIKI_DB_URL", () => {
 });
 
 describe("assertDbIsolationFences - BRAIN_MCP_READER_DB_URL", () => {
-  it("throws in NODE_ENV=production when MCP reader is required and unset", () => {
+  it("throws in production when MCP reader is required, unset, and the opt-out is not set", () => {
     expect(() =>
       assertDbIsolationFences({
         nodeEnv: "production",
@@ -79,7 +79,25 @@ describe("assertDbIsolationFences - BRAIN_MCP_READER_DB_URL", () => {
         requireMcpReader: true,
         privilegedRoleUrls: allRoleUrls(),
       }),
-    ).toThrow(/BRAIN_MCP_READER_DB_URL is required in NODE_ENV=production/);
+    ).toThrow(/BRAIN_MCP_READER_DB_URL is required.*BRAIN_ALLOW_MISSING_MCP_READER/s);
+  });
+
+  it("warns rather than throws in production when MCP reader is required, unset, and allowMissingMcpReader is true", () => {
+    const warn = vi.fn();
+    let warnings: string[] = [];
+    expect(() => {
+      warnings = assertDbIsolationFences({
+        nodeEnv: "production",
+        wikiDbUrl: "postgres://reader@host/db",
+        mcpReaderDbUrl: undefined,
+        requireMcpReader: true,
+        allowMissingMcpReader: true,
+        privilegedRoleUrls: allRoleUrls(),
+        warn,
+      });
+    }).not.toThrow();
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warnings[0]).toMatch(/BRAIN_MCP_READER_DB_URL unset/);
   });
 
   it("warns in dev when MCP reader is required and unset", () => {
@@ -94,6 +112,20 @@ describe("assertDbIsolationFences - BRAIN_MCP_READER_DB_URL", () => {
     });
     expect(warn).toHaveBeenCalledOnce();
     expect(warnings[0]).toMatch(/BRAIN_MCP_READER_DB_URL unset/);
+  });
+
+  it("is silent in production when MCP reader URL is set", () => {
+    const warn = vi.fn();
+    const warnings = assertDbIsolationFences({
+      nodeEnv: "production",
+      wikiDbUrl: "postgres://reader@host/db",
+      mcpReaderDbUrl: "postgres://mcpreader@host/db",
+      requireMcpReader: true,
+      privilegedRoleUrls: allRoleUrls(),
+      warn,
+    });
+    expect(warn).not.toHaveBeenCalled();
+    expect(warnings).toEqual([]);
   });
 });
 

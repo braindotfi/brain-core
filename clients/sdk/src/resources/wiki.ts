@@ -1,6 +1,6 @@
 import type { BrainHttpClient } from "../client.js";
 import { BrainAPIError, type BrainErrorBody } from "../errors.js";
-import type { components, paths } from "../generated/openapi.js";
+import type { components, operations, paths } from "../generated/openapi.js";
 
 type WikiAnswer = components["schemas"]["WikiAnswer"];
 type WikiEntity = components["schemas"]["WikiEntity"];
@@ -127,6 +127,55 @@ export class WikiResource {
 
   async schema(params: SchemaQuery = {}): Promise<Record<string, unknown>> {
     const { data, error, response } = await this.http.GET("/wiki/schema", {
+      params: { query: params },
+    });
+    return unwrap(data, error, response.status);
+  }
+}
+
+type WikiPage = components["schemas"]["WikiPage"];
+
+export type ListMemoryPagesParams = NonNullable<
+  operations["listMemoryPages"]["parameters"]["query"]
+>;
+export type SearchMemoryParams = operations["searchMemory"]["parameters"]["query"];
+export type SearchMemoryResult =
+  operations["searchMemory"]["responses"]["200"]["content"]["application/json"];
+
+/**
+ * `/memory/*`, v0.3 Layer 3 narrative memory. Distinct from `WikiResource`
+ * above (the knowledge-graph entities/relations layer) even though both are
+ * served by the wiki service. Requires `wiki:read` for everything, including
+ * `regenerate`, despite being a POST, it only re-derives a page from
+ * existing Ledger/Raw state, it doesn't write new source-of-truth data.
+ */
+export class MemoryResource {
+  constructor(private readonly http: BrainHttpClient) {}
+
+  async listPages(params: ListMemoryPagesParams = {}): Promise<WikiPage[]> {
+    const { data, error, response } = await this.http.GET("/memory/pages", {
+      params: { query: params },
+    });
+    const body = unwrap(data, error, response.status);
+    return body.pages ?? [];
+  }
+
+  async getPage(slugOrId: string): Promise<WikiPage> {
+    const { data, error, response } = await this.http.GET("/memory/pages/{slug_or_id}", {
+      params: { path: { slug_or_id: slugOrId } },
+    });
+    return unwrap(data, error, response.status);
+  }
+
+  async regenerate(slugOrId: string): Promise<WikiPage> {
+    const { data, error, response } = await this.http.POST("/memory/regenerate", {
+      body: { slug_or_id: slugOrId },
+    });
+    return unwrap(data, error, response.status);
+  }
+
+  async search(params: SearchMemoryParams): Promise<SearchMemoryResult> {
+    const { data, error, response } = await this.http.GET("/memory/search", {
       params: { query: params },
     });
     return unwrap(data, error, response.status);

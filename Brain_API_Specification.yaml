@@ -53,8 +53,14 @@ tags:
     description: Agent registration and action orchestration (Layer 5). Replaces the v0.1 Execution group; legacy /execution/* paths still resolve.
   - name: Proposals
     description: Typed, customer-facing read surface for agent outputs across money and non-money proposals.
+  - name: Actions
+    description: |
+      The v0.3 public write path for financial actions — propose, approve,
+      reject, execute, cancel. Supersedes PaymentIntent; both operate on
+      the same underlying storage.
   - name: PaymentIntent
-    description: PaymentIntent lifecycle — propose, approve, execute. Always passes the deterministic pre-execution gate (§6 of Engineering Standards).
+    description: DEPRECATED — use Actions. PaymentIntent lifecycle (propose, approve, execute) always passed the deterministic pre-execution gate (§6 of Engineering Standards); Actions inherits the same gate.
+    x-deprecated-superseded-by: [Actions]
   - name: Members
     description: Tenant members, roles, and approval authority. The normative actor model behind PaymentIntent approval and second-approval gating.
   - name: Tenancy
@@ -3477,6 +3483,44 @@ paths:
                   quarantined: { type: boolean }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+  /agents/{agent_id}/restore:
+    post:
+      tags: [Agent]
+      summary: Restore a halted agent from quarantine
+      description: |
+        Requires `payment_intent:approve` (same scope as halt). Operator
+        compare-and-swap restore: moves the agent from `quarantined` back to
+        `active`. Rejects every other source state (409,
+        `execution_agent_not_registered`), it is not a general state setter,
+        only the halt-to-active path. Does not un-pause PaymentIntents paused
+        by the prior halt; those remain paused and must be resumed
+        separately.
+      operationId: restoreAgent
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Restore result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent_id: { type: string }
+                  restored: { type: boolean, enum: [true] }
+        '404':
+          description: No such agent. Error code `execution_agent_not_registered`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Agent is not currently quarantined. Error code `execution_agent_not_registered`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /agents/{agent_id}/contribution-hold/release:
     post:
       tags: [Agent]
@@ -3690,11 +3734,243 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /actions:
+    post:
+      tags: [Actions]
+      summary: Create an Action (proposed)
+      description: |
+        Requires `payment_intent:propose`. Idempotent (config
+        `idempotent: true`). The v0.3 user-facing write path for financial
+        actions, supersedes `/payment-intents` (see the `Deprecation`
+        header on those routes), backed by the same underlying storage.
+
+        `type` is translated to an internal action type (`pay_invoice` and
+        `outbound_payment` both map to `ach_outbound`; `ach_inbound`, `wire`,
+        `onchain_transfer`, `erp_writeback`, and `card_payment` pass
+        through). Requires `source_account_id`, `to.counterparty_id`,
+        `amount`, and a 3-letter `currency`.
+      operationId: createAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              title: FullAction
+              type: object
+              required: [type, source_account_id, to, amount, currency]
+              properties:
+                type:
+                  type: string
+                  enum: [pay_invoice, outbound_payment, ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment]
+                agent_id: { type: string, description: 'Only honored for callers with `execution:admin`.' }
+                to:
+                  type: object
+                  required: [counterparty_id]
+                  properties:
+                    counterparty_id: { type: string }
+                amount: { type: string, pattern: '^\d+(\.\d+)?$' }
+                currency: { type: string, pattern: '^[A-Z]{3}$' }
+                source_account_id: { type: string }
+                memo: { type: string }
+                evidence_ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        '201':
+          description: Action created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [Actions]
+      summary: List Actions
+      description: |
+        Requires `execution:read`. `status=auto` widens to the underlying
+        `proposed` and `approved` storage states and is filtered
+        client-side; a typed multi-status storage filter is a follow-up.
+        Not yet cursor-paginated (`next_cursor` is always `null`).
+      operationId: listActions
+      parameters:
+        - name: agent_id
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [auto, needs_approval, approved, rejected, executed, failed, cancelled]
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Actions page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, next_cursor]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Action' }
+                  next_cursor: { type: [string, "null"] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /actions/{id}:
+    get:
+      tags: [Actions]
+      summary: Get an Action
+      description: Requires `execution:read`.
+      operationId: getAction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The Action
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+        '404':
+          description: No such action. Error code `action_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Actions]
+      summary: Cancel an Action
+      description: Requires `payment_intent:propose`.
+      operationId: cancelAction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Action cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: No such action. Error code `action_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /actions/{id}/approve:
+    post:
+      tags: [Actions]
+      summary: Approve an Action
+      description: Requires `payment_intent:approve`. Delegates to the PaymentIntent approval lifecycle, so member authority and human-approval floors apply.
+      operationId: approveAction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                asserted_actor_id: { type: string }
+                actor_id: {}
+                actor: {}
+      responses:
+        '200':
+          description: Action approved (or advanced toward approval, e.g. awaiting second approval)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No such action. Error code `action_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /actions/{id}/reject:
+    post:
+      tags: [Actions]
+      summary: Reject an Action
+      description: Requires `payment_intent:approve`.
+      operationId: rejectAction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Action rejected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+        '404':
+          description: No such action. Error code `action_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /actions/{id}/execute:
+    post:
+      tags: [Actions]
+      summary: Execute an Action (runs the money-path gate)
+      description: Requires `payment_intent:execute`.
+      operationId: executeAction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '202':
+          description: Execution accepted (async — poll the action or the execution record for terminal state)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action_id: { type: string }
+                  execution_id: { type: [string, "null"] }
+                  rail: { type: [string, "null"] }
+                  status: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No such action. Error code `action_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /payment-intents:
     post:
       tags: [PaymentIntent]
       summary: Create a PaymentIntent (proposed)
-      description: 'Requires `payment_intent:propose`. Idempotent (config `idempotent: true`).'
+      description: |
+        Requires `payment_intent:propose`. Idempotent (config
+        `idempotent: true`). **Deprecated** (RFC 8594 `Deprecation` header),
+        superseded by `POST /actions`, the v0.3 public write path. Both
+        operate on the same underlying storage.
       operationId: createPaymentIntent
       requestBody:
         required: true
@@ -7397,6 +7673,50 @@ components:
                 - $ref: '#/components/schemas/ProposalAgent'
                 - type: "null"
               description: Present only when requested with `?expand=agent`.
+
+    Action:
+      description: >-
+        The v0.3 public wire shape for `/v1/actions/*`. Internally backed by
+        the same storage row as `PaymentIntent` (translation layer in
+        `services/execution/src/actions/mapper.ts`), `id` is a `pi_...`
+        Brain id either way.
+      type: object
+      required: [id, tenantId, type, decision, status, expires_at, confidence, evidence_score, execution_mode, created_at, updated_at]
+      properties:
+        id: { type: string }
+        tenantId: { type: string }
+        agent_id: { type: [string, "null"] }
+        type: { type: string }
+        decision:
+          type: string
+          enum: [ALLOW, ESCALATE, DENY]
+        status:
+          type: string
+          enum: [auto, needs_approval, approved, paused, dispatching, rejected, executed, failed, cancelled]
+        approvers:
+          type: array
+          items: { type: string }
+        approvals:
+          type: array
+          items: {}
+        rail: { type: [string, "null"] }
+        tx_hash: { type: [string, "null"] }
+        rail_receipt: { type: [object, "null"] }
+        executed_at: { type: [string, "null"], format: date-time }
+        settled_at: { type: [string, "null"], format: date-time }
+        expires_at: { type: string, format: date-time }
+        policy_version: { type: [integer, "null"] }
+        matched_rule: { type: [string, "null"] }
+        reason: { type: [object, "null"] }
+        signed_verdict: { type: [string, "null"] }
+        confidence: { type: number }
+        evidence_score: { type: number }
+        execution_mode: { type: string }
+        audit_events:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     ReconciliationMatch:
       type: object

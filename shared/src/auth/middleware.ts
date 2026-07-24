@@ -90,6 +90,11 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
     try {
       await apiKeyUsageAudit.emit({
         tenantId: request.principal.tenantId,
+        // Pass keyId explicitly rather than relying solely on
+        // CorrelatingAuditEmitter pulling it from AsyncLocalStorage, the
+        // request object already has it right here (checked above), so this
+        // path no longer depends on ALS context surviving the hook chain.
+        keyId: request.apiKeyId,
         layer: "audit",
         actor: request.principal.id,
         action: "http.request",

@@ -1,5 +1,6 @@
 import type { Brain } from "../brain.js";
-import type { components } from "../generated/openapi.js";
+import { BrainAPIError, type BrainErrorBody } from "../errors.js";
+import type { components, operations } from "../generated/openapi.js";
 import type { InclusionProof } from "./audit.js";
 
 type Balance = components["schemas"]["Balance"];
@@ -35,6 +36,21 @@ export interface CashFlowSummary {
   currency: string | undefined;
 }
 
+export type GetServerCashFlowsParams = NonNullable<
+  operations["getCashFlows"]["parameters"]["query"]
+>;
+/**
+ * The real `GET /ledger/cash_flows` server response, a distinct,
+ * trailing-window (`days`), by-currency-and-by-day aggregation capped to
+ * 1000 transactions per request. NOT the same computation as
+ * `CashFlowResource.summarize()` below, which paginates through every
+ * transaction in an explicit `since`/`until` range client-side with no cap.
+ * Both exist; neither supersedes the other yet (see the SDK gap-closing
+ * checklist's note on reconciling them).
+ */
+export type ServerCashFlowSummary =
+  operations["getCashFlows"]["responses"]["200"]["content"]["application/json"];
+
 export interface SnapshotOptions {
   /** How many recent transactions to include. Default 20. */
   recentTransactionLimit?: number;
@@ -50,12 +66,12 @@ export interface CashFlowSummarizeParams {
 
 /**
  * Client-side aggregations layered over the typed HTTP surface. None
- * of these methods correspond to a single REST endpoint — they
+ * of these methods correspond to a single REST endpoint, they
  * compose multiple calls (in parallel where possible) and reshape the
  * result for documented ergonomics.
  *
  * These are explicitly client-side: the server is not told about a
- * "snapshot" or "trace" — they're SDK conveniences. If a server-side
+ * "snapshot" or "trace", they're SDK conveniences. If a server-side
  * endpoint lands later, these can be retargeted without changing the
  * public method signature.
  */
@@ -70,7 +86,7 @@ export class CompoundsResource {
    * Runs in parallel.
    *
    * The `tenantId` argument matches the documented signature but is
-   * not sent on the wire — the API derives tenant from the
+   * not sent on the wire, the API derives tenant from the
    * authenticated principal. Reserved for future cross-tenant API key
    * support.
    */
@@ -142,6 +158,24 @@ export class CompoundsResource {
  */
 export class CashFlowResource {
   constructor(private readonly brain: Brain) {}
+
+  /**
+   * Requires `ledger:read`. The real server-side aggregation:
+   * `GET /ledger/cash_flows`. Trailing window in `days` (default 30, max
+   * 365), not an explicit date range, grouped by currency and by day,
+   * pulling up to 1000 transactions. See `summarize()` below for the
+   * older client-side alternative (explicit since/until, full pagination,
+   * no day-grouping).
+   */
+  async getServerSummary(params: GetServerCashFlowsParams = {}): Promise<ServerCashFlowSummary> {
+    const { data, error, response } = await this.brain.http.GET("/ledger/cash_flows", {
+      params: { query: params },
+    });
+    if (error !== undefined || data === undefined) {
+      throw new BrainAPIError(response.status, error as BrainErrorBody | undefined);
+    }
+    return data;
+  }
 
   async summarize(params: CashFlowSummarizeParams): Promise<CashFlowSummary> {
     const txParams: NonNullable<Parameters<typeof this.brain.transactions.list>[0]> = {

@@ -12,11 +12,17 @@
  *                       single broad brain_privileged). All eight are required
  *                       in production. See infra/db-roles.sql §4.
  *
- * In dev/test the wiki and §4 worker URLs fall back to the main pool with a
- * warning, while the MCP raw reader warns and leaves raw.artifact.get
- * unavailable. In production the absence of any required URL throws. Factored
- * out of main.ts so the behavior is unit-testable without booting the full
- * server.
+ * In dev/test all of the wiki, MCP reader, and §4 worker URLs fall back to
+ * the main pool with a warning. In production the absence of the wiki URL or
+ * any §4 role URL throws (fail closed, these guard tenant isolation and
+ * cross-tenant privilege boundaries). The MCP reader URL fails closed the
+ * same way by default. BRAIN_ALLOW_MISSING_MCP_READER is the explicit
+ * operator opt-out: when true, a missing MCP reader URL only warns and
+ * degrades to raw.artifact.get being unavailable rather than blocking API
+ * startup, since every consumer of that pool already fails closed
+ * per-request instead (dependency_unavailable), so an operator who has
+ * consciously accepted that gap can boot without the URL. Factored out of
+ * main.ts so the behavior is unit-testable without booting the full server.
  */
 
 /** The eight §4 least-privilege role URLs, keyed by env var name. */
@@ -49,6 +55,12 @@ export interface DbIsolationCheckInput {
    */
   requireMcpReader?: boolean;
   /**
+   * Explicit operator opt-out (BRAIN_ALLOW_MISSING_MCP_READER) for the
+   * fail-closed fence on the MCP reader URL. Defaults to false: a missing
+   * URL throws in production, same as the wiki and §4 role URLs.
+   */
+  allowMissingMcpReader?: boolean;
+  /**
    * Env var names of the role URLs this process actually needs (worker/process
    * separation): only these are fenced. When omitted, all are required (the
    * historical all-in-one process).
@@ -59,9 +71,10 @@ export interface DbIsolationCheckInput {
 }
 
 /**
- * Throws when production is missing a required isolation URL. Returns the
- * list of warnings emitted (or empty in production-with-all-set). Only the URLs
- * this process role needs are fenced (see requireWiki / requiredEnv).
+ * Throws when production is missing the wiki URL, the MCP reader URL (unless
+ * allowMissingMcpReader opts out), or a required §4 role URL. Returns the
+ * list of warnings emitted (or empty in production-with-all-set). Only the
+ * URLs this process role needs are fenced (see requireWiki / requiredEnv).
  */
 export function assertDbIsolationFences(input: DbIsolationCheckInput): string[] {
   const warn = input.warn ?? ((m: string) => console.warn(m));
@@ -69,6 +82,7 @@ export function assertDbIsolationFences(input: DbIsolationCheckInput): string[] 
   const isProd = input.nodeEnv === "production";
   const requireWiki = input.requireWiki ?? true;
   const requireMcpReader = input.requireMcpReader ?? false;
+  const allowMissingMcpReader = input.allowMissingMcpReader ?? false;
 
   if (requireWiki && (input.wikiDbUrl === undefined || input.wikiDbUrl.length === 0)) {
     if (isProd) {
@@ -88,12 +102,18 @@ export function assertDbIsolationFences(input: DbIsolationCheckInput): string[] 
     requireMcpReader &&
     (input.mcpReaderDbUrl === undefined || input.mcpReaderDbUrl.length === 0)
   ) {
-    if (isProd) {
+    if (isProd && !allowMissingMcpReader) {
       throw new Error(
-        "BRAIN_MCP_READER_DB_URL is required in NODE_ENV=production. " +
-          "Set it to the brain_mcp_reader role connection string.",
+        "BRAIN_MCP_READER_DB_URL is required in NODE_ENV=production (H-14, Standards §1.2). " +
+          "Set it to the brain_mcp_reader role connection string, or set " +
+          "BRAIN_ALLOW_MISSING_MCP_READER=true to boot with raw.artifact.get disabled instead.",
       );
     }
+    // allowMissingMcpReader (or dev/test): degrade gracefully rather than
+    // fail closed. Every consumer of the MCP reader pool (raw.artifact.get)
+    // already treats an absent pool as `dependency_unavailable` at request time
+    // (services/mcp/src/tools/types.ts requireToolService), so this keeps the
+    // blast radius scoped to that one tool for an operator who opted in.
     const msg = "[boot] BRAIN_MCP_READER_DB_URL unset. raw.artifact.get will be unavailable.";
     warn(msg);
     warnings.push(msg);

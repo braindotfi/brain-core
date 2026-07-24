@@ -1,6 +1,6 @@
 import type { BrainHttpClient } from "../client.js";
 import { BrainAPIError, type BrainErrorBody } from "../errors.js";
-import type { components, paths } from "../generated/openapi.js";
+import type { components, operations, paths } from "../generated/openapi.js";
 
 type RawIngestResponse = components["schemas"]["RawIngestResponse"];
 type RawSourceType = components["schemas"]["RawSourceType"];
@@ -61,6 +61,14 @@ export type GetParsedParams = NonNullable<
   paths["/raw/{raw_id}/parsed"]["get"]["parameters"]["query"]
 >;
 export type ListSourcesParams = NonNullable<paths["/sources"]["get"]["parameters"]["query"]>;
+
+export type WriteRawParsedBody = NonNullable<
+  operations["writeRawParsed"]["requestBody"]
+>["content"]["application/json"];
+
+export type ConnectSourceBody = NonNullable<
+  operations["connectSource"]["requestBody"]
+>["content"]["application/json"];
 
 function unwrap<T>(data: T | undefined, error: BrainErrorBody | undefined, status: number): T {
   if (error !== undefined || data === undefined) {
@@ -160,6 +168,76 @@ export class RawResource {
       params: { path: { source_id: sourceId, job_id: jobId } },
     });
     return mapSourceSyncJob(unwrap(data, error, response.status));
+  }
+
+  /**
+   * Requires `raw:admin` (not `raw:write`), a higher bar than every other
+   * write in this resource. As of this writing, no currently issued
+   * credential (member session, owner token, agent, or API key) carries
+   * `raw:admin` anywhere in the codebase, so this will 403 with
+   * `auth_scope_insufficient` until that's provisioned, the same
+   * scope-provisioning gap pattern documented for `audit:write` and
+   * `canonical:read` elsewhere in this project. Writes a tombstone record;
+   * the artifact is retained in storage per retention policy but becomes
+   * inaccessible via the API and is filtered from all Wiki derivations.
+   */
+  async deleteArtifact(rawId: string): Promise<void> {
+    const { error, response } = await this.http.DELETE("/raw/{raw_id}", {
+      params: { path: { raw_id: rawId } },
+    });
+    // The 410 "already tombstoned" response is a spec-level oneOf (a bare
+    // `{ raw_id, tombstoned: true }` shape, NOT the standard Error envelope),
+    // BrainAPIError degrades it to code "unknown" via its `body?.error`
+    // optional access, same pattern as sessions.create's bare-reason 403.
+    if (error !== undefined) {
+      throw new BrainAPIError(response.status, error as BrainErrorBody | undefined);
+    }
+  }
+
+  /**
+   * Requires `raw:write`: production member sessions don't carry this
+   * (only owner/login tokens do). Records one parser-output row for the
+   * artifact. Naturally idempotent on the (raw_id, parser, parser_version)
+   * tuple: re-posting the same tuple returns the existing row with 200
+   * instead of creating a duplicate. Never touches Ledger, that's the
+   * separate normalize service's job.
+   */
+  async writeParsed(rawId: string, body: WriteRawParsedBody): Promise<RawParsed> {
+    const { data, error, response } = await this.http.POST("/raw/{raw_id}/parsed", {
+      params: { path: { raw_id: rawId } },
+      body,
+    });
+    return unwrap(data, error, response.status);
+  }
+
+  /**
+   * Requires `raw:write`. Connects a source connector for this tenant.
+   * Idempotent: reconnecting the same source returns the existing record.
+   * `credentials` is opaque to the SDK and encrypted server-side; never log
+   * it.
+   */
+  async connectSource(body: ConnectSourceBody): Promise<Source> {
+    const { data, error, response } = await this.http.POST("/sources", { body });
+    return unwrap(data, error, response.status);
+  }
+
+  /** Requires `raw:read`. */
+  async getSource(sourceId: string): Promise<Source> {
+    const { data, error, response } = await this.http.GET("/sources/{source_id}", {
+      params: { path: { source_id: sourceId } },
+    });
+    return unwrap(data, error, response.status);
+  }
+
+  /**
+   * Requires `raw:write`. Marks the source disconnected; does not delete
+   * previously ingested artifacts.
+   */
+  async disconnectSource(sourceId: string): Promise<Source> {
+    const { data, error, response } = await this.http.DELETE("/sources/{source_id}", {
+      params: { path: { source_id: sourceId } },
+    });
+    return unwrap(data, error, response.status);
   }
 }
 
