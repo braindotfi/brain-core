@@ -346,6 +346,19 @@ REVOKE DELETE, TRUNCATE ON audit_verifier_checkpoint
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_integrity_findings
   FROM brain_privileged, brain_audit_verifier;
 
+-- Layer-truth append-only: raw_artifacts, canonical_journal_entry, and
+-- ledger_obligations are append-only to their projection workers. The prefix
+-- grant loops above hand SELECT, INSERT, UPDATE by table name. An earlier grant
+-- footprint (4883296) also granted DELETE, and tightening the loop (1f74d74)
+-- stopped granting DELETE but did not revoke the DELETE already applied to live
+-- databases, so it persisted across redeploys. Strip it here so a redeploy or a
+-- restore self-heals and matches the worker boot check assertDbRoles
+-- (Codex c96283d P2 / fca9ac8 P2 #4). UPDATE is retained: the projection workers
+-- upsert these rows.
+REVOKE DELETE, TRUNCATE ON raw_artifacts FROM brain_raw_worker;
+REVOKE DELETE, TRUNCATE ON canonical_journal_entry FROM brain_canonical_projector;
+REVOKE DELETE, TRUNCATE ON ledger_obligations FROM brain_ledger_projector;
+
 -- Defence in depth: FORCE RLS on every tenant-scoped table so even a connection
 -- that happens to be the table owner is still subject to the tenant_isolation
 -- policy. Applies to every table that has RLS enabled (set by the migrations).
