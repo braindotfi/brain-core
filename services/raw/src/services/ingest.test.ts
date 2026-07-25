@@ -11,15 +11,21 @@ import { ingestOne } from "./ingest.js";
 import { UPLOAD_DOCUMENT_SCHEMA } from "../interpreters/upload.js";
 
 function makeFakePool(
-  options: { existing?: boolean; idempotencyHit?: boolean; autoExtract?: boolean } = {},
+  options: {
+    existing?: boolean;
+    idempotencyHit?: boolean;
+    autoExtract?: boolean;
+    validParsed?: boolean;
+  } = {},
 ): {
   pool: { connect: () => Promise<unknown> };
-  client: { released: boolean; inserts: unknown[][]; jobs: unknown[][] };
+  client: { released: boolean; inserts: unknown[][]; jobs: unknown[][]; parsedChecks: unknown[][] };
 } {
   const client = {
     released: false,
     inserts: [] as unknown[][],
     jobs: [] as unknown[][],
+    parsedChecks: [] as unknown[][],
     query: vi.fn(async (text: string, values?: unknown[]) => {
       if (text.startsWith("BEGIN") || text === "COMMIT" || text === "ROLLBACK") {
         return { rows: [], rowCount: 0 };
@@ -46,6 +52,13 @@ function makeFakePool(
         return {
           rows: options.autoExtract === true ? [{ auto_extract_documents: true }] : [],
           rowCount: options.autoExtract === true ? 1 : 0,
+        };
+      }
+      if (text.includes("FROM raw_parsed") && text.includes("parser IS NOT NULL")) {
+        client.parsedChecks.push(values ?? []);
+        return {
+          rows: [{ count: options.validParsed === true ? 1 : 0 }],
+          rowCount: 1,
         };
       }
       if (text.startsWith("INSERT INTO raw_artifacts")) {
@@ -394,6 +407,77 @@ describe("ingestOne", () => {
       raw_id: result.rawId,
       status: "queued",
     });
+  });
+
+  it("re-enqueues a deduplicated upload when no parser-stamped parsed row exists", async () => {
+    const { pool, client } = makeFakePool({
+      existing: true,
+      autoExtract: true,
+      validParsed: false,
+    });
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await ingestOne(
+      {
+        pool: pool as unknown as Pool,
+        blob,
+        audit,
+        extractionJobs: { documentExtractorConfigured: true },
+      },
+      {
+        tenantId: newTenantId(),
+        actor: newUserId(),
+        sourceType: "pdf_upload",
+        sourceRef: { filename: "bank.pdf" },
+        body: Buffer.from("pdf"),
+        mimeType: "application/pdf",
+      },
+    );
+
+    expect(result.deduplicated).toBe(true);
+    expect(audit.events[0]!.action).toBe("raw.ingest.deduplicated");
+    expect(client.parsedChecks).toEqual([["raw_EXISTING"]]);
+    expect(client.jobs).toHaveLength(1);
+    expect(client.jobs[0]![2]).toBe("raw_EXISTING");
+    expect(client.jobs[0]![5]).toBe(true);
+    expect(result.extractionJob).toMatchObject({
+      raw_id: "raw_EXISTING",
+      status: "queued",
+    });
+  });
+
+  it("does not enqueue a deduplicated upload that already has parser-stamped parsed output", async () => {
+    const { pool, client } = makeFakePool({
+      existing: true,
+      autoExtract: true,
+      validParsed: true,
+    });
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await ingestOne(
+      {
+        pool: pool as unknown as Pool,
+        blob,
+        audit,
+        extractionJobs: { documentExtractorConfigured: true },
+      },
+      {
+        tenantId: newTenantId(),
+        actor: newUserId(),
+        sourceType: "pdf_upload",
+        sourceRef: { filename: "bank.pdf" },
+        body: Buffer.from("pdf"),
+        mimeType: "application/pdf",
+      },
+    );
+
+    expect(result.deduplicated).toBe(true);
+    expect(audit.events[0]!.action).toBe("raw.ingest.deduplicated");
+    expect(client.parsedChecks).toEqual([["raw_EXISTING"]]);
+    expect(client.jobs).toHaveLength(0);
+    expect(result.extractionJob).toBeNull();
   });
 
   it("does not auto-enqueue when the setting is on but the extractor is not configured", async () => {

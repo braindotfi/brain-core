@@ -39,6 +39,7 @@ export interface EnqueueExtractionJobInput {
   rawId: string;
   contentSha256: Buffer;
   requestedBy: string;
+  requeueSucceeded?: boolean;
 }
 
 export async function isAutoExtractDocumentsEnabled(client: TenantScopedClient): Promise<boolean> {
@@ -62,29 +63,43 @@ export async function enqueueExtractionJob(
      VALUES ($1, $2, $3, $4, 'queued', $5)
      ON CONFLICT (tenant_id, raw_id, content_sha256) DO UPDATE SET
        status = CASE
-         WHEN extraction_jobs.status = 'succeeded' THEN extraction_jobs.status
          WHEN extraction_jobs.status = 'running' THEN extraction_jobs.status
+         WHEN extraction_jobs.status = 'succeeded' AND $6::boolean = FALSE THEN extraction_jobs.status
          ELSE 'queued'
        END,
+       parsed_id = CASE
+         WHEN extraction_jobs.status = 'running' THEN extraction_jobs.parsed_id
+         WHEN extraction_jobs.status = 'succeeded' AND $6::boolean = FALSE THEN extraction_jobs.parsed_id
+         ELSE NULL
+       END,
+       confidence = CASE
+         WHEN extraction_jobs.status = 'running' THEN extraction_jobs.confidence
+         WHEN extraction_jobs.status = 'succeeded' AND $6::boolean = FALSE THEN extraction_jobs.confidence
+         ELSE NULL
+       END,
        error = CASE
-         WHEN extraction_jobs.status = 'succeeded' THEN extraction_jobs.error
          WHEN extraction_jobs.status = 'running' THEN extraction_jobs.error
+         WHEN extraction_jobs.status = 'succeeded' AND $6::boolean = FALSE THEN extraction_jobs.error
          ELSE NULL
        END,
        attempt_count = CASE
-         WHEN extraction_jobs.status IN ('succeeded', 'running') THEN extraction_jobs.attempt_count
+         WHEN extraction_jobs.status = 'running' THEN extraction_jobs.attempt_count
+         WHEN extraction_jobs.status = 'succeeded' AND $6::boolean = FALSE THEN extraction_jobs.attempt_count
          ELSE 0
        END,
        next_attempt_at = CASE
-         WHEN extraction_jobs.status IN ('succeeded', 'running') THEN extraction_jobs.next_attempt_at
+         WHEN extraction_jobs.status = 'running' THEN extraction_jobs.next_attempt_at
+         WHEN extraction_jobs.status = 'succeeded' AND $6::boolean = FALSE THEN extraction_jobs.next_attempt_at
          ELSE NULL
        END,
        finished_at = CASE
-         WHEN extraction_jobs.status IN ('succeeded', 'running') THEN extraction_jobs.finished_at
+         WHEN extraction_jobs.status = 'running' THEN extraction_jobs.finished_at
+         WHEN extraction_jobs.status = 'succeeded' AND $6::boolean = FALSE THEN extraction_jobs.finished_at
          ELSE NULL
        END,
        started_at = CASE
-         WHEN extraction_jobs.status IN ('succeeded', 'running') THEN extraction_jobs.started_at
+         WHEN extraction_jobs.status = 'running' THEN extraction_jobs.started_at
+         WHEN extraction_jobs.status = 'succeeded' AND $6::boolean = FALSE THEN extraction_jobs.started_at
          ELSE NULL
        END,
        locked_at = CASE
@@ -98,7 +113,14 @@ export async function enqueueExtractionJob(
        requested_by = EXCLUDED.requested_by,
        updated_at = now()
      RETURNING *`,
-    [id, input.tenantId, input.rawId, input.contentSha256, input.requestedBy],
+    [
+      id,
+      input.tenantId,
+      input.rawId,
+      input.contentSha256,
+      input.requestedBy,
+      input.requeueSucceeded === true,
+    ],
   );
   const row = rows[0];
   if (row === undefined) throw new Error("extraction_jobs enqueue returned no row");

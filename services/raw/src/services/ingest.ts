@@ -16,6 +16,7 @@ import {
 } from "@brain/shared";
 import type { Pool } from "pg";
 import { insertOrReuseArtifact } from "../repository/artifacts.js";
+import { hasValidParsedForArtifact } from "../repository/parsed.js";
 import {
   enqueueExtractionJob,
   extractionJobToWire,
@@ -101,13 +102,17 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
         shouldAutoExtractDocument(input) &&
         (await isAutoExtractDocumentsEnabled(client))
       ) {
-        const enqueued = await enqueueExtractionJob(client, {
-          tenantId: input.tenantId,
-          rawId: artifact.row.id,
-          contentSha256: artifact.row.sha256,
-          requestedBy: input.actor,
-        });
-        job = extractionJobToWire(enqueued.row);
+        const hasValidParsed = await hasValidParsedForArtifact(client, artifact.row.id);
+        if (!hasValidParsed) {
+          const enqueued = await enqueueExtractionJob(client, {
+            tenantId: input.tenantId,
+            rawId: artifact.row.id,
+            contentSha256: artifact.row.sha256,
+            requestedBy: input.actor,
+            requeueSucceeded: true,
+          });
+          job = extractionJobToWire(enqueued.row);
+        }
       }
       return { ...artifact, extractionJob: job };
     },

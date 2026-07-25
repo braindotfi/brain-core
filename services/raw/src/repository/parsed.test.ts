@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TenantScopedClient } from "@brain/shared";
-import { listParsedByArtifact } from "./parsed.js";
+import { hasValidParsedForArtifact, listParsedByArtifact } from "./parsed.js";
 
 function fakeClient(): { client: TenantScopedClient; log: { sql: string; values: unknown[] }[] } {
   const log: { sql: string; values: unknown[] }[] = [];
@@ -47,5 +47,30 @@ describe("listParsedByArtifact", () => {
     const { client, log } = fakeClient();
     await listParsedByArtifact(client, "raw_1");
     expect(log[0]!.sql).toMatch(/ORDER BY extracted_at DESC/);
+  });
+});
+
+describe("hasValidParsedForArtifact", () => {
+  it("checks for parser-stamped parsed rows", async () => {
+    const log: { sql: string; values: unknown[] }[] = [];
+    const client = {
+      query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
+        log.push({ sql, values: Array.from(values ?? []) });
+        return { rows: [{ count: "1" }], rowCount: 1 };
+      }),
+    } as unknown as TenantScopedClient;
+
+    await expect(hasValidParsedForArtifact(client, "raw_1")).resolves.toBe(true);
+    expect(log[0]!.sql).toContain("raw_artifact_id = $1");
+    expect(log[0]!.sql).toContain("parser IS NOT NULL");
+    expect(log[0]!.values).toEqual(["raw_1"]);
+  });
+
+  it("returns false when only parser-null or no parsed rows exist", async () => {
+    const client = {
+      query: vi.fn(async () => ({ rows: [{ count: 0 }], rowCount: 1 })),
+    } as unknown as TenantScopedClient;
+
+    await expect(hasValidParsedForArtifact(client, "raw_1")).resolves.toBe(false);
   });
 });

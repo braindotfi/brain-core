@@ -44,6 +44,20 @@ export async function listParsedByArtifact(
   return rows;
 }
 
+export async function hasValidParsedForArtifact(
+  client: TenantScopedClient,
+  artifactId: string,
+): Promise<boolean> {
+  const { rows } = await client.query<{ count: string | number }>(
+    `SELECT COUNT(*)::int AS count
+       FROM raw_parsed
+      WHERE raw_artifact_id = $1
+        AND parser IS NOT NULL`,
+    [artifactId],
+  );
+  return Number(rows[0]?.count ?? 0) > 0;
+}
+
 export interface InsertParsedInput {
   id: string;
   rawArtifactId: string;
