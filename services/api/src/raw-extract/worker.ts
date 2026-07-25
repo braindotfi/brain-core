@@ -288,16 +288,22 @@ async function tryInProcessUploadExtraction(
   const interpreter = inProcessUploadInterpreter(input.artifact);
   if (interpreter === undefined) return null;
 
-  const output = interpreter(input.bytes, {
-    rawArtifactId: input.artifact.id,
-    tenantId: input.tenantId,
-    sourceType: input.artifact.source_type,
-    sourceSchema: input.artifact.source_schema ?? UPLOAD_DOCUMENT_SCHEMA,
-    sourceRef: input.artifact.source_ref,
-    sourceId: input.artifact.source_id,
-    objectType: input.artifact.object_type,
-    mimeType: input.artifact.mime_type,
-  });
+  let output: InterpretedOutput | null;
+  try {
+    output = interpreter(input.bytes, {
+      rawArtifactId: input.artifact.id,
+      tenantId: input.tenantId,
+      sourceType: input.artifact.source_type,
+      sourceSchema: input.artifact.source_schema ?? UPLOAD_DOCUMENT_SCHEMA,
+      sourceRef: input.artifact.source_ref,
+      sourceId: input.artifact.source_id,
+      objectType: input.artifact.object_type,
+      mimeType: input.artifact.mime_type,
+    });
+  } catch (err) {
+    if (isBrainError(err) && err.code === "raw_source_unsupported") return null;
+    throw err;
+  }
   if (output === null) return null;
 
   const parsed = await insertInProcessParsed(deps, input, output);

@@ -264,6 +264,32 @@ describe("runDocumentExtractionCycle", () => {
     });
   });
 
+  it("falls back to the external extractor when an upload PDF is not a bank statement", async () => {
+    const app = appPool({
+      artifact: {
+        source_type: "pdf_upload",
+        source_schema: "brain.upload.document.v1",
+        mime_type: "application/pdf",
+      },
+    });
+    const client: DocumentExtractPort = {
+      extract: vi.fn(async () => ({
+        parsed_id: "prs_01TEST000000000000000000000",
+        parser: "doc_obligation_v1",
+        confidence: 0.91,
+      })),
+    };
+
+    await runDocumentExtractionCycle(
+      { scanPool: scanPool(), appPool: app.pool, blob: blob("invoice"), client },
+      { batchSize: 1 },
+    );
+
+    expect(client.extract).toHaveBeenCalledOnce();
+    const succeeded = app.updates.find((u) => u.kind === "succeeded");
+    expect(succeeded?.values).toEqual([JOB_ID, "prs_01TEST000000000000000000000", 0.5]);
+  });
+
   it("creates a matching parser row when the agent wrote a legacy parser", async () => {
     const updates: Array<{ kind: string; values: unknown[] | undefined }> = [];
     const client = {
