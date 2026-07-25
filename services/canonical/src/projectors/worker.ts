@@ -487,7 +487,10 @@ async function persistConnectorProjection(
 
 function isUploadProjector(projector: string): boolean {
   return (
-    projector === BANK_STATEMENT_UPLOAD_PROJECTOR || projector === DOCUMENT_RECORDS_UPLOAD_PROJECTOR
+    projector === BANK_STATEMENT_UPLOAD_PROJECTOR ||
+    projector === DOCUMENT_RECORDS_UPLOAD_PROJECTOR ||
+    projector === BANK_STATEMENT_UPLOAD_PARSER ||
+    projector === DOCUMENT_RECORDS_UPLOAD_PARSER
   );
 }
 
