@@ -152,7 +152,7 @@ describe("insertParsed", () => {
     );
   });
 
-  it("refreshes an exact parsed row only when a terminal zero-row projection log exists", async () => {
+  it("refreshes an exact upload parsed row when its payload shape is stale", async () => {
     const log: { sql: string; values: unknown[] }[] = [];
     const exactRow = {
       id: "prs_1",
@@ -174,9 +174,6 @@ describe("insertParsed", () => {
         log.push({ sql, values: Array.from(values ?? []) });
         if (sql.includes("WHERE raw_artifact_id = $1 AND parser = $2")) {
           return { rows: [exactRow], rowCount: 1 };
-        }
-        if (sql.includes("SELECT EXISTS")) {
-          return { rows: [{ exists: true }], rowCount: 1 };
         }
         if (sql.startsWith("UPDATE raw_parsed")) {
           return { rows: [repairedRow], rowCount: 1 };
@@ -201,8 +198,49 @@ describe("insertParsed", () => {
     expect(result.created).toBe(false);
     expect(result.row).toEqual(repairedRow);
     expect(log.some((entry) => entry.sql.startsWith("INSERT INTO raw_parsed"))).toBe(false);
+    expect(log.some((entry) => entry.sql.includes("SELECT EXISTS"))).toBe(false);
     expect(log.some((entry) => entry.sql.startsWith("DELETE FROM canonical_projection_log"))).toBe(
       true,
     );
+  });
+
+  it("keeps an exact valid upload parsed row when no terminal zero-row projection log exists", async () => {
+    const log: { sql: string; values: unknown[] }[] = [];
+    const exactRow = {
+      id: "prs_1",
+      raw_artifact_id: "raw_1",
+      tenant_id: "ten_1",
+      parser: "bank_statement_upload_v1",
+      parser_version: "1.0.0",
+      extracted: { object_type: "bank_statement", transactions: [] },
+      confidence: 0.94,
+      extracted_at: new Date("2026-06-01T00:00:00Z"),
+    };
+    const client = {
+      query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
+        log.push({ sql, values: Array.from(values ?? []) });
+        if (sql.includes("WHERE raw_artifact_id = $1 AND parser = $2")) {
+          return { rows: [exactRow], rowCount: 1 };
+        }
+        if (sql.includes("SELECT EXISTS")) {
+          return { rows: [{ exists: false }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as TenantScopedClient;
+
+    const result = await insertParsed(client, {
+      id: "prs_new",
+      rawArtifactId: "raw_1",
+      tenantId: "ten_1",
+      parser: "bank_statement_upload_v1",
+      parserVersion: "1.0.0",
+      extracted: { object_type: "bank_statement", transactions: [] },
+      confidence: 0.94,
+    });
+
+    expect(result.created).toBe(false);
+    expect(result.row).toEqual(exactRow);
+    expect(log.some((entry) => entry.sql.startsWith("UPDATE raw_parsed"))).toBe(false);
   });
 });
