@@ -10,7 +10,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { InMemoryAuditEmitter, newRawArtifactId, newRawParsedId, newTenantId } from "@brain/shared";
-import { replayQuarantined, runProjectionCycle } from "../projectors/worker.js";
+import {
+  replayQuarantined,
+  runProjectionCycle,
+  type LedgerUploadProjectedEvent,
+} from "../projectors/worker.js";
 
 // runProjectionCycle polls pending raw_parsed rows across tenants, so keep this
 // file's database-backed suites from seeding competing tenants at the same time.
@@ -282,6 +286,7 @@ DESCRIBE("canonical upload projector audit integration (requires DATABASE_URL)",
   const rawId = newRawArtifactId();
   const parsedId = newRawParsedId();
   const audit = new InMemoryAuditEmitter();
+  const uploadEvents: LedgerUploadProjectedEvent[] = [];
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -332,8 +337,17 @@ DESCRIBE("canonical upload projector audit integration (requires DATABASE_URL)",
     await pool.end();
   });
 
-  it("emits ledger.upload.projected after upload projection completes", async () => {
-    await runProjectionCycle({ pool, audit }, { batchSize: 50 });
+  it("emits ledger.upload.projected and calls the upload projection hook after upload projection completes", async () => {
+    await runProjectionCycle(
+      {
+        pool,
+        audit,
+        onUploadProjected: async (event) => {
+          uploadEvents.push(event);
+        },
+      },
+      { batchSize: 50 },
+    );
 
     const actions = audit.events.map((event) => event.action);
     expect(actions.indexOf("canonical.projected")).toBeGreaterThanOrEqual(0);
@@ -358,5 +372,19 @@ DESCRIBE("canonical upload projector audit integration (requires DATABASE_URL)",
         }),
       },
     });
+    expect(uploadEvents).toEqual([
+      expect.objectContaining({
+        event: "ledger.upload.projected",
+        tenantId: tenant,
+        rawArtifactId: rawId,
+        rawParsedId: parsedId,
+        projector: "bank_statement_upload_canonical_v1",
+        summary: expect.objectContaining({
+          accounts: 1,
+          transactions: 1,
+          newCounterparties: 1,
+        }),
+      }),
+    ]);
   });
 });

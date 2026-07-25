@@ -75,6 +75,9 @@ const MERGE_COUNTERPARTY_CONFIDENCE = 0.8;
 /** Fallback when a document's raw_parsed row carries no confidence (capped agent ceiling). */
 const DOC_DEFAULT_CONFIDENCE = 0.5;
 
+// parser identifies the raw_parsed producer. projector identifies this
+// canonical projection pass and is the value stored in canonical_projection_log
+// plus emitted to upload projection hooks.
 const CONNECTOR_LEDGER_PASSES = [
   {
     parser: PLAID_LEDGER_PARSER,
