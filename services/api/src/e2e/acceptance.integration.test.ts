@@ -22,7 +22,7 @@ import {
   ProposalDecisionService,
   registerProposalReadRoutes,
 } from "@brain/execution";
-import { ingestOne, runInterpretCycle } from "@brain/raw";
+import { enqueueExtractionJob, ingestOne, runInterpretCycle } from "@brain/raw";
 import {
   internalAgentCatalog,
   internalAgentDefinitions,
@@ -485,6 +485,59 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
     expect(await paymentIntentCount(tenantA)).toBe(0);
   }, 60_000);
 
+  it("projects manually extracted bank statements into public Ledger accounts and transactions", async () => {
+    const actor = memberB;
+    const bank = await ingestOne(
+      { pool: appPool, blob, audit: appAudit },
+      {
+        tenantId: tenantB,
+        actor,
+        sourceType: "pdf_upload",
+        sourceRef: { filename: "bank_statement_2026-06.pdf" },
+        body: readFixture("bank_statement_2026-06.pdf"),
+        mimeType: "application/pdf",
+      },
+    );
+    await withTenantScope(appPool, tenantB, (client) =>
+      enqueueExtractionJob(client, {
+        tenantId: tenantB,
+        rawId: bank.rawId,
+        contentSha256: Buffer.from(bank.sha256, "hex"),
+        requestedBy: actor,
+      }),
+    );
+
+    await runDocumentExtractionCycle(
+      { scanPool: pool, appPool, blob, audit: appAudit },
+      { batchSize: 1 },
+    );
+    const extraction = await extractionJobForRaw(tenantB, bank.rawId);
+    expect(extraction).toMatchObject({
+      status: "succeeded",
+      parsed_id: expect.stringMatching(/^prs_/),
+      confidence: expect.any(Number),
+    });
+    expect(Number(extraction?.confidence ?? 0)).toBeGreaterThan(0.5);
+
+    await runNormalizeCycle({ pool, audit: workerAudit }, { batchSize: 20 });
+    await runProjectionCycle({ pool, audit: workerAudit }, { batchSize: 50 });
+    await runLedgerAccountTransactionProjectionCycle({ pool }, { batchSize: 50 });
+
+    expect(await ledgerTransactionCountForRaw(tenantB, bank.rawId)).toBe(19);
+
+    currentPrincipal = principal(tenantB, memberB);
+    const accounts = await app.inject({ method: "GET", url: "/ledger/accounts?limit=50" });
+    expect(accounts.statusCode).toBe(200);
+    expect(accounts.json().accounts.length).toBeGreaterThan(0);
+
+    const transactions = await app.inject({
+      method: "GET",
+      url: "/ledger/transactions?limit=50",
+    });
+    expect(transactions.statusCode).toBe(200);
+    expect(transactions.json().transactions.length).toBeGreaterThanOrEqual(19);
+  }, 60_000);
+
   async function getObligationsAs(tenantId: string, memberId: string): Promise<unknown[]> {
     currentPrincipal = principal(tenantId, memberId);
     const response = await app.inject({
@@ -566,6 +619,31 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
         [proposalId],
       );
       return Number(rows[0]?.count ?? "0");
+    });
+  }
+
+  async function extractionJobForRaw(
+    tenantId: string,
+    rawId: string,
+  ): Promise<{
+    status: string;
+    parsed_id: string | null;
+    confidence: string | number | null;
+  } | null> {
+    return withTenantScope(appPool, tenantId, async (client) => {
+      const { rows } = await client.query<{
+        status: string;
+        parsed_id: string | null;
+        confidence: string | number | null;
+      }>(
+        `SELECT status, parsed_id, confidence
+           FROM extraction_jobs
+          WHERE tenant_id = $1 AND raw_id = $2
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [tenantId, rawId],
+      );
+      return rows[0] ?? null;
     });
   }
 

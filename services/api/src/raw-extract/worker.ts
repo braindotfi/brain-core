@@ -53,6 +53,7 @@ export interface DocumentExtractionWorkerDeps {
 export interface DocumentExtractionWorkerOptions {
   intervalMs?: number;
   batchSize?: number;
+  jobId?: string;
   workerId?: string;
   agentId?: string;
   maxAttempts?: number;
@@ -98,14 +99,23 @@ export async function runDocumentExtractionCycle(
   const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const retryBaseMs = opts.retryBaseMs ?? DEFAULT_RETRY_BASE_MS;
   const now = opts.now ?? (() => new Date());
+  const values: unknown[] = [batchSize];
+  const jobFilter =
+    opts.jobId === undefined
+      ? ""
+      : (() => {
+          values.push(opts.jobId);
+          return `AND id = $${values.length}`;
+        })();
   const pending = await deps.scanPool.query<PendingExtractionJobRow>(
     `SELECT id, tenant_id, raw_id
        FROM extraction_jobs
       WHERE status = 'queued'
         AND (next_attempt_at IS NULL OR next_attempt_at <= now())
+        ${jobFilter}
       ORDER BY created_at ASC
       LIMIT $1`,
-    [batchSize],
+    values,
   );
 
   for (const row of pending.rows) {

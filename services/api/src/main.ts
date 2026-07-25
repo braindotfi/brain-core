@@ -134,11 +134,16 @@ import {
   startLedgerProjectionWorker,
   startLedgerAparProjectionWorker,
   startLedgerAccountTransactionProjectionWorker,
+  runNormalizeCycle,
   runLedgerAparProjectionCycle,
   runLedgerAccountTransactionProjectionCycle,
 } from "@brain/ledger";
 
-import { registerCanonicalRoutes, startCanonicalProjectionWorker } from "@brain/canonical";
+import {
+  registerCanonicalRoutes,
+  runProjectionCycle,
+  startCanonicalProjectionWorker,
+} from "@brain/canonical";
 import type { LedgerUploadProjectedEvent } from "@brain/canonical";
 
 import { WikiPageService, registerWikiPlugin, loadRegistry } from "@brain/wiki";
@@ -247,7 +252,7 @@ import { createViemPolicySignerChecker } from "./policy/viemPolicySignerChecker.
 import { DocumentExtractClient } from "./agents/documentExtractClient.js";
 import { ReconciliationAgentClient } from "./agents/reconciliationClient.js";
 import { registerRawExtractRoute } from "./raw-extract/route.js";
-import { startDocumentExtractionWorker } from "./raw-extract/worker.js";
+import { runDocumentExtractionCycle, startDocumentExtractionWorker } from "./raw-extract/worker.js";
 import { createPlaidKeyResolver } from "./webhooks/plaidJwks.js";
 import { createPlaidTenantResolver } from "./webhooks/plaidTenant.js";
 import {
@@ -1688,6 +1693,20 @@ async function main(): Promise<void> {
     ...(metrics !== undefined ? { metrics } : {}),
     log,
   });
+  const onUploadProjected = async (event: LedgerUploadProjectedEvent): Promise<void> => {
+    await runLedgerAparProjectionCycle({ pool: ledgerProjectorPool, metrics });
+    await runLedgerAccountTransactionProjectionCycle({ pool: ledgerProjectorPool, metrics });
+    await regenerateWikiForUploadProjection(
+      {
+        tenantDiscoveryPool: tenantDeletionPool,
+        pageService: wikiPageService,
+        audit,
+        log,
+      },
+      event,
+    );
+    await uploadProjectionAgentTrigger.handle(event);
+  };
 
   // -- Fastify root app -----------------------------------------------
   const app = Fastify({
@@ -1833,6 +1852,43 @@ async function main(): Promise<void> {
         await v1.register(async (child) =>
           registerRawExtractRoute(child, {
             pool,
+            afterEnqueue: async (job) => {
+              await runDocumentExtractionCycle(
+                {
+                  scanPool: rawWorkerPool,
+                  appPool: pool,
+                  blob,
+                  audit,
+                  ...(documentExtractClient !== undefined ? { client: documentExtractClient } : {}),
+                  metrics,
+                  log,
+                },
+                {
+                  jobId: job.id,
+                  batchSize: 1,
+                  maxAttempts: cfg.BRAIN_DOCUMENT_EXTRACT_WORKER_MAX_ATTEMPTS,
+                  retryBaseMs: cfg.BRAIN_DOCUMENT_EXTRACT_WORKER_RETRY_BASE_MS,
+                },
+              );
+              await runNormalizeCycle(
+                {
+                  pool,
+                  audit,
+                  ...(metrics !== undefined ? { metrics } : {}),
+                },
+                { batchSize: 20 },
+              );
+              await runProjectionCycle(
+                {
+                  pool: canonicalProjectorPool,
+                  audit,
+                  metrics,
+                  log,
+                  onUploadProjected,
+                },
+                { batchSize: 20 },
+              );
+            },
           }),
         );
         await v1.register(async (child) =>
@@ -2778,20 +2834,7 @@ async function main(): Promise<void> {
     audit,
     metrics,
     log,
-    onUploadProjected: async (event: LedgerUploadProjectedEvent) => {
-      await runLedgerAparProjectionCycle({ pool: ledgerProjectorPool, metrics });
-      await runLedgerAccountTransactionProjectionCycle({ pool: ledgerProjectorPool, metrics });
-      await regenerateWikiForUploadProjection(
-        {
-          tenantDiscoveryPool: tenantDeletionPool,
-          pageService: wikiPageService,
-          audit,
-          log,
-        },
-        event,
-      );
-      await uploadProjectionAgentTrigger.handle(event);
-    },
+    onUploadProjected,
   };
   const canonicalProjectionWorker = composition.workers.has("canonical")
     ? startCanonicalProjectionWorker(canonicalProjectionWorkerDeps)

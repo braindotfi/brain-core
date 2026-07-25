@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import { brainError, isBrainId, requireScope, withTenantScope, type Scope } from "@brain/shared";
 import {
@@ -6,6 +6,7 @@ import {
   extractionJobToWire,
   findArtifactById,
   findLatestExtractionJob,
+  type ExtractionJobRow,
 } from "@brain/raw";
 
 const WRITE: Scope = "raw:write";
@@ -13,6 +14,7 @@ const READ: Scope = "raw:read";
 
 export interface RegisterRawExtractRouteDeps {
   pool: Pool;
+  afterEnqueue?: (job: ExtractionJobRow) => Promise<void>;
 }
 
 export async function registerRawExtractRoute(
@@ -21,7 +23,7 @@ export async function registerRawExtractRoute(
 ): Promise<void> {
   app.post(
     "/raw/:raw_id/extract",
-    async (request: FastifyRequest<{ Params: { raw_id: string } }>) => {
+    async (request: FastifyRequest<{ Params: { raw_id: string } }>, reply: FastifyReply) => {
       const principal = request.principal;
       if (principal === undefined) {
         throw brainError("auth_token_missing", "principal required");
@@ -51,7 +53,19 @@ export async function registerRawExtractRoute(
         });
         return enqueued.row;
       });
-      return extractionJobToWire(job);
+      if (deps.afterEnqueue === undefined) {
+        reply.status(job.status === "queued" || job.status === "running" ? 202 : 200);
+        return extractionJobToWire(job);
+      }
+
+      await deps.afterEnqueue(job);
+      const latest = await withTenantScope(deps.pool, principal.tenantId, async (c) =>
+        findLatestExtractionJob(c, request.params.raw_id),
+      );
+      const responseJob = latest ?? job;
+      assertExtractionJobIsHonest(responseJob);
+      reply.status(responseJob.status === "queued" || responseJob.status === "running" ? 202 : 200);
+      return extractionJobToWire(responseJob);
     },
   );
 
@@ -85,4 +99,27 @@ export async function registerRawExtractRoute(
       return extractionJobToWire(job);
     },
   );
+}
+
+function assertExtractionJobIsHonest(job: ExtractionJobRow): void {
+  if (job.status === "failed") {
+    const error = job.error ?? {};
+    const message =
+      typeof error["message"] === "string" && error["message"].length > 0
+        ? error["message"]
+        : "document extraction failed";
+    throw brainError("dependency_unavailable", message, {
+      statusOverride: 502,
+      details: { job_id: job.id, raw_id: job.raw_id, error },
+    });
+  }
+  if (job.status === "succeeded" && job.parsed_id === null) {
+    throw brainError(
+      "internal_server_error",
+      "document extraction succeeded without parsed output",
+      {
+        details: { job_id: job.id, raw_id: job.raw_id },
+      },
+    );
+  }
 }

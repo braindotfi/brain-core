@@ -1265,15 +1265,23 @@ paths:
       summary: Trigger document extraction for a raw artifact
       description: |
         Requires `raw:write`. Enqueues or re-enqueues an async document
-        extraction job for the referenced artifact. The request never calls the
-        document extraction agent inline. A terminal succeeded job for the same
-        raw artifact and content hash is reused.
+        extraction job for the referenced artifact. In the composed API process,
+        the route also drains the queued job through extraction and downstream
+        projection before returning when the worker dependencies are available.
+        A terminal succeeded job for the same raw artifact and content hash is
+        reused.
       operationId: extractRawDocument
       parameters:
         - $ref: '#/components/parameters/RawId'
       responses:
         '200':
-          description: Document extraction job accepted or reused
+          description: Document extraction job completed or reused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RawExtractionJob'
+        '202':
+          description: Document extraction job accepted for asynchronous processing
           content:
             application/json:
               schema:
@@ -1290,6 +1298,12 @@ paths:
                 $ref: '#/components/schemas/Error'
         '422':
           description: Artifact cannot be extracted by the document agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Extraction worker failed to parse or persist parsed output
           content:
             application/json:
               schema:

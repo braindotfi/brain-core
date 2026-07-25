@@ -9,7 +9,7 @@ import {
   type Scope,
 } from "@brain/shared";
 import type { Pool } from "pg";
-import { registerRawExtractRoute } from "./route.js";
+import { registerRawExtractRoute, type RegisterRawExtractRouteDeps } from "./route.js";
 
 const TENANT = newTenantId();
 const RAW_ID = newRawArtifactId();
@@ -136,6 +136,7 @@ async function buildApp(opts: {
   principal: Principal | undefined;
   row?: ArtifactRow | null;
   latestJob?: ReturnType<typeof jobRow> | null;
+  afterEnqueue?: RegisterRawExtractRouteDeps["afterEnqueue"];
 }) {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
@@ -147,6 +148,7 @@ async function buildApp(opts: {
   const pool = fakePool(opts.row === undefined ? artifactRow() : opts.row, opts.latestJob);
   await registerRawExtractRoute(app, {
     pool,
+    ...(opts.afterEnqueue !== undefined ? { afterEnqueue: opts.afterEnqueue } : {}),
   });
   return { app, pool };
 }
@@ -214,12 +216,12 @@ describe("POST /raw/:raw_id/extract", () => {
     }
   });
 
-  it("enqueues an async extraction job without calling the extractor on the request path", async () => {
+  it("enqueues an async extraction job without a route drain", async () => {
     const latestJob = jobRow();
     const { app } = await buildApp({ principal: principal(), latestJob });
     try {
       const res = await app.inject({ method: "POST", url: `/raw/${RAW_ID}/extract` });
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(202);
       expect(res.json()).toEqual({
         job_id: latestJob.id,
         raw_id: RAW_ID,
@@ -230,6 +232,46 @@ describe("POST /raw/:raw_id/extract", () => {
         next_attempt_at: null,
         created_at: "2026-07-06T00:00:00.000Z",
         updated_at: "2026-07-06T00:00:00.000Z",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("drains the queued job when a route drain is configured", async () => {
+    const afterEnqueue = vi.fn(async () => undefined);
+    const latestJob = {
+      ...jobRow(RAW_ID, "succeeded"),
+      parsed_id: "prs_01TEST000000000000000000000",
+      confidence: 0.91,
+    };
+    const { app } = await buildApp({ principal: principal(), latestJob, afterEnqueue });
+    try {
+      const res = await app.inject({ method: "POST", url: `/raw/${RAW_ID}/extract` });
+      expect(res.statusCode).toBe(200);
+      expect(afterEnqueue).toHaveBeenCalledWith(expect.objectContaining({ raw_id: RAW_ID }));
+      expect(res.json()).toMatchObject({
+        status: "succeeded",
+        parsed_id: "prs_01TEST000000000000000000000",
+        confidence: 0.91,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not report success when the drain fails to parse the document", async () => {
+    const afterEnqueue = vi.fn(async () => undefined);
+    const latestJob = {
+      ...jobRow(RAW_ID, "failed"),
+      error: { code: "raw_source_unsupported", message: "no parser matched document" },
+    };
+    const { app } = await buildApp({ principal: principal(), latestJob, afterEnqueue });
+    try {
+      const res = await app.inject({ method: "POST", url: `/raw/${RAW_ID}/extract` });
+      expect(res.statusCode).toBe(502);
+      expect(res.json()).toMatchObject({
+        error: { code: "dependency_unavailable", message: "no parser matched document" },
       });
     } finally {
       await app.close();

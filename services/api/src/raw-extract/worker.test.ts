@@ -154,6 +154,25 @@ function blob(contents: Buffer | string = "invoice"): BlobAdapter {
 }
 
 describe("runDocumentExtractionCycle", () => {
+  it("can target a specific queued job", async () => {
+    const scan = scanPool();
+    const app = appPool({
+      artifact: {
+        source_type: "pdf_upload",
+        source_schema: "brain.upload.document.v1",
+        mime_type: "application/pdf",
+      },
+    });
+
+    await runDocumentExtractionCycle(
+      { scanPool: scan, appPool: app.pool, blob: blob(BANK_STATEMENT_FIXTURE) },
+      { batchSize: 1, jobId: JOB_ID },
+    );
+
+    const query = scan.query as unknown as ReturnType<typeof vi.fn>;
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("AND id = $2"), [1, JOB_ID]);
+  });
+
   it("marks queued jobs failed when the extractor is not configured", async () => {
     const app = appPool({ artifact: EXTERNAL_AGENT_ARTIFACT });
 

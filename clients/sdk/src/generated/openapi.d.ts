@@ -549,9 +549,11 @@ export interface paths {
         /**
          * Trigger document extraction for a raw artifact
          * @description Requires `raw:write`. Enqueues or re-enqueues an async document
-         *     extraction job for the referenced artifact. The request never calls the
-         *     document extraction agent inline. A terminal succeeded job for the same
-         *     raw artifact and content hash is reused.
+         *     extraction job for the referenced artifact. In the composed API process,
+         *     the route also drains the queued job through extraction and downstream
+         *     projection before returning when the worker dependencies are available.
+         *     A terminal succeeded job for the same raw artifact and content hash is
+         *     reused.
          */
         post: operations["extractRawDocument"];
         delete?: never;
@@ -6026,8 +6028,17 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Document extraction job accepted or reused */
+            /** @description Document extraction job completed or reused */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RawExtractionJob"];
+                };
+            };
+            /** @description Document extraction job accepted for asynchronous processing */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6050,6 +6061,15 @@ export interface operations {
             };
             /** @description Artifact cannot be extracted by the document agent */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Extraction worker failed to parse or persist parsed output */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
