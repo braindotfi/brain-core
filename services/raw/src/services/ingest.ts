@@ -24,7 +24,11 @@ import {
   type ExtractionJobWire,
 } from "../repository/extractionJobs.js";
 import type { IngestEnvelopeFields } from "../envelope.js";
-import { defaultSourceSchemaForUpload } from "../interpreters/upload.js";
+import {
+  BANK_STATEMENT_UPLOAD_PARSER,
+  defaultSourceSchemaForUpload,
+  DOCUMENT_RECORDS_UPLOAD_PARSER,
+} from "../interpreters/upload.js";
 
 export interface IngestInput {
   tenantId: string;
@@ -102,7 +106,10 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
         shouldAutoExtractDocument(input) &&
         (await isAutoExtractDocumentsEnabled(client))
       ) {
-        const hasValidParsed = await hasValidParsedForArtifact(client, artifact.row.id);
+        const hasValidParsed = await hasValidParsedForArtifact(client, artifact.row.id, {
+          acceptedParsers: expectedUploadParsers(input.sourceType),
+          excludeTerminalZeroProjection: true,
+        });
         if (!hasValidParsed) {
           const enqueued = await enqueueExtractionJob(client, {
             tenantId: input.tenantId,
@@ -178,6 +185,12 @@ function shouldAutoExtractDocument(input: IngestInput): boolean {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "text/csv",
   ].includes(mime);
+}
+
+function expectedUploadParsers(sourceType: string): readonly string[] {
+  if (sourceType === "pdf_upload") return [BANK_STATEMENT_UPLOAD_PARSER];
+  if (sourceType === "csv_upload") return [DOCUMENT_RECORDS_UPLOAD_PARSER];
+  return [];
 }
 
 function withDefaultUploadEnvelope(input: IngestInput): IngestEnvelopeFields | undefined {

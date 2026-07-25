@@ -47,13 +47,33 @@ export async function listParsedByArtifact(
 export async function hasValidParsedForArtifact(
   client: TenantScopedClient,
   artifactId: string,
+  options: {
+    acceptedParsers?: readonly string[];
+    excludeTerminalZeroProjection?: boolean;
+  } = {},
 ): Promise<boolean> {
+  const where = ["rp.raw_artifact_id = $1", "rp.parser IS NOT NULL"];
+  const values: unknown[] = [artifactId];
+  if (options.acceptedParsers !== undefined) {
+    values.push([...options.acceptedParsers]);
+    where.push(`rp.parser = ANY($${values.length}::text[])`);
+  }
+  if (options.excludeTerminalZeroProjection === true) {
+    where.push(`NOT EXISTS (
+      SELECT 1
+        FROM canonical_projection_log cpl
+       WHERE cpl.raw_parsed_id = rp.id
+         AND cpl.records_written = 0
+         AND cpl.error IS NULL
+         AND COALESCE(cpl.quarantined, false) = false
+    )`);
+  }
+
   const { rows } = await client.query<{ count: string | number }>(
     `SELECT COUNT(*)::int AS count
-       FROM raw_parsed
-      WHERE raw_artifact_id = $1
-        AND parser IS NOT NULL`,
-    [artifactId],
+       FROM raw_parsed rp
+      WHERE ${where.join(" AND ")}`,
+    values,
   );
   return Number(rows[0]?.count ?? 0) > 0;
 }
@@ -69,15 +89,40 @@ export interface InsertParsedInput {
 }
 
 /**
- * Insert one parser-output row (the stage-3 producer of raw_parsed). Naturally
- * idempotent on the (raw_artifact_id, parser, parser_version) UNIQUE key: a
- * re-post returns the existing row with `created: false` and never mutates it,
- * so the parser output stays immutable per (artifact, parser, version).
+ * Insert one parser-output row (the stage-3 producer of raw_parsed).
+ *
+ * Normal re-posts stay immutable per (artifact, parser, version). The exception
+ * is a parser correction for a previously stranded upload row: if there is one
+ * stale row for the same artifact/version, or if the exact row has a terminal
+ * zero-row projection log, update the derived parser output and clear the log
+ * so canonical projection can replay it.
  */
 export async function insertParsed(
   client: TenantScopedClient,
   input: InsertParsedInput,
 ): Promise<{ row: RawParsedRow; created: boolean }> {
+  const exact = await findParsedByArtifactParserVersion(client, input);
+  if (exact !== undefined) {
+    if (await hasTerminalZeroProjectionLog(client, exact.id)) {
+      return { row: await repairParsedOutput(client, exact, input), created: false };
+    }
+    return { row: exact, created: false };
+  }
+
+  const stale = await client.query<RawParsedRow>(
+    `SELECT * FROM raw_parsed
+      WHERE raw_artifact_id = $1
+        AND parser_version = $2
+        AND parser IS DISTINCT FROM $3
+      ORDER BY extracted_at DESC
+      LIMIT 2`,
+    [input.rawArtifactId, input.parserVersion, input.parser],
+  );
+  if (stale.rows.length === 1) {
+    const row = await repairParsedOutput(client, stale.rows[0]!, input);
+    return { row, created: false };
+  }
+
   const { rows } = await client.query<RawParsedRow>(
     `INSERT INTO raw_parsed
        (id, raw_artifact_id, tenant_id, parser, parser_version, extracted, confidence)
@@ -97,16 +142,79 @@ export async function insertParsed(
   const inserted = rows[0];
   if (inserted !== undefined) return { row: inserted, created: true };
 
-  // Conflict: the (artifact, parser, version) row already exists. Return it.
-  const existing = await client.query<RawParsedRow>(
+  // Conflict from a concurrent writer: the exact row now exists. Return it,
+  // unless a prior zero-row projection log proves the row must be replayed.
+  const row = await findParsedByArtifactParserVersion(client, input);
+  if (row === undefined) {
+    throw new Error("raw_parsed insert hit a conflict but no existing row was found");
+  }
+  if (await hasTerminalZeroProjectionLog(client, row.id)) {
+    return { row: await repairParsedOutput(client, row, input), created: false };
+  }
+  return { row, created: false };
+}
+
+async function findParsedByArtifactParserVersion(
+  client: TenantScopedClient,
+  input: InsertParsedInput,
+): Promise<RawParsedRow | undefined> {
+  const { rows } = await client.query<RawParsedRow>(
     `SELECT * FROM raw_parsed
       WHERE raw_artifact_id = $1 AND parser = $2 AND parser_version = $3
       LIMIT 1`,
     [input.rawArtifactId, input.parser, input.parserVersion],
   );
-  const row = existing.rows[0];
+  return rows[0];
+}
+
+async function hasTerminalZeroProjectionLog(
+  client: TenantScopedClient,
+  parsedId: string,
+): Promise<boolean> {
+  const { rows } = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM canonical_projection_log
+        WHERE raw_parsed_id = $1
+          AND records_written = 0
+          AND error IS NULL
+          AND COALESCE(quarantined, false) = false
+     ) AS exists`,
+    [parsedId],
+  );
+  return rows[0]?.exists === true;
+}
+
+async function repairParsedOutput(
+  client: TenantScopedClient,
+  existing: RawParsedRow,
+  input: InsertParsedInput,
+): Promise<RawParsedRow> {
+  const { rows } = await client.query<RawParsedRow>(
+    `UPDATE raw_parsed
+        SET parser = $2,
+            parser_version = $3,
+            extracted = $4,
+            confidence = $5,
+            extracted_at = now()
+      WHERE id = $1
+        AND raw_artifact_id = $6
+        AND tenant_id = $7
+      RETURNING *`,
+    [
+      existing.id,
+      input.parser,
+      input.parserVersion,
+      JSON.stringify(input.extracted),
+      input.confidence,
+      input.rawArtifactId,
+      input.tenantId,
+    ],
+  );
+  const row = rows[0];
   if (row === undefined) {
-    throw new Error("raw_parsed insert hit a conflict but no existing row was found");
+    throw new Error("raw_parsed repair failed to return the existing row");
   }
-  return { row, created: false };
+  await client.query(`DELETE FROM canonical_projection_log WHERE raw_parsed_id = $1`, [row.id]);
+  return row;
 }

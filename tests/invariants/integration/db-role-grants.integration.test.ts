@@ -44,6 +44,8 @@ const MATRIX: ReadonlyArray<{
       ["raw_parsed", "UPDATE"],
       ["raw_sync_partitions", "UPDATE"],
       ["raw_sources", "SELECT"],
+      ["canonical_projection_log", "SELECT"],
+      ["canonical_projection_log", "DELETE"],
     ],
     cannot: [
       ["canonical_journal_entry", "INSERT"],

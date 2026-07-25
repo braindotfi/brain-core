@@ -72,6 +72,7 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
 
   it("scopes each worker role to its layer", () => {
     expect(SQL).toMatch(/GRANT SELECT, INSERT, UPDATE ON %s TO brain_raw_worker/);
+    expect(SQL).toContain("GRANT SELECT, DELETE ON canonical_projection_log TO brain_raw_worker");
     expect(SQL).toMatch(/GRANT SELECT, INSERT, UPDATE ON %s TO brain_canonical_projector/);
     expect(SQL).toContain("GRANT DELETE ON canonical_journal_line TO brain_canonical_projector");
     expect(SQL).toContain("GRANT SELECT ON raw_parsed TO brain_canonical_projector");

@@ -186,7 +186,8 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO
   brain_execution_worker, brain_audit_verifier, brain_tenant_deletion,
   brain_surface_gateway;
 
--- brain_raw_worker: raw layer writes. No worker delete path exists.
+-- brain_raw_worker: raw layer writes. It may delete only stale canonical
+-- projection replay markers when repairing a corrected upload parsed row.
 DO $$
 DECLARE t regclass;
 BEGIN
@@ -195,6 +196,7 @@ BEGIN
   LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE ON %s TO brain_raw_worker', t); END LOOP;
 END $$;
 GRANT SELECT ON extraction_jobs TO brain_raw_worker;
+GRANT SELECT, DELETE ON canonical_projection_log TO brain_raw_worker;
 
 -- brain_canonical_projector: canonical writes, SELECT on raw_parsed (input).
 -- Only canonical_journal_line is deleted by the projector, as a line-replace
