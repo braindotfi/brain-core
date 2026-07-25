@@ -283,6 +283,36 @@ describe("runDocumentExtractionCycle", () => {
     });
   });
 
+  it("detects upload PDFs by MIME and still skips the external agent", async () => {
+    const app = appPool({
+      artifact: {
+        source_type: "other",
+        source_schema: null,
+        mime_type: "application/pdf",
+        source_ref: { filename: "bank_statement_2026-06.pdf" },
+      },
+    });
+    const client: DocumentExtractPort = {
+      extract: vi.fn(async () => {
+        throw new Error("external agent should not be called");
+      }),
+    };
+
+    await runDocumentExtractionCycle(
+      {
+        scanPool: scanPool(),
+        appPool: app.pool,
+        blob: blob(BANK_STATEMENT_FIXTURE),
+        client,
+      },
+      { batchSize: 1 },
+    );
+
+    expect(client.extract).not.toHaveBeenCalled();
+    const inserted = app.updates.find((u) => u.kind === "parsed");
+    expect(inserted?.values?.[3]).toBe("bank_statement_upload_v1");
+  });
+
   it("falls back to the external extractor when an upload PDF is not a bank statement", async () => {
     const app = appPool({
       artifact: {
@@ -390,6 +420,72 @@ describe("runDocumentExtractionCycle", () => {
       inputs: { parser: "bank_statement_upload_v1", source_parser: "doc_obligation_v1" },
       outputs: { parsed_id: "prs_01FIXED0000000000000000000", created: true },
     });
+  });
+
+  it("rejects external upload parser results with non-upload payload shape", async () => {
+    const updates: Array<{ kind: string; values: unknown[] | undefined }> = [];
+    const client = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        if (
+          sql === "BEGIN" ||
+          sql === "COMMIT" ||
+          sql === "ROLLBACK" ||
+          sql.startsWith("SELECT set_config")
+        ) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith("UPDATE extraction_jobs") && sql.includes("status = 'running'")) {
+          updates.push({ kind: "claim", values });
+          return { rows: [jobRow("running", 1)], rowCount: 1 };
+        }
+        if (sql.includes("FROM raw_artifacts")) {
+          return { rows: [artifactRow(EXTERNAL_AGENT_ARTIFACT)], rowCount: 1 };
+        }
+        if (sql.includes("FROM raw_parsed") && sql.includes("WHERE id = $1")) {
+          return {
+            rows: [
+              {
+                id: "prs_01BAD0000000000000000000",
+                raw_artifact_id: RAW_ID,
+                tenant_id: TENANT,
+                parser: "bank_statement_upload_v1",
+                parser_version: "1.0.0",
+                extracted: { kind: "doc_obligation", amount: "100.00" },
+                confidence: 0.91,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.startsWith("UPDATE extraction_jobs") && sql.includes("status = 'failed'")) {
+          updates.push({ kind: "failed", values });
+          return { rows: [], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    const extractClient: DocumentExtractPort = {
+      extract: vi.fn(async () => ({
+        parsed_id: "prs_01BAD0000000000000000000",
+        parser: "bank_statement_upload_v1",
+        confidence: 0.91,
+      })),
+    };
+
+    await runDocumentExtractionCycle(
+      {
+        scanPool: scanPool(),
+        appPool: { connect: vi.fn(async () => client) } as unknown as Pool,
+        blob: blob(),
+        client: extractClient,
+      },
+      { batchSize: 1, maxAttempts: 1 },
+    );
+
+    expect(updates.some((u) => u.kind === "succeeded")).toBe(false);
+    const failed = updates.find((u) => u.kind === "failed");
+    expect(failed?.values?.[1]).toContain("raw_source_unsupported");
   });
 
   it("requeues transient extractor failures with bounded backoff", async () => {
