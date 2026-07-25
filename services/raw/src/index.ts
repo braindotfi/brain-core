@@ -60,7 +60,9 @@ export {
 } from "./repository/artifacts.js";
 export {
   listParsedByArtifact,
+  insertParsed,
   type RawParsedRow,
+  type InsertParsedInput,
   type ListParsedFilters,
 } from "./repository/parsed.js";
 export {

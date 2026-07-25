@@ -14,9 +14,15 @@ import {
 import {
   claimExtractionJob,
   findArtifactById,
+  insertParsed,
+  interpreterForSchema,
   markExtractionJobFailed,
   markExtractionJobSucceeded,
   requeueExtractionJob,
+  registeredSchemas,
+  UPLOAD_DOCUMENT_SCHEMA,
+  type InterpretedOutput,
+  type RawArtifactRow,
 } from "@brain/raw";
 import type {
   DocumentExtractInput,
@@ -114,26 +120,6 @@ export async function runDocumentExtractionCycle(
       after: "running",
     });
 
-    if (deps.client === undefined) {
-      await withTenantScope(deps.appPool, row.tenant_id, (c) =>
-        markExtractionJobFailed(c, row.id, {
-          code: "dependency_unavailable",
-          message: "document extraction agent is not configured",
-        }),
-      );
-      deps.metrics?.increment("brain.raw.extraction_job.failed.count", {
-        reason: "dependency_unavailable",
-      });
-      await emitExtractionStatusChanged(deps, row.tenant_id, workerId, {
-        jobId: row.id,
-        rawId: row.raw_id,
-        before: "running",
-        after: "failed",
-        errorCode: "dependency_unavailable",
-      });
-      continue;
-    }
-
     try {
       const artifact = await withTenantScope(deps.appPool, row.tenant_id, (c) =>
         findArtifactById(c, row.raw_id),
@@ -159,6 +145,53 @@ export async function runDocumentExtractionCycle(
       }
 
       const bytes = await readAll(await deps.blob.get(artifact.blob_uri));
+      const localParsed = await tryInProcessUploadExtraction(deps, {
+        tenantId: row.tenant_id,
+        actor: workerId,
+        artifact,
+        bytes,
+      });
+      if (localParsed !== null) {
+        await withTenantScope(deps.appPool, row.tenant_id, (c) =>
+          markExtractionJobSucceeded(c, row.id, {
+            parsedId: localParsed.parsedId,
+            confidence: localParsed.confidence,
+          }),
+        );
+        deps.metrics?.increment("brain.raw.extraction_job.succeeded.count", {
+          interpreter: "in_process",
+        });
+        await emitExtractionStatusChanged(deps, row.tenant_id, workerId, {
+          jobId: row.id,
+          rawId: row.raw_id,
+          before: "running",
+          after: "succeeded",
+          parsedId: localParsed.parsedId,
+          confidence: localParsed.confidence,
+        });
+        continue;
+      }
+
+      if (deps.client === undefined) {
+        await withTenantScope(deps.appPool, row.tenant_id, (c) =>
+          markExtractionJobFailed(c, row.id, {
+            code: "dependency_unavailable",
+            message: "document extraction agent is not configured",
+          }),
+        );
+        deps.metrics?.increment("brain.raw.extraction_job.failed.count", {
+          reason: "dependency_unavailable",
+        });
+        await emitExtractionStatusChanged(deps, row.tenant_id, workerId, {
+          jobId: row.id,
+          rawId: row.raw_id,
+          before: "running",
+          after: "failed",
+          errorCode: "dependency_unavailable",
+        });
+        continue;
+      }
+
       const result = await deps.client.extract(ctxFor(row.tenant_id, workerId), {
         rawId: artifact.id,
         mimeType: artifact.mime_type ?? DEFAULT_MIME_TYPE,
@@ -241,6 +274,100 @@ export function startDocumentExtractionWorker(
       onError: (err) => deps.log?.error({ err }, "document extraction worker failed"),
     },
   );
+}
+
+async function tryInProcessUploadExtraction(
+  deps: DocumentExtractionWorkerDeps,
+  input: {
+    tenantId: string;
+    actor: string;
+    artifact: RawArtifactRow;
+    bytes: Buffer;
+  },
+): Promise<{ parsedId: string; confidence: number } | null> {
+  const interpreter = inProcessUploadInterpreter(input.artifact);
+  if (interpreter === undefined) return null;
+
+  const output = interpreter(input.bytes, {
+    rawArtifactId: input.artifact.id,
+    tenantId: input.tenantId,
+    sourceType: input.artifact.source_type,
+    sourceSchema: input.artifact.source_schema ?? UPLOAD_DOCUMENT_SCHEMA,
+    sourceRef: input.artifact.source_ref,
+    sourceId: input.artifact.source_id,
+    objectType: input.artifact.object_type,
+    mimeType: input.artifact.mime_type,
+  });
+  if (output === null) return null;
+
+  const parsed = await insertInProcessParsed(deps, input, output);
+  return {
+    parsedId: parsed.id,
+    confidence: output.confidence ?? 1,
+  };
+}
+
+function inProcessUploadInterpreter(artifact: RawArtifactRow) {
+  if (!registeredSchemas().includes(UPLOAD_DOCUMENT_SCHEMA)) return undefined;
+  if (artifact.source_schema !== null && artifact.source_schema !== UPLOAD_DOCUMENT_SCHEMA) {
+    return undefined;
+  }
+  if (!isSupportedUploadArtifact(artifact.source_type, artifact.mime_type)) return undefined;
+  return interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA);
+}
+
+function isSupportedUploadArtifact(sourceType: string, mimeType: string | null): boolean {
+  if (sourceType === "pdf_upload") {
+    return mimeType === null || mimeType === "application/pdf" || mimeType === DEFAULT_MIME_TYPE;
+  }
+  if (sourceType !== "csv_upload") return false;
+  if (mimeType === null || mimeType === DEFAULT_MIME_TYPE) return true;
+  return (
+    mimeType === "text/csv" ||
+    mimeType === "application/csv" ||
+    mimeType === "application/vnd.ms-excel" ||
+    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+}
+
+async function insertInProcessParsed(
+  deps: DocumentExtractionWorkerDeps,
+  input: {
+    tenantId: string;
+    actor: string;
+    artifact: RawArtifactRow;
+  },
+  output: InterpretedOutput,
+): Promise<{ id: string }> {
+  const { parsed, created } = await withTenantScope(deps.appPool, input.tenantId, async (c) => {
+    const result = await insertParsed(c, {
+      id: newRawParsedId(),
+      rawArtifactId: input.artifact.id,
+      tenantId: input.tenantId,
+      parser: output.parser,
+      parserVersion: output.parserVersion,
+      extracted: output.extracted,
+      confidence: output.confidence,
+    });
+    return { parsed: result.row, created: result.created };
+  });
+
+  await deps.audit?.emit({
+    tenantId: input.tenantId,
+    layer: "raw",
+    actor: input.actor,
+    action: created ? "raw.parsed.write" : "raw.parsed.deduplicated",
+    inputs: {
+      raw_id: input.artifact.id,
+      parser: output.parser,
+      parser_version: output.parserVersion,
+      source_schema: input.artifact.source_schema ?? UPLOAD_DOCUMENT_SCHEMA,
+      extracted_sha256: sha256Hex(Buffer.from(JSON.stringify(output.extracted))),
+    },
+    outputs: { parsed_id: parsed.id, created },
+  });
+
+  return { id: parsed.id };
 }
 
 async function reconcileReturnedParsedParser(

@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { readFileSync } from "node:fs";
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -13,8 +14,12 @@ import { runDocumentExtractionCycle, type DocumentExtractPort } from "./worker.j
 const TENANT = newTenantId();
 const RAW_ID = newRawArtifactId();
 const JOB_ID = newRawExtractionJobId();
+const EXTERNAL_AGENT_ARTIFACT = { source_type: "email_attachment" };
+const BANK_STATEMENT_FIXTURE = readFileSync(
+  new URL("../../../raw/src/interpreters/__fixtures__/bank_statement_2026-06.pdf", import.meta.url),
+);
 
-function artifactRow() {
+function artifactRow(overrides: Record<string, unknown> = {}) {
   return {
     id: RAW_ID,
     tenant_id: TENANT,
@@ -38,6 +43,7 @@ function artifactRow() {
     source_id: null,
     source_version: null,
     idempotency_key: null,
+    ...overrides,
   };
 }
 
@@ -70,7 +76,12 @@ function scanPool(): Pool {
   } as unknown as Pool;
 }
 
-function appPool(options: { claimedAttemptCount?: number } = {}) {
+function appPool(
+  options: {
+    claimedAttemptCount?: number;
+    artifact?: Record<string, unknown>;
+  } = {},
+) {
   const updates: Array<{ kind: string; values: unknown[] | undefined }> = [];
   const client = {
     query: vi.fn(async (sql: string, values?: unknown[]) => {
@@ -87,7 +98,25 @@ function appPool(options: { claimedAttemptCount?: number } = {}) {
         return { rows: [jobRow("running", options.claimedAttemptCount ?? 1)], rowCount: 1 };
       }
       if (sql.includes("FROM raw_artifacts")) {
-        return { rows: [artifactRow()], rowCount: 1 };
+        return { rows: [artifactRow(options.artifact)], rowCount: 1 };
+      }
+      if (sql.startsWith("INSERT INTO raw_parsed")) {
+        updates.push({ kind: "parsed", values });
+        return {
+          rows: [
+            {
+              id: "prs_01LOCAL0000000000000000000",
+              raw_artifact_id: RAW_ID,
+              tenant_id: TENANT,
+              parser: values?.[3],
+              parser_version: values?.[4],
+              extracted: JSON.parse(String(values?.[5])),
+              confidence: values?.[6],
+              extracted_at: new Date("2026-07-06T00:00:00Z"),
+            },
+          ],
+          rowCount: 1,
+        };
       }
       if (sql.startsWith("UPDATE extraction_jobs") && sql.includes("status = 'succeeded'")) {
         updates.push({ kind: "succeeded", values });
@@ -111,10 +140,12 @@ function appPool(options: { claimedAttemptCount?: number } = {}) {
   };
 }
 
-function blob(): BlobAdapter {
+function blob(contents: Buffer | string = "invoice"): BlobAdapter {
   return {
     put: vi.fn(),
-    get: vi.fn(async () => Readable.from([Buffer.from("invoice")])),
+    get: vi.fn(async () =>
+      Readable.from([Buffer.isBuffer(contents) ? contents : Buffer.from(contents)]),
+    ),
     signedUrl: vi.fn(),
     tombstone: vi.fn(),
     purgeTenant: vi.fn(),
@@ -124,7 +155,7 @@ function blob(): BlobAdapter {
 
 describe("runDocumentExtractionCycle", () => {
   it("marks queued jobs failed when the extractor is not configured", async () => {
-    const app = appPool();
+    const app = appPool({ artifact: EXTERNAL_AGENT_ARTIFACT });
 
     await runDocumentExtractionCycle(
       { scanPool: scanPool(), appPool: app.pool, blob: blob() },
@@ -137,7 +168,7 @@ describe("runDocumentExtractionCycle", () => {
   });
 
   it("calls the extractor from the worker and caps recorded confidence at 0.5", async () => {
-    const app = appPool();
+    const app = appPool({ artifact: EXTERNAL_AGENT_ARTIFACT });
     const audit = new InMemoryAuditEmitter();
     const client: DocumentExtractPort = {
       extract: vi.fn(async () => ({
@@ -182,6 +213,57 @@ describe("runDocumentExtractionCycle", () => {
     });
   });
 
+  it("uses the in-process upload interpreter for bank statements and skips the external agent", async () => {
+    const app = appPool({
+      artifact: {
+        source_type: "pdf_upload",
+        source_schema: "brain.upload.document.v1",
+        mime_type: "application/pdf",
+      },
+    });
+    const audit = new InMemoryAuditEmitter();
+    const client: DocumentExtractPort = {
+      extract: vi.fn(async () => {
+        throw new Error("external agent should not be called");
+      }),
+    };
+
+    await runDocumentExtractionCycle(
+      {
+        scanPool: scanPool(),
+        appPool: app.pool,
+        blob: blob(BANK_STATEMENT_FIXTURE),
+        client,
+        audit,
+      },
+      { batchSize: 1 },
+    );
+
+    expect(client.extract).not.toHaveBeenCalled();
+    const inserted = app.updates.find((u) => u.kind === "parsed");
+    expect(inserted?.values?.[3]).toBe("bank_statement_upload_v1");
+    expect(inserted?.values?.[4]).toBe("1.0.0");
+    const extracted = JSON.parse(String(inserted?.values?.[5])) as {
+      object_type?: string;
+      transactions?: unknown[];
+    };
+    expect(extracted.object_type).toBe("bank_statement");
+    expect(extracted.transactions).toHaveLength(19);
+    const succeeded = app.updates.find((u) => u.kind === "succeeded");
+    expect(succeeded?.values?.[1]).toBe("prs_01LOCAL0000000000000000000");
+    expect(succeeded?.values?.[2]).toBeGreaterThan(0.5);
+    const parsedAudit = audit.events.find((e) => e.action === "raw.parsed.write");
+    expect(parsedAudit).toMatchObject({
+      action: "raw.parsed.write",
+      inputs: {
+        parser: "bank_statement_upload_v1",
+        parser_version: "1.0.0",
+        source_schema: "brain.upload.document.v1",
+      },
+      outputs: { parsed_id: "prs_01LOCAL0000000000000000000", created: true },
+    });
+  });
+
   it("creates a matching parser row when the agent wrote a legacy parser", async () => {
     const updates: Array<{ kind: string; values: unknown[] | undefined }> = [];
     const client = {
@@ -199,7 +281,7 @@ describe("runDocumentExtractionCycle", () => {
           return { rows: [jobRow("running", 1)], rowCount: 1 };
         }
         if (sql.includes("FROM raw_artifacts")) {
-          return { rows: [artifactRow()], rowCount: 1 };
+          return { rows: [artifactRow(EXTERNAL_AGENT_ARTIFACT)], rowCount: 1 };
         }
         if (sql.includes("FROM raw_parsed") && sql.includes("WHERE id = $1")) {
           return {
@@ -266,7 +348,7 @@ describe("runDocumentExtractionCycle", () => {
   });
 
   it("requeues transient extractor failures with bounded backoff", async () => {
-    const app = appPool({ claimedAttemptCount: 1 });
+    const app = appPool({ claimedAttemptCount: 1, artifact: EXTERNAL_AGENT_ARTIFACT });
     const client: DocumentExtractPort = {
       extract: vi.fn(async () => {
         throw new Error("timeout");
@@ -287,7 +369,7 @@ describe("runDocumentExtractionCycle", () => {
   });
 
   it("marks transient failures terminal after the retry budget is exhausted", async () => {
-    const app = appPool({ claimedAttemptCount: 3 });
+    const app = appPool({ claimedAttemptCount: 3, artifact: EXTERNAL_AGENT_ARTIFACT });
     const client: DocumentExtractPort = {
       extract: vi.fn(async () => {
         throw new Error("timeout");
