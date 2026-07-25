@@ -287,7 +287,7 @@ describe("runDocumentExtractionCycle", () => {
     const app = appPool({
       artifact: {
         source_type: "other",
-        source_schema: null,
+        source_schema: "legacy.document_upload.v1",
         mime_type: "application/pdf",
         source_ref: { filename: "bank_statement_2026-06.pdf" },
       },

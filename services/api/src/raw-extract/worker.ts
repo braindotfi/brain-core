@@ -56,6 +56,7 @@ export interface DocumentExtractionWorkerDeps {
   log?: {
     error(obj: unknown, msg?: string): void;
     warn(obj: unknown, msg?: string): void;
+    info?(obj: unknown, msg?: string): void;
   };
 }
 
@@ -190,6 +191,19 @@ export async function runDocumentExtractionCycle(
         });
         continue;
       }
+      if (looksLikeUploadArtifact(artifact)) {
+        deps.log?.warn(
+          {
+            raw_id: artifact.id,
+            source_type: artifact.source_type,
+            source_schema: artifact.source_schema,
+            mime_type: artifact.mime_type,
+            filename: sourceRefFilename(artifact.source_ref),
+            git_sha: process.env["GIT_SHA"] ?? "dev",
+          },
+          "upload-like artifact fell through to external document extractor",
+        );
+      }
 
       if (deps.client === undefined) {
         await withTenantScope(deps.appPool, row.tenant_id, (c) =>
@@ -284,6 +298,14 @@ export function startDocumentExtractionWorker(
   deps: DocumentExtractionWorkerDeps,
   opts: DocumentExtractionWorkerOptions = {},
 ): ManagedWorker {
+  deps.log?.info?.(
+    {
+      git_sha: process.env["GIT_SHA"] ?? "dev",
+      upload_schema_registered: registeredSchemas().includes(UPLOAD_DOCUMENT_SCHEMA),
+      brain_workers: process.env["BRAIN_WORKERS"] ?? "all",
+    },
+    "document extraction worker configured",
+  );
   return startManagedInterval(
     () => runDocumentExtractionCycle(deps, opts),
     opts.intervalMs ?? DEFAULT_INTERVAL_MS,
@@ -334,9 +356,6 @@ async function tryInProcessUploadExtraction(
 
 function inProcessUploadInterpreter(artifact: RawArtifactRow) {
   if (!registeredSchemas().includes(UPLOAD_DOCUMENT_SCHEMA)) return undefined;
-  if (artifact.source_schema !== null && artifact.source_schema !== UPLOAD_DOCUMENT_SCHEMA) {
-    return undefined;
-  }
   const sourceType = supportedUploadSourceType(artifact);
   if (sourceType === null) return undefined;
   const interpreter = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA);
@@ -370,6 +389,10 @@ function supportedUploadSourceType(artifact: RawArtifactRow): "pdf_upload" | "cs
   }
 
   return null;
+}
+
+function looksLikeUploadArtifact(artifact: RawArtifactRow): boolean {
+  return supportedUploadSourceType(artifact) !== null;
 }
 
 function normalizedMimeType(mimeType: string | null): string {

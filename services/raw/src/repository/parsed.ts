@@ -103,7 +103,10 @@ export async function insertParsed(
 ): Promise<{ row: RawParsedRow; created: boolean }> {
   const exact = await findParsedByArtifactParserVersion(client, input);
   if (exact !== undefined) {
-    if (await hasTerminalZeroProjectionLog(client, exact.id)) {
+    if (
+      shouldRepairParsedOutput(exact, input) ||
+      (await hasTerminalZeroProjectionLog(client, exact.id))
+    ) {
       return { row: await repairParsedOutput(client, exact, input), created: false };
     }
     return { row: exact, created: false };
@@ -217,4 +220,23 @@ async function repairParsedOutput(
   }
   await client.query(`DELETE FROM canonical_projection_log WHERE raw_parsed_id = $1`, [row.id]);
   return row;
+}
+
+function shouldRepairParsedOutput(existing: RawParsedRow, input: InsertParsedInput): boolean {
+  return (
+    isUploadParser(input.parser) && !uploadParsedPayloadMatches(input.parser, existing.extracted)
+  );
+}
+
+function isUploadParser(parser: string): boolean {
+  return parser === "bank_statement_upload_v1" || parser === "document_records_upload_v1";
+}
+
+function uploadParsedPayloadMatches(parser: string, extracted: Record<string, unknown>): boolean {
+  const objectType = extracted["object_type"];
+  if (parser === "bank_statement_upload_v1") return objectType === "bank_statement";
+  if (parser === "document_records_upload_v1") {
+    return objectType === "ar_aging" || objectType === "payroll_register";
+  }
+  return true;
 }
