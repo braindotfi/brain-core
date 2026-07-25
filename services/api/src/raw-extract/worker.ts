@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import {
+  brainError,
   isBrainError,
   newRawParsedId,
   sha256Hex,
@@ -36,6 +37,14 @@ const DEFAULT_RETRY_BASE_MS = 30_000;
 const MAX_RETRY_DELAY_MS = 15 * 60_000;
 const DEFAULT_MIME_TYPE = "application/octet-stream";
 const WORKER_ACTOR = "document_extraction_worker";
+const BANK_STATEMENT_UPLOAD_PARSER = "bank_statement_upload_v1";
+const DOCUMENT_RECORDS_UPLOAD_PARSER = "document_records_upload_v1";
+const CSV_MIME_TYPES = new Set([
+  "text/csv",
+  "application/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
 
 export interface DocumentExtractionWorkerDeps {
   scanPool: Pool;
@@ -295,15 +304,15 @@ async function tryInProcessUploadExtraction(
     bytes: Buffer;
   },
 ): Promise<{ parsedId: string; confidence: number } | null> {
-  const interpreter = inProcessUploadInterpreter(input.artifact);
-  if (interpreter === undefined) return null;
+  const local = inProcessUploadInterpreter(input.artifact);
+  if (local === undefined) return null;
 
   let output: InterpretedOutput | null;
   try {
-    output = interpreter(input.bytes, {
+    output = local.interpreter(input.bytes, {
       rawArtifactId: input.artifact.id,
       tenantId: input.tenantId,
-      sourceType: input.artifact.source_type,
+      sourceType: local.sourceType,
       sourceSchema: input.artifact.source_schema ?? UPLOAD_DOCUMENT_SCHEMA,
       sourceRef: input.artifact.source_ref,
       sourceId: input.artifact.source_id,
@@ -328,22 +337,79 @@ function inProcessUploadInterpreter(artifact: RawArtifactRow) {
   if (artifact.source_schema !== null && artifact.source_schema !== UPLOAD_DOCUMENT_SCHEMA) {
     return undefined;
   }
-  if (!isSupportedUploadArtifact(artifact.source_type, artifact.mime_type)) return undefined;
-  return interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA);
+  const sourceType = supportedUploadSourceType(artifact);
+  if (sourceType === null) return undefined;
+  const interpreter = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA);
+  if (interpreter === undefined) return undefined;
+  return { interpreter, sourceType };
 }
 
-function isSupportedUploadArtifact(sourceType: string, mimeType: string | null): boolean {
-  if (sourceType === "pdf_upload") {
-    return mimeType === null || mimeType === "application/pdf" || mimeType === DEFAULT_MIME_TYPE;
+function supportedUploadSourceType(artifact: RawArtifactRow): "pdf_upload" | "csv_upload" | null {
+  const sourceType = artifact.source_type;
+  const mimeType = normalizedMimeType(artifact.mime_type);
+  const filename = sourceRefFilename(artifact.source_ref).toLowerCase();
+
+  if (
+    sourceType === "pdf_upload" ||
+    mimeType === "application/pdf" ||
+    ((mimeType === "" || mimeType === DEFAULT_MIME_TYPE) && filename.endsWith(".pdf"))
+  ) {
+    if (mimeType === "" || mimeType === "application/pdf" || mimeType === DEFAULT_MIME_TYPE) {
+      return "pdf_upload";
+    }
   }
-  if (sourceType !== "csv_upload") return false;
-  if (mimeType === null || mimeType === DEFAULT_MIME_TYPE) return true;
-  return (
-    mimeType === "text/csv" ||
-    mimeType === "application/csv" ||
-    mimeType === "application/vnd.ms-excel" ||
-    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+  if (
+    sourceType === "csv_upload" ||
+    CSV_MIME_TYPES.has(mimeType) ||
+    spreadsheetFilename(filename)
+  ) {
+    if (mimeType === "" || mimeType === DEFAULT_MIME_TYPE || CSV_MIME_TYPES.has(mimeType)) {
+      return "csv_upload";
+    }
+  }
+
+  return null;
+}
+
+function normalizedMimeType(mimeType: string | null): string {
+  return (mimeType ?? "").split(";", 1)[0]!.trim().toLowerCase();
+}
+
+function spreadsheetFilename(filename: string): boolean {
+  return filename.endsWith(".csv") || filename.endsWith(".xlsx") || filename.endsWith(".xls");
+}
+
+function sourceRefFilename(sourceRef: Record<string, unknown>): string {
+  const filename =
+    sourceRef["filename"] ??
+    sourceRef["file_name"] ??
+    sourceRef["name"] ??
+    sourceRef["original_filename"];
+  return typeof filename === "string" ? filename : "";
+}
+
+function assertExternalParserPayloadMatches(
+  parser: string,
+  extracted: Record<string, unknown>,
+): void {
+  const objectType = extracted["object_type"];
+  const matches =
+    parser === BANK_STATEMENT_UPLOAD_PARSER
+      ? objectType === "bank_statement"
+      : parser === DOCUMENT_RECORDS_UPLOAD_PARSER
+        ? objectType === "ar_aging" || objectType === "payroll_register"
+        : true;
+  if (matches) return;
+  throw brainError(
+    "raw_source_unsupported",
+    `document extraction agent returned ${String(objectType ?? "unknown")} for ${parser}`,
+    { statusOverride: 422 },
   );
+}
+
+function isUploadParser(parser: string): boolean {
+  return parser === BANK_STATEMENT_UPLOAD_PARSER || parser === DOCUMENT_RECORDS_UPLOAD_PARSER;
 }
 
 async function insertInProcessParsed(
@@ -420,6 +486,9 @@ async function reconcileReturnedParsedParser(
         "document extraction agent returned a parsed id with no matching raw_parsed row",
       );
       return input.parsedId;
+    }
+    if (isUploadParser(input.parser)) {
+      assertExternalParserPayloadMatches(input.parser, row.extracted);
     }
     if (row.parser === input.parser) return row.id;
 
