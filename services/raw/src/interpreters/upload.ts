@@ -831,7 +831,13 @@ function arAgingOutput(sheet: ParsedSpreadsheet): InterpretedOutput {
       ]),
     );
     const bucketAmount = amountFromAgingBucketColumns(record);
-    const amount = explicitAmount ?? bucketAmount?.amount;
+    // `?? null`, not just chained `??`: when both explicitAmount and
+    // bucketAmount are absent, `bucketAmount?.amount` evaluates to
+    // `undefined`, not `null` -- the `amount === null` guard below only
+    // catches `null`, so an invoice-ref-but-no-amount row would otherwise
+    // slip through with `amount: undefined` and later crash
+    // extractedPayloadChanged's stableStringify (M2).
+    const amount = explicitAmount ?? bucketAmount?.amount ?? null;
     if (invoiceRef === null || amount === null || amount === "0" || amount === "0.00") continue;
     receivables.push({
       counterparty_name: counterparty,

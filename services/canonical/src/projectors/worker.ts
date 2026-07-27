@@ -139,6 +139,7 @@ export interface ProjectionWorkerDeps {
   metrics?: MetricsEmitter;
   log?: {
     debug(obj: unknown, msg?: string): void;
+    warn(obj: unknown, msg?: string): void;
   };
 }
 
@@ -177,6 +178,12 @@ interface PendingParsedRow {
   raw_artifact_id: string;
   tenant_id: string;
   extracted: { object_type?: string; merge_integration?: string | null };
+  // Selected as ::text (not the driver's parsed Date) and round-tripped back
+  // into parsed_extracted_at verbatim: a JS Date only holds millisecond
+  // precision, but Postgres timestamptz (what `now()` stamps raw_parsed.
+  // extracted_at with) carries microseconds, so a Date round-trip would
+  // truncate and permanently fail PENDING_EXCLUSION's exact-version match.
+  extracted_at: string;
 }
 
 // Object types this worker projects, across both canonical domains served by
@@ -202,15 +209,26 @@ function sourceSystemOf(mergeIntegration: string | null | undefined): string {
 
 /**
  * SQL fragment (alias `rp`) that excludes raw_parsed rows already handled to a
- * terminal state — successfully projected (`error IS NULL`) or quarantined. A
- * failed-but-not-quarantined row is intentionally NOT excluded, so the next
- * cycle retries it. Used by every poll + the lag gauge so they agree on what
- * "pending" means.
+ * terminal state for the CURRENT payload version: successfully projected
+ * (`error IS NULL`) or quarantined, AND the log row recorded consuming the
+ * same `rp.extracted_at` the row currently carries. A failed-but-not-
+ * quarantined row is intentionally NOT excluded, so the next cycle retries
+ * it. Used by every poll + the lag gauge so they agree on what "pending"
+ * means.
+ *
+ * `IS NOT DISTINCT FROM` (NULL-safe equality) matters here: after migration
+ * 0005's backfill, every log row that still points at a live raw_parsed row
+ * carries that row's real extracted_at, so this comparison only sees NULL on
+ * one side for an orphaned log row (its raw_parsed row was deleted, not
+ * repaired) -- and an orphan's raw_parsed_id has no matching `rp` row in any
+ * of these FROM-raw_parsed-driven queries, so it is never reached by this
+ * predicate at all. No legacy row is spuriously re-pending.
  */
 const PENDING_EXCLUSION = `NOT EXISTS (
             SELECT 1 FROM canonical_projection_log pl
              WHERE pl.raw_parsed_id = rp.id
                AND (pl.error IS NULL OR pl.quarantined)
+               AND pl.parsed_extracted_at IS NOT DISTINCT FROM rp.extracted_at
           )`;
 
 /**
@@ -218,6 +236,16 @@ const PENDING_EXCLUSION = `NOT EXISTS (
  * budget is exhausted, quarantine the row. Returns the post-update state so the
  * caller can emit a quarantine metric on the transition. Runs in its own
  * tenant-scoped transaction (the data transaction has already rolled back).
+ *
+ * `parsedExtractedAt` is the raw_parsed row's extracted_at as read during THIS
+ * poll (not `now()`): stamping the version actually attempted, not the time of
+ * the attempt, closes the read-then-write race where a repair lands mid-cycle.
+ *
+ * M5: `attempts` resets to 1 (a fresh retry budget) whenever the STORED
+ * parsed_extracted_at differs from the one THIS attempt just consumed --
+ * i.e. the payload changed since the last recorded failure. Without this a
+ * quarantined row whose payload gets corrected keeps its exhausted counter,
+ * so one transient failure re-quarantines it after a single attempt.
  */
 async function recordFailure(
   pool: Pool,
@@ -227,24 +255,101 @@ async function recordFailure(
   domain: string,
   errorMessage: string,
   maxAttempts: number,
+  parsedExtractedAt: string,
 ): Promise<{ attempts: number; quarantined: boolean }> {
   return withTenantScope(pool, tenantId, async (c) => {
     const { rows } = await c.query<{ attempts: number; quarantined: boolean }>(
       `INSERT INTO canonical_projection_log
-         (raw_parsed_id, tenant_id, projector, domain, records_written, error, attempts, quarantined)
-       VALUES ($1,$2,$3,$4,0,$5,1, 1 >= $6)
+         (raw_parsed_id, tenant_id, projector, domain, records_written, error, attempts, quarantined, parsed_extracted_at)
+       VALUES ($1,$2,$3,$4,0,$5,1, 1 >= $6, $7::timestamp AT TIME ZONE 'UTC')
        ON CONFLICT (raw_parsed_id) DO UPDATE SET
          error = EXCLUDED.error,
          projector = EXCLUDED.projector,
          domain = EXCLUDED.domain,
-         attempts = canonical_projection_log.attempts + 1,
-         quarantined = (canonical_projection_log.attempts + 1) >= $6,
+         attempts = CASE
+           WHEN canonical_projection_log.parsed_extracted_at IS DISTINCT FROM EXCLUDED.parsed_extracted_at
+           THEN 1
+           ELSE canonical_projection_log.attempts + 1
+         END,
+         quarantined = (CASE
+           WHEN canonical_projection_log.parsed_extracted_at IS DISTINCT FROM EXCLUDED.parsed_extracted_at
+           THEN 1
+           ELSE canonical_projection_log.attempts + 1
+         END) >= $6,
+         parsed_extracted_at = EXCLUDED.parsed_extracted_at,
          projected_at = now()
        RETURNING attempts, quarantined`,
-      [rawParsedId, tenantId, projector, domain, errorMessage, maxAttempts],
+      [rawParsedId, tenantId, projector, domain, errorMessage, maxAttempts, parsedExtractedAt],
     );
     return rows[0] ?? { attempts: 1, quarantined: isQuarantined(1, maxAttempts) };
   });
+}
+
+/**
+ * The canonical tables a raw_parsed page can produce records into, all
+ * sharing the same (tenant_id, evidence_ids TEXT[], source_natural_key)
+ * shape. A fixed allowlist (not caller input), so string-interpolating the
+ * table name is safe.
+ */
+type OrphanCleanupTable =
+  | "canonical_gl_account"
+  | "canonical_journal_entry"
+  | "canonical_account"
+  | "canonical_transaction"
+  | "canonical_counterparty"
+  | "canonical_obligation";
+
+/**
+ * H3: a re-projection upserts every natural key the CURRENT payload still
+ * contains, but nothing removes a canonical row for a key the payload
+ * DROPPED or RENAMED (source_natural_key is the idempotency key; nothing
+ * reacts to that key disappearing). That leaves corrected-away receivables
+ * and orphaned OCR-typo'd counterparties in place.
+ *
+ * A prior version of this fix DELETEd those rows. Reverted -- it was unsound
+ * three ways, not tunable:
+ *   1. brain_canonical_projector has no DELETE grant on these tables
+ *      (infra/db-roles.sql); granting one is explicitly forbidden (PR #330 +
+ *      the runtime-db-roles.ts boot fence), so it would 500 every cycle in
+ *      any environment that actually runs under the least-privilege role.
+ *   2. Counterparty natural keys are shared across raw_parsed rows and every
+ *      upsert overwrites evidence_ids wholesale (last writer owns it), so a
+ *      scoped delete keyed on evidence_ids can drop the link for a sibling
+ *      record this raw_parsed_id never touched.
+ *   3. A degraded re-extraction (missing amount/type) legitimately produces
+ *      an empty keep-set; deleting on that logs a terminal SUCCESS while a
+ *      real payable silently vanishes -- worse than the bug this fixes.
+ *
+ * Converging correctly needs a real data-model change (many-to-many
+ * evidence, or soft supersession with a superseded_at the read layer
+ * filters) -- separate scoped work, not a rider here. Until then: detect,
+ * count, log loudly, emit a metric, and still mark the projection terminal
+ * (the caller's normal log write) so the projector doesn't hot-spin
+ * retrying the same orphan every 15s. Destroying financial records is
+ * strictly worse than a visible, measured inconsistency.
+ */
+async function detectOrphanedCanonicalRows(
+  c: TenantScopedClient,
+  deps: ProjectionWorkerDeps,
+  table: OrphanCleanupTable,
+  tenantId: string,
+  rawParsedId: string,
+  keepNaturalKeys: readonly string[],
+): Promise<void> {
+  const { rows } = await c.query<{ source_natural_key: string }>(
+    `SELECT source_natural_key FROM ${table}
+      WHERE tenant_id = $1
+        AND evidence_ids @> ARRAY[$2]::text[]
+        AND NOT (source_natural_key = ANY ($3::text[]))`,
+    [tenantId, rawParsedId, [...keepNaturalKeys]],
+  );
+  if (rows.length === 0) return;
+  const naturalKeys = rows.map((r) => r.source_natural_key);
+  deps.metrics?.increment("brain.canonical.projector.orphaned_records", { table }, rows.length);
+  deps.log?.warn(
+    { tenantId, rawParsedId, table, naturalKeys, count: rows.length },
+    "canonical projector: re-projection left orphaned records (not deleted; see H3 in worker.ts)",
+  );
 }
 
 /** One full projection cycle. Exported for tests; startCanonicalProjectionWorker schedules it. */
@@ -261,7 +366,7 @@ export async function runProjectionCycle(
     // Cross-tenant poll — requires BYPASSRLS or superuser in production.
     // Reference pages first so dependent rows can resolve in the same cycle.
     const result = await deps.pool.query<PendingParsedRow>(
-      `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted
+      `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted, (rp.extracted_at AT TIME ZONE 'UTC')::text AS extracted_at
          FROM raw_parsed rp
         WHERE rp.parser = $1
           AND rp.extracted->>'object_type' = ANY($2::text[])
@@ -296,47 +401,85 @@ export async function runProjectionCycle(
       evidenceIds: [row.id],
     };
 
+    const canonicalTable: OrphanCleanupTable | undefined =
+      objectType === "gl_account"
+        ? "canonical_gl_account"
+        : objectType === "journal_entry"
+          ? "canonical_journal_entry"
+          : objectType === "contact"
+            ? "canonical_counterparty"
+            : objectType === "invoice"
+              ? "canonical_obligation"
+              : undefined;
+
     try {
       const written = await withTenantScope(deps.pool, row.tenant_id, async (c) => {
         let count = 0;
+        const naturalKeys: string[] = [];
         for (const obj of objects) {
           if (objectType === "gl_account") {
             const input = projectGlAccount(obj, sourceSystem, common);
             if (input === null) continue;
             await upsertGlAccount(c, row.tenant_id, input);
+            naturalKeys.push(input.sourceNaturalKey);
             count += 1;
           } else if (objectType === "journal_entry") {
             const input = projectJournalEntry(obj, sourceSystem, common);
             if (input === null) continue;
             await upsertJournalEntry(c, row.tenant_id, input);
+            naturalKeys.push(input.sourceNaturalKey);
             count += 1;
           } else if (objectType === "contact") {
             const input = projectMergeContact(obj, sourceSystem, common);
             if (input === null) continue;
             await upsertCanonicalCounterparty(c, row.tenant_id, input);
+            naturalKeys.push(input.sourceNaturalKey);
             count += 1;
           } else if (objectType === "invoice") {
             const input = projectMergeInvoice(obj, sourceSystem, common);
             if (input === null) continue;
             await upsertCanonicalObligation(c, row.tenant_id, input);
+            naturalKeys.push(input.sourceNaturalKey);
             count += 1;
           }
+        }
+        // H3: detect (do not delete) canonical rows a corrected page dropped
+        // or renamed. See detectOrphanedCanonicalRows.
+        if (canonicalTable !== undefined) {
+          await detectOrphanedCanonicalRows(
+            c,
+            deps,
+            canonicalTable,
+            row.tenant_id,
+            row.id,
+            naturalKeys,
+          );
         }
         // Same transaction as the writes: log + data commit or roll back
         // together. On conflict (a prior failed attempt left a row) clear the
         // error/quarantine so a retry that finally succeeds is marked terminal.
+        // parsed_extracted_at is stamped with the version read at poll time
+        // (row.extracted_at), not now() -- see PENDING_EXCLUSION.
         await c.query(
           `INSERT INTO canonical_projection_log
-             (raw_parsed_id, tenant_id, projector, domain, records_written, error, quarantined)
-           VALUES ($1,$2,$3,$4,$5,NULL,false)
+             (raw_parsed_id, tenant_id, projector, domain, records_written, error, quarantined, parsed_extracted_at)
+           VALUES ($1,$2,$3,$4,$5,NULL,false,$6::timestamp AT TIME ZONE 'UTC')
            ON CONFLICT (raw_parsed_id) DO UPDATE SET
              projector = EXCLUDED.projector,
              domain = EXCLUDED.domain,
              records_written = EXCLUDED.records_written,
              error = NULL,
              quarantined = false,
+             parsed_extracted_at = EXCLUDED.parsed_extracted_at,
              projected_at = now()`,
-          [row.id, row.tenant_id, MERGE_ACCOUNTING_PROJECTOR, domainFor(objectType), count],
+          [
+            row.id,
+            row.tenant_id,
+            MERGE_ACCOUNTING_PROJECTOR,
+            domainFor(objectType),
+            count,
+            row.extracted_at,
+          ],
         );
         return count;
       });
@@ -373,6 +516,7 @@ export async function runProjectionCycle(
         objectType ?? "unknown",
         message,
         maxAttempts,
+        row.extracted_at,
       );
     }
   }
@@ -396,6 +540,7 @@ async function handleProjectionFailure(
   objectType: string,
   message: string,
   maxAttempts: number,
+  parsedExtractedAt: string,
 ): Promise<void> {
   try {
     const state = await recordFailure(
@@ -406,6 +551,7 @@ async function handleProjectionFailure(
       domain,
       message,
       maxAttempts,
+      parsedExtractedAt,
     );
     if (state.quarantined) {
       console.error(
@@ -467,6 +613,9 @@ interface PendingConnectorRow {
   tenant_id: string;
   extracted: Record<string, unknown>;
   confidence: number | null;
+  // See PendingParsedRow.extracted_at: kept as the ::text the poll selected,
+  // not a driver-parsed Date, to preserve microsecond precision.
+  extracted_at: string;
 }
 
 async function persistConnectorProjection(
@@ -535,7 +684,7 @@ async function runConnectorLedgerPasses(
     let rows: PendingConnectorRow[];
     try {
       const result = await deps.pool.query<PendingConnectorRow>(
-        `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted, rp.confidence
+        `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted, rp.confidence, (rp.extracted_at AT TIME ZONE 'UTC')::text AS extracted_at
            FROM raw_parsed rp
           WHERE rp.parser = $1
             AND ${PENDING_EXCLUSION}
@@ -562,22 +711,65 @@ async function runConnectorLedgerPasses(
           const projections = pass.project(row.extracted, common, diagnostics);
           const summary = summarizeUploadProjection(projections);
           let count = 0;
+          const naturalKeysByKind: Record<ConnectorLedgerProjection["kind"], string[]> = {
+            account: [],
+            transaction: [],
+            counterparty: [],
+            obligation: [],
+          };
           for (const projection of projections) {
             await persistConnectorProjection(c, row.tenant_id, projection);
+            naturalKeysByKind[projection.kind].push(projection.input.sourceNaturalKey);
             count += 1;
           }
+          // H3: detect (do not delete) orphans across all 4 target tables,
+          // even ones with zero projections THIS cycle (e.g. a correction
+          // removes the only account). See detectOrphanedCanonicalRows.
+          await detectOrphanedCanonicalRows(
+            c,
+            deps,
+            "canonical_account",
+            row.tenant_id,
+            row.id,
+            naturalKeysByKind.account,
+          );
+          await detectOrphanedCanonicalRows(
+            c,
+            deps,
+            "canonical_transaction",
+            row.tenant_id,
+            row.id,
+            naturalKeysByKind.transaction,
+          );
+          await detectOrphanedCanonicalRows(
+            c,
+            deps,
+            "canonical_counterparty",
+            row.tenant_id,
+            row.id,
+            naturalKeysByKind.counterparty,
+          );
+          await detectOrphanedCanonicalRows(
+            c,
+            deps,
+            "canonical_obligation",
+            row.tenant_id,
+            row.id,
+            naturalKeysByKind.obligation,
+          );
           await c.query(
             `INSERT INTO canonical_projection_log
-               (raw_parsed_id, tenant_id, projector, domain, records_written, error, quarantined)
-             VALUES ($1,$2,$3,'ledger',$4,NULL,false)
+               (raw_parsed_id, tenant_id, projector, domain, records_written, error, quarantined, parsed_extracted_at)
+             VALUES ($1,$2,$3,'ledger',$4,NULL,false,$5::timestamp AT TIME ZONE 'UTC')
              ON CONFLICT (raw_parsed_id) DO UPDATE SET
                projector = EXCLUDED.projector,
                domain = EXCLUDED.domain,
                records_written = EXCLUDED.records_written,
                error = NULL,
                quarantined = false,
+               parsed_extracted_at = EXCLUDED.parsed_extracted_at,
                projected_at = now()`,
-            [row.id, row.tenant_id, pass.projector, count],
+            [row.id, row.tenant_id, pass.projector, count, row.extracted_at],
           );
           return { count, skippedRows: diagnostics.skippedRows, summary };
         });
@@ -666,6 +858,7 @@ async function runConnectorLedgerPasses(
           pass.objectType,
           message,
           maxAttempts,
+          row.extracted_at,
         );
       }
     }
@@ -678,6 +871,9 @@ interface PendingDocRow {
   tenant_id: string;
   extracted: Record<string, unknown>;
   confidence: number | null;
+  // See PendingParsedRow.extracted_at: kept as the ::text the poll selected,
+  // not a driver-parsed Date, to preserve microsecond precision.
+  extracted_at: string;
 }
 
 /**
@@ -694,7 +890,7 @@ async function runDocObligationPass(
   let rows: PendingDocRow[];
   try {
     const result = await deps.pool.query<PendingDocRow>(
-      `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted, rp.confidence
+      `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted, rp.confidence, (rp.extracted_at AT TIME ZONE 'UTC')::text AS extracted_at
          FROM raw_parsed rp
         WHERE rp.parser = $1
           AND ${PENDING_EXCLUSION}
@@ -724,17 +920,37 @@ async function runDocObligationPass(
           await upsertCanonicalObligation(c, row.tenant_id, projected.obligation);
           count = 1;
         }
+        // H3: detect (do not delete) orphans -- a correction that now
+        // resolves to a different (OCR fix) or no counterparty/obligation.
+        // See detectOrphanedCanonicalRows.
+        await detectOrphanedCanonicalRows(
+          c,
+          deps,
+          "canonical_counterparty",
+          row.tenant_id,
+          row.id,
+          projected !== null ? [projected.counterparty.sourceNaturalKey] : [],
+        );
+        await detectOrphanedCanonicalRows(
+          c,
+          deps,
+          "canonical_obligation",
+          row.tenant_id,
+          row.id,
+          projected !== null ? [projected.obligation.sourceNaturalKey] : [],
+        );
         await c.query(
           `INSERT INTO canonical_projection_log
-             (raw_parsed_id, tenant_id, projector, domain, records_written, error, quarantined)
-           VALUES ($1,$2,$3,'ap_ar',$4,NULL,false)
+             (raw_parsed_id, tenant_id, projector, domain, records_written, error, quarantined, parsed_extracted_at)
+           VALUES ($1,$2,$3,'ap_ar',$4,NULL,false,$5::timestamp AT TIME ZONE 'UTC')
            ON CONFLICT (raw_parsed_id) DO UPDATE SET
              projector = EXCLUDED.projector,
              records_written = EXCLUDED.records_written,
              error = NULL,
              quarantined = false,
+             parsed_extracted_at = EXCLUDED.parsed_extracted_at,
              projected_at = now()`,
-          [row.id, row.tenant_id, DOC_OBLIGATION_PROJECTOR, count],
+          [row.id, row.tenant_id, DOC_OBLIGATION_PROJECTOR, count, row.extracted_at],
         );
         return count;
       });
@@ -771,6 +987,7 @@ async function runDocObligationPass(
         "doc_obligation",
         message,
         maxAttempts,
+        row.extracted_at,
       );
     }
   }

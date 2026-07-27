@@ -91,33 +91,39 @@ function extractRawBody(body: unknown): Buffer | undefined {
 }
 
 /**
- * Resolve which tenant a parsed write should land in. Defaults to the JWT
- * principal own tenant; only deviates when a configured service secret
- * verifies an X-Brain-Service-Auth HMAC over the raw request body AND a
- * target tenant is named via X-Brain-Write-Tenant. Fails closed: no
- * configured secret, or any signature mismatch, means the header is
- * always ignored.
+ * Resolve which tenant a parsed write should land in, and whether the caller
+ * proved it is the trusted first-party service (not just any raw:write
+ * principal) via a verified X-Brain-Service-Auth HMAC over the raw request
+ * body. Defaults to the JWT principal's own tenant / untrusted. Fails
+ * closed: no configured secret, or any signature mismatch, means both the
+ * tenant-redirect header and the trust signal are ignored.
+ *
+ * `serviceAuthVerified` is also `insertParsed`'s `allowRepair` gate (H4):
+ * only a caller that proved this HMAC -- i.e. the deterministic
+ * re-extraction workers, never an ordinary raw:write token -- may trigger a
+ * repair of an existing raw_parsed row.
  */
-function resolveWriteTenantId(
+function resolveWriteAuthorization(
   request: FastifyRequest,
   principalTenantId: string,
   crossTenantServiceSecret: string | undefined,
-): string {
+): { tenantId: string; serviceAuthVerified: boolean } {
   if (crossTenantServiceSecret === undefined || crossTenantServiceSecret.length === 0) {
-    return principalTenantId;
+    return { tenantId: principalTenantId, serviceAuthVerified: false };
   }
   const providedAuth = request.headers["x-brain-service-auth"];
   const providedAuthValue = Array.isArray(providedAuth) ? providedAuth[0] : providedAuth;
   const rawBody = extractRawBody(request.body);
   if (!verifyServiceAuthSignature(rawBody, providedAuthValue, crossTenantServiceSecret)) {
-    return principalTenantId;
+    return { tenantId: principalTenantId, serviceAuthVerified: false };
   }
   const targetTenant = request.headers["x-brain-write-tenant"];
   const targetTenantValue = Array.isArray(targetTenant) ? targetTenant[0] : targetTenant;
-  if (typeof targetTenantValue !== "string" || targetTenantValue.length === 0) {
-    return principalTenantId;
-  }
-  return targetTenantValue;
+  const tenantId =
+    typeof targetTenantValue === "string" && targetTenantValue.length > 0
+      ? targetTenantValue
+      : principalTenantId;
+  return { tenantId, serviceAuthVerified: true };
 }
 
 export interface RawParsedWriteBody {
@@ -248,7 +254,7 @@ export async function registerParsed(
       }
 
       const body = parseRawParsedWriteBody(request.body);
-      const writeTenantId = resolveWriteTenantId(
+      const { tenantId: writeTenantId, serviceAuthVerified } = resolveWriteAuthorization(
         request,
         request.principal.tenantId,
         opts.crossTenantServiceSecret,
@@ -267,6 +273,11 @@ export async function registerParsed(
           parserVersion: body.parser_version,
           extracted: body.extracted,
           confidence: body.confidence,
+          // H4/H2: repair is trusted-caller-only. The HMAC-verified service
+          // call (document_extractor et al, via X-Brain-Service-Auth) may
+          // repair a stranded/corrected row; an ordinary raw:write token may
+          // not -- see resolveWriteAuthorization.
+          allowRepair: serviceAuthVerified,
         });
         return { kind: "ok" as const, row, created };
       });

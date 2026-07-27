@@ -45,12 +45,12 @@ const MATRIX: ReadonlyArray<{
       ["raw_sync_partitions", "UPDATE"],
       ["raw_sources", "SELECT"],
       ["canonical_projection_log", "SELECT"],
-      ["canonical_projection_log", "DELETE"],
     ],
     cannot: [
       ["canonical_journal_entry", "INSERT"],
       ["ledger_payment_intents", "INSERT"],
       ["audit_integrity_findings", "SELECT"],
+      ["canonical_projection_log", "DELETE"],
     ],
   },
   {

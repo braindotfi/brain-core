@@ -186,8 +186,13 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO
   brain_execution_worker, brain_audit_verifier, brain_tenant_deletion,
   brain_surface_gateway;
 
--- brain_raw_worker: raw layer writes. It may delete only stale canonical
--- projection replay markers when repairing a corrected upload parsed row.
+-- brain_raw_worker: raw layer writes. It reads canonical_projection_log
+-- (hasTerminalZeroProjectionLog) but no longer deletes from it: repairing a
+-- corrected upload parsed row now bumps raw_parsed.extracted_at, which the
+-- canonical projector's version-gated pending predicate treats as a fresh
+-- payload version on its own (services/canonical migration 0005). DELETE was
+-- previously required so a repair could force replay by hand, which
+-- re-introduced the same over-broad grant class PR #330 revoked below.
 DO $$
 DECLARE t regclass;
 BEGIN
@@ -196,7 +201,7 @@ BEGIN
   LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE ON %s TO brain_raw_worker', t); END LOOP;
 END $$;
 GRANT SELECT ON extraction_jobs TO brain_raw_worker;
-GRANT SELECT, DELETE ON canonical_projection_log TO brain_raw_worker;
+GRANT SELECT ON canonical_projection_log TO brain_raw_worker;
 
 -- brain_canonical_projector: canonical writes, SELECT on raw_parsed (input).
 -- Only canonical_journal_line is deleted by the projector, as a line-replace
@@ -360,6 +365,17 @@ REVOKE UPDATE, DELETE, TRUNCATE ON audit_integrity_findings
 REVOKE DELETE, TRUNCATE ON raw_artifacts FROM brain_raw_worker;
 REVOKE DELETE, TRUNCATE ON canonical_journal_entry FROM brain_canonical_projector;
 REVOKE DELETE, TRUNCATE ON ledger_obligations FROM brain_ledger_projector;
+
+-- canonical_projection_log DELETE followed the same shape: it was granted to
+-- brain_raw_worker (#330-adjacent grant, above) so repairParsedOutput could
+-- force a stranded row to replay by hand-deleting its log entry. Migration
+-- 0005 (services/canonical) gives the projector's pending predicate its own
+-- source-version check, so a repair now only needs to bump
+-- raw_parsed.extracted_at (already does) and the DELETE grant is unused.
+-- Strip it so a redeploy or restore self-heals the same way the block above
+-- does, instead of leaving a live database holding a wider grant than the
+-- worker needs.
+REVOKE DELETE, TRUNCATE ON canonical_projection_log FROM brain_raw_worker;
 
 -- Defence in depth: FORCE RLS on every tenant-scoped table so even a connection
 -- that happens to be the table owner is still subject to the tenant_isolation

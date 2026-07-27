@@ -76,8 +76,13 @@ export function createUploadIngestPipelineDrain(
           pool: deps.canonicalProjectorPool,
           audit: deps.audit,
           ...(deps.metrics !== undefined ? { metrics: deps.metrics } : {}),
-          ...(deps.log?.debug !== undefined
-            ? { log: { debug: deps.log.debug.bind(deps.log) } }
+          ...(deps.log !== undefined
+            ? {
+                log: {
+                  debug: deps.log.debug?.bind(deps.log) ?? ((): void => {}),
+                  warn: deps.log.warn.bind(deps.log),
+                },
+              }
             : {}),
           onUploadProjected: async (event) => {
             await runLedgerAparProjectionCycle({
