@@ -189,6 +189,7 @@ describe("runDocumentExtractionCycle", () => {
   it("calls the extractor from the worker and caps recorded confidence at 0.5", async () => {
     const app = appPool({ artifact: EXTERNAL_AGENT_ARTIFACT });
     const audit = new InMemoryAuditEmitter();
+    const afterExtract = vi.fn(async () => {});
     const client: DocumentExtractPort = {
       extract: vi.fn(async () => ({
         parsed_id: "prs_01TEST000000000000000000000",
@@ -198,7 +199,7 @@ describe("runDocumentExtractionCycle", () => {
     };
 
     await runDocumentExtractionCycle(
-      { scanPool: scanPool(), appPool: app.pool, blob: blob(), client, audit },
+      { scanPool: scanPool(), appPool: app.pool, blob: blob(), client, audit, afterExtract },
       { batchSize: 1, agentId: "document_extractor" },
     );
 
@@ -218,6 +219,13 @@ describe("runDocumentExtractionCycle", () => {
     );
     const succeeded = app.updates.find((u) => u.kind === "succeeded");
     expect(succeeded?.values).toEqual([JOB_ID, "prs_01TEST000000000000000000000", 0.5]);
+    expect(afterExtract).toHaveBeenCalledWith({
+      tenantId: TENANT,
+      rawId: RAW_ID,
+      parsedId: "prs_01TEST000000000000000000000",
+      jobId: JOB_ID,
+      parser: "bank_statement_upload_v1",
+    });
     expect(audit.events.map((e) => e.action)).toEqual([
       "raw.extraction.status_changed",
       "raw.extraction.status_changed",
@@ -241,6 +249,7 @@ describe("runDocumentExtractionCycle", () => {
       },
     });
     const audit = new InMemoryAuditEmitter();
+    const afterExtract = vi.fn(async () => {});
     const client: DocumentExtractPort = {
       extract: vi.fn(async () => {
         throw new Error("external agent should not be called");
@@ -254,6 +263,7 @@ describe("runDocumentExtractionCycle", () => {
         blob: blob(BANK_STATEMENT_FIXTURE),
         client,
         audit,
+        afterExtract,
       },
       { batchSize: 1 },
     );
@@ -271,6 +281,13 @@ describe("runDocumentExtractionCycle", () => {
     const succeeded = app.updates.find((u) => u.kind === "succeeded");
     expect(succeeded?.values?.[1]).toBe("prs_01LOCAL0000000000000000000");
     expect(succeeded?.values?.[2]).toBeGreaterThan(0.5);
+    expect(afterExtract).toHaveBeenCalledWith({
+      tenantId: TENANT,
+      rawId: RAW_ID,
+      parsedId: "prs_01LOCAL0000000000000000000",
+      jobId: JOB_ID,
+      parser: "bank_statement_upload_v1",
+    });
     const parsedAudit = audit.events.find((e) => e.action === "raw.parsed.write");
     expect(parsedAudit).toMatchObject({
       action: "raw.parsed.write",

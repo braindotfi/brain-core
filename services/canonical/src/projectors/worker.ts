@@ -165,6 +165,8 @@ export interface ProjectionWorkerOptions {
   intervalMs?: number;
   /** Maximum raw_parsed rows per poll cycle. Default: 20. */
   batchSize?: number;
+  /** Optional exact raw_parsed ids to drain ahead of the cross-tenant backlog. */
+  rawParsedIds?: readonly string[];
   /** Actor id attributed to projection audit events. */
   actor?: string;
   /** Failed projections quarantined after this many attempts. Default: 5. */
@@ -360,16 +362,27 @@ export async function runProjectionCycle(
   const batchSize = opts?.batchSize ?? 20;
   const actor = opts?.actor ?? "sys_canonical_projector";
   const maxAttempts = opts?.maxAttempts ?? DEFAULT_MAX_PROJECTION_ATTEMPTS;
+  const rawParsedIds = opts?.rawParsedIds ?? [];
+  const hasRawParsedFilter = rawParsedIds.length > 0;
 
   let rows: PendingParsedRow[];
   try {
     // Cross-tenant poll — requires BYPASSRLS or superuser in production.
     // Reference pages first so dependent rows can resolve in the same cycle.
+    const values: unknown[] = [MERGE_ACCOUNTING_PARSER, [...ALL_PROJECTABLE_OBJECT_TYPES]];
+    const rawParsedFilter = hasRawParsedFilter
+      ? (() => {
+          values.push([...rawParsedIds]);
+          return `AND rp.id = ANY($${values.length}::text[])`;
+        })()
+      : "";
+    values.push(batchSize);
     const result = await deps.pool.query<PendingParsedRow>(
       `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted, (rp.extracted_at AT TIME ZONE 'UTC')::text AS extracted_at
          FROM raw_parsed rp
         WHERE rp.parser = $1
           AND rp.extracted->>'object_type' = ANY($2::text[])
+          ${rawParsedFilter}
           AND ${PENDING_EXCLUSION}
         ORDER BY CASE rp.extracted->>'object_type'
                    WHEN 'contact' THEN 0
@@ -379,8 +392,8 @@ export async function runProjectionCycle(
                    ELSE 9
                  END,
                  rp.extracted_at ASC
-        LIMIT $3`,
-      [MERGE_ACCOUNTING_PARSER, [...ALL_PROJECTABLE_OBJECT_TYPES], batchSize],
+        LIMIT $${values.length}`,
+      values,
     );
     rows = result.rows;
   } catch (err) {
@@ -521,9 +534,9 @@ export async function runProjectionCycle(
     }
   }
 
-  await runDocObligationPass(deps, batchSize, actor, maxAttempts);
-  await runConnectorLedgerPasses(deps, batchSize, actor, maxAttempts);
-  await emitProjectorLag(deps);
+  await runDocObligationPass(deps, batchSize, actor, maxAttempts, rawParsedIds);
+  await runConnectorLedgerPasses(deps, batchSize, actor, maxAttempts, rawParsedIds);
+  if (!hasRawParsedFilter) await emitProjectorLag(deps);
 }
 
 /**
@@ -679,18 +692,29 @@ async function runConnectorLedgerPasses(
   batchSize: number,
   actor: string,
   maxAttempts: number,
+  rawParsedIds: readonly string[] = [],
 ): Promise<void> {
   for (const pass of CONNECTOR_LEDGER_PASSES) {
     let rows: PendingConnectorRow[];
     try {
+      const values: unknown[] = [pass.parser];
+      const rawParsedFilter =
+        rawParsedIds.length > 0
+          ? (() => {
+              values.push([...rawParsedIds]);
+              return `AND rp.id = ANY($${values.length}::text[])`;
+            })()
+          : "";
+      values.push(batchSize);
       const result = await deps.pool.query<PendingConnectorRow>(
         `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted, rp.confidence, (rp.extracted_at AT TIME ZONE 'UTC')::text AS extracted_at
            FROM raw_parsed rp
           WHERE rp.parser = $1
+            ${rawParsedFilter}
             AND ${PENDING_EXCLUSION}
           ORDER BY rp.extracted_at ASC
-          LIMIT $2`,
-        [pass.parser, batchSize],
+          LIMIT $${values.length}`,
+        values,
       );
       rows = result.rows;
     } catch (err) {
@@ -886,17 +910,28 @@ async function runDocObligationPass(
   batchSize: number,
   actor: string,
   maxAttempts: number,
+  rawParsedIds: readonly string[] = [],
 ): Promise<void> {
   let rows: PendingDocRow[];
   try {
+    const values: unknown[] = [DOC_OBLIGATION_PARSER];
+    const rawParsedFilter =
+      rawParsedIds.length > 0
+        ? (() => {
+            values.push([...rawParsedIds]);
+            return `AND rp.id = ANY($${values.length}::text[])`;
+          })()
+        : "";
+    values.push(batchSize);
     const result = await deps.pool.query<PendingDocRow>(
       `SELECT rp.id, rp.raw_artifact_id, rp.tenant_id, rp.extracted, rp.confidence, (rp.extracted_at AT TIME ZONE 'UTC')::text AS extracted_at
          FROM raw_parsed rp
         WHERE rp.parser = $1
+          ${rawParsedFilter}
           AND ${PENDING_EXCLUSION}
         ORDER BY rp.extracted_at ASC
-        LIMIT $2`,
-      [DOC_OBLIGATION_PARSER, batchSize],
+        LIMIT $${values.length}`,
+      values,
     );
     rows = result.rows;
   } catch (err) {

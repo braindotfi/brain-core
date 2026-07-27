@@ -135,8 +135,8 @@ import {
   startLedgerAparProjectionWorker,
   startLedgerAccountTransactionProjectionWorker,
   runNormalizeCycle,
-  runLedgerAparProjectionCycle,
-  runLedgerAccountTransactionProjectionCycle,
+  rebuildAparProjectionFromCanonical,
+  rebuildAccountTransactionProjectionFromCanonical,
 } from "@brain/ledger";
 
 import {
@@ -1694,8 +1694,11 @@ async function main(): Promise<void> {
     log,
   });
   const onUploadProjected = async (event: LedgerUploadProjectedEvent): Promise<void> => {
-    await runLedgerAparProjectionCycle({ pool: ledgerProjectorPool, metrics });
-    await runLedgerAccountTransactionProjectionCycle({ pool: ledgerProjectorPool, metrics });
+    await rebuildAparProjectionFromCanonical(ledgerProjectorPool, audit, {
+      tenantId: event.tenantId,
+      actor: "sys_upload_projection",
+    });
+    await rebuildAccountTransactionProjectionFromCanonical(ledgerProjectorPool, event.tenantId);
     await regenerateWikiForUploadProjection(
       {
         tenantDiscoveryPool: tenantDeletionPool,
@@ -2815,6 +2818,29 @@ async function main(): Promise<void> {
           ...(documentExtractClient !== undefined ? { client: documentExtractClient } : {}),
           metrics,
           log,
+          afterExtract: async (event) => {
+            await runNormalizeCycle(
+              {
+                pool,
+                audit,
+                ...(metrics !== undefined ? { metrics } : {}),
+              },
+              { batchSize: 20 },
+            );
+            await runProjectionCycle(
+              {
+                pool: canonicalProjectorPool,
+                audit,
+                ...(metrics !== undefined ? { metrics } : {}),
+                log,
+                onUploadProjected,
+              },
+              {
+                batchSize: 20,
+                rawParsedIds: [event.parsedId],
+              },
+            );
+          },
         },
         {
           intervalMs: cfg.BRAIN_DOCUMENT_EXTRACT_WORKER_INTERVAL_MS,

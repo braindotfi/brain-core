@@ -53,11 +53,20 @@ export interface DocumentExtractionWorkerDeps {
   audit?: AuditEmitter;
   client?: DocumentExtractPort;
   metrics?: MetricsEmitter;
+  afterExtract?: (event: DocumentExtractionSucceededEvent) => Promise<void>;
   log?: {
     error(obj: unknown, msg?: string): void;
     warn(obj: unknown, msg?: string): void;
     info?(obj: unknown, msg?: string): void;
   };
+}
+
+export interface DocumentExtractionSucceededEvent {
+  tenantId: string;
+  rawId: string;
+  parsedId: string;
+  jobId: string;
+  parser?: string;
 }
 
 export interface DocumentExtractionWorkerOptions {
@@ -189,6 +198,13 @@ export async function runDocumentExtractionCycle(
           parsedId: localParsed.parsedId,
           confidence: localParsed.confidence,
         });
+        await notifyAfterExtract(deps, {
+          tenantId: row.tenant_id,
+          rawId: row.raw_id,
+          parsedId: localParsed.parsedId,
+          jobId: row.id,
+          parser: localParsed.parser,
+        });
         continue;
       }
       if (looksLikeUploadArtifact(artifact)) {
@@ -253,6 +269,13 @@ export async function runDocumentExtractionCycle(
         after: "succeeded",
         parsedId,
         confidence: Math.min(result.confidence, 0.5),
+      });
+      await notifyAfterExtract(deps, {
+        tenantId: row.tenant_id,
+        rawId: row.raw_id,
+        parsedId,
+        jobId: row.id,
+        parser: result.parser,
       });
     } catch (err) {
       deps.log?.error(
@@ -325,7 +348,7 @@ async function tryInProcessUploadExtraction(
     artifact: RawArtifactRow;
     bytes: Buffer;
   },
-): Promise<{ parsedId: string; confidence: number } | null> {
+): Promise<{ parsedId: string; parser: string; confidence: number } | null> {
   const local = inProcessUploadInterpreter(input.artifact);
   if (local === undefined) return null;
 
@@ -350,6 +373,7 @@ async function tryInProcessUploadExtraction(
   const parsed = await insertInProcessParsed(deps, input, output);
   return {
     parsedId: parsed.id,
+    parser: output.parser,
     confidence: output.confidence ?? 1,
   };
 }
@@ -631,4 +655,25 @@ async function emitExtractionStatusChanged(
       },
     },
   });
+}
+
+async function notifyAfterExtract(
+  deps: DocumentExtractionWorkerDeps,
+  event: DocumentExtractionSucceededEvent,
+): Promise<void> {
+  if (deps.afterExtract === undefined) return;
+  try {
+    await deps.afterExtract(event);
+  } catch (err) {
+    deps.log?.error(
+      {
+        err,
+        tenant_id: event.tenantId,
+        raw_id: event.rawId,
+        parsed_id: event.parsedId,
+        job_id: event.jobId,
+      },
+      "document extraction post-processing failed",
+    );
+  }
 }
