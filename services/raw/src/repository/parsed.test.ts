@@ -127,9 +127,6 @@ describe("insertParsed", () => {
         if (sql.startsWith("UPDATE raw_parsed")) {
           return { rows: [repairedRow], rowCount: 1 };
         }
-        if (sql.startsWith("DELETE FROM canonical_projection_log")) {
-          return { rows: [], rowCount: 1 };
-        }
         return { rows: [], rowCount: 0 };
       }),
     } as unknown as TenantScopedClient;
@@ -142,13 +139,16 @@ describe("insertParsed", () => {
       parserVersion: "1.0.0",
       extracted: { object_type: "bank_statement", transactions: [] },
       confidence: 0.94,
+      allowRepair: true, // trusted extraction worker, not the HTTP route
     });
 
     expect(result.created).toBe(false);
     expect(result.row).toEqual(repairedRow);
     expect(log.some((entry) => entry.sql.startsWith("UPDATE raw_parsed"))).toBe(true);
+    // The projection log row is no longer deleted: worker.ts's version-gated
+    // pending predicate now re-projects on the bumped extracted_at instead.
     expect(log.some((entry) => entry.sql.startsWith("DELETE FROM canonical_projection_log"))).toBe(
-      true,
+      false,
     );
   });
 
@@ -178,9 +178,6 @@ describe("insertParsed", () => {
         if (sql.startsWith("UPDATE raw_parsed")) {
           return { rows: [repairedRow], rowCount: 1 };
         }
-        if (sql.startsWith("DELETE FROM canonical_projection_log")) {
-          return { rows: [], rowCount: 1 };
-        }
         return { rows: [], rowCount: 0 };
       }),
     } as unknown as TenantScopedClient;
@@ -193,14 +190,17 @@ describe("insertParsed", () => {
       parserVersion: "1.0.0",
       extracted: { object_type: "bank_statement", transactions: [] },
       confidence: 0.94,
+      allowRepair: true, // trusted extraction worker, not the HTTP route
     });
 
     expect(result.created).toBe(false);
     expect(result.row).toEqual(repairedRow);
     expect(log.some((entry) => entry.sql.startsWith("INSERT INTO raw_parsed"))).toBe(false);
     expect(log.some((entry) => entry.sql.includes("SELECT EXISTS"))).toBe(false);
+    // The projection log row is no longer deleted: worker.ts's version-gated
+    // pending predicate now re-projects on the bumped extracted_at instead.
     expect(log.some((entry) => entry.sql.startsWith("DELETE FROM canonical_projection_log"))).toBe(
-      true,
+      false,
     );
   });
 
@@ -242,5 +242,165 @@ describe("insertParsed", () => {
     expect(result.created).toBe(false);
     expect(result.row).toEqual(exactRow);
     expect(log.some((entry) => entry.sql.startsWith("UPDATE raw_parsed"))).toBe(false);
+  });
+
+  it("repairs an exact upload parsed row whose correct-shaped content changed", async () => {
+    const log: { sql: string; values: unknown[] }[] = [];
+    const exactRow = {
+      id: "prs_1",
+      raw_artifact_id: "raw_1",
+      tenant_id: "ten_1",
+      parser: "bank_statement_upload_v1",
+      parser_version: "1.0.0",
+      extracted: { object_type: "bank_statement", transactions: [{ id: "tx_1" }] },
+      confidence: 0.6,
+      extracted_at: new Date("2026-06-01T00:00:00Z"),
+    };
+    const repairedRow = {
+      ...exactRow,
+      extracted: {
+        object_type: "bank_statement",
+        transactions: Array.from({ length: 40 }, (_, i) => ({ id: `tx_${i}` })),
+      },
+      confidence: 0.94,
+    };
+    const client = {
+      query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
+        log.push({ sql, values: Array.from(values ?? []) });
+        if (sql.includes("WHERE raw_artifact_id = $1 AND parser = $2")) {
+          return { rows: [exactRow], rowCount: 1 };
+        }
+        if (sql.startsWith("UPDATE raw_parsed")) {
+          return { rows: [repairedRow], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as TenantScopedClient;
+
+    const result = await insertParsed(client, {
+      id: "prs_new",
+      rawArtifactId: "raw_1",
+      tenantId: "ten_1",
+      parser: "bank_statement_upload_v1",
+      parserVersion: "1.0.0",
+      extracted: {
+        object_type: "bank_statement",
+        transactions: Array.from({ length: 40 }, (_, i) => ({ id: `tx_${i}` })),
+      },
+      confidence: 0.94,
+      allowRepair: true, // trusted extraction worker, not the HTTP route
+    });
+
+    expect(result.created).toBe(false);
+    expect(result.row).toEqual(repairedRow);
+    expect(log.some((entry) => entry.sql.startsWith("UPDATE raw_parsed"))).toBe(true);
+    // Content differs (3 -> 40 transactions) even though the shape is already
+    // valid, so the repair fires without needing the zero-row-log probe.
+    expect(log.some((entry) => entry.sql.includes("SELECT EXISTS"))).toBe(false);
+  });
+
+  it("H4: the route call shape (no allowRepair) cannot mutate an existing row on content diff", async () => {
+    const log: { sql: string; values: unknown[] }[] = [];
+    const exactRow = {
+      id: "prs_1",
+      raw_artifact_id: "raw_1",
+      tenant_id: "ten_1",
+      parser: "bank_statement_upload_v1",
+      parser_version: "1.0.0",
+      extracted: { object_type: "bank_statement", transactions: [{ id: "tx_1" }] },
+      confidence: 0.6,
+      extracted_at: new Date("2026-06-01T00:00:00Z"),
+    };
+    const client = {
+      query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
+        log.push({ sql, values: Array.from(values ?? []) });
+        if (sql.includes("WHERE raw_artifact_id = $1 AND parser = $2")) {
+          return { rows: [exactRow], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as TenantScopedClient;
+
+    // Same input as the "correct-shaped content changed" repair test above,
+    // MINUS allowRepair -- exactly what services/raw/src/routes/parsed.ts's
+    // POST handler passes.
+    const result = await insertParsed(client, {
+      id: "prs_new",
+      rawArtifactId: "raw_1",
+      tenantId: "ten_1",
+      parser: "bank_statement_upload_v1",
+      parserVersion: "1.0.0",
+      extracted: {
+        object_type: "bank_statement",
+        transactions: Array.from({ length: 40 }, (_, i) => ({ id: `tx_${i}` })),
+      },
+      confidence: 0.94,
+    });
+
+    expect(result.created).toBe(false);
+    expect(result.row).toEqual(exactRow); // unchanged -- not overwritten to 40
+    expect(log.some((entry) => entry.sql.startsWith("UPDATE raw_parsed"))).toBe(false);
+    expect(log.some((entry) => entry.sql.includes("SELECT EXISTS"))).toBe(false);
+  });
+
+  it("M2: the content-diff check does not throw when extracted carries an undefined field, and still detects a real change", async () => {
+    // A reachable production shape: services/raw/src/interpreters/upload.ts's
+    // AR-aging rows could carry `amount: undefined` before its own fix. The
+    // shared stableStringify (shared/src/audit/hash.ts) throws a TypeError on
+    // undefined; extractedPayloadChanged must normalize it away first --
+    // without losing the ability to detect an actual content change sitting
+    // alongside the undefined field (2 transactions -> 1, one of them
+    // carrying `amount: undefined`).
+    const log: { sql: string; values: unknown[] }[] = [];
+    const exactRow = {
+      id: "prs_1",
+      raw_artifact_id: "raw_1",
+      tenant_id: "ten_1",
+      parser: "bank_statement_upload_v1",
+      parser_version: "1.0.0",
+      extracted: {
+        object_type: "bank_statement",
+        transactions: [{ id: "tx_1" }, { id: "tx_2" }],
+      },
+      confidence: 0.6,
+      extracted_at: new Date("2026-06-01T00:00:00Z"),
+    };
+    const repairedRow = {
+      ...exactRow,
+      extracted: {
+        object_type: "bank_statement",
+        transactions: [{ id: "tx_1", amount: undefined }],
+      },
+      confidence: 0.94,
+    };
+    const client = {
+      query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
+        log.push({ sql, values: Array.from(values ?? []) });
+        if (sql.includes("WHERE raw_artifact_id = $1 AND parser = $2")) {
+          return { rows: [exactRow], rowCount: 1 };
+        }
+        if (sql.startsWith("UPDATE raw_parsed")) {
+          return { rows: [repairedRow], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as TenantScopedClient;
+
+    const result = await insertParsed(client, {
+      id: "prs_new",
+      rawArtifactId: "raw_1",
+      tenantId: "ten_1",
+      parser: "bank_statement_upload_v1",
+      parserVersion: "1.0.0",
+      extracted: {
+        object_type: "bank_statement",
+        transactions: [{ id: "tx_1", amount: undefined }],
+      },
+      confidence: 0.94,
+      allowRepair: true,
+    });
+
+    expect(result.row).toEqual(repairedRow); // did not throw, and detected the real diff
+    expect(log.some((entry) => entry.sql.startsWith("UPDATE raw_parsed"))).toBe(true);
   });
 });

@@ -9,7 +9,13 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
-import { InMemoryAuditEmitter, newRawArtifactId, newRawParsedId, newTenantId } from "@brain/shared";
+import {
+  InMemoryAuditEmitter,
+  MockMetrics,
+  newRawArtifactId,
+  newRawParsedId,
+  newTenantId,
+} from "@brain/shared";
 import {
   replayQuarantined,
   runProjectionCycle,
@@ -386,5 +392,166 @@ DESCRIBE("canonical upload projector audit integration (requires DATABASE_URL)",
         }),
       }),
     ]);
+  });
+});
+
+DESCRIBE("canonical projector re-projects a corrected payload (requires DATABASE_URL)", () => {
+  let pool: Pool;
+  const tenant = newTenantId();
+  const rawId = newRawArtifactId();
+  const parsedId = newRawParsedId();
+
+  function bankStatementPayload(transactionCount: number): Record<string, unknown> {
+    return {
+      object_type: "bank_statement",
+      account: {
+        account_id: "acct_source_version",
+        name: "Operating",
+        currency: "USD",
+        current_balance: "100.00",
+      },
+      transactions: Array.from({ length: transactionCount }, (_, i) => ({
+        transaction_id: `tx_source_version_${i}`,
+        date: "2026-06-10",
+        amount: "10.00",
+        currency: "USD",
+        direction: "outflow",
+        description: "Office supplies",
+        counterparty_name: "Office Depot",
+      })),
+    };
+  }
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    await pool.query(
+      `INSERT INTO raw_artifacts (id, tenant_id, sha256, source_type, blob_uri, bytes, ingested_by)
+       VALUES ($1,$2,$3,'pdf_upload',$4,$5,'sys_test')`,
+      [rawId, tenant, Buffer.from(rawId), `blob://${rawId}`, 1],
+    );
+    await pool.query(
+      `INSERT INTO raw_parsed (id, raw_artifact_id, tenant_id, parser, parser_version, extracted, confidence)
+       VALUES ($1,$2,$3,'bank_statement_upload_v1','1.0.0',$4::jsonb,0.92)`,
+      [parsedId, rawId, tenant, JSON.stringify(bankStatementPayload(1))],
+    );
+  }, 60_000);
+
+  afterAll(async () => {
+    if (pool === undefined) return;
+    await pool.query(`DELETE FROM canonical_transaction WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM canonical_counterparty WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM canonical_account WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM canonical_projection_log WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM raw_parsed WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM raw_artifacts WHERE tenant_id = $1`, [tenant]);
+    await pool.end();
+  });
+
+  async function transactionCount(): Promise<number> {
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM canonical_transaction WHERE tenant_id = $1`,
+      [tenant],
+    );
+    return Number(rows[0]!.n);
+  }
+
+  function bankStatementPayloadWithKey(transactionId: string): Record<string, unknown> {
+    return {
+      object_type: "bank_statement",
+      account: {
+        account_id: "acct_source_version",
+        name: "Operating",
+        currency: "USD",
+        current_balance: "100.00",
+      },
+      transactions: [
+        {
+          transaction_id: transactionId,
+          date: "2026-06-10",
+          amount: "10.00",
+          currency: "USD",
+          direction: "outflow",
+          description: "Office supplies",
+          counterparty_name: "Office Depot",
+        },
+      ],
+    };
+  }
+
+  it("re-projects when a repair bumps extracted_at without touching the log row", async () => {
+    await runProjectionCycle({ pool, audit: noopAudit }, { batchSize: 50 });
+    expect(await transactionCount()).toBe(1);
+    const { rows: logRows } = await pool.query<{ error: string | null }>(
+      `SELECT error FROM canonical_projection_log WHERE raw_parsed_id = $1`,
+      [parsedId],
+    );
+    expect(logRows[0]?.error).toBeNull(); // terminal success, same as `main` today
+
+    // Simulate repairParsedOutput: mutate raw_parsed in place, bump
+    // extracted_at, but leave canonical_projection_log untouched. On `main`
+    // (before the source-version fix) PENDING_EXCLUSION would permanently
+    // skip this row because it already has a log entry with error IS NULL.
+    await pool.query(
+      `UPDATE raw_parsed SET extracted = $2::jsonb, extracted_at = now() WHERE id = $1`,
+      [parsedId, JSON.stringify(bankStatementPayload(2))],
+    );
+
+    await runProjectionCycle({ pool, audit: noopAudit }, { batchSize: 50 });
+    expect(await transactionCount()).toBe(2);
+  });
+
+  it("H3: a shrink/rename is left in place (not deleted) but surfaced via metric + warn log", async () => {
+    // Starting state (from the previous test): 2 transactions, tx_source_version_0
+    // and tx_source_version_1. Correct the payload down to a SINGLE, DIFFERENTLY
+    // KEYED transaction (an OCR-style natural-key rename). Deleting the two
+    // stale rows was tried and reverted (see detectOrphanedCanonicalRows'
+    // doc comment): no DELETE grant under least-privilege, shared-evidence
+    // natural keys, and degraded-extraction data loss all made it unsound.
+    // The honest fallback: detect, don't touch, log + metric loudly, still
+    // mark the projection terminal.
+    const metrics = new MockMetrics();
+    const warnCalls: unknown[] = [];
+    const log = { debug: () => {}, warn: (obj: unknown) => warnCalls.push(obj) };
+
+    await pool.query(
+      `UPDATE raw_parsed SET extracted = $2::jsonb, extracted_at = now() WHERE id = $1`,
+      [parsedId, JSON.stringify(bankStatementPayloadWithKey("tx_source_version_corrected"))],
+    );
+
+    await runProjectionCycle({ pool, audit: noopAudit, metrics, log }, { batchSize: 50 });
+
+    // Nothing deleted: the 2 stale rows plus the 1 corrected row all remain.
+    expect(await transactionCount()).toBe(3);
+    const { rows } = await pool.query<{ source_natural_key: string }>(
+      `SELECT source_natural_key FROM canonical_transaction WHERE tenant_id = $1 ORDER BY source_natural_key`,
+      [tenant],
+    );
+    expect(rows.map((r) => r.source_natural_key)).toEqual([
+      "tx_source_version_0",
+      "tx_source_version_1",
+      "tx_source_version_corrected",
+    ]);
+
+    // Surfaced, not silent.
+    const orphanMetric = metrics.calls.find(
+      (c) => c.kind === "increment" && c.name === "brain.canonical.projector.orphaned_records",
+    );
+    expect(orphanMetric?.value).toBe(2);
+    expect(orphanMetric?.tags).toMatchObject({ table: "canonical_transaction" });
+    expect(warnCalls).toHaveLength(1);
+    expect(warnCalls[0]).toMatchObject({
+      tenantId: tenant,
+      rawParsedId: parsedId,
+      table: "canonical_transaction",
+      naturalKeys: ["tx_source_version_0", "tx_source_version_1"],
+      count: 2,
+    });
+
+    // Still terminal -- the projector does not hot-spin retrying this row.
+    const { rows: logRows } = await pool.query<{ error: string | null }>(
+      `SELECT error FROM canonical_projection_log WHERE raw_parsed_id = $1`,
+      [parsedId],
+    );
+    expect(logRows[0]?.error).toBeNull();
   });
 });

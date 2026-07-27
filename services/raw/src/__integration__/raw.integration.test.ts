@@ -307,6 +307,111 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
     expect((second.json() as { id: string }).id).toBe((first.json() as { id: string }).id);
   });
 
+  it("POST /raw/{raw_id}/parsed cannot mutate an existing parsed row (H4: repair is trusted-worker-only)", async () => {
+    if (h === null) return;
+    const token = await writeToken();
+    const raw_id = await ingestUpload(token, "parsed-immutable");
+    const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+
+    const first = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers,
+      payload: JSON.stringify({
+        parser: "bank_statement_upload_v1",
+        parser_version: "1.0.0",
+        extracted: {
+          object_type: "bank_statement",
+          transactions: [{ transaction_id: "tx_1" }],
+        },
+      }),
+    });
+    expect(first.statusCode).toBe(201);
+    const firstRow = first.json() as { id: string; extracted: { transactions: unknown[] } };
+    expect(firstRow.extracted.transactions).toHaveLength(1);
+
+    // Same (artifact, parser, version) as the first post, but a materially
+    // different (still correct-shaped) payload -- the exact shape the
+    // content-diff repair (services/raw/src/repository/parsed.ts) would
+    // otherwise treat as a correction. The route must return the row
+    // UNCHANGED: repair is gated behind allowRepair, which the route never
+    // sets.
+    const second = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers,
+      payload: JSON.stringify({
+        parser: "bank_statement_upload_v1",
+        parser_version: "1.0.0",
+        extracted: {
+          object_type: "bank_statement",
+          transactions: Array.from({ length: 40 }, (_, i) => ({ transaction_id: `tx_${i}` })),
+        },
+      }),
+    });
+    expect(second.statusCode).toBe(200); // not 201 -- no new row, and not repaired
+    const secondRow = second.json() as { id: string; extracted: { transactions: unknown[] } };
+    expect(secondRow.id).toBe(firstRow.id);
+    expect(secondRow.extracted.transactions).toHaveLength(1); // unchanged, not overwritten to 40
+  });
+
+  it("POST /raw/{raw_id}/parsed CAN repair when the caller proves the service HMAC (H2: document_extractor's real write path)", async () => {
+    if (h === null) return;
+    const token = await writeToken();
+    const raw_id = await ingestUpload(token, "parsed-hmac-repair");
+
+    const firstPayload = JSON.stringify({
+      parser: "bank_statement_upload_v1",
+      parser_version: "1.0.0",
+      extracted: {
+        object_type: "bank_statement",
+        transactions: [{ transaction_id: "tx_1" }],
+      },
+    });
+    const first = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "x-brain-service-auth": signCrossTenantServiceAuth(firstPayload),
+      },
+      payload: firstPayload,
+    });
+    expect(first.statusCode).toBe(201);
+    const firstRow = first.json() as { id: string; extracted: { transactions: unknown[] } };
+    expect(firstRow.extracted.transactions).toHaveLength(1);
+
+    // Same (artifact, parser, version), a materially different payload, and
+    // a verified X-Brain-Service-Auth HMAC over this exact body -- exactly
+    // how brain_agents.client.post_parsed calls this route (X-Brain-Write-
+    // Tenant is optional; omitted here, so it falls back to the JWT tenant,
+    // same as the document_extractor's normal same-tenant repair). Unlike
+    // the plain raw:write call above, this one must actually repair.
+    const secondPayload = JSON.stringify({
+      parser: "bank_statement_upload_v1",
+      parser_version: "1.0.0",
+      extracted: {
+        object_type: "bank_statement",
+        transactions: Array.from({ length: 40 }, (_, i) => ({ transaction_id: `tx_${i}` })),
+      },
+    });
+    const second = await h.app.inject({
+      method: "POST",
+      url: `/raw/${raw_id}/parsed`,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "x-brain-service-auth": signCrossTenantServiceAuth(secondPayload),
+      },
+      payload: secondPayload,
+    });
+    expect(second.statusCode).toBe(200); // repaired in place, not a new row
+    const secondRow = second.json() as { id: string; extracted: { transactions: unknown[] } };
+    expect(secondRow.id).toBe(firstRow.id);
+    expect(secondRow.extracted.transactions).toHaveLength(40); // actually repaired
+  });
+
   it("POST /raw/{raw_id}/parsed returns 404 for an unknown artifact", async () => {
     if (h === null) return;
     const token = await writeToken();

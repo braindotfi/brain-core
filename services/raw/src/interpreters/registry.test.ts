@@ -483,6 +483,34 @@ describe("upload document interpreters", () => {
     ).toThrow(/contained no receivable rows/);
   });
 
+  it("M2 regression: skips an AR aging row with an invoice ref but no parseable amount, instead of leaking amount: undefined", () => {
+    // Row 1 has a counterparty and invoice ref but no amount column value and
+    // no aging-bucket columns in the header at all, so BOTH explicitAmount
+    // and bucketAmount are absent. Before the fix, `explicitAmount ??
+    // bucketAmount?.amount` evaluated to `undefined` (not `null`), which the
+    // `amount === null` skip-guard doesn't catch -- the row was pushed with
+    // `amount: undefined`, and stableStringify later threw on it (services/
+    // raw/src/repository/parsed.ts's extractedPayloadChanged).
+    const csv = ["Customer,Invoice Ref,Amount", "Acme Co,INV-100,", "Beta LLC,INV-101,50.00"].join(
+      "\n",
+    );
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      Buffer.from(csv),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "text/csv",
+      }),
+    );
+    const receivables = (out!.extracted as { receivables: Array<{ invoice_ref: string }> })
+      .receivables;
+    expect(receivables).toHaveLength(1); // INV-100 dropped, INV-101 kept
+    expect(receivables[0]?.invoice_ref).toBe("INV-101");
+    expect(receivables.some((r) => !("amount" in r) || r["amount" as never] === undefined)).toBe(
+      false,
+    );
+  });
+
   it("parses payroll register CSV rows into payroll obligations", () => {
     const csv = [
       "Pay Run,Net Pay,Tax Amount,Pay Date,Cadence",

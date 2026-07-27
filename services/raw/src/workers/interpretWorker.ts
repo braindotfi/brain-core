@@ -205,6 +205,10 @@ export async function runInterpretCycle(
           parserVersion: output.parserVersion,
           extracted: output.extracted,
           confidence: output.confidence,
+          // Trusted: this worker re-derives `extracted` deterministically
+          // from the immutable raw bytes, not from caller-supplied content.
+          // See InsertParsedInput.allowRepair.
+          allowRepair: true,
         });
         return { parsed: result.row, created: result.created };
       });
