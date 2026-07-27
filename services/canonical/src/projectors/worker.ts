@@ -173,6 +173,18 @@ export interface ProjectionWorkerOptions {
   maxAttempts?: number;
 }
 
+export interface ProjectionCycleSummary {
+  readonly selectedRows: number;
+  readonly recordsWritten: number;
+  readonly uploadProjectedEvents: number;
+}
+
+interface ProjectionCycleCounters {
+  selectedRows: number;
+  recordsWritten: number;
+  uploadProjectedEvents: number;
+}
+
 export type ProjectionWorker = ManagedWorker;
 
 interface PendingParsedRow {
@@ -358,12 +370,13 @@ async function detectOrphanedCanonicalRows(
 export async function runProjectionCycle(
   deps: ProjectionWorkerDeps,
   opts?: ProjectionWorkerOptions,
-): Promise<void> {
+): Promise<ProjectionCycleSummary> {
   const batchSize = opts?.batchSize ?? 20;
   const actor = opts?.actor ?? "sys_canonical_projector";
   const maxAttempts = opts?.maxAttempts ?? DEFAULT_MAX_PROJECTION_ATTEMPTS;
   const rawParsedIds = opts?.rawParsedIds ?? [];
   const hasRawParsedFilter = rawParsedIds.length > 0;
+  const summary = newProjectionCycleSummary();
 
   let rows: PendingParsedRow[];
   try {
@@ -398,8 +411,9 @@ export async function runProjectionCycle(
     rows = result.rows;
   } catch (err) {
     console.error("[canonicalProjector] poll query failed:", err);
-    return;
+    return summary;
   }
+  summary.selectedRows += rows.length;
 
   for (const row of rows) {
     const objectType = row.extracted.object_type;
@@ -496,6 +510,7 @@ export async function runProjectionCycle(
         );
         return count;
       });
+      summary.recordsWritten += written;
 
       await deps.audit.emit({
         tenantId: row.tenant_id,
@@ -534,9 +549,29 @@ export async function runProjectionCycle(
     }
   }
 
-  await runDocObligationPass(deps, batchSize, actor, maxAttempts, rawParsedIds);
-  await runConnectorLedgerPasses(deps, batchSize, actor, maxAttempts, rawParsedIds);
+  addProjectionCycleSummary(
+    summary,
+    await runDocObligationPass(deps, batchSize, actor, maxAttempts, rawParsedIds),
+  );
+  addProjectionCycleSummary(
+    summary,
+    await runConnectorLedgerPasses(deps, batchSize, actor, maxAttempts, rawParsedIds),
+  );
   if (!hasRawParsedFilter) await emitProjectorLag(deps);
+  return summary;
+}
+
+function newProjectionCycleSummary(): ProjectionCycleCounters {
+  return { selectedRows: 0, recordsWritten: 0, uploadProjectedEvents: 0 };
+}
+
+function addProjectionCycleSummary(
+  target: ProjectionCycleCounters,
+  source: ProjectionCycleSummary,
+): void {
+  target.selectedRows += source.selectedRows;
+  target.recordsWritten += source.recordsWritten;
+  target.uploadProjectedEvents += source.uploadProjectedEvents;
 }
 
 /**
@@ -693,7 +728,8 @@ async function runConnectorLedgerPasses(
   actor: string,
   maxAttempts: number,
   rawParsedIds: readonly string[] = [],
-): Promise<void> {
+): Promise<ProjectionCycleSummary> {
+  const summary = newProjectionCycleSummary();
   for (const pass of CONNECTOR_LEDGER_PASSES) {
     let rows: PendingConnectorRow[];
     try {
@@ -721,6 +757,7 @@ async function runConnectorLedgerPasses(
       console.error(`[canonicalProjector] ${pass.parser} poll failed:`, err);
       continue;
     }
+    summary.selectedRows += rows.length;
 
     for (const row of rows) {
       const common: ProjectionCommon = {
@@ -813,6 +850,7 @@ async function runConnectorLedgerPasses(
           },
           outputs: { records_written: written.count },
         });
+        summary.recordsWritten += written.count;
         deps.metrics?.increment(
           "brain.canonical.projector.records.count",
           { projector: pass.projector, object_type: pass.objectType },
@@ -833,6 +871,7 @@ async function runConnectorLedgerPasses(
             },
             outputs: { summary: written.summary },
           });
+          summary.uploadProjectedEvents += 1;
         }
         if (
           deps.onUploadProjected !== undefined &&
@@ -887,6 +926,7 @@ async function runConnectorLedgerPasses(
       }
     }
   }
+  return summary;
 }
 
 interface PendingDocRow {
@@ -911,7 +951,8 @@ async function runDocObligationPass(
   actor: string,
   maxAttempts: number,
   rawParsedIds: readonly string[] = [],
-): Promise<void> {
+): Promise<ProjectionCycleSummary> {
+  const summary = newProjectionCycleSummary();
   let rows: PendingDocRow[];
   try {
     const values: unknown[] = [DOC_OBLIGATION_PARSER];
@@ -936,8 +977,9 @@ async function runDocObligationPass(
     rows = result.rows;
   } catch (err) {
     console.error("[canonicalProjector] doc poll failed:", err);
-    return;
+    return summary;
   }
+  summary.selectedRows += rows.length;
 
   for (const row of rows) {
     const common: ProjectionCommon = {
@@ -989,6 +1031,7 @@ async function runDocObligationPass(
         );
         return count;
       });
+      summary.recordsWritten += written;
 
       await deps.audit.emit({
         tenantId: row.tenant_id,
@@ -1026,6 +1069,7 @@ async function runDocObligationPass(
       );
     }
   }
+  return summary;
 }
 
 /**
@@ -1071,7 +1115,9 @@ export function startCanonicalProjectionWorker(
     leasedCycle({
       pool: deps.pool,
       lockKey: "brain_worker_canonical_projection",
-      cycle: () => runProjectionCycle(deps, opts),
+      cycle: async () => {
+        await runProjectionCycle(deps, opts);
+      },
       name: "canonical-projector",
       metrics: deps.metrics,
     }),
