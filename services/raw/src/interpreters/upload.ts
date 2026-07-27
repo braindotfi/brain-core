@@ -437,7 +437,11 @@ function parseBankTransactionTokenRow(
 }
 
 function isStandaloneFullDateToken(token: string): boolean {
-  return /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/20\d{2}$/.test(token.trim());
+  const trimmed = token.trim();
+  return (
+    /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/20\d{2}$/.test(trimmed) ||
+    /^20\d{2}[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])$/.test(trimmed)
+  );
 }
 
 function inferOpeningBalance(tokens: string[]): number | null {
@@ -600,7 +604,19 @@ function headerRowScore(row: string[]): number {
 }
 
 function keywordMatchCount(text: string, keywords: readonly string[]): number {
-  return keywords.filter((keyword) => text.includes(` ${keyword} `)).length;
+  const matches = keywords
+    .filter((keyword) => text.includes(` ${keyword} `))
+    .sort((a, b) => b.length - a.length);
+  const counted: string[] = [];
+  for (const keyword of matches) {
+    if (counted.some((existing) => keywordContains(existing, keyword))) continue;
+    counted.push(keyword);
+  }
+  return counted.length;
+}
+
+function keywordContains(container: string, candidate: string): boolean {
+  return ` ${container} `.includes(` ${candidate} `);
 }
 
 function isXlsx(bytes: Buffer, ctx: UploadContext): boolean {
