@@ -5,7 +5,7 @@ import type { ArtifactInterpreter, InterpretedOutput } from "./registry.js";
 export const UPLOAD_DOCUMENT_SCHEMA = "brain.upload.document.v1";
 export const BANK_STATEMENT_UPLOAD_PARSER = "bank_statement_upload_v1";
 export const DOCUMENT_RECORDS_UPLOAD_PARSER = "document_records_upload_v1";
-const INTERPRETER_VERSION = "1.0.0";
+export const UPLOAD_DOCUMENT_INTERPRETER_VERSION = "1.0.1";
 const DEFAULT_CURRENCY = "USD";
 const HEADER_SCAN_LIMIT = 10;
 const AR_HEADER_KEYWORDS = [
@@ -121,7 +121,7 @@ function interpretBankStatementPdf(bytes: Buffer, ctx: UploadContext): Interpret
   }
   return {
     parser: BANK_STATEMENT_UPLOAD_PARSER,
-    parserVersion: INTERPRETER_VERSION,
+    parserVersion: UPLOAD_DOCUMENT_INTERPRETER_VERSION,
     extracted: parsed,
     confidence: bankStatementConfidence(parsed),
   };
@@ -873,7 +873,7 @@ function arAgingOutput(sheet: ParsedSpreadsheet): InterpretedOutput {
   }
   return {
     parser: DOCUMENT_RECORDS_UPLOAD_PARSER,
-    parserVersion: INTERPRETER_VERSION,
+    parserVersion: UPLOAD_DOCUMENT_INTERPRETER_VERSION,
     extracted: { object_type: "ar_aging", receivables },
     confidence: spreadsheetConfidence(receivables.length, sheet.records.length),
   };
@@ -897,7 +897,7 @@ function payrollOutput(sheet: ParsedSpreadsheet, ctx: UploadContext): Interprete
   }
   return {
     parser: DOCUMENT_RECORDS_UPLOAD_PARSER,
-    parserVersion: INTERPRETER_VERSION,
+    parserVersion: UPLOAD_DOCUMENT_INTERPRETER_VERSION,
     extracted: { object_type: "payroll_register", obligations },
     confidence: spreadsheetConfidence(payrollParsedRowCount(aggregates), sheet.records.length),
   };

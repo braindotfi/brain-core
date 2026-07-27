@@ -87,6 +87,26 @@ describe("hasValidParsedForArtifact", () => {
     expect(log[0]!.values).toEqual(["raw_1", ["bank_statement_upload_v1"]]);
   });
 
+  it("can require a current parser version", async () => {
+    const log: { sql: string; values: unknown[] }[] = [];
+    const client = {
+      query: vi.fn(async (sql: string, values?: ReadonlyArray<unknown>) => {
+        log.push({ sql, values: Array.from(values ?? []) });
+        return { rows: [{ count: "0" }], rowCount: 1 };
+      }),
+    } as unknown as TenantScopedClient;
+
+    await expect(
+      hasValidParsedForArtifact(client, "raw_1", {
+        acceptedParsers: ["bank_statement_upload_v1"],
+        acceptedParserVersions: ["1.0.1"],
+      }),
+    ).resolves.toBe(false);
+    expect(log[0]!.sql).toContain("rp.parser = ANY($2::text[])");
+    expect(log[0]!.sql).toContain("rp.parser_version = ANY($3::text[])");
+    expect(log[0]!.values).toEqual(["raw_1", ["bank_statement_upload_v1"], ["1.0.1"]]);
+  });
+
   it("returns false when only parser-null or no parsed rows exist", async () => {
     const client = {
       query: vi.fn(async () => ({ rows: [{ count: 0 }], rowCount: 1 })),

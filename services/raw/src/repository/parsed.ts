@@ -49,6 +49,7 @@ export async function hasValidParsedForArtifact(
   artifactId: string,
   options: {
     acceptedParsers?: readonly string[];
+    acceptedParserVersions?: readonly string[];
     excludeTerminalZeroProjection?: boolean;
   } = {},
 ): Promise<boolean> {
@@ -57,6 +58,10 @@ export async function hasValidParsedForArtifact(
   if (options.acceptedParsers !== undefined) {
     values.push([...options.acceptedParsers]);
     where.push(`rp.parser = ANY($${values.length}::text[])`);
+  }
+  if (options.acceptedParserVersions !== undefined) {
+    values.push([...options.acceptedParserVersions]);
+    where.push(`rp.parser_version = ANY($${values.length}::text[])`);
   }
   if (options.excludeTerminalZeroProjection === true) {
     where.push(`NOT EXISTS (

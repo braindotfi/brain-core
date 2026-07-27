@@ -437,7 +437,9 @@ describe("ingestOne", () => {
 
     expect(result.deduplicated).toBe(true);
     expect(audit.events[0]!.action).toBe("raw.ingest.deduplicated");
-    expect(client.parsedChecks).toEqual([["raw_EXISTING", ["bank_statement_upload_v1"]]]);
+    expect(client.parsedChecks).toEqual([
+      ["raw_EXISTING", ["bank_statement_upload_v1"], ["1.0.1"]],
+    ]);
     expect(client.jobs).toHaveLength(1);
     expect(client.jobs[0]![2]).toBe("raw_EXISTING");
     expect(client.jobs[0]![5]).toBe(true);
@@ -447,7 +449,7 @@ describe("ingestOne", () => {
     });
   });
 
-  it("does not enqueue a deduplicated upload that already has parser-stamped parsed output", async () => {
+  it("does not enqueue a deduplicated upload that already has current parser-stamped output", async () => {
     const { pool, client } = makeFakePool({
       existing: true,
       autoExtract: true,
@@ -475,7 +477,9 @@ describe("ingestOne", () => {
 
     expect(result.deduplicated).toBe(true);
     expect(audit.events[0]!.action).toBe("raw.ingest.deduplicated");
-    expect(client.parsedChecks).toEqual([["raw_EXISTING", ["bank_statement_upload_v1"]]]);
+    expect(client.parsedChecks).toEqual([
+      ["raw_EXISTING", ["bank_statement_upload_v1"], ["1.0.1"]],
+    ]);
     expect(client.jobs).toHaveLength(0);
     expect(result.extractionJob).toBeNull();
   });

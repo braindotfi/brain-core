@@ -28,6 +28,7 @@ import {
   BANK_STATEMENT_UPLOAD_PARSER,
   defaultSourceSchemaForUpload,
   DOCUMENT_RECORDS_UPLOAD_PARSER,
+  UPLOAD_DOCUMENT_INTERPRETER_VERSION,
 } from "../interpreters/upload.js";
 
 export interface IngestInput {
@@ -108,6 +109,7 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
       ) {
         const hasValidParsed = await hasValidParsedForArtifact(client, artifact.row.id, {
           acceptedParsers: expectedUploadParsers(input.sourceType),
+          acceptedParserVersions: [UPLOAD_DOCUMENT_INTERPRETER_VERSION],
           excludeTerminalZeroProjection: true,
         });
         if (!hasValidParsed) {
