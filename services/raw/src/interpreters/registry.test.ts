@@ -403,6 +403,58 @@ describe("upload document interpreters", () => {
     expect(extracted.transactions.at(-1)?.running_balance).toBe("398220.20");
   });
 
+  it("scopes bank statement token rows to the transaction detail section", () => {
+    const text = [
+      "NORTHLIGHT MANUFACTURING",
+      "June 2026 Statement",
+      "Statement Period",
+      "06/01/2026",
+      "Opening Balance",
+      "412,806.22",
+      "Closing Balance",
+      "398,220.20",
+      "TRANSACTION DETAIL",
+      "Date",
+      "Description",
+      "Amount",
+      "Balance",
+      "06/01/2026",
+      "ACH DEBIT - CLOUDSTACK HOSTING SVCS INV CS-2026-0601",
+      "2,490.00",
+      "410,316.22",
+      "06/02/2026",
+      "INCOMING WIRE - BLUEPEAK DISTRIBUTORS LLC REF 88213",
+      "46,200.00",
+      "456,516.22",
+      "ACCOUNT SUMMARY",
+      "06/30/2026",
+      "Fees Assessed",
+      "25.00",
+      "398,220.20",
+    ].join("\n");
+
+    const out = uploadDocumentInterpreter(
+      Buffer.from(text),
+      ctx({
+        rawArtifactId: "raw_scoped_bank",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "pdf_upload",
+        mimeType: "application/pdf",
+      }),
+    );
+
+    const extracted = out!.extracted as {
+      transactions: Array<{ amount: string; description: string }>;
+      parse_diagnostics: { rows_parsed: number };
+    };
+    expect(extracted.transactions).toHaveLength(2);
+    expect(extracted.parse_diagnostics.rows_parsed).toBe(2);
+    expect(extracted.transactions.map((tx) => tx.description)).toEqual([
+      "ACH DEBIT - CLOUDSTACK HOSTING SVCS INV CS-2026-0601",
+      "INCOMING WIRE - BLUEPEAK DISTRIBUTORS LLC REF 88213",
+    ]);
+  });
+
   it("throws on unsupported upload source types and empty bank statements", () => {
     expect(() =>
       interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(

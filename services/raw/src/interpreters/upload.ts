@@ -307,12 +307,18 @@ function parseBankStatementText(text: string, ctx: UploadContext): BankStatement
     .split(/\r?\n/)
     .map((token) => token.replace(/\s+/g, " ").trim())
     .filter((token) => token.length > 0);
+  const transactionTokens = bankStatementTransactionDetailTokens(tokens);
   const year = inferYear(tokens) ?? new Date().getUTCFullYear();
-  const assembled = parseBankTransactionsFromTokens(tokens, year, ctx.rawArtifactId);
+  const assembled = parseBankTransactionsFromTokens(
+    transactionTokens,
+    year,
+    ctx.rawArtifactId,
+    tokens,
+  );
   const transactions =
     assembled.length > 0
       ? assembled
-      : parseBankTransactionsFromLines(tokens, year, ctx.rawArtifactId);
+      : parseBankTransactionsFromLines(transactionTokens, year, ctx.rawArtifactId);
   const rowsWithBalance = transactions.filter((tx) => tx.running_balance !== undefined).length;
   const currentBalance = [...transactions]
     .reverse()
@@ -335,6 +341,44 @@ function parseBankStatementText(text: string, ctx: UploadContext): BankStatement
   };
 }
 
+function bankStatementTransactionDetailTokens(tokens: string[]): string[] {
+  const start = tokens.findIndex(isBankStatementTransactionDetailStart);
+  if (start === -1) return tokens;
+  const end = tokens.findIndex(
+    (token, index) => index > start && isBankStatementTransactionDetailEnd(token),
+  );
+  const scoped = tokens.slice(start + 1, end === -1 ? undefined : end);
+  return scoped.length > 0 ? scoped : tokens;
+}
+
+function isBankStatementTransactionDetailStart(token: string): boolean {
+  const normalized = normalizeBankStatementSectionToken(token);
+  return (
+    /\btransaction\s+(detail|details|activity|history|ledger)\b/.test(normalized) ||
+    /\baccount\s+activity\b/.test(normalized)
+  );
+}
+
+function isBankStatementTransactionDetailEnd(token: string): boolean {
+  const normalized = normalizeBankStatementSectionToken(token);
+  if (/^(date|posted date)\s+(description|details)\b/.test(normalized)) return false;
+  return (
+    /\b(account|statement|balance|fee|interest)\s+summary\b/.test(normalized) ||
+    /\b(daily|ending|closing)\s+balance\b/.test(normalized) ||
+    /\bimportant\s+information\b/.test(normalized) ||
+    /\b(disclosures?|notices?)\b/.test(normalized) ||
+    /^page\s+\d+\b/.test(normalized)
+  );
+}
+
+function normalizeBankStatementSectionToken(token: string): string {
+  return token
+    .toLowerCase()
+    .replace(/[_:|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseBankTransactionsFromLines(
   lines: string[],
   year: number,
@@ -352,6 +396,7 @@ function parseBankTransactionsFromTokens(
   tokens: string[],
   fallbackYear: number,
   rawArtifactId: string,
+  statementTokens: string[] = tokens,
 ): BankTransaction[] {
   const rows: Array<{ dateToken: string; cells: string[] }> = [];
   let current: { dateToken: string; cells: string[] } | null = null;
@@ -366,7 +411,7 @@ function parseBankTransactionsFromTokens(
   if (current !== null) rows.push(current);
   if (rows.length === 0) return [];
 
-  let previousBalance = inferOpeningBalance(tokens);
+  let previousBalance = inferOpeningBalance(statementTokens);
   const out: BankTransaction[] = [];
   for (const row of rows) {
     const parsed = parseBankTransactionTokenRow(
