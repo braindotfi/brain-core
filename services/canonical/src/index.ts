@@ -101,6 +101,7 @@ export {
   type ProjectionWorker,
   type ProjectionWorkerDeps,
   type ProjectionWorkerOptions,
+  type ProjectionCycleSummary,
   type LedgerUploadProjectionSummary,
   type LedgerUploadProjectedEvent,
 } from "./projectors/worker.js";

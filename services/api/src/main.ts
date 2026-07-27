@@ -120,6 +120,7 @@ import {
   registerRawPlugin,
   SourceService,
   PostgresSourceRepository,
+  findLatestExtractionJob,
   startInterpretWorker,
   startSyncWorker,
   assertRegistryPartnerIsolation,
@@ -1881,7 +1882,24 @@ async function main(): Promise<void> {
                 },
                 { batchSize: 20 },
               );
-              await runProjectionCycle(
+              const latest = await withTenantScope(pool, job.tenant_id, async (c) =>
+                findLatestExtractionJob(c, job.raw_id),
+              );
+              const rawParsedIds =
+                latest?.parsed_id === undefined || latest.parsed_id === null
+                  ? []
+                  : [latest.parsed_id];
+              log.info(
+                {
+                  path_label: "raw_extract_route_after_enqueue",
+                  tenant_id: job.tenant_id,
+                  raw_id: job.raw_id,
+                  job_id: job.id,
+                  raw_parsed_ids: rawParsedIds,
+                },
+                "document extraction projection cycle starting",
+              );
+              const projectionSummary = await runProjectionCycle(
                 {
                   pool: canonicalProjectorPool,
                   audit,
@@ -1889,7 +1907,23 @@ async function main(): Promise<void> {
                   log,
                   onUploadProjected,
                 },
-                { batchSize: 20 },
+                {
+                  batchSize: 20,
+                  ...(rawParsedIds.length > 0 ? { rawParsedIds } : {}),
+                },
+              );
+              log.info(
+                {
+                  path_label: "raw_extract_route_after_enqueue",
+                  tenant_id: job.tenant_id,
+                  raw_id: job.raw_id,
+                  job_id: job.id,
+                  raw_parsed_ids: rawParsedIds,
+                  selected_rows: projectionSummary.selectedRows,
+                  records_written: projectionSummary.recordsWritten,
+                  upload_projected_events: projectionSummary.uploadProjectedEvents,
+                },
+                "document extraction projection cycle completed",
               );
             },
           }),
@@ -2827,7 +2861,18 @@ async function main(): Promise<void> {
               },
               { batchSize: 20 },
             );
-            await runProjectionCycle(
+            log.info(
+              {
+                path_label: "document_extraction_worker_after_extract",
+                tenant_id: event.tenantId,
+                raw_id: event.rawId,
+                raw_parsed_ids: [event.parsedId],
+                job_id: event.jobId,
+                parser: event.parser ?? null,
+              },
+              "document extraction projection cycle starting",
+            );
+            const projectionSummary = await runProjectionCycle(
               {
                 pool: canonicalProjectorPool,
                 audit,
@@ -2839,6 +2884,20 @@ async function main(): Promise<void> {
                 batchSize: 20,
                 rawParsedIds: [event.parsedId],
               },
+            );
+            log.info(
+              {
+                path_label: "document_extraction_worker_after_extract",
+                tenant_id: event.tenantId,
+                raw_id: event.rawId,
+                raw_parsed_ids: [event.parsedId],
+                job_id: event.jobId,
+                parser: event.parser ?? null,
+                selected_rows: projectionSummary.selectedRows,
+                records_written: projectionSummary.recordsWritten,
+                upload_projected_events: projectionSummary.uploadProjectedEvents,
+              },
+              "document extraction projection cycle completed",
             );
           },
         },
