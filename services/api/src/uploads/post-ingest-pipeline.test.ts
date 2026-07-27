@@ -96,6 +96,7 @@ describe("createUploadIngestPipelineDrain", () => {
       audit: {},
       pageService: {},
       uploadProjectionAgentTrigger: trigger,
+      wikiSettleDelayMs: 0,
       log: { info, warn: vi.fn(), error: vi.fn() },
     } as unknown as Parameters<typeof createUploadIngestPipelineDrain>[0]);
 
@@ -164,6 +165,44 @@ describe("createUploadIngestPipelineDrain", () => {
       expect.objectContaining({ step: "agent_trigger" }),
       "upload projection side effect completed",
     );
+  });
+
+  it("waits for ledger transaction visibility before regenerating wiki pages", async () => {
+    vi.useFakeTimers();
+    const trigger = { handle: vi.fn() };
+    const promise = runUploadProjectionSideEffects(
+      {
+        ledgerProjectorPool: {} as Pool,
+        tenantDiscoveryPool: {} as Pool,
+        audit: {},
+        pageService: {},
+        uploadProjectionAgentTrigger: trigger,
+        wikiSettleDelayMs: 250,
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      } as unknown as Parameters<typeof runUploadProjectionSideEffects>[0],
+      {
+        event: "ledger.upload.projected",
+        tenantId: "tnt_seed",
+        rawArtifactId: "raw_seed",
+        rawParsedId: "prs_seed",
+        projector: "bank_statement_upload_canonical_v1",
+        summary: {
+          accounts: 1,
+          transactions: 19,
+          receivables: 0,
+          obligations: 0,
+          newCounterparties: 4,
+        },
+      },
+      1_000,
+    );
+
+    await vi.advanceTimersByTimeAsync(249);
+    expect(calls.regenerateWikiForUploadProjection).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await promise;
+    expect(calls.regenerateWikiForUploadProjection).toHaveBeenCalledTimes(1);
+    expect(trigger.handle).toHaveBeenCalledTimes(1);
   });
 
   it("times out and logs the exact upload projection side effect that hangs", async () => {
