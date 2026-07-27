@@ -1,6 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
-import { createUploadIngestPipelineDrain } from "./post-ingest-pipeline.js";
+import {
+  createUploadIngestPipelineDrain,
+  runUploadProjectionSideEffects,
+} from "./post-ingest-pipeline.js";
 
 const calls = vi.hoisted(() => ({
   order: [] as string[],
@@ -62,6 +65,7 @@ vi.mock("../wiki/regeneration-worker.js", () => ({
 
 describe("createUploadIngestPipelineDrain", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     calls.order.length = 0;
     calls.runInterpretCycle.mockClear();
     calls.runNormalizeCycle.mockClear();
@@ -71,7 +75,12 @@ describe("createUploadIngestPipelineDrain", () => {
     calls.regenerateWikiForUploadProjection.mockClear();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("drains interpret, normalize, canonical, wiki, and agents for seeded upload documents", async () => {
+    const info = vi.fn();
     const trigger = {
       handle: vi.fn(async () => {
         calls.order.push("agents");
@@ -87,7 +96,7 @@ describe("createUploadIngestPipelineDrain", () => {
       audit: {},
       pageService: {},
       uploadProjectionAgentTrigger: trigger,
-      log: { warn: vi.fn(), error: vi.fn() },
+      log: { info, warn: vi.fn(), error: vi.fn() },
     } as unknown as Parameters<typeof createUploadIngestPipelineDrain>[0]);
 
     await drain({
@@ -135,6 +144,76 @@ describe("createUploadIngestPipelineDrain", () => {
         rawArtifactId: "raw_seed",
       }),
     );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "ledger_apar_rebuild" }),
+      "upload projection side effect starting",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "ledger_apar_rebuild" }),
+      "upload projection side effect completed",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "ledger_account_transaction_rebuild" }),
+      "upload projection side effect starting",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "wiki_regeneration" }),
+      "upload projection side effect starting",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "agent_trigger" }),
+      "upload projection side effect completed",
+    );
+  });
+
+  it("times out and logs the exact upload projection side effect that hangs", async () => {
+    vi.useFakeTimers();
+    const warn = vi.fn();
+    calls.rebuildAparProjectionFromCanonical.mockImplementationOnce(
+      () => new Promise<never>(() => {}),
+    );
+    const promise = runUploadProjectionSideEffects(
+      {
+        ledgerProjectorPool: {} as Pool,
+        tenantDiscoveryPool: {} as Pool,
+        audit: {},
+        pageService: {},
+        uploadProjectionAgentTrigger: { handle: vi.fn() },
+        log: { info: vi.fn(), warn, error: vi.fn() },
+      } as unknown as Parameters<typeof runUploadProjectionSideEffects>[0],
+      {
+        event: "ledger.upload.projected",
+        tenantId: "tnt_seed",
+        rawArtifactId: "raw_seed",
+        rawParsedId: "prs_seed",
+        projector: "bank_statement_upload_canonical_v1",
+        summary: {
+          accounts: 1,
+          transactions: 19,
+          receivables: 0,
+          obligations: 0,
+          newCounterparties: 4,
+        },
+      },
+      10,
+    );
+
+    const expectedRejection = expect(promise).rejects.toThrow(
+      "upload projection side effect timed out: ledger_apar_rebuild after 10ms",
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    await expectedRejection;
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "ledger_apar_rebuild",
+        tenant_id: "tnt_seed",
+        raw_artifact_id: "raw_seed",
+        timeout_ms: 10,
+      }),
+      "upload projection side effect timed out",
+    );
+    expect(calls.rebuildAccountTransactionProjectionFromCanonical).not.toHaveBeenCalled();
+    expect(calls.regenerateWikiForUploadProjection).not.toHaveBeenCalled();
   });
 
   it("warns and skips upload artifacts that are missing the registered source schema", async () => {

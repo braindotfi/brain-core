@@ -110,11 +110,11 @@ import { startRevenueIntelScanner } from "./agents/revenue-intel-scanner.js";
 import { startSubscriptionScanner } from "./agents/subscription-scanner.js";
 import { startTreasuryScanner } from "./agents/treasury-scanner.js";
 import { startVendorRiskScanner } from "./agents/vendor-risk-scanner.js";
+import { startWikiRegenerationWorker } from "./wiki/regeneration-worker.js";
 import {
-  regenerateWikiForUploadProjection,
-  startWikiRegenerationWorker,
-} from "./wiki/regeneration-worker.js";
-import { createUploadIngestPipelineDrain } from "./uploads/post-ingest-pipeline.js";
+  createUploadIngestPipelineDrain,
+  runUploadProjectionSideEffects,
+} from "./uploads/post-ingest-pipeline.js";
 
 import {
   registerRawPlugin,
@@ -136,8 +136,6 @@ import {
   startLedgerAparProjectionWorker,
   startLedgerAccountTransactionProjectionWorker,
   runNormalizeCycle,
-  rebuildAparProjectionFromCanonical,
-  rebuildAccountTransactionProjectionFromCanonical,
 } from "@brain/ledger";
 
 import {
@@ -1695,21 +1693,17 @@ async function main(): Promise<void> {
     log,
   });
   const onUploadProjected = async (event: LedgerUploadProjectedEvent): Promise<void> => {
-    await rebuildAparProjectionFromCanonical(ledgerProjectorPool, audit, {
-      tenantId: event.tenantId,
-      actor: "sys_upload_projection",
-    });
-    await rebuildAccountTransactionProjectionFromCanonical(ledgerProjectorPool, event.tenantId);
-    await regenerateWikiForUploadProjection(
+    await runUploadProjectionSideEffects(
       {
+        ledgerProjectorPool,
         tenantDiscoveryPool: tenantDeletionPool,
-        pageService: wikiPageService,
         audit,
+        pageService: wikiPageService,
+        uploadProjectionAgentTrigger,
         log,
       },
       event,
     );
-    await uploadProjectionAgentTrigger.handle(event);
   };
 
   // -- Fastify root app -----------------------------------------------

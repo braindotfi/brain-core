@@ -15,10 +15,13 @@ interface UploadProjectionAgentTrigger {
 }
 
 interface PipelineLog {
+  info?(obj: unknown, msg?: string): void;
   warn(obj: unknown, msg?: string): void;
   error(obj: unknown, msg?: string): void;
   debug?(obj: unknown, msg?: string): void;
 }
+
+const UPLOAD_PROJECTION_STEP_TIMEOUT_MS = 30_000;
 
 export interface UploadIngestPipelineDeps {
   rawWorkerPool: Pool;
@@ -85,24 +88,7 @@ export function createUploadIngestPipelineDrain(
               }
             : {}),
           onUploadProjected: async (event) => {
-            await rebuildAparProjectionFromCanonical(deps.ledgerProjectorPool, deps.audit, {
-              tenantId: event.tenantId,
-              actor: "sys_upload_projection",
-            });
-            await rebuildAccountTransactionProjectionFromCanonical(
-              deps.ledgerProjectorPool,
-              event.tenantId,
-            );
-            await regenerateWikiForUploadProjection(
-              {
-                tenantDiscoveryPool: deps.tenantDiscoveryPool,
-                pageService: deps.pageService,
-                audit: deps.audit,
-                ...(deps.log !== undefined ? { log: deps.log } : {}),
-              },
-              event,
-            );
-            await deps.uploadProjectionAgentTrigger.handle(event);
+            await runUploadProjectionSideEffects(deps, event);
           },
         },
         { batchSize: 20 },
@@ -115,6 +101,113 @@ export function createUploadIngestPipelineDrain(
       throw err;
     }
   };
+}
+
+export async function runUploadProjectionSideEffects(
+  deps: Pick<
+    UploadIngestPipelineDeps,
+    | "ledgerProjectorPool"
+    | "audit"
+    | "tenantDiscoveryPool"
+    | "pageService"
+    | "uploadProjectionAgentTrigger"
+    | "log"
+  >,
+  event: LedgerUploadProjectedEvent,
+  timeoutMs = UPLOAD_PROJECTION_STEP_TIMEOUT_MS,
+): Promise<void> {
+  await runUploadProjectionStep(deps.log, event, "ledger_apar_rebuild", timeoutMs, () =>
+    rebuildAparProjectionFromCanonical(deps.ledgerProjectorPool, deps.audit, {
+      tenantId: event.tenantId,
+      actor: "sys_upload_projection",
+    }),
+  );
+  await runUploadProjectionStep(
+    deps.log,
+    event,
+    "ledger_account_transaction_rebuild",
+    timeoutMs,
+    () =>
+      rebuildAccountTransactionProjectionFromCanonical(deps.ledgerProjectorPool, event.tenantId),
+  );
+  await runUploadProjectionStep(deps.log, event, "wiki_regeneration", timeoutMs, () =>
+    regenerateWikiForUploadProjection(
+      {
+        tenantDiscoveryPool: deps.tenantDiscoveryPool,
+        pageService: deps.pageService,
+        audit: deps.audit,
+        ...(deps.log !== undefined ? { log: deps.log } : {}),
+      },
+      event,
+    ),
+  );
+  await runUploadProjectionStep(deps.log, event, "agent_trigger", timeoutMs, () =>
+    deps.uploadProjectionAgentTrigger.handle(event),
+  );
+}
+
+async function runUploadProjectionStep<T>(
+  log: PipelineLog | undefined,
+  event: LedgerUploadProjectedEvent,
+  step: string,
+  timeoutMs: number,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  const fields = {
+    step,
+    tenant_id: event.tenantId,
+    raw_artifact_id: event.rawArtifactId,
+    raw_parsed_id: event.rawParsedId,
+    projector: event.projector,
+    timeout_ms: timeoutMs,
+  };
+  log?.info?.(fields, "upload projection side effect starting");
+  try {
+    const result = await withTimeout(fn(), timeoutMs, step);
+    log?.info?.(
+      {
+        ...fields,
+        duration_ms: Date.now() - startedAt,
+      },
+      "upload projection side effect completed",
+    );
+    return result;
+  } catch (err) {
+    log?.warn(
+      {
+        ...fields,
+        duration_ms: Date.now() - startedAt,
+        err,
+      },
+      err instanceof UploadProjectionStepTimeoutError
+        ? "upload projection side effect timed out"
+        : "upload projection side effect failed",
+    );
+    throw err;
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, step: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new UploadProjectionStepTimeoutError(step, timeoutMs));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
+class UploadProjectionStepTimeoutError extends Error {
+  public constructor(
+    public readonly step: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`upload projection side effect timed out: ${step} after ${timeoutMs}ms`);
+    this.name = "UploadProjectionStepTimeoutError";
+  }
 }
 
 function isUploadSourceType(sourceType: string): boolean {
