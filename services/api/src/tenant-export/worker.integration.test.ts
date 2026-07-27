@@ -81,7 +81,7 @@ suite("tenant export worker integration (requires DATABASE_URL)", () => {
       enqueueTenantExportJob(client, {
         tenantId: tenant,
         requestedBy: "user_export",
-        expiresAt: new Date("2026-07-27T00:00:00Z"),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       }),
     );
     const service = new TenantExportService({ pool, blob, audit });
