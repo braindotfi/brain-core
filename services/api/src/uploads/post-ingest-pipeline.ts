@@ -22,6 +22,7 @@ interface PipelineLog {
 }
 
 const UPLOAD_PROJECTION_STEP_TIMEOUT_MS = 30_000;
+const UPLOAD_PROJECTION_WIKI_SETTLE_DELAY_MS = 250;
 
 export interface UploadIngestPipelineDeps {
   rawWorkerPool: Pool;
@@ -35,6 +36,7 @@ export interface UploadIngestPipelineDeps {
   uploadProjectionAgentTrigger: UploadProjectionAgentTrigger;
   metrics?: MetricsEmitter;
   log?: PipelineLog;
+  wikiSettleDelayMs?: number;
 }
 
 export function createUploadIngestPipelineDrain(
@@ -111,6 +113,7 @@ export async function runUploadProjectionSideEffects(
     | "tenantDiscoveryPool"
     | "pageService"
     | "uploadProjectionAgentTrigger"
+    | "wikiSettleDelayMs"
     | "log"
   >,
   event: LedgerUploadProjectedEvent,
@@ -130,6 +133,12 @@ export async function runUploadProjectionSideEffects(
     () =>
       rebuildAccountTransactionProjectionFromCanonical(deps.ledgerProjectorPool, event.tenantId),
   );
+  const wikiSettleDelayMs = deps.wikiSettleDelayMs ?? UPLOAD_PROJECTION_WIKI_SETTLE_DELAY_MS;
+  if (wikiSettleDelayMs > 0) {
+    await runUploadProjectionStep(deps.log, event, "wiki_visibility_settle", timeoutMs, () =>
+      delay(wikiSettleDelayMs),
+    );
+  }
   await runUploadProjectionStep(deps.log, event, "wiki_regeneration", timeoutMs, () =>
     regenerateWikiForUploadProjection(
       {
@@ -144,6 +153,10 @@ export async function runUploadProjectionSideEffects(
   await runUploadProjectionStep(deps.log, event, "agent_trigger", timeoutMs, () =>
     deps.uploadProjectionAgentTrigger.handle(event),
   );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function runUploadProjectionStep<T>(
