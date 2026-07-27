@@ -323,6 +323,46 @@ describe("upload document interpreters", () => {
     ]);
   });
 
+  it("parses bank statement token rows that use ISO date tokens", () => {
+    const text = [
+      "Brightline Bank",
+      "Opening Balance",
+      "412,806.22",
+      "2026-06-02",
+      "PAYCORE 2026-06A",
+      "29,612.42",
+      "383,193.80",
+      "2026-06-03",
+      "Customer Deposit",
+      "5,000.00",
+      "388,193.80",
+    ].join("\n");
+    const out = uploadDocumentInterpreter(
+      Buffer.from(text),
+      ctx({
+        rawArtifactId: "raw_iso_bank",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "pdf_upload",
+        mimeType: "application/pdf",
+      }),
+    );
+
+    const txs = (
+      out!.extracted as {
+        transactions: Array<{ amount: string; date: string; direction: string }>;
+      }
+    ).transactions;
+    expect(out!.parser).toBe("bank_statement_upload_v1");
+    expect(txs).toEqual([
+      expect.objectContaining({
+        amount: "29612.42",
+        date: "2026-06-02",
+        direction: "outflow",
+      }),
+      expect.objectContaining({ amount: "5000", date: "2026-06-03", direction: "inflow" }),
+    ]);
+  });
+
   it("parses the June demo bank statement PDF fixture end to end", () => {
     const out = uploadDocumentInterpreter(
       fixtureBytes("bank_statement_2026-06.pdf"),
@@ -435,6 +475,38 @@ describe("upload document interpreters", () => {
       "31150",
       "14780",
       "9310",
+    ]);
+  });
+
+  it("selects the real AR aging header row when a title row contains subject keywords", () => {
+    const csv = [
+      "Brightline Systems Inc. - Accounts Receivable Aging",
+      "As of 2026-06-30",
+      "",
+      "Customer,Invoice No,Invoice Date,Due Date,Current,1-30,31-60,61-90,90+,Total Due",
+      "Helios,NL-2417,2026-04-22,2026-05-22,0,0,49000,0,0,49000",
+    ].join("\n");
+    const out = uploadDocumentInterpreter(
+      Buffer.from(csv),
+      ctx({
+        rawArtifactId: "raw_ar_title",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "text/csv",
+      }),
+    );
+
+    const extracted = out!.extracted as {
+      object_type: string;
+      receivables: Array<{ invoice_ref: string; amount: string; aging_bucket: string | null }>;
+    };
+    expect(extracted.object_type).toBe("ar_aging");
+    expect(extracted.receivables).toEqual([
+      expect.objectContaining({
+        invoice_ref: "NL-2417",
+        amount: "49000",
+        aging_bucket: "31-60",
+      }),
     ]);
   });
 
