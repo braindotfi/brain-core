@@ -280,7 +280,7 @@ function jobRow(input: {
     status: input.status ?? "queued",
     output_blob_uri: input.outputBlobUri ?? null,
     byte_size: input.outputBlobUri === undefined ? null : 8,
-    expires_at: input.expiresAt ?? new Date("2026-07-27T00:00:00Z"),
+    expires_at: input.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     error: null,
     requested_by: input.requestedBy ?? USER,
     locked_at: null,

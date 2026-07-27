@@ -199,7 +199,7 @@ function jobRow(input: {
     status: input.status,
     output_blob_uri: input.outputBlobUri ?? null,
     byte_size: null,
-    expires_at: input.expiresAt ?? new Date("2026-07-27T00:00:00Z"),
+    expires_at: input.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     error: null,
     requested_by: "user_admin",
     locked_at: null,
