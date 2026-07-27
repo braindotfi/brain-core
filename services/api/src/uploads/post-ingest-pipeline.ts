@@ -1,8 +1,8 @@
 import type { Pool } from "pg";
 import { runInterpretCycle, UPLOAD_DOCUMENT_SCHEMA, type RawDeps } from "@brain/raw";
 import {
-  runLedgerAccountTransactionProjectionCycle,
-  runLedgerAparProjectionCycle,
+  rebuildAccountTransactionProjectionFromCanonical,
+  rebuildAparProjectionFromCanonical,
   runNormalizeCycle,
 } from "@brain/ledger";
 import { runProjectionCycle, type LedgerUploadProjectedEvent } from "@brain/canonical";
@@ -85,14 +85,14 @@ export function createUploadIngestPipelineDrain(
               }
             : {}),
           onUploadProjected: async (event) => {
-            await runLedgerAparProjectionCycle({
-              pool: deps.ledgerProjectorPool,
-              ...(deps.metrics !== undefined ? { metrics: deps.metrics } : {}),
+            await rebuildAparProjectionFromCanonical(deps.ledgerProjectorPool, deps.audit, {
+              tenantId: event.tenantId,
+              actor: "sys_upload_projection",
             });
-            await runLedgerAccountTransactionProjectionCycle({
-              pool: deps.ledgerProjectorPool,
-              ...(deps.metrics !== undefined ? { metrics: deps.metrics } : {}),
-            });
+            await rebuildAccountTransactionProjectionFromCanonical(
+              deps.ledgerProjectorPool,
+              event.tenantId,
+            );
             await regenerateWikiForUploadProjection(
               {
                 tenantDiscoveryPool: deps.tenantDiscoveryPool,

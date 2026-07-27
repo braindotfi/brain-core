@@ -29,10 +29,10 @@ const calls = vi.hoisted(() => ({
       });
     },
   ),
-  runLedgerAparProjectionCycle: vi.fn(async () => {
+  rebuildAparProjectionFromCanonical: vi.fn(async () => {
     calls.order.push("ledger-apar");
   }),
-  runLedgerAccountTransactionProjectionCycle: vi.fn(async () => {
+  rebuildAccountTransactionProjectionFromCanonical: vi.fn(async () => {
     calls.order.push("ledger-account-transaction");
   }),
   regenerateWikiForUploadProjection: vi.fn(async () => {
@@ -46,8 +46,9 @@ vi.mock("@brain/raw", () => ({
 }));
 
 vi.mock("@brain/ledger", () => ({
-  runLedgerAccountTransactionProjectionCycle: calls.runLedgerAccountTransactionProjectionCycle,
-  runLedgerAparProjectionCycle: calls.runLedgerAparProjectionCycle,
+  rebuildAccountTransactionProjectionFromCanonical:
+    calls.rebuildAccountTransactionProjectionFromCanonical,
+  rebuildAparProjectionFromCanonical: calls.rebuildAparProjectionFromCanonical,
   runNormalizeCycle: calls.runNormalizeCycle,
 }));
 
@@ -65,8 +66,8 @@ describe("createUploadIngestPipelineDrain", () => {
     calls.runInterpretCycle.mockClear();
     calls.runNormalizeCycle.mockClear();
     calls.runProjectionCycle.mockClear();
-    calls.runLedgerAparProjectionCycle.mockClear();
-    calls.runLedgerAccountTransactionProjectionCycle.mockClear();
+    calls.rebuildAparProjectionFromCanonical.mockClear();
+    calls.rebuildAccountTransactionProjectionFromCanonical.mockClear();
     calls.regenerateWikiForUploadProjection.mockClear();
   });
 
@@ -119,6 +120,15 @@ describe("createUploadIngestPipelineDrain", () => {
       "wiki",
       "agents",
     ]);
+    expect(calls.rebuildAparProjectionFromCanonical).toHaveBeenCalledWith(
+      {} as Pool,
+      {},
+      expect.objectContaining({ tenantId: "tnt_seed", actor: "sys_upload_projection" }),
+    );
+    expect(calls.rebuildAccountTransactionProjectionFromCanonical).toHaveBeenCalledWith(
+      {} as Pool,
+      "tnt_seed",
+    );
     expect(trigger.handle).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "ledger.upload.projected",
