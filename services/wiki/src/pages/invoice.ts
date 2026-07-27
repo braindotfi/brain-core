@@ -9,6 +9,9 @@ export class InvoicePageGenerator implements PageGenerator {
   public readonly pageType = "invoice" as const;
 
   public resolveSlug(slugOrId: string): { subjectId: string | null; slug: string } | null {
+    if (slugOrId === "invoices/all" || slugOrId === "/invoices/all") {
+      return { subjectId: null, slug: "/invoices/all" };
+    }
     if (slugOrId.startsWith("inv_")) {
       return { subjectId: slugOrId, slug: `/invoices/${slugOrId}` };
     }
@@ -24,6 +27,7 @@ export class InvoicePageGenerator implements PageGenerator {
     subject: { subjectId: string | null; slug: string },
   ): Promise<PageGenerationOutput> {
     const id = subject.subjectId;
+    if (subject.slug === "/invoices/all") return renderInvoiceIndex(deps, subject.slug);
     if (id === null) throw new Error("InvoicePageGenerator requires a subject id");
 
     const inv = await fetchInvoice(deps, id);
@@ -114,6 +118,64 @@ export class InvoicePageGenerator implements PageGenerator {
   }
 }
 
+async function renderInvoiceIndex(
+  deps: PageGenerationContext,
+  slug: string,
+): Promise<PageGenerationOutput> {
+  const summary = await fetchInvoiceSummary(deps);
+  const invoices = await fetchRecentInvoices(deps);
+
+  const currentTruth =
+    `**Invoices**\n` +
+    `Invoice count: ${summary.invoice_count}\n` +
+    `Open amount: ${summary.open_amount} ${summary.currency ?? "USD"}\n` +
+    `Paid amount: ${summary.paid_amount} ${summary.currency ?? "USD"}`;
+
+  const linkedEntities = bullet(
+    invoices.map(
+      (inv) =>
+        `\`${inv.id}\` ${inv.invoice_number} - ${inv.amount_due} ${inv.currency} [${inv.status}]`,
+    ),
+    "_No invoice rows are anchored in Ledger yet._",
+  );
+
+  const recentActivity = bullet(
+    invoices.map(
+      (inv) =>
+        `${inv.updated_at.toISOString()} - ${inv.invoice_number} ${inv.amount_due} ${inv.currency} [${inv.status}]`,
+    ),
+    "_No invoice activity recorded._",
+  );
+
+  const openQuestions =
+    summary.invoice_count === 0
+      ? "No invoice-shaped Ledger rows exist yet. Uploaded receivables may currently be represented as obligations."
+      : "_None._";
+
+  const riskNotes =
+    summary.overdue_count > 0
+      ? `${summary.overdue_count} overdue invoice(s) require review.`
+      : "_No invoice risk flags._";
+
+  const revision = revisionFromTouches(
+    invoices.map((inv) => ({ id: inv.id, updated_at: inv.updated_at })),
+  );
+
+  return {
+    page_type: "invoice",
+    subject_id: null,
+    slug,
+    body_md: renderPage("Invoices", {
+      currentTruth,
+      linkedEntities,
+      recentActivity,
+      openQuestions,
+      riskNotes,
+    }),
+    source_revision: invoices.length > 0 ? revision : "invoices_all_empty",
+  };
+}
+
 interface InvoiceRow {
   id: string;
   invoice_number: string;
@@ -129,6 +191,61 @@ interface InvoiceRow {
   source_ids: string[];
   evidence_ids: string[];
   updated_at: Date;
+}
+
+interface InvoiceSummary {
+  invoice_count: number;
+  overdue_count: number;
+  open_amount: string;
+  paid_amount: string;
+  currency: string | null;
+}
+
+async function fetchInvoiceSummary(deps: PageGenerationContext): Promise<InvoiceSummary> {
+  const { rows } = await deps.client.query<{
+    invoice_count: string;
+    overdue_count: string;
+    open_amount: string | null;
+    paid_amount: string | null;
+    currency: string | null;
+  }>(
+    `SELECT COUNT(*)::TEXT AS invoice_count,
+            COUNT(*) FILTER (WHERE status = 'overdue')::TEXT AS overdue_count,
+            COALESCE(SUM(amount_due - amount_paid), 0)::TEXT AS open_amount,
+            COALESCE(SUM(amount_paid), 0)::TEXT AS paid_amount,
+            MAX(currency) AS currency
+       FROM ledger_invoices`,
+  );
+  const row = rows[0];
+  if (row === undefined) {
+    return {
+      invoice_count: 0,
+      overdue_count: 0,
+      open_amount: "0",
+      paid_amount: "0",
+      currency: null,
+    };
+  }
+  return {
+    invoice_count: Number.parseInt(row.invoice_count, 10),
+    overdue_count: Number.parseInt(row.overdue_count, 10),
+    open_amount: row.open_amount ?? "0",
+    paid_amount: row.paid_amount ?? "0",
+    currency: row.currency,
+  };
+}
+
+async function fetchRecentInvoices(deps: PageGenerationContext): Promise<InvoiceRow[]> {
+  const { rows } = await deps.client.query<InvoiceRow>(
+    `SELECT id, invoice_number, counterparty_id, amount_due::TEXT, amount_paid::TEXT,
+            currency, issue_date, due_date, status,
+            linked_document_ids, linked_transaction_ids,
+            source_ids, evidence_ids, updated_at
+       FROM ledger_invoices
+      ORDER BY updated_at DESC
+      LIMIT 25`,
+  );
+  return rows;
 }
 
 async function fetchInvoice(deps: PageGenerationContext, id: string): Promise<InvoiceRow | null> {

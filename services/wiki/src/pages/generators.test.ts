@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ServiceCallContext, TenantScopedClient } from "@brain/shared";
 import { PolicyPageGenerator } from "./policy.js";
 import { AgentPageGenerator } from "./agent.js";
+import { InvoicePageGenerator } from "./invoice.js";
 import type { AgentView, PolicyReader, PolicyView, AgentReader } from "./types.js";
 
 const ctx: ServiceCallContext = { tenantId: "tnt_test", actor: "user_test", requestId: "req_1" };
@@ -82,5 +83,102 @@ describe("AgentPageGenerator", () => {
     );
     expect(out.body_md).toContain("Treasury Bot");
     expect(out.subject_id).toBe("agent_1");
+  });
+});
+
+describe("InvoicePageGenerator", () => {
+  it("renders /invoices/all as an empty state when no ledger invoices exist", async () => {
+    const queries: string[] = [];
+    const client = {
+      query: vi.fn(async (text: string) => {
+        queries.push(text);
+        if (text.includes("COUNT(*)::TEXT AS invoice_count")) {
+          return {
+            rows: [
+              {
+                invoice_count: "0",
+                overdue_count: "0",
+                open_amount: "0",
+                paid_amount: "0",
+                currency: null,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (text.includes("FROM ledger_invoices") && text.includes("ORDER BY updated_at DESC")) {
+          return { rows: [], rowCount: 0 };
+        }
+        throw new Error(`unexpected query: ${text}`);
+      }),
+    } as unknown as TenantScopedClient;
+
+    const gen = new InvoicePageGenerator();
+    const resolved = gen.resolveSlug("/invoices/all");
+    expect(resolved).toEqual({ subjectId: null, slug: "/invoices/all" });
+
+    const out = await gen.render({ ctx, client }, resolved!);
+
+    expect(out.slug).toBe("/invoices/all");
+    expect(out.subject_id).toBeNull();
+    expect(out.body_md).toContain("Invoice count: 0");
+    expect(out.body_md).toContain("No invoice rows are anchored in Ledger yet");
+    expect(out.source_revision).toBe("invoices_all_empty");
+    expect(queries.some((q) => q.includes("WHERE id = $1 LIMIT 1"))).toBe(false);
+  });
+
+  it("renders recent invoices for /invoices/all when invoice rows exist", async () => {
+    const updatedAt = new Date("2026-06-30T12:00:00Z");
+    const client = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("COUNT(*)::TEXT AS invoice_count")) {
+          return {
+            rows: [
+              {
+                invoice_count: "1",
+                overdue_count: "1",
+                open_amount: "1200.00",
+                paid_amount: "300.00",
+                currency: "USD",
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (text.includes("FROM ledger_invoices") && text.includes("ORDER BY updated_at DESC")) {
+          return {
+            rows: [
+              {
+                id: "inv_1",
+                invoice_number: "NL-2417",
+                counterparty_id: "cp_1",
+                amount_due: "1500.00",
+                amount_paid: "300.00",
+                currency: "USD",
+                issue_date: new Date("2026-05-01T00:00:00Z"),
+                due_date: new Date("2026-05-22T00:00:00Z"),
+                status: "overdue",
+                linked_document_ids: [],
+                linked_transaction_ids: [],
+                source_ids: [],
+                evidence_ids: [],
+                updated_at: updatedAt,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        throw new Error(`unexpected query: ${text}`);
+      }),
+    } as unknown as TenantScopedClient;
+
+    const gen = new InvoicePageGenerator();
+    const out = await gen.render({ ctx, client }, { subjectId: null, slug: "/invoices/all" });
+
+    expect(out.body_md).toContain("Invoice count: 1");
+    expect(out.body_md).toContain("NL-2417");
+    expect(out.body_md).toContain("1 overdue invoice(s) require review");
+    expect(out.source_revision).toMatch(/^[a-f0-9]{16}$/);
+    expect(out.source_revision).not.toBe("invoices_all_empty");
   });
 });
