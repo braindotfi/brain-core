@@ -296,6 +296,7 @@ import {
 import { closeAllPools } from "./composition/close-pools.js";
 import { runShutdown } from "./composition/shutdown.js";
 import { resolveComposition, POOL_ENV } from "./composition/process-roles.js";
+import { rolePoolMax } from "./composition/role-pool-sizing.js";
 import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-loaders-prod-fence.js";
 import { assertOutboxDispatchGuardWiredInProduction } from "./composition/outbox-dispatch-guard-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
@@ -1067,27 +1068,52 @@ async function main(): Promise<void> {
   // pool). Each connects as its own BYPASSRLS role scoped to one layer's tables
   // (infra/db-roles.sql §4). Falls back to the main pool in dev/test with a
   // warning; production presence is fenced above by assertDbIsolationFences.
-  const makeRolePool = (url: string | undefined, suffix: string): typeof pool =>
+  const makeRolePool = (
+    url: string | undefined,
+    suffix: string,
+    poolName: keyof typeof POOL_ENV,
+  ): typeof pool =>
     url === undefined
       ? pool
       : createPool({
           connectionString: url,
-          max: 3,
+          max: rolePoolMax(poolName, cfg.DATABASE_POOL_MAX),
           statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
           applicationName: `${cfg.SERVICE_NAME}-${suffix}`,
         });
 
-  const rawWorkerPool = makeRolePool(cfg.BRAIN_RAW_WORKER_DB_URL, "raw-worker");
+  const rawWorkerPool = makeRolePool(cfg.BRAIN_RAW_WORKER_DB_URL, "raw-worker", "raw_worker");
   const canonicalProjectorPool = makeRolePool(
     cfg.BRAIN_CANONICAL_PROJECTOR_DB_URL,
     "canonical-projector",
+    "canonical_projector",
   );
-  const ledgerProjectorPool = makeRolePool(cfg.BRAIN_LEDGER_PROJECTOR_DB_URL, "ledger-projector");
-  const executionWorkerPool = makeRolePool(cfg.BRAIN_EXECUTION_WORKER_DB_URL, "execution-worker");
-  const auditVerifierPool = makeRolePool(cfg.BRAIN_AUDIT_VERIFIER_DB_URL, "audit-verifier");
-  const auditPublisherPool = makeRolePool(cfg.BRAIN_AUDIT_PUBLISHER_DB_URL, "audit-publisher");
-  const resolverPool = makeRolePool(cfg.BRAIN_RESOLVER_DB_URL, "resolver");
-  const tenantDeletionPool = makeRolePool(cfg.BRAIN_TENANT_DELETION_DB_URL, "tenant-deletion");
+  const ledgerProjectorPool = makeRolePool(
+    cfg.BRAIN_LEDGER_PROJECTOR_DB_URL,
+    "ledger-projector",
+    "ledger_projector",
+  );
+  const executionWorkerPool = makeRolePool(
+    cfg.BRAIN_EXECUTION_WORKER_DB_URL,
+    "execution-worker",
+    "execution_worker",
+  );
+  const auditVerifierPool = makeRolePool(
+    cfg.BRAIN_AUDIT_VERIFIER_DB_URL,
+    "audit-verifier",
+    "audit_verifier",
+  );
+  const auditPublisherPool = makeRolePool(
+    cfg.BRAIN_AUDIT_PUBLISHER_DB_URL,
+    "audit-publisher",
+    "audit_publisher",
+  );
+  const resolverPool = makeRolePool(cfg.BRAIN_RESOLVER_DB_URL, "resolver", "resolver");
+  const tenantDeletionPool = makeRolePool(
+    cfg.BRAIN_TENANT_DELETION_DB_URL,
+    "tenant-deletion",
+    "tenant_deletion",
+  );
   const mcpReaderPool =
     cfg.BRAIN_MCP_READER_DB_URL === undefined
       ? undefined
