@@ -21,8 +21,9 @@
  *               The operating buffer is a Treasury *policy* parameter; the
  *               yield-venue catalog is a global reference endpoint, not seeded.
  *   Policy    — one active policy whose rules express the AP / Treasury / AR
- *               behaviour the demo proves (approved≤$50k auto, approved>$50k
- *               confirm, unapproved reject, onchain + agent_action auto).
+ *               behaviour the demo proves (approved <= $50k auto,
+ *               approved > $50k confirm, unapproved reject, onchain auto,
+ *               agent_action confirm).
  *   Agent     — a registered Demo Payment Agent (onchain_address = the shared
  *               BrainSmartAccount when BRAIN_ONCHAIN_SMART_ACCOUNT is set).
  *
@@ -568,8 +569,8 @@ function mapIds(rows: Record<string, CounterpartyRow>): Record<string, string> {
 //        concentration breach escalation); otherwise auto. The marquee AP
 //        settlement is a symbolic ETH transfer — its currency never matches the
 //        USD threshold, so it stays auto and the verified money path is intact.
-//   AR (agent_action): outstanding >$500k → confirm (≈ approval_above_500k);
-//        otherwise auto.
+//   AR (agent_action): outstanding >$500k -> confirm (approval_above_500k);
+//        otherwise corroborated actions require single-signer confirmation.
 // The buffer minimum, per-venue concentration cap, approved-venue list, the
 // 7-day chase window, and relationship tone are NOT brain-core gate primitives
 // (no DSL/Ledger column expresses them) — they remain advisory, orchestrator-
@@ -639,7 +640,13 @@ async function seedPolicy(
         require: "owner_approval",
         execute: "confirm",
       },
-      { id: "ar-auto-agent-action", applies_to: ["agent_action"], when: {}, execute: "auto" },
+      {
+        id: "ar-agent-action-requires-review",
+        applies_to: ["agent_action"],
+        when: { "agent.confidence.gte": 0.6 },
+        execute: "confirm",
+        require: "single_signer",
+      },
     ],
   };
   const policyJson = JSON.stringify(policy);
