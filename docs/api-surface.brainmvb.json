@@ -667,9 +667,20 @@
           "required_scope": "ledger:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "query { q?, type?, verified_status?, limit?, cursor? }",
-          "response_shape": "200 { counterparties, next_cursor }",
+          "response_shape": "200 { counterparties[{..., payment_count, payment_total}], next_cursor }",
           "example_request": "GET /v1/ledger/counterparties",
-          "example_response": { "counterparties": [], "next_cursor": null },
+          "example_response": {
+            "counterparties": [
+              {
+                "id": "cp_example",
+                "name": "Globex Corp",
+                "type": "vendor",
+                "payment_count": 2,
+                "payment_total": "1234.56"
+              }
+            ],
+            "next_cursor": null
+          },
           "openapi": "documented:/ledger/counterparties"
         },
         {

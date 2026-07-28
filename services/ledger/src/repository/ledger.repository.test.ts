@@ -173,16 +173,26 @@ describe("listCounterparties", () => {
   it("adds verified_status filter", async () => {
     const { _log, ...client } = fakeClient();
     await listCounterparties(client, { verified_status: "unverified", limit: 20 });
-    expect(_log[0]!.sql).toContain("verified_status = $1");
+    expect(_log[0]!.sql).toContain("cp.verified_status = $1");
     expect(_log[0]!.values).toEqual(["unverified", 20]);
   });
 
   it("searches normalized names and aliases", async () => {
     const { _log, ...client } = fakeClient();
     await listCounterparties(client, { q: "Acme Trading", limit: 20 });
-    expect(_log[0]!.sql).toContain("LOWER(COALESCE(normalized_name, '')) LIKE $1");
-    expect(_log[0]!.sql).toContain("FROM unnest(aliases) AS alias");
+    expect(_log[0]!.sql).toContain("LOWER(COALESCE(cp.normalized_name, '')) LIKE $1");
+    expect(_log[0]!.sql).toContain("FROM unnest(cp.aliases) AS alias");
     expect(_log[0]!.values).toEqual(["%acme_trading%", "Acme Trading", 20]);
+  });
+
+  it("adds outflow payment rollups to counterparty list rows", async () => {
+    const { _log, ...client } = fakeClient();
+    await listCounterparties(client, { type: "vendor", limit: 20 });
+    expect(_log[0]!.sql).toContain("LEFT JOIN");
+    expect(_log[0]!.sql).toContain("FROM ledger_transactions");
+    expect(_log[0]!.sql).toContain("direction = 'outflow'");
+    expect(_log[0]!.sql).toContain("status IN ('posted', 'cleared')");
+    expect(_log[0]!.sql).toContain("payment_total");
   });
 });
 

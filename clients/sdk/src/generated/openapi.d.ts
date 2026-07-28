@@ -4318,6 +4318,10 @@ export interface components {
             verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared" | null;
             aliases?: string[];
             linked_accounts?: string[];
+            /** @description Count of posted or cleared outflow transactions linked to this counterparty. */
+            payment_count?: number;
+            /** @description Sum of posted or cleared outflow transaction amounts linked to this counterparty. */
+            payment_total?: string;
         };
         Obligation: components["schemas"]["LedgerCommonFields"] & {
             /** @enum {string} */

@@ -566,6 +566,8 @@ function serializeCounterparty(row: CounterpartyRow): Counterparty {
     agent_id: row.agent_id,
     onchain_address: row.onchain_address,
     metadata: row.metadata ?? {},
+    payment_count: Number(row.payment_count ?? 0),
+    payment_total: row.payment_total ?? "0",
   };
 }
 

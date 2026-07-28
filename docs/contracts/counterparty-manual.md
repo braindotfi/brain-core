@@ -25,9 +25,22 @@ Response:
 
 ```json
 {
-  "counterparties": []
+  "counterparties": [
+    {
+      "id": "cp_example",
+      "name": "Globex Corp",
+      "display_name": "Globex Corp",
+      "type": "vendor",
+      "payment_count": 2,
+      "payment_total": "1234.56"
+    }
+  ]
 }
 ```
+
+`payment_count` and `payment_total` are read-side rollups from posted or
+cleared outflow transactions linked by `counterparty_id`. They are zero when no
+matching transactions exist.
 
 ### `GET /ledger/counterparties/:counterparty_id`
 

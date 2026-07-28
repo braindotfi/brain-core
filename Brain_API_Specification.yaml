@@ -7433,6 +7433,13 @@ components:
             linked_accounts:
               type: array
               items: { type: string }
+            payment_count:
+              type: integer
+              minimum: 0
+              description: Count of posted or cleared outflow transactions linked to this counterparty.
+            payment_total:
+              type: string
+              description: Sum of posted or cleared outflow transaction amounts linked to this counterparty.
 
     Obligation:
       allOf:

@@ -467,6 +467,7 @@ function parseBankTransactionTokenRow(
     }
   }
 
+  const counterpartyName = counterpartyFromDescription(description);
   return {
     transaction_id: `${rawArtifactId}:bank:${String(index + 1).padStart(4, "0")}`,
     date,
@@ -475,9 +476,7 @@ function parseBankTransactionTokenRow(
     direction,
     currency: DEFAULT_CURRENCY,
     running_balance: decimalString(running.value),
-    ...(counterpartyFromDescription(description) !== null
-      ? { counterparty_name: counterpartyFromDescription(description)! }
-      : {}),
+    ...(counterpartyName !== null ? { counterparty_name: counterpartyName } : {}),
   };
 }
 
@@ -553,6 +552,7 @@ function parseBankTransactionLine(
   if (amountCandidate === null || amountCandidate.value === 0) return null;
 
   const direction = inferDirection(amountCandidate.token, amountCandidate.value, description);
+  const counterpartyName = counterpartyFromDescription(description);
   return {
     transaction_id: `${rawArtifactId}:bank:${String(index + 1).padStart(4, "0")}`,
     date,
@@ -561,9 +561,7 @@ function parseBankTransactionLine(
     direction,
     currency: DEFAULT_CURRENCY,
     ...(runningBalance !== null ? { running_balance: runningBalance } : {}),
-    ...(counterpartyFromDescription(description) !== null
-      ? { counterparty_name: counterpartyFromDescription(description)! }
-      : {}),
+    ...(counterpartyName !== null ? { counterparty_name: counterpartyName } : {}),
   };
 }
 
@@ -591,12 +589,37 @@ function inferDirection(token: string, value: number, description: string): "inf
   return "outflow";
 }
 
-function counterpartyFromDescription(description: string): string | null {
+export function counterpartyFromDescription(description: string): string | null {
+  if (isNonCounterpartyBankDescription(description)) return null;
   const cleaned = description
     .replace(/\b(ach|pos|debit|credit|card|online|payment|deposit|withdrawal)\b/gi, " ")
+    .replace(/^[^A-Za-z0-9]+/g, "")
+    .replace(
+      /\b(?:invoice|reference)(?:(?:\s+no\.?)?\s*[-#:]\s*|\s+)[A-Za-z0-9-]*\d[A-Za-z0-9-]*\b|\b(?:inv|bill|ref|po|p\.?o\.?)[-#:\s]+[A-Za-z0-9-]*\d[A-Za-z0-9-]*\b/gi,
+      " ",
+    )
     .replace(/\s+/g, " ")
     .trim();
-  return cleaned.length > 0 ? cleaned : null;
+  return cleaned.length > 0 && !isNonCounterpartyBankDescription(cleaned) ? cleaned : null;
+}
+
+function isNonCounterpartyBankDescription(description: string): boolean {
+  const normalized = description
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (normalized.length === 0) return true;
+  return (
+    /^(interest|interest earned|interest paid|interest credit|interest charge|interest income)$/.test(
+      normalized,
+    ) ||
+    /\b(bank fee|service fee|monthly fee|maintenance fee|overdraft fee|wire fee|atm fee|fee reversal)\b/.test(
+      normalized,
+    ) ||
+    /\b(internal transfer|transfer to|transfer from|account transfer|book transfer)\b/.test(
+      normalized,
+    )
+  );
 }
 
 function bankStatementConfidence(parsed: BankStatementOutput): number {

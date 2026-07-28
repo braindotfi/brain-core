@@ -585,6 +585,11 @@ export function normalizeName(s: string): string {
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
+    .replace(/^[^a-z0-9]+/g, "")
+    .replace(
+      /\b(?:invoice|reference)(?:(?:\s+no\.?)?\s*[-#:]\s*|\s+)[a-z0-9-]*\d[a-z0-9-]*\b|\b(?:inv|bill|ref|po|p\.?o\.?)[-#:\s]+[a-z0-9-]*\d[a-z0-9-]*\b/g,
+      " ",
+    )
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 }
