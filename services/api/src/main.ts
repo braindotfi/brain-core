@@ -97,6 +97,7 @@ import {
   resourceMetadataUrl,
 } from "./well-known/oauth-protected-resource.js";
 import { registerDocsRoutes } from "./docs/routes.js";
+import { registerAssistantQuestionsRoute } from "./assistant/questions-route.js";
 import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
 import { startCollectionsOverdueScanner } from "./agents/collections-overdue-scanner.js";
@@ -1955,6 +1956,7 @@ async function main(): Promise<void> {
         );
         await v1.register(async (child) => registerCanonicalRoutes(child, { pool }));
         await v1.register(async (child) => registerWikiPlugin(child, wikiDeps));
+        await v1.register(async (child) => registerAssistantQuestionsRoute(child, { pool, log }));
         await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
         await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
         await v1.register(async (child) => registerMemberRoutes(child, { pool, audit }));

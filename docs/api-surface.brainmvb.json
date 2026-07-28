@@ -607,9 +607,9 @@
           "required_scope": "ledger:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "query { status?, account_type?, limit?, cursor? }",
-          "response_shape": "200 { accounts, next_cursor }",
+          "response_shape": "200 { accounts, next_cursor, total_count }",
           "example_request": "GET /v1/ledger/accounts?limit=25",
-          "example_response": { "accounts": [], "next_cursor": null },
+          "example_response": { "accounts": [], "next_cursor": null, "total_count": 0 },
           "openapi": "documented:/ledger/accounts"
         },
         {
@@ -916,6 +916,18 @@
     {
       "group": "wiki_memory_policy",
       "endpoints": [
+        {
+          "method": "GET",
+          "path": "/v1/assistant/questions",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { limit? }",
+          "response_shape": "200 { questions }",
+          "example_request": "GET /v1/assistant/questions",
+          "example_response": { "questions": [] },
+          "openapi": "documented:/assistant/questions"
+        },
         {
           "method": "GET",
           "path": "/v1/memory/pages",

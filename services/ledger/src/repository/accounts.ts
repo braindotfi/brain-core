@@ -19,6 +19,8 @@ export interface AccountListFilters {
   cursor?: KeysetCursor;
 }
 
+export type AccountCountFilters = Pick<AccountListFilters, "status" | "account_type">;
+
 export async function findAccountById(
   client: TenantScopedClient,
   id: string,
@@ -64,4 +66,26 @@ export async function listAccounts(
     values,
   );
   return rows;
+}
+
+export async function countAccounts(
+  client: TenantScopedClient,
+  filters: AccountCountFilters,
+): Promise<number> {
+  const where: string[] = [`owner_id = current_setting('app.tenant_id', true)`];
+  const values: unknown[] = [];
+  if (filters.status !== undefined) {
+    values.push(filters.status);
+    where.push(`status = $${values.length}`);
+  }
+  if (filters.account_type !== undefined) {
+    values.push(filters.account_type);
+    where.push(`account_type = $${values.length}`);
+  }
+  const whereSql = where.length === 0 ? "" : `WHERE ${where.join(" AND ")}`;
+  const { rows } = await client.query<{ total_count: string | number }>(
+    `SELECT count(*)::int AS total_count FROM ledger_accounts ${whereSql}`,
+    values,
+  );
+  return Number(rows[0]?.total_count ?? 0);
 }

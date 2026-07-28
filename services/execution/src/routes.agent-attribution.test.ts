@@ -68,9 +68,20 @@ function paymentIntent(input: CreatePaymentIntentInput): PaymentIntent {
 
 function createService() {
   const create = vi.fn(async (_ctx, input: CreatePaymentIntentInput) => paymentIntent(input));
+  const list = vi.fn(async () => [
+    paymentIntent({
+      action_type: "ach_outbound",
+      source_account_id: ACCT,
+      destination_counterparty_id: CP,
+      amount: "100.00",
+      currency: "USD",
+      agent_id: REQUESTED_AGENT,
+    }),
+  ]);
   return {
-    service: { create } as unknown as PaymentIntentService,
+    service: { create, list } as unknown as PaymentIntentService,
     create,
+    list,
   };
 }
 
@@ -251,6 +262,31 @@ describe("propose route agent attribution", () => {
 
     expect(res.statusCode).toBe(201);
     expect(captured).toEqual([AUTH_AGENT]);
+    await app.close();
+  });
+
+  it("lists actions for the requested agent", async () => {
+    const { service, list } = createService();
+    const app = await buildApp(principal(["execution:read"], "user"));
+    await registerPaymentIntentRoutes(app, service);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/agents/${REQUESTED_AGENT}/actions?limit=10`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ tenantId: TENANT }), {
+      agent_id: REQUESTED_AGENT,
+      limit: 10,
+    });
+    expect(res.json().actions).toEqual([
+      expect.objectContaining({
+        proposal_id: null,
+        payment_intent_id: expect.stringMatching(/^pi_/),
+        status: "approved",
+      }),
+    ]);
     await app.close();
   });
 });

@@ -41,6 +41,7 @@ import {
   findObligationById,
   findTransactionById,
   findLatestBalance,
+  countAccounts as countAccountsRepo,
   listAccounts as listAccountsRepo,
   listBalances as listBalancesRepo,
   listCounterparties as listCounterpartiesRepo,
@@ -111,18 +112,26 @@ export class LedgerService implements ILedgerService {
   public async listAccounts(
     ctx: ServiceCallContext,
     f: AccountListFilters,
-  ): Promise<ListResult<Account>> {
+  ): Promise<ListResult<Account> & { total_count: number }> {
     const limit = clampLimit(f.limit, 50, 500);
     const cursor = f.cursor !== undefined ? decodeKeysetCursor(f.cursor) : undefined;
-    const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      listAccountsRepo(c, {
-        ...(f.status !== undefined ? { status: f.status } : {}),
-        ...(f.account_type !== undefined ? { account_type: f.account_type } : {}),
+    const filters = {
+      ...(f.status !== undefined ? { status: f.status } : {}),
+      ...(f.account_type !== undefined ? { account_type: f.account_type } : {}),
+    };
+    const result = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      const rows = await listAccountsRepo(c, {
+        ...filters,
         limit: limit + 1,
         ...(cursor !== undefined ? { cursor } : {}),
-      }),
-    );
-    return pageRows(rows, limit, serializeAccount, (row) => row.created_at.toISOString());
+      });
+      const totalCount = await countAccountsRepo(c, filters);
+      return { rows, totalCount };
+    });
+    return {
+      ...pageRows(result.rows, limit, serializeAccount, (row) => row.created_at.toISOString()),
+      total_count: result.totalCount,
+    };
   }
 
   public async getAccount(
