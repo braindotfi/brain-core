@@ -62,7 +62,7 @@ describe("GET /.well-known/jwks.json", () => {
   });
 });
 
-describe("interim stubs (replaced in Phase 2a)", () => {
+describe("interim stubs (Phase 1 mode: no oauthCore supplied)", () => {
   it("GET /authorize returns 503 with an RFC 6749 error body", async () => {
     const r = await app.inject({ method: "GET", url: "/authorize" });
     expect(r.statusCode).toBe(503);
@@ -74,5 +74,39 @@ describe("interim stubs (replaced in Phase 2a)", () => {
     expect(r.statusCode).toBe(503);
     expect(r.json()).toEqual({ error: "temporarily_unavailable" });
     expect(r.headers["cache-control"]).toBe("no-store");
+  });
+});
+
+describe("Phase 2a increment 3: oauthCore replaces the stubs when supplied", () => {
+  it("GET /authorize is no longer the 503 stub -- it renders the open-redirect-safe error page for an unknown client_id", async () => {
+    const jwk = await generateSignKeyJwk();
+    const withOauthCore = await buildAuthApp({
+      issuer: ISSUER,
+      signKey: JSON.stringify(jwk),
+      serviceName: "brain-auth",
+      serviceVersion: "0.0.0-dev",
+      commit: "deadbeef",
+      logger: false,
+      oauthCore: {
+        authPool: { query: async () => ({ rows: [], rowCount: 0 }) } as never,
+        resolverPool: { query: async () => ({ rows: [], rowCount: 0 }) } as never,
+        cookieSecret: "test-cookie-secret-do-not-use-in-prod",
+        audit: {
+          emit: async () => ({ id: "evt_test", eventHash: "h", prevEventHash: null }),
+        } as never,
+        signer: { sign: async () => "unused" } as never,
+        onchain: { getOnchainScopeHash: async () => null },
+        authAudience: "brain-api",
+        mcpPublicResourceUrl: "https://mcp.brain.fi",
+      },
+    });
+    try {
+      const r = await withOauthCore.inject({ method: "GET", url: "/authorize" });
+      expect(r.statusCode).not.toBe(503);
+      expect(r.statusCode).toBe(400);
+      expect(r.body).toContain("Unknown or disabled OAuth client");
+    } finally {
+      await withOauthCore.close();
+    }
   });
 });

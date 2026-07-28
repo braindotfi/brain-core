@@ -208,6 +208,8 @@ services:
           -v brain_tenant_deletion_password="${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}" \
           -v brain_surface_gateway_password="${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:-brain_surface_gateway}" \
           -v brain_surface_audit_writer_password="${BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD:-brain_surface_audit_writer}" \
+          -v brain_auth_password="${BRAIN_AUTH_DB_PASSWORD:-brain_auth}" \
+          -v brain_auth_audit_writer_password="${BRAIN_AUTH_AUDIT_DB_PASSWORD:-brain_auth_audit_writer}" \
           -f /db-roles.sql
     depends_on:
       migrate:
@@ -300,18 +302,33 @@ services:
       NODE_ENV: production
       PORT: "3000"
       SERVICE_NAME: brain-auth
-      # DATABASE_URL, REDIS_URL and AUTH_JWKS_URL below are placeholders.
-      # loadConfig() requires them to parse as URLs, but Phase 1 of the
-      # authorization server dials none of them: it serves only discovery
-      # documents and /healthz. This service deliberately has no env_file, so no
-      # production secret beyond AUTH_SIGN_KEY reaches what becomes a public
-      # browser-facing origin in Phase 2a. Phase 2a adds a real DATABASE_URL on
-      # the least-privilege brain_auth role.
+      # DATABASE_URL and REDIS_URL below remain placeholders: loadConfig()
+      # requires them to parse as URLs, but this service never dials either --
+      # DB access goes through BRAIN_AUTH_DB_URL / BRAIN_RESOLVER_DB_URL /
+      # BRAIN_AUTH_AUDIT_DB_URL below on their own least-privilege roles, and
+      # there is no Redis dependency (rate limiting is in-memory, single
+      # container, per OAUTH-AS-PLAN.md section 2). This service deliberately
+      # has no env_file, so no production secret beyond what is explicitly
+      # listed here reaches what is a public browser-facing origin.
       DATABASE_URL: postgres://unused:unused@localhost:5432/unused
       REDIS_URL: redis://localhost:6379
       AUTH_JWKS_URL: http://jwks:8085/.well-known/jwks.json
       AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
       AUTH_SIGN_KEY: ${AUTH_SIGN_KEY}
+      AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET}
+      BRAIN_AUTH_DB_URL: postgres://brain_auth:${BRAIN_AUTH_DB_PASSWORD:-brain_auth}@postgres:5432/brain
+      BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}@postgres:5432/brain
+      BRAIN_AUTH_AUDIT_DB_URL: postgres://brain_auth_audit_writer:${BRAIN_AUTH_AUDIT_DB_PASSWORD:-brain_auth_audit_writer}@postgres:5432/brain
+      EMAIL_ENDPOINT: ${EMAIL_ENDPOINT:-}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      db-roles:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD

@@ -14,15 +14,24 @@
     "lint:fix": "eslint src test --fix",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
+    "@brain/internal-agents": "workspace:*",
+    "@brain/mcp": "workspace:*",
     "@brain/shared": "workspace:*",
+    "@brain/surfaces": "workspace:*",
     "@fastify/helmet": "^13.0.2",
-    "fastify": "^5.0.0"
+    "@fastify/rate-limit": "^10.3.0",
+    "fastify": "^5.0.0",
+    "pg": "^8.13.0",
+    "viem": "^2.21.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
+    "@types/pg": "^8.11.10",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^9.12.0",
     "tsx": "^4.19.2",

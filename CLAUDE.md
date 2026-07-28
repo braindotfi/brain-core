@@ -27,11 +27,20 @@ Private workspace, UNLICENSED.
 - `services/auth`: the OAuth 2.0 authorization server at `AUTH_ISSUER`
   (`auth.brain.fi`), a standalone Fastify deployable (see OAUTH-AS-PLAN.md).
   Phase 1 serves RFC 8414 metadata and JWKS discovery only, plus 503 stubs for
-  `/authorize` and `/token`; Phase 2a adds the real authorization-code + PKCE
-  flow. No DB, no Redis, no session cookie in Phase 1. Runs as its own process
-  with its own minimal env (`AUTH_SIGN_KEY` plus whatever `loadConfig`
-  requires to boot), not the full `.env.prod` secret set, since it is a
-  public browser-facing origin starting Phase 2a.
+  `/authorize` and `/token`. Phase 2a increment 2 (AUTH-PATHS-PLAN.md section
+  2, "Path 1") adds human authentication: `GET/POST /login`, `/set-password`,
+  `/forgot-password`, server-rendered HTML, stateless `__Host-brain_as`
+  session cookie plus a pre-auth CSRF carrier (both `shared/src/auth/hmac-token.ts`),
+  reusing `email_verifications` verbatim (no migration). Still no
+  `/authorize`/`/token`/PKCE/consent -- that is the OAuth core, a later
+  increment. Two DB pools: `brain_auth` (`BRAIN_AUTH_DB_URL`, tenant-scoped)
+  and `brain_resolver` (`BRAIN_RESOLVER_DB_URL`, the pre-tenant email lookup),
+  plus `brain_auth_audit_writer` (`BRAIN_AUTH_AUDIT_DB_URL`) for `auth.login`
+  / `auth.password_set` / `auth.password_reset_requested` audit events. Runs
+  as its own process with its own explicit env (DB role URLs, `AUTH_SIGN_KEY`,
+  `AUTH_COOKIE_SECRET`, `EMAIL_ENDPOINT`/`EMAIL_API_KEY`/`EMAIL_FROM`), not the
+  full `.env.prod` secret set (no `env_file:`), since it is a public
+  browser-facing origin.
 
 Dependency is one-directional and acyclic: core -> surfaces. A CI check should
 fail the build if anything under packages/surfaces imports @brain/core.
