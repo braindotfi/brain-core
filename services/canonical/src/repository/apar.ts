@@ -72,8 +72,8 @@ export async function upsertCanonicalObligation(
       : ((
           await c.query<{ id: string }>(
             `SELECT id FROM canonical_counterparty
-              WHERE source_system = $1 AND source_natural_key = $2`,
-            [input.sourceSystem, input.counterpartySourceKey],
+              WHERE tenant_id = $1 AND source_system = $2 AND source_natural_key = $3`,
+            [tenantId, input.sourceSystem, input.counterpartySourceKey],
           )
         ).rows[0]?.id ?? null);
 

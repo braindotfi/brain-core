@@ -206,11 +206,12 @@ import {
   registerAuditRoutes,
   registerWebhookRoutes,
   publishAnchor,
+  publishPendingAnchor,
   startAnchorReconciler,
   startAuditConsistencyVerifier,
   startWebhookDispatchWorker,
 } from "@brain/audit";
-import type { AuditDeps } from "@brain/audit";
+import type { AuditAnchorRow, AuditDeps } from "@brain/audit";
 
 import {
   sandboxEvaluateLegacyPolicy,
@@ -3230,6 +3231,26 @@ async function main(): Promise<void> {
       const now = new Date();
       const periodStart = new Date(now.getTime() - intervalMs);
       try {
+        const pending = await auditVerifierPool.query<AuditAnchorRow>(
+          `SELECT id, tenant_id, merkle_root, event_count, period_start, period_end,
+                  onchain_tx_hash, onchain_block_number, onchain_status, created_at
+             FROM audit_anchors
+            WHERE onchain_tx_hash IS NULL
+              AND onchain_status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT 10`,
+        );
+        for (const row of pending.rows) {
+          try {
+            await publishPendingAnchor(pool, anchorBroadcaster, row);
+          } catch (err) {
+            log.error(
+              { err, tenantId: row.tenant_id, anchorId: row.id },
+              "pending anchor retry failed",
+            );
+          }
+        }
+
         // Cross-tenant ENUMERATION only: MUST use a BYPASSRLS pool (the
         // audit-publisher role, scoped to SELECT on audit_events). The app pool
         // connects as brain_app under FORCE RLS, so without a tenant scope this
