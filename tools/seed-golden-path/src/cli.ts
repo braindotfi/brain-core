@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import { Pool } from "pg";
 import { InMemoryAuditEmitter, withTenantScope, newPolicyId, newAgentId } from "@brain/shared";
 import { seedGoldenPath } from "./index.js";
+import { demoAgentScopeHash } from "./demo-agent-scope-hash.js";
 
 /**
  * Demo-only governance seed: an active 5-rule policy + a registered payment
@@ -66,7 +67,7 @@ async function seedDemoGovernance(
     process.env.BRAIN_ONCHAIN_SMART_ACCOUNT ?? "0x0000000000000000000000000000000000000000";
   const policyJson = JSON.stringify(DEMO_POLICY);
   const policyHash = createHash("sha256").update(policyJson).digest();
-  const scopeHash = createHash("sha256").update(`${tenantId}:payment`).digest();
+  const scopeHash = demoAgentScopeHash();
   const policyId = newPolicyId();
   const agentId = newAgentId();
   await withTenantScope(pool, tenantId, async (c) => {

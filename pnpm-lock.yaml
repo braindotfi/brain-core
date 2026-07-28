@@ -430,6 +430,9 @@ importers:
 
   services/execution:
     dependencies:
+      '@brain/internal-agents':
+        specifier: workspace:*
+        version: link:../internal-agents
       '@brain/ledger':
         specifier: workspace:*
         version: link:../ledger

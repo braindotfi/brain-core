@@ -4,7 +4,14 @@ import type { Redis } from "ioredis";
 import { SiweMessage } from "siwe";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { errorHandlerPlugin, requestIdPlugin, JwtSigner } from "@brain/shared";
+import {
+  computeAgentScopeHash,
+  errorHandlerPlugin,
+  requestIdPlugin,
+  JwtSigner,
+} from "@brain/shared";
+import { scopesForAgentRole } from "@brain/internal-agents";
+import type { OnchainScopeChecker } from "@brain/mcp";
 import {
   StubAgentRegistry,
   PostgresAgentRegistry,
@@ -412,8 +419,27 @@ describe("PostgresAgentRegistry", () => {
     } as unknown as Pool;
   }
 
+  // Scope-hash acceptance is on-chain preferred (see
+  // assertScopeHashAcceptable in @brain/mcp): an agent not registered
+  // on-chain must carry the canonical hash for its role, so most fixtures
+  // below use the real canonical hash + a checker that reports "not
+  // on-chain" (null). Tests of the on-chain-registered branch pass a
+  // checker that returns a matching (or mismatching) hash instead.
+  function canonicalHashHex(role: string): string {
+    return computeAgentScopeHash(scopesForAgentRole(role)).slice(2);
+  }
+  function canonicalHashBuffer(role: string): Buffer {
+    return Buffer.from(canonicalHashHex(role), "hex");
+  }
+  function notOnchain(): OnchainScopeChecker {
+    return { getOnchainScopeHash: async () => null };
+  }
+  function onchainReturning(hash: string | null): OnchainScopeChecker {
+    return { getOnchainScopeHash: async () => hash };
+  }
+
   it("returns null when no agent row is found", async () => {
-    const registry = new PostgresAgentRegistry(makePool([]));
+    const registry = new PostgresAgentRegistry(makePool([]), notOnchain());
     const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result).toBeNull();
   });
@@ -424,11 +450,11 @@ describe("PostgresAgentRegistry", () => {
         id: "agent_01RECON000000000000000000",
         tenant_id: "tnt_01RECON00000000000000000",
         role: "reconciliation",
-        scope_hash: null,
+        scope_hash: canonicalHashBuffer("reconciliation"),
         state: "active",
       },
     ]);
-    const registry = new PostgresAgentRegistry(pool);
+    const registry = new PostgresAgentRegistry(pool, notOnchain());
     const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result).not.toBeNull();
     expect(result?.agentId).toBe("agent_01RECON000000000000000000");
@@ -439,7 +465,7 @@ describe("PostgresAgentRegistry", () => {
     expect(result?.scopes).not.toContain("payment_intent:propose");
   });
 
-  it("decodes scope_hash Buffer to 0x-prefixed hex string", async () => {
+  it("decodes scope_hash Buffer to 0x-prefixed hex string (on-chain registered, hashes match)", async () => {
     const hashBytes = Buffer.from("aa".repeat(32), "hex");
     const pool = makePool([
       {
@@ -450,12 +476,15 @@ describe("PostgresAgentRegistry", () => {
         state: "active",
       },
     ]);
-    const registry = new PostgresAgentRegistry(pool);
+    const registry = new PostgresAgentRegistry(pool, onchainReturning("aa".repeat(32)));
     const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopeHash).toBe("0x" + "aa".repeat(32));
   });
 
-  it("uses zero hash when scope_hash column is null", async () => {
+  it("rejects (does not resolve) when scope_hash column is null", async () => {
+    // Prior behavior minted a token with a zero scope hash for a
+    // never-attested agent; assertScopeHashAcceptable now fails closed
+    // instead of letting an unattested agent authenticate.
     const pool = makePool([
       {
         id: "agent_01ZERO0000000000000000000",
@@ -465,11 +494,10 @@ describe("PostgresAgentRegistry", () => {
         state: "active",
       },
     ]);
-    const registry = new PostgresAgentRegistry(pool);
-    const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
-    expect(result?.scopeHash).toBe(
-      "0x0000000000000000000000000000000000000000000000000000000000000000",
-    );
+    const registry = new PostgresAgentRegistry(pool, notOnchain());
+    await expect(
+      registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+    ).rejects.toMatchObject({ code: "agent_scope_hash_missing" });
   });
 
   it("issues payment scopes for payment role", async () => {
@@ -478,11 +506,11 @@ describe("PostgresAgentRegistry", () => {
         id: "agent_01PAY00000000000000000000",
         tenant_id: "tnt_01PAY0000000000000000000",
         role: "payment",
-        scope_hash: null,
+        scope_hash: canonicalHashBuffer("payment"),
         state: "active",
       },
     ]);
-    const registry = new PostgresAgentRegistry(pool);
+    const registry = new PostgresAgentRegistry(pool, notOnchain());
     const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopes).toContain("payment_intent:propose");
     expect(result?.scopes).not.toContain("raw:read");
@@ -497,11 +525,11 @@ describe("PostgresAgentRegistry", () => {
           id: "agent_01RAW00000000000000000000",
           tenant_id: "tnt_01RAW0000000000000000000",
           role,
-          scope_hash: null,
+          scope_hash: canonicalHashBuffer(role),
           state: "active",
         },
       ]);
-      const registry = new PostgresAgentRegistry(pool);
+      const registry = new PostgresAgentRegistry(pool, notOnchain());
       const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
       expect(result?.scopes).toContain("ledger:read");
       expect(result?.scopes).toContain("wiki:read");
@@ -517,11 +545,11 @@ describe("PostgresAgentRegistry", () => {
         id: "agent_01DEV00000000000000000000",
         tenant_id: "tnt_01DEV0000000000000000000",
         role: "unknown_future_role",
-        scope_hash: null,
+        scope_hash: canonicalHashBuffer("unknown_future_role"),
         state: "active",
       },
     ]);
-    const registry = new PostgresAgentRegistry(pool);
+    const registry = new PostgresAgentRegistry(pool, notOnchain());
     const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopes).toContain("audit:read");
     expect(result?.scopes).not.toContain("raw:read");
@@ -538,11 +566,11 @@ describe("PostgresAgentRegistry", () => {
         id: "agent_01PART0000000000000000000",
         tenant_id: "tnt_01PART000000000000000000",
         role: "partner",
-        scope_hash: null,
+        scope_hash: canonicalHashBuffer("partner"),
         state: "active",
       },
     ]);
-    const registry = new PostgresAgentRegistry(pool);
+    const registry = new PostgresAgentRegistry(pool, notOnchain());
     const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopes).toContain("payment_intent:propose");
     expect(result?.scopes).toContain("payment_intent:approve");
@@ -561,15 +589,84 @@ describe("PostgresAgentRegistry", () => {
         id: "agent_01PEXE0000000000000000000",
         tenant_id: "tnt_01PEXE000000000000000000",
         role: "partner_execute",
-        scope_hash: null,
+        scope_hash: canonicalHashBuffer("partner_execute"),
         state: "active",
       },
     ]);
-    const registry = new PostgresAgentRegistry(pool);
+    const registry = new PostgresAgentRegistry(pool, notOnchain());
     const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
     expect(result?.scopes).toContain("payment_intent:execute");
     expect(result?.scopes).toContain("payment_intent:approve");
     expect(result?.scopes).toContain("payment_intent:propose");
+  });
+
+  describe("assertScopeHashAcceptable integration (drift + golden-agent cases)", () => {
+    it("accepts an on-chain-registered agent whose DB hash matches chain but NOT the role derivation (golden-agent case)", async () => {
+      // agent_01KTB9KXM267ZEEBAMYMNSYE6X: registered on-chain under the old
+      // seed-golden-path SHA-256(tenantId:payment) formula. Chain and DB
+      // agree with each other, so it must keep authenticating even though it
+      // disagrees with computeAgentScopeHash(scopesForAgentRole("payment")).
+      const oldFormulaHash = Buffer.from("11".repeat(32), "hex");
+      const pool = makePool([
+        {
+          id: "agent_01KTB9KXM267ZEEBAMYMNSYE6X",
+          tenant_id: "tnt_00000000010000000000000000",
+          role: "payment",
+          scope_hash: oldFormulaHash,
+          state: "active",
+        },
+      ]);
+      const registry = new PostgresAgentRegistry(pool, onchainReturning("11".repeat(32)));
+      const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+      expect(result?.agentId).toBe("agent_01KTB9KXM267ZEEBAMYMNSYE6X");
+    });
+
+    it("rejects an on-chain-registered agent whose DB hash disagrees with chain", async () => {
+      const pool = makePool([
+        {
+          id: "agent_01DRIFT00000000000000000",
+          tenant_id: "tnt_01DRIFT000000000000000000",
+          role: "payment",
+          scope_hash: Buffer.from("22".repeat(32), "hex"),
+          state: "active",
+        },
+      ]);
+      const registry = new PostgresAgentRegistry(pool, onchainReturning("33".repeat(32)));
+      await expect(
+        registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+      ).rejects.toMatchObject({ code: "agent_scope_hash_mismatch" });
+    });
+
+    it("rejects an unregistered agent whose DB hash is non-canonical", async () => {
+      const pool = makePool([
+        {
+          id: "agent_01NONCANON000000000000000",
+          tenant_id: "tnt_01NONCANON00000000000000",
+          role: "payment",
+          scope_hash: Buffer.from("44".repeat(32), "hex"),
+          state: "active",
+        },
+      ]);
+      const registry = new PostgresAgentRegistry(pool, notOnchain());
+      await expect(
+        registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+      ).rejects.toMatchObject({ code: "agent_scope_hash_mismatch" });
+    });
+
+    it("accepts an unregistered agent with the canonical hash", async () => {
+      const pool = makePool([
+        {
+          id: "agent_01CANON00000000000000000",
+          tenant_id: "tnt_01CANON0000000000000000000",
+          role: "payment",
+          scope_hash: canonicalHashBuffer("payment"),
+          state: "active",
+        },
+      ]);
+      const registry = new PostgresAgentRegistry(pool, notOnchain());
+      const result = await registry.resolveByAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+      expect(result?.agentId).toBe("agent_01CANON00000000000000000");
+    });
   });
 });
 

@@ -1324,6 +1324,13 @@ async function main(): Promise<void> {
       : undefined;
 
   // -- MCP server -----------------------------------------------------
+  // Hoisted above the dev-bypass ternary: PostgresAgentRegistry (SIWX) also
+  // needs an on-chain reader for its scope-hash acceptance check, whether or
+  // not MCP itself is running in dev-bypass mode.
+  const onchainScopeChecker = createViemScopeChecker({
+    rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+    contractAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
+  });
   const mcpAuthVerifier =
     cfg.BRAIN_MCP_DEV_AUTH_BYPASS && cfg.NODE_ENV !== "production"
       ? new FakeAuthVerifier({
@@ -1335,16 +1342,12 @@ async function main(): Promise<void> {
           role: "dev",
         })
       : (() => {
-          const scopeChecker = createViemScopeChecker({
-            rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
-            contractAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
-          });
           // Boot-time registry self-check. `getOnchainScopeHash` fails closed to
           // null on an ABI/layout skew, so a stale MCP_AGENT_REGISTRY_ADDRESS
           // would silently 401 every MCP call (agent_not_registered_onchain)
           // instead of surfacing. Probe once at boot and log loudly on mismatch.
           // Fire-and-forget so a slow RPC never blocks server start.
-          void scopeChecker
+          void onchainScopeChecker
             .selfCheck()
             .then((res) => {
               if (res.ok) {
@@ -1362,7 +1365,7 @@ async function main(): Promise<void> {
               }
             })
             .catch((err) => log.error({ err }, "MCP agent registry self-check threw"));
-          return new McpAuthVerifier(pool, scopeChecker);
+          return new McpAuthVerifier(pool, onchainScopeChecker);
         })();
 
   const agentService = new AgentService({
@@ -2164,7 +2167,7 @@ async function main(): Promise<void> {
         });
         const agentRegistry = cfg.BRAIN_DEMO_MODE
           ? new StubAgentRegistry()
-          : new PostgresAgentRegistry(pool);
+          : new PostgresAgentRegistry(pool, onchainScopeChecker);
         await v1.register(async (child) =>
           registerProductionTenancyRoutes(child, {
             pool,

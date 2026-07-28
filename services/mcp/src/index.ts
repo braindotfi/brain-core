@@ -13,6 +13,8 @@ export { BrainMcpServer, type McpServerDeps } from "./server.js";
 export {
   McpAuthVerifier,
   FakeAuthVerifier,
+  CachedOnchainScopeChecker,
+  assertScopeHashAcceptable,
   type AuthVerifier,
   type AgentRecord,
   type OnchainScopeChecker,
