@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TenantScopedClient } from "@brain/shared";
-import { projectCanonicalObligation } from "./obligations.js";
+import { projectCanonicalObligation, runLedgerAparProjectionCycle } from "./obligations.js";
 
 function clientWithCounterparty(): {
   client: TenantScopedClient;
@@ -147,5 +147,22 @@ describe("projectCanonicalObligation", () => {
     expect(invoice?.values[2]).toBe("NL-2417");
     expect(invoice?.values[4]).toBe("500.00");
     expect(invoice?.values[14]).toBe("co_1");
+  });
+});
+
+describe("runLedgerAparProjectionCycle", () => {
+  it("selects source_natural_key for obligation projection", async () => {
+    const queries: string[] = [];
+    const pool = {
+      query: vi.fn(async (text: string) => {
+        queries.push(text);
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    await runLedgerAparProjectionCycle({ pool: pool as never });
+
+    const obligationQuery = queries.find((q) => q.includes("FROM canonical_obligation co"));
+    expect(obligationQuery).toContain("co.source_natural_key");
   });
 });

@@ -81,8 +81,11 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(SQL).toContain("GRANT SELECT ON raw_parsed TO brain_canonical_projector");
     // ledger projector: SELECT canonical_*, write only projection targets.
     expect(SQL).toMatch(/GRANT SELECT ON %s TO brain_ledger_projector/);
+    expect(SQL).toContain(
+      "GRANT UPDATE (canonical_counterparty_id, updated_at) ON canonical_obligation\n  TO brain_ledger_projector",
+    );
     expect(SQL).toMatch(
-      /GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties,\s+ledger_accounts, ledger_transactions\s+TO brain_ledger_projector/,
+      /GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties,\s+ledger_accounts, ledger_transactions, ledger_invoices\s+TO brain_ledger_projector/,
     );
     // execution worker: outbox only.
     expect(SQL).toContain(
