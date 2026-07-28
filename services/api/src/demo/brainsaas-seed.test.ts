@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { evaluate, type Action, type PolicyDocument } from "@brain/policy";
 import type * as BrainShared from "@brain/shared";
 
 const { upsertCounterpartyRow, upsertAccountRow, recordTransactionRow } = vi.hoisted(() => ({
@@ -241,6 +242,42 @@ describe("seedBrainSaasDemo", () => {
     // version comes from the COALESCE(MAX(version)+1) stub → 1.
     expect(insertPolicy!.values?.[2]).toBe(1);
     expect(insertPolicy!.values?.[1]).toBe(TENANT);
+
+    const policy = JSON.parse(String(insertPolicy!.values?.[3])) as PolicyDocument;
+    expect(policy.rules).not.toContainEqual(
+      expect.objectContaining({ id: "ar-auto-agent-action", execute: "auto" }),
+    );
+    expect(policy.rules).toContainEqual({
+      id: "ar-agent-action-requires-review",
+      applies_to: ["agent_action"],
+      when: { "agent.confidence.gte": 0.6 },
+      execute: "confirm",
+      require: "single_signer",
+    });
+
+    const ordinaryAgentAction: Action = {
+      kind: "agent_action",
+      counterparty_id: null,
+      amount: null,
+      agent_role: "collections",
+      timestamp: new Date("2026-06-30T00:00:00Z"),
+      confidence: 0.72,
+    };
+    expect(evaluate(policy, ordinaryAgentAction)).toMatchObject({
+      outcome: "confirm",
+      matched_rule_id: "ar-agent-action-requires-review",
+      required_approvers: ["signer"],
+    });
+
+    const largeAgentAction: Action = {
+      ...ordinaryAgentAction,
+      amount: { currency: "USD", value: "500000.01" },
+    };
+    expect(evaluate(policy, largeAgentAction)).toMatchObject({
+      outcome: "confirm",
+      matched_rule_id: "ar-confirm-above-500k",
+      required_approvers: ["owner"],
+    });
   });
 
   it("deletes and re-inserts the demo payment agent", async () => {
