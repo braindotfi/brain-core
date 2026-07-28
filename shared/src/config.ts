@@ -72,6 +72,12 @@ const envSchema = z.object({
   BRAIN_TENANT_DELETION_DB_URL: z.string().url().optional(),
   BRAIN_SURFACE_GATEWAY_DB_URL: z.string().url().optional(),
   BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL: z.string().url().optional(),
+  // services/auth (Phase 2a): brain_auth (tenant-scoped oauth_*/users/members
+  // reads+writes) and its INSERT-only audit_events writer, mirroring the
+  // surface-gateway pair above. BRAIN_RESOLVER_DB_URL (already declared) is
+  // reused unchanged for the AS's pre-tenant email -> user lookup.
+  BRAIN_AUTH_DB_URL: z.string().url().optional(),
+  BRAIN_AUTH_AUDIT_DB_URL: z.string().url().optional(),
 
   // ---- Redis ----
   REDIS_URL: z.string().url(),
@@ -88,6 +94,13 @@ const envSchema = z.object({
    * exchange, and invite consumption. Routes compare it in constant time.
    */
   BRAIN_PLATFORM_SERVICE_SECRET: optionalNonEmptyString(),
+  /**
+   * services/auth (Phase 2a): HMAC secret for the AS's own browser session
+   * cookie, the pre-auth CSRF carrier, and the pending-authorization blob
+   * (shared/src/auth/hmac-token.ts). NOT a JWT signing key -- do not reuse
+   * AUTH_SIGN_KEY. Required for the AS to boot; no safe fallback.
+   */
+  AUTH_COOKIE_SECRET: optionalNonEmptyString(),
 
   // ---- Observability ----
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),

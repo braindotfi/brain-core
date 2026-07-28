@@ -263,6 +263,30 @@ describe("TenantDeletionService", () => {
     expect(enqueueIdx).toBeLessThan(commitIdx);
   });
 
+  it("deletes a tenant holding rows in all three oauth tables (finding 1)", async () => {
+    const pool = fakePool({
+      oauth_authorization_codes: 1,
+      oauth_refresh_tokens: 2,
+      oauth_consent_grants: 1,
+    });
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+
+    const result = await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+
+    expect(result.deletedRows.oauth_authorization_codes).toBe(1);
+    expect(result.deletedRows.oauth_refresh_tokens).toBe(2);
+    expect(result.deletedRows.oauth_consent_grants).toBe(1);
+    // The transaction committed rather than rolling back on a 23503 FK
+    // violation, which is what happened before these tables were added to
+    // TENANT_SCOPED_TABLES: the tenants row deleted before its oauth_*
+    // children, tripping the FK.
+    const client = await pool.connect();
+    const calls = vi.mocked(client.query).mock.calls.map((c) => c[0] as string);
+    expect(calls).toContain("COMMIT");
+    expect(calls).not.toContain("ROLLBACK");
+  });
+
   it("a failing audit emitter does not fail the committed deletion (best-effort emit)", async () => {
     const pool = fakePool({ raw_artifacts: 1 });
     // Audit service is down: the immediate emit rejects.
@@ -306,11 +330,28 @@ function repoRoot(): string {
   return join(here, "..", "..", "..", "..");
 }
 
+// Derived from disk rather than a fixed array: a hardcoded service list is
+// exactly how "auth" went unscanned until this fix (services/auth shipped a
+// migration with three tenant-scoped oauth_* tables and this test never saw
+// it). Reading services/*/ means the next new service's migrations are
+// scanned automatically.
+//
+// "surface-gateway" is excluded on purpose, not an oversight: it already has
+// its own tenant-scoped tables (surface_proposals, surface_decisions, etc.,
+// services/surface-gateway/migrations/0001_surface_gateway.sql) that are NOT
+// yet in TENANT_SCOPED_TABLES or PRESERVED_TABLES. That is a real, separate
+// GDPR-deletion gap this change does not fix; including it here would fail
+// this test for a reason unrelated to the oauth tables it exists to guard.
+const MIGRATION_SCAN_EXCLUDED_SERVICES = new Set(["surface-gateway"]);
+
 function listMigrationFiles(): string[] {
-  const services = ["api", "raw", "canonical", "ledger", "wiki", "policy", "audit", "execution"];
+  const servicesDir = join(repoRoot(), "services");
+  const services = readdirSync(servicesDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !MIGRATION_SCAN_EXCLUDED_SERVICES.has(e.name))
+    .map((e) => e.name);
   const files: string[] = [];
   for (const svc of services) {
-    const dir = join(repoRoot(), "services", svc, "migrations");
+    const dir = join(servicesDir, svc, "migrations");
     let entries: string[];
     try {
       entries = readdirSync(dir);

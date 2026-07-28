@@ -160,6 +160,7 @@ COPY --from=builder /app/tools/seed-golden-path/dist tools/seed-golden-path/dist
 # build stage's `COPY . .` does not survive into this stage.
 COPY --from=builder /app/services/api/migrations services/api/migrations
 COPY --from=builder /app/services/audit/migrations services/audit/migrations
+COPY --from=builder /app/services/auth/migrations services/auth/migrations
 COPY --from=builder /app/services/canonical/migrations services/canonical/migrations
 COPY --from=builder /app/services/execution/migrations services/execution/migrations
 COPY --from=builder /app/services/ledger/migrations services/ledger/migrations

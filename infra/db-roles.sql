@@ -81,6 +81,8 @@ ALTER ROLE brain_mcp_reader WITH LOGIN PASSWORD :'brain_mcp_reader_password' NOB
 --      brain_tenant_deletion     GDPR erasure svc + blob-purge (broad DELETE, route-gated)
 --      brain_surface_gateway     approval webhooks only (surface_* + approvals)
 --      brain_surface_audit_writer audit_events append only for surface gateway
+--      brain_auth                OAuth authorization server core (oauth_*, tenant-scoped)
+--      brain_auth_audit_writer   audit_events append only for the authorization server
 DO $$
 DECLARE
   rolename text;
@@ -89,7 +91,7 @@ BEGIN
     'brain_raw_worker', 'brain_canonical_projector', 'brain_ledger_projector',
     'brain_execution_worker', 'brain_audit_verifier', 'brain_audit_publisher',
     'brain_resolver', 'brain_tenant_deletion', 'brain_surface_gateway',
-    'brain_surface_audit_writer'
+    'brain_surface_audit_writer', 'brain_auth', 'brain_auth_audit_writer'
   ] LOOP
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = rolename) THEN
       EXECUTE format('CREATE ROLE %I LOGIN', rolename);
@@ -106,6 +108,8 @@ ALTER ROLE brain_resolver            WITH LOGIN PASSWORD :'brain_resolver_passwo
 ALTER ROLE brain_tenant_deletion     WITH LOGIN PASSWORD :'brain_tenant_deletion_password' BYPASSRLS;
 ALTER ROLE brain_surface_gateway     WITH LOGIN PASSWORD :'brain_surface_gateway_password' NOBYPASSRLS;
 ALTER ROLE brain_surface_audit_writer WITH LOGIN PASSWORD :'brain_surface_audit_writer_password' NOBYPASSRLS;
+ALTER ROLE brain_auth                WITH LOGIN PASSWORD :'brain_auth_password' NOBYPASSRLS;
+ALTER ROLE brain_auth_audit_writer   WITH LOGIN PASSWORD :'brain_auth_audit_writer_password' NOBYPASSRLS;
 
 -- brain_app gets request-path DML on the application schema; it does not own the
 -- tables, so RLS applies to it. brain_privileged is intentionally excluded from
@@ -178,7 +182,7 @@ GRANT USAGE ON SCHEMA public TO
   brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
   brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
   brain_resolver, brain_tenant_deletion, brain_surface_gateway,
-  brain_surface_audit_writer;
+  brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
 -- Writer roles may hit serial-backed tables; read-only roles (publisher,
 -- resolver) get no sequence access.
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO
@@ -263,8 +267,14 @@ GRANT SELECT ON webhook_endpoints, webhook_dead_letters, webhook_delivery_receip
   TO brain_audit_publisher;
 
 -- brain_resolver: cross-tenant SELECT only, for the webhook/SIWX/login/session resolvers.
+-- Extended for the OAuth core (Phase 2a): agents (pre-tenant OAuth agent
+-- lookups) plus the oauth_* pre-tenant lookups (code_hash -> row, token_hash
+-- -> row). oauth_consent_grants is intentionally excluded: it is reached only
+-- through an already-tenant-scoped code or refresh token, never a pre-tenant
+-- lookup.
 GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links,
-  member_invites, session_refresh_tokens, api_keys TO brain_resolver;
+  member_invites, session_refresh_tokens, api_keys, agents, oauth_clients,
+  oauth_authorization_codes, oauth_refresh_tokens TO brain_resolver;
 
 -- brain_surface_gateway: tenant-scoped webhook decisions and delivery state.
 -- No ledger_* or execution_outbox grants. The handoff stops at approvals.
@@ -280,8 +290,49 @@ GRANT SELECT, INSERT, UPDATE ON approvals TO brain_surface_gateway;
 
 -- brain_surface_audit_writer: append-only audit events for the surface gateway
 -- audit pool. It intentionally has no grants on surface, ledger, approval, or
--- outbox tables.
-GRANT INSERT ON audit_events TO brain_surface_audit_writer;
+-- outbox tables. Append-only means no mutation of EXISTING rows (the REVOKE
+-- UPDATE, DELETE, TRUNCATE below still applies), not blind writes:
+-- PostgresAuditEmitter.emit (shared/src/audit/emitter.ts) reads the
+-- hash-chain predecessor (`SELECT event_hash FROM audit_events ... LIMIT 1`)
+-- before every insert, so SELECT is structurally required or every emit
+-- raises 42501 permission denied. Verified live: INSERT-only broke every
+-- emit from this role. Do not "harden" this back to INSERT-only.
+GRANT SELECT, INSERT ON audit_events TO brain_surface_audit_writer;
+
+-- brain_auth: the OAuth authorization server core (Phase 2a, OAUTH-AS-PLAN.md
+-- section 4 / AUTH-PATHS-PLAN.md section 6). NOBYPASSRLS -- unlike the other
+-- section 4 roles, the AS is tenant-scoped per request like brain_app, not a
+-- cross-tenant reader, so RLS applies to it. No DELETE anywhere: codes and
+-- tokens are marked consumed or revoked, never deleted. The column-list GRANT
+-- UPDATE on users matters: a compromised AS cannot change email, tenant_id,
+-- or role.
+GRANT SELECT, INSERT, UPDATE ON oauth_clients, oauth_authorization_codes,
+  oauth_consent_grants, oauth_refresh_tokens TO brain_auth;
+GRANT SELECT, INSERT, UPDATE ON email_verifications TO brain_auth;
+-- No grant on wallet_identities: Path 2 (wallet + SIWE login at the AS) is
+-- design-only, not built in v1 (AUTH-PATHS-PLAN.md section 3). No Phase 2a
+-- code writes wallet_identities, so the grant bought nothing today and was a
+-- session-minting primitive: siwx.ts resolves a linked wallet straight to an
+-- owner JWT, so brain_auth alone could insert a row binding an attacker
+-- address to any tenant owner and mint an owner JWT via POST /v1/auth/siwx.
+-- RLS does not contain this because brain_auth sets its own app.tenant_id.
+-- Add SELECT, INSERT back here when Path 2 ships.
+GRANT UPDATE (password_hash, email_verified_at, status) ON users TO brain_auth;
+GRANT SELECT ON users, members, member_identity_links, tenants, agents TO brain_auth;
+
+COMMENT ON ROLE brain_auth IS
+  'OAuth authorization server core (auth.brain.fi). Containment: brain_auth cannot INSERT or UPDATE members, cannot touch session_refresh_tokens or member_invites, cannot INSERT tenants or users, cannot UPDATE agents, and holds nothing on any ledger_* table or execution_outbox. The AS cannot mint a Brain session directly (no session table, no JWT signing key), but its column-list GRANT UPDATE (password_hash, email_verified_at, status) ON users is a credential-write primitive equivalent to one: setting a known scrypt hash on any owner and then calling POST /v1/auth/login reaches the same outcome as a minted session. AS compromise must therefore be modelled as tenant-wide account takeover, not merely as an OAuth-scoped foothold.';
+
+-- brain_auth_audit_writer: append-only audit events for the authorization
+-- server's audit pool, mirroring brain_surface_audit_writer. Required, not
+-- optional: brain_privileged deliberately cannot insert audit_events, so
+-- every writer needs its own narrow role. SELECT is required alongside
+-- INSERT for the same reason as brain_surface_audit_writer above: the
+-- hash-chain predecessor read in PostgresAuditEmitter.emit 42501s without it,
+-- turning every /login, /set-password, and /forgot-password audit emit into
+-- a 500 (finding 1). Append-only is enforced by the REVOKE UPDATE, DELETE,
+-- TRUNCATE below, not by withholding SELECT.
+GRANT SELECT, INSERT ON audit_events TO brain_auth_audit_writer;
 
 -- brain_tenant_deletion: GDPR Article 17 erasure (route-gated) + blob-purge
 -- worker. Broad DELETE across tenant-scoped (RLS) tables — that IS the erasure
@@ -319,13 +370,13 @@ REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
        brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
        brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
        brain_resolver, brain_tenant_deletion, brain_surface_gateway,
-       brain_surface_audit_writer;
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
 REVOKE INSERT ON audit_events
   FROM brain_privileged, brain_wiki_reader,
        brain_mcp_reader,
        brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
        brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
-       brain_resolver, brain_tenant_deletion, brain_surface_gateway;
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway, brain_auth;
 
 -- Audit-verifier FORENSIC state (audit_verifier_checkpoint, audit_integrity_findings):
 -- global, RLS-exempt tables that PROVE tamper detection. Only the privileged verifier
@@ -347,7 +398,8 @@ REVOKE ALL ON audit_verifier_checkpoint, audit_integrity_findings
        brain_mcp_reader,
        brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
        brain_execution_worker, brain_audit_publisher, brain_resolver,
-       brain_tenant_deletion, brain_surface_gateway, brain_surface_audit_writer;
+       brain_tenant_deletion, brain_surface_gateway, brain_surface_audit_writer,
+       brain_auth, brain_auth_audit_writer;
 REVOKE DELETE, TRUNCATE ON audit_verifier_checkpoint
   FROM brain_privileged, brain_audit_verifier;
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_integrity_findings
@@ -409,6 +461,8 @@ $$;
 --   brain_mcp_reader          BRAIN_MCP_READER_DB_URL
 --   brain_surface_gateway     BRAIN_SURFACE_GATEWAY_DB_URL
 --   brain_surface_audit_writer BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL
+--   brain_auth                BRAIN_AUTH_DB_URL
+--   brain_auth_audit_writer   BRAIN_AUTH_AUDIT_DB_URL
 -- In NODE_ENV=production the api fails to boot if BRAIN_WIKI_DB_URL or any of
 -- the eight §4 URLs is unset (services/api/src/composition/db-isolation.ts);
 -- in dev/test each falls back to DATABASE_URL with a warning. The API runtime

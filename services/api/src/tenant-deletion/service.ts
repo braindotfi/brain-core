@@ -150,6 +150,15 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "webhook_endpoints", column: "tenant_id" },
   { table: "domain_events", column: "tenant_id" },
 
+  // ---- Auth (OAuth authorization server, services/auth/migrations/0001) ----
+  // No FK relationships between the three (see the migration header for why);
+  // order is arbitrary among them. oauth_clients is deliberately absent: it
+  // has no tenant_id column (DCR clients register before any tenant exists)
+  // and carries zero authority until a consent grant binds it to a tenant.
+  { table: "oauth_authorization_codes", column: "tenant_id" },
+  { table: "oauth_refresh_tokens", column: "tenant_id" },
+  { table: "oauth_consent_grants", column: "tenant_id" },
+
   // ---- Onboarding / identity (tenants registry last) ----
   { table: "governance_report_snapshots", column: "tenant_id" },
   { table: "tenant_export_jobs", column: "tenant_id" },

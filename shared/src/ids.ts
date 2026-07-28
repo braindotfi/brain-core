@@ -101,6 +101,12 @@ export const ID_PREFIX = {
   // Per-customer API-key auth (token-exchange model). Public id for a row in
   // api_keys; distinct from the token/agent ids minted alongside it.
   apiKey: "akey",
+  // OAuth 2.1 authorization server (Phase 2a increment 3, OAUTH-AS-PLAN.md
+  // section 4). oauth_clients.client_id is minted by scripts/ops/
+  // register-oauth-client.ts, not this file's generic prefix; the constant
+  // still lives here so both sides agree on the shape.
+  oauthClient: "oacl",
+  oauthConsentGrant: "ogr",
 } as const;
 
 export type BrainIdPrefix = (typeof ID_PREFIX)[keyof typeof ID_PREFIX];
@@ -163,6 +169,8 @@ export const newApiKeyId = (): string => brainId(ID_PREFIX.apiKey);
 export const newTenantExportJobId = (): string => brainId(ID_PREFIX.tenantExportJob);
 export const newGovernanceReportSnapshotId = (): string =>
   brainId(ID_PREFIX.governanceReportSnapshot);
+export const newOauthClientId = (): string => brainId(ID_PREFIX.oauthClient);
+export const newOauthConsentGrantId = (): string => brainId(ID_PREFIX.oauthConsentGrant);
 
 /**
  * Parse a Brain ID into its prefix and ULID. Returns null on malformed input.
