@@ -83,7 +83,9 @@ describe("TenantDeletionService", () => {
     const deletes = calls.filter((c) => c.startsWith("DELETE FROM "));
     expect(deletes.length).toBeGreaterThan(20);
     for (const sql of deletes) {
-      expect(sql).toMatch(/^DELETE FROM [a-z_][a-z0-9_]* WHERE (tenant_id|owner_id|id) = \$1$/);
+      expect(sql).toMatch(
+        /^DELETE FROM [a-z_][a-z0-9_]* WHERE (tenant_id|owner_id|brain_tenant_id|id) = \$1$/,
+      );
     }
   });
 
@@ -263,6 +265,30 @@ describe("TenantDeletionService", () => {
     expect(enqueueIdx).toBeLessThan(commitIdx);
   });
 
+  it("deletes the surface-gateway tables, keyed on their own tenant column", async () => {
+    const pool = fakePool({
+      surface_proposals: 2,
+      surface_decisions: 1,
+      surface_slack_installations: 1,
+      surface_teams_installations: 1,
+      surface_email_recipients: 3,
+    });
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+
+    const result = await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+
+    expect(result.deletedRows.surface_proposals).toBe(2);
+    expect(result.deletedRows.surface_slack_installations).toBe(1);
+    expect(result.deletedRows.surface_email_recipients).toBe(3);
+
+    // surface_teams_installations is keyed on brain_tenant_id, not tenant_id:
+    // a DELETE built with the wrong predicate column would error at runtime.
+    const client = await pool.connect();
+    const calls = vi.mocked(client.query).mock.calls.map((c) => c[0] as string);
+    expect(calls).toContain("DELETE FROM surface_teams_installations WHERE brain_tenant_id = $1");
+  });
+
   it("a failing audit emitter does not fail the committed deletion (best-effort emit)", async () => {
     const pool = fakePool({ raw_artifacts: 1 });
     // Audit service is down: the immediate emit rejects.
@@ -292,7 +318,7 @@ describe("TenantDeletionService", () => {
 
 interface ScannedTable {
   table: string;
-  column: "owner_id" | "tenant_id" | "id";
+  column: "owner_id" | "tenant_id" | "brain_tenant_id" | "id";
   migrationFile: string;
 }
 
@@ -306,11 +332,20 @@ function repoRoot(): string {
   return join(here, "..", "..", "..", "..");
 }
 
+// Derived from disk rather than a fixed array. A hardcoded service list is
+// exactly how services/surface-gateway went unscanned: it shipped eleven
+// tenant-scoped surface_* tables and this guard never saw one of them, so a
+// GDPR erasure left every Slack/Teams install token and proposal payload
+// behind. Reading services/*/ means the next new service's migrations are
+// scanned automatically, with no list to remember to update.
 function listMigrationFiles(): string[] {
-  const services = ["api", "raw", "canonical", "ledger", "wiki", "policy", "audit", "execution"];
+  const servicesDir = join(repoRoot(), "services");
+  const services = readdirSync(servicesDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
   const files: string[] = [];
   for (const svc of services) {
-    const dir = join(repoRoot(), "services", svc, "migrations");
+    const dir = join(servicesDir, svc, "migrations");
     let entries: string[];
     try {
       entries = readdirSync(dir);
@@ -355,6 +390,12 @@ function scanCreatedTables(sql: string, file: string): ScannedTable[] {
       out.push({ table: name, column: "tenant_id", migrationFile: file });
     } else if (/\bowner_id\b/.test(body)) {
       out.push({ table: name, column: "owner_id", migrationFile: file });
+    } else if (/\bbrain_tenant_id\b/.test(body)) {
+      // `\btenant_id\b` does NOT match inside `brain_tenant_id` (no word
+      // boundary after the underscore), so surface_teams_installations —
+      // whose tenant key is brain_tenant_id — read as un-scoped and slipped
+      // past this guard entirely. Match it explicitly.
+      out.push({ table: name, column: "brain_tenant_id", migrationFile: file });
     } else if (name === "tenants") {
       // tenants is the registry; its key is `id`. Treated as tenant-scoped
       // for this purpose so the deletion path includes the row itself.
