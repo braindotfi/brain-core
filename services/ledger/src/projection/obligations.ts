@@ -80,9 +80,11 @@ interface CanonicalCounterpartyRow {
 interface CanonicalObligationRow {
   id: string;
   tenant_id: string;
+  source_system: string;
   direction: string;
   type: string;
   canonical_counterparty_id: string | null;
+  counterparty_source_key: string | null;
   amount: string;
   currency: string | null;
   issue_date: string | null;
@@ -173,11 +175,29 @@ export async function projectCanonicalObligation(
   tenantId: string,
   row: CanonicalObligationRow,
 ): Promise<boolean> {
-  if (row.canonical_counterparty_id === null) return false;
+  let canonicalCounterpartyId = row.canonical_counterparty_id;
+  if (canonicalCounterpartyId === null && row.counterparty_source_key !== null) {
+    const { rows } = await c.query<{ id: string }>(
+      `SELECT id FROM canonical_counterparty
+        WHERE tenant_id = $1 AND source_system = $2 AND source_natural_key = $3
+        LIMIT 1`,
+      [tenantId, row.source_system, row.counterparty_source_key],
+    );
+    canonicalCounterpartyId = rows[0]?.id ?? null;
+    if (canonicalCounterpartyId !== null) {
+      await c.query(
+        `UPDATE canonical_obligation
+            SET canonical_counterparty_id = $1, updated_at = now()
+          WHERE tenant_id = $2 AND id = $3 AND canonical_counterparty_id IS NULL`,
+        [canonicalCounterpartyId, tenantId, row.id],
+      );
+    }
+  }
+  if (canonicalCounterpartyId === null) return false;
   const { rows: cp } = await c.query<{ id: string }>(
     `SELECT id FROM ledger_counterparties
       WHERE owner_id = $1 AND canonical_counterparty_id = $2`,
-    [tenantId, row.canonical_counterparty_id],
+    [tenantId, canonicalCounterpartyId],
   );
   const counterpartyId = cp[0]?.id;
   if (counterpartyId === undefined) return false;
@@ -236,8 +256,9 @@ export interface AparRebuildResult {
 const SELECT_CANONICAL_COUNTERPARTY =
   "id, tenant_id, name, normalized_name, type, email, provenance, confidence, source_ids, evidence_ids";
 const SELECT_CANONICAL_OBLIGATION =
-  "id, tenant_id, direction, type, canonical_counterparty_id, amount, currency, " +
-  "issue_date, due_date, status, provenance, confidence, source_ids, evidence_ids, " +
+  "id, tenant_id, source_system, direction, type, canonical_counterparty_id, " +
+  "counterparty_source_key, amount, currency, issue_date, due_date, status, " +
+  "provenance, confidence, source_ids, evidence_ids, " +
   "COALESCE(extensions, '{}'::jsonb) AS extensions";
 
 /**
@@ -329,7 +350,8 @@ export async function runLedgerAparProjectionCycle(
 
   try {
     const { rows: obls } = await deps.pool.query<CanonicalObligationRow>(
-      `SELECT co.id, co.tenant_id, co.direction, co.type, co.canonical_counterparty_id,
+      `SELECT co.id, co.tenant_id, co.source_system, co.direction, co.type,
+              co.canonical_counterparty_id, co.counterparty_source_key,
               co.amount, co.currency, co.issue_date, co.due_date, co.status,
               co.provenance, co.confidence, co.source_ids, co.evidence_ids,
               COALESCE(co.extensions, '{}'::jsonb) AS extensions

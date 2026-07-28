@@ -10,7 +10,7 @@ interface Captured {
 
 /** Fake tenant-scoped client that records every statement. No active member
  * exists yet, so the bootstrap path always runs (matches a fresh mint). */
-function makeFakeClient(opts: { hasActiveMember?: boolean } = {}): {
+function makeFakeClient(opts: { hasActiveMember?: boolean; hasActivePolicy?: boolean } = {}): {
   client: TenantScopedClient;
   calls: Captured[];
 } {
@@ -23,6 +23,15 @@ function makeFakeClient(opts: { hasActiveMember?: boolean } = {}): {
           rows: opts.hasActiveMember ? [{ id: "mbr_existing" }] : [],
           rowCount: opts.hasActiveMember ? 1 : 0,
         });
+      }
+      if (sql.includes("SELECT id FROM policies")) {
+        return Promise.resolve({
+          rows: opts.hasActivePolicy ? [{ id: "pol_existing" }] : [],
+          rowCount: opts.hasActivePolicy ? 1 : 0,
+        });
+      }
+      if (sql.includes("SELECT COALESCE(MAX(version) + 1, 1) AS next FROM policies")) {
+        return Promise.resolve({ rows: [{ next: 1 }], rowCount: 1 });
       }
       return Promise.resolve({ rows: [], rowCount: 0 });
     }),
@@ -59,9 +68,20 @@ describe("ensureTenantBootstrapped, H1 fix for POST /v1/auth/service-token", () 
     expect(userInsert?.sql).not.toMatch(/password_hash/);
   });
 
-  it("is a no-op when the tenant already has an active member (repeat mint)", async () => {
+  it("repairs a missing active policy when the tenant already has an active member", async () => {
     const tenantId = newTenantId();
     const { client, calls } = makeFakeClient({ hasActiveMember: true });
+
+    await ensureTenantBootstrapped(client, tenantId);
+
+    expect(calls.some((c) => /INSERT INTO users/.test(c.sql))).toBe(false);
+    expect(calls.some((c) => /INSERT INTO members/.test(c.sql))).toBe(false);
+    expect(calls.some((c) => /INSERT INTO policies/.test(c.sql))).toBe(true);
+  });
+
+  it("does not insert anything when the tenant already has an active member and policy", async () => {
+    const tenantId = newTenantId();
+    const { client, calls } = makeFakeClient({ hasActiveMember: true, hasActivePolicy: true });
 
     await ensureTenantBootstrapped(client, tenantId);
 

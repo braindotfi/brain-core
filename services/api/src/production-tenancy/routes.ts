@@ -16,6 +16,7 @@ import {
 } from "@brain/shared";
 import { insertBootstrapAdminMember } from "../onboarding/bootstrap-member.js";
 import {
+  ensureActiveDefaultPolicy,
   ensureBffServiceAgent,
   findActiveProductionAgentToken,
   insertProductionAgentToken,
@@ -147,6 +148,7 @@ export async function registerProductionTenancyRoutes(
         displayName: founderDisplayName,
       });
       await insertPlatformIdentityLink(client, tenantId, memberId, externalRef);
+      await ensureActiveDefaultPolicy(client, tenantId, memberId);
       await insertRefreshToken(client, sessionSeed);
       const agent = await ensureBffServiceAgent(client, tenantId, smartAccount);
       const agentToken = await insertProductionAgentToken(client, tenantId, agent.agentId);
