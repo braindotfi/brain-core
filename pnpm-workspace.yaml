@@ -14,6 +14,7 @@ packages:
   - "services/mcp"
   - "services/audit"
   - "services/surface-gateway"
+  - "services/auth"
   - "clients/*"
   - "tools/*"
   - "tests/e2e"

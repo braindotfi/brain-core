@@ -267,6 +267,62 @@ services:
       timeout: 5s
       retries: 12
 
+  # `auth`: the OAuth 2.0 authorization server at AUTH_ISSUER (auth.brain.fi).
+  # Phase 1 (OAUTH-AS-PLAN.md section 8): RFC 8414 metadata + JWKS discovery
+  # only, plus 503 stubs for /authorize and /token. Publishes the same
+  # AUTH_SIGN_KEY the `jwks` sidecar above publishes, so the kid is identical.
+  # `jwks` keeps running untouched until Phase 4 retires it, do not remove it
+  # here; the in-network AUTH_JWKS_URL above still points at it.
+  #
+  # Deliberately NOT env_file: `${BRAIN_ENV_FILE:-.env.prod}` (unlike jwks and
+  # surface-gateway) and NOT `<<: *brain-common-env`. This process needs
+  # exactly AUTH_SIGN_KEY; env_file would load the entire production secret
+  # set (AUDIT_PUBLISHER_KEY, BRAIN_SESSION_KEY, every *_DB_PASSWORD,
+  # OPENAI_API_KEY, Slack/Teams/ESP credentials) into it for no reason, and it
+  # becomes a public browser-facing origin in Phase 2a (CLAUDE.md "Runtime
+  # isolation"). DATABASE_URL/REDIS_URL/AUTH_JWKS_URL below are unused
+  # placeholders required only because loadConfig()'s shared schema validates
+  # them as URLs for every service; Phase 1 never dials any of them. Bound to
+  # 127.0.0.1 (not brain-common-env's api/worker pattern of a public port):
+  # reachable only through Caddy TLS, plus curl-able from the VM itself for
+  # the promote-prod.yml smoke.
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brain-core:${BRAIN_IMAGE_TAG:-prod}
+    container_name: brain-prod-auth
+    restart: unless-stopped
+    command: ["node", "services/auth/dist/main.js"]
+    ports:
+      - "127.0.0.1:3003:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      SERVICE_NAME: brain-auth
+      # DATABASE_URL, REDIS_URL and AUTH_JWKS_URL below are placeholders.
+      # loadConfig() requires them to parse as URLs, but Phase 1 of the
+      # authorization server dials none of them: it serves only discovery
+      # documents and /healthz. This service deliberately has no env_file, so no
+      # production secret beyond AUTH_SIGN_KEY reaches what becomes a public
+      # browser-facing origin in Phase 2a. Phase 2a adds a real DATABASE_URL on
+      # the least-privilege brain_auth role.
+      DATABASE_URL: postgres://unused:unused@localhost:5432/unused
+      REDIS_URL: redis://localhost:6379
+      AUTH_JWKS_URL: http://jwks:8085/.well-known/jwks.json
+      AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
+      AUTH_SIGN_KEY: ${AUTH_SIGN_KEY}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+
   api:
     build:
       context: .

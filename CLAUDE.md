@@ -24,6 +24,14 @@ Private workspace, UNLICENSED.
 - `services/surface-gateway` (@brain/surface-gateway): Fastify v5 deployable for
   Slack, Teams, and email approval webhooks. Depends on @brain/core,
   @brain/surfaces, and existing policy, audit, and execution services.
+- `services/auth`: the OAuth 2.0 authorization server at `AUTH_ISSUER`
+  (`auth.brain.fi`), a standalone Fastify deployable (see OAUTH-AS-PLAN.md).
+  Phase 1 serves RFC 8414 metadata and JWKS discovery only, plus 503 stubs for
+  `/authorize` and `/token`; Phase 2a adds the real authorization-code + PKCE
+  flow. No DB, no Redis, no session cookie in Phase 1. Runs as its own process
+  with its own minimal env (`AUTH_SIGN_KEY` plus whatever `loadConfig`
+  requires to boot), not the full `.env.prod` secret set, since it is a
+  public browser-facing origin starting Phase 2a.
 
 Dependency is one-directional and acyclic: core -> surfaces. A CI check should
 fail the build if anything under packages/surfaces imports @brain/core.
@@ -443,8 +451,8 @@ Deployment is a single Docker VM per environment. `deploy_staging` (in
 `main.yml`) runs automatically on green `main`, connects to `VM_HOST_STAGING`
 with `VM_SSH_KEY_STAGING`, uses `.env.staging`, pulls the SHA-tagged images,
 runs `tools/migrate up`, reruns `infra/db-roles.sql`, recreates `api`,
-`worker`, and `agents`, then smokes the staging health URL with a commit
-match.
+`worker`, `agents`, and `auth`, then smokes the staging health URL with a
+commit match.
 
 Production promotion is manual: `.github/workflows/promote-prod.yml` is a
 separate `workflow_dispatch` workflow, run by hand from the Actions tab, so
@@ -457,8 +465,9 @@ staging (`GET https://staging-api.brain.fi/health`) and promotes that. It
 still requires the `production` environment approval, connects to `VM_HOST`,
 uses `.env.prod`, pulls the resolved SHA's images, runs `tools/migrate up`,
 reruns `infra/db-roles.sql` before any compose recreate, recreates `api`,
-`worker`, and `agents`, and smokes `https://api.brain.fi/health` for a commit
-match against the resolved SHA.
+`worker`, `agents`, and `auth`, and smokes `https://api.brain.fi/health` plus
+`auth`'s `/healthz` (via SSH, since `auth.brain.fi` DNS does not resolve yet)
+for a commit match against the resolved SHA.
 
 The remaining discipline is the post-deploy probe: verify what is serving,
 not only what is merged. For production tenancy changes, operators must probe
@@ -467,8 +476,8 @@ a user-principal member session, then record the result in the PR or release
 notes. A failed migration or smoke check fails the workflow before the deploy is
 considered complete.
 
-The VM compose recreate command starts `api`, `worker`, and `agents` with the
-`agents` profile. The API reaches the extraction agents at
+The VM compose recreate command starts `api`, `worker`, `agents`, and `auth`
+with the `agents` profile. The API reaches the extraction agents at
 `DOCUMENT_EXTRACT_AGENT_URL=http://agents:8001`. The agents service uses
 `image: brain-agents:${BRAIN_AGENTS_IMAGE_TAG:-prod}` in
 `docker-compose.prod.yml`; CI must pull and retag `brain-agents:prod` before

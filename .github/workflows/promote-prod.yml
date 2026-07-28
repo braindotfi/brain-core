@@ -134,8 +134,8 @@ jobs:
             "cd ~/brain-core && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps db-roles && \
-             (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents || \
-              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 api worker agents && false))"
+             (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents auth || \
+              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 api worker agents auth && false))"
 
       - name: Smoke test /health
         # A bare 200 is not enough: /health returns 200 before a deploy too, so
@@ -151,6 +151,26 @@ jobs:
             sleep 6
           done
           echo "$HEALTH_URL never reported commit=$expected (last seen: '$last_commit')"
+          exit 1
+
+      # docker compose up returning 0 only means the container started; a
+      # node process that exits(1) moments later (e.g. missing/malformed
+      # AUTH_SIGN_KEY, see services/auth/src/main.ts) is invisible to that
+      # exit code and would otherwise ship a green promote with a dead
+      # authorization server. auth.brain.fi DNS does not resolve yet
+      # (OAUTH-AS-PLAN.md), so this SSHes into the VM and curls the container's
+      # 127.0.0.1-bound port directly instead of going over Caddy/DNS.
+      - name: Smoke test auth /healthz
+        run: |
+          expected="${{ steps.resolve.outputs.sha }}"
+          last_commit=""
+          for i in $(seq 1 10); do
+            body=$(ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" 'curl -s http://localhost:3003/healthz' || true)
+            last_commit=$(echo "$body" | grep -o '"commit":"[^"]*"' | sed 's/.*:"//;s/"$//')
+            [ "$last_commit" = "$expected" ] && exit 0
+            sleep 6
+          done
+          echo "auth /healthz never reported commit=$expected (last seen: '$last_commit')"
           exit 1
 
       - name: Tag deployed commit for review
