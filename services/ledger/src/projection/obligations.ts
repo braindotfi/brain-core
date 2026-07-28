@@ -508,7 +508,7 @@ export async function runLedgerAparProjectionCycle(
 
   try {
     const { rows: obls } = await deps.pool.query<CanonicalObligationRow>(
-      `SELECT co.id, co.tenant_id, co.source_system, co.direction, co.type,
+      `SELECT co.id, co.tenant_id, co.source_natural_key, co.source_system, co.direction, co.type,
               co.canonical_counterparty_id, co.counterparty_source_key,
               co.amount, co.currency, co.issue_date, co.due_date, co.status,
               co.provenance, co.confidence, co.source_ids, co.evidence_ids,

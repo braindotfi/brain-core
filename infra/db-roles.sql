@@ -216,8 +216,8 @@ END $$;
 GRANT DELETE ON canonical_journal_line TO brain_canonical_projector;
 GRANT SELECT ON raw_parsed TO brain_canonical_projector;
 
--- brain_ledger_projector: SELECT on canonical_* (input); DML ONLY on the three
--- ledger projection targets (NOT the money-path ledger_* tables).
+-- brain_ledger_projector: SELECT on canonical_* (input); DML ONLY on the
+-- rebuildable ledger projection targets (NOT the money-path ledger_* tables).
 DO $$
 DECLARE t regclass;
 BEGIN
@@ -225,8 +225,12 @@ BEGIN
            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'canonical\_%'
   LOOP EXECUTE format('GRANT SELECT ON %s TO brain_ledger_projector', t); END LOOP;
 END $$;
+-- AP/AR projection may repair stale canonical counterparty links before
+-- mirroring obligations. Keep that write as narrow as the repair path.
+GRANT UPDATE (canonical_counterparty_id, updated_at) ON canonical_obligation
+  TO brain_ledger_projector;
 GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties,
-  ledger_accounts, ledger_transactions
+  ledger_accounts, ledger_transactions, ledger_invoices
   TO brain_ledger_projector;
 -- The Collections, Reconciliation, Cash Forecast, Vendor Risk, Fraud Anomaly,
 -- and Compliance scanners share the ledger worker pool for cross-tenant enumeration only.
