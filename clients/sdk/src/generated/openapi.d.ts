@@ -3648,6 +3648,7 @@ export interface components {
             source_type?: components["schemas"]["RawSourceType"];
             /** @description Declared payload schema tag, echoed when one was declared */
             source_schema?: string;
+            projection_status?: components["schemas"]["RawProjectionStatus"];
             bytes?: number;
             /** Format: date-time */
             ingested_at?: string;
@@ -3655,6 +3656,14 @@ export interface components {
             deduplicated?: boolean;
             extraction_job?: components["schemas"]["RawExtractionJob"];
         };
+        /**
+         * @description Lifecycle status for upload document projection side effects. This is
+         *     not a row-count validator: `projected` means the post-upload projection
+         *     side-effect chain completed for the artifact. Use audit events such as
+         *     `ledger.apar_projection.rebuilt` for produced-row diagnostics.
+         * @enum {string}
+         */
+        RawProjectionStatus: "pending" | "projecting" | "projected" | "projection_timed_out" | "projection_failed";
         RawExtractionJob: {
             job_id: string;
             raw_id: string;
@@ -5952,6 +5961,7 @@ export interface operations {
                         expires_at?: string;
                         mime_type?: string;
                         bytes?: number;
+                        projection_status?: components["schemas"]["RawProjectionStatus"];
                     };
                 };
             };

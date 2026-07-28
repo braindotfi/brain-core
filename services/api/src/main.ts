@@ -1723,6 +1723,7 @@ async function main(): Promise<void> {
     await runUploadProjectionSideEffects(
       {
         ledgerProjectorPool,
+        appPool: pool,
         tenantDiscoveryPool: tenantDeletionPool,
         audit,
         pageService: wikiPageService,

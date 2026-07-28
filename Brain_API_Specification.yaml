@@ -1219,6 +1219,8 @@ paths:
                   expires_at: { type: string, format: date-time }
                   mime_type: { type: string }
                   bytes: { type: integer, minimum: 0 }
+                  projection_status:
+                    $ref: '#/components/schemas/RawProjectionStatus'
         '404':
           description: No such artifact. Error code `raw_artifact_not_found`.
           content:
@@ -6441,6 +6443,8 @@ components:
         source_schema:
           type: string
           description: Declared payload schema tag, echoed when one was declared
+        projection_status:
+          $ref: '#/components/schemas/RawProjectionStatus'
         bytes: { type: integer }
         ingested_at: { type: string, format: date-time }
         deduplicated:
@@ -6448,6 +6452,15 @@ components:
           description: True if this artifact was already in storage
         extraction_job:
           $ref: '#/components/schemas/RawExtractionJob'
+
+    RawProjectionStatus:
+      type: string
+      description: |
+        Lifecycle status for upload document projection side effects. This is
+        not a row-count validator: `projected` means the post-upload projection
+        side-effect chain completed for the artifact. Use audit events such as
+        `ledger.apar_projection.rebuilt` for produced-row diagnostics.
+      enum: [pending, projecting, projected, projection_timed_out, projection_failed]
 
     RawExtractionJob:
       type: object
