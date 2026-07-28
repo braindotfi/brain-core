@@ -73,15 +73,19 @@ jobs:
       # Images alone are not enough: the VM's ~/brain-core is a copied tree,
       # not a git checkout, so changes to docker-compose.prod.yml and the
       # host files it bind-mounts into containers (db-roles.sql,
-      # tools/postgres-init) never reach the box on their own. Ship exactly
-      # the repo-tracked paths compose depends on, before any compose
-      # invocation below. Host-only files (VM_ENV_FILE, docker-compose.caddy.yml)
-      # are left untouched, they are not in this repo.
+      # tools/postgres-init, docker-compose.caddy.yml, Caddyfile) never reach
+      # the box on their own. Ship exactly the repo-tracked paths compose
+      # depends on, before any compose invocation below. VM_ENV_FILE remains
+      # host-only, it is not in this repo. The caddy container mounts the
+      # Caddyfile read-only, so shipping it here is not enough on its own to
+      # apply it, see the Caddy reload step below.
       - name: Sync compose and bind-mounted host files to VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
             'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
           scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
+          scp -i ~/.ssh/id_deploy docker-compose.caddy.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.caddy.yml"
+          scp -i ~/.ssh/id_deploy Caddyfile "azureuser@$VM_HOST:~/brain-core/Caddyfile"
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
@@ -136,6 +140,39 @@ jobs:
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps db-roles && \
              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents auth || \
               (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 api worker agents auth && false))"
+
+      # The Caddyfile shipped above is bind-mounted read-only into the caddy
+      # container; a plain scp does not make Caddy re-read it, and the infra
+      # step above uses --no-recreate so a warm caddy container is left
+      # untouched. Caddy reload applies the new config over its local admin
+      # API without dropping connections.
+      #
+      # This runs AFTER migrate/recreate, not before: nothing about
+      # api.brain.fi or mcp.brain.fi routing depends on the reload running
+      # first (those Caddyfile blocks are unchanged), and a reload failure
+      # here must never abort an approved production deploy before
+      # api/worker/agents/auth are recreated. Two real triggers for that
+      # failure: on a cold box the infra step's `up -d --no-recreate` returns
+      # as soon as the caddy container starts, before its admin API on
+      # localhost:2019 is listening (`caddy reload` then exits with
+      # connection refused); and a crashed or restarting caddy container makes
+      # `docker compose exec` itself exit 1. The retry loop below self-heals
+      # both. `caddy reload` validates the new config before applying it and
+      # keeps serving the old config on failure, so a genuinely invalid config
+      # still fails this step (fail loud) once retries are exhausted. `-T`:
+      # no other step in this repo runs `compose exec`, so there is no in-repo
+      # evidence this box's compose version defaults correctly over a non-tty
+      # ssh session; it costs nothing to pass explicitly.
+      - name: Reload Caddy config on VM
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             ok=0; \
+             for i in 1 2 3 4 5; do \
+               docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile && ok=1 && break; \
+               sleep 3; \
+             done; \
+             [ \$ok -eq 1 ]"
 
       - name: Smoke test /health
         # A bare 200 is not enough: /health returns 200 before a deploy too, so

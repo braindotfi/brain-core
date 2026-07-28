@@ -465,9 +465,10 @@ staging (`GET https://staging-api.brain.fi/health`) and promotes that. It
 still requires the `production` environment approval, connects to `VM_HOST`,
 uses `.env.prod`, pulls the resolved SHA's images, runs `tools/migrate up`,
 reruns `infra/db-roles.sql` before any compose recreate, recreates `api`,
-`worker`, `agents`, and `auth`, and smokes `https://api.brain.fi/health` plus
-`auth`'s `/healthz` (via SSH, since `auth.brain.fi` DNS does not resolve yet)
-for a commit match against the resolved SHA.
+`worker`, `agents`, and `auth`, then reloads the Caddy config, and smokes
+`https://api.brain.fi/health` plus `auth`'s `/healthz` (via SSH, since
+`auth.brain.fi` DNS does not resolve yet) for a commit match against the
+resolved SHA.
 
 The remaining discipline is the post-deploy probe: verify what is serving,
 not only what is merged. For production tenancy changes, operators must probe
@@ -484,6 +485,18 @@ with the `agents` profile. The API reaches the extraction agents at
 running compose with `--no-build`. Both host env files must carry
 `OPENAI_API_KEY`, `DOCUMENT_EXTRACT_AGENT_URL`, `BRAIN_AGENTS_INBOUND_SECRET`,
 and the ESP credentials required by outbound email onboarding.
+
+Caddy config (`Caddyfile`, `docker-compose.caddy.yml`) is repo-tracked and
+shipped by CI, but only to the **production** VM (`promote-prod.yml`), and
+that vendored `Caddyfile` was read directly off the prod box: it carries only
+`api.brain.fi`, `mcp.brain.fi`, and `auth.brain.fi`. It is deliberately NOT
+shipped by `main.yml`'s staging deploy. The staging VM (`VM_HOST_STAGING`) is
+a different box with its own host-only Caddyfile carrying a
+`staging-api.brain.fi` block that is not in this repo and has no backup;
+staging's `docker compose ... -f docker-compose.caddy.yml` invocations rely on
+that file already being present on the box from manual setup, never on CI
+having shipped it. Do not add Caddyfile/docker-compose.caddy.yml sync or a
+Caddy reload step to `main.yml`.
 
 `infra/main.tf` still contains Container Apps wiring from the earlier deploy
 model. That wiring is legacy and is not the production source of truth while

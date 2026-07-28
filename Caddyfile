@@ -1,0 +1,25 @@
+api.brain.fi {
+    redir / /v1/docs 302
+    reverse_proxy api:3000
+}
+
+mcp.brain.fi {
+    @mcp path /
+    handle @mcp {
+        rewrite * /v1/agents/mcp
+        reverse_proxy api:3000
+    }
+    handle /health {
+        reverse_proxy api:3000
+    }
+    handle /.well-known/oauth-protected-resource {
+        reverse_proxy api:3000
+    }
+    handle {
+        respond "Not Found" 404
+    }
+}
+
+auth.brain.fi {
+    reverse_proxy auth:3000
+}

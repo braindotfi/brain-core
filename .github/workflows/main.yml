@@ -249,6 +249,15 @@ jobs:
       # the repo-tracked paths compose depends on, before any compose
       # invocation below. Host-only files (VM_ENV_FILE, docker-compose.caddy.yml)
       # are left untouched, they are not in this repo.
+      #
+      # Do NOT ship Caddyfile or docker-compose.caddy.yml here. Both are
+      # vendored from the PRODUCTION VM and contain only api.brain.fi,
+      # mcp.brain.fi, and auth.brain.fi. Staging (VM_HOST_STAGING) is a
+      # different box with its own host-only Caddyfile carrying a
+      # staging-api.brain.fi block that is not in git and has no backup;
+      # scp'ing the prod file over it would take staging-api.brain.fi down
+      # with no way to recover the original. See promote-prod.yml, which
+      # deploys to the prod VM the file was actually read from.
       - name: Sync compose and bind-mounted host files to VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
@@ -357,10 +366,15 @@ jobs:
             "cd ~/brain-core && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate --no-deps postgres redis minio minio-setup jwks caddy"
 
+      # No Caddy reload step here. Staging's Caddyfile is host-only and never
+      # shipped by this job (see the comment above the sync step), so there is
+      # nothing new for Caddy to pick up. Reload runs only in
+      # promote-prod.yml, against the prod VM the vendored Caddyfile came from.
+
       # The VM's ~/brain-core is a copied tree (not a git checkout) that
-      # already holds the stage env file and docker-compose.caddy.yml (both
-      # host-only, not in this repo). Migrations are idempotent, so running `up`
-      # on every deploy is safe even when there are no new migrations.
+      # already holds the stage env file (host-only, not in this repo).
+      # Migrations are idempotent, so running `up` on every deploy is safe
+      # even when there are no new migrations.
       - name: Migrate + recreate api/worker/agents on VM
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
