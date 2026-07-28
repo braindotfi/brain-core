@@ -9,7 +9,11 @@ import {
 import { PolicyService } from "./service.js";
 import type { PolicyDocument } from "./dsl.js";
 
-function poolWithActivePolicy(content: PolicyDocument): Pool {
+function poolWithActivePolicy(content: PolicyDocument): {
+  pool: Pool;
+  queries: Array<{ sql: string; values: unknown[] }>;
+} {
+  const queries: Array<{ sql: string; values: unknown[] }> = [];
   const row = {
     id: "pol_01TEST0000000000000000000",
     tenant_id: "tnt_01TEST0000000000000000000",
@@ -23,7 +27,8 @@ function poolWithActivePolicy(content: PolicyDocument): Pool {
     updated_at: new Date("2026-01-01T00:00:00Z"),
   };
   const client = {
-    query: vi.fn((sql: string) => {
+    query: vi.fn((sql: string, values: unknown[] = []) => {
+      queries.push({ sql, values });
       if (
         sql === "BEGIN" ||
         sql === "COMMIT" ||
@@ -39,30 +44,31 @@ function poolWithActivePolicy(content: PolicyDocument): Pool {
     }),
     release: vi.fn(),
   };
-  return { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool;
+  return { pool: { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool, queries };
 }
 
 const ctx: ServiceCallContext = { tenantId: newTenantId(), actor: newAgentId() };
 
 describe("PolicyService.evaluateLegacy", () => {
   it("threads agent confidence, evidence, risk, and id into legacy agent evaluation", async () => {
-    const svc = new PolicyService({
-      pool: poolWithActivePolicy({
-        version: 1,
-        rules: [
-          {
-            id: "agent-gate",
-            applies_to: ["any"],
-            when: {
-              "agent.confidence.gte": 0.8,
-              "agent.evidence_score.gte": 0.7,
-              "agent.risk_level.lte": "medium",
-              "agent.id": "agent_payment",
-            },
-            execute: "auto",
+    const { pool } = poolWithActivePolicy({
+      version: 1,
+      rules: [
+        {
+          id: "agent-gate",
+          applies_to: ["any"],
+          when: {
+            "agent.confidence.gte": 0.8,
+            "agent.evidence_score.gte": 0.7,
+            "agent.risk_level.lte": "medium",
+            "agent.id": "agent_payment",
           },
-        ],
-      }),
+          execute: "auto",
+        },
+      ],
+    });
+    const svc = new PolicyService({
+      pool,
       audit: new InMemoryAuditEmitter(),
     });
 
@@ -85,5 +91,30 @@ describe("PolicyService.evaluateLegacy", () => {
         risk_level: "low",
       }),
     ).resolves.toMatchObject({ outcome: "allow" });
+  });
+
+  it("persists a non-null subject id for legacy agent_action policy decisions", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, queries } = poolWithActivePolicy({
+      version: 1,
+      rules: [{ id: "agent-auto", applies_to: ["agent_action"], when: {}, execute: "auto" }],
+    });
+    const svc = new PolicyService({ pool, audit });
+
+    await expect(
+      svc.evaluateLegacy(ctx, {
+        kind: "agent_action",
+        agent_id: "treasury",
+        balance_id: "bal_123",
+      }),
+    ).resolves.toMatchObject({ outcome: "allow" });
+
+    const insert = queries.find((q) => q.sql.includes("INSERT INTO policy_decisions"));
+    expect(insert?.values[4]).toBe("agent_action");
+    expect(insert?.values[5]).toBe("bal_123");
+    expect(audit.events[0]?.inputs).toMatchObject({
+      subject_type: "agent_action",
+      subject_id: "bal_123",
+    });
   });
 });

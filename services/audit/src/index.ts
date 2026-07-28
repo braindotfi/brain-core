@@ -13,11 +13,13 @@ export * from "./merkle.js";
 export { verifyInclusion } from "./verify.js";
 export {
   publishAnchor,
+  publishPendingAnchor,
   type AnchorBroadcaster,
   type BroadcastInput,
   type BroadcastResult,
   type PublishOptions,
 } from "./publisher.js";
+export type { AuditAnchorRow } from "./repository.js";
 export { registerAuditRoutes } from "./routes.js";
 export { registerWebhookRoutes, type WebhookRouteDeps } from "./webhook-routes.js";
 export {

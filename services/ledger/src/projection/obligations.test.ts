@@ -31,6 +31,7 @@ function clientWithCounterparty(): {
 const BASE_OBLIGATION = {
   id: "co_1",
   tenant_id: "tnt_1",
+  source_natural_key: "inv_1",
   source_system: "document_upload",
   direction: "payable",
   type: "bill",
@@ -87,5 +88,64 @@ describe("projectCanonicalObligation", () => {
     expect(ledgerLookup?.values).toEqual(["tnt_1", "cc_repaired"]);
 
     expect(calls.some((c) => c.text.includes("INSERT INTO ledger_obligations"))).toBe(true);
+  });
+
+  it("repairs a cross-tenant canonical counterparty link before projecting", async () => {
+    const calls: { text: string; values: unknown[] }[] = [];
+    const client = {
+      query: vi.fn(async (text: string, values: unknown[] = []) => {
+        calls.push({ text, values });
+        if (text.includes("WHERE tenant_id = $1 AND id = $2")) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (text.includes("WHERE tenant_id = $1 AND source_system = $2")) {
+          return { rows: [{ id: "cc_same_tenant" }], rowCount: 1 };
+        }
+        if (text.includes("SELECT id FROM ledger_counterparties")) {
+          return { rows: [{ id: "cp_same_tenant" }], rowCount: 1 };
+        }
+        if (text.includes("INSERT INTO ledger_obligations")) {
+          return { rows: [], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as TenantScopedClient;
+
+    await expect(
+      projectCanonicalObligation(client, "tnt_1", {
+        ...BASE_OBLIGATION,
+        canonical_counterparty_id: "cc_other_tenant",
+        currency: "USD",
+      }),
+    ).resolves.toBe(true);
+
+    const repair = calls.find((c) => c.text.includes("UPDATE canonical_obligation"));
+    expect(repair?.values).toEqual(["cc_same_tenant", "tnt_1", "co_1"]);
+    const ledgerLookup = calls.find((c) => c.text.includes("SELECT id FROM ledger_counterparties"));
+    expect(ledgerLookup?.values).toEqual(["tnt_1", "cc_same_tenant"]);
+  });
+
+  it("mirrors receivable invoice obligations into ledger_invoices", async () => {
+    const { client, calls } = clientWithCounterparty();
+
+    await expect(
+      projectCanonicalObligation(client, "tnt_1", {
+        ...BASE_OBLIGATION,
+        direction: "receivable",
+        type: "invoice",
+        source_natural_key: "ar:NL-2417",
+        amount: "500.00",
+        currency: "USD",
+        issue_date: null,
+        due_date: "2026-05-22T00:00:00Z",
+        extensions: { document_upload: { invoice_ref: "NL-2417" } },
+      }),
+    ).resolves.toBe(true);
+
+    const invoice = calls.find((c) => c.text.includes("INSERT INTO ledger_invoices"));
+    expect(invoice).toBeDefined();
+    expect(invoice?.values[2]).toBe("NL-2417");
+    expect(invoice?.values[4]).toBe("500.00");
+    expect(invoice?.values[14]).toBe("co_1");
   });
 });

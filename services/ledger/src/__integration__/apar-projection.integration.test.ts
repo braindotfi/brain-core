@@ -49,6 +49,7 @@ DESCRIBE("ledger AP/AR projection integration (requires DATABASE_URL)", () => {
 
   afterAll(async () => {
     if (pool === undefined) return;
+    await pool.query(`DELETE FROM ledger_invoices WHERE owner_id = $1`, [tenant]);
     await pool.query(`DELETE FROM ledger_obligations WHERE owner_id = $1`, [tenant]);
     await pool.query(`DELETE FROM ledger_counterparties WHERE owner_id = $1`, [tenant]);
     await pool.query(`DELETE FROM canonical_obligation WHERE tenant_id = $1`, [tenant]);
@@ -58,7 +59,7 @@ DESCRIBE("ledger AP/AR projection integration (requires DATABASE_URL)", () => {
 
   it("rebuilds obligations + counterparties from canonical with the link resolved", async () => {
     const result = await rebuildAparProjectionFromCanonical(pool, audit, ctx);
-    expect(result).toEqual({ counterparties: 1, obligations: 1 });
+    expect(result).toEqual({ counterparties: 1, obligations: 1, invoices: 0 });
 
     const { rows: obls } = await pool.query<{
       direction: string;

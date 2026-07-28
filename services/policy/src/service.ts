@@ -78,6 +78,7 @@ export class PolicyService {
 
     const decision = evaluate(active.content, action);
     const snapshotHash = sha256Action(raw);
+    const subjectId = legacySubjectId(raw, snapshotHash);
     const id = newPolicyDecisionId();
 
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
@@ -92,7 +93,7 @@ export class PolicyService {
           active.id,
           active.version,
           "agent_action",
-          null,
+          subjectId,
           decision.outcome,
           decision.matched_rule_id,
           decision.required_approvers,
@@ -112,6 +113,7 @@ export class PolicyService {
       outcome: decision.outcome,
       inputs: {
         subject_type: "agent_action",
+        subject_id: subjectId,
         action_kind: action.kind,
         policy_version: active.version,
       },
@@ -347,6 +349,25 @@ function isAmountShape(v: unknown): v is { currency: string; value: string } {
 
 function isRiskLevel(v: unknown): v is NonNullable<Action["risk_level"]> {
   return v === "low" || v === "medium" || v === "high" || v === "critical";
+}
+
+function rawString(raw: Record<string, unknown>, key: string): string | null {
+  const value = raw[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function legacySubjectId(raw: Record<string, unknown>, snapshotHash: string): string {
+  return (
+    rawString(raw, "subject_id") ??
+    rawString(raw, "action_id") ??
+    rawString(raw, "proposal_id") ??
+    rawString(raw, "run_id") ??
+    rawString(raw, "invoice_id") ??
+    rawString(raw, "obligation_id") ??
+    rawString(raw, "balance_id") ??
+    rawString(raw, "account_id") ??
+    `agent_action_${snapshotHash.slice(0, 32)}`
+  );
 }
 
 function sha256Action(action: Record<string, unknown>): string {

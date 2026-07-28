@@ -29,6 +29,7 @@
 
 import {
   newCounterpartyId,
+  newInvoiceId,
   newObligationId,
   startManagedInterval,
   leasedCycle,
@@ -80,6 +81,7 @@ interface CanonicalCounterpartyRow {
 interface CanonicalObligationRow {
   id: string;
   tenant_id: string;
+  source_natural_key: string;
   source_system: string;
   direction: string;
   type: string;
@@ -102,12 +104,42 @@ function ledgerStatus(canonicalStatus: string | null, dueDate: string | null): s
   return dueDate !== null ? "due" : "upcoming";
 }
 
+function ledgerInvoiceStatus(canonicalStatus: string | null, dueDate: string | null): string {
+  const status = canonicalStatus?.toUpperCase() ?? null;
+  if (status === "PAID") return "paid";
+  if (status === "CANCELLED" || status === "VOID") return "cancelled";
+  if (status === "DISPUTED") return "disputed";
+  if (dueDate !== null && new Date(dueDate).getTime() < Date.now()) return "overdue";
+  return "sent";
+}
+
 function ledgerCurrency(canonicalCurrency: string | null): string {
   if (canonicalCurrency === null) return "USD";
   if (!/^[A-Z]{3}$/.test(canonicalCurrency)) {
     throw new Error("currency must be a 3-letter ISO 4217 code");
   }
   return canonicalCurrency;
+}
+
+function record(v: unknown): Record<string, unknown> | null {
+  return typeof v === "object" && v !== null && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null;
+}
+
+function str(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+function invoiceNumber(row: CanonicalObligationRow): string {
+  const documentUpload = record(row.extensions["document_upload"]);
+  const merge = record(row.extensions["merge"]);
+  return (
+    str(documentUpload?.["invoice_ref"]) ??
+    str(merge?.["number"]) ??
+    str(merge?.["remote_id"]) ??
+    row.source_natural_key
+  );
 }
 
 /** Upsert one canonical counterparty into the Ledger projection; returns the Ledger id. */
@@ -175,32 +207,10 @@ export async function projectCanonicalObligation(
   tenantId: string,
   row: CanonicalObligationRow,
 ): Promise<boolean> {
-  let canonicalCounterpartyId = row.canonical_counterparty_id;
-  if (canonicalCounterpartyId === null && row.counterparty_source_key !== null) {
-    const { rows } = await c.query<{ id: string }>(
-      `SELECT id FROM canonical_counterparty
-        WHERE tenant_id = $1 AND source_system = $2 AND source_natural_key = $3
-        LIMIT 1`,
-      [tenantId, row.source_system, row.counterparty_source_key],
-    );
-    canonicalCounterpartyId = rows[0]?.id ?? null;
-    if (canonicalCounterpartyId !== null) {
-      await c.query(
-        `UPDATE canonical_obligation
-            SET canonical_counterparty_id = $1, updated_at = now()
-          WHERE tenant_id = $2 AND id = $3 AND canonical_counterparty_id IS NULL`,
-        [canonicalCounterpartyId, tenantId, row.id],
-      );
-    }
-  }
+  const canonicalCounterpartyId = await resolveTenantCanonicalCounterpartyId(c, tenantId, row);
   if (canonicalCounterpartyId === null) return false;
-  const { rows: cp } = await c.query<{ id: string }>(
-    `SELECT id FROM ledger_counterparties
-      WHERE owner_id = $1 AND canonical_counterparty_id = $2`,
-    [tenantId, canonicalCounterpartyId],
-  );
-  const counterpartyId = cp[0]?.id;
-  if (counterpartyId === undefined) return false;
+  const counterpartyId = await ensureLedgerCounterparty(c, tenantId, canonicalCounterpartyId);
+  if (counterpartyId === null) return false;
 
   const dueDate = row.due_date ?? row.issue_date ?? EPOCH_ISO;
   await c.query(
@@ -245,21 +255,159 @@ export async function projectCanonicalObligation(
       row.id,
     ],
   );
+  await projectCanonicalInvoice(c, tenantId, row, counterpartyId);
   return true;
 }
 
 export interface AparRebuildResult {
   counterparties: number;
   obligations: number;
+  invoices: number;
 }
 
 const SELECT_CANONICAL_COUNTERPARTY =
   "id, tenant_id, name, normalized_name, type, email, provenance, confidence, source_ids, evidence_ids";
 const SELECT_CANONICAL_OBLIGATION =
-  "id, tenant_id, source_system, direction, type, canonical_counterparty_id, " +
+  "id, tenant_id, source_natural_key, source_system, direction, type, canonical_counterparty_id, " +
   "counterparty_source_key, amount, currency, issue_date, due_date, status, " +
   "provenance, confidence, source_ids, evidence_ids, " +
   "COALESCE(extensions, '{}'::jsonb) AS extensions";
+
+async function resolveTenantCanonicalCounterpartyId(
+  c: TenantScopedClient,
+  tenantId: string,
+  row: CanonicalObligationRow,
+): Promise<string | null> {
+  if (row.canonical_counterparty_id !== null) {
+    const { rows } = await c.query<{ id: string }>(
+      `SELECT id FROM canonical_counterparty
+        WHERE tenant_id = $1 AND id = $2
+        LIMIT 1`,
+      [tenantId, row.canonical_counterparty_id],
+    );
+    if (rows[0]?.id !== undefined) return row.canonical_counterparty_id;
+  }
+  if (row.counterparty_source_key === null) return null;
+
+  const { rows } = await c.query<{ id: string }>(
+    `SELECT id FROM canonical_counterparty
+      WHERE tenant_id = $1 AND source_system = $2 AND source_natural_key = $3
+      LIMIT 1`,
+    [tenantId, row.source_system, row.counterparty_source_key],
+  );
+  const canonicalCounterpartyId = rows[0]?.id ?? null;
+  if (canonicalCounterpartyId !== null) {
+    await c.query(
+      `UPDATE canonical_obligation
+          SET canonical_counterparty_id = $1, updated_at = now()
+        WHERE tenant_id = $2 AND id = $3
+          AND canonical_counterparty_id IS DISTINCT FROM $1`,
+      [canonicalCounterpartyId, tenantId, row.id],
+    );
+  }
+  return canonicalCounterpartyId;
+}
+
+async function ensureLedgerCounterparty(
+  c: TenantScopedClient,
+  tenantId: string,
+  canonicalCounterpartyId: string,
+): Promise<string | null> {
+  const { rows: existing } = await c.query<{ id: string }>(
+    `SELECT id FROM ledger_counterparties
+      WHERE owner_id = $1 AND canonical_counterparty_id = $2`,
+    [tenantId, canonicalCounterpartyId],
+  );
+  if (existing[0]?.id !== undefined) return existing[0].id;
+
+  const { rows } = await c.query<CanonicalCounterpartyRow>(
+    `SELECT ${SELECT_CANONICAL_COUNTERPARTY}
+       FROM canonical_counterparty
+      WHERE tenant_id = $1 AND id = $2
+      LIMIT 1`,
+    [tenantId, canonicalCounterpartyId],
+  );
+  const row = rows[0];
+  return row === undefined ? null : projectCanonicalCounterparty(c, tenantId, row);
+}
+
+async function projectCanonicalInvoice(
+  c: TenantScopedClient,
+  tenantId: string,
+  row: CanonicalObligationRow,
+  counterpartyId: string,
+): Promise<boolean> {
+  if (row.direction !== "receivable" || row.type !== "invoice") return false;
+  const issueDate = row.issue_date ?? row.due_date ?? EPOCH_ISO;
+  const { rows } = await c.query<{ id: string }>(
+    `WITH updated AS (
+       UPDATE ledger_invoices
+          SET invoice_number = $3,
+              counterparty_id = $4,
+              amount_due = $5,
+              currency = $6,
+              issue_date = $7,
+              due_date = $8,
+              status = $9,
+              source_ids = $10::text[],
+              evidence_ids = $11::text[],
+              metadata = $12::jsonb,
+              provenance = CASE WHEN ledger_invoices.provenance IN ('human_confirmed','extracted')
+                                THEN ledger_invoices.provenance ELSE $13 END,
+              confidence = GREATEST(ledger_invoices.confidence, $14),
+              updated_at = now()
+        WHERE owner_id = $2 AND canonical_obligation_id = $15
+        RETURNING id
+     ),
+     inserted AS (
+       INSERT INTO ledger_invoices
+          (id, owner_id, invoice_number, counterparty_id, amount_due, amount_paid,
+           currency, issue_date, due_date, status, linked_document_ids,
+           linked_transaction_ids, source_ids, evidence_ids, provenance, confidence,
+           metadata, canonical_obligation_id)
+       SELECT $1,$2,$3,$4,$5,'0.00',$6,$7,$8,$9,ARRAY[]::text[],ARRAY[]::text[],
+              $10::text[],$11::text[],$13,$14,$12::jsonb,$15
+        WHERE NOT EXISTS (SELECT 1 FROM updated)
+       ON CONFLICT (owner_id, counterparty_id, invoice_number) DO UPDATE SET
+          amount_due = EXCLUDED.amount_due,
+          currency = EXCLUDED.currency,
+          issue_date = EXCLUDED.issue_date,
+          due_date = EXCLUDED.due_date,
+          status = EXCLUDED.status,
+          source_ids = EXCLUDED.source_ids,
+          evidence_ids = EXCLUDED.evidence_ids,
+          metadata = EXCLUDED.metadata,
+          canonical_obligation_id = EXCLUDED.canonical_obligation_id,
+          provenance = CASE WHEN ledger_invoices.provenance IN ('human_confirmed','extracted')
+                            THEN ledger_invoices.provenance ELSE EXCLUDED.provenance END,
+          confidence = GREATEST(ledger_invoices.confidence, EXCLUDED.confidence),
+          updated_at = now()
+       RETURNING id
+     )
+     SELECT id FROM updated
+     UNION ALL
+     SELECT id FROM inserted
+     LIMIT 1`,
+    [
+      newInvoiceId(),
+      tenantId,
+      invoiceNumber(row),
+      counterpartyId,
+      row.amount,
+      ledgerCurrency(row.currency),
+      issueDate,
+      row.due_date,
+      ledgerInvoiceStatus(row.status, row.due_date),
+      row.source_ids,
+      row.evidence_ids,
+      JSON.stringify(row.extensions),
+      row.provenance,
+      projectedConfidence(row.provenance, row.confidence),
+      row.id,
+    ],
+  );
+  return rows[0] !== undefined;
+}
 
 /**
  * Rebuild the Ledger AP/AR projection for one tenant from canonical alone, no
@@ -283,10 +431,20 @@ export async function rebuildAparProjectionFromCanonical(
       [ctx.tenantId],
     );
     let obligationCount = 0;
+    let invoiceCount = 0;
     for (const obl of obls) {
       if (await projectCanonicalObligation(c, ctx.tenantId, obl)) obligationCount += 1;
+      if (obl.direction === "receivable" && obl.type === "invoice") {
+        const projected = await c.query<{ n: string }>(
+          `SELECT count(*)::text AS n
+             FROM ledger_invoices
+            WHERE owner_id = $1 AND canonical_obligation_id = $2`,
+          [ctx.tenantId, obl.id],
+        );
+        if (Number(projected.rows[0]?.n ?? 0) > 0) invoiceCount += 1;
+      }
     }
-    return { counterparties: cps.length, obligations: obligationCount };
+    return { counterparties: cps.length, obligations: obligationCount, invoices: invoiceCount };
   });
 
   await audit.emit({

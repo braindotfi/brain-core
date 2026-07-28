@@ -23,7 +23,7 @@ vi.mock("./repository.js", () => ({
   setAnchorReverted: vi.fn(),
 }));
 
-import { publishAnchor, type BroadcastResult } from "./publisher.js";
+import { publishAnchor, publishPendingAnchor, type BroadcastResult } from "./publisher.js";
 import * as repo from "./repository.js";
 
 const pool = {} as Pool;
@@ -144,5 +144,31 @@ describe("publishAnchor", () => {
     await publishAnchor(pool, broadcaster, opts);
 
     expect(broadcaster).not.toHaveBeenCalled();
+  });
+
+  it("retries an existing pending anchor row without rebuilding the window", async () => {
+    const pending = anchorRow();
+    vi.mocked(repo.findAnchorByRoot).mockResolvedValueOnce(
+      anchorRow({ onchain_tx_hash: Buffer.alloc(32, 0xab), onchain_status: "confirmed" }),
+    );
+    const broadcaster = vi.fn(async () => broadcastResult("confirmed"));
+
+    await publishPendingAnchor(pool, broadcaster, pending);
+
+    expect(repo.listEventsForAnchor).not.toHaveBeenCalled();
+    expect(repo.insertAnchor).not.toHaveBeenCalled();
+    expect(broadcaster).toHaveBeenCalledWith({
+      tenantId: pending.tenant_id,
+      merkleRoot: pending.merkle_root,
+      eventCount: pending.event_count,
+      periodStart: pending.period_start,
+      periodEnd: pending.period_end,
+    });
+    expect(repo.setAnchorTxHash).toHaveBeenCalledWith(
+      expect.anything(),
+      pending.id,
+      broadcastResult("confirmed").txHash,
+      4242n,
+    );
   });
 });
