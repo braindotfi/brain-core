@@ -58,7 +58,9 @@ export {
 
 export {
   findArtifactById,
+  setArtifactProjectionStatus,
   tombstoneArtifact,
+  type RawArtifactProjectionStatus,
   type RawArtifactRow,
 } from "./repository/artifacts.js";
 export {

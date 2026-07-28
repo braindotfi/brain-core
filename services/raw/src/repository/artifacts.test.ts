@@ -3,6 +3,7 @@ import type { TenantScopedClient } from "@brain/shared";
 import {
   findArtifactById,
   insertOrReuseArtifact,
+  setArtifactProjectionStatus,
   tombstoneArtifact,
   type RawArtifactRow,
 } from "./artifacts.js";
@@ -44,6 +45,8 @@ const stubRow: RawArtifactRow = {
   source_id: null,
   source_version: null,
   idempotency_key: null,
+  projection_status: null,
+  projection_status_updated_at: null,
 };
 
 function statefulDedupClient(initialRows: RawArtifactRow[] = []): {
@@ -60,9 +63,12 @@ function statefulDedupClient(initialRows: RawArtifactRow[] = []): {
       const sha = values?.[2] as Buffer;
       const key = sha.toString("hex");
       const incomingSchema = (values?.[9] as string | null) ?? null;
+      const incomingProjectionStatus =
+        (values?.[20] as RawArtifactRow["projection_status"]) ?? null;
       const existing = rows.get(key);
       if (existing !== undefined) {
         existing.source_schema = existing.source_schema ?? incomingSchema;
+        existing.projection_status = existing.projection_status ?? incomingProjectionStatus;
         return { rows: [existing], rowCount: 1 };
       }
       const row = {
@@ -77,6 +83,9 @@ function statefulDedupClient(initialRows: RawArtifactRow[] = []): {
         bytes: String(values?.[7]),
         ingested_by: values?.[8] as string,
         source_schema: incomingSchema,
+        projection_status: incomingProjectionStatus,
+        projection_status_updated_at:
+          incomingProjectionStatus !== null ? new Date("2026-01-01T00:00:00Z") : null,
       };
       rows.set(key, row);
       return { rows: [row], rowCount: 1 };
@@ -151,6 +160,7 @@ describe("insertOrReuseArtifact", () => {
     expect(second.deduplicated).toBe(true);
     expect(second.row.id).toBe("raw_old");
     expect(second.row.source_schema).toBe("brain.upload.document.v1");
+    expect(second.row.projection_status).toBe("pending");
     expect(log[0]!.sql).toContain(
       "source_schema = COALESCE(raw_artifacts.source_schema, EXCLUDED.source_schema)",
     );
@@ -197,6 +207,17 @@ describe("insertOrReuseArtifact", () => {
         ingestedBy: "agent_1",
       }),
     ).rejects.toThrow("raw_artifacts insert returned no row");
+  });
+});
+
+describe("setArtifactProjectionStatus", () => {
+  it("updates the per-artifact projection lifecycle status", async () => {
+    const { client, log } = fakeClient([]);
+
+    await setArtifactProjectionStatus(client, "raw_1", "projected");
+
+    expect(log[0]!.sql).toContain("SET projection_status = $1");
+    expect(log[0]!.values).toEqual(["projected", "raw_1"]);
   });
 });
 

@@ -53,6 +53,7 @@ export async function registerArtifact(app: FastifyInstance, deps: RawDeps): Pro
         expires_at: expiresAt,
         mime_type: row.mime_type,
         bytes: Number(row.bytes),
+        ...(row.projection_status !== null ? { projection_status: row.projection_status } : {}),
       };
     },
   );

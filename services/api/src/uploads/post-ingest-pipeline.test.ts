@@ -4,6 +4,7 @@ import {
   createUploadIngestPipelineDrain,
   runUploadProjectionSideEffects,
 } from "./post-ingest-pipeline.js";
+import type * as BrainShared from "@brain/shared";
 
 const calls = vi.hoisted(() => ({
   order: [] as string[],
@@ -41,11 +42,26 @@ const calls = vi.hoisted(() => ({
   regenerateWikiForUploadProjection: vi.fn(async () => {
     calls.order.push("wiki");
   }),
+  setArtifactProjectionStatus: vi.fn(async (_client: unknown, _rawId: string, status: string) => {
+    calls.order.push(`projection status ${status}`);
+  }),
 }));
+
+vi.mock("@brain/shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof BrainShared>();
+  return {
+    ...actual,
+    withTenantScope: vi.fn(
+      async (_pool: unknown, _tenantId: string, cb: (client: unknown) => unknown) =>
+        cb({ query: vi.fn() }),
+    ),
+  };
+});
 
 vi.mock("@brain/raw", () => ({
   UPLOAD_DOCUMENT_SCHEMA: "brain.upload.document.v1",
   runInterpretCycle: calls.runInterpretCycle,
+  setArtifactProjectionStatus: calls.setArtifactProjectionStatus,
 }));
 
 vi.mock("@brain/ledger", () => ({
@@ -73,6 +89,7 @@ describe("createUploadIngestPipelineDrain", () => {
     calls.rebuildAparProjectionFromCanonical.mockClear();
     calls.rebuildAccountTransactionProjectionFromCanonical.mockClear();
     calls.regenerateWikiForUploadProjection.mockClear();
+    calls.setArtifactProjectionStatus.mockClear();
   });
 
   afterEach(() => {
@@ -115,6 +132,7 @@ describe("createUploadIngestPipelineDrain", () => {
         bytes: 3,
         sourceType: "pdf_upload",
         sourceSchema: "brain.upload.document.v1",
+        projectionStatus: "pending",
         ingestedAt: "2026-07-25T00:00:00.000Z",
         deduplicated: false,
         extractionJob: null,
@@ -125,11 +143,25 @@ describe("createUploadIngestPipelineDrain", () => {
       "interpret",
       "normalize",
       "canonical",
+      "projection status projecting",
       "ledger-apar",
       "ledger-account-transaction",
       "wiki",
       "agents",
+      "projection status projected",
     ]);
+    expect(calls.setArtifactProjectionStatus).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      "raw_seed",
+      "projecting",
+    );
+    expect(calls.setArtifactProjectionStatus).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      "raw_seed",
+      "projected",
+    );
     expect(calls.rebuildAparProjectionFromCanonical).toHaveBeenCalledWith(
       {} as Pool,
       {},
@@ -251,6 +283,11 @@ describe("createUploadIngestPipelineDrain", () => {
       }),
       "upload projection side effect timed out",
     );
+    expect(calls.setArtifactProjectionStatus).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "raw_seed",
+      "projection_timed_out",
+    );
     expect(calls.rebuildAccountTransactionProjectionFromCanonical).not.toHaveBeenCalled();
     expect(calls.regenerateWikiForUploadProjection).not.toHaveBeenCalled();
   });
@@ -285,6 +322,7 @@ describe("createUploadIngestPipelineDrain", () => {
         bytes: 3,
         sourceType: "csv_upload",
         sourceSchema: null,
+        projectionStatus: null,
         ingestedAt: "2026-07-25T00:00:00.000Z",
         deduplicated: false,
         extractionJob: null,

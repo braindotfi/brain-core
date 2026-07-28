@@ -15,7 +15,8 @@ import {
   type BlobAdapter,
 } from "@brain/shared";
 import type { Pool } from "pg";
-import { insertOrReuseArtifact } from "../repository/artifacts.js";
+import { insertOrReuseArtifact, setArtifactProjectionStatus } from "../repository/artifacts.js";
+import type { RawArtifactProjectionStatus } from "../repository/artifacts.js";
 import { hasValidParsedForArtifact } from "../repository/parsed.js";
 import {
   enqueueExtractionJob,
@@ -28,6 +29,7 @@ import {
   BANK_STATEMENT_UPLOAD_PARSER,
   defaultSourceSchemaForUpload,
   DOCUMENT_RECORDS_UPLOAD_PARSER,
+  UPLOAD_DOCUMENT_SCHEMA,
   UPLOAD_DOCUMENT_INTERPRETER_VERSION,
 } from "../interpreters/upload.js";
 
@@ -52,6 +54,7 @@ export interface IngestResult {
   bytes: number;
   sourceType: string;
   sourceSchema: string | null;
+  projectionStatus: RawArtifactProjectionStatus | null;
   ingestedAt: string;
   deduplicated: boolean;
   extractionJob?: ExtractionJobWire | null;
@@ -113,6 +116,7 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
           excludeTerminalZeroProjection: true,
         });
         if (!hasValidParsed) {
+          await setArtifactProjectionStatus(client, artifact.row.id, "pending");
           const enqueued = await enqueueExtractionJob(client, {
             tenantId: input.tenantId,
             rawId: artifact.row.id,
@@ -153,6 +157,10 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
     bytes: Number(row.bytes),
     sourceType: row.source_type,
     sourceSchema: row.source_schema ?? null,
+    projectionStatus:
+      row.source_schema === UPLOAD_DOCUMENT_SCHEMA && extractionJob !== null
+        ? "pending"
+        : row.projection_status,
     ingestedAt: toIso(row.ingested_at),
     deduplicated,
     extractionJob,

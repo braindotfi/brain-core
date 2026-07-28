@@ -64,6 +64,7 @@ describe("buildWikiMemoryService.annotate", () => {
       bytes: 0,
       sourceType: WIKI_ANNOTATION_SOURCE_TYPE,
       sourceSchema: null,
+      projectionStatus: null,
       ingestedAt: "2026-01-01T00:00:00Z",
       deduplicated: false,
     });
@@ -113,6 +114,7 @@ describe("buildWikiMemoryService.annotate", () => {
       bytes: 0,
       sourceType: WIKI_ANNOTATION_SOURCE_TYPE,
       sourceSchema: null,
+      projectionStatus: null,
       ingestedAt: "2026-01-01T00:00:00Z",
       deduplicated: false,
     });
