@@ -70,7 +70,10 @@ import { insertBootstrapAdminMember } from "./bootstrap-member.js";
  *
  *   1. money movement (outbound_payment / onchain_tx) at >= floor => `confirm`
  *      with a single-signer approval requirement (human in the loop);
- *   2. non-money agent actions (inbound_payment / ledger_write) at >= floor =>
+ *   2. non-financial agent proposals (agent_action) at >= floor => `confirm`
+ *      with a single-signer approval requirement, so fresh/demo tenants can
+ *      demonstrate the Needs Review approval loop without execution authority;
+ *   3. non-money system actions (inbound_payment / ledger_write) at >= floor =>
  *      `auto` (safe to allow; not a money mover, so lint-clean).
  *
  * Below the floor, no rule matches and the default-deny tail rejects. The VM
@@ -89,6 +92,13 @@ export function buildDefaultPolicyDocument(floor = DEFAULT_CONFIDENCE_FLOOR): Po
       {
         id: "default-money-requires-confirmation",
         applies_to: ["outbound_payment", "onchain_tx"],
+        when: { "agent.confidence.gte": floor },
+        execute: "confirm",
+        require: "single_signer",
+      },
+      {
+        id: "default-agent-action-requires-review",
+        applies_to: ["agent_action"],
         when: { "agent.confidence.gte": floor },
         execute: "confirm",
         require: "single_signer",

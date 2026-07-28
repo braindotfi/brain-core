@@ -176,14 +176,19 @@ describe("provisionTenant — RFC 0002 Phase B", () => {
     // The rule is the named floor at the configured constant. The floor sits
     // ABOVE the 0.5 agent_contributed write ceiling (see the boundary
     // regression block below) so an uncorroborated 0.5 row cannot satisfy it.
-    // Rule 0 gates money movement to human confirmation; rule 1 is the
-    // non-money floor. Money is never auto-executed by default (Codex P0).
+    // Rule 0 gates money movement to human confirmation; rule 1 admits
+    // evidence-backed agent proposals into Needs Review; rule 2 is the
+    // non-money system floor. Money is never auto-executed by default
+    // (Codex P0).
     expect(parsed.rules[0].when["agent.confidence.gte"]).toBe(DEFAULT_CONFIDENCE_FLOOR);
     expect(parsed.rules[0].applies_to).toEqual(["outbound_payment", "onchain_tx"]);
     expect(parsed.rules[0].execute).toBe("confirm");
     expect(parsed.rules[0].require).toBe("single_signer");
-    expect(parsed.rules[1].applies_to).toEqual(["inbound_payment", "ledger_write"]);
-    expect(parsed.rules[1].execute).toBe("auto");
+    expect(parsed.rules[1].applies_to).toEqual(["agent_action"]);
+    expect(parsed.rules[1].execute).toBe("confirm");
+    expect(parsed.rules[1].require).toBe("single_signer");
+    expect(parsed.rules[2].applies_to).toEqual(["inbound_payment", "ledger_write"]);
+    expect(parsed.rules[2].execute).toBe("auto");
 
     // content_hash is sha256 of the canonical document. Computed in code, not
     // hard-coded -- otherwise a future DSL change to canonicalize() would
@@ -253,6 +258,35 @@ describe("default confidence floor — boundary enforcement (Codex 2026-06-05 P0
   it("non-money actions above the floor still auto-allow (not needlessly gated)", () => {
     const ledgerWrite: Action = { ...paymentWithConfidence(0.8), kind: "ledger_write" };
     expect(evaluate(policy, ledgerWrite).outcome).toBe("allow");
+  });
+
+  it("agent actions above the floor require human review instead of rejecting", () => {
+    const agentAction: Action = {
+      kind: "agent_action",
+      counterparty_id: null,
+      amount: null,
+      agent_role: "collections",
+      agent_id: "collections",
+      timestamp: new Date("2026-06-05T00:00:00Z"),
+      confidence: DEFAULT_CONFIDENCE_FLOOR,
+    };
+    const decision = evaluate(policy, agentAction);
+    expect(decision.outcome).toBe("confirm");
+    expect(decision.matched_rule_id).toBe("default-agent-action-requires-review");
+    expect(decision.required_approvers).toEqual(["signer"]);
+  });
+
+  it("agent actions below the floor still reject", () => {
+    const agentAction: Action = {
+      kind: "agent_action",
+      counterparty_id: null,
+      amount: null,
+      agent_role: "collections",
+      agent_id: "collections",
+      timestamp: new Date("2026-06-05T00:00:00Z"),
+      confidence: DEFAULT_CONFIDENCE_FLOOR - 0.01,
+    };
+    expect(evaluate(policy, agentAction).outcome).toBe("reject");
   });
 
   it("the default policy is lint-clean: lintPolicy returns zero ERROR findings", () => {
