@@ -134,4 +134,92 @@ DESCRIBE("ledger AP/AR projection integration (requires DATABASE_URL)", () => {
     expect(Number(o[0]!.n)).toBe(1);
     expect(Number(c[0]!.n)).toBe(1);
   });
+
+  it("projects document-upload receivables and payroll obligations into compact AP/AR tables", async () => {
+    const documentTenant = newTenantId();
+    const arCounterparty = newCanonicalCounterpartyId();
+    const payrollCounterpartyA = newCanonicalCounterpartyId();
+    const payrollCounterpartyB = newCanonicalCounterpartyId();
+    const invoiceObligation = newCanonicalObligationId();
+    const payrollObligationA = newCanonicalObligationId();
+    const payrollObligationB = newCanonicalObligationId();
+    const documentCtx: ServiceCallContext = { tenantId: documentTenant, actor: "sys_test" };
+
+    try {
+      await pool.query(
+        `INSERT INTO canonical_counterparty
+           (id, tenant_id, source_system, source_natural_key, name, normalized_name,
+            type, provenance, confidence, source_ids, evidence_ids)
+         VALUES
+           ($1,$2,'document_upload','customer_helios','Helios','helios','customer','extracted',0.72,ARRAY['raw_ar'],ARRAY['prs_ar']),
+           ($3,$2,'document_upload','payroll_2026_06A','Payroll 2026-06A','payroll_2026_06a','employee','extracted',0.9,ARRAY['raw_payroll'],ARRAY['prs_payroll']),
+           ($4,$2,'document_upload','payroll_2026_06B','Payroll 2026-06B','payroll_2026_06b','employee','extracted',0.9,ARRAY['raw_payroll'],ARRAY['prs_payroll'])`,
+        [arCounterparty, documentTenant, payrollCounterpartyA, payrollCounterpartyB],
+      );
+      await pool.query(
+        `INSERT INTO canonical_obligation
+           (id, tenant_id, source_system, source_natural_key, direction, type,
+            canonical_counterparty_id, counterparty_source_key, amount, currency,
+            issue_date, due_date, status, provenance, confidence, source_ids,
+            evidence_ids, extensions)
+         VALUES
+           ($1,$2,'document_upload','invoice_NL_2417','receivable','invoice',
+            $3,'customer_helios','1200.00','USD','2026-05-01','2026-05-22','OPEN',
+            'extracted',0.72,ARRAY['raw_ar'],ARRAY['prs_ar'],
+            '{ "document_upload": { "invoice_ref": "NL-2417" } }'::jsonb),
+           ($4,$2,'document_upload','payroll_2026_06A','payable','payroll',
+            $5,'payroll_2026_06A','29612.42','USD','2026-06-12','2026-06-12','OPEN',
+            'extracted',0.9,ARRAY['raw_payroll'],ARRAY['prs_payroll'],'{}'::jsonb),
+           ($6,$2,'document_upload','payroll_2026_06B','payable','payroll',
+            $7,'payroll_2026_06B','29612.42','USD','2026-06-26','2026-06-26','OPEN',
+            'extracted',0.9,ARRAY['raw_payroll'],ARRAY['prs_payroll'],'{}'::jsonb)`,
+        [
+          invoiceObligation,
+          documentTenant,
+          arCounterparty,
+          payrollObligationA,
+          payrollCounterpartyA,
+          payrollObligationB,
+          payrollCounterpartyB,
+        ],
+      );
+
+      const result = await rebuildAparProjectionFromCanonical(pool, audit, documentCtx);
+      expect(result).toEqual({ counterparties: 3, obligations: 3, invoices: 1 });
+
+      const { rows: obligations } = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n
+           FROM ledger_obligations
+          WHERE owner_id = $1
+            AND canonical_obligation_id = ANY($2::text[])`,
+        [documentTenant, [invoiceObligation, payrollObligationA, payrollObligationB]],
+      );
+      expect(Number(obligations[0]!.n)).toBe(3);
+
+      const { rows: invoices } = await pool.query<{
+        invoice_number: string;
+        amount_due: string;
+        source_ids: string[];
+        evidence_ids: string[];
+      }>(
+        `SELECT invoice_number, amount_due, source_ids, evidence_ids
+           FROM ledger_invoices
+          WHERE owner_id = $1 AND canonical_obligation_id = $2`,
+        [documentTenant, invoiceObligation],
+      );
+      expect(invoices).toHaveLength(1);
+      expect(invoices[0]).toMatchObject({
+        invoice_number: "NL-2417",
+        source_ids: ["raw_ar"],
+        evidence_ids: ["prs_ar"],
+      });
+      expect(Number(invoices[0]!.amount_due)).toBe(1200);
+    } finally {
+      await pool.query(`DELETE FROM ledger_invoices WHERE owner_id = $1`, [documentTenant]);
+      await pool.query(`DELETE FROM ledger_obligations WHERE owner_id = $1`, [documentTenant]);
+      await pool.query(`DELETE FROM ledger_counterparties WHERE owner_id = $1`, [documentTenant]);
+      await pool.query(`DELETE FROM canonical_obligation WHERE tenant_id = $1`, [documentTenant]);
+      await pool.query(`DELETE FROM canonical_counterparty WHERE tenant_id = $1`, [documentTenant]);
+    }
+  });
 });
