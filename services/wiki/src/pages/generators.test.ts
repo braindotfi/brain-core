@@ -106,9 +106,6 @@ describe("InvoicePageGenerator", () => {
             rowCount: 1,
           };
         }
-        if (text.includes("FROM ledger_invoices") && text.includes("ORDER BY updated_at DESC")) {
-          return { rows: [], rowCount: 0 };
-        }
         throw new Error(`unexpected query: ${text}`);
       }),
     } as unknown as TenantScopedClient;
@@ -125,6 +122,7 @@ describe("InvoicePageGenerator", () => {
     expect(out.body_md).toContain("No invoice rows are anchored in Ledger yet");
     expect(out.source_revision).toBe("invoices_all_empty");
     expect(queries.some((q) => q.includes("WHERE id = $1 LIMIT 1"))).toBe(false);
+    expect(queries.some((q) => q.includes("ORDER BY updated_at DESC"))).toBe(false);
   });
 
   it("renders recent invoices for /invoices/all when invoice rows exist", async () => {
@@ -180,5 +178,47 @@ describe("InvoicePageGenerator", () => {
     expect(out.body_md).toContain("1 overdue invoice(s) require review");
     expect(out.source_revision).toMatch(/^[a-f0-9]{16}$/);
     expect(out.source_revision).not.toBe("invoices_all_empty");
+  });
+
+  it("renders an invoice page when its counterparty row is missing", async () => {
+    const updatedAt = new Date("2026-06-30T12:00:00Z");
+    const client = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("FROM ledger_invoices WHERE id = $1 LIMIT 1")) {
+          return {
+            rows: [
+              {
+                id: "inv_1",
+                invoice_number: "NL-2417",
+                counterparty_id: "cp_missing",
+                amount_due: "1500.00",
+                amount_paid: "0.00",
+                currency: "USD",
+                issue_date: new Date("2026-05-01T00:00:00Z"),
+                due_date: new Date("2026-05-22T00:00:00Z"),
+                status: "overdue",
+                linked_document_ids: [],
+                linked_transaction_ids: [],
+                source_ids: [],
+                evidence_ids: [],
+                updated_at: updatedAt,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (text.includes("FROM ledger_counterparties WHERE id = $1 LIMIT 1")) {
+          return { rows: [], rowCount: 0 };
+        }
+        throw new Error(`unexpected query: ${text}`);
+      }),
+    } as unknown as TenantScopedClient;
+
+    const gen = new InvoicePageGenerator();
+    const out = await gen.render({ ctx, client }, { subjectId: "inv_1", slug: "/invoices/inv_1" });
+
+    expect(out.body_md).toContain("`cp_missing` (missing)");
+    expect(out.body_md).toContain("No linked entities");
+    expect(out.body_md).toContain("Overdue invoice");
   });
 });

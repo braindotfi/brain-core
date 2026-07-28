@@ -123,7 +123,7 @@ async function renderInvoiceIndex(
   slug: string,
 ): Promise<PageGenerationOutput> {
   const summary = await fetchInvoiceSummary(deps);
-  const invoices = await fetchRecentInvoices(deps);
+  const invoices = summary.invoice_count === 0 ? [] : await fetchRecentInvoices(deps);
 
   const currentTruth =
     `**Invoices**\n` +
@@ -239,8 +239,11 @@ async function fetchRecentInvoices(deps: PageGenerationContext): Promise<Invoice
   const { rows } = await deps.client.query<InvoiceRow>(
     `SELECT id, invoice_number, counterparty_id, amount_due::TEXT, amount_paid::TEXT,
             currency, issue_date, due_date, status,
-            linked_document_ids, linked_transaction_ids,
-            source_ids, evidence_ids, updated_at
+            COALESCE(linked_document_ids, ARRAY[]::TEXT[]) AS linked_document_ids,
+            COALESCE(linked_transaction_ids, ARRAY[]::TEXT[]) AS linked_transaction_ids,
+            COALESCE(source_ids, ARRAY[]::TEXT[]) AS source_ids,
+            COALESCE(evidence_ids, ARRAY[]::TEXT[]) AS evidence_ids,
+            updated_at
        FROM ledger_invoices
       ORDER BY updated_at DESC
       LIMIT 25`,
@@ -252,8 +255,11 @@ async function fetchInvoice(deps: PageGenerationContext, id: string): Promise<In
   const { rows } = await deps.client.query<InvoiceRow>(
     `SELECT id, invoice_number, counterparty_id, amount_due::TEXT, amount_paid::TEXT,
             currency, issue_date, due_date, status,
-            linked_document_ids, linked_transaction_ids,
-            source_ids, evidence_ids, updated_at
+            COALESCE(linked_document_ids, ARRAY[]::TEXT[]) AS linked_document_ids,
+            COALESCE(linked_transaction_ids, ARRAY[]::TEXT[]) AS linked_transaction_ids,
+            COALESCE(source_ids, ARRAY[]::TEXT[]) AS source_ids,
+            COALESCE(evidence_ids, ARRAY[]::TEXT[]) AS evidence_ids,
+            updated_at
        FROM ledger_invoices WHERE id = $1 LIMIT 1`,
     [id],
   );
