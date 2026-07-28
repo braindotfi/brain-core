@@ -266,6 +266,10 @@ describe("production tenancy routes", () => {
             c.sql.includes("INSERT INTO member_identity_links") && c.sql.includes("'platform'"),
         ),
       ).toBe(true);
+      expect(appDb.calls.some((c) => c.sql.includes("INSERT INTO policies"))).toBe(true);
+      const policyInsert = appDb.calls.find((c) => c.sql.includes("INSERT INTO policies"));
+      expect(policyInsert?.sql).toContain("'active'");
+      expect(policyInsert?.values).toContain(body.tenant_id);
       expect(signer.sign).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "user",

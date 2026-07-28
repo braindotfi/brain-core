@@ -74,6 +74,40 @@ interface ActiveTokenRow {
   expires_at_epoch: string | number;
 }
 
+export async function ensureActiveDefaultPolicy(
+  c: TenantScopedClient,
+  tenantId: string,
+  createdBy: string,
+): Promise<void> {
+  const active = await c.query<{ id: string }>(
+    `SELECT id FROM policies WHERE tenant_id = $1 AND state = 'active' LIMIT 1`,
+    [tenantId],
+  );
+  if (active.rows[0] !== undefined) return;
+
+  const version = await c.query<{ next: number }>(
+    `SELECT COALESCE(MAX(version) + 1, 1) AS next FROM policies WHERE tenant_id = $1`,
+    [tenantId],
+  );
+  const policyId = newPolicyId();
+  const defaultPolicy = buildDefaultPolicyDocument();
+  const defaultPolicyHash = contentHash(defaultPolicy);
+  await c.query(
+    `INSERT INTO policies
+       (id, tenant_id, version, content, content_hash, quorum_required, state, created_by, activated_at)
+     VALUES ($1, $2, $3, $4, $5, 1, 'active', $6, now())
+     ON CONFLICT DO NOTHING`,
+    [
+      policyId,
+      tenantId,
+      version.rows[0]?.next ?? 1,
+      JSON.stringify(defaultPolicy),
+      defaultPolicyHash,
+      createdBy,
+    ],
+  );
+}
+
 /**
  * Idempotently seed the owner user, bootstrap admin member, and active
  * default policy for a service-token tenant. Safe to call on every mint:
@@ -90,7 +124,11 @@ export async function ensureTenantBootstrapped(
     `SELECT id FROM members WHERE tenant_id = $1 AND active = true LIMIT 1`,
     [tenantId],
   );
-  if (existingMember.rows[0]) return;
+  const existingMemberId = existingMember.rows[0]?.id;
+  if (existingMemberId !== undefined) {
+    await ensureActiveDefaultPolicy(c, tenantId, existingMemberId);
+    return;
+  }
 
   const ownerUserId = newUserId();
   const placeholderEmail = bootstrapPlaceholderEmail(tenantId);
@@ -112,16 +150,7 @@ export async function ensureTenantBootstrapped(
     displayName: "Bootstrap Admin",
   });
 
-  const policyId = newPolicyId();
-  const defaultPolicy = buildDefaultPolicyDocument();
-  const defaultPolicyHash = contentHash(defaultPolicy);
-  await c.query(
-    `INSERT INTO policies
-       (id, tenant_id, version, content, content_hash, quorum_required, state, created_by, activated_at)
-     VALUES ($1, $2, 1, $3, $4, 1, 'active', $5, now())
-     ON CONFLICT DO NOTHING`,
-    [policyId, tenantId, JSON.stringify(defaultPolicy), defaultPolicyHash, ownerUserId],
-  );
+  await ensureActiveDefaultPolicy(c, tenantId, ownerUserId);
 }
 
 export async function ensureBffServiceAgent(
