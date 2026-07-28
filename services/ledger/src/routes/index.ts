@@ -65,7 +65,11 @@ export async function registerLedgerRoutes(
         ...(request.query.cursor !== undefined ? { cursor: request.query.cursor } : {}),
       });
       reply.status(200);
-      return { accounts: result.items, next_cursor: result.next_cursor };
+      return {
+        accounts: result.items,
+        next_cursor: result.next_cursor,
+        total_count: result.total_count ?? result.items.length,
+      };
     },
   );
 

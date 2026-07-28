@@ -1087,6 +1087,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assistant/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List suggested assistant questions
+         * @description Requires `wiki:read`. Returns tenant-scoped assistant questions when
+         *     present. Empty tenants receive `questions: []`.
+         */
+        get: operations["listAssistantQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/memory/pages": {
         parameters: {
             query?: never;
@@ -4519,6 +4540,22 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
+        AssistantQuestion: {
+            id: string;
+            question: string;
+            answer: string | null;
+            /** @enum {string} */
+            status: "suggested" | "answered" | "dismissed";
+            source: string | null;
+            evidence_ids: string[];
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         WikiPage: {
             id: string;
             /** @enum {string} */
@@ -6421,6 +6458,8 @@ export interface operations {
                     "application/json": {
                         accounts?: components["schemas"]["Account"][];
                         next_cursor?: string | null;
+                        /** @description Total tenant accounts matching the filters, independent of pagination. */
+                        total_count?: number;
                     };
                 };
             };
@@ -7004,6 +7043,31 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    listAssistantQuestions: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Assistant question list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        questions: components["schemas"]["AssistantQuestion"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
         };
     };
     listMemoryPages: {

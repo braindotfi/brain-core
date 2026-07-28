@@ -57,6 +57,7 @@ describe("LedgerService — limit clamping and reads", () => {
     const result = await service.listAccounts(ctx, { limit: 0 });
     expect(result.items).toEqual([]);
     expect(result.next_cursor).toBeNull();
+    expect(result.total_count).toBe(0);
   });
 
   it("clamps requested limit above max", async () => {
@@ -145,10 +146,14 @@ describe("LedgerService — limit clamping and reads", () => {
       accountRow("acct_2", new Date("2026-07-02T00:00:00Z")),
       accountRow("acct_1", new Date("2026-07-01T00:00:00Z")),
     ];
-    const { pool, calls } = fakePool({ "SELECT * FROM ledger_accounts": rows });
+    const { pool, calls } = fakePool({
+      "SELECT * FROM ledger_accounts": rows,
+      "SELECT count(*)::int AS total_count FROM ledger_accounts": [{ total_count: 2 }],
+    });
     const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
     const result = await service.listAccounts(ctx, { limit: 1 });
     expect(result.items.map((account) => account.id)).toEqual(["acct_2"]);
+    expect(result.total_count).toBe(2);
     expect(result.next_cursor).toEqual(expect.any(String));
     expect(decodeKeysetCursor(result.next_cursor!)).toEqual({
       sort: "2026-07-02T00:00:00.000Z",

@@ -1621,6 +1621,9 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Account' }
                   next_cursor: { type: [string, "null"] }
+                  total_count:
+                    type: integer
+                    description: Total tenant accounts matching the filters, independent of pagination.
 
         '400': { $ref: '#/components/responses/BadRequest' }
   /ledger/accounts/{account_id}:
@@ -2225,6 +2228,32 @@ paths:
   #############################################################################
   # LAYER 3: WIKI (memory)
   #############################################################################
+
+  /assistant/questions:
+    get:
+      tags: [Wiki]
+      summary: List suggested assistant questions
+      description: |
+        Requires `wiki:read`. Returns tenant-scoped assistant questions when
+        present. Empty tenants receive `questions: []`.
+      operationId: listAssistantQuestions
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 100 }
+      responses:
+        '200':
+          description: Assistant question list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questions]
+                properties:
+                  questions:
+                    type: array
+                    items: { $ref: '#/components/schemas/AssistantQuestion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   # Wiki memory pages — derived from Ledger + Raw, regenerable on demand.
   /memory/pages:
@@ -7786,6 +7815,24 @@ components:
     #
     # Wiki memory pages (v0.2)
     #
+
+    AssistantQuestion:
+      type: object
+      required: [id, question, answer, status, source, evidence_ids, metadata, created_at, updated_at]
+      properties:
+        id: { type: string }
+        question: { type: string }
+        answer: { type: [string, "null"] }
+        status:
+          type: string
+          enum: [suggested, answered, dismissed]
+        source: { type: [string, "null"] }
+        evidence_ids:
+          type: array
+          items: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     WikiPage:
       type: object
