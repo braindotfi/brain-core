@@ -31,7 +31,10 @@ const DB_URL = process.env.DATABASE_URL;
 const suite = DB_URL !== undefined && DB_URL !== "" ? describe : describe.skip;
 
 function repoRoot(): string {
-  return new URL("../../../..", import.meta.url).pathname;
+  // decodeURIComponent for the same reason service.test.ts does it: pathname
+  // percent-encodes spaces, so a checkout under e.g. "Brain Code" resolves to
+  // a directory that does not exist and discoverMigrations quietly finds none.
+  return decodeURIComponent(new URL("../../../..", import.meta.url).pathname);
 }
 
 /**
@@ -90,6 +93,19 @@ async function surfaceCounts(pool: Pool, tenantId: string): Promise<Record<strin
   return counts;
 }
 
+// Deliberately NOT inside `suite`: this is a pure comparison of two in-memory
+// constants, and it is the guard that stops the DB-backed tests below from
+// passing vacuously. Gating it on DATABASE_URL would drop the cheapest
+// protection on exactly the machines that skip everything else.
+describe("tenant deletion — surface seed coverage", () => {
+  it("seeds every surface table the deletion list claims to cover (drift guard)", () => {
+    expect(new Set(Object.keys(SURFACE_SEEDS))).toEqual(
+      new Set(surfaceEntries.map((t) => t.table)),
+    );
+    expect(surfaceEntries.length).toBeGreaterThan(10);
+  });
+});
+
 suite("tenant deletion — surface-gateway tables (requires DATABASE_URL)", () => {
   let pool: Pool;
   let schema: string;
@@ -131,15 +147,6 @@ suite("tenant deletion — surface-gateway tables (requires DATABASE_URL)", () =
       await teardown.end();
     }
   }, 60_000);
-
-  it("seeds every surface table the deletion list claims to cover (drift guard)", () => {
-    // If a new tenant-scoped surface_* table is added to TENANT_SCOPED_TABLES
-    // without a seed here, the coverage assertions below would pass vacuously.
-    expect(new Set(Object.keys(SURFACE_SEEDS))).toEqual(
-      new Set(surfaceEntries.map((t) => t.table)),
-    );
-    expect(surfaceEntries.length).toBeGreaterThan(10);
-  });
 
   it("PRE-FIX: the old deletion list commits successfully and orphans every surface row", async () => {
     const tenant = newTenantId();

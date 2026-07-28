@@ -442,6 +442,22 @@ describe("TenantDeletionService — registry coverage (migration-derived)", () =
     expect(orphans).toEqual([]);
   });
 
+  it("every entry deletes on the column its migration actually declares", () => {
+    // The scan already computes each table's tenant column; comparing names
+    // only would let a wrong predicate through. A DELETE naming a column the
+    // table does not have raises 42703 and rolls the whole erasure back — a
+    // hard failure, strictly worse than the orphaning this list exists to
+    // prevent, and invisible to the fake-pool tests above (they match on the
+    // table name and ignore the predicate).
+    const scannedColumn = new Map(scanned.map((t) => [t.table, t.column]));
+    const mismatched = TENANT_SCOPED_TABLES.filter(
+      (t) => scannedColumn.get(t.table) !== undefined && scannedColumn.get(t.table) !== t.column,
+    ).map(
+      (t) => `${t.table}: list says ${t.column}, migration declares ${scannedColumn.get(t.table)}`,
+    );
+    expect(mismatched).toEqual([]);
+  });
+
   it("preserved tables (audit chain) are not in the deletion list", () => {
     const conflicts = TENANT_SCOPED_TABLES.filter((t) => PRESERVED_TABLES.has(t.table));
     expect(conflicts).toEqual([]);
