@@ -61,7 +61,10 @@ import {
 
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
-import { buildVerificationEmailDelivery } from "./onboarding/email-delivery.js";
+import {
+  buildVerificationEmailDelivery,
+  buildSetPasswordEmailDelivery,
+} from "./onboarding/email-delivery.js";
 import { registerPasswordLoginRoute, PostgresUserCredentialReader } from "./onboarding/login.js";
 import { insertBootstrapAdminMember } from "./onboarding/bootstrap-member.js";
 import {
@@ -2168,6 +2171,17 @@ async function main(): Promise<void> {
         const agentRegistry = cfg.BRAIN_DEMO_MODE
           ? new StubAgentRegistry()
           : new PostgresAgentRegistry(pool, onchainScopeChecker);
+        // AUTH-PATHS-PLAN.md section 2 hard prerequisite: every founder minted
+        // by POST /tenants needs a set-password invite or they can never
+        // authenticate at auth.brain.fi. Lenient (undefined, not a throw) when
+        // ESP creds are absent -- this route has no feature flag to gate it
+        // off, unlike self-serve signup's boot fence.
+        const deliverSetPasswordEmail = buildSetPasswordEmailDelivery({
+          emailEndpoint: cfg.EMAIL_ENDPOINT,
+          emailApiKey: cfg.EMAIL_API_KEY,
+          emailFrom: cfg.EMAIL_FROM,
+          authIssuer: cfg.AUTH_ISSUER,
+        });
         await v1.register(async (child) =>
           registerProductionTenancyRoutes(child, {
             pool,
@@ -2178,6 +2192,7 @@ async function main(): Promise<void> {
             ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
               ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
               : {}),
+            ...(deliverSetPasswordEmail !== undefined ? { deliverSetPasswordEmail } : {}),
           }),
         );
         await v1.register(async (child) =>

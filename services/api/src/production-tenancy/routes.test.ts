@@ -61,7 +61,7 @@ function memberRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function appPool(member = memberRow()) {
+function appPool(member = memberRow(), inviteRow: Record<string, unknown> | null = null) {
   const calls: QueryCall[] = [];
   const tenants = new Map<string, "production" | "demo">();
   const agents = new Map<string, AgentRow>();
@@ -86,6 +86,13 @@ function appPool(member = memberRow()) {
         const [tenantId] = values as [string];
         const kind = tenants.get(tenantId) ?? "production";
         return Promise.resolve({ rows: [{ kind }], rowCount: 1 });
+      }
+      // lockInvite: the FOR UPDATE re-read inside the withTenantScope tx.
+      if (sql.includes("FROM member_invites") && sql.includes("FOR UPDATE")) {
+        return Promise.resolve({
+          rows: inviteRow === null ? [] : [inviteRow],
+          rowCount: inviteRow === null ? 0 : 1,
+        });
       }
       if (sql.includes("FROM members") && sql.includes("WHERE id = $1")) {
         return Promise.resolve({ rows: [member], rowCount: 1 });
@@ -173,10 +180,26 @@ function resolverPool(rows: unknown[] = []) {
   };
 }
 
-async function build(opts: { appRows?: unknown[]; resolverRows?: unknown[] } = {}) {
+async function build(
+  opts: {
+    appRows?: unknown[];
+    resolverRows?: unknown[];
+    inviteRow?: Record<string, unknown> | null;
+    deliverSetPasswordEmail?: (input: {
+      tenantId: string;
+      userId: string;
+      email: string;
+      token: string;
+      expiresAt: Date;
+    }) => Promise<void>;
+  } = {},
+) {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
-  const appDb = appPool(opts.appRows?.[0] === undefined ? memberRow() : (opts.appRows[0] as never));
+  const appDb = appPool(
+    opts.appRows?.[0] === undefined ? memberRow() : (opts.appRows[0] as never),
+    opts.inviteRow ?? null,
+  );
   const resolver = resolverPool(opts.resolverRows ?? []);
   const audit = { emit: vi.fn(async () => ({ id: "audit_1" })) };
   const signer = { sign: vi.fn(async () => "access-token") };
@@ -186,6 +209,9 @@ async function build(opts: { appRows?: unknown[]; resolverRows?: unknown[] } = {
     audit: audit as never,
     signer: signer as never,
     platformSecret,
+    ...(opts.deliverSetPasswordEmail !== undefined
+      ? { deliverSetPasswordEmail: opts.deliverSetPasswordEmail }
+      : {}),
   });
   return { app, appDb, resolver, audit, signer };
 }
@@ -284,6 +310,81 @@ describe("production tenancy routes", () => {
       );
       expect(appDb.agents.size).toBe(1);
       expect(appDb.productionAgentTokens.size).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("mints a set-password token for the founder and reports founder_invite_email when no delivery dependency is wired", async () => {
+    const { app, appDb } = await build();
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/tenants",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: {
+          founder: { email: "founder@example.com" },
+          founder_external_ref: "platform-user-1",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().founder_invite_email).toBe("not_sent");
+      const insert = appDb.calls.find((c) => c.sql.includes("INSERT INTO email_verifications"));
+      expect(insert).toBeDefined();
+      expect(insert?.values?.[2]).toBe(res.json().tenant_id);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("sends the founder a set-password invite and audits the outcome when a delivery dependency is wired", async () => {
+    const deliverSetPasswordEmail = vi.fn(async () => {});
+    const { app, audit } = await build({ deliverSetPasswordEmail });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/tenants",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: {
+          founder: { email: "founder@example.com" },
+          founder_external_ref: "platform-user-1",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().founder_invite_email).toBe("sent");
+      expect(deliverSetPasswordEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ email: "founder@example.com" }),
+      );
+      const created = (
+        audit.emit.mock.calls as unknown as Array<
+          [{ action: string; outputs: Record<string, unknown> }]
+        >
+      )
+        .map((call) => call[0])
+        .find((event) => event.action === "tenant.created");
+      expect(created?.outputs).toMatchObject({ founder_invite_email: "sent" });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not fail tenant creation when the set-password email fails to send", async () => {
+    const deliverSetPasswordEmail = vi.fn(async () => {
+      throw new Error("esp down");
+    });
+    const { app } = await build({ deliverSetPasswordEmail });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/tenants",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: {
+          founder: { email: "founder@example.com" },
+          founder_external_ref: "platform-user-1",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().founder_invite_email).toBe("not_sent");
     } finally {
       await app.close();
     }
@@ -609,6 +710,50 @@ describe("production tenancy routes", () => {
       expect(res.statusCode).toBe(403);
       expect(res.json().reason).toBe("invite_invalid");
       expect(appDb.calls.some((c) => c.sql.includes("member_identity_links"))).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("creates the users row on invite consume (AUTH-PATHS-PLAN.md section 1)", async () => {
+    const tenantId = newTenantId();
+    const inviteRow = {
+      tenant_id: tenantId,
+      member_id: "user_invited_1",
+      token_hash: "hash-of-invite-token",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      consumed_at: null,
+      revoked_at: null,
+      member_status: "invited",
+      email: "colleague@example.com",
+      display_name: "Colleague",
+      role: "approver",
+      approval_domains: ["ap"],
+      per_item_limit_cents: "1000",
+      requires_second_approver_above_cents: null,
+    };
+    const { app, appDb } = await build({ resolverRows: [inviteRow], inviteRow });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/invites/consume",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: { invite_token: "good-token", external_ref: "platform-user-2" },
+      });
+      expect(res.statusCode).toBe(200);
+      const usersInsert = appDb.calls.find((c) => c.sql.includes("INSERT INTO users"));
+      expect(usersInsert).toBeDefined();
+      expect(usersInsert?.values).toEqual([
+        "user_invited_1",
+        tenantId,
+        "colleague@example.com",
+        "approver",
+      ]);
+      // Runs before activateInvitedMember, inside the same transaction.
+      const usersIdx = appDb.calls.findIndex((c) => c.sql.includes("INSERT INTO users"));
+      const activateIdx = appDb.calls.findIndex((c) => c.sql.startsWith("UPDATE members"));
+      expect(usersIdx).toBeGreaterThanOrEqual(0);
+      expect(activateIdx).toBeGreaterThan(usersIdx);
     } finally {
       await app.close();
     }
