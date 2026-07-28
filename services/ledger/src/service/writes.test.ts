@@ -2,7 +2,12 @@ import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryAuditEmitter, newTenantId, newUserId } from "@brain/shared";
 import { isBrainError } from "@brain/shared";
-import { recordTransactionRow, upsertCounterpartyRow, upsertObligationRow } from "./writes.js";
+import {
+  normalizeName,
+  recordTransactionRow,
+  upsertCounterpartyRow,
+  upsertObligationRow,
+} from "./writes.js";
 
 /** Fake pool that captures each query's text + values; routes by substring. */
 function capturingPool(routes: Record<string, Array<Record<string, unknown>>> = {}): {
@@ -27,6 +32,14 @@ function capturingPool(routes: Record<string, Array<Record<string, unknown>>> = 
 
 const ctx = { tenantId: newTenantId(), actor: newUserId() };
 const AGENT_ID = "agent_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+describe("normalizeName", () => {
+  it("collapses invoice-decorated counterparty labels into the vendor key", () => {
+    expect(normalizeName("Globex Corp")).toBe("globex_corp");
+    expect(normalizeName("- GLOBEX CORP INV-1044")).toBe("globex_corp");
+    expect(normalizeName("Globex Corp Invoice #1044")).toBe("globex_corp");
+  });
+});
 
 describe("upsertCounterpartyRow — agent counterparties (RFC 0001)", () => {
   it("creates a type='agent' counterparty and persists agent_id", async () => {

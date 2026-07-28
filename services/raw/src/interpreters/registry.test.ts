@@ -7,7 +7,11 @@ import {
   registerInterpreter,
   type InterpreterArtifactContext,
 } from "./registry.js";
-import { UPLOAD_DOCUMENT_SCHEMA, uploadDocumentInterpreter } from "./upload.js";
+import {
+  UPLOAD_DOCUMENT_SCHEMA,
+  counterpartyFromDescription,
+  uploadDocumentInterpreter,
+} from "./upload.js";
 
 function ctx(over: Partial<InterpreterArtifactContext> = {}): InterpreterArtifactContext {
   return {
@@ -254,6 +258,13 @@ describe("interpreter registry", () => {
 describe("upload document interpreters", () => {
   it("registers the generic upload document schema", () => {
     expect(registeredSchemas()).toEqual(expect.arrayContaining([UPLOAD_DOCUMENT_SCHEMA]));
+  });
+
+  it("does not turn bank-operational descriptions into counterparties", () => {
+    expect(counterpartyFromDescription("INTEREST")).toBeNull();
+    expect(counterpartyFromDescription("Monthly service fee")).toBeNull();
+    expect(counterpartyFromDescription("Transfer to operating account")).toBeNull();
+    expect(counterpartyFromDescription("- GLOBEX CORP INV-1044")).toBe("GLOBEX CORP");
   });
 
   it("parses a bank statement text upload into document-sourced transactions", () => {
