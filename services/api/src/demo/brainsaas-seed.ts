@@ -381,7 +381,7 @@ export async function seedBrainSaasDemo(
   const operating = (
     await upsertAccountRow(pool, audit, ctx, {
       external_account_id: "brainsaas_operating",
-      institution: "Mercury",
+      institution: "First Meridian Bank",
       account_type: "bank_checking",
       name: "Operating",
       currency: "USD",
@@ -397,7 +397,7 @@ export async function seedBrainSaasDemo(
   const reserve = (
     await upsertAccountRow(pool, audit, ctx, {
       external_account_id: "brainsaas_reserve",
-      institution: "Mercury",
+      institution: "First Meridian Bank",
       account_type: "bank_savings",
       name: "Reserve",
       currency: "USD",
@@ -419,7 +419,7 @@ export async function seedBrainSaasDemo(
         external_account_id: smartAccountAddr,
         institution: "Base Sepolia",
         account_type: "onchain",
-        name: "Brain Smart Account (ETH)",
+        name: "Brightline Treasury Wallet",
         currency: "ETH",
         current_balance: "0.005",
         available_balance: "0.005",
