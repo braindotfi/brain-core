@@ -75,3 +75,52 @@ export async function insertOauthClient(
   );
   return { clientId };
 }
+
+export interface RegisterOauthClientInput {
+  readonly clientName: string;
+  readonly redirectUris: readonly string[];
+  readonly grantTypes: readonly string[];
+  readonly responseTypes: readonly string[];
+  readonly tokenEndpointAuthMethod: string;
+  readonly softwareId?: string | undefined;
+  readonly softwareVersion?: string | undefined;
+}
+
+/**
+ * RFC 7591 `POST /register` (Phase 3): persists exactly what
+ * client-registration.ts validated -- unlike insertOauthClient above, this
+ * does NOT hardcode grant_types/response_types, because DCR must store the
+ * client's own (validated) registration, not the operator-seeding default.
+ */
+export async function registerOauthClient(
+  pool: Pool,
+  input: RegisterOauthClientInput,
+): Promise<{ clientId: string; createdAt: Date }> {
+  const clientId = newOauthClientId();
+  const { rows } = await pool.query<{ created_at: Date }>(
+    `INSERT INTO oauth_clients
+       (client_id, client_name, redirect_uris, grant_types, response_types,
+        token_endpoint_auth_method, software_id, software_version)
+     VALUES ($1, $2, $3::text[], $4::text[], $5::text[], $6, $7, $8)
+     RETURNING created_at`,
+    [
+      clientId,
+      input.clientName,
+      [...input.redirectUris],
+      [...input.grantTypes],
+      [...input.responseTypes],
+      input.tokenEndpointAuthMethod,
+      input.softwareId ?? null,
+      input.softwareVersion ?? null,
+    ],
+  );
+  const row = rows[0];
+  // A zero-row RETURNING would otherwise surface as a raw TypeError (reading
+  // .created_at of undefined) all the way to routes/register.ts's caller
+  // (Opus review, Phase 3 follow-up) -- an explicit throw here is caught by
+  // that route's try/catch and turned into a generic server_error instead.
+  if (row === undefined) {
+    throw new Error("oauth_clients insert returned no row");
+  }
+  return { clientId, createdAt: row.created_at };
+}

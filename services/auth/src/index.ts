@@ -47,7 +47,24 @@ export * from "./html.js";
 // Phase 2a increment 3: the OAuth core.
 export { isValidCodeVerifier, deriveCodeChallenge, verifyPkce } from "./pkce.js";
 export { isRegistrableRedirectUri, matchesRedirectUri } from "./redirect-uri.js";
-export { findActiveOauthClient, insertOauthClient, type OauthClient } from "./oauth-clients.js";
+export {
+  findActiveOauthClient,
+  insertOauthClient,
+  registerOauthClient,
+  type OauthClient,
+  type RegisterOauthClientInput,
+} from "./oauth-clients.js";
+export {
+  validateClientRegistration,
+  MAX_REDIRECT_URIS,
+  MAX_REDIRECT_URI_LENGTH,
+  MAX_CLIENT_NAME_LENGTH,
+  MAX_SOFTWARE_FIELD_LENGTH,
+  type ClientRegistrationResult,
+  type ClientRegistrationError,
+  type ClientRegistrationErrorCode,
+  type ValidatedClientRegistration,
+} from "./client-registration.js";
 export { parseScopeParam, computeConsentableScopes, narrowByDeselection } from "./consent.js";
 export {
   AUTHORIZATION_CODE_TTL_SECONDS,
@@ -73,3 +90,8 @@ export {
   resumePendingAuthorization,
   type OauthRouteDeps,
 } from "./routes/oauth.js";
+export {
+  registerClientRegistrationRoute,
+  REGISTER_RATE_LIMIT,
+  type RegisterRouteDeps,
+} from "./routes/register.js";

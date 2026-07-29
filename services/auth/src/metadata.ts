@@ -23,6 +23,7 @@ export interface AuthorizationServerMetadata {
   readonly token_endpoint_auth_methods_supported: readonly string[];
   readonly revocation_endpoint: string;
   readonly revocation_endpoint_auth_methods_supported: readonly string[];
+  readonly registration_endpoint: string;
 }
 
 export const WELL_KNOWN_AS_PATH = "/.well-known/oauth-authorization-server";
@@ -46,5 +47,7 @@ export function buildAuthorizationServerMetadata(issuer: string): AuthorizationS
     token_endpoint_auth_methods_supported: ["none"],
     revocation_endpoint: `${issuer}/revoke`,
     revocation_endpoint_auth_methods_supported: ["none"],
+    // RFC 7591 (Phase 3): open, unauthenticated Dynamic Client Registration.
+    registration_endpoint: `${issuer}/register`,
   };
 }

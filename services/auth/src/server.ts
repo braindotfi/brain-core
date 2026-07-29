@@ -31,6 +31,7 @@ import { buildJwks } from "./jwks.js";
 import { registerAuthSecurityHeaders } from "./security-headers.js";
 import { registerHumanAuthRoutes } from "./routes/human-auth.js";
 import { registerOauthRoutes, type OauthRouteDeps } from "./routes/oauth.js";
+import { registerClientRegistrationRoute } from "./routes/register.js";
 import type { UserCredentialReader } from "./credentials.js";
 
 export interface HumanAuthOptions {
@@ -249,6 +250,12 @@ export async function buildAuthApp(opts: BuildAuthAppOptions): Promise<FastifyIn
   // here only affects Fastify's route table, not module resolution.
   if (opts.oauthCore !== undefined) {
     await registerOauthRoutes(app, opts.oauthCore);
+    // Phase 3: DCR reuses oauthCore's own authPool (brain_auth) -- no new
+    // BuildAuthAppOptions field, since /register needs exactly the same
+    // brain_auth-scoped connection findActiveOauthClient/insertOauthClient
+    // already use directly (oauth-clients.ts's header: oauth_clients is not
+    // tenant scoped, so a plain query through that pool is already correct).
+    await registerClientRegistrationRoute(app, { authPool: opts.oauthCore.authPool });
   }
 
   return app;

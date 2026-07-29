@@ -20,6 +20,7 @@ describe("buildAuthorizationServerMetadata", () => {
     expect(md.token_endpoint_auth_methods_supported).toEqual(["none"]);
     expect(md.revocation_endpoint).toBe(`${ISSUER}/revoke`);
     expect(md.revocation_endpoint_auth_methods_supported).toEqual(["none"]);
+    expect(md.registration_endpoint).toBe(`${ISSUER}/register`);
   });
 
   it("derives jwks_uri from AUTH_ISSUER, structurally never from AUTH_JWKS_URL", () => {
