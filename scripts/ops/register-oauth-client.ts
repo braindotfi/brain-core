@@ -1,7 +1,11 @@
 /**
  * register-oauth-client -- seeds one `oauth_clients` row so the Phase 2a
- * increment 3 authorization-code flow can be exercised before Dynamic
- * Client Registration exists (Phase 3, RFC 7591). `token_endpoint_auth_method`
+ * increment 3 authorization-code and refresh-token flows can both be
+ * exercised before Dynamic Client Registration exists (Phase 3, RFC 7591).
+ * Both grant types are registered because grant_types is enforced at
+ * the token endpoint: a client seeded without refresh_token is refused
+ * unauthorized_client on refresh.
+ * `token_endpoint_auth_method`
  * is always `none`: every OAuth client at this AS is a public client
  * authenticated by PKCE plus exact redirect-URI matching, never a stored
  * secret (OAUTH-AS-PLAN.md section 5.7).
@@ -86,7 +90,7 @@ async function main(): Promise<void> {
     await pool.query(
       `INSERT INTO oauth_clients
          (client_id, client_name, redirect_uris, grant_types, response_types, token_endpoint_auth_method)
-       VALUES ($1, $2, $3::text[], ARRAY['authorization_code'], ARRAY['code'], 'none')`,
+       VALUES ($1, $2, $3::text[], ARRAY['authorization_code', 'refresh_token'], ARRAY['code'], 'none')`,
       [clientId, clientName, redirectUris],
     );
     console.log(`Registered OAuth client: ${clientId}`);
