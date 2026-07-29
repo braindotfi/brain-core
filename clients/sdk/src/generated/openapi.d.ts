@@ -3739,6 +3739,13 @@ export interface components {
             /** Format: date-time */
             last_synced_at: string | null;
             freshness: components["schemas"]["SourceFreshness"];
+            /**
+             * @description Connector metadata. Demo tenants may include
+             *     `demo_seed_kind:"fake_connected_source"`, `disconnectable:false`,
+             *     `disconnect_hidden:true`, and `sync_disabled:true` for fake connected
+             *     rows that should count as connected sources but should not show a
+             *     disconnect control or run provider sync.
+             */
             metadata: {
                 [key: string]: unknown;
             };

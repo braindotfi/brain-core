@@ -155,6 +155,11 @@ describe("runSyncCycle", () => {
     // Source freshness stamped after a successful partition run.
     expect(calls.some((c) => c.text.includes("UPDATE raw_sources"))).toBe(true);
     expect(audit.events.some((e) => e.action === "raw.source.status_changed")).toBe(true);
+
+    const sourcePoll = calls.find(
+      (c) => c.text.includes("FROM raw_sources") && c.text.includes("status = 'active'"),
+    );
+    expect(sourcePoll?.text).toContain("demo_seed_kind");
   });
 
   it("never advances the checkpoint when the provider fetch fails", async () => {

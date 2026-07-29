@@ -217,6 +217,7 @@ export async function runSyncCycle(deps: SyncWorkerDeps, opts?: SyncWorkerOption
         `SELECT id, tenant_id, type
            FROM raw_sources
           WHERE status = 'active'
+            AND NOT (metadata @> '{"demo_seed_kind":"fake_connected_source"}'::jsonb)
           ORDER BY last_synced_at ASC NULLS FIRST
           LIMIT $1`,
         [maxSources],

@@ -50,6 +50,7 @@ import {
   newPolicyId,
   newRawArtifactId,
   newRawParsedId,
+  newSourceId,
   PAYMENT_AGENT_SCOPES,
   withTenantScope,
   type AuditEmitter,
@@ -241,12 +242,47 @@ export interface BrainSaasSeed {
   accounts: { operating: string; reserve: string; smartAccount: string | null };
   apInvoices: Record<string, string>; // vendorKey -> invoice id
   arInvoices: Record<string, string>; // customerKey -> invoice id
+  sources: Record<DemoFakeSourceKey, string>; // source key -> raw_sources id
   policyId: string;
   agentId: string;
 }
 
+type DemoFakeSourceKey =
+  | "plaid"
+  | "stripe"
+  | "finch"
+  | "merge_accounting"
+  | "alchemy_wallet"
+  | "tax_return";
+
+type DemoFakeSourceType =
+  | "plaid"
+  | "stripe"
+  | "finch"
+  | "merge_accounting"
+  | "alchemy_wallet"
+  | "email_inbound";
+
+interface DemoFakeSourceSpec {
+  key: DemoFakeSourceKey;
+  type: DemoFakeSourceType;
+  displayName: string;
+  providerName: string;
+  sourceCategory:
+    | "banking_cash"
+    | "payments_revenue"
+    | "payroll_hr"
+    | "accounting_erp"
+    | "digital_assets"
+    | "documents_email";
+  externalAccountIds: string[];
+  isStub: boolean;
+  overlapsWith: Record<string, unknown>;
+}
+
 const NOW = new Date();
 const DEMO_BOOTSTRAP_DISPLAY_NAME = "Demo Owner";
+const DEMO_COMPANY_NAME = "Brightline Systems Inc.";
 function daysAgo(n: number): Date {
   const d = new Date(NOW);
   d.setUTCDate(d.getUTCDate() - n);
@@ -533,6 +569,14 @@ export async function seedBrainSaasDemo(
     }
   }
 
+  const sources = await seedDemoFakeConnectedSources(pool, tenantId, {
+    operatingAccountId: operating.id,
+    reserveAccountId: reserve.id,
+    smartAccountId: smartAccount?.id ?? null,
+    apInvoices,
+    arInvoices,
+  });
+
   // ---------- Active policy (off-chain; on-chain registration is a later phase) ----------
   const approvedVendorCpIds = VENDORS.filter((v) => v.approved).map((v) => vendors[v.key]!.id);
   const policyId = await seedPolicy(pool, tenantId, actor, approvedVendorCpIds);
@@ -549,6 +593,7 @@ export async function seedBrainSaasDemo(
     },
     apInvoices,
     arInvoices,
+    sources,
     policyId,
     agentId,
   };
@@ -556,6 +601,158 @@ export async function seedBrainSaasDemo(
 
 function mapIds(rows: Record<string, CounterpartyRow>): Record<string, string> {
   return Object.fromEntries(Object.entries(rows).map(([k, v]) => [k, v.id]));
+}
+
+async function seedDemoFakeConnectedSources(
+  pool: Pool,
+  tenantId: string,
+  refs: {
+    operatingAccountId: string;
+    reserveAccountId: string;
+    smartAccountId: string | null;
+    apInvoices: Record<string, string>;
+    arInvoices: Record<string, string>;
+  },
+): Promise<Record<DemoFakeSourceKey, string>> {
+  const now = NOW.toISOString();
+  const smartAccount =
+    process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ??
+    process.env["BRAIN_DEMO_ONCHAIN_RECIPIENT"] ??
+    DEMO_SETTLEMENT_RECIPIENT_FALLBACK;
+  const specs: DemoFakeSourceSpec[] = [
+    {
+      key: "plaid",
+      type: "plaid",
+      displayName: "First Meridian Bank",
+      providerName: "Plaid",
+      sourceCategory: "banking_cash",
+      externalAccountIds: ["brainsaas_operating", "brainsaas_reserve"],
+      isStub: false,
+      overlapsWith: {
+        documents: ["bank_statement_2026-06.pdf"],
+        ledger_account_ids: [refs.operatingAccountId, refs.reserveAccountId],
+        accounts: [
+          { name: "Operating", kind: "checking", last4: "7302" },
+          { name: "Reserve", kind: "savings", last4: "1188" },
+        ],
+      },
+    },
+    {
+      key: "stripe",
+      type: "stripe",
+      displayName: "Brightline Stripe",
+      providerName: "Stripe",
+      sourceCategory: "payments_revenue",
+      externalAccountIds: ["stripe_brightline_payments"],
+      isStub: false,
+      overlapsWith: {
+        documents: ["bank_statement_2026-06.pdf", "ar_aging_2026-06-30.xlsx"],
+        bank_statement_counterparties: ["CARD SERV", "BigCo Industries", "Enterprise Holdings"],
+        ar_invoice_ids: Object.values(refs.arInvoices),
+      },
+    },
+    {
+      key: "finch",
+      type: "finch",
+      displayName: "Brightline Payroll",
+      providerName: "Finch",
+      sourceCategory: "payroll_hr",
+      externalAccountIds: ["finch_brightline_payroll"],
+      isStub: false,
+      overlapsWith: {
+        documents: ["payroll_register_2026-06.xlsx"],
+        pay_runs: ["2026-06A", "2026-06B"],
+      },
+    },
+    {
+      key: "merge_accounting",
+      type: "merge_accounting",
+      displayName: "Brightline Accounting",
+      providerName: "Merge",
+      sourceCategory: "accounting_erp",
+      externalAccountIds: ["merge_brightline_accounting"],
+      isStub: false,
+      overlapsWith: {
+        ap_invoice_ids: Object.values(refs.apInvoices),
+        ar_invoice_ids: Object.values(refs.arInvoices),
+        fixture_scope:
+          "Brightline Systems Inc. general ledger, vendors, customers, bills, invoices",
+      },
+    },
+    {
+      key: "alchemy_wallet",
+      type: "alchemy_wallet",
+      displayName: "Brightline Treasury Wallet",
+      providerName: "Alchemy",
+      sourceCategory: "digital_assets",
+      externalAccountIds: [smartAccount],
+      isStub: true,
+      overlapsWith: {
+        documents: ["crypto_wallet_2026-06.json"],
+        ledger_account_ids: refs.smartAccountId === null ? [] : [refs.smartAccountId],
+        wallet_address: smartAccount,
+      },
+    },
+    {
+      key: "tax_return",
+      type: "email_inbound",
+      displayName: "Brightline Tax Portal",
+      providerName: "Tax mailbox",
+      sourceCategory: "documents_email",
+      externalAccountIds: ["brightline_tax_return_2025"],
+      isStub: true,
+      overlapsWith: {
+        documents: ["tax_return_2025.pdf"],
+        company: DEMO_COMPANY_NAME,
+      },
+    },
+  ];
+  const ids = Object.fromEntries(specs.map((spec) => [spec.key, newSourceId()])) as Record<
+    DemoFakeSourceKey,
+    string
+  >;
+
+  await withTenantScope(pool, tenantId, async (c) => {
+    // This intentionally supersedes the 2026-07-28 "do not fake connections"
+    // demo decision. Investor walkthroughs need connected-looking sources, but
+    // the rows are demo-only, skipped by sync, and never create duplicate facts.
+    await c.query(
+      `DELETE FROM raw_sources
+        WHERE tenant_id = $1
+          AND metadata->>'demo_seed_kind' = 'fake_connected_source'`,
+      [tenantId],
+    );
+    for (const spec of specs) {
+      await c.query(
+        `INSERT INTO raw_sources (
+           id, tenant_id, type, status, encrypted_credentials, credential_key_id,
+           metadata, external_account_ids, last_synced_at, error_message, is_stub, created_at, updated_at
+         ) VALUES ($1,$2,$3,'active',NULL,NULL,$4::jsonb,$5,$6,NULL,$7,$6,$6)`,
+        [
+          ids[spec.key],
+          tenantId,
+          spec.type,
+          JSON.stringify({
+            demo_seed_kind: "fake_connected_source",
+            demo_fake_connected: true,
+            company_name: DEMO_COMPANY_NAME,
+            display_name: spec.displayName,
+            provider_name: spec.providerName,
+            source_category: spec.sourceCategory,
+            disconnect_hidden: true,
+            disconnectable: false,
+            sync_disabled: true,
+            overlaps_with: spec.overlapsWith,
+          }),
+          spec.externalAccountIds,
+          now,
+          spec.isStub,
+        ],
+      );
+    }
+  });
+
+  return ids;
 }
 
 // ---------------------------------------------------------------------------

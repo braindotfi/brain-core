@@ -343,6 +343,11 @@ Pending Dmitriy sign-off
   `tenant.kind='demo'`, can never create production tenants, and still returns
   split propose-only agent tokens and user-principal member tokens. Production
   tenants are not eligible for demo cleanup.
+- BrainSaaS demo provisioning also seeds demo-only fake connected
+  `raw_sources` rows for the MVP source categories. These rows overlap the
+  Brightline document seed data, expose `disconnectable:false`,
+  `disconnect_hidden:true`, and `sync_disabled:true` in metadata, and are
+  excluded from raw source sync by `demo_seed_kind='fake_connected_source'`.
 - Production member sessions use the exchange model:
   `POST /v1/sessions`, `POST /v1/sessions/refresh`, and
   `DELETE /v1/sessions`. Unlinked platform identities return

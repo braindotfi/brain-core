@@ -540,7 +540,22 @@
           "request_shape": "query { type?, status?, limit?, cursor? }",
           "response_shape": "200 { data, next_cursor }",
           "example_request": "GET /v1/sources?limit=25",
-          "example_response": { "data": [], "next_cursor": null },
+          "example_response": {
+            "data": [
+              {
+                "id": "src_example",
+                "type": "plaid",
+                "status": "active",
+                "metadata": {
+                  "demo_seed_kind": "fake_connected_source",
+                  "disconnectable": false,
+                  "disconnect_hidden": true,
+                  "sync_disabled": true
+                }
+              }
+            ],
+            "next_cursor": null
+          },
           "openapi": "documented:/sources"
         },
         {
@@ -552,7 +567,16 @@
           "request_shape": "path { source_id }",
           "response_shape": "200 source",
           "example_request": "GET /v1/sources/src_example",
-          "example_response": { "id": "src_example", "status": "connected" },
+          "example_response": {
+            "id": "src_example",
+            "status": "active",
+            "metadata": {
+              "demo_seed_kind": "fake_connected_source",
+              "disconnectable": false,
+              "disconnect_hidden": true,
+              "sync_disabled": true
+            }
+          },
           "openapi": "documented:/sources/{source_id}"
         },
         {
