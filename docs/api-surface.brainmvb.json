@@ -266,12 +266,13 @@
           "auth": "X-Platform-Service-Auth",
           "required_scope": "tenant:create",
           "enforcement": "shared_secret_header",
-          "request_shape": "{ company_name?, founder: { email, display_name? }, founder_external_ref }",
-          "response_shape": "201 { tenant_id, member, session, agent }",
+          "request_shape": "{ company_name?, demo_seed?, founder: { email, display_name? }, founder_external_ref }",
+          "response_shape": "201 { tenant_id, member, session, agent, demo_seed? }",
           "example_request": {
             "headers": { "X-Platform-Service-Auth": "<secret>" },
             "body": {
               "company_name": "Example Inc",
+              "demo_seed": true,
               "founder": { "email": "founder@example.com" },
               "founder_external_ref": "mvb_user_123"
             }
@@ -280,7 +281,23 @@
             "tenant_id": "tnt_example",
             "member": {},
             "session": { "token": "<jwt>", "refresh_token": "<secret>", "expires_in": 900 },
-            "agent": {}
+            "agent": {},
+            "demo_seed": {
+              "seeded": true,
+              "sources": {
+                "plaid": "src_plaid",
+                "stripe": "src_stripe",
+                "finch": "src_finch",
+                "merge_accounting": "src_merge",
+                "alchemy_wallet": "src_wallet",
+                "tax_return": "src_tax"
+              },
+              "accounts": {},
+              "ap_invoices": {},
+              "ar_invoices": {},
+              "policy_id": "pol_example",
+              "agent_id": "agent_example"
+            }
           },
           "openapi": "documented:/tenants"
         },
@@ -290,11 +307,12 @@
           "auth": "X-Platform-Service-Auth",
           "required_scope": "tenant:create",
           "enforcement": "shared_secret_header",
-          "request_shape": "path { orgId }; body { company_name?, founder: { email, display_name? }, founder_external_ref }",
-          "response_shape": "201 { tenant_id, org_id, member, session, agent }",
+          "request_shape": "path { orgId }; body { company_name?, demo_seed?, founder: { email, display_name? }, founder_external_ref }",
+          "response_shape": "201 { tenant_id, org_id, member, session, agent, demo_seed? }",
           "example_request": {
             "path": "/v1/orgs/org_123/tenants",
             "body": {
+              "demo_seed": true,
               "founder": { "email": "founder@example.com" },
               "founder_external_ref": "mvb_user_123"
             }
@@ -304,7 +322,8 @@
             "org_id": "org_123",
             "member": {},
             "session": {},
-            "agent": {}
+            "agent": {},
+            "demo_seed": { "seeded": true, "sources": {} }
           },
           "openapi": "documented:/orgs/{orgId}/tenants"
         },

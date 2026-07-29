@@ -2181,6 +2181,7 @@ async function main(): Promise<void> {
             ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
               ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
               : {}),
+            demoSeeder: ({ tenantId, actor }) => seedBrainSaasDemo(pool, audit, tenantId, actor),
           }),
         );
         await v1.register(async (child) =>

@@ -222,7 +222,10 @@ export interface paths {
          *     agent token. Rejects the request outright if the demo
          *     provisioning header (`X-Demo-Provision-Auth`) is also present, to
          *     keep the demo and production tenant-creation paths from being
-         *     conflatable.
+         *     conflatable. When `demo_seed: true` is present, the route also
+         *     seeds the durable production tenant with the Brightline demo
+         *     ledger, policy, agent, and fake-connected source rows. The tenant
+         *     remains `kind='production'`.
          */
         post: operations["createTenant"];
         delete?: never;
@@ -244,7 +247,8 @@ export interface paths {
          * Create a production tenant for an organization
          * @description Organization-scoped alias for `POST /tenants`. It persists a
          *     production tenant with the same bootstrap admin, member session, and
-         *     propose-only agent token behavior, and echoes `org_id` in the response.
+         *     propose-only agent token behavior, supports the same `demo_seed`
+         *     option, and echoes `org_id` in the response.
          */
         post: operations["createOrgTenant"];
         delete?: never;
@@ -5187,6 +5191,14 @@ export interface operations {
             content: {
                 "application/json": {
                     company_name?: string;
+                    /**
+                     * @description When true, seed the durable production tenant with the
+                     *     server-owned Brightline demo dataset. Intended for the
+                     *     platform "Continue with Demo" flow. Does not change
+                     *     tenant.kind.
+                     * @default false
+                     */
+                    demo_seed?: boolean;
                     founder: {
                         /** Format: email */
                         email: string;
@@ -5215,6 +5227,25 @@ export interface operations {
                             expires_in?: 900;
                         };
                         agent?: components["schemas"]["ProductionAgentToken"];
+                        /** @description Present only when demo_seed was requested. */
+                        demo_seed?: {
+                            /** @enum {boolean} */
+                            seeded?: true;
+                            sources?: {
+                                [key: string]: string;
+                            };
+                            accounts?: {
+                                [key: string]: string | null;
+                            };
+                            ap_invoices?: {
+                                [key: string]: string;
+                            };
+                            ar_invoices?: {
+                                [key: string]: string;
+                            };
+                            policy_id?: string | null;
+                            agent_id?: string | null;
+                        };
                     };
                 };
             };
@@ -5255,6 +5286,11 @@ export interface operations {
             content: {
                 "application/json": {
                     company_name?: string;
+                    /**
+                     * @description Same semantics as POST /tenants.
+                     * @default false
+                     */
+                    demo_seed?: boolean;
                     founder: {
                         /** Format: email */
                         email: string;
@@ -5282,6 +5318,25 @@ export interface operations {
                             expires_in?: 900;
                         };
                         agent?: components["schemas"]["ProductionAgentToken"];
+                        /** @description Present only when demo_seed was requested. */
+                        demo_seed?: {
+                            /** @enum {boolean} */
+                            seeded?: true;
+                            sources?: {
+                                [key: string]: string;
+                            };
+                            accounts?: {
+                                [key: string]: string | null;
+                            };
+                            ap_invoices?: {
+                                [key: string]: string;
+                            };
+                            ar_invoices?: {
+                                [key: string]: string;
+                            };
+                            policy_id?: string | null;
+                            agent_id?: string | null;
+                        };
                     };
                 };
             };

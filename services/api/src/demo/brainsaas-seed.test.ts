@@ -149,6 +149,19 @@ describe("seedBrainSaasDemo", () => {
     ]);
   });
 
+  it("does not overwrite tenant kind when seeding an existing durable tenant", async () => {
+    const { pool, audit } = deps();
+    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const tenantUpsert = scopedCalls.find((c) =>
+      c.sql.includes("INSERT INTO tenants (id, kind, default_ap_account_id)"),
+    );
+    expect(tenantUpsert).toBeDefined();
+    expect(tenantUpsert?.sql).toContain("ON CONFLICT (id) DO UPDATE");
+    expect(tenantUpsert?.sql).toContain("SET default_ap_account_id");
+    expect(tenantUpsert?.sql).not.toContain("SET kind");
+  });
+
   it("marks unapproved vendors high-risk with no settlement alias", async () => {
     const { pool, audit } = deps();
     await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
