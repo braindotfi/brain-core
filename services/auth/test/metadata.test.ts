@@ -18,6 +18,8 @@ describe("buildAuthorizationServerMetadata", () => {
     expect(md.response_types_supported).toEqual(["code"]);
     expect(md.grant_types_supported).toEqual(["authorization_code", "refresh_token"]);
     expect(md.token_endpoint_auth_methods_supported).toEqual(["none"]);
+    expect(md.revocation_endpoint).toBe(`${ISSUER}/revoke`);
+    expect(md.revocation_endpoint_auth_methods_supported).toEqual(["none"]);
   });
 
   it("derives jwks_uri from AUTH_ISSUER, structurally never from AUTH_JWKS_URL", () => {

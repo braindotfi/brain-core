@@ -53,6 +53,11 @@ let h: AuthHarness | null = null;
 let authPool: Pool | null = null;
 let resolverPool: Pool | null = null;
 let app: FastifyInstance | null = null;
+// Captured (not discarded inline) so tests can assert on .events -- an
+// inline `new InMemoryAuditEmitter()` with nothing keeping a reference is
+// exactly how the grant_revoked/rotation_race audit gap shipped unnoticed
+// (Opus review, Phase 2b).
+let oauthAudit: InMemoryAuditEmitter | null = null;
 
 const onchainRegistry = new Map<string, string>();
 const fakeOnchain: OnchainScopeChecker = {
@@ -144,7 +149,7 @@ async function seedOauthClient(clientId: string, redirectUris: string[]): Promis
   if (h === null) throw new Error("harness not built");
   await h.pool.query(
     `INSERT INTO oauth_clients (client_id, client_name, redirect_uris, grant_types, response_types)
-       VALUES ($1, 'Test Client', $2::text[], ARRAY['authorization_code'], ARRAY['code'])`,
+       VALUES ($1, 'Test Client', $2::text[], ARRAY['authorization_code', 'refresh_token'], ARRAY['code'])`,
     [clientId, redirectUris],
   );
 }
@@ -277,7 +282,7 @@ DESCRIBE(
           authPool,
           resolverPool,
           cookieSecret: COOKIE_SECRET,
-          audit: new InMemoryAuditEmitter(),
+          audit: (oauthAudit = new InMemoryAuditEmitter()),
           signer,
           onchain: fakeOnchain,
           authAudience: AUDIENCE,
@@ -820,8 +825,458 @@ DESCRIBE(
       );
       expect(rowsUnderTenantA.rows.length).toBe(1);
     });
+
+    // ---- Phase 2b: refresh grant, rotation, reuse detection, revocation ----
+
+    it("refresh rotation returns a fresh refresh token; the old one then fails", async () => {
+      if (h === null || app === null) return;
+      const seeded = await seedRefreshFixture("oacl_refresh_rotate_test");
+      const first = await obtainRefreshToken(seeded);
+
+      const refreshRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", first.refreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(refreshRes.statusCode).toBe(200);
+      const refreshBody = refreshRes.json() as { access_token: string; refresh_token: string };
+      expect(refreshBody.refresh_token).not.toBe(first.refreshToken);
+
+      const replayOldRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", first.refreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(replayOldRes.statusCode).toBe(400);
+      expect(replayOldRes.json()).toEqual({ error: "invalid_grant" });
+    });
+
+    it("presenting a rotated (already-used) refresh token revokes the whole family and audits it flagged", async () => {
+      if (h === null || app === null || oauthAudit === null) return;
+      const seeded = await seedRefreshFixture("oacl_refresh_reuse_test");
+      const first = await obtainRefreshToken(seeded);
+      const eventsBefore = oauthAudit.events.length;
+
+      const rotateRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", first.refreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(rotateRes.statusCode).toBe(200);
+      const { refresh_token: secondRefreshToken } = rotateRes.json() as { refresh_token: string };
+
+      // Reuse of the already-rotated first token.
+      const reuseRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", first.refreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(reuseRes.statusCode).toBe(400);
+      expect(reuseRes.json()).toEqual({ error: "invalid_grant" });
+
+      const reusedEvent = oauthAudit.events
+        .slice(eventsBefore)
+        .find((e) => e.action === "oauth.refresh_token.reused");
+      expect(reusedEvent).toBeDefined();
+      expect(reusedEvent?.eventType).toBe("flagged");
+      expect(reusedEvent?.actor).toBe(seeded.agentId);
+
+      // The reuse detection above must have revoked the WHOLE family,
+      // including the second (never-yet-reused) token.
+      const secondNowRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", secondRefreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(secondNowRes.statusCode).toBe(400);
+      expect(secondNowRes.json()).toEqual({ error: "invalid_grant" });
+    });
+
+    it("a revoked consent grant blocks refresh and audits it flagged", async () => {
+      if (h === null || app === null || oauthAudit === null) return;
+      const seeded = await seedRefreshFixture("oacl_refresh_grant_revoked_test");
+      const { refreshToken } = await obtainRefreshToken(seeded);
+      const eventsBefore = oauthAudit.events.length;
+
+      await h.pool.query(
+        `UPDATE oauth_consent_grants SET revoked_at = now()
+           WHERE tenant_id = $1 AND agent_id = $2`,
+        [seeded.tenantId, seeded.agentId],
+      );
+
+      const refreshRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", refreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(refreshRes.statusCode).toBe(400);
+      expect(refreshRes.json()).toEqual({ error: "invalid_grant" });
+
+      const grantRevokedEvent = oauthAudit.events
+        .slice(eventsBefore)
+        .find((e) => e.action === "oauth.refresh_token.grant_revoked");
+      expect(grantRevokedEvent).toBeDefined();
+      expect(grantRevokedEvent?.eventType).toBe("flagged");
+    });
+
+    it("a quarantined agent blocks refresh and audits it (not flagged)", async () => {
+      if (h === null || app === null || oauthAudit === null) return;
+      const seeded = await seedRefreshFixture("oacl_refresh_quarantine_test");
+      const { refreshToken } = await obtainRefreshToken(seeded);
+      const eventsBefore = oauthAudit.events.length;
+
+      await h.pool.query(`UPDATE agents SET state = 'quarantined' WHERE id = $1`, [seeded.agentId]);
+
+      const refreshRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", refreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(refreshRes.statusCode).toBe(400);
+      expect(refreshRes.json()).toEqual({ error: "invalid_grant" });
+
+      const agentInactiveEvent = oauthAudit.events
+        .slice(eventsBefore)
+        .find((e) => e.action === "oauth.refresh_token.agent_inactive");
+      expect(agentInactiveEvent).toBeDefined();
+      expect(agentInactiveEvent?.eventType).not.toBe("flagged");
+    });
+
+    it("a rotated on-chain scope hash blocks refresh and audits it flagged", async () => {
+      if (h === null || app === null || oauthAudit === null) return;
+      const seeded = await seedRefreshFixture("oacl_refresh_drift_test");
+      const { refreshToken } = await obtainRefreshToken(seeded);
+      const eventsBefore = oauthAudit.events.length;
+
+      // Simulate the tenant rotating the agent's on-chain scope set after
+      // consent: agents.scope_hash now differs from oauth_consent_grants'
+      // scope_hash_at_grant.
+      const rotatedHash = scopeHashBuffer(scopesForAgentRole("viewer"));
+      await h.pool.query(`UPDATE agents SET scope_hash = $1 WHERE id = $2`, [
+        rotatedHash,
+        seeded.agentId,
+      ]);
+
+      const refreshRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", refreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(refreshRes.statusCode).toBe(400);
+      expect(refreshRes.json()).toEqual({ error: "invalid_grant" });
+
+      const driftEvent = oauthAudit.events
+        .slice(eventsBefore)
+        .find((e) => e.action === "oauth.refresh.scope_hash_drift");
+      expect(driftEvent).toBeDefined();
+      expect(driftEvent?.eventType).toBe("flagged");
+    });
+
+    it("a refresh request's scope param widening beyond the stored scopes is rejected with invalid_scope", async () => {
+      if (h === null || app === null) return;
+      const seeded = await seedRefreshFixture("oacl_refresh_widen_test");
+      const { refreshToken } = await obtainRefreshToken(seeded);
+
+      const refreshRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", refreshToken],
+          ["client_id", seeded.clientId],
+          // obtainRefreshToken only ever grants "ledger:read" -- requesting
+          // an additional scope here must be rejected outright, not silently
+          // narrowed.
+          ["scope", "ledger:read wiki:read"],
+        ]),
+      });
+      expect(refreshRes.statusCode).toBe(400);
+      expect(refreshRes.json()).toEqual({ error: "invalid_scope" });
+    });
+
+    it("a client not registered for refresh_token gets an access token only, and its refresh grant is rejected", async () => {
+      if (h === null || app === null) return;
+      const tenantId = newTenantId();
+      const memberId = newUserId();
+      const agentId = newAgentId();
+      const clientId = "oacl_code_only_test";
+      const email = `admin-${memberId}@example.test`;
+      const scopeHash = scopeHashBuffer(scopesForAgentRole("payment"));
+      await seedTenant(tenantId);
+      await seedAdmin({ tenantId, memberId, email });
+      await seedAgent({ tenantId, agentId, role: "payment", scopeHash });
+      // Deliberately authorization_code only -- mirrors an operator
+      // registering a client for a short-lived supervised integration
+      // (Opus review, Phase 2b).
+      await h!.pool.query(
+        `INSERT INTO oauth_clients (client_id, client_name, redirect_uris, grant_types, response_types)
+           VALUES ($1, 'Code-Only Client', $2::text[], ARRAY['authorization_code'], ARRAY['code'])`,
+        [clientId, [REDIRECT_URI]],
+      );
+      onchainRegistry.set(agentId, scopeHash.toString("hex"));
+      const sessionCookie = await login(app, email);
+
+      const codeVerifier = "a".repeat(43);
+      const codeChallenge = deriveCodeChallenge(codeVerifier);
+      const authorizeRes = await app.inject({
+        method: "GET",
+        url: `/authorize?${authorizeQuery({
+          clientId,
+          redirectUri: REDIRECT_URI,
+          scope: "ledger:read",
+          state: "s1",
+          codeChallenge,
+        })}`,
+        headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` },
+      });
+      const consentCsrf = authorizeRes.body.match(/name="csrf" value="([^"]*)"/)?.[1]!;
+      const consentRes = await app.inject({
+        method: "POST",
+        url: "/authorize/consent",
+        headers: {
+          cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        payload: formBody([
+          ["csrf", consentCsrf],
+          ["client_id", clientId],
+          ["redirect_uri", REDIRECT_URI],
+          ["response_type", "code"],
+          ["scope", "ledger:read"],
+          ["state", "s1"],
+          ["code_challenge", codeChallenge],
+          ["code_challenge_method", "S256"],
+          ["resource", ""],
+          ["agent_id", agentId],
+          ["decision", "allow"],
+          ["scope_selected", "ledger:read"],
+        ]),
+      });
+      const code = new URL(consentRes.headers.location as string).searchParams.get("code")!;
+
+      const tokenRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "authorization_code"],
+          ["code", code],
+          ["redirect_uri", REDIRECT_URI],
+          ["client_id", clientId],
+          ["code_verifier", codeVerifier],
+        ]),
+      });
+      expect(tokenRes.statusCode).toBe(200);
+      const tokenBody = tokenRes.json() as { access_token: string; refresh_token?: string };
+      expect(tokenBody.access_token).toBeTruthy();
+      expect(tokenBody.refresh_token).toBeUndefined();
+
+      // Even a forged refresh_token grant against this client is rejected
+      // before any token lookup -- unauthorized_client, not invalid_grant.
+      const refreshRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", "anything"],
+          ["client_id", clientId],
+        ]),
+      });
+      expect(refreshRes.statusCode).toBe(400);
+      expect(refreshRes.json()).toEqual({ error: "unauthorized_client" });
+    });
+
+    it("POST /revoke always returns 200 with an empty body, including for a token that never existed", async () => {
+      if (h === null || app === null) return;
+      const seeded = await seedRefreshFixture("oacl_revoke_test");
+      const { refreshToken } = await obtainRefreshToken(seeded);
+
+      const neverExistedRes = await app.inject({
+        method: "POST",
+        url: "/revoke",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["token", "this-token-never-existed"],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(neverExistedRes.statusCode).toBe(200);
+      expect(neverExistedRes.body).toBe("");
+
+      const revokeRes = await app.inject({
+        method: "POST",
+        url: "/revoke",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["token", refreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(revokeRes.statusCode).toBe(200);
+      expect(revokeRes.body).toBe("");
+
+      // Idempotent: revoking the same (already-revoked) token again is still 200.
+      const revokeAgainRes = await app.inject({
+        method: "POST",
+        url: "/revoke",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["token", refreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(revokeAgainRes.statusCode).toBe(200);
+      expect(revokeAgainRes.body).toBe("");
+
+      // And the revoked token is now unusable for refresh.
+      const refreshRes = await app.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: formBody([
+          ["grant_type", "refresh_token"],
+          ["refresh_token", refreshToken],
+          ["client_id", seeded.clientId],
+        ]),
+      });
+      expect(refreshRes.statusCode).toBe(400);
+      expect(refreshRes.json()).toEqual({ error: "invalid_grant" });
+    });
   },
 );
+
+interface RefreshFixture {
+  tenantId: string;
+  agentId: string;
+  clientId: string;
+  sessionCookie: string;
+}
+
+/** Seeds a tenant + admin + payment agent + OAuth client and logs in, for the Phase 2b refresh tests. */
+async function seedRefreshFixture(clientId: string): Promise<RefreshFixture> {
+  if (h === null || app === null) throw new Error("harness not built");
+  const tenantId = newTenantId();
+  const memberId = newUserId();
+  const agentId = newAgentId();
+  const email = `admin-${memberId}@example.test`;
+  const scopeHash = scopeHashBuffer(scopesForAgentRole("payment"));
+  await seedTenant(tenantId);
+  await seedAdmin({ tenantId, memberId, email });
+  await seedAgent({ tenantId, agentId, role: "payment", scopeHash });
+  await seedOauthClient(clientId, [REDIRECT_URI]);
+  onchainRegistry.set(agentId, scopeHash.toString("hex"));
+  const sessionCookie = await login(app, email);
+  return { tenantId, agentId, clientId, sessionCookie };
+}
+
+/** Full authorization_code exchange, returning the minted refresh_token (and access_token) -- the fixture the Phase 2b refresh tests build on. */
+async function obtainRefreshToken(
+  fixture: RefreshFixture,
+): Promise<{ accessToken: string; refreshToken: string }> {
+  if (app === null) throw new Error("app not built");
+  const codeVerifier = "a".repeat(43);
+  const codeChallenge = deriveCodeChallenge(codeVerifier);
+  const scope = "ledger:read";
+
+  const authorizeRes = await app.inject({
+    method: "GET",
+    url: `/authorize?${authorizeQuery({
+      clientId: fixture.clientId,
+      redirectUri: REDIRECT_URI,
+      scope,
+      state: "s1",
+      codeChallenge,
+    })}`,
+    headers: { cookie: `${SESSION_COOKIE_NAME}=${fixture.sessionCookie}` },
+  });
+  const consentCsrf = authorizeRes.body.match(/name="csrf" value="([^"]*)"/)?.[1];
+  if (consentCsrf === undefined) throw new Error("no consent csrf");
+
+  const consentRes = await app.inject({
+    method: "POST",
+    url: "/authorize/consent",
+    headers: {
+      cookie: `${SESSION_COOKIE_NAME}=${fixture.sessionCookie}`,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    payload: formBody([
+      ["csrf", consentCsrf],
+      ["client_id", fixture.clientId],
+      ["redirect_uri", REDIRECT_URI],
+      ["response_type", "code"],
+      ["scope", scope],
+      ["state", "s1"],
+      ["code_challenge", codeChallenge],
+      ["code_challenge_method", "S256"],
+      ["resource", ""],
+      ["agent_id", fixture.agentId],
+      ["decision", "allow"],
+      ["scope_selected", scope],
+    ]),
+  });
+  const code = new URL(consentRes.headers.location as string).searchParams.get("code");
+  if (code === null) throw new Error("no code in redirect");
+
+  const tokenRes = await app.inject({
+    method: "POST",
+    url: "/token",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    payload: formBody([
+      ["grant_type", "authorization_code"],
+      ["code", code],
+      ["redirect_uri", REDIRECT_URI],
+      ["client_id", fixture.clientId],
+      ["code_verifier", codeVerifier],
+    ]),
+  });
+  if (tokenRes.statusCode !== 200) {
+    throw new Error(`code exchange failed: ${tokenRes.statusCode} ${tokenRes.body}`);
+  }
+  const tokenBody = tokenRes.json() as { access_token: string; refresh_token: string };
+  return { accessToken: tokenBody.access_token, refreshToken: tokenBody.refresh_token };
+}
 
 /**
  * Derives the session-cookie-bound CSRF token directly, mirroring

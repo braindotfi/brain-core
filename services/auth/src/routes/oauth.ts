@@ -1,22 +1,35 @@
 /**
  * The OAuth 2.1 core: GET/POST /authorize, POST /authorize/consent,
- * POST /token (OAUTH-AS-PLAN.md section 3, Phase 2a increment 3).
- *
- * `grant_type=authorization_code` only -- no refresh grant (Phase 2b), no DCR
- * (Phase 3). Consent model (OAUTH-AS-PLAN.md section 0):
+ * POST /token, POST /revoke (OAUTH-AS-PLAN.md section 3, Phase 2a increment 3
+ * + Phase 2b). No DCR yet (Phase 3). Consent model (OAUTH-AS-PLAN.md
+ * section 0):
  *
  *   granted_scopes = requested_scopes
  *                  ∩ registered_scopes(agent)     // scopesForAgentRole(agent.role)
  *                  ∩ AGENT_PERMITTED_SCOPES        // consent.ts
  *
- * Security posture (OAUTH-AS-PLAN.md section 5), the two rules everything
- * else here defends: (1) an unknown client_id or a redirect_uri that does
- * not match a registered value renders an error page and NEVER redirects --
- * that is the open-redirect boundary, checked first in both handlers below,
- * before any other input is trusted enough to drive a redirect; (2) a code
- * is single-use, proven by the one atomic UPDATE in oauth-codes.ts, and any
- * zero-row consume (a genuine replay OR the losing side of a race) revokes
- * the refresh-token family for that grant and is audited flagged.
+ * Security posture (OAUTH-AS-PLAN.md section 5), the rules everything else
+ * here defends: (1) an unknown client_id or a redirect_uri that does not
+ * match a registered value renders an error page and NEVER redirects -- that
+ * is the open-redirect boundary, checked first in both /authorize handlers
+ * below, before any other input is trusted enough to drive a redirect; (2) a
+ * code is single-use, proven by the one atomic UPDATE in oauth-codes.ts, and
+ * any zero-row consume (a genuine replay OR the losing side of a race)
+ * revokes the refresh-token family for that grant and is audited flagged;
+ * (3) Phase 2b: a refresh token is rotate-on-use (oauth-refresh.ts), and
+ * presenting an already-rotated one is reuse -- same "revoke the whole
+ * family, audit flagged" treatment as (2); (4) POST /revoke always answers
+ * 200 with an empty body regardless of whether the token existed or matched,
+ * per RFC 7009 section 2.2 -- status and body are genuinely
+ * indistinguishable, so a caller cannot tell "never existed" from "existed
+ * and got revoked" from the response shape alone. That is NOT a claim of
+ * full timing-side-channel freedom (a hit does a tenant-scoped round trip
+ * plus an audit emit; a miss does one indexed SELECT) -- but the caller must
+ * already hold the raw token to reach either branch, so a timing difference
+ * only confirms "what I stole is live," nothing an attacker does not already
+ * know; (5) only a client whose `oauth_clients.grant_types` includes
+ * `refresh_token` ever gets one, on either the code-exchange or refresh
+ * path (oauth-clients.ts).
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -34,7 +47,13 @@ import { resolveAuthority } from "../authority.js";
 import { findActiveOauthClient } from "../oauth-clients.js";
 import { matchesRedirectUri } from "../redirect-uri.js";
 import { verifyPkce } from "../pkce.js";
-import { computeConsentableScopes, narrowByDeselection, parseScopeParam } from "../consent.js";
+import {
+  computeConsentableScopes,
+  intersectAgentPermitted,
+  narrowByDeselection,
+  narrowRefreshScopes,
+  parseScopeParam,
+} from "../consent.js";
 import {
   issueAuthorizationCode,
   lookupAuthorizationCodeByHash,
@@ -42,6 +61,13 @@ import {
   revokeRefreshTokenFamilyForGrant,
   type AuthorizationCodeLookup,
 } from "../oauth-codes.js";
+import {
+  lookupRefreshTokenByHash,
+  rotateRefreshToken,
+  revokeRefreshFamily,
+  loadConsentGrant,
+  type RefreshSeed,
+} from "../oauth-refresh.js";
 import {
   mintPendingAuthorization,
   verifyPendingAuthorization,
@@ -111,6 +137,23 @@ function readSession(request: FastifyRequest, secret: string): ReadSession | nul
 
 function scopeHashHex(scopeHash: Buffer | null): string | null {
   return scopeHash === null ? null : `0x${scopeHash.toString("hex")}`;
+}
+
+/**
+ * RFC 8707 section 2.2: the access token's audience is derived per-request
+ * from the `resource` param, shared by both grant paths (authorization_code
+ * and refresh_token) so they cannot drift apart. An unrecognized `resource`
+ * does NOT widen the audience -- it silently falls through to
+ * `deps.authAudience` alone, matching this function's own behavior for a
+ * missing `resource` too; no separate rejection branch.
+ */
+export function resolveAudience(
+  deps: Pick<OauthRouteDeps, "authAudience" | "mcpPublicResourceUrl">,
+  resource: string | undefined,
+): string | string[] {
+  return resource !== undefined && resource === deps.mcpPublicResourceUrl
+    ? [deps.authAudience, deps.mcpPublicResourceUrl]
+    : deps.authAudience;
 }
 
 /** Appends `error` (and `state`, if present) to an already-VALIDATED redirect_uri. Never call before matchesRedirectUri passed. */
@@ -501,134 +544,487 @@ export async function registerOauthRoutes(
 
   // ---- POST /token ----
 
-  app.post(
-    "/token",
-    {
-      config: {
-        rateLimit: {
-          max: 60,
-          timeWindow: "1 minute",
-          hook: "preHandler", // needs request.body -> parsed after onRequest
-          keyGenerator: (req: FastifyRequest) => {
-            const body = req.body as Record<string, unknown> | undefined;
-            const clientId =
-              typeof body?.["client_id"] === "string" ? body["client_id"] : undefined;
-            return clientId ?? req.ip;
-          },
-        },
+  /**
+   * `grant_type=authorization_code` exchange, extracted to its own function
+   * (Phase 2b) purely so the dispatcher below stays readable -- unchanged
+   * behavior from Phase 2a increment 3 except it now also mints a refresh
+   * token atomically with consuming the code (oauth-codes.ts's
+   * consumeAuthorizationCode).
+   */
+  async function handleAuthorizationCodeGrant(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const code = str(body["code"]);
+    const redirectUri = str(body["redirect_uri"]);
+    const clientId = str(body["client_id"]);
+    if (code === undefined || redirectUri === undefined || clientId === undefined) {
+      reply.code(400);
+      return { error: "invalid_request" };
+    }
+
+    const client = await findActiveOauthClient(deps.authPool, clientId);
+    if (client === null) {
+      reply.code(401);
+      return { error: "invalid_client" };
+    }
+
+    const codeHash = sha256Hex(code);
+    const lookup = await lookupAuthorizationCodeByHash(deps.resolverPool, codeHash);
+    if (lookup === null) {
+      // ponytail: structured pino warn as the "own counter" for failed code
+      // exchange (section 5.10) -- this service has no StatsD client wired
+      // yet; promote to a real metric if/when one is added.
+      request.log.warn({
+        event: "oauth.token.code_exchange_failed",
+        reason: "not_found",
+        clientId,
+      });
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+    if (lookup.consumedAt !== null) {
+      await handleCodeReplay(deps, lookup, request);
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+    if (lookup.expiresAt.getTime() <= Date.now()) {
+      request.log.warn({
+        event: "oauth.token.code_exchange_failed",
+        reason: "expired",
+        clientId,
+      });
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+    if (lookup.clientId !== clientId || lookup.redirectUri !== redirectUri) {
+      request.log.warn({
+        event: "oauth.token.code_exchange_failed",
+        reason: "binding_mismatch",
+        clientId,
+      });
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+    if (!verifyPkce(body["code_verifier"], lookup.codeChallenge)) {
+      request.log.warn({ event: "oauth.token.pkce_failed", clientId });
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+
+    // Only a client registered for refresh_token ever gets one -- see
+    // oauth-clients.ts. `client` was already looked up above.
+    const mayIssueRefreshToken = client.grantTypes.includes("refresh_token");
+    const refreshToken = mayIssueRefreshToken ? newRawToken() : null;
+    const consumed = await consumeAuthorizationCode(
+      deps.authPool,
+      lookup.tenantId,
+      codeHash,
+      refreshToken === null
+        ? null
+        : { tokenHash: sha256Hex(refreshToken), tokenId: newTokenId(), familyId: newTokenId() },
+    );
+    if (consumed === null) {
+      // Zero rows: either a genuine replay racing this request, or the
+      // losing side of two concurrent exchanges. Both are handled
+      // identically per OAUTH-AS-PLAN.md section 5.4 -- see file header.
+      await handleCodeReplay(deps, lookup, request);
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+
+    const audience = resolveAudience(deps, consumed.resource ?? undefined);
+    // Defensive re-intersection, symmetric with the refresh path
+    // (narrowRefreshScopes already applies this). Not reachable today --
+    // computeConsentableScopes already applied AGENT_PERMITTED_SCOPES at
+    // consent time -- but the two /token paths should not silently diverge
+    // on this ceiling (Opus review, Phase 2b).
+    const grantedScopes = intersectAgentPermitted(consumed.scopes);
+
+    const tokenId = newTokenId();
+    const expiresAt = Math.floor(Date.now() / 1000) + accessTokenTtlSeconds;
+    const accessToken = await deps.signer.sign(
+      {
+        id: consumed.agentId,
+        type: "agent",
+        tenantId: consumed.tenantId,
+        scopes: grantedScopes,
+        tokenId,
+        expiresAt,
+      },
+      audience,
+    );
+
+    await deps.audit.emit({
+      tenantId: consumed.tenantId,
+      layer: "identity",
+      actor: consumed.agentId,
+      action: "oauth.token.minted",
+      inputs: { client_id: consumed.clientId, grant_id: consumed.grantId },
+      outputs: { token_id: tokenId, scopes: grantedScopes, agent_id: consumed.agentId },
+    });
+
+    reply.code(200);
+    return {
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: accessTokenTtlSeconds,
+      ...(refreshToken !== null ? { refresh_token: refreshToken } : {}),
+      scope: grantedScopes.join(" "),
+    };
+  }
+
+  /**
+   * `grant_type=refresh_token` (Phase 2b, OAUTH-AS-PLAN.md section 3):
+   * rotate-on-use with reuse detection, RFC 6749 section 6 scope
+   * narrow-never-widen, a re-check of the durable consent grant (revocation
+   * and on-chain scope-hash drift), and an agent-state check that doubles as
+   * the quarantine check (see the loadActiveAgent call below).
+   */
+  async function handleRefreshTokenGrant(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const refreshToken = str(body["refresh_token"]);
+    const clientId = str(body["client_id"]);
+    if (refreshToken === undefined || clientId === undefined) {
+      reply.code(400);
+      return { error: "invalid_request" };
+    }
+
+    // ponytail: structured pino warn as the "own counter", same posture as
+    // handleAuthorizationCodeGrant's code_exchange_failed warns above -- this
+    // service has no StatsD client wired yet; promote to a real metric if/
+    // when one is added.
+    const warnRefresh = (reason: string): void => {
+      request.log.warn({ event: "oauth.token.refresh_failed", reason, clientId });
+    };
+
+    const client = await findActiveOauthClient(deps.authPool, clientId);
+    if (client === null) {
+      reply.code(401);
+      return { error: "invalid_client" };
+    }
+    // RFC 6749 section 5.2: `unauthorized_client` is the correct error for a
+    // client authenticated fine but not authorized for THIS grant type --
+    // enforced now that oauth_clients.grant_types is actually read
+    // (oauth-clients.ts; Opus review, Phase 2b: previously decorative).
+    if (!client.grantTypes.includes("refresh_token")) {
+      warnRefresh("unauthorized_client");
+      reply.code(400);
+      return { error: "unauthorized_client" };
+    }
+
+    const tokenHash = sha256Hex(refreshToken);
+    const lookup = await lookupRefreshTokenByHash(deps.resolverPool, tokenHash);
+    if (lookup === null) {
+      warnRefresh("not_found");
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+    if (lookup.revokedAt !== null) {
+      warnRefresh("revoked");
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+    if (lookup.rotatedAt !== null) {
+      // Reuse of an already-rotated refresh token (RFC 6749 section 10.4) is
+      // checked BEFORE expiry: a rotated token is compromise evidence
+      // regardless of age. Checking expiry first would let a stolen token
+      // replayed after its 30-day TTL return a bare "expired" and never
+      // revoke the family (Opus review, Phase 2b P1) -- the exact scenario
+      // this branch exists to catch.
+      await revokeRefreshFamily(deps.authPool, lookup.tenantId, lookup.grantId, lookup.familyId);
+      await deps.audit.emit({
+        tenantId: lookup.tenantId,
+        layer: "identity",
+        actor: lookup.agentId,
+        eventType: "flagged",
+        action: "oauth.refresh_token.reused",
+        inputs: { client_id: lookup.clientId, grant_id: lookup.grantId },
+        outputs: {},
+      });
+      warnRefresh("reused");
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+    if (lookup.expiresAt.getTime() <= Date.now()) {
+      warnRefresh("expired");
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+    if (lookup.clientId !== clientId) {
+      warnRefresh("client_mismatch");
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+
+    const grant = await loadConsentGrant(deps.authPool, lookup.tenantId, lookup.grantId);
+    if (grant === null || grant.revokedAt !== null) {
+      // A revoked (or vanished) consent grant must kill every outstanding
+      // refresh token in the family within this one exchange.
+      await revokeRefreshFamily(deps.authPool, lookup.tenantId, lookup.grantId, lookup.familyId);
+      await deps.audit.emit({
+        tenantId: lookup.tenantId,
+        layer: "identity",
+        actor: lookup.agentId,
+        eventType: "flagged",
+        action: "oauth.refresh_token.grant_revoked",
+        inputs: { client_id: lookup.clientId, grant_id: lookup.grantId },
+        outputs: {},
+      });
+      warnRefresh("grant_revoked");
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+
+    // POST /v1/agents/{id}/halt moves an agent to state 'quarantined', and
+    // loadActiveAgent filters state = 'active' -- this null IS the
+    // quarantine check, no separate query needed.
+    const agent = await loadActiveAgent(deps.authPool, lookup.tenantId, lookup.agentId);
+    if (agent === null) {
+      // Normal (not flagged) audit trace: unlike the branches above, an
+      // inactive/quarantined agent is not itself evidence of compromise, but
+      // CLAUDE.md's "every write that matters is audited" still applies --
+      // this was the one Phase 2b DoD condition with no audit trace before
+      // (Opus review).
+      await deps.audit.emit({
+        tenantId: lookup.tenantId,
+        layer: "identity",
+        actor: lookup.agentId,
+        action: "oauth.refresh_token.agent_inactive",
+        inputs: { client_id: lookup.clientId, grant_id: lookup.grantId, agent_id: lookup.agentId },
+        outputs: {},
+      });
+      warnRefresh("agent_inactive");
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+
+    // Anti-silent-widening: oauth_consent_grants' table comment (migration
+    // 0001) describes exactly this -- if the tenant rotated this agent's
+    // on-chain scope set since consent, agents.scope_hash no longer matches
+    // scope_hash_at_grant, and refresh must fail rather than silently carry
+    // the stale grant forward. A null scope_hash counts as drift too.
+    if (agent.scope_hash === null || !agent.scope_hash.equals(grant.scopeHashAtGrant)) {
+      await revokeRefreshFamily(deps.authPool, lookup.tenantId, lookup.grantId, lookup.familyId);
+      await deps.audit.emit({
+        tenantId: lookup.tenantId,
+        layer: "identity",
+        actor: lookup.agentId,
+        eventType: "flagged",
+        action: "oauth.refresh.scope_hash_drift",
+        inputs: { client_id: lookup.clientId, grant_id: lookup.grantId, agent_id: lookup.agentId },
+        outputs: {},
+      });
+      warnRefresh("scope_hash_drift");
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+
+    // The durable consent grant is the authority on scope (migration 0001's
+    // table comment on oauth_consent_grants): intersect the refresh row's own
+    // scopes down to what the grant still lists, THEN apply the requested
+    // narrowing. Without this, grant.scopes is read but never actually
+    // enforced (Opus review, Phase 2b).
+    const grantScopeSet = new Set(grant.scopes);
+    const authorizedScopes = lookup.scopes.filter((s) => grantScopeSet.has(s));
+    const narrowed = narrowRefreshScopes(authorizedScopes, str(body["scope"]));
+    if (!narrowed.ok) {
+      reply.code(400);
+      return { error: "invalid_scope" };
+    }
+
+    const newRefreshToken = newRawToken();
+    const newSeed: RefreshSeed = {
+      tenantId: lookup.tenantId,
+      agentId: lookup.agentId,
+      clientId: lookup.clientId,
+      grantId: lookup.grantId,
+      familyId: lookup.familyId,
+      tokenId: newTokenId(),
+      tokenHash: sha256Hex(newRefreshToken),
+      scopes: narrowed.scopes,
+    };
+    const rotated = await rotateRefreshToken(deps.authPool, lookup.tenantId, tokenHash, newSeed);
+    if (!rotated) {
+      // Zero rows: the losing side of a concurrent rotation race -- treated
+      // identically to reuse (same family-kill, same flagged audit -- this
+      // branch IS the concurrency half of reuse detection, the one a racing
+      // attacker lands on).
+      await revokeRefreshFamily(deps.authPool, lookup.tenantId, lookup.grantId, lookup.familyId);
+      await deps.audit.emit({
+        tenantId: lookup.tenantId,
+        layer: "identity",
+        actor: lookup.agentId,
+        eventType: "flagged",
+        action: "oauth.refresh_token.rotation_race",
+        inputs: { client_id: lookup.clientId, grant_id: lookup.grantId },
+        outputs: {},
+      });
+      warnRefresh("rotation_race");
+      reply.code(400);
+      return { error: "invalid_grant" };
+    }
+
+    // ponytail: deliberately NOT calling assertScopeHashAcceptable's on-chain
+    // check here -- an RPC round trip (and an RPC-flake fail-closed) on the
+    // hot refresh path for no gain, since the DB-vs-grant scope_hash
+    // comparison above already catches drift from the same on-chain-derived
+    // value. Upgrade path: add the on-chain read too if the mirrored DB value
+    // is ever found to lag it.
+
+    // RFC 8707 section 2.2 permits `resource` on a refresh_token request too.
+    // The audience is derived per-request from it (resolveAudience, shared
+    // with the code path) rather than persisted on the refresh row, so a
+    // grant's audience can never be silently widened by a stale stored value
+    // -- there is no column to migrate because there is nothing to store.
+    const audience = resolveAudience(deps, str(body["resource"]));
+
+    const tokenId = newTokenId();
+    const expiresAt = Math.floor(Date.now() / 1000) + accessTokenTtlSeconds;
+    const accessToken = await deps.signer.sign(
+      {
+        id: lookup.agentId,
+        type: "agent",
+        tenantId: lookup.tenantId,
+        scopes: narrowed.scopes,
+        tokenId,
+        expiresAt,
+      },
+      audience,
+    );
+
+    await deps.audit.emit({
+      tenantId: lookup.tenantId,
+      layer: "identity",
+      actor: lookup.agentId,
+      action: "oauth.token.minted",
+      inputs: { client_id: lookup.clientId, grant_id: lookup.grantId, grant_type: "refresh_token" },
+      outputs: { token_id: tokenId, scopes: narrowed.scopes, agent_id: lookup.agentId },
+    });
+
+    reply.code(200);
+    return {
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: accessTokenTtlSeconds,
+      refresh_token: newRefreshToken,
+      scope: narrowed.scopes.join(" "),
+    };
+  }
+
+  const tokenRateLimitConfig = {
+    rateLimit: {
+      max: 60,
+      timeWindow: "1 minute",
+      hook: "preHandler" as const, // needs request.body -> parsed after onRequest
+      keyGenerator: (req: FastifyRequest) => {
+        const body = req.body as Record<string, unknown> | undefined;
+        const clientId = typeof body?.["client_id"] === "string" ? body["client_id"] : undefined;
+        return clientId ?? req.ip;
       },
     },
+  };
+
+  app.post(
+    "/token",
+    { config: tokenRateLimitConfig },
     async (request: FastifyRequest<{ Body: Record<string, unknown> }>, reply) => {
       // RFC 6749 section 5.1 requires no-store on token-endpoint responses.
       reply.header("cache-control", "no-store");
       const body = request.body ?? {};
+      const grantType = str(body["grant_type"]);
 
-      if (str(body["grant_type"]) !== "authorization_code") {
-        reply.code(400);
-        return { error: "unsupported_grant_type" };
+      if (grantType === "authorization_code") {
+        return handleAuthorizationCodeGrant(request, reply, body);
       }
-      const code = str(body["code"]);
-      const redirectUri = str(body["redirect_uri"]);
+      if (grantType === "refresh_token") {
+        return handleRefreshTokenGrant(request, reply, body);
+      }
+      reply.code(400);
+      return { error: "unsupported_grant_type" };
+    },
+  );
+
+  // ---- POST /revoke (RFC 7009) ----
+
+  const revokeRateLimitConfig = {
+    rateLimit: {
+      max: 60,
+      timeWindow: "1 minute",
+      hook: "preHandler" as const,
+      // Keyed on client_id + ip, NOT client_id alone (Opus review, Phase 2b):
+      // client_id is caller-controlled and unauthenticated at this endpoint
+      // (public clients, no secret), so keying on it alone lets anyone send
+      // 60 junk requests/minute carrying a real public client's id and rate-
+      // limit every legitimate holder of that client's tokens out of
+      // revocation -- a targeted DoS on the one endpoint meant for incident
+      // remediation. /token's tokenRateLimitConfig is left as client_id-only:
+      // that key only ever gates a caller who ALSO holds a valid code or
+      // refresh token bound to that client, so the same forgery has no
+      // matching payload to pair with it there.
+      keyGenerator: (req: FastifyRequest) => {
+        const body = req.body as Record<string, unknown> | undefined;
+        const clientId = typeof body?.["client_id"] === "string" ? body["client_id"] : "anon";
+        return `${clientId}:${req.ip}`;
+      },
+    },
+  };
+
+  app.post(
+    "/revoke",
+    { config: revokeRateLimitConfig },
+    async (request: FastifyRequest<{ Body: Record<string, unknown> }>, reply) => {
+      reply.header("cache-control", "no-store");
+      const body = request.body ?? {};
+      const token = str(body["token"]);
       const clientId = str(body["client_id"]);
-      if (code === undefined || redirectUri === undefined || clientId === undefined) {
-        reply.code(400);
-        return { error: "invalid_request" };
-      }
 
-      const client = await findActiveOauthClient(deps.authPool, clientId);
-      if (client === null) {
-        reply.code(401);
-        return { error: "invalid_client" };
+      // RFC 7009 section 2.2: the endpoint MUST answer 200 with an empty
+      // body whether the token existed, was already revoked, or belonged to
+      // a different client -- response status and body are indistinguishable
+      // across every branch below (see the file header for the honest
+      // caveat: that is not a claim of full timing-side-channel freedom).
+      if (token !== undefined) {
+        const tokenHash = sha256Hex(token);
+        const lookup = await lookupRefreshTokenByHash(deps.resolverPool, tokenHash);
+        // ponytail: access tokens are stateless JWTs verified against JWKS,
+        // not rows in this table -- this endpoint has no way to revoke one.
+        // Returning `unsupported_token_type` for one would itself be a
+        // distinguishable (oracle) response, so an access token (or any
+        // token this table has never heard of) is accepted and silently
+        // ignored instead, same as an already-revoked or client-mismatched one.
+        if (lookup !== null && lookup.revokedAt === null) {
+          // RFC 7009 section 2.1: client authentication at this endpoint is
+          // only required for confidential clients. Every client registered
+          // here is public (token_endpoint_auth_method 'none', no secret to
+          // check), so a missing client_id is not itself suspicious -- only
+          // an explicit mismatch (a client_id present but naming a DIFFERENT
+          // client than the one that holds this token) refuses the revoke.
+          if (clientId === undefined || lookup.clientId === clientId) {
+            await revokeRefreshFamily(
+              deps.authPool,
+              lookup.tenantId,
+              lookup.grantId,
+              lookup.familyId,
+            );
+            await deps.audit.emit({
+              tenantId: lookup.tenantId,
+              layer: "identity",
+              actor: lookup.agentId,
+              action: "oauth.refresh_token.revoked",
+              inputs: { client_id: lookup.clientId, grant_id: lookup.grantId },
+              outputs: {},
+            });
+          }
+        }
       }
-
-      const codeHash = sha256Hex(code);
-      const lookup = await lookupAuthorizationCodeByHash(deps.resolverPool, codeHash);
-      if (lookup === null) {
-        // ponytail: structured pino warn as the "own counter" for failed code
-        // exchange (section 5.10) -- this service has no StatsD client wired
-        // yet; promote to a real metric if/when one is added.
-        request.log.warn({
-          event: "oauth.token.code_exchange_failed",
-          reason: "not_found",
-          clientId,
-        });
-        reply.code(400);
-        return { error: "invalid_grant" };
-      }
-      if (lookup.consumedAt !== null) {
-        await handleCodeReplay(deps, lookup, request);
-        reply.code(400);
-        return { error: "invalid_grant" };
-      }
-      if (lookup.expiresAt.getTime() <= Date.now()) {
-        request.log.warn({
-          event: "oauth.token.code_exchange_failed",
-          reason: "expired",
-          clientId,
-        });
-        reply.code(400);
-        return { error: "invalid_grant" };
-      }
-      if (lookup.clientId !== clientId || lookup.redirectUri !== redirectUri) {
-        request.log.warn({
-          event: "oauth.token.code_exchange_failed",
-          reason: "binding_mismatch",
-          clientId,
-        });
-        reply.code(400);
-        return { error: "invalid_grant" };
-      }
-      if (!verifyPkce(body["code_verifier"], lookup.codeChallenge)) {
-        request.log.warn({ event: "oauth.token.pkce_failed", clientId });
-        reply.code(400);
-        return { error: "invalid_grant" };
-      }
-
-      const consumed = await consumeAuthorizationCode(deps.authPool, lookup.tenantId, codeHash);
-      if (consumed === null) {
-        // Zero rows: either a genuine replay racing this request, or the
-        // losing side of two concurrent exchanges. Both are handled
-        // identically per OAUTH-AS-PLAN.md section 5.4 -- see file header.
-        await handleCodeReplay(deps, lookup, request);
-        reply.code(400);
-        return { error: "invalid_grant" };
-      }
-
-      const audience: string | string[] =
-        consumed.resource !== null && consumed.resource === deps.mcpPublicResourceUrl
-          ? [deps.authAudience, deps.mcpPublicResourceUrl]
-          : deps.authAudience;
-
-      const tokenId = newTokenId();
-      const expiresAt = Math.floor(Date.now() / 1000) + accessTokenTtlSeconds;
-      const accessToken = await deps.signer.sign(
-        {
-          id: consumed.agentId,
-          type: "agent",
-          tenantId: consumed.tenantId,
-          scopes: consumed.scopes,
-          tokenId,
-          expiresAt,
-        },
-        audience,
-      );
-
-      await deps.audit.emit({
-        tenantId: consumed.tenantId,
-        layer: "identity",
-        actor: consumed.agentId,
-        action: "oauth.token.minted",
-        inputs: { client_id: consumed.clientId, grant_id: consumed.grantId },
-        outputs: { token_id: tokenId, scopes: consumed.scopes, agent_id: consumed.agentId },
-      });
 
       reply.code(200);
-      return {
-        access_token: accessToken,
-        token_type: "Bearer",
-        expires_in: accessTokenTtlSeconds,
-        scope: consumed.scopes.join(" "),
-      };
+      return "";
     },
   );
 }

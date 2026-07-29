@@ -15,6 +15,8 @@ export interface OauthClient {
   readonly clientId: string;
   readonly clientName: string;
   readonly redirectUris: readonly string[];
+  /** What this client is registered to do, e.g. `["authorization_code", "refresh_token"]`. Enforced at /token (Opus review, Phase 2b): a client without `refresh_token` here gets an access token only, never a refresh token. */
+  readonly grantTypes: readonly string[];
   readonly disabledAt: Date | null;
 }
 
@@ -22,6 +24,7 @@ interface OauthClientRow {
   readonly client_id: string;
   readonly client_name: string;
   readonly redirect_uris: string[];
+  readonly grant_types: string[];
   readonly disabled_at: Date | null;
 }
 
@@ -31,7 +34,7 @@ export async function findActiveOauthClient(
   clientId: string,
 ): Promise<OauthClient | null> {
   const { rows } = await pool.query<OauthClientRow>(
-    `SELECT client_id, client_name, redirect_uris, disabled_at
+    `SELECT client_id, client_name, redirect_uris, grant_types, disabled_at
        FROM oauth_clients WHERE client_id = $1 AND disabled_at IS NULL LIMIT 1`,
     [clientId],
   );
@@ -41,6 +44,7 @@ export async function findActiveOauthClient(
     clientId: row.client_id,
     clientName: row.client_name,
     redirectUris: row.redirect_uris,
+    grantTypes: row.grant_types,
     disabledAt: row.disabled_at,
   };
 }
@@ -49,7 +53,10 @@ export async function findActiveOauthClient(
  * Operator-seeded client insert (scripts/ops/register-oauth-client.ts). No
  * DCR (`POST /register`) exists yet (Phase 3) -- every `redirect_uris` entry
  * must pass {@link isRegistrableRedirectUri}, mirroring the rule a real DCR
- * handler would enforce.
+ * handler would enforce. Registers both `authorization_code` and
+ * `refresh_token` -- a caller wanting a narrower (e.g. authorization_code
+ * only, for a short-lived supervised integration) client should insert
+ * directly rather than through this convenience helper.
  */
 export async function insertOauthClient(
   pool: Pool,
@@ -63,7 +70,7 @@ export async function insertOauthClient(
   await pool.query(
     `INSERT INTO oauth_clients
        (client_id, client_name, redirect_uris, grant_types, response_types, token_endpoint_auth_method)
-     VALUES ($1, $2, $3::text[], ARRAY['authorization_code'], ARRAY['code'], 'none')`,
+     VALUES ($1, $2, $3::text[], ARRAY['authorization_code', 'refresh_token'], ARRAY['code'], 'none')`,
     [clientId, input.clientName, [...input.redirectUris]],
   );
   return { clientId };

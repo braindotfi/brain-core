@@ -21,6 +21,8 @@ export interface AuthorizationServerMetadata {
   readonly grant_types_supported: readonly string[];
   readonly code_challenge_methods_supported: readonly string[];
   readonly token_endpoint_auth_methods_supported: readonly string[];
+  readonly revocation_endpoint: string;
+  readonly revocation_endpoint_auth_methods_supported: readonly string[];
 }
 
 export const WELL_KNOWN_AS_PATH = "/.well-known/oauth-authorization-server";
@@ -42,5 +44,7 @@ export function buildAuthorizationServerMetadata(issuer: string): AuthorizationS
     code_challenge_methods_supported: ["S256"],
     // Public clients only: PKCE plus exact redirect-URI matching authenticates.
     token_endpoint_auth_methods_supported: ["none"],
+    revocation_endpoint: `${issuer}/revoke`,
+    revocation_endpoint_auth_methods_supported: ["none"],
   };
 }

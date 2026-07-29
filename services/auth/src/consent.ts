@@ -52,3 +52,40 @@ export function narrowByDeselection(
   const selectedSet = new Set(selected);
   return consentable.filter((s) => selectedSet.has(s));
 }
+
+/**
+ * Phase 2b refresh-grant scope narrowing (RFC 6749 section 6: a refresh
+ * request's `scope` param MUST NOT include anything not originally granted).
+ * `stored` is the refresh token row's own `scopes` (already consent-narrowed
+ * at issuance); `requestedParam` is the raw `scope` body param, `undefined`
+ * when omitted (carries `stored` forward unchanged). Rejects a superset
+ * outright rather than silently dropping it, so a client is told. The
+ * AGENT_PERMITTED_SCOPES intersection is defensive: it holds even if `stored`
+ * somehow carries a forbidden scope from a stale row, so the same ceiling
+ * this file's header describes cannot be bypassed via refresh either.
+ */
+export function narrowRefreshScopes(
+  stored: readonly Scope[],
+  requestedParam: string | undefined,
+): { ok: true; scopes: Scope[] } | { ok: false } {
+  if (requestedParam === undefined) {
+    return { ok: true, scopes: intersectAgentPermitted(stored) };
+  }
+  const requested = parseScopeParam(requestedParam);
+  const storedSet = new Set(stored);
+  if (requested.some((s) => !storedSet.has(s))) return { ok: false };
+  return { ok: true, scopes: intersectAgentPermitted(requested) };
+}
+
+/**
+ * The defensive AGENT_PERMITTED_SCOPES ceiling, exported so BOTH /token grant
+ * paths in routes/oauth.ts apply it symmetrically to whatever they are about
+ * to sign -- narrowRefreshScopes already calls this internally; the
+ * authorization_code path calls it directly on `consumed.scopes` right before
+ * minting (Opus review, Phase 2b: not reachable today since
+ * computeConsentableScopes already applied this ceiling at consent time, but
+ * the two paths should not silently diverge on it).
+ */
+export function intersectAgentPermitted(scopes: readonly Scope[]): Scope[] {
+  return scopes.filter((s) => AGENT_PERMITTED_SCOPES.has(s));
+}

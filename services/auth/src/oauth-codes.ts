@@ -17,6 +17,11 @@ import {
   type Scope,
   type TenantScopedClient,
 } from "@brain/shared";
+import {
+  insertRefreshToken,
+  OAUTH_REFRESH_LOCK_NAMESPACE,
+  type RefreshSeed,
+} from "./oauth-refresh.js";
 
 export const AUTHORIZATION_CODE_TTL_SECONDS = 60;
 
@@ -146,16 +151,32 @@ export async function lookupAuthorizationCodeByHash(
   return row === undefined ? null : fromRow(row);
 }
 
+/** The three fields a fresh refresh token needs that the caller (routes/oauth.ts) already minted before calling consumeAuthorizationCode -- everything else (tenantId, agentId, clientId, grantId, scopes) comes from the code row itself, inside the same transaction. */
+export interface NewRefreshTokenSeed {
+  readonly tokenHash: string;
+  readonly tokenId: string;
+  readonly familyId: string;
+}
+
 /**
  * The atomic single-use claim (OAUTH-AS-PLAN.md section 5.4): a zero-row
  * result (already consumed by a concurrent request, or expired between the
  * pre-tenant lookup and here) is `null` -- the caller treats that identically
  * to a genuine replay and revokes the refresh-token family.
+ *
+ * Phase 2b: when the UPDATE returns a row AND `refreshSeed` is non-null, the
+ * refresh token is inserted in the SAME transaction (both or neither) -- a
+ * refresh token must never exist for an unconsumed code, and a code must
+ * never be burned without its refresh token landing. `refreshSeed` is `null`
+ * when the client's `oauth_clients.grant_types` does not include
+ * `refresh_token` (routes/oauth.ts checks this before calling) -- that client
+ * gets an access token only, per its own registration.
  */
 export async function consumeAuthorizationCode(
   authPool: Pool,
   tenantId: string,
   codeHash: string,
+  refreshSeed: NewRefreshTokenSeed | null,
 ): Promise<AuthorizationCodeLookup | null> {
   return withTenantScope(authPool, tenantId, async (client: TenantScopedClient) => {
     const { rows } = await client.query<AuthorizationCodeRow>(
@@ -167,17 +188,30 @@ export async function consumeAuthorizationCode(
       [codeHash],
     );
     const row = rows[0];
-    return row === undefined ? null : fromRow(row);
+    if (row === undefined) return null;
+    if (refreshSeed !== null) {
+      const seed: RefreshSeed = {
+        tenantId: row.tenant_id,
+        agentId: row.agent_id,
+        clientId: row.client_id,
+        grantId: row.grant_id,
+        familyId: refreshSeed.familyId,
+        tokenId: refreshSeed.tokenId,
+        tokenHash: refreshSeed.tokenHash,
+        scopes: row.scopes,
+      };
+      await insertRefreshToken(client, seed);
+    }
+    return fromRow(row);
   });
 }
 
 /**
  * RFC 6749 section 10.5: a replayed authorization code revokes every
- * outstanding refresh token issued under its grant. No refresh-token grant
- * exists yet in this increment (Phase 2b), so this affects zero rows today
- * -- kept so the code path is already correct once Phase 2b starts minting
- * them, and so the DB-level intent (a grant_id index on oauth_refresh_tokens)
- * is exercised now rather than first at Phase 2b.
+ * outstanding refresh token issued under its grant. Phase 2a wrote this
+ * ahead of minting any refresh tokens (so it affected zero rows); Phase 2b
+ * now mints one per code exchange (consumeAuthorizationCode above), so a
+ * replay revokes a real, non-empty family by grant_id.
  */
 export async function revokeRefreshTokenFamilyForGrant(
   authPool: Pool,
@@ -185,6 +219,13 @@ export async function revokeRefreshTokenFamilyForGrant(
   grantId: string,
 ): Promise<void> {
   await withTenantScope(authPool, tenantId, async (client: TenantScopedClient) => {
+    // Same lock, same namespace, same key (grant_id) as oauth-refresh.ts's
+    // rotateRefreshToken/revokeRefreshFamily -- see that file's header for
+    // why grant_id closes the rotate-vs-revoke write-skew window here too.
+    await client.query(
+      `SELECT pg_advisory_xact_lock(${OAUTH_REFRESH_LOCK_NAMESPACE}, hashtext($1))`,
+      [grantId],
+    );
     await client.query(
       `UPDATE oauth_refresh_tokens SET revoked_at = now()
         WHERE grant_id = $1 AND revoked_at IS NULL`,
