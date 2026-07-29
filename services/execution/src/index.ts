@@ -133,6 +133,7 @@ export {
 
 // Boot-binary route registration hooks.
 export { registerExecutionRoutes } from "./routes.js";
+export { registerActionRoutes } from "./actions/routes.js";
 export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
 export type {
   InvoiceShortcutResolver,

@@ -89,7 +89,7 @@ describe("GET /audit/event/:id inclusion_proof shape", () => {
     created_at: new Date("2026-05-23T12:00:00Z"),
   };
 
-  function buildApp(): ReturnType<typeof Fastify> {
+  function buildApp(row = eventRow): ReturnType<typeof Fastify> {
     const app = Fastify();
     app.addHook("onRequest", async (req) => {
       (req as unknown as { principal: unknown }).principal = {
@@ -101,11 +101,11 @@ describe("GET /audit/event/:id inclusion_proof shape", () => {
     });
     const client = {
       query: vi.fn(async (text: string) => {
-        if (text.includes("FROM audit_events WHERE id")) return { rows: [eventRow], rowCount: 1 };
+        if (text.includes("FROM audit_events WHERE id")) return { rows: [row], rowCount: 1 };
         if (text.includes("FROM audit_anchors ORDER BY period_end")) {
           return { rows: [anchorRow], rowCount: 1 };
         }
-        if (text.includes("WHERE created_at >=")) return { rows: [eventRow], rowCount: 1 };
+        if (text.includes("WHERE created_at >=")) return { rows: [row], rowCount: 1 };
         return { rows: [], rowCount: 0 };
       }),
       release: vi.fn(),
@@ -135,6 +135,19 @@ describe("GET /audit/event/:id inclusion_proof shape", () => {
     expect(body.inclusion_proof).toHaveProperty("merkle_proof");
     expect(body.inclusion_proof.anchor_block).toBe(12345);
     expect(typeof body.inclusion_proof.anchor_tx_hash).toBe("string");
+    await app.close();
+  });
+
+  it("routes agent actor lookup refs to the runtime execution agent endpoint", async () => {
+    const agentId = "agent_01KYN4M0K0X9G4M27ZB8E8NSQS";
+    const app = buildApp({ ...eventRow, id: "evt_agent", actor: agentId });
+    const res = await app.inject({ method: "GET", url: "/audit/event/evt_agent" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().event.actor_ref).toMatchObject({
+      id: agentId,
+      type: "agent",
+      lookup: `/v1/execution/agents/${agentId}`,
+    });
     await app.close();
   });
 });
