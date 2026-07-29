@@ -460,8 +460,8 @@ Deployment is a single Docker VM per environment. `deploy_staging` (in
 `main.yml`) runs automatically on green `main`, connects to `VM_HOST_STAGING`
 with `VM_SSH_KEY_STAGING`, uses `.env.staging`, pulls the SHA-tagged images,
 runs `tools/migrate up`, reruns `infra/db-roles.sql`, recreates `api`,
-`worker`, `agents`, and `auth`, then smokes the staging health URL with a
-commit match.
+`worker`, `agents`, `auth`, and `surface-gateway`, then smokes the staging
+health URL with a commit match.
 
 Production promotion is manual: `.github/workflows/promote-prod.yml` is a
 separate `workflow_dispatch` workflow, run by hand from the Actions tab, so
@@ -474,10 +474,56 @@ staging (`GET https://staging-api.brain.fi/health`) and promotes that. It
 still requires the `production` environment approval, connects to `VM_HOST`,
 uses `.env.prod`, pulls the resolved SHA's images, runs `tools/migrate up`,
 reruns `infra/db-roles.sql` before any compose recreate, recreates `api`,
-`worker`, `agents`, and `auth`, then reloads the Caddy config, and smokes
-`https://api.brain.fi/health` plus `auth`'s `/healthz` (via SSH, since
-`auth.brain.fi` DNS does not resolve yet) for a commit match against the
-resolved SHA.
+`worker`, `agents`, `auth`, and `surface-gateway`, then reloads the Caddy
+config, and smokes `https://api.brain.fi/health` plus `auth`'s `/healthz`
+(via SSH, since `auth.brain.fi` DNS does not resolve yet) for a commit match
+against the resolved SHA.
+
+**JWKS sidecar retirement (Phase 4, OAUTH-AS-PLAN.md §8).** `docker-compose.prod.yml`'s
+standalone `jwks` service (the `tools/static-jwks` sidecar on :8085) has been
+retired: `auth` is now the single JWKS source, and `AUTH_JWKS_URL` for every
+consumer (`api`, `worker`, `surface-gateway`, and `auth`'s own unused
+placeholder) points at `http://auth:3000/.well-known/jwks.json`.
+
+Hard precondition, not a footnote: `services/auth/src/main.ts` `process.exit(1)`s
+in production when `EMAIL_ENDPOINT`/`EMAIL_API_KEY` or the three `BRAIN_*_DB_URL`
+role URLs are missing. No ESP is provisioned in `.env.prod` as of this writing,
+so `auth` cannot currently boot in prod. **Do not run this cutover until an ESP
+is provisioned and `auth` has been confirmed healthy on the target VM** --
+flipping `AUTH_JWKS_URL` at a crash-looping `auth` container breaks every
+token verification in production at once.
+
+Once that precondition holds, both `main.yml` and `promote-prod.yml` recreate
+`auth` alone first and gate on its `/healthz` (bounded retry loop) before
+touching anything that verifies tokens against it -- see the "Migrate +
+recreate auth on VM" / "Wait for auth healthy on VM" / "Recreate
+api/worker/agents/surface-gateway on VM" steps in each workflow. The cutover
+on a given VM is, in order:
+
+1. Confirm `auth` is healthy on that VM (the workflow step above does this
+   automatically; manually it is `docker compose ... ps auth` and/or curling
+   its `/healthz`).
+2. Recreate `api`, `worker`, and `surface-gateway` (the workflow step above
+   already does this, after step 1 passes) so they pick up the new
+   `AUTH_JWKS_URL`.
+3. Verify a token still verifies (mint with `tools/dev-token`, hit an
+   authenticated route) -- the `kid` is unchanged since `auth` and `jwks`
+   shared `AUTH_SIGN_KEY`, so this should be a no-op cutover.
+4. Only then remove the orphan: the `brain-prod-jwks` container is not
+   removed by `up -d` alone once its service block is deleted from compose --
+   the project just stops managing it. Run `docker rm -f brain-prod-jwks` as
+   an explicit operator step. Do not reach for `--remove-orphans` on a bare
+   `up -d` instead: with no service list it also evaluates `postgres` and
+   `minio` (the same shape as the 2026-07-24 MinIO downgrade outage this repo
+   already documents), would run `migrate`/`db-roles` as recreated containers
+   instead of `run --rm`, and may treat the profile-gated `agents` container
+   as an orphan too.
+
+What step 4's ordering preserves: while `jwks`'s container still exists,
+reverting `AUTH_JWKS_URL` in compose back to `http://jwks:8085/...` and
+recreating the verifiers is a live rollback path. Removing the orphan before
+step 3 confirms tokens still verify throws that rollback away with nothing to
+fall back to.
 
 The remaining discipline is the post-deploy probe: verify what is serving,
 not only what is merged. For production tenancy changes, operators must probe
@@ -486,8 +532,8 @@ a user-principal member session, then record the result in the PR or release
 notes. A failed migration or smoke check fails the workflow before the deploy is
 considered complete.
 
-The VM compose recreate command starts `api`, `worker`, `agents`, and `auth`
-with the `agents` profile. The API reaches the extraction agents at
+The VM compose recreate command starts `api`, `worker`, `agents`, `auth`, and
+`surface-gateway` with the `agents` profile. The API reaches the extraction agents at
 `DOCUMENT_EXTRACT_AGENT_URL=http://agents:8001`. The agents service uses
 `image: brain-agents:${BRAIN_AGENTS_IMAGE_TAG:-prod}` in
 `docker-compose.prod.yml`; CI must pull and retag `brain-agents:prod` before

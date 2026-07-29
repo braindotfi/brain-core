@@ -197,9 +197,9 @@ services:
   # The OAuth 2.0 authorization server (Phase 1: RFC 8414 metadata + JWKS
   # discovery only, see OAUTH-AS-PLAN.md §8). Off by default: needs
   # AUTH_SIGN_KEY on the host to publish JWKS, and without it the container
-  # exits at boot, same fail-closed behavior as the `jwks` sidecar tool has in
-  # prod (which dev does not run at all, since BRAIN_DEMO_MODE uses a static
-  # HS256 secret) — matching the `agents`/`libs-watch` profile-gated precedent
+  # exits at boot, same fail-closed behavior `auth` has in prod (which dev
+  # does not run at all, since BRAIN_DEMO_MODE uses a static HS256 secret) --
+  # matching the `agents`/`libs-watch` profile-gated precedent
   # below rather than leaving every developer with a permanently-exited
   # container on a plain `up`. Enable with: --profile auth
   # Generate a key with: pnpm --filter @brain/static-jwks run generate
