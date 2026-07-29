@@ -340,10 +340,10 @@ Pending Dmitriy sign-off
   identity link, a user-principal member session, and the tenant's propose-only
   BFF service agent with an initial agent token. When the platform sends
   `demo_seed: true`, the same durable production tenant is also seeded with the
-  Brightline demo ledger, policy, agent, and fake-connected source rows before
-  the 201 response. This is the supported persistent "Continue with Demo" path;
-  it does not change `tenant.kind`, add a TTL, or make the tenant eligible for
-  demo cleanup.
+  Brightline demo ledger, policy, agent, pending Needs Review proposals, and
+  fake-connected source rows before the 201 response. This is the supported
+  persistent "Continue with Demo" path; it does not change `tenant.kind`, add a
+  TTL, or make the tenant eligible for demo cleanup.
 - Demo tenancy remains structurally separate. `/v1/demo/provision-run` stamps
   `tenant.kind='demo'`, can never create production tenants, and still returns
   split propose-only agent tokens and user-principal member tokens. Production

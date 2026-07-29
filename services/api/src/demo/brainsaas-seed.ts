@@ -48,6 +48,7 @@ import {
   newDocumentId,
   newInvoiceId,
   newPolicyId,
+  newProposalId,
   newRawArtifactId,
   newRawParsedId,
   newSourceId,
@@ -243,6 +244,7 @@ export interface BrainSaasSeed {
   apInvoices: Record<string, string>; // vendorKey -> invoice id
   arInvoices: Record<string, string>; // customerKey -> invoice id
   sources: Record<DemoFakeSourceKey, string>; // source key -> raw_sources id
+  proposals: Record<DemoProposalKey, string>; // proposal key -> proposal id
   policyId: string;
   agentId: string;
 }
@@ -254,6 +256,8 @@ type DemoFakeSourceKey =
   | "merge_accounting"
   | "alchemy_wallet"
   | "tax_return";
+
+type DemoProposalKey = "midmarket_collections" | "startupx_collections";
 
 type DemoFakeSourceType =
   | "plaid"
@@ -579,7 +583,13 @@ export async function seedBrainSaasDemo(
 
   // ---------- Active policy (off-chain; on-chain registration is a later phase) ----------
   const approvedVendorCpIds = VENDORS.filter((v) => v.approved).map((v) => vendors[v.key]!.id);
-  const policyId = await seedPolicy(pool, tenantId, actor, approvedVendorCpIds);
+  const policy = await seedPolicy(pool, tenantId, actor, approvedVendorCpIds);
+  const proposals = await seedNeedsReviewProposals(pool, audit, tenantId, {
+    agentId,
+    policyVersion: policy.version,
+    arInvoices,
+    customers: mapIds(customers),
+  });
 
   return {
     tenantId,
@@ -594,7 +604,8 @@ export async function seedBrainSaasDemo(
     apInvoices,
     arInvoices,
     sources,
-    policyId,
+    proposals,
+    policyId: policy.id,
     agentId,
   };
 }
@@ -782,7 +793,7 @@ async function seedPolicy(
   tenantId: string,
   actor: string,
   approvedVendorCpIds: string[],
-): Promise<string> {
+): Promise<{ id: string; version: number }> {
   const policy = {
     version: 1,
     lists: { "vendors.approved": approvedVendorCpIds },
@@ -849,22 +860,170 @@ async function seedPolicy(
   const policyJson = JSON.stringify(policy);
   const policyHash = createHash("sha256").update(policyJson).digest();
   const policyId = newPolicyId();
+  let version = 1;
 
   await withTenantScope(pool, tenantId, async (c) => {
     const v = await c.query<{ next: number }>(
       `SELECT COALESCE(MAX(version) + 1, 1) AS next FROM policies WHERE tenant_id = $1`,
       [tenantId],
     );
+    version = v.rows[0]?.next ?? 1;
     await c.query(
       `UPDATE policies SET state = 'deactivated', deactivated_at = now() WHERE state = 'active'`,
     );
     await c.query(
       `INSERT INTO policies (id, tenant_id, version, content, content_hash, quorum_required, state, created_by, activated_at, created_at)
        VALUES ($1, $2, $3, $4::jsonb, $5, 1, 'active', $6, now(), now())`,
-      [policyId, tenantId, v.rows[0]?.next ?? 1, policyJson, policyHash, actor],
+      [policyId, tenantId, version, policyJson, policyHash, actor],
     );
   });
-  return policyId;
+  return { id: policyId, version };
+}
+
+async function seedNeedsReviewProposals(
+  pool: Pool,
+  audit: AuditEmitter,
+  tenantId: string,
+  refs: {
+    agentId: string;
+    policyVersion: number;
+    arInvoices: Record<string, string>;
+    customers: Record<string, string>;
+  },
+): Promise<Record<DemoProposalKey, string>> {
+  const proposals: Array<{
+    key: DemoProposalKey;
+    proposalId: string;
+    dedupKey: string;
+    action: Record<string, unknown>;
+  }> = [
+    {
+      key: "midmarket_collections",
+      proposalId: newProposalId(),
+      dedupKey: "demo:brainsaas:proposal:midmarket_collections",
+      action: demoCollectionsAction({
+        agentId: refs.agentId,
+        customerId: refs.customers["midmarket"]!,
+        invoiceId: refs.arInvoices["midmarket"]!,
+        customerName: "Midmarket Solutions",
+        invoiceNumber: "AR-MIDMARKET-001",
+        amount: "42000.00",
+        daysOverdue: 18,
+        confidence: 0.78,
+        riskBand: "elevated",
+        recommendation:
+          "Approve a customer-safe payment reminder before quarter-end collections escalation.",
+      }),
+    },
+    {
+      key: "startupx_collections",
+      proposalId: newProposalId(),
+      dedupKey: "demo:brainsaas:proposal:startupx_collections",
+      action: demoCollectionsAction({
+        agentId: refs.agentId,
+        customerId: refs.customers["startupx"]!,
+        invoiceId: refs.arInvoices["startupx"]!,
+        customerName: "StartupX",
+        invoiceNumber: "AR-STARTUPX-001",
+        amount: "8000.00",
+        daysOverdue: 32,
+        confidence: 0.82,
+        riskBand: "high",
+        recommendation:
+          "Approve a payment-plan outreach that preserves the account while reducing aging risk.",
+      }),
+    },
+  ];
+  const trace = JSON.stringify([
+    {
+      rule_id: "ar-agent-action-requires-review",
+      matched: true,
+      checks: [{ key: "agent.confidence.gte", passed: true, detail: "0.6" }],
+    },
+  ]);
+
+  await withTenantScope(pool, tenantId, async (c) => {
+    for (const proposal of proposals) {
+      await c.query(
+        `INSERT INTO proposals (
+           id, tenant_id, proposing_agent, action, policy_version, policy_decision,
+           policy_trace, required_approvers, status, proposal_dedup_key
+         )
+         VALUES ($1,$2,$3,$4::jsonb,$5,'confirm',$6::jsonb,ARRAY['signer']::text[],'pending',$7)
+         ON CONFLICT (tenant_id, proposal_dedup_key)
+         WHERE proposal_dedup_key IS NOT NULL
+         DO NOTHING`,
+        [
+          proposal.proposalId,
+          tenantId,
+          refs.agentId,
+          JSON.stringify(proposal.action),
+          refs.policyVersion,
+          trace,
+          proposal.dedupKey,
+        ],
+      );
+    }
+  });
+
+  for (const proposal of proposals) {
+    await audit.emit({
+      tenantId,
+      layer: "agent",
+      actor: refs.agentId,
+      action: "agent.action.proposed",
+      policyCheckId: "ar-agent-action-requires-review",
+      outcome: "confirm",
+      inputs: { action_kind: "agent_action", proposal_id: proposal.proposalId },
+      outputs: {
+        status: "pending",
+        outcome: "confirm",
+        matched_rule_id: "ar-agent-action-requires-review",
+        required_approvers: ["signer"],
+      },
+      idempotencyKey: `${proposal.dedupKey}:agent.action.proposed`,
+    });
+  }
+
+  return Object.fromEntries(
+    proposals.map((proposal) => [proposal.key, proposal.proposalId]),
+  ) as Record<DemoProposalKey, string>;
+}
+
+function demoCollectionsAction(input: {
+  agentId: string;
+  customerId: string;
+  invoiceId: string;
+  customerName: string;
+  invoiceNumber: string;
+  amount: string;
+  daysOverdue: number;
+  confidence: number;
+  riskBand: "elevated" | "high";
+  recommendation: string;
+}): Record<string, unknown> {
+  const narrative = `${input.customerName} is ${input.daysOverdue} days overdue on ${input.invoiceNumber} for $${input.amount}. ${input.recommendation}`;
+  return {
+    kind: "agent_action",
+    type: "collections",
+    agent_role: "collections",
+    agent_id: input.agentId,
+    action_id: `demo.collections.${input.invoiceNumber.toLowerCase()}`,
+    mode: "propose",
+    confidence: input.confidence,
+    risk_band: input.riskBand,
+    counterparty_id: input.customerId,
+    amount: { currency: "USD", value: input.amount },
+    invoice_id: input.invoiceId,
+    summary: `Review collections outreach for ${input.customerName}`,
+    narrative,
+    recommended_remediation: input.recommendation,
+    affected_entities: [input.customerId, input.invoiceId],
+    evidence_refs: [
+      { kind: "invoice", ref: input.invoiceId },
+      { kind: "counterparty", ref: input.customerId },
+    ],
+  };
 }
 
 async function seedAgent(pool: Pool, tenantId: string): Promise<string> {
