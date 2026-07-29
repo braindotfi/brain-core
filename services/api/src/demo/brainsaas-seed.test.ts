@@ -127,6 +127,11 @@ describe("seedBrainSaasDemo", () => {
     expect(result.accounts.smartAccount).toBeNull();
     expect(result.accounts.operating).toBe("acct_brainsaas_operating");
     expect(result.accounts.reserve).toBe("acct_brainsaas_reserve");
+    const accountArgs = upsertAccountRow.mock.calls.map((c) => c[3] as { institution: string });
+    expect(accountArgs.map((a) => a.institution)).toEqual([
+      "First Meridian Bank",
+      "First Meridian Bank",
+    ]);
 
     // AP inbox (3) + AR receivables (4).
     expect(Object.keys(result.apInvoices)).toEqual(["cloudops", "datacenter", "quickpay"]);
@@ -207,6 +212,16 @@ describe("seedBrainSaasDemo", () => {
     // 3 accounts now: operating + reserve + smart.
     expect(upsertAccountRow).toHaveBeenCalledTimes(3);
     expect(result.accounts.smartAccount).toBe("acct_0xSMART00000000000000000000000000000000AA");
+    const smartAccountCall = upsertAccountRow.mock.calls.find(
+      (c) =>
+        (c[3] as { external_account_id: string }).external_account_id ===
+        "0xSMART00000000000000000000000000000000AA",
+    );
+    expect(smartAccountCall).toBeDefined();
+    expect(smartAccountCall![3]).toMatchObject({
+      institution: "Base Sepolia",
+      name: "Brightline Treasury Wallet",
+    });
   });
 
   it("posts monthly inflow history only for customers with payment_days", async () => {
