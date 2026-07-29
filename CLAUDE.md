@@ -26,7 +26,9 @@ Private workspace, UNLICENSED.
   @brain/surfaces, and existing policy, audit, and execution services.
 - `services/auth`: the OAuth 2.0 authorization server at `AUTH_ISSUER`
   (`auth.brain.fi`), a standalone Fastify deployable (see OAUTH-AS-PLAN.md).
-  Phase 1 serves RFC 8414 metadata and JWKS discovery only, plus 503 stubs for
+  It serves RFC 8414 metadata and JWKS discovery, and after Phase 4 is the sole
+  JWKS source for every service that verifies tokens. A discovery-only build
+  (one constructed without an OAuth core) returns 503 from
   `/authorize` and `/token`. Phase 2a increment 2 (AUTH-PATHS-PLAN.md section
   2, "Path 1") adds human authentication: `GET/POST /login`, `/set-password`,
   `/forgot-password`, server-rendered HTML, stateless `__Host-brain_as`
