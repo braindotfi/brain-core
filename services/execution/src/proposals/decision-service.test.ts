@@ -65,6 +65,47 @@ describe("ProposalDecisionService", () => {
     expect(row.status).toBe("acknowledged");
   });
 
+  it("embeds a narrative/severity/rule_id snapshot in proposal.decided for a compliance finding", async () => {
+    const row = proposal({
+      action: {
+        type: "compliance",
+        mode: "notify_only",
+        agent_kind: "compliance",
+        finding_type: "policy_violation",
+        severity: "high",
+        risk_band: "high",
+        rule_id: "cmp_policy_violation",
+        narrative: "Compliance review found policy_violation with high severity.",
+        summary: "Compliance finding policy_violation severity high.",
+        recommended_remediation: "Review the rejected policy decision and keep the action blocked.",
+        affected_entities: [{ kind: "policy_decision", ref: "pd_123" }],
+      },
+    });
+    const service = serviceFor(row);
+
+    await service.decide(ctx(), PROPOSAL, "acknowledge");
+
+    const emitted = (service as unknown as { deps: { audit: AuditEmitter } }).deps.audit
+      .emit as ReturnType<typeof vi.fn>;
+    const [event] = emitted.mock.calls[0] as [Parameters<AuditEmitter["emit"]>[0]];
+    expect(event.outputs).toMatchObject({
+      proposal_summary: {
+        proposing_agent: AGENT,
+        finding_type: "policy_violation",
+        severity: "high",
+        rule_id: "cmp_policy_violation",
+        narrative: "Compliance review found policy_violation with high severity.",
+        recommended_remediation: "Review the rejected policy decision and keep the action blocked.",
+      },
+    });
+    expect(event.beforeState).toMatchObject({
+      finding_type: "policy_violation",
+      severity: "high",
+      rule_id: "cmp_policy_violation",
+    });
+    expect(event.inputs).toEqual({ proposal_id: PROPOSAL, decision: "acknowledge" });
+  });
+
   it("denies an unresolved user before auditing or transitioning", async () => {
     const order: string[] = [];
     const row = proposal();
