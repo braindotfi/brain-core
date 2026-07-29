@@ -439,6 +439,6 @@ function inferActorType(actor: string): string {
 
 function actorLookupPath(type: string, actor: string): string | null {
   if (type === "user") return `/v1/members/${encodeURIComponent(actor)}`;
-  if (type === "agent") return `/v1/agents/${encodeURIComponent(actor)}`;
+  if (type === "agent") return `/v1/execution/agents/${encodeURIComponent(actor)}`;
   return null;
 }

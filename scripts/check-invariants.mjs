@@ -117,6 +117,12 @@ check(
     apiMain.includes("scopes: PAYMENT_AGENT_SCOPES"),
   "demo provision-run must return a propose-only agent token and separate user member token",
 );
+check(
+  "deployed API mounts canonical action routes",
+  apiMain.includes("registerActionRoutes") &&
+    apiMain.includes("registerActionRoutes(child, piService)"),
+  "services/api/src/main.ts must mount /v1/actions with the shared PaymentIntentService, not only the standalone execution server",
+);
 
 const anchorReconciler = read("services/audit/src/reconciler.ts");
 check(
