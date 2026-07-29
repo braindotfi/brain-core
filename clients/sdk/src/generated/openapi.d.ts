@@ -5234,6 +5234,9 @@ export interface operations {
                             sources?: {
                                 [key: string]: string;
                             };
+                            proposals?: {
+                                [key: string]: string;
+                            };
                             accounts?: {
                                 [key: string]: string | null;
                             };
@@ -5323,6 +5326,9 @@ export interface operations {
                             /** @enum {boolean} */
                             seeded?: true;
                             sources?: {
+                                [key: string]: string;
+                            };
+                            proposals?: {
                                 [key: string]: string;
                             };
                             accounts?: {

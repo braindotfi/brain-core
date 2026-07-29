@@ -28,11 +28,12 @@ tenant.created, member.changed, auth.production_agent_token.minted.
 
 When `demo_seed: true` is present, this route additionally seeds the durable production
 tenant with the server-owned Brightline demo data before returning: ledger rows, active demo
-policy, demo agent, and fake-connected `raw_sources` rows. This is the production-compatible
-"Continue with Demo" path for clients that need persistent sessions across logins. It does
-not change `tenant.kind`, does not add a TTL, and does not make the tenant eligible for demo
-cleanup. If the seeder is not wired or throws, the request fails visibly rather than returning
-an empty durable tenant as a successful demo.
+policy, demo agent, pending agent-action proposals for Needs Review, and fake-connected
+`raw_sources` rows. This is the production-compatible "Continue with Demo" path for clients
+that need persistent sessions across logins. It does not change `tenant.kind`, does not add a
+TTL, and does not make the tenant eligible for demo cleanup. If the seeder is not wired or
+throws, the request fails visibly rather than returning an empty durable tenant as a successful
+demo.
 
 ## Sessions (exchange model; ACTOR = SESSION preserved)
 
@@ -103,4 +104,6 @@ sessions remains POST /v1/sessions.
    principals; they never use POST /v1/auth/service-token.
 10. `demo_seed: true` on POST /v1/tenants preserves production tenancy while making the
     Brightline demo dataset reachable to durable clients. The legacy demo fence remains
-    separate and still cannot create production tenants.
+    separate and still cannot create production tenants. Fresh demo-seeded production tenants
+    include pending agent-action proposals, so the approval loop is visible without waiting for
+    background scanners.

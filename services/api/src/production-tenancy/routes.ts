@@ -59,6 +59,7 @@ export interface ProductionTenantDemoSeed {
   apInvoices?: Record<string, string>;
   arInvoices?: Record<string, string>;
   sources?: Record<string, string>;
+  proposals?: Record<string, string>;
   policyId?: string;
   agentId?: string;
 }
@@ -235,6 +236,7 @@ export async function registerProductionTenancyRoutes(
         outputs: {
           tenant_id: tenantId,
           sources: Object.keys(demoSeed.sources ?? {}).length,
+          proposals: Object.keys(demoSeed.proposals ?? {}).length,
           accounts: Object.keys(demoSeed.accounts ?? {}).length,
           ap_invoices: Object.keys(demoSeed.apInvoices ?? {}).length,
           ar_invoices: Object.keys(demoSeed.arInvoices ?? {}).length,
@@ -537,6 +539,7 @@ function serializeDemoSeed(seed: ProductionTenantDemoSeed): Record<string, unkno
   return {
     seeded: true,
     sources: seed.sources ?? {},
+    proposals: seed.proposals ?? {},
     accounts: seed.accounts ?? {},
     ap_invoices: seed.apInvoices ?? {},
     ar_invoices: seed.arInvoices ?? {},

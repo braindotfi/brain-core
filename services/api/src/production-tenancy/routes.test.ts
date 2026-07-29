@@ -312,6 +312,7 @@ describe("production tenancy routes", () => {
       accounts: { operating: "acct_operating", reserve: "acct_reserve", smartAccount: null },
       apInvoices: { cloudops: "inv_cloudops" },
       arInvoices: { bigco: "inv_bigco" },
+      proposals: { midmarket_collections: "prop_midmarket" },
       policyId: "pol_demo",
       agentId: "agent_demo",
     }));
@@ -350,6 +351,7 @@ describe("production tenancy routes", () => {
         accounts: { operating: "acct_operating", reserve: "acct_reserve", smartAccount: null },
         ap_invoices: { cloudops: "inv_cloudops" },
         ar_invoices: { bigco: "inv_bigco" },
+        proposals: { midmarket_collections: "prop_midmarket" },
         policy_id: "pol_demo",
         agent_id: "agent_demo",
       });

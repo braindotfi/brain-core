@@ -139,6 +139,11 @@ describe("seedBrainSaasDemo", () => {
 
     expect(result.policyId.startsWith("pol_")).toBe(true);
     expect(result.agentId.startsWith("agent_")).toBe(true);
+    expect(Object.keys(result.proposals)).toEqual([
+      "midmarket_collections",
+      "startupx_collections",
+    ]);
+    expect(Object.values(result.proposals).every((id) => id.startsWith("prop_"))).toBe(true);
     expect(Object.keys(result.sources)).toEqual([
       "plaid",
       "stripe",
@@ -378,6 +383,58 @@ describe("seedBrainSaasDemo", () => {
       matched_rule_id: "ar-confirm-above-500k",
       required_approvers: ["owner"],
     });
+  });
+
+  it("plants pending Needs Review agent proposals for overdue receivables", async () => {
+    const { pool, audit } = deps();
+    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const proposalInserts = scopedCalls.filter((c) => c.sql.includes("INSERT INTO proposals"));
+    expect(proposalInserts).toHaveLength(2);
+
+    const actions = proposalInserts.map(
+      (c) => JSON.parse(String(c.values?.[3])) as Record<string, unknown>,
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "agent_action",
+          type: "collections",
+          mode: "propose",
+          risk_band: "elevated",
+          action_id: "demo.collections.ar-midmarket-001",
+        }),
+        expect.objectContaining({
+          kind: "agent_action",
+          type: "collections",
+          mode: "propose",
+          risk_band: "high",
+          action_id: "demo.collections.ar-startupx-001",
+        }),
+      ]),
+    );
+
+    for (const call of proposalInserts) {
+      expect(call.values?.[1]).toBe(TENANT);
+      expect(call.values?.[4]).toBe(1);
+      expect(call.values?.[5]).toContain("ar-agent-action-requires-review");
+      expect(String(call.values?.[6])).toMatch(/^demo:brainsaas:proposal:/);
+      expect(call.sql).toContain("'confirm'");
+      expect(call.sql).toContain("'pending'");
+      expect(call.sql).toContain("ARRAY['signer']");
+      expect(call.sql).toContain("ON CONFLICT (tenant_id, proposal_dedup_key)");
+    }
+
+    const auditEvents = audit.events.filter((event) => event.action === "agent.action.proposed");
+    expect(auditEvents).toHaveLength(2);
+    expect(auditEvents.every((event) => event.outcome === "confirm")).toBe(true);
+    expect(
+      auditEvents.every(
+        (event) =>
+          (event.outputs as { matched_rule_id?: string }).matched_rule_id ===
+          "ar-agent-action-requires-review",
+      ),
+    ).toBe(true);
   });
 
   it("deletes and re-inserts the demo payment agent", async () => {
