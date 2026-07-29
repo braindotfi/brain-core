@@ -47,7 +47,28 @@ export interface ProductionTenancyRoutesDeps {
   revocation?: RevocationStore;
   platformSecret?: string;
   smartAccount?: string;
+  demoSeeder?: ProductionTenantDemoSeeder;
 }
+
+export interface ProductionTenantDemoSeed {
+  tenantId: string;
+  actor: string;
+  vendors?: Record<string, string>;
+  customers?: Record<string, string>;
+  accounts?: Record<string, string | null>;
+  apInvoices?: Record<string, string>;
+  arInvoices?: Record<string, string>;
+  sources?: Record<string, string>;
+  policyId?: string;
+  agentId?: string;
+}
+
+export type ProductionTenantDemoSeeder = (input: {
+  tenantId: string;
+  actor: string;
+  companyName: string | null;
+  founderEmail: string;
+}) => Promise<ProductionTenantDemoSeed>;
 
 interface MemberRow {
   tenant_id: string;
@@ -106,6 +127,7 @@ export async function registerProductionTenancyRoutes(
         company_name?: unknown;
         founder?: { email?: unknown; display_name?: unknown };
         founder_external_ref?: unknown;
+        demo_seed?: unknown;
       };
     }>,
     reply: FastifyReply,
@@ -117,11 +139,19 @@ export async function registerProductionTenancyRoutes(
     }
 
     const body = request.body;
+    const demoSeedRequested = parseDemoSeedRequested(body?.demo_seed);
+    const demoSeeder = demoSeedRequested ? deps.demoSeeder : undefined;
+    if (demoSeedRequested && demoSeeder === undefined) {
+      throw brainError("dependency_unavailable", "production demo seeder is not configured", {
+        details: { required_scope: "tenant:create" },
+      });
+    }
     const founderEmail = requireString(body?.founder?.email, "founder.email").toLowerCase();
     const founderDisplayName =
       typeof body?.founder?.display_name === "string" && body.founder.display_name.length > 0
         ? body.founder.display_name
         : founderEmail;
+    const companyName = typeof body?.company_name === "string" ? body.company_name : null;
     const externalRef = requireString(body?.founder_external_ref, "founder_external_ref");
     const tenantId = newTenantId();
     const memberId = newUserId();
@@ -188,6 +218,32 @@ export async function registerProductionTenancyRoutes(
       },
     });
 
+    let demoSeed: ProductionTenantDemoSeed | null = null;
+    if (demoSeeder !== undefined) {
+      demoSeed = await demoSeeder({
+        tenantId,
+        actor: memberId,
+        companyName,
+        founderEmail,
+      });
+      await deps.audit.emit({
+        tenantId,
+        layer: "execution",
+        actor: memberId,
+        action: "tenant.demo_seeded",
+        inputs: { company_name: companyName },
+        outputs: {
+          tenant_id: tenantId,
+          sources: Object.keys(demoSeed.sources ?? {}).length,
+          accounts: Object.keys(demoSeed.accounts ?? {}).length,
+          ap_invoices: Object.keys(demoSeed.apInvoices ?? {}).length,
+          ar_invoices: Object.keys(demoSeed.arInvoices ?? {}).length,
+          policy_id: demoSeed.policyId ?? null,
+          agent_id: demoSeed.agentId ?? null,
+        },
+      });
+    }
+
     reply.status(201);
     return {
       tenant_id: tenantId,
@@ -199,6 +255,7 @@ export async function registerProductionTenancyRoutes(
         expires_in: ACCESS_TOKEN_TTL_SECONDS,
       },
       agent: serializeAgentToken(agentResult.agentId, agentToken, agentResult.agentToken),
+      ...(demoSeed !== null ? { demo_seed: serializeDemoSeed(demoSeed) } : {}),
     };
   };
 
@@ -468,6 +525,24 @@ export function assertPlatformCredential(
       details: { required_scope: scope },
     });
   }
+}
+
+function parseDemoSeedRequested(raw: unknown): boolean {
+  if (raw === undefined) return false;
+  if (typeof raw === "boolean") return raw;
+  throw brainError("request_body_invalid", "demo_seed must be a boolean");
+}
+
+function serializeDemoSeed(seed: ProductionTenantDemoSeed): Record<string, unknown> {
+  return {
+    seeded: true,
+    sources: seed.sources ?? {},
+    accounts: seed.accounts ?? {},
+    ap_invoices: seed.apInvoices ?? {},
+    ar_invoices: seed.arInvoices ?? {},
+    policy_id: seed.policyId ?? null,
+    agent_id: seed.agentId ?? null,
+  };
 }
 
 interface SessionSeed {

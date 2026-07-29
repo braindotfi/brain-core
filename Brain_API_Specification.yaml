@@ -416,7 +416,10 @@ paths:
         agent token. Rejects the request outright if the demo
         provisioning header (`X-Demo-Provision-Auth`) is also present, to
         keep the demo and production tenant-creation paths from being
-        conflatable.
+        conflatable. When `demo_seed: true` is present, the route also
+        seeds the durable production tenant with the Brightline demo
+        ledger, policy, agent, and fake-connected source rows. The tenant
+        remains `kind='production'`.
       operationId: createTenant
       security: []
       requestBody:
@@ -428,6 +431,14 @@ paths:
               required: [founder, founder_external_ref]
               properties:
                 company_name: { type: string }
+                demo_seed:
+                  type: boolean
+                  default: false
+                  description: |
+                    When true, seed the durable production tenant with the
+                    server-owned Brightline demo dataset. Intended for the
+                    platform "Continue with Demo" flow. Does not change
+                    tenant.kind.
                 founder:
                   type: object
                   required: [email]
@@ -454,6 +465,26 @@ paths:
                       refresh_token: { type: string }
                       expires_in: { type: integer, enum: [900] }
                   agent: { $ref: '#/components/schemas/ProductionAgentToken' }
+                  demo_seed:
+                    type: object
+                    description: Present only when demo_seed was requested.
+                    properties:
+                      seeded: { type: boolean, enum: [true] }
+                      sources:
+                        type: object
+                        additionalProperties: { type: string }
+                      accounts:
+                        type: object
+                        additionalProperties:
+                          type: [string, 'null']
+                      ap_invoices:
+                        type: object
+                        additionalProperties: { type: string }
+                      ar_invoices:
+                        type: object
+                        additionalProperties: { type: string }
+                      policy_id: { type: [string, 'null'] }
+                      agent_id: { type: [string, 'null'] }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401':
           description: |
@@ -481,7 +512,8 @@ paths:
       description: |
         Organization-scoped alias for `POST /tenants`. It persists a
         production tenant with the same bootstrap admin, member session, and
-        propose-only agent token behavior, and echoes `org_id` in the response.
+        propose-only agent token behavior, supports the same `demo_seed`
+        option, and echoes `org_id` in the response.
       operationId: createOrgTenant
       security: []
       parameters:
@@ -498,6 +530,10 @@ paths:
               required: [founder, founder_external_ref]
               properties:
                 company_name: { type: string }
+                demo_seed:
+                  type: boolean
+                  default: false
+                  description: Same semantics as POST /tenants.
                 founder:
                   type: object
                   required: [email]
@@ -523,6 +559,26 @@ paths:
                       refresh_token: { type: string }
                       expires_in: { type: integer, enum: [900] }
                   agent: { $ref: '#/components/schemas/ProductionAgentToken' }
+                  demo_seed:
+                    type: object
+                    description: Present only when demo_seed was requested.
+                    properties:
+                      seeded: { type: boolean, enum: [true] }
+                      sources:
+                        type: object
+                        additionalProperties: { type: string }
+                      accounts:
+                        type: object
+                        additionalProperties:
+                          type: [string, 'null']
+                      ap_invoices:
+                        type: object
+                        additionalProperties: { type: string }
+                      ar_invoices:
+                        type: object
+                        additionalProperties: { type: string }
+                      policy_id: { type: [string, 'null'] }
+                      agent_id: { type: [string, 'null'] }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401':
           description: Missing or invalid platform credential.
