@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import {
+  createDebouncedUploadIngestPipelineDrain,
   createUploadIngestPipelineDrain,
   runUploadProjectionSideEffects,
 } from "./post-ingest-pipeline.js";
@@ -334,5 +335,82 @@ describe("createUploadIngestPipelineDrain", () => {
       expect.objectContaining({ source_schema: null }),
       expect.stringContaining("missing registered document source_schema"),
     );
+  });
+});
+
+describe("createDebouncedUploadIngestPipelineDrain", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    calls.order.length = 0;
+    calls.runInterpretCycle.mockClear();
+    calls.runNormalizeCycle.mockClear();
+    calls.runProjectionCycle.mockClear();
+    calls.rebuildAparProjectionFromCanonical.mockClear();
+    calls.rebuildAccountTransactionProjectionFromCanonical.mockClear();
+    calls.regenerateWikiForUploadProjection.mockClear();
+    calls.setArtifactProjectionStatus.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("coalesces sequential upload document ingests into one background drain", async () => {
+    const drain = createDebouncedUploadIngestPipelineDrain(
+      {
+        rawWorkerPool: {} as Pool,
+        appPool: {} as Pool,
+        canonicalProjectorPool: {} as Pool,
+        ledgerProjectorPool: {} as Pool,
+        tenantDiscoveryPool: {} as Pool,
+        blob: {},
+        audit: {},
+        pageService: {},
+        uploadProjectionAgentTrigger: {
+          handle: vi.fn(async () => {
+            calls.order.push("agents");
+          }),
+        },
+        wikiSettleDelayMs: 0,
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      } as unknown as Parameters<typeof createDebouncedUploadIngestPipelineDrain>[0],
+      { debounceMs: 25 },
+    );
+
+    const event = (rawId: string) => ({
+      input: {
+        tenantId: "tnt_seed",
+        actor: "usr_seed",
+        sourceType: "csv_upload",
+        sourceRef: { filename: `${rawId}.xlsx` },
+        body: Buffer.from("xlsx"),
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+      result: {
+        rawId,
+        sha256: "a".repeat(64),
+        bytes: 4,
+        sourceType: "csv_upload",
+        sourceSchema: "brain.upload.document.v1",
+        projectionStatus: "pending" as const,
+        ingestedAt: "2026-07-25T00:00:00.000Z",
+        deduplicated: false,
+        extractionJob: null,
+      },
+    });
+
+    await drain(event("raw_ar"));
+    await drain(event("raw_payroll"));
+
+    expect(calls.runInterpretCycle).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(24);
+    expect(calls.runInterpretCycle).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(calls.runInterpretCycle).toHaveBeenCalledTimes(1);
+    expect(calls.runNormalizeCycle).toHaveBeenCalledTimes(1);
+    expect(calls.runProjectionCycle).toHaveBeenCalledTimes(1);
   });
 });

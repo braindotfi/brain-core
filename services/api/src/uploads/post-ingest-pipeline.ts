@@ -34,6 +34,7 @@ interface PipelineLog {
 
 const UPLOAD_PROJECTION_STEP_TIMEOUT_MS = 30_000;
 const UPLOAD_PROJECTION_WIKI_SETTLE_DELAY_MS = 250;
+const UPLOAD_INGEST_DRAIN_DEBOUNCE_MS = 750;
 
 export interface UploadIngestPipelineDeps {
   rawWorkerPool: Pool;
@@ -114,6 +115,84 @@ export function createUploadIngestPipelineDrain(
       throw err;
     }
   };
+}
+
+export function createDebouncedUploadIngestPipelineDrain(
+  deps: UploadIngestPipelineDeps,
+  opts: { debounceMs?: number } = {},
+): NonNullable<RawDeps["afterIngest"]> {
+  const drain = createUploadIngestPipelineDrain(deps);
+  const debounceMs = opts.debounceMs ?? UPLOAD_INGEST_DRAIN_DEBOUNCE_MS;
+  const byTenant = new Map<string, DebouncedDrainState>();
+
+  return async (event) => {
+    if (!isRegisteredUploadDocumentEvent(event)) {
+      await drain(event);
+      return;
+    }
+
+    const tenantId = event.input.tenantId;
+    let state = byTenant.get(tenantId);
+    if (state === undefined) {
+      state = { latest: event, timer: undefined, running: false, rerunRequested: false };
+      byTenant.set(tenantId, state);
+    } else {
+      state.latest = event;
+    }
+
+    if (state.running) {
+      state.rerunRequested = true;
+      return;
+    }
+
+    if (state.timer !== undefined) clearTimeout(state.timer);
+    state.timer = setTimeout(() => {
+      void runQueuedDrain(tenantId);
+    }, debounceMs);
+  };
+
+  async function runQueuedDrain(tenantId: string): Promise<void> {
+    const state = byTenant.get(tenantId);
+    if (state === undefined || state.running) return;
+    const event = state.latest;
+    state.timer = undefined;
+    state.running = true;
+    state.rerunRequested = false;
+    try {
+      await drain(event);
+    } catch (err) {
+      deps.log?.error(
+        {
+          err,
+          tenant_id: event.input.tenantId,
+          raw_id: event.result.rawId,
+        },
+        "background upload post-ingest projection drain failed",
+      );
+    } finally {
+      state.running = false;
+      if (state.rerunRequested) {
+        state.timer = setTimeout(() => {
+          void runQueuedDrain(tenantId);
+        }, debounceMs);
+      } else {
+        byTenant.delete(tenantId);
+      }
+    }
+  }
+}
+
+type UploadIngestEvent = Parameters<NonNullable<RawDeps["afterIngest"]>>[0];
+
+interface DebouncedDrainState {
+  latest: UploadIngestEvent;
+  timer: NodeJS.Timeout | undefined;
+  running: boolean;
+  rerunRequested: boolean;
+}
+
+function isRegisteredUploadDocumentEvent(event: UploadIngestEvent): boolean {
+  return event.result.sourceSchema === UPLOAD_DOCUMENT_SCHEMA;
 }
 
 export async function runUploadProjectionSideEffects(
