@@ -113,7 +113,7 @@ import { startTreasuryScanner } from "./agents/treasury-scanner.js";
 import { startVendorRiskScanner } from "./agents/vendor-risk-scanner.js";
 import { startWikiRegenerationWorker } from "./wiki/regeneration-worker.js";
 import {
-  createUploadIngestPipelineDrain,
+  createDebouncedUploadIngestPipelineDrain,
   runUploadProjectionSideEffects,
 } from "./uploads/post-ingest-pipeline.js";
 
@@ -1708,7 +1708,7 @@ async function main(): Promise<void> {
     audit,
     log,
   });
-  rawDeps.afterIngest = createUploadIngestPipelineDrain({
+  rawDeps.afterIngest = createDebouncedUploadIngestPipelineDrain({
     rawWorkerPool,
     appPool: pool,
     canonicalProjectorPool,
