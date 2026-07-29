@@ -129,17 +129,44 @@ export async function buildAuthApp(opts: BuildAuthAppOptions): Promise<FastifyIn
           serializers: { req: reqSerializer },
           ...(opts.loggerStream !== undefined ? { stream: opts.loggerStream } : {}),
         };
-  // trustProxy: true, matching services/api/src/main.ts's Fastify root app.
-  // Caddy fronts auth.brain.fi exactly like it fronts api.brain.fi (same
-  // Caddyfile), so without this every request arrives from the Caddy
-  // container's address, req.ip is constant, and @fastify/rate-limit's
-  // default IP keyGenerator collapses every distinct client into one bucket
-  // -- 5 /forgot-password requests/minute total, not per client (finding 4).
-  // Not narrowed to a specific proxy hop count/CIDR: services/api takes the
-  // same blanket `true` for the same single-hop Caddy topology, and diverging
-  // here would make the two deployables' trust boundary inconsistent for no
-  // documented reason.
-  const app = Fastify({ logger: loggerOption, disableRequestLogging: false, trustProxy: true });
+  // trustProxy: 1, NOT true (Opus review, Phase 3 follow-up). Caddy fronts
+  // auth.brain.fi as the sole ingress, so without ANY trustProxy every
+  // request arrives from the Caddy container's constant address, req.ip is
+  // constant, and @fastify/rate-limit's default IP keyGenerator collapses
+  // every distinct client into one bucket -- 5 /forgot-password
+  // requests/minute total, not per client (finding 4, Phase 2a).
+  //
+  // `true` is wrong, though, and not just a stylistic mismatch with
+  // services/api: fastify/lib/request.js's getTrustProxyFn(true) returns
+  // `() => true` (trust every hop unconditionally), and @fastify/proxy-addr's
+  // alladdrs() walks forwarded(req)'s address array -- [socketAddr, ...
+  // X-Forwarded-For entries, RIGHTMOST first, since @fastify/forwarded parses
+  // the header scanning right-to-left] -- truncating at the first hop the
+  // trust function rejects, then proxyaddr() returns the LAST surviving
+  // element. With every hop trusted, nothing is ever truncated, so the
+  // returned address is the array's last element, which is the LEFTMOST
+  // (oldest, most-forwarded) X-Forwarded-For entry -- caller-supplied and
+  // therefore spoofable. A single-valued forged header (`X-Forwarded-For:
+  // 10.0.0.<i>`) IS that leftmost entry, so req.ip changes every request
+  // no matter what Caddy appends behind it, and every limiter keyed on it
+  // (this one, /register's, /token's and /revoke's client_id-or-req.ip
+  // fallback) buckets per attacker-chosen value instead of per real client.
+  //
+  // `1` (verified against the same two files) makes getTrustProxyFn return
+  // `(addr, i) => i < 1`: only hop index 0 (the direct TCP peer, i.e. Caddy
+  // itself) is trusted, so alladdrs() truncates at index 1 and proxyaddr()
+  // returns THAT element -- the rightmost X-Forwarded-For entry, which is
+  // the one Caddy itself appended (or set, if it replaces rather than
+  // appends) from the connection it actually terminated. This holds either
+  // way Caddy's reverse_proxy is configured: append turns a spoofed
+  // "X-Forwarded-For: 10.0.0.<i>" into "10.0.0.<i>, <real_ip>" and hop 1 is
+  // `<real_ip>`; replace discards the forged value outright and hop 1 is
+  // `<real_ip>` regardless. Any earlier, attacker-controlled hops are still
+  // present in the header but no longer reachable through req.ip.
+  //
+  // services/api/src/main.ts keeps its own blanket `true` unchanged --
+  // out of scope here, and a documented divergence rather than a silent one.
+  const app = Fastify({ logger: loggerOption, disableRequestLogging: false, trustProxy: 1 });
 
   // registerAuthSecurityHeaders (security-headers.ts) is a from-scratch
   // equivalent of services/api/src/security-headers.ts's registerSecurityHeaders

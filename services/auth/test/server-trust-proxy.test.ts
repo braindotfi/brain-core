@@ -1,16 +1,28 @@
 /**
- * Finding 4: `buildAuthApp` built its Fastify instance with no `trustProxy`,
- * unlike `services/api/src/main.ts`'s root app (`trustProxy: true`). Caddy
- * fronts `auth.brain.fi` exactly like it fronts `api.brain.fi`, so every
+ * Finding 4 (Phase 2a): `buildAuthApp` built its Fastify instance with no
+ * `trustProxy`. Caddy fronts `auth.brain.fi` as the sole ingress, so every
  * request's immediate peer is the Caddy container -- without `trustProxy`,
  * `request.ip` (and therefore @fastify/rate-limit's default IP key) is
  * constant for every real client, and every distinct visitor collapses into
  * one shared rate-limit bucket.
  *
- * This proves the fix two ways against the REAL app, not a config read:
- * `request.ip` actually reflects `X-Forwarded-For` per request, and two
- * different forwarded clients get INDEPENDENT rate-limit buckets on the
- * same limited route (/login, max 10/min).
+ * Opus review, Phase 3 follow-up: the original fix (`trustProxy: true`) went
+ * too far. `true` trusts every hop in X-Forwarded-For unconditionally, so
+ * `req.ip` resolves to the header's LEFTMOST entry (server.ts's header
+ * comment traces this through fastify/lib/request.js and
+ * @fastify/proxy-addr) -- and the leftmost entry is exactly what a caller
+ * supplies, spoofable per request with no proxy involved at all. `server.ts`
+ * now uses `trustProxy: 1`: trust only the direct TCP peer (Caddy), so
+ * `req.ip` resolves to the RIGHTMOST entry -- the one Caddy itself appended
+ * (or set) from the connection it actually terminated.
+ *
+ * This proves both properties against the REAL app, not a config read:
+ * `request.ip` still reflects a single-valued `X-Forwarded-For` (unchanged
+ * behavior, single entry has no leftmost/rightmost distinction), two
+ * different forwarded clients still get INDEPENDENT rate-limit buckets, and
+ * -- the new case -- an attacker who prepends a forged hop ahead of the real
+ * one cannot manufacture a fresh bucket: `req.ip` is the RIGHTMOST entry, not
+ * the leftmost/spoofed one.
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -69,6 +81,25 @@ describe("buildAuthApp trusts the Caddy hop for the real client IP", () => {
 
     expect(a.json()).toEqual({ ip: "203.0.113.5" });
     expect(b.json()).toEqual({ ip: "198.51.100.9" });
+  });
+
+  it("request.ip is the RIGHTMOST X-Forwarded-For entry, not the leftmost/spoofable one", async () => {
+    app = await buildApp();
+    app.get("/__whoami", async (req) => ({ ip: req.ip }));
+    await app.ready();
+
+    // Simulates Caddy appending the real client IP after a forged leftmost
+    // hop the attacker fully controls. trustProxy: 1 must resolve to the
+    // rightmost entry (203.0.113.77, what Caddy actually observed), never the
+    // leftmost one (10.0.0.1, the attacker's own header content) -- that is
+    // the entire point of trustProxy: 1 over trustProxy: true.
+    const res = await app.inject({
+      method: "GET",
+      url: "/__whoami",
+      headers: { "x-forwarded-for": "10.0.0.1, 203.0.113.77" },
+    });
+    expect(res.json()).toEqual({ ip: "203.0.113.77" });
+    expect(res.json()).not.toEqual({ ip: "10.0.0.1" });
   });
 
   it("/login rate-limits distinct forwarded clients independently, not into one shared bucket", async () => {
