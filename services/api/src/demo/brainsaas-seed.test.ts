@@ -139,6 +139,14 @@ describe("seedBrainSaasDemo", () => {
 
     expect(result.policyId.startsWith("pol_")).toBe(true);
     expect(result.agentId.startsWith("agent_")).toBe(true);
+    expect(Object.keys(result.sources)).toEqual([
+      "plaid",
+      "stripe",
+      "finch",
+      "merge_accounting",
+      "alchemy_wallet",
+      "tax_return",
+    ]);
   });
 
   it("marks unapproved vendors high-risk with no settlement alias", async () => {
@@ -193,6 +201,85 @@ describe("seedBrainSaasDemo", () => {
       (c) => (c[3] as { direction: string }).direction,
     );
     expect(directions.every((d) => d === "inflow")).toBe(true);
+  });
+
+  it("seeds fake-connected demo sources that overlap with document data", async () => {
+    const { pool, audit } = deps();
+    const result = await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const deletePrior = scopedCalls.find((c) =>
+      c.sql.includes("metadata->>'demo_seed_kind' = 'fake_connected_source'"),
+    );
+    expect(deletePrior).toBeDefined();
+
+    const inserts = scopedCalls.filter((c) => c.sql.includes("INSERT INTO raw_sources"));
+    expect(inserts).toHaveLength(6);
+    expect(Object.values(result.sources).every((id) => id.startsWith("src_"))).toBe(true);
+
+    const byType = new Map(
+      inserts.map((c) => [
+        c.values?.[2],
+        {
+          externalAccountIds: c.values?.[4],
+          isStub: c.values?.[6],
+          metadata: JSON.parse(String(c.values?.[3])) as {
+            demo_seed_kind: string;
+            demo_fake_connected: boolean;
+            company_name: string;
+            display_name: string;
+            provider_name: string;
+            source_category: string;
+            disconnect_hidden: boolean;
+            disconnectable: boolean;
+            sync_disabled: boolean;
+            overlaps_with: Record<string, unknown>;
+          },
+        },
+      ]),
+    );
+
+    expect([...byType.keys()].sort()).toEqual([
+      "alchemy_wallet",
+      "email_inbound",
+      "finch",
+      "merge_accounting",
+      "plaid",
+      "stripe",
+    ]);
+
+    for (const entry of byType.values()) {
+      expect(entry.metadata).toMatchObject({
+        demo_seed_kind: "fake_connected_source",
+        demo_fake_connected: true,
+        company_name: "Brightline Systems Inc.",
+        disconnect_hidden: true,
+        disconnectable: false,
+        sync_disabled: true,
+      });
+      expect(entry.metadata.source_category).toEqual(expect.any(String));
+      expect(entry.metadata.provider_name).toEqual(expect.any(String));
+      expect(entry.metadata.display_name).toEqual(expect.any(String));
+    }
+
+    expect(byType.get("plaid")?.externalAccountIds).toEqual([
+      "brainsaas_operating",
+      "brainsaas_reserve",
+    ]);
+    expect(byType.get("plaid")?.metadata.overlaps_with).toMatchObject({
+      documents: ["bank_statement_2026-06.pdf"],
+      ledger_account_ids: ["acct_brainsaas_operating", "acct_brainsaas_reserve"],
+    });
+    expect(byType.get("stripe")?.metadata.overlaps_with).toMatchObject({
+      documents: ["bank_statement_2026-06.pdf", "ar_aging_2026-06-30.xlsx"],
+    });
+    expect(byType.get("finch")?.metadata.overlaps_with).toMatchObject({
+      documents: ["payroll_register_2026-06.xlsx"],
+      pay_runs: ["2026-06A", "2026-06B"],
+    });
+    expect(byType.get("merge_accounting")?.metadata.overlaps_with.ap_invoice_ids).toHaveLength(3);
+    expect(byType.get("merge_accounting")?.metadata.overlaps_with.ar_invoice_ids).toHaveLength(4);
+    expect(byType.get("alchemy_wallet")?.isStub).toBe(true);
+    expect(byType.get("email_inbound")?.isStub).toBe(true);
   });
 
   it("backdates payment-instruction history out of the 24h fraud window", async () => {
