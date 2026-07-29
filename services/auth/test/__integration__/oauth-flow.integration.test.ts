@@ -167,9 +167,26 @@ function formBody(fields: Array<[string, string]>): string {
   return params.toString();
 }
 
+// GET/POST /login are each rate limited to 10/minute per IP (human-auth.ts),
+// keyed on the default req.ip. This file calls login() far more than 10
+// times, so every invocation needs its own X-Forwarded-For hop -- otherwise
+// they all collapse into one bucket and the 11th call onward gets 429 with
+// no Set-Cookie (server-trust-proxy.test.ts proves trustProxy: 1 resolves
+// req.ip to a single-entry X-Forwarded-For value).
+let loginIpCounter = 0;
+function nextLoginIp(): string {
+  loginIpCounter += 1;
+  return `203.0.113.${loginIpCounter}`;
+}
+
 /** Full password login via a fresh CSRF carrier; returns the session cookie value. */
 async function login(fastify: FastifyInstance, email: string): Promise<string> {
-  const getRes = await fastify.inject({ method: "GET", url: "/login" });
+  const ip = nextLoginIp();
+  const getRes = await fastify.inject({
+    method: "GET",
+    url: "/login",
+    headers: { "x-forwarded-for": ip },
+  });
   const carrier = extractCookie(getRes.headers["set-cookie"], CSRF_COOKIE_NAME);
   if (carrier === undefined) throw new Error("no csrf carrier");
   const csrfMatch = getRes.body.match(/name="csrf" value="([^"]*)"/);
@@ -181,6 +198,7 @@ async function login(fastify: FastifyInstance, email: string): Promise<string> {
     headers: {
       cookie: `${CSRF_COOKIE_NAME}=${carrier}`,
       "content-type": "application/x-www-form-urlencoded",
+      "x-forwarded-for": ip,
     },
     payload: formBody([
       ["email", email],
