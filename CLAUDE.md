@@ -163,6 +163,18 @@ Done
   `flagged` is reserved for risk events that require attention. `wiki.question`
   emits `assistant_activity` with severity `info` and includes the original
   question text at `inputs.question`.
+- Proposal read contracts are documented in
+  `docs/contracts/proposals-read-model.md`. `/v1/proposals` and
+  `/v1/proposals/{id}` keep their compact fields and also expose
+  `stored_action_type`, `details`, `policy`, `presentation`, and
+  `available_decisions`. Public proposal types are `bill_management`,
+  `cash_forecast`, `collections`, `compliance`, `debt_optimization`,
+  `dispute`, `financial_health`, `fraud_anomaly`, `payment`,
+  `personal_budget`, `purchase_advisor`, `reconciliation`, `revenue_intel`,
+  `savings`, `subscription`, `tax_prep`, `travel_finance`, `treasury`, and
+  `vendor_risk`. Stored action names map through an explicit resolver; ambiguous
+  names such as `notify`, `escalate`, `create_task`, and `recommend_action`
+  resolve through the agent role instead of action-name guessing.
 - Tenant provisioning must create one active bootstrap admin member in the same
   transaction as the tenant row. The bootstrap member uses all approval domains,
   a per-item limit of `9223372036854775807`, no second-approver threshold, and
