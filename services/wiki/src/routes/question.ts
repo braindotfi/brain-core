@@ -60,6 +60,7 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
         model: deps.questionModel,
       },
       outputs: {
+        answer: result.answer,
         evidence_count: result.evidence.length,
         input_tokens: result.usage.inputTokens,
         output_tokens: result.usage.outputTokens,

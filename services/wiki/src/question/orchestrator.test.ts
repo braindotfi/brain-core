@@ -31,11 +31,33 @@ interface FakeRows {
   obligations: Array<{
     id: string;
     type: string;
+    direction?: "payable" | "receivable" | null;
     amount_due: string;
     currency: string;
     due_date: Date;
     status: string;
     counterparty_id: string;
+  }>;
+  reconciliationMatches?: Array<{
+    match_id: string;
+    match_type: string;
+    match_status: string;
+    confidence_score: number;
+    explanation: string | null;
+    transaction_id: string | null;
+    amount: string | null;
+    currency: string | null;
+    direction: string | null;
+    transaction_date: Date | null;
+    description_normalized: string | null;
+    description_raw: string | null;
+    obligation_id: string | null;
+    obligation_type: string | null;
+    amount_due: string | null;
+    due_date: Date | null;
+    obligation_status: string | null;
+    counterparty_id: string | null;
+    counterparty_name: string | null;
   }>;
   counterparties: Array<{
     id: string;
@@ -65,11 +87,25 @@ function fakeRedis(): {
 function fakeClient(rows: FakeRows): TenantScopedClient {
   return {
     query: async (text: string) => {
+      if (text.includes("FROM ledger_reconciliation_matches")) {
+        return {
+          rows: (rows.reconciliationMatches ?? []) as never[],
+          rowCount: rows.reconciliationMatches?.length ?? 0,
+        };
+      }
       if (text.includes("FROM ledger_transactions")) {
-        return { rows: rows.transactions as never[], rowCount: rows.transactions.length };
+        const transactions = text.includes("reconciliation_status = 'unreconciled'")
+          ? rows.transactions.filter((r) =>
+              (r.description_normalized ?? r.description_raw ?? "").includes("unreconciled"),
+            )
+          : rows.transactions;
+        return { rows: transactions as never[], rowCount: transactions.length };
       }
       if (text.includes("FROM ledger_obligations")) {
-        return { rows: rows.obligations as never[], rowCount: rows.obligations.length };
+        const obligations = text.includes("direction = 'receivable'")
+          ? rows.obligations.filter((r) => r.direction === "receivable" && r.type === "invoice")
+          : rows.obligations;
+        return { rows: obligations as never[], rowCount: obligations.length };
       }
       if (text.includes("FROM ledger_counterparties")) {
         return { rows: rows.counterparties as never[], rowCount: rows.counterparties.length };
@@ -102,6 +138,41 @@ function buildEvidenceContext(rows: FakeRows): string {
 
 const SYSTEM_PROMPT =
   "You answer questions about a tenant's financial data grounded ONLY in the EVIDENCE block. Each evidence row has a typed id like `tx_..`, `obl_..`, or `cp_..`. Reply as JSON { answer, evidence_ids }. evidence_ids must be a subset of the EVIDENCE block ids.";
+
+async function askWithEmptyEvidence(question: string, model: string): Promise<string> {
+  const prompt = {
+    model,
+    messages: [
+      { role: "system" as const, content: SYSTEM_PROMPT },
+      { role: "user" as const, content: `QUESTION:\n${question}\n\nEVIDENCE:\n` },
+    ],
+    temperature: 0,
+    maxTokens: 800,
+    timeoutMs: 15_000,
+  };
+  const llm = new RecordedLlmAdapter([
+    {
+      key: llmKey(prompt),
+      response: {
+        text: `{"answer":"No matching evidence was found.","evidence_ids":[]}`,
+        usage: { inputTokens: 4, outputTokens: 4 },
+        model,
+        finishReason: "end_turn",
+      },
+    },
+  ]);
+  const result = await askWiki(
+    {
+      client: fakeClient({ transactions: [], obligations: [], counterparties: [] }),
+      llm,
+      embed: new DeterministicEmbeddingAdapter(16),
+      redis: fakeRedis() as unknown as Redis,
+      metrics: new MockMetrics(),
+    },
+    { question, asOf: null, maxEvidenceDepth: 3, tenantId: "tnt_test", model },
+  );
+  return result.answer;
+}
 
 describe("askWiki — Ledger-grounded retrieval", () => {
   it("returns a grounded answer citing only retrieved Ledger rows", async () => {
@@ -462,5 +533,600 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     );
     expect(result.answer).toBe("This is not JSON at all.");
     expect(result.evidence).toHaveLength(0);
+  });
+
+  it("parses fenced JSON and tolerates a missing evidence array", async () => {
+    const rows: FakeRows = {
+      transactions: [
+        {
+          id: "tx_FENCE",
+          amount: "42.00",
+          currency: "USD",
+          direction: "outflow",
+          transaction_date: new Date("2026-07-01T00:00:00Z"),
+          description_normalized: "test transaction",
+          description_raw: null,
+          counterparty_id: null,
+        },
+      ],
+      obligations: [],
+      counterparties: [],
+    };
+    const evidenceContext = buildEvidenceContext(rows);
+    const prompt = {
+      model: "m-fence",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        {
+          role: "user" as const,
+          content: `QUESTION:\nshow the fenced answer\n\nEVIDENCE:\n${evidenceContext}`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: '```json\n{"answer":"The fenced answer parsed."}\n```',
+          usage: { inputTokens: 6, outputTokens: 6 },
+          model: "m-fence",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "show the fenced answer",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-fence",
+      },
+    );
+
+    expect(result.answer).toBe("The fenced answer parsed.");
+    expect(result.evidence).toHaveLength(0);
+  });
+
+  it("falls back to raw text when JSON omits answer", async () => {
+    const rows: FakeRows = { transactions: [], obligations: [], counterparties: [] };
+    const prompt = {
+      model: "m-missing-answer",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        { role: "user" as const, content: "QUESTION:\nmissing answer\n\nEVIDENCE:\n" },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: `{"evidence_ids":[]}`,
+          usage: { inputTokens: 5, outputTokens: 5 },
+          model: "m-missing-answer",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "missing answer",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-missing-answer",
+      },
+    );
+
+    expect(result.answer).toBe(`{"evidence_ids":[]}`);
+    expect(result.evidence).toHaveLength(0);
+  });
+
+  it.each([
+    ["did payment clear an invoice", "m-payment-invoice"],
+    ["did the invoice receive payment", "m-invoice-payment"],
+    ["what is AR today", "m-ar-abbrev"],
+    ["which receivables are open", "m-receivables"],
+    ["show outstanding invoices", "m-outstanding-invoices"],
+    ["total outstanding for invoices", "m-total-outstanding-invoices"],
+  ])("classifies %s without falling back to generic evidence", async (question, model) => {
+    await expect(askWithEmptyEvidence(question, model)).resolves.toBe(
+      "No matching evidence was found.",
+    );
+  });
+
+  it("filters accounts receivable questions to receivable invoices", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [
+        {
+          id: "obl_INV1",
+          type: "invoice",
+          direction: "receivable",
+          amount_due: "11250.00",
+          currency: "USD",
+          due_date: new Date("2026-05-15T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_PALISADE",
+        },
+        {
+          id: "obl_INV2",
+          type: "invoice",
+          direction: "receivable",
+          amount_due: "18600.00",
+          currency: "USD",
+          due_date: new Date("2026-07-17T00:00:00Z"),
+          status: "due",
+          counterparty_id: "cp_THORNEBURY",
+        },
+        {
+          id: "obl_INV3",
+          type: "invoice",
+          direction: "receivable",
+          amount_due: "34680.00",
+          currency: "USD",
+          due_date: new Date("2026-07-25T00:00:00Z"),
+          status: "due",
+          counterparty_id: "cp_OTHER",
+        },
+        {
+          id: "obl_PAYROLL1",
+          type: "payroll",
+          direction: "payable",
+          amount_due: "33204.00",
+          currency: "USD",
+          due_date: new Date("2026-07-05T00:00:00Z"),
+          status: "due",
+          counterparty_id: "cp_GUSTO",
+        },
+        {
+          id: "obl_TAX1",
+          type: "tax",
+          direction: "payable",
+          amount_due: "2500.00",
+          currency: "USD",
+          due_date: new Date("2026-08-15T00:00:00Z"),
+          status: "upcoming",
+          counterparty_id: "cp_TAX",
+        },
+      ],
+      counterparties: [
+        { id: "cp_PALISADE", name: "Palisade Home Goods", type: "customer", risk_level: null },
+        {
+          id: "cp_THORNEBURY",
+          name: "Thornebury Imports Ltd.",
+          type: "customer",
+          risk_level: null,
+        },
+        { id: "cp_OTHER", name: "Other Customer", type: "customer", risk_level: null },
+      ],
+    };
+    const expectedEvidence = [
+      "[obl_INV1] (obligation) invoice due 2026-05-15 amount 11250.00 USD status=overdue cp=cp_PALISADE",
+      "[obl_INV2] (obligation) invoice due 2026-07-17 amount 18600.00 USD status=due cp=cp_THORNEBURY",
+      "[obl_INV3] (obligation) invoice due 2026-07-25 amount 34680.00 USD status=due cp=cp_OTHER",
+      '[cp_PALISADE] (counterparty) customer "Palisade Home Goods"',
+      '[cp_THORNEBURY] (counterparty) customer "Thornebury Imports Ltd."',
+      '[cp_OTHER] (counterparty) customer "Other Customer"',
+    ].join("\n");
+    const prompt = {
+      model: "m-ar",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        {
+          role: "user" as const,
+          content: `QUESTION:\nWhat's my total outstanding accounts receivable?\n\nEVIDENCE:\n${expectedEvidence}`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: `{"answer":"Outstanding accounts receivable is $64,530.00.","evidence_ids":["obl_INV1","obl_INV2","obl_INV3"]}`,
+          usage: { inputTokens: 60, outputTokens: 12 },
+          model: "m-ar",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What's my total outstanding accounts receivable?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_solstice",
+        model: "m-ar",
+      },
+    );
+
+    expect(result.answer).toBe("Outstanding accounts receivable is $64,530.00.");
+    expect(result.evidence.map((e) => e.entityId)).toEqual(["obl_INV1", "obl_INV2", "obl_INV3"]);
+    expect(result.evidence.map((e) => e.entityId)).not.toContain("obl_PAYROLL1");
+    expect(result.evidence.map((e) => e.entityId)).not.toContain("obl_TAX1");
+  });
+
+  it("uses reconciliation evidence for invoice payment match questions", async () => {
+    const rows: FakeRows = {
+      transactions: [
+        {
+          id: "tx_THORNEBURY",
+          amount: "18600.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-07-17T00:00:00Z"),
+          description_normalized: "Thornebury Imports Ltd.",
+          description_raw: "ACH CREDIT THORNEBURY IMPORTS LTD",
+          counterparty_id: "cp_THORNEBURY",
+        },
+      ],
+      obligations: [
+        {
+          id: "obl_THORNEBURY",
+          type: "invoice",
+          direction: "receivable",
+          amount_due: "18600.00",
+          currency: "USD",
+          due_date: new Date("2026-07-17T00:00:00Z"),
+          status: "due",
+          counterparty_id: "cp_THORNEBURY",
+        },
+      ],
+      counterparties: [],
+      reconciliationMatches: [
+        {
+          match_id: "rcn_THORNEBURY",
+          match_type: "invoice_payment",
+          match_status: "matched",
+          confidence_score: 0.94,
+          explanation: "Amount, date, and counterparty match the invoice.",
+          transaction_id: "tx_THORNEBURY",
+          amount: "18600.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-07-17T00:00:00Z"),
+          description_normalized: "Thornebury Imports Ltd.",
+          description_raw: "ACH CREDIT THORNEBURY IMPORTS LTD",
+          obligation_id: "obl_THORNEBURY",
+          obligation_type: "invoice",
+          amount_due: "18600.00",
+          due_date: new Date("2026-07-17T00:00:00Z"),
+          obligation_status: "due",
+          counterparty_id: "cp_THORNEBURY",
+          counterparty_name: "Thornebury Imports Ltd.",
+        },
+      ],
+    };
+    const evidence = [
+      "[tx_THORNEBURY] (transaction) reconciled via invoice_payment matched confidence=0.94 match=rcn_THORNEBURY inflow 18600.00 USD on 2026-07-17 cp=Thornebury Imports Ltd. matched_to=obl_THORNEBURY Thornebury Imports Ltd. explanation=Amount, date, and counterparty match the invoice.",
+      "[obl_THORNEBURY] (obligation) reconciled via invoice_payment matched confidence=0.94 match=rcn_THORNEBURY invoice due 2026-07-17 amount 18600.00 USD status=due cp=Thornebury Imports Ltd. matched_to=tx_THORNEBURY explanation=Amount, date, and counterparty match the invoice.",
+    ].join("\n");
+    const prompt = {
+      model: "m-recon",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        {
+          role: "user" as const,
+          content: `QUESTION:\nDoes the Thornebury Imports invoice match a payment?\n\nEVIDENCE:\n${evidence}`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: `{"answer":"Yes. The Thornebury Imports invoice for $18,600 due 2026-07-17 matches the $18,600 inflow on 2026-07-17.","evidence_ids":["obl_THORNEBURY","tx_THORNEBURY"]}`,
+          usage: { inputTokens: 80, outputTokens: 18 },
+          model: "m-recon",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Does the Thornebury Imports invoice match a payment?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_solstice",
+        model: "m-recon",
+      },
+    );
+
+    expect(result.answer).toContain("Thornebury Imports");
+    expect(result.answer).toContain("$18,600");
+    expect(result.evidence.map((e) => e.entityId).sort()).toEqual([
+      "obl_THORNEBURY",
+      "tx_THORNEBURY",
+    ]);
+  });
+
+  it("keeps AR retrieval scoped when asOf and counterparty risk are present", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [
+        {
+          id: "obl_AR_RISK",
+          type: "invoice",
+          direction: "receivable",
+          amount_due: "1000.00",
+          currency: "USD",
+          due_date: new Date("2026-07-01T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_AR_RISK",
+        },
+      ],
+      counterparties: [
+        { id: "cp_AR_RISK", name: "Late Buyer", type: "customer", risk_level: "watch" },
+      ],
+    };
+    const evidence = [
+      "[obl_AR_RISK] (obligation) invoice due 2026-07-01 amount 1000.00 USD status=overdue cp=cp_AR_RISK",
+      '[cp_AR_RISK] (counterparty) customer "Late Buyer" risk=watch',
+    ].join("\n");
+    const prompt = {
+      model: "m-ar-asof",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        {
+          role: "user" as const,
+          content: `QUESTION:\nwhat AR is overdue?\n\nEVIDENCE:\n${evidence}`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: `{"answer":"Late Buyer has $1,000 overdue.","evidence_ids":["obl_AR_RISK","cp_AR_RISK"]}`,
+          usage: { inputTokens: 30, outputTokens: 8 },
+          model: "m-ar-asof",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "what AR is overdue?",
+        asOf: new Date("2026-07-31T00:00:00Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_solstice",
+        model: "m-ar-asof",
+      },
+    );
+
+    expect(result.evidence.map((e) => e.entityId).sort()).toEqual(["cp_AR_RISK", "obl_AR_RISK"]);
+  });
+
+  it("handles partial reconciliation match rows without generic fallback", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [],
+      counterparties: [],
+      reconciliationMatches: [
+        {
+          match_id: "rcn_OBL_ONLY",
+          match_type: "invoice_payment",
+          match_status: "candidate",
+          confidence_score: 0.51,
+          explanation: null,
+          transaction_id: null,
+          amount: null,
+          currency: null,
+          direction: null,
+          transaction_date: null,
+          description_normalized: null,
+          description_raw: null,
+          obligation_id: "obl_PARTIAL",
+          obligation_type: null,
+          amount_due: null,
+          due_date: null,
+          obligation_status: null,
+          counterparty_id: "cp_PARTIAL",
+          counterparty_name: null,
+        },
+        {
+          match_id: "rcn_TX_ONLY",
+          match_type: "invoice_payment",
+          match_status: "candidate",
+          confidence_score: 0.48,
+          explanation: null,
+          transaction_id: "tx_PARTIAL",
+          amount: null,
+          currency: null,
+          direction: null,
+          transaction_date: null,
+          description_normalized: null,
+          description_raw: "partial raw memo",
+          obligation_id: null,
+          obligation_type: null,
+          amount_due: null,
+          due_date: null,
+          obligation_status: null,
+          counterparty_id: null,
+          counterparty_name: null,
+        },
+      ],
+    };
+    const evidence = [
+      "[obl_PARTIAL] (obligation) reconciled via invoice_payment candidate confidence=0.51 match=rcn_OBL_ONLY obligation due unknown due date amount unknown amount  status=unknown cp=cp_PARTIAL matched_to=unknown",
+      "[tx_PARTIAL] (transaction) reconciled via invoice_payment candidate confidence=0.48 match=rcn_TX_ONLY transaction unknown amount  on unknown date cp=unknown counterparty matched_to=unknown partial raw memo",
+    ].join("\n");
+    const prompt = {
+      model: "m-recon-partial",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        {
+          role: "user" as const,
+          content: `QUESTION:\nis this payment reconciled?\n\nEVIDENCE:\n${evidence}`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: `{"answer":"There are two partial reconciliation candidates.","evidence_ids":["obl_PARTIAL","tx_PARTIAL"]}`,
+          usage: { inputTokens: 50, outputTokens: 10 },
+          model: "m-recon-partial",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "is this payment reconciled?",
+        asOf: new Date("2026-07-31T00:00:00Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_solstice",
+        model: "m-recon-partial",
+      },
+    );
+
+    expect(result.evidence.map((e) => e.entityId).sort()).toEqual(["obl_PARTIAL", "tx_PARTIAL"]);
+  });
+
+  it("uses unreconciled transaction evidence for open reconciliation questions", async () => {
+    const rows: FakeRows = {
+      transactions: [
+        {
+          id: "tx_UNRECONCILED_WIRE",
+          amount: "50000.00",
+          currency: "USD",
+          direction: "outflow",
+          transaction_date: new Date("2026-07-22T00:00:00Z"),
+          description_normalized: "unreconciled wire to Harbor Reserve Investment Acct",
+          description_raw: "WIRE HARBOR RESERVE INVESTMENT ACCT",
+          counterparty_id: "cp_HARBOR",
+        },
+        {
+          id: "tx_UNRECONCILED_RAW",
+          amount: "120.00",
+          currency: "USD",
+          direction: "outflow",
+          transaction_date: new Date("2026-07-23T00:00:00Z"),
+          description_normalized: null,
+          description_raw: "unreconciled raw memo",
+          counterparty_id: null,
+        },
+      ],
+      obligations: [],
+      counterparties: [],
+      reconciliationMatches: [],
+    };
+    const evidence = [
+      "[tx_UNRECONCILED_WIRE] (transaction) unreconciled outflow 50000.00 USD on 2026-07-22 cp=cp_HARBOR unreconciled wire to Harbor Reserve Investment Acct",
+      "[tx_UNRECONCILED_RAW] (transaction) unreconciled outflow 120.00 USD on 2026-07-23 unreconciled raw memo",
+    ].join("\n");
+    const prompt = {
+      model: "m-unreconciled",
+      messages: [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        {
+          role: "user" as const,
+          content: `QUESTION:\nAre there any unreconciled transactions right now?\n\nEVIDENCE:\n${evidence}`,
+        },
+      ],
+      temperature: 0,
+      maxTokens: 800,
+      timeoutMs: 15_000,
+    };
+    const llm = new RecordedLlmAdapter([
+      {
+        key: llmKey(prompt),
+        response: {
+          text: `{"answer":"The $50,000 Harbor Reserve wire on 2026-07-22 and the $120 raw memo on 2026-07-23 are unreconciled.","evidence_ids":["tx_UNRECONCILED_WIRE","tx_UNRECONCILED_RAW"]}`,
+          usage: { inputTokens: 44, outputTokens: 14 },
+          model: "m-unreconciled",
+          finishReason: "end_turn",
+        },
+      },
+    ]);
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Are there any unreconciled transactions right now?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_solstice",
+        model: "m-unreconciled",
+      },
+    );
+
+    expect(result.answer).toContain("Harbor Reserve");
+    expect(result.evidence.map((e) => e.entityId)).toEqual([
+      "tx_UNRECONCILED_WIRE",
+      "tx_UNRECONCILED_RAW",
+    ]);
   });
 });
