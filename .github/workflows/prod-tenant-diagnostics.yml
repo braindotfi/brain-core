@@ -176,6 +176,49 @@ jobs:
            GROUP BY 1, 2
            ORDER BY 1, 2;
 
+          \echo 'proposal details for transaction flags, collections, and payment'
+          SELECT p.id,
+                 p.created_at,
+                 p.proposing_agent,
+                 COALESCE(NULLIF(p.action->>'type', ''), NULLIF(p.action->>'kind', ''), 'unknown')
+                   AS type,
+                 p.status,
+                 p.policy_decision,
+                 p.required_approvers,
+                 p.action->>'summary' AS summary,
+                 p.action->>'narrative' AS narrative,
+                 p.action->>'description' AS description,
+                 p.action->>'counterparty_name' AS counterparty_name,
+                 p.action->>'merchant' AS merchant,
+                 p.action->>'amount' AS amount,
+                 p.action->>'currency' AS currency,
+                 p.action->>'transaction_id' AS transaction_id,
+                 p.action->>'payment_intent_id' AS payment_intent_id,
+                 p.action->'evidence_ids' AS evidence_ids,
+                 p.action->'evidence_refs' AS evidence_refs,
+                 p.policy_trace
+            FROM proposals p
+           WHERE p.tenant_id = :'tenant_id'
+             AND COALESCE(NULLIF(p.action->>'type', ''), NULLIF(p.action->>'kind', ''), 'unknown')
+                 IN ('flag_transaction', 'collections', 'payment')
+           ORDER BY p.created_at DESC, p.id DESC
+           LIMIT 50;
+
+          \echo 'recent rejected agent_action policy decisions'
+          SELECT id,
+                 decided_at,
+                 subject_id,
+                 outcome,
+                 matched_rule_id,
+                 required_approvers,
+                 trace
+            FROM policy_decisions
+           WHERE tenant_id = :'tenant_id'
+             AND subject_type = 'agent_action'
+             AND outcome = 'reject'
+           ORDER BY decided_at DESC
+           LIMIT 50;
+
           \echo 'wiki.question audit payloads'
           SELECT id,
                  created_at,
